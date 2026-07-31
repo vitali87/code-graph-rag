@@ -1894,6 +1894,11 @@ class GraphUpdater:
         return (root_node, language)
 
     def _process_function_calls(self) -> None:
+        # A reused updater (watch mode, a second run) re-parses files; the
+        # JS receiver-binding index holds nodes from the PREVIOUS parse,
+        # whose spans would resolve against the refreshed registry onto
+        # whatever now sits at the old line/column.
+        self.factory.call_processor.reset_js_receiver_bindings()
         captures_cache = self.factory._func_class_captures_cache
         # Iterate every file parsed this run, not the bounded AST cache: on a
         # large repo the cache evicts most files, and iterating it drops their

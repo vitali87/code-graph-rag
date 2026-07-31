@@ -372,6 +372,36 @@ _JSX_NAMED_ELEMENT_TYPES = frozenset(
 # (scope.onSuccess), so a passed object of callbacks must reference each or
 # every TanStack-style callback reports as dead.
 _INLINE_FUNC_VALUE_TYPES = frozenset({cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION})
+# JS/TS scopes that bind their own parameters (and, for a named function
+# expression, their own name) for the lexical receiver resolution of #988.
+_JS_LEXICAL_CALLABLE_SCOPES = frozenset(
+    {
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        cs.TS_METHOD_DEFINITION,
+    }
+)
+# Declarations hoisted to function/module scope.
+_JS_LEXICAL_HOISTED_DECLARATIONS = frozenset(
+    {cs.TS_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION_DECLARATION}
+)
+# Inline values that ARE callables when held by a declarator; generators
+# included (a `const gen = function* () {...}` receiver is invocable).
+_JS_INLINE_CALLABLE_VALUE_TYPES = _INLINE_FUNC_VALUE_TYPES | {cs.TS_GENERATOR_FUNCTION}
+# Declarations that bind a VALUE name for the receiver index: classes, TS
+# enums (compiled to vars) and namespaces/modules (compiled to objects).
+_JS_VALUE_TYPE_DECLARATIONS = frozenset(
+    {
+        cs.TS_CLASS_DECLARATION,
+        cs.TS_CLASS_EXPRESSION,
+        cs.TS_ENUM_DECLARATION,
+        cs.TS_INTERNAL_MODULE,
+        cs.TS_MODULE,
+    }
+)
 # JS/TS function scopes that REBIND `this` per call (a plain function /
 # generator / function expression), as opposed to an arrow_function (inherits
 # `this` lexically) or a method_definition / class-field arrow (binds `this` to
@@ -558,6 +588,264 @@ def _add_py_keyword_argument(child: Node, keyword: dict[str, Node]) -> None:
         keyword[name] = value_node
 
 
+class _JsFileBindingCollector:
+    """Whole-file binding index for the #988 receiver resolution.
+
+    One pass over a JS/TS file: name -> introductions as (function node or
+    None, container node or None for file-wide). Non-function introductions
+    are OVER-collected on purpose (destructuring, import aliases,
+    reassignment targets): each can only suppress. A `with` block makes every
+    name dynamic, so the whole file collapses to an empty index and nothing
+    ever resolves.
+
+    TS declaration merging: every block of one namespace shares one scope for
+    EXPORTED direct members, so those members gain one introduction per
+    SIBLING block afterwards; that is exactly where merging makes them
+    visible, and nowhere else. Merge groups key on (nearest NON-namespace
+    container id, dotted namespace path): `A { N }` in either A block and
+    `A.N` at top level all key to (program, "A.N") and merge, while a
+    top-level `N` keys to (program, "N") and stays distinct. Node identity
+    uses tree-sitter's stable `.id` (fresh Python wrappers over the same tree
+    node compare unequal with `is`).
+    """
+
+    __slots__ = (
+        "_bindings",
+        "_namespace_blocks",
+        "_namespace_group_of",
+        "_ns_exported",
+        "_poisoned",
+        "_unwrap_ts_value",
+    )
+
+    def __init__(self, unwrap_ts_value: Callable[[Node], Node]) -> None:
+        self._unwrap_ts_value = unwrap_ts_value
+        self._bindings: dict[str, list[tuple[Node | None, Node | None]]] = {}
+        self._namespace_blocks: dict[tuple[int, str], list[Node]] = {}
+        self._namespace_group_of: dict[int, tuple[int, str]] = {}
+        self._ns_exported: list[tuple[str, Node | None, Node]] = []
+        self._poisoned = False
+
+    def collect(self, root: Node) -> dict[str, list[tuple[Node | None, Node | None]]]:
+        stack: list[tuple[Node, Node, int, tuple[str, ...]]] = [
+            (root, root, root.id, ())
+        ]
+        while stack:
+            node, fn_container, ns_anchor, ns_path = stack.pop()
+            descend, frame = self._visit(node, fn_container, ns_anchor, ns_path)
+            if self._poisoned:
+                return {}
+            if descend:
+                for child in node.named_children:
+                    stack.append((child, *frame))
+        self._replicate_merged_members()
+        return self._bindings
+
+    def _visit(
+        self, node: Node, fn_container: Node, ns_anchor: int, ns_path: tuple[str, ...]
+    ) -> tuple[bool, tuple[Node, int, tuple[str, ...]]]:
+        node_type = node.type
+        frame = (fn_container, ns_anchor, ns_path)
+        if node_type in _JS_LEXICAL_CALLABLE_SCOPES:
+            return True, self._visit_callable(node, fn_container)
+        if node_type == cs.TS_CLASS_STATIC_BLOCK:
+            # A static block is its own `var` scope.
+            return True, (node, node.id, ())
+        if node_type == cs.TS_JS_WITH_STATEMENT:
+            # Dynamic scoping: no receiver in this file can be trusted.
+            self._poisoned = True
+            return False, frame
+        if node_type == cs.TS_VARIABLE_DECLARATOR:
+            self._visit_declarator(node, fn_container)
+        elif node_type == cs.TS_JS_FOR_IN_STATEMENT:
+            # Covers for-of and for-in, with or without var/let/const: the
+            # left side binds (or rebinds) its identifiers. The enclosing
+            # callable body over-approximates the lexical variants' scope,
+            # which can only suppress.
+            left = node.child_by_field_name(cs.FIELD_LEFT)
+            if left is not None:
+                self._add_pattern(left, fn_container)
+        elif node_type == cs.TS_JS_CATCH_CLAUSE:
+            param = node.child_by_field_name(cs.FIELD_PARAMETER)
+            if param is not None:
+                self._add_pattern(param, node)
+        elif node_type in _JS_VALUE_TYPE_DECLARATIONS:
+            return True, self._visit_type_binding(node, frame)
+        elif node_type in (cs.TS_IMPORT_ALIAS, cs.TS_IMPORT_STATEMENT):
+            # Either import form binds every identifier it contains: the
+            # default/named/namespace clauses, the TS `import x =
+            # require(...)` clause, and the namespace alias `import x =
+            # Other.thing` (whose aliased path identifiers over-collect,
+            # which can only suppress). The module path is a string.
+            self._add_pattern(node, None)
+            return False, frame
+        elif node_type in (
+            cs.TS_JS_ASSIGNMENT_EXPRESSION,
+            cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
+        ):
+            self._visit_assignment(node)
+        return True, frame
+
+    def _visit_callable(
+        self, node: Node, fn_container: Node
+    ) -> tuple[Node, int, tuple[str, ...]]:
+        params = node.child_by_field_name(cs.FIELD_PARAMETERS)
+        if params is not None:
+            self._add_pattern(params, node)
+        elif (single := node.child_by_field_name(cs.FIELD_PARAMETER)) is not None:
+            self._add_pattern(single, node)
+        node_type = node.type
+        if node_type in (cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION):
+            # A named function expression binds its own name in its body only.
+            name_node = node.child_by_field_name(cs.FIELD_NAME)
+            if name_node is not None:
+                self._add(safe_decode_text(name_node), node, node)
+        elif node_type in _JS_LEXICAL_HOISTED_DECLARATIONS:
+            self._visit_hoisted_declaration(node, fn_container)
+        # A method_definition name is a property, never a binding.
+        body = node.child_by_field_name(cs.FIELD_BODY) or node
+        return body, body.id, ()
+
+    def _visit_hoisted_declaration(self, node: Node, fn_container: Node) -> None:
+        # Function declarations hoist; Annex B makes even a block-level one
+        # function-scoped in sloppy mode, and one under a switch case is live
+        # across the whole switch body, so the enclosing callable body (or
+        # module) is the only container that never understates the binding's
+        # reach. In strict-mode block cases this over-widens, which can only
+        # suppress.
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None:
+            return
+        decl_name = safe_decode_text(name_node)
+        self._add(decl_name, node, fn_container)
+        if (
+            decl_name
+            and fn_container.type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE)
+            and node.parent is not None
+            and node.parent.type == cs.TS_EXPORT_STATEMENT
+        ):
+            self._ns_exported.append((decl_name, node, fn_container))
+
+    def _visit_declarator(self, node: Node, fn_container: Node) -> None:
+        target = node.child_by_field_name(cs.FIELD_NAME)
+        declaration = node.parent
+        if target is None or declaration is None:
+            return
+        container = self._declarator_container(declaration, fn_container)
+        if target.type != cs.TS_IDENTIFIER:
+            self._add_pattern(target, container)
+            return
+        value = node.child_by_field_name(cs.FIELD_VALUE)
+        fn_value: Node | None = None
+        if value is not None:
+            value = self._unwrap_ts_value(value)
+            if value.type in _JS_INLINE_CALLABLE_VALUE_TYPES:
+                fn_value = value
+        target_name = safe_decode_text(target)
+        self._add(target_name, fn_value, container)
+        wrapper = declaration.parent
+        if (
+            target_name
+            and wrapper is not None
+            and wrapper.type == cs.TS_EXPORT_STATEMENT
+            and (body := wrapper.parent) is not None
+            and (ns := body.parent) is not None
+            and ns.type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE)
+        ):
+            self._ns_exported.append((target_name, fn_value, ns))
+
+    def _visit_type_binding(
+        self, node: Node, frame: tuple[Node, int, tuple[str, ...]]
+    ) -> tuple[Node, int, tuple[str, ...]]:
+        # Classes, TS enums and namespaces all bind VALUE names (an enum
+        # compiles to a var, a namespace to an object). A namespace/module
+        # body is additionally its own scope: its members are invisible
+        # outside it.
+        _fn_container, ns_anchor, ns_path = frame
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None:
+            self._add(safe_decode_text(name_node), None, None)
+        if node.type not in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):
+            return frame
+        if name_node is not None and (ns_name := safe_decode_text(name_node)):
+            ns_path = ns_path + tuple(ns_name.split(cs.SEPARATOR_DOT))
+            group = (ns_anchor, cs.SEPARATOR_DOT.join(ns_path))
+            self._namespace_blocks.setdefault(group, []).append(node)
+            self._namespace_group_of[node.id] = group
+        return node, ns_anchor, ns_path
+
+    def _visit_assignment(self, node: Node) -> None:
+        # A reassignment rebinds a name declared SOMEWHERE to an arbitrary
+        # value; file-wide relevance is the safe reading.
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        if left is None:
+            return
+        if left.type == cs.TS_IDENTIFIER:
+            self._add(safe_decode_text(left), None, None)
+        elif left.type in (cs.TS_OBJECT_PATTERN, cs.TS_ARRAY_PATTERN):
+            self._add_pattern(left, None)
+
+    def _add(
+        self, name: str | None, fn_node: Node | None, container: Node | None
+    ) -> None:
+        if name:
+            self._bindings.setdefault(name, []).append((fn_node, container))
+
+    def _add_pattern(self, pattern: Node, container: Node | None) -> None:
+        # Binding-side only: a default value (assignment_pattern right, or
+        # the TS grammar's wrapperless parameter default outside the pattern
+        # field) or a type annotation READS names, it does not introduce them.
+        stack = [pattern]
+        while stack:
+            part = stack.pop()
+            if part.type == cs.TS_ASSIGNMENT_PATTERN:
+                left = part.child_by_field_name(cs.FIELD_LEFT)
+                if left is not None:
+                    stack.append(left)
+                continue
+            if part.type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
+                ts_pattern = part.child_by_field_name(cs.TS_FIELD_PATTERN)
+                if ts_pattern is not None:
+                    stack.append(ts_pattern)
+                continue
+            if part.type == cs.TS_TYPE_ANNOTATION:
+                continue
+            if part.type in (
+                cs.TS_IDENTIFIER,
+                cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+            ):
+                self._add(safe_decode_text(part), None, container)
+            stack.extend(part.named_children)
+
+    @staticmethod
+    def _declarator_container(declaration: Node, fn_container: Node) -> Node | None:
+        # `var` hoists to the enclosing callable body; `let`/`const` scope to
+        # the declaration's parent, peeling an export_statement wrapper and
+        # widening a switch-case slot to the shared switch body.
+        if declaration.type != cs.TS_LEXICAL_DECLARATION:
+            return fn_container
+        parent = declaration.parent
+        if parent is None:
+            return fn_container
+        if parent.type == cs.TS_EXPORT_STATEMENT:
+            return parent.parent
+        if parent.type in (cs.TS_JS_SWITCH_CASE, cs.TS_JS_SWITCH_DEFAULT):
+            return parent.parent
+        return parent
+
+    def _replicate_merged_members(self) -> None:
+        for member_name, fn_node, block in self._ns_exported:
+            group = self._namespace_group_of.get(block.id)
+            if group is None:
+                continue
+            blocks = self._namespace_blocks.get(group, [])
+            if len(blocks) < 2:
+                continue
+            for sibling in blocks:
+                if sibling.id != block.id:
+                    self._add(member_name, fn_node, sibling)
+
+
 class CallProcessor:
     __slots__ = (
         "ingestor",
@@ -580,6 +868,7 @@ class CallProcessor:
         "_flow_processor",
         "_rpc_exposure",
         "_dispatch_registry",
+        "_js_file_receiver_bindings",
     )
 
     def __init__(
@@ -615,6 +904,12 @@ class CallProcessor:
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
         self.macro_qns = macro_qns if macro_qns is not None else set()
+        # Per-module map of identifier -> introductions as (function node,
+        # container) for the #988 lexical receiver resolution; built once per
+        # file on first use.
+        self._js_file_receiver_bindings: dict[
+            str, dict[str, list[tuple[Node | None, Node | None]]]
+        ] = {}
 
         self._resolver = CallResolver(
             function_registry=function_registry,
@@ -1070,6 +1365,7 @@ class CallProcessor:
         relative_path = cached_relative_path(file_path, self.repo_path)
         logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
 
+        module_qn: str | None = None
         try:
             module_qn = self._module_qn(file_path, relative_path)
 
@@ -1314,6 +1610,13 @@ class CallProcessor:
 
         except Exception as e:
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
+        finally:
+            # The receiver binding index is only ever consulted by sites in
+            # the SAME file; evicting here (errors and early returns
+            # included) keeps the map from retaining one parse tree per
+            # JS/TS module for the rest of the pass.
+            if module_qn is not None:
+                self._js_file_receiver_bindings.pop(module_qn, None)
 
     def _process_calls_in_functions(
         self,
@@ -2618,6 +2921,25 @@ class CallProcessor:
                 self._ingest_inline_call_arg_references(
                     call_node, caller_spec, ensure_rel, caller_qn, module_qn
                 )
+                # `fn.call(this, ...)` / `fn.apply(this, ...)` invokes fn, but
+                # the callee names Function.prototype.call, so the resolve
+                # below fails (or, cast-wrapped, never even names the site)
+                # and a function invoked ONLY this way in statement position
+                # reports dead (issue #988; value positions link through the
+                # bound-callable peel). The receiver is resolved by LEXICAL
+                # BINDING, never by name lookup: only a binding that IS a
+                # function (a hoisted declaration or a declarator holding an
+                # inline function) emits, resolved by its own source span.
+                # Everything else about the site (name resolution, builtin
+                # handling, argument references) proceeds unchanged below.
+                if (
+                    loc := self._js_fn_call_receiver_binding(call_node, module_qn)
+                ) is not None:
+                    ensure_rel(
+                        caller_spec,
+                        calls_rel,
+                        (loc.label, qn_key, loc.qualified_name),
+                    )
             if not call_name:
                 # A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)
                 # or otherwise yields no name still consumes its arguments through
@@ -6167,6 +6489,82 @@ class CallProcessor:
         if node.type not in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
             return False
         return not (self._get_node_name(node) or self._js_ts_arrow_binding_name(node))
+
+    def reset_js_receiver_bindings(self) -> None:
+        # Drop the per-file receiver-binding index; a reused updater's next
+        # pass re-parses files and must rebuild it from the fresh trees.
+        self._js_file_receiver_bindings.clear()
+
+    def _js_fn_call_receiver_binding(
+        self, call_node: Node, module_qn: str
+    ) -> FunctionLocation | None:
+        # For `fn.call(...)` / `fn.apply(...)` (only: `.bind` produces a value
+        # without invoking), peel casts/parens off the receiver and, when it is
+        # a bare identifier, resolve what that identifier DENOTES at this site
+        # by lexical scoping. `.bind`-style member receivers and computed
+        # receivers never qualify.
+        fn_child = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if fn_child is None or fn_child.type != cs.TS_MEMBER_EXPRESSION:
+            return None
+        prop = fn_child.child_by_field_name(cs.FIELD_PROPERTY)
+        if prop is None or safe_decode_text(prop) not in (
+            cs.JS_METHOD_CALL,
+            cs.JS_METHOD_APPLY,
+        ):
+            return None
+        obj = fn_child.child_by_field_name(cs.FIELD_OBJECT)
+        if obj is None:
+            return None
+        obj = self._unwrap_ts_value(obj)
+        if obj.type != cs.TS_IDENTIFIER:
+            return None
+        name = safe_decode_text(obj)
+        if not name:
+            return None
+        return self._js_lexical_function_binding(call_node, name, module_qn)
+
+    def _js_lexical_function_binding(
+        self, site: Node, name: str, module_qn: str
+    ) -> FunctionLocation | None:
+        # UNIQUE-RELEVANT-BINDING resolution: collect every INTRODUCTION of
+        # every name in the file once (cached), each with the container whose
+        # span bounds where it is usable, then keep only the introductions
+        # whose container encloses THIS site (a file-wide container always
+        # qualifies). The receiver resolves only when exactly ONE relevant
+        # introduction remains and it IS a function registered by the
+        # definition pass; two or more relevant introductions, or a
+        # non-function one, mean the runtime value is unknowable and nothing
+        # is emitted. Shadowing, `var` hoisting, switch/for/catch scoping and
+        # duplicate declarations all collapse into "a second relevant
+        # introduction", with no scope simulation; an introduction confined
+        # to a SIBLING scope is irrelevant here and cannot suppress.
+        root = site
+        while root.parent is not None:
+            root = root.parent
+        bindings = self._js_file_receiver_bindings.get(module_qn)
+        if bindings is None:
+            bindings = self._js_collect_file_bindings(root)
+            self._js_file_receiver_bindings[module_qn] = bindings
+        entries = bindings.get(name)
+        if not entries:
+            return None
+        relevant = [
+            (fn_node, container)
+            for fn_node, container in entries
+            if container is None
+            or container.start_byte <= site.start_byte < container.end_byte
+        ]
+        if len(relevant) != 1:
+            return None
+        fn_node, _container = relevant[0]
+        if fn_node is None:
+            return None
+        return self._recorded_caller(fn_node, module_qn)
+
+    def _js_collect_file_bindings(
+        self, root: Node
+    ) -> dict[str, list[tuple[Node | None, Node | None]]]:
+        return _JsFileBindingCollector(self._unwrap_ts_value).collect(root)
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)
