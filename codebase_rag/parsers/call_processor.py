@@ -119,14 +119,6 @@ _JS_SCOPE_CONTAINER_TYPES = frozenset(
 )
 
 
-def _walk_named(node: Node):  # noqa: ANN201 - simple generator over Node
-    stack = list(node.named_children)
-    while stack:
-        current = stack.pop()
-        yield current
-        stack.extend(current.named_children)
-
-
 # Languages with argument-REFERENCE edges but no interprocedural
 # callable-param flow: passing a function keeps it reachable (REFERENCES),
 # while invocation edges stay with the flow languages.
@@ -905,6 +897,7 @@ class CallProcessor:
         "js_symbol_constants",
         "_js_symbol_assignments",
         "js_symbol_member_types",
+        "_js_proto_evidence_cache",
     )
 
     def __init__(
@@ -954,6 +947,7 @@ class CallProcessor:
         self.js_symbol_constants: set[str] = set()
         self._js_symbol_assignments: list[tuple[str, str, str]] = []
         self.js_symbol_member_types: dict[str, set[str]] = {}
+        self._js_proto_evidence_cache: dict[tuple[str, str | None], bool] = {}
 
         self._resolver = CallResolver(
             function_registry=function_registry,
@@ -3177,11 +3171,14 @@ class CallProcessor:
                     targets, unique = sym_targets
                     sym_rel = calls_rel if unique else cs.RelationshipType.REFERENCES
                     for sym_label, sym_qn_target in targets:
-                        ensure_rel(
-                            caller_spec,
-                            sym_rel,
-                            (sym_label, qn_key, sym_qn_target),
-                        )
+                        for variant in resolver.function_registry.variants(
+                            sym_qn_target
+                        ):
+                            ensure_rel(
+                                caller_spec,
+                                sym_rel,
+                                (sym_label, qn_key, variant),
+                            )
                     call_name = None
             if not call_name:
                 # A callee that is itself a call (`wraps(view_func)(_view_wrapper)`)
@@ -6739,12 +6736,15 @@ class CallProcessor:
         return not (self._get_node_name(node) or self._js_ts_arrow_binding_name(node))
 
     def reset_js_receiver_bindings(self) -> None:
-        # Drop the per-file receiver-binding index; a reused updater's next
-        # pass re-parses files and must rebuild it from the fresh trees.
+        # Despite the historical name this clears ALL per-run JS call-pass
+        # state: the receiver-binding index, the symbol index, and the
+        # prototype-evidence memo. A reused updater's next pass re-parses
+        # files and must rebuild each from the fresh trees.
         self._js_file_receiver_bindings.clear()
         self.js_symbol_constants.clear()
         self._js_symbol_assignments.clear()
         self.js_symbol_member_types.clear()
+        self._js_proto_evidence_cache.clear()
 
     def collect_js_symbol_bindings(
         self,
@@ -6767,20 +6767,23 @@ class CallProcessor:
             )
         except ValueError:
             return
-        stack: list[Node] = [root_node]
-        while stack:
-            node = stack.pop()
-            if node.type == cs.TS_VARIABLE_DECLARATOR:
-                self._collect_symbol_declarator(node, module_qn)
-            elif node.type in (
-                cs.TS_PAIR,
-                cs.TS_PUBLIC_FIELD_DEFINITION,
-                cs.TS_JS_FIELD_DEFINITION,
-            ):
-                self._collect_symbol_pair(node, module_qn)
-            elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
-                self._collect_symbol_subscript_assignment(node, module_qn)
-            stack.extend(node.children)
+        try:
+            stack: list[Node] = [root_node]
+            while stack:
+                node = stack.pop()
+                if node.type == cs.TS_VARIABLE_DECLARATOR:
+                    self._collect_symbol_declarator(node, module_qn)
+                elif node.type in (
+                    cs.TS_PAIR,
+                    cs.TS_PUBLIC_FIELD_DEFINITION,
+                    cs.TS_JS_FIELD_DEFINITION,
+                ):
+                    self._collect_symbol_pair(node, module_qn)
+                elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+                    self._collect_symbol_subscript_assignment(node, module_qn)
+                stack.extend(node.children)
+        except Exception as e:
+            logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
 
     @staticmethod
     def _js_is_symbol_mint(value: Node | None) -> bool:
@@ -6801,12 +6804,25 @@ class CallProcessor:
             )
         return False
 
+    @staticmethod
+    def _js_inside_callable(node: Node) -> bool:
+        current = node.parent
+        while current is not None:
+            if current.type in cs.JS_TS_FUNCTION_NODES:
+                return True
+            current = current.parent
+        return False
+
     def _collect_symbol_declarator(self, node: Node, module_qn: str) -> None:
+        # Only a MODULE-scoped binding mints a shared symbol constant; a
+        # function-local `k = Symbol(...)` is a local value whose name must
+        # not hijack same-spelled reads elsewhere in the module.
         target = node.child_by_field_name(cs.FIELD_NAME)
         if (
             target is not None
             and target.type == cs.TS_IDENTIFIER
             and self._js_is_symbol_mint(node.child_by_field_name(cs.FIELD_VALUE))
+            and not self._js_inside_callable(node)
             and (name := safe_decode_text(target))
         ):
             self.js_symbol_constants.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
@@ -6823,8 +6839,9 @@ class CallProcessor:
         if key is None or value is None:
             return
         if key.type == cs.TS_PROPERTY_IDENTIFIER and self._js_is_symbol_mint(value):
-            if name := safe_decode_text(key):
-                self.js_symbol_constants.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
+            if not self._js_inside_callable(node):
+                if name := safe_decode_text(key):
+                    self.js_symbol_constants.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
             return
         if key.type == cs.TS_JS_COMPUTED_PROPERTY_NAME:
             index = next(
@@ -6925,6 +6942,14 @@ class CallProcessor:
         return self._js_has_prototype_members(class_qn, member=method)
 
     def _js_has_prototype_members(self, fn_qn: str, member: str | None = None) -> bool:
+        cache_key = (fn_qn, member)
+        if cache_key in self._js_proto_evidence_cache:
+            return self._js_proto_evidence_cache[cache_key]
+        result = self._js_scan_prototype_members(fn_qn, member)
+        self._js_proto_evidence_cache[cache_key] = result
+        return result
+
+    def _js_scan_prototype_members(self, fn_qn: str, member: str | None = None) -> bool:
         # Constructor EVIDENCE: at least one `Fn.prototype.x = ...` in the
         # function's module (any member), or, when `member` is given, an
         # assignment for that SPECIFIC member. Without it, `module.fn.name`
@@ -7429,7 +7454,7 @@ class CallProcessor:
         fan = [
             (registry[qn], qn)
             for qn in sorted(name_matches)
-            if qn in registry and registry[qn] != NodeType.CLASS
+            if qn in registry and registry[qn] in (NodeType.FUNCTION, NodeType.METHOD)
         ]
         return fan, False
 

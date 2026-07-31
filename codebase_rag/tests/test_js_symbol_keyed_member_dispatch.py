@@ -185,6 +185,33 @@ module.exports = { Row, Panel, fill, decorate }
     )
 
 
+def test_function_local_symbol_pair_is_not_a_constant(tmp_path: Path) -> None:
+    # A `k: Symbol(...)` pair INSIDE a function is a local value, not a
+    # module symbol constant; an unrelated module-level name spelled the
+    # same must keep its generic resolution (here: the unique-class trie
+    # CALLS), not get suppressed into a fan.
+    files = {
+        "ctrl.js": CTRL,
+        "main.js": """'use strict'
+const { Ctrl } = require('./ctrl.js')
+function make () {
+  return { kCtrl: Symbol('local') }
+}
+function use (server, kCtrl) {
+  return server[kCtrl].ping()
+}
+module.exports = { make, use }
+""",
+    }
+    cap = _run(tmp_path, files)
+    assert any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".use")
+        and str(to) == "p.ctrl.Ctrl.ping"
+        for frm, rel, to in cap.rels
+    )
+
+
 def test_symbol_for_registry_constant_links(tmp_path: Path) -> None:
     symbols = SYMBOLS.replace("Symbol('ctrl')", "Symbol.for('app.ctrl')")
     cap = _run(
