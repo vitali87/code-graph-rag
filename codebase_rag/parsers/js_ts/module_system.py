@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import QueryCursor
+from tree_sitter import Language, QueryCursor
 
 from ... import constants as cs
 from ... import logs as ls
@@ -296,6 +296,51 @@ class JsTsModuleSystemMixin:
                     cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
                 )
 
+    def _ingest_direct_module_export(
+        self,
+        root_node: ASTNode,
+        module_qn: str,
+        language_obj: Language,
+    ) -> None:
+        # `module.exports = function (...) {...}` makes the WHOLE module one
+        # function (fastify's generated error-serializer). Register it as an
+        # exported function under its own name (or its position when
+        # anonymous) and record the module-to-function mapping, so a
+        # whole-module require alias called directly resolves to it.
+        try:
+            cursor = QueryCursor(
+                get_cached_query(language_obj, cs.JS_COMMONJS_DIRECT_EXPORT_QUERY)
+            )
+            captures = sorted_captures(cursor, root_node)
+        except Exception as e:
+            logger.debug(ls.JS_COMMONJS_EXPORTS_QUERY_FAILED, error=e)
+            return
+        for module_obj, exports_prop, export_function in zip(
+            captures.get(cs.CAPTURE_MODULE_OBJ, []),
+            captures.get(cs.CAPTURE_EXPORTS_PROP, []),
+            captures.get(cs.CAPTURE_EXPORT_FUNCTION, []),
+        ):
+            if safe_decode_text(module_obj) != cs.JS_MODULE_KEYWORD:
+                continue
+            if safe_decode_text(exports_prop) != cs.JS_EXPORTS_KEYWORD:
+                continue
+            name_node = export_function.child_by_field_name(cs.FIELD_NAME)
+            function_name = (
+                safe_decode_text(name_node) if name_node is not None else None
+            )
+            if not function_name:
+                row, col = export_function.start_point
+                function_name = f"{cs.PREFIX_ANONYMOUS}{row}_{col}"
+            self._ingest_export_function(
+                export_function,
+                function_name,
+                module_qn,
+                cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
+            )
+            self.import_processor.commonjs_direct_exports[module_qn] = (
+                f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
+            )
+
     def _ingest_commonjs_exports(
         self,
         root_node: ASTNode,
@@ -314,6 +359,7 @@ class JsTsModuleSystemMixin:
             cs.JS_COMMONJS_EXPORTS_FUNCTION_QUERY,
             cs.JS_COMMONJS_MODULE_EXPORTS_QUERY,
         ]
+        self._ingest_direct_module_export(root_node, module_qn, language_obj)
 
         for query_text in query_texts:
             try:

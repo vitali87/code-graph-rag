@@ -1078,6 +1078,14 @@ class CallResolver:
         if imported_qn in self.function_registry:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=imported_qn)
             return self.function_registry[imported_qn], imported_qn
+        # A whole-module require alias (`const f = require('./m'); f(x)`)
+        # maps to the MODULE qn; when that module's entire export is one
+        # function (`module.exports = function ... `), the call is a call to
+        # that function (issue #991, fastify's error-serializer).
+        direct = self.import_processor.commonjs_direct_exports.get(imported_qn)
+        if direct is not None and direct in self.function_registry:
+            logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=direct)
+            return self.function_registry[direct], direct
         return None
 
     def _try_resolve_qualified_call(
