@@ -272,6 +272,43 @@ module.exports = { build, use }
     )
 
 
+def test_prototype_evidence_is_per_member_not_per_function(
+    tmp_path: Path,
+) -> None:
+    # A constructor WITH prototype methods still must not expose its nested
+    # private helpers: the evidence has to name the SPECIFIC member.
+    files = {
+        "symbols.js": SYMBOLS,
+        "parser.js": """'use strict'
+function Parser (x) {
+  function ping () { return 'private helper' }
+  ping()
+  this.x = x
+}
+Parser.prototype.other = function () { return 'proto' }
+module.exports = Parser
+""",
+        "main.js": """'use strict'
+const { kCtrl } = require('./symbols.js')
+const Parser = require('./parser.js')
+function build () {
+  return { [kCtrl]: new Parser(1) }
+}
+function use (s) {
+  return s[kCtrl].ping()
+}
+module.exports = { build, use }
+""",
+    }
+    cap = _run(tmp_path, files)
+    assert not any(
+        rel == str(cs.RelationshipType.CALLS)
+        and str(frm).endswith(".use")
+        and str(to) == "p.parser.Parser.ping"
+        for frm, rel, to in cap.rels
+    )
+
+
 def test_class_field_symbol_install_links(tmp_path: Path) -> None:
     # `class Server { [kCtrl] = new Ctrl() }`: the class-field installation
     # feeds the index like an object-literal key.

@@ -6721,11 +6721,23 @@ class CallProcessor:
                 return candidate
         return None
 
-    def _js_has_prototype_members(self, fn_qn: str) -> bool:
+    def _js_member_is_exposed(self, class_qn: str, method: str) -> bool:
+        # A CLASS's registry members are its real methods. A CONSTRUCTOR
+        # FUNCTION shares its `module.fn.name` namespace with its NESTED
+        # private helpers, so each member needs its own
+        # `Fn.prototype.<method> = ...` evidence before the qn may be
+        # treated as callable from outside.
+        registry = self._resolver.function_registry
+        if class_qn in registry and registry[class_qn] == NodeType.CLASS:
+            return True
+        return self._js_has_prototype_members(class_qn, member=method)
+
+    def _js_has_prototype_members(self, fn_qn: str, member: str | None = None) -> bool:
         # Constructor EVIDENCE: at least one `Fn.prototype.x = ...` in the
-        # function's module. Without it, `module.fn.name` registry entries
-        # under the function are its NESTED helpers, not methods, and
-        # accepting the function as a type would manufacture edges to them.
+        # function's module (any member), or, when `member` is given, an
+        # assignment for that SPECIFIC member. Without it, `module.fn.name`
+        # registry entries under the function are its NESTED helpers, not
+        # methods, and accepting them would manufacture edges.
         fn_module, _, fn_leaf = fn_qn.rpartition(cs.SEPARATOR_DOT)
         type_inference = self._resolver.type_inference
         file_path = type_inference.module_qn_to_file_path.get(fn_module)
@@ -6749,7 +6761,14 @@ class CallProcessor:
                     is not None
                     and safe_decode_text(prop) == cs.JS_PROTOTYPE_KEYWORD
                 ):
-                    return True
+                    if member is None:
+                        return True
+                    outer_prop = left.child_by_field_name(cs.FIELD_PROPERTY)
+                    if (
+                        outer_prop is not None
+                        and safe_decode_text(outer_prop) == member
+                    ):
+                        return True
             stack.extend(node.children)
         return False
 
@@ -7209,6 +7228,7 @@ class CallProcessor:
                 (registry[method_qn], method_qn)
                 for class_qn in sorted(classes)
                 if (method_qn := f"{class_qn}{cs.SEPARATOR_DOT}{method}") in registry
+                and self._js_member_is_exposed(class_qn, method)
             ]
             return targets, len(classes) == 1
         name_matches = self._resolver.type_inference.simple_name_lookup.get(
