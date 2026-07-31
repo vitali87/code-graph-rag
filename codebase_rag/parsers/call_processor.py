@@ -1365,6 +1365,7 @@ class CallProcessor:
         relative_path = cached_relative_path(file_path, self.repo_path)
         logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
 
+        module_qn: str | None = None
         try:
             module_qn = self._module_qn(file_path, relative_path)
 
@@ -1607,6 +1608,13 @@ class CallProcessor:
 
         except Exception as e:
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
+        finally:
+            # The receiver binding index is only ever consulted by sites in
+            # the SAME file; evicting here (errors and early returns
+            # included) keeps the map from retaining one parse tree per
+            # JS/TS module for the rest of the pass.
+            if module_qn is not None:
+                self._js_file_receiver_bindings.pop(module_qn, None)
 
     def _process_calls_in_functions(
         self,
