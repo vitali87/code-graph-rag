@@ -919,3 +919,132 @@ def test_super_path_trait_links(temp_repo: Path, mock_ingestor: MagicMock) -> No
         f"{base}.flags.defs.BeforeContext.name_long",
         f"{base}.flags.Flag.name_long",
     ) in overrides, overrides
+
+
+def test_definitive_lib_module_ignores_main_item_declaration(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Only lib.rs declares `mod user;`, so `crate::` in src/user.rs can ONLY
+    # mean the lib crate: a same-named item in the separate bin crate
+    # (src/main.rs) must not attract the import via the item tie-break.
+    project = temp_repo / "rs_lib_definitive"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_lib_definitive"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod config;\npub mod user;\n\npub use crate::config::Config;\n"
+            ),
+            "src/config.rs": (
+                "pub struct Config;\n\n"
+                "impl Config {\n"
+                "    pub fn apply(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/user.rs": (
+                "use crate::Config;\n\npub fn f(c: Config) -> u32 {\n    c.apply()\n}\n"
+            ),
+            "src/main.rs": (
+                "pub struct Config;\n\n"
+                "impl Config {\n"
+                "    pub fn apply(&self) -> u32 {\n"
+                "        99\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_lib_definitive.src"
+    assert (f"{base}.user.f", f"{base}.main.Config.apply") not in calls, calls
+    imports = _pairs(mock_ingestor, RelationshipType.IMPORTS.value)
+    assert (f"{base}.user", f"{base}.main") not in imports, imports
+
+
+def test_mod_decl_inside_inline_block_does_not_count_for_entry(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `pub mod sys { pub mod unix; }` in lib.rs declares src/sys/unix.rs, a
+    # DIFFERENT file from src/unix.rs; the nested `mod unix;` must not make
+    # the entry chooser attribute src/unix.rs (declared only by main.rs) to
+    # the lib crate.
+    project = temp_repo / "rs_nested_mod_decl"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_nested_mod_decl"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod api;\n\n"
+                "pub mod sys {\n"
+                "    pub mod unix;\n"
+                "}\n\n"
+                "pub trait Runner {\n"
+                "    fn go(&self) -> u32;\n"
+                "}\n"
+            ),
+            "src/api.rs": "pub fn a() -> u32 {\n    0\n}\n",
+            "src/sys/unix.rs": "pub fn s() -> u32 {\n    0\n}\n",
+            "src/main.rs": (
+                "mod unix;\n\n"
+                "pub trait Runner {\n"
+                "    fn go(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/unix.rs": (
+                "use crate::Runner;\n\n"
+                "pub struct U;\n\n"
+                "impl Runner for U {\n"
+                "    fn go(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_nested_mod_decl.src"
+    assert (f"{base}.unix.U", f"{base}.main.Runner") in implements, implements
+    assert (f"{base}.unix.U", f"{base}.lib.Runner") not in implements, implements
+
+
+def test_mod_rs_module_dir_with_incidental_main_is_not_crate_root(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # src/foo/ is a module directory in the mod.rs spelling; an incidental
+    # src/foo/main.rs is just the module foo::main, so `crate::` inside
+    # src/foo/bar.rs must still reach the real crate root at src/.
+    project = temp_repo / "rs_modrs_main"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_modrs_main"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod foo;\n\npub trait Tr {\n    fn go(&self) -> u32;\n}\n"
+            ),
+            "src/foo/mod.rs": "pub mod main;\npub mod bar;\n",
+            "src/foo/main.rs": "pub fn m() -> u32 {\n    0\n}\n",
+            "src/foo/bar.rs": (
+                "use crate::Tr;\n\n"
+                "pub struct B;\n\n"
+                "impl Tr for B {\n"
+                "    fn go(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_modrs_main.src"
+    assert (f"{base}.foo.bar.B", f"{base}.lib.Tr") in implements, implements
+    assert (f"{base}.foo.bar.B", f"{base}.foo.main.Tr") not in implements, implements

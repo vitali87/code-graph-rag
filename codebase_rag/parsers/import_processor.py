@@ -53,7 +53,7 @@ _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
 # a comment marker can flip the crate attribution.
 _RS_MOD_DECL_PATTERN = re.compile(
     r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
-    r"mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;",
+    r"mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*[;{]",
     re.MULTILINE,
 )
 # Top-level item declarations in an entry file, used to disambiguate
@@ -133,6 +133,31 @@ def _rs_strip_comments_and_strings(source: str) -> str:
                 continue
         out.append(c)
         i += 1
+    return "".join(out)
+
+
+def _rs_top_level_only(stripped: str) -> str:
+    """Keep only brace-depth-zero text of a comment-stripped source.
+
+    A `mod unix;` nested in an inline `mod sys { ... }` block declares a
+    file in a DIFFERENT directory, and a method inside an `impl` block is
+    not a crate-root item; both would otherwise match the line-anchored
+    declaration patterns. A depth-0 `}` becomes a newline so a declaration
+    following it on the same line stays anchored.
+    """
+    out: list[str] = []
+    depth = 0
+    for c in stripped:
+        if c == "{":
+            if depth == 0:
+                out.append(c)
+            depth += 1
+        elif c == "}":
+            depth = max(depth - 1, 0)
+            if depth == 0:
+                out.append("\n")
+        elif depth == 0 or c == "\n":
+            out.append(c)
     return "".join(out)
 
 
@@ -952,32 +977,41 @@ class ImportProcessor:
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
         if cs.LIB_RS not in entries and cs.MAIN_RS not in entries:
             return False
+        if cs.MOD_RS in entries:
+            # The mod.rs spelling of a module directory.
+            return False
         if dir_parts and f"{dir_parts[-1]}{cs.EXT_RS}" in self._rust_dir_entries(
             self.repo_path.joinpath(*dir_parts[:-1])
         ):
             return False
         return True
 
-    def _rust_entry_stem(self, dir_parts: list[str], module_qn: str) -> str:
+    def _rust_entry_stem(
+        self, dir_parts: list[str], module_qn: str
+    ) -> tuple[str, bool]:
         """Entry-file stem (lib/main) of the crate that contains module_qn.
 
         src/lib.rs + src/main.rs in one package is a standard layout and the
         two are DIFFERENT crates: the file's crate is the entry whose `mod`
         declarations reach the file's top-level module segment. An entry file
-        is its own crate; ties prefer lib.rs.
+        is its own crate; ties prefer lib.rs. The second element is True when
+        the choice is definitive (the importer IS an entry, or exactly one
+        entry declares it): a definitive crate must never be overridden by
+        the item tie-break in _rust_attach, because `crate::` in a module the
+        other entry does not declare can never reach that other crate.
         """
         decls = self._rust_entry_decls(dir_parts)
         segments = module_qn.split(cs.SEPARATOR_DOT)[1 + len(dir_parts) :]
         top = segments[0] if segments else ""
         if top in decls:
-            return top
-        for stem, (mods, _items) in decls.items():
-            if top in mods:
-                return stem
+            return top, True
+        declaring = [stem for stem, (mods, _items) in decls.items() if top in mods]
+        if declaring:
+            return declaring[0], len(declaring) == 1
         for stem in ("lib", "main"):
             if stem in decls:
-                return stem
-        return "lib"
+                return stem, False
+        return "lib", False
 
     def _rust_entry_decls(
         self, dir_parts: list[str]
@@ -998,15 +1032,17 @@ class ImportProcessor:
                     )
                 except OSError:
                     source = ""
-                stripped = _rs_strip_comments_and_strings(source)
+                top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
                 decls[stem] = (
-                    set(_RS_MOD_DECL_PATTERN.findall(stripped)),
-                    set(_RS_ITEM_DECL_PATTERN.findall(stripped)),
+                    set(_RS_MOD_DECL_PATTERN.findall(top_level)),
+                    set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
                 )
             self._rust_entry_mod_decls[key] = decls
         return decls
 
-    def _rust_attach(self, dir_parts: list[str], stem: str, rest: list[str]) -> str:
+    def _rust_attach(
+        self, dir_parts: list[str], stem: str, rest: list[str], definitive: bool
+    ) -> str:
         # A crate-root-relative path: the first segment names either a
         # submodule FILE/directory beside the entry point (crate::flags ->
         # src.flags) or an item/inline mod declared IN the entry file
@@ -1018,7 +1054,7 @@ class ImportProcessor:
             or (rest[0] in entries and (directory / rest[0]).is_dir())
         ):
             return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
-        if rest:
+        if rest and not definitive:
             # When a file compiles into BOTH crates (lib.rs and main.rs each
             # declare its module), the path can only mean the entry that
             # DECLARES the item.
@@ -1043,11 +1079,9 @@ class ImportProcessor:
         beside the entry point, so route through _rust_attach.
         """
         parts = base_qn.split(cs.SEPARATOR_DOT)[1:]
-        entries = self._rust_dir_entries(self.repo_path.joinpath(*parts))
-        if cs.MOD_RS not in entries and self._rust_is_crate_root_dir(parts):
-            return self._rust_attach(
-                parts, self._rust_entry_stem(parts, importer_qn), rest
-            )
+        if self._rust_is_crate_root_dir(parts):
+            stem, definitive = self._rust_entry_stem(parts, importer_qn)
+            return self._rust_attach(parts, stem, rest, definitive)
         if (
             parts
             and parts[-1] in ("lib", "main")
@@ -1057,7 +1091,7 @@ class ImportProcessor:
         ):
             # The base IS a crate entry module (self:: in lib.rs); a module
             # merely NAMED main/lib deeper in the tree attaches normally.
-            return self._rust_attach(parts[:-1], parts[-1], rest)
+            return self._rust_attach(parts[:-1], parts[-1], rest, definitive=True)
         return cs.SEPARATOR_DOT.join([base_qn, *rest]) if rest else base_qn
 
     def _rewrite_rust_local_use_path(self, full_path: str, module_qn: str) -> str:
@@ -1086,9 +1120,8 @@ class ImportProcessor:
                 # An auto-target crate (src/bin/tool.rs): items and
                 # submodules both nest under the entry file's qn.
                 return cs.SEPARATOR_DOT.join([self.project_name, *root_parts, *rest])
-            return self._rust_attach(
-                root_parts, self._rust_entry_stem(root_parts, module_qn), rest
-            )
+            stem, definitive = self._rust_entry_stem(root_parts, module_qn)
+            return self._rust_attach(root_parts, stem, rest, definitive)
         if head == cs.KEYWORD_SELF:
             return self._rust_resolve_relative(module_qn, parts[1:], module_qn)
         if head == cs.KEYWORD_SUPER:
