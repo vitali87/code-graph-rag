@@ -1106,7 +1106,7 @@ class ClassIngestMixin:
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):
                 continue
-            ingest_method(
+            ingested_qn = ingest_method(
                 method_node,
                 class_qn,
                 cs.NodeLabel.CLASS,
@@ -1125,6 +1125,17 @@ class ClassIngestMixin:
                 module_qn=owner_module_qn,
                 pending_endpoints=self.pending_endpoints,
             )
+            # Record where this method landed, same as the generic method
+            # path: the registered qn (a collision deduplicates it to
+            # `natural@<line>`) is recoverable afterwards only by span.
+            if ingested_qn is not None:
+                self.function_locations[function_span_key(module_qn, method_node)] = (
+                    FunctionLocation(
+                        label=cs.NodeLabel.METHOD.value,
+                        qualified_name=ingested_qn,
+                        container_qn=class_qn,
+                    )
+                )
             # Record the method's return type (Self -> impl target) so a chained
             # call (`Ping::new(msg).into_frame()`) and a call-bound local
             # (`let cmd = Command::from_frame(f)`) can resolve the next hop.

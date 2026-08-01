@@ -246,52 +246,23 @@ def extract_use_imports(use_node: Node) -> dict[str, str]:
     return imports
 
 
-def _append_scope_name(node: Node, parts: list[str]) -> bool:
-    if name_node := node.child_by_field_name(cs.FIELD_NAME):
-        text = name_node.text
-        if text is not None:
-            parts.append(text.decode(cs.RS_ENCODING_UTF8))
-            return True
-    return False
+def rust_use_scope_function(node: Node) -> Node | None:
+    """The function whose body DIRECTLY encloses this `use` declaration.
 
-
-_RS_CLASS_SCOPE_TYPES = (
-    cs.TS_RS_STRUCT_ITEM,
-    cs.TS_RS_ENUM_ITEM,
-    cs.TS_RS_TRAIT_ITEM,
-)
-
-
-def build_rust_use_scope(node: Node) -> tuple[list[str], int | None]:
-    """Scope-key path for a `use` declaration, mirroring the REGISTERED qn
-    scheme: the innermost enclosing function contributes only when the use
-    sits directly below it (items nested deeper register flat, without any
-    function segment), the innermost impl/trait/struct/enum contributes its
-    single segment (class qns collapse every outer non-mod scope), and only
-    `mod` segments count above that. Returns the path and the contributing
-    function's 1-based start line (None when the use is not function-scoped).
+    Returns None when a mod/impl/trait/struct/enum sits closer than any
+    function. A function-scoped use keys on its enclosing function's
+    REGISTERED qn (resolved by span after ingestion, never re-derived from
+    source names, which diverge on qn collisions); every other use keys on
+    its module chain.
     """
-    path_parts: list[str] = []
-    fn_line: int | None = None
-    seen_class = False
     current = node.parent
     while current and current.type != cs.TS_RS_SOURCE_FILE:
-        if current.type == cs.TS_RS_MOD_ITEM:
-            _append_scope_name(current, path_parts)
-        elif current.type == cs.TS_RS_FUNCTION_ITEM:
-            if not path_parts and _append_scope_name(current, path_parts):
-                fn_line = current.start_point[0] + 1
-        elif not seen_class:
-            if current.type == cs.TS_IMPL_ITEM:
-                if target := extract_impl_target(current):
-                    path_parts.append(target)
-                seen_class = True
-            elif current.type in _RS_CLASS_SCOPE_TYPES:
-                _append_scope_name(current, path_parts)
-                seen_class = True
+        if current.type == cs.TS_RS_FUNCTION_ITEM:
+            return current
+        if current.type in cs.FQN_RS_SCOPE_TYPES:
+            return None
         current = current.parent
-    path_parts.reverse()
-    return path_parts, fn_line
+    return None
 
 
 def build_module_path(

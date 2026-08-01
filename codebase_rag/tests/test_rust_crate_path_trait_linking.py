@@ -1593,7 +1593,7 @@ def test_duplicate_method_qn_does_not_steal_body_use(
     # Beta::run's use is keyed on its dedup variant, ready for the caller
     # side: the method call pass still attributes Beta::run's calls to the
     # natural qn (issue #1014), so no @13 caller edge exists yet.
-    scope_uses = updater.factory.import_processor.import_mapping.get(
+    scope_uses = updater.factory.import_processor.rust_fn_scope_imports.get(
         f"{base}.foo.S.run@13"
     )
     assert scope_uses == {"other": f"{base}.alpha.other"}, scope_uses
@@ -1717,3 +1717,218 @@ def test_impl_nested_in_method_body_use_keys_under_its_own_impl(
     base = "rs_impl_in_method.src"
     assert (f"{base}.foo.S1.me1", f"{base}.alpha.helper") in calls, calls
     assert (f"{base}.foo.S1.me1", f"{base}.foo.helper") not in calls, calls
+
+
+def test_fn_sharing_inline_mod_name_keeps_module_scope_calls(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `mod run` and `fn run` live in DIFFERENT Rust namespaces but share one
+    # cgr qn string: the inline mod's import map must never answer for the
+    # same-named function's own bare calls.
+    project = temp_repo / "rs_mod_fn_clash"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_mod_fn_clash"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/foo.rs": (
+                "pub fn helper() -> u32 {\n"
+                "    1\n"
+                "}\n\n"
+                "pub mod run {\n"
+                "    use crate::alpha::helper;\n\n"
+                "    pub fn go() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn run() -> u32 {\n"
+                "    helper()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_mod_fn_clash.src"
+    assert (f"{base}.foo.run", f"{base}.foo.helper") in calls, calls
+    assert (f"{base}.foo.run", f"{base}.alpha.helper") not in calls, calls
+    assert (f"{base}.foo.run.go", f"{base}.alpha.helper") in calls, calls
+
+
+def test_fn_sharing_submodule_name_keeps_its_body_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `pub mod run;` pulls in src/foo/run.rs whose module qn equals the
+    # sibling `fn run`'s qn. Parsing run.rs resets its module import map;
+    # the function's body use must survive in its own store, and neither
+    # may read the other's imports.
+    project = temp_repo / "rs_submod_fn_clash"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_submod_fn_clash"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub mod run;\n\n"
+                "pub fn helper() -> u32 {\n"
+                "    1\n"
+                "}\n\n"
+                "pub fn run() -> u32 {\n"
+                "    use crate::alpha::helper;\n"
+                "    helper()\n"
+                "}\n"
+            ),
+            "src/foo/run.rs": (
+                "use crate::beta::helper;\n\npub fn go() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_submod_fn_clash.src"
+    assert (f"{base}.foo.run", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.run", f"{base}.beta.helper") not in calls, calls
+    assert (f"{base}.foo.run.go", f"{base}.beta.helper") in calls, calls
+
+
+def test_reparse_of_declaring_file_keeps_submodule_import_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A watch-mode re-parse of foo.rs drops the scope keys foo.rs minted.
+    # The function-scope key `foo.run` must not be tracked as an
+    # import_mapping key, or the cleanup wipes src/foo/run.rs's whole
+    # module import map until run.rs itself is re-parsed.
+    project = temp_repo / "rs_reparse_clash"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_reparse_clash"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub mod run;\n\n"
+                "pub fn run() -> u32 {\n"
+                "    use crate::alpha::helper;\n"
+                "    helper()\n"
+                "}\n"
+            ),
+            "src/foo/run.rs": (
+                "use crate::beta::helper;\n\npub fn go() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    processor = updater.factory.import_processor
+    base = "rs_reparse_clash.src"
+    module_map = processor.import_mapping.get(f"{base}.foo.run")
+    assert module_map == {"helper": f"{base}.beta.helper"}, module_map
+    # Simulate the start of a re-parse of foo.rs alone.
+    processor._parse_rust_imports({}, f"{base}.foo")
+    module_map = processor.import_mapping.get(f"{base}.foo.run")
+    assert module_map == {"helper": f"{base}.beta.helper"}, module_map
+
+
+def test_same_line_struct_does_not_steal_fn_body_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `fn thing` and `struct thing {}` on ONE line: the struct collides on
+    # the natural qn and registers as thing@2, but the function kept the
+    # natural qn, so its body use must stay on the natural key.
+    project = temp_repo / "rs_struct_line_clash"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_struct_line_clash"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/foo.rs": (
+                "pub fn helper() -> u32 { 1 }\n"
+                "pub fn thing() -> u32 { use crate::alpha::helper; helper() } "
+                "pub struct thing {}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_struct_line_clash.src"
+    assert (f"{base}.foo.thing", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.thing", f"{base}.foo.helper") not in calls, calls
+
+
+def test_two_same_line_impls_keep_first_methods_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two one-line impls of the same type on ONE line: the FIRST method
+    # holds the natural qn S.me, the second becomes S.me@5. The first's
+    # body use must resolve by the method's own span, not by guessing
+    # from the line number (which matches the second's variant too).
+    project = temp_repo / "rs_same_line_impls"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_same_line_impls"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/foo.rs": (
+                "pub fn helper() -> u32 { 1 }\n"
+                "pub struct S;\n"
+                "pub trait A { fn me(&self) -> u32; }\n"
+                "pub trait B { fn me(&self) -> u32; }\n"
+                "impl A for S { fn me(&self) -> u32 { use crate::alpha::helper; "
+                "helper() } } impl B for S { fn me(&self) -> u32 { helper() } }\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_same_line_impls.src"
+    assert (f"{base}.foo.S.me", f"{base}.alpha.helper") in calls, calls
+
+
+def test_unextractable_impl_target_use_does_not_bind_free_fn(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `impl A for &S` has no extractable target and its methods are never
+    # registered: the method-body use has no caller to serve and must be
+    # dropped, not keyed at module.m where a real free fn lives.
+    project = temp_repo / "rs_ref_impl_target"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_ref_impl_target"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/foo.rs": (
+                "pub fn helper() -> u32 { 1 }\n"
+                "pub fn m() -> u32 { helper() }\n"
+                "pub struct S;\n"
+                "pub trait A { fn m(&self) -> u32; }\n"
+                "impl A for &S {\n"
+                "    fn m(&self) -> u32 { use crate::alpha::helper; helper() }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_ref_impl_target.src"
+    assert (f"{base}.foo.m", f"{base}.foo.helper") in calls, calls
+    assert (f"{base}.foo.m", f"{base}.alpha.helper") not in calls, calls

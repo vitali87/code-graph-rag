@@ -713,7 +713,7 @@ class CallResolver:
             and caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
             and (
                 cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
-                or caller_qn in self.import_processor.import_mapping
+                or caller_qn in self.import_processor.rust_fn_scope_imports
             )
         ):
             use_cache = False
@@ -1219,10 +1219,11 @@ class CallResolver:
     ) -> tuple[tuple[str, str] | None] | None:
         """Resolve a bare call through the caller's enclosing Rust scopes.
 
-        Walks innermost-out from the caller itself (function-body `use`
-        declarations store under the function's qn) through enclosing inline
-        modules to the file module, checking each scope's own items and its
-        import map (stored under the scope qn by _parse_rust_use_declaration).
+        Probes the caller's OWN body uses first (kept in a separate map:
+        `mod run` and `fn run` occupy different Rust namespaces but share
+        one qn string, so the module-keyed map must never answer for the
+        function itself), then walks the enclosing inline modules down to
+        the file module, checking each scope's own items and its import map.
         Returns a 1-tuple so a deliberate drop (the scope imports the name
         from OUTSIDE the indexed first-party graph) is distinguishable from
         "no scope claims it".
@@ -1233,31 +1234,37 @@ class CallResolver:
             or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
         ):
             return None
-        scope = caller_qn
         import_mapping = self.import_processor.import_mapping
-        while len(scope) > len(module_qn):
-            local_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
-            if (local_type := self.function_registry.get(local_qn)) is not None:
-                return ((local_type, local_qn),)
-            target = import_mapping.get(scope, {}).get(call_name)
-            if target is not None:
-                # An entry-file `pub use` re-export maps the name to the
-                # re-exporting module's qn, not the defining one; hop through
-                # that module's own import map before concluding the target
-                # is outside the graph.
-                seen = {target}
-                while (target_type := self.function_registry.get(target)) is None:
-                    owner, _, item = target.rpartition(cs.SEPARATOR_DOT)
-                    hop = import_mapping.get(owner, {}).get(item)
-                    if hop is None or hop in seen:
-                        break
-                    seen.add(hop)
-                    target = hop
-                if target_type is not None:
-                    return ((target_type, target),)
-                return (None,)
-            scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        return None
+        target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
+            call_name
+        )
+        if target is None:
+            scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            while len(scope) > len(module_qn):
+                local_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
+                if (local_type := self.function_registry.get(local_qn)) is not None:
+                    return ((local_type, local_qn),)
+                target = import_mapping.get(scope, {}).get(call_name)
+                if target is not None:
+                    break
+                scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        if target is None:
+            return None
+        # An entry-file `pub use` re-export maps the name to the
+        # re-exporting module's qn, not the defining one; hop through
+        # that module's own import map before concluding the target
+        # is outside the graph.
+        seen = {target}
+        while (target_type := self.function_registry.get(target)) is None:
+            owner, _, item = target.rpartition(cs.SEPARATOR_DOT)
+            hop = import_mapping.get(owner, {}).get(item)
+            if hop is None or hop in seen:
+                break
+            seen.add(hop)
+            target = hop
+        if target_type is not None:
+            return ((target_type, target),)
+        return (None,)
 
     def _try_resolve_same_module(
         self, call_name: str, module_qn: str
