@@ -371,8 +371,8 @@ def _offset_of_closing_brace(config_content: str, dict_node: ast.Dict) -> int:
     end_col_offset = dict_node.end_col_offset
     if end_lineno is None or end_col_offset is None:
         raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
-    lines = config_content.splitlines(keepends=True)
-    prefix = sum(len(line) for line in lines[: end_lineno - 1])
+    lines = config_content.split("\n")
+    prefix = sum(len(line) + 1 for line in lines[: end_lineno - 1])
     line = lines[end_lineno - 1]
     char_col = len(line.encode("utf-8")[: end_col_offset - 1].decode("utf-8"))
     return prefix + char_col
@@ -382,12 +382,14 @@ def _write_language_config(config_entry: str, language_name: str) -> bool:
     config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
     closing_brace_pos = _find_specs_closing_brace(config_content)
 
-    new_content = (
-        config_content[:closing_brace_pos]
-        + config_entry
-        + "\n"
-        + config_content[closing_brace_pos:]
-    )
+    head = config_content[:closing_brace_pos]
+    tail = config_content[closing_brace_pos:]
+    trimmed_head = head.rstrip()
+    if not trimmed_head.endswith(("{", ",")):
+        head = trimmed_head + ",\n"
+    new_content = head + config_entry + "\n" + tail
+
+    compile(new_content, cs.LANG_CONFIG_FILE, "exec")
 
     _write_config_atomically(new_content)
 
