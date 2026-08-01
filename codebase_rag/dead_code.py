@@ -6,6 +6,7 @@
 # memgraph's 600s timeout on big projects (django: 31k roots, 101k CALLS
 # edges), whereas a multi-source walk over the fetched edges is linear and
 # finishes in milliseconds.
+import re
 from collections import defaultdict
 from fnmatch import fnmatch
 
