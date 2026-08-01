@@ -1,4 +1,3 @@
-
 # Dead-code reachability engine. Roots (entry points, framework hooks,
 # module-load callees, test code) expand over CALLS/REFERENCES edges;
 # whatever is never reached is reported. Reachability runs client-side in
@@ -493,7 +492,7 @@ def dead_code_from_graph(
             react_component_classes,
         ):
             roots.add(qn)
-        elif is_well_known_symbol_member(leaf) and str(
+        elif is_well_known_symbol_member(qn) and str(
             props.get(cs.KEY_PATH, "")
         ).endswith(cs.JS_TS_ALL_EXTENSIONS):
             roots.add(qn)
