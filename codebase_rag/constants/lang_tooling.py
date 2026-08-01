@@ -155,3 +155,11 @@ LANG_GITMODULES_FILE = ".gitmodules"
 LANG_CALL_KEYWORD_EXCLUDE = "call"
 
 LANG_GITMODULES_REGEX = r"path = (grammars/tree-sitter-[^\n]+)"
+
+LANG_SPECS_DICT_NAME = "LANGUAGE_SPECS"
+LANG_SPECS_DICT_CLOSING = "\n}"
+LANG_STRING_KEY_PATTERN = '"{name}"'
+LANG_ENUM_KEY_PATTERN = r"cs\.SupportedLanguage\.{member}"
+LANG_REMOVE_ENTRY_PATTERN = r"    (?:{keys}): LanguageSpec\([\s\S]*?\n    \),\n"
+
+LANG_ERR_ENTRY_NOT_IN_CONFIG = "no config entry found for '{name}'"

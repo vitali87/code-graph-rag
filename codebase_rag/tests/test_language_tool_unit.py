@@ -516,10 +516,7 @@ class TestUpdateConfigFile:
     ) -> None:
         config = tmp_path / "language_spec.py"
         config.write_text(
-            "LANGUAGE_SPECS = {\n"
-            "}\n"
-            "\n"
-            "_EXTENSION_TO_SPEC = {}\n",
+            "LANGUAGE_SPECS = {\n}\n\n_EXTENSION_TO_SPEC = {}\n",
             encoding="utf-8",
         )
 

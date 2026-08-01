@@ -333,10 +333,14 @@ def _update_config_file(language_name: str, spec: LanguageSpec) -> bool:
 
 def _write_language_config(config_entry: str, language_name: str) -> bool:
     config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
-    closing_brace_pos = config_content.rfind("}")
-
-    if closing_brace_pos == -1:
+    specs_pos = config_content.find(cs.LANG_SPECS_DICT_NAME)
+    if specs_pos == -1:
         raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+
+    closing_newline_pos = config_content.find(cs.LANG_SPECS_DICT_CLOSING, specs_pos)
+    if closing_newline_pos == -1:
+        raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+    closing_brace_pos = closing_newline_pos + 1
 
     new_content = (
         config_content[:closing_brace_pos]
@@ -525,8 +529,19 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
 
     try:
         original_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
-        pattern = rf'    "{language_name}": LanguageSpec\([\s\S]*?\),\n'
+        key_patterns = [
+            cs.LANG_STRING_KEY_PATTERN.format(name=re.escape(language_name))
+        ]
+        try:
+            member = cs.SupportedLanguage(language_name).name
+        except ValueError:
+            pass
+        else:
+            key_patterns.append(cs.LANG_ENUM_KEY_PATTERN.format(member=member))
+        pattern = cs.LANG_REMOVE_ENTRY_PATTERN.format(keys="|".join(key_patterns))
         new_content = re.sub(pattern, "", original_content)
+        if new_content == original_content:
+            raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
 
         dmp_obj = dmp.diff_match_patch()
         patches = dmp_obj.patch_make(original_content, new_content)
