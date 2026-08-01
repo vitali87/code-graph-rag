@@ -2466,3 +2466,97 @@ def test_cfg_gated_inline_mod_with_file_present_does_not_wipe_map(
         f"{base}.foo.run",
         {"helper": f"{base}.beta.helper"},
     )
+
+
+def test_entry_file_inline_mod_does_not_collide_with_sibling_file(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # In src/main.rs an inline `mod run` keys at src.main.run while the
+    # declared sibling src/run.rs keys at src.run: DIFFERENT qns, no
+    # collision. The twin probe answers a cgr-qn question, not rustc's
+    # beside-the-entry module rule, so the inline map must be kept.
+    project = temp_repo / "rs_entry_constblock"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_entry_constblock"\nversion = "0.1.0"\n'
+            ),
+            "src/main.rs": (
+                "mod alpha;\n"
+                "mod beta;\n"
+                "mod run;\n\n"
+                "pub const X: u32 = {\n"
+                "    mod run {\n"
+                "        use crate::beta::helper;\n\n"
+                "        pub const fn go2() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    run::go2()\n"
+                "};\n\n"
+                "fn main() {\n"
+                '    println!("{}", X);\n'
+                "}\n"
+            ),
+            "src/alpha.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/run.rs": (
+                "use crate::alpha::helper;\n\npub fn go() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_entry_constblock.src"
+    assert (f"{base}.main.run.go2", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.main.run.go2", f"{base}.alpha.helper") not in calls, calls
+    module_map = updater.factory.import_processor.import_mapping.get(f"{base}.main.run")
+    assert module_map == {"helper": f"{base}.beta.helper"}, module_map
+
+
+def test_incidental_main_module_file_collision_still_drops(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # src/app/main.rs is the MODULE app::main (declared by src/app.rs),
+    # not a crate entry: its submodules live in src/app/main/, so the
+    # fn-local `mod sub` DOES collide with src/app/main/sub.rs and must
+    # drop, exactly like any non-entry-named file.
+    project = temp_repo / "rs_incidental_main"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_incidental_main"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod app;\npub mod beta;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/app.rs": "pub mod main;\n",
+            "src/app/main.rs": (
+                "pub mod sub;\n\n"
+                "pub fn f() -> u32 {\n"
+                "    mod sub {\n"
+                "        use crate::alpha::helper;\n\n"
+                "        pub fn go2() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    sub::go2()\n"
+                "}\n"
+            ),
+            "src/app/main/sub.rs": (
+                "use crate::beta::helper;\n\npub fn go() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_incidental_main.src"
+    _assert_submodule_map_survives(
+        updater,
+        f"{base}.app.main",
+        f"{base}.app.main.sub",
+        {"helper": f"{base}.beta.helper"},
+    )

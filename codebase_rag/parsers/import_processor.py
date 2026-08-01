@@ -1825,15 +1825,13 @@ class ImportProcessor:
         segs = module_qn.split(cs.SEPARATOR_DOT)[1:]
         if not segs:
             return False
-        stem = segs[-1]
-        parent = self.repo_path.joinpath(*segs[:-1])
-        # Entry-named files declare their submodules BESIDE themselves;
-        # every other file declares them in its own directory.
-        base = (
-            parent
-            if f"{stem}{cs.EXT_RS}" in (cs.LIB_RS, cs.MAIN_RS, cs.MOD_RS)
-            else parent / stem
-        )
+        # The probe answers a cgr-QN question, not rustc's module rule:
+        # module qns derive from file paths uniformly (only mod.rs
+        # collapses), so a file whose qn is module_qn + prefix + name can
+        # only live under the file's own directory. Entry files need no
+        # special case: their inline mods key under src.main.* while a
+        # declared sibling keys src.*, which never collide.
+        base = self.repo_path.joinpath(*segs)
         for prefix, name in twins:
             directory = base.joinpath(*prefix)
             entries = self._rust_dir_entries(directory)
