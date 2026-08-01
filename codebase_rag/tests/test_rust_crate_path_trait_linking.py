@@ -2624,6 +2624,7 @@ def test_directory_with_mod_rs_still_collides_and_drops(
             "src/main.rs": (
                 "mod alpha;\n"
                 "mod beta;\n"
+                '#[path = "main/sub/mod.rs"]\n'
                 "mod sub;\n\n"
                 "fn f() -> u32 {\n"
                 "    mod sub {\n"
@@ -2653,4 +2654,88 @@ def test_directory_with_mod_rs_still_collides_and_drops(
         f"{base}.main",
         f"{base}.main.sub",
         {"helper": f"{base}.beta.helper"},
+    )
+
+
+def test_inline_mod_does_not_hijack_same_named_python_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The module-qn scheme is language-agnostic: src/foo/aaa.py owns
+    # foo.aaa, the SAME qn as the Rust inline `mod aaa` in foo/mod.rs. No
+    # bodyless declaration exists, so file existence alone must trigger
+    # the drop, or the Rust map overwrites the Python module's and a
+    # Python function's call to its own def rebinds into Rust.
+    project = temp_repo / "rs_py_polyglot"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_py_polyglot"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod foo;\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo/mod.rs": (
+                "pub fn f() -> u32 {\n"
+                "    mod aaa {\n"
+                "        use crate::beta::helper;\n\n"
+                "        pub fn go2() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    aaa::go2()\n"
+                "}\n"
+            ),
+            "src/foo/aaa.py": (
+                "def helper():\n    return 11\n\n\ndef caller():\n    return helper()\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_py_polyglot.src"
+    assert (f"{base}.foo.aaa.caller", f"{base}.foo.aaa.helper") in calls, calls
+    assert (f"{base}.foo.aaa.caller", f"{base}.beta.helper") not in calls, calls
+
+
+def test_bare_directory_with_python_package_still_drops(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # __init__.py collapses onto its directory exactly like mod.rs, so a
+    # bare-of-mod-rs directory holding a Python package DOES own the
+    # colliding qn: the inline mod's key must drop, or a re-parse of the
+    # Rust file wipes the Python package's import map.
+    project = temp_repo / "rs_py_pkg_dir"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_py_pkg_dir"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod foo;\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                '#[path = "foo/sub/unix.rs"]\n'
+                "pub mod sub;\n\n"
+                "pub fn f() -> u32 {\n"
+                "    mod sub {\n"
+                "        use crate::beta::helper;\n\n"
+                "        pub fn go2() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    sub::go2()\n"
+                "}\n"
+            ),
+            "src/foo/sub/unix.rs": "pub fn plat() -> u32 {\n    7\n}\n",
+            "src/foo/sub/__init__.py": (
+                "from .other import helper\n\n\ndef caller():\n    return helper()\n"
+            ),
+            "src/foo/sub/other.py": "def helper():\n    return 11\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_py_pkg_dir.src"
+    _assert_submodule_map_survives(
+        updater,
+        f"{base}.foo",
+        f"{base}.foo.sub",
+        {"helper": f"{base}.foo.sub.other.helper"},
     )

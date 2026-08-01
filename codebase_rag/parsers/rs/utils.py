@@ -246,51 +246,21 @@ def extract_use_imports(use_node: Node) -> dict[str, str]:
     return imports
 
 
-def _rust_enclosing_module_body(node: Node) -> Node | None:
-    current = node.parent
-    while current:
-        if current.type == cs.TS_RS_SOURCE_FILE:
-            return current
-        if current.type == cs.TS_RS_MOD_ITEM:
-            return current.child_by_field_name(cs.FIELD_BODY)
-        current = current.parent
-    return None
-
-
-def _rust_bodyless_twin_declared(scope_body: Node, name: str) -> bool:
-    for child in scope_body.named_children:
-        if (
-            child.type == cs.TS_RS_MOD_ITEM
-            and child.child_by_field_name(cs.FIELD_BODY) is None
-            and (decl_name := child.child_by_field_name(cs.FIELD_NAME)) is not None
-            and decl_name.text is not None
-            and decl_name.text.decode(cs.RS_ENCODING_UTF8) == name
-        ):
-            return True
-    return False
-
-
-def rust_use_scope(
-    node: Node,
-) -> tuple[Node | None, list[str] | None, list[tuple[tuple[str, ...], str]]]:
+def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None]:
     """Classify a `use` declaration's storage scope.
 
-    Returns (fn_node, None, []) when the use sits directly in a function
-    body: it keys on that function's REGISTERED qn, resolved by span after
-    ingestion (never re-derived from source names, which diverge on qn
-    collisions). Returns (None, parts, twins) when the nearest scope is a
-    module chain, with parts mirroring the registered-qn path of the items
-    inside it (mod names, impl targets, and class names, with functions
-    contributing nothing; [] is file scope); twins lists (prefix, name)
-    for every chain mod whose enclosing module scope ALSO declares a
-    bodyless `mod name;`. A fn-local or block-local inline mod legally
-    coexists with such a twin (the file-level non-cfg pair is E0428), and
-    cfg-gated file-level twins are indexed side by side, so when the
-    twin's FILE exists the mods-only key IS that file's module qn and the
-    caller must drop the mapping. Returns (None, None, []) when the use
-    sits in a class-body block with no intervening mod or fn (an
-    associated-const initializer): no qn scope corresponds to such a
-    block, and any key would serve a REAL scope's readers.
+    Returns (fn_node, None) when the use sits directly in a function
+    body: it keys on that function's REGISTERED qn, resolved by span
+    after ingestion (never re-derived from source names, which diverge on
+    qn collisions). Returns (None, parts) when the nearest scope is a
+    module chain, with parts mirroring the registered-qn path of the
+    items inside it (mod names, impl targets, and class names, with
+    functions contributing nothing; [] is file scope); whether the key
+    collides with a FILE-owned module qn is the import processor's
+    filesystem question. Returns (None, None) when the use sits in a
+    class-body block with no intervening mod or fn (an associated-const
+    initializer): no qn scope corresponds to such a block, and any key
+    would serve a REAL scope's readers.
     """
     nearest = None
     current = node.parent
@@ -303,41 +273,25 @@ def rust_use_scope(
             break
         current = current.parent
     if nearest is None:
-        return None, [], []
+        return None, []
     if nearest.type == cs.TS_RS_FUNCTION_ITEM:
-        return nearest, None, []
+        return nearest, None
     if nearest.type != cs.TS_RS_MOD_ITEM:
-        return None, None, []
-    chain: list[tuple[str, Node | None]] = []
-    has_class_segment = False
+        return None, None
+    parts: list[str] = []
     current = node.parent
     while current and current.type != cs.TS_RS_SOURCE_FILE:
         if current.type == cs.TS_IMPL_ITEM:
             if target := extract_impl_target(current):
-                chain.append((target, None))
-                has_class_segment = True
+                parts.append(target)
         elif current.type in cs.FQN_RS_SCOPE_TYPES:
             if name_node := current.child_by_field_name(cs.FIELD_NAME):
                 text = name_node.text
                 if text is not None:
-                    name = text.decode(cs.RS_ENCODING_UTF8)
-                    if current.type == cs.TS_RS_MOD_ITEM:
-                        chain.append((name, current))
-                    else:
-                        chain.append((name, None))
-                        has_class_segment = True
+                    parts.append(text.decode(cs.RS_ENCODING_UTF8))
         current = current.parent
-    chain.reverse()
-    parts = [name for name, _ in chain]
-    twins: list[tuple[tuple[str, ...], str]] = []
-    if not has_class_segment:
-        for idx, (name, mod_node) in enumerate(chain):
-            if mod_node is None:
-                continue
-            body = _rust_enclosing_module_body(mod_node)
-            if body is not None and _rust_bodyless_twin_declared(body, name):
-                twins.append((tuple(parts[:idx]), name))
-    return None, parts, twins
+    parts.reverse()
+    return None, parts
 
 
 def build_module_path(

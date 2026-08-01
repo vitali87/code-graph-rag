@@ -80,6 +80,12 @@ _RS_ITEM_DECL_PATTERN = re.compile(
 _RS_MACRO_OPEN_RE = re.compile(
     r"(?:[A-Za-z0-9_]!|\bmacro_rules!\s*(?:r#)?[A-Za-z_][A-Za-z0-9_]*)\s*$"
 )
+# Every extension that maps a file to a module qn: the scheme is
+# language-agnostic, so a Rust inline-mod scope key can collide with a
+# same-named module of any indexed language.
+_MODULE_FILE_EXTENSIONS = frozenset(
+    ext for spec in LANGUAGE_SPECS.values() for ext in spec.file_extensions
+)
 
 
 def _rs_strip_comments_and_strings(source: str) -> str:
@@ -1772,18 +1778,18 @@ class ImportProcessor:
         resolve_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *mod_parts]) if mod_parts else module_qn
         )
-        fn_node, scope_parts, twin_decls = rs_utils.rust_use_scope(use_node)
+        fn_node, scope_parts = rs_utils.rust_use_scope(use_node)
         if (
             fn_node is None
             and scope_parts
-            and twin_decls
-            and self._rust_mod_twin_file_exists(module_qn, twin_decls)
+            and self._rust_scope_key_owned_by_file(module_qn, scope_parts)
         ):
-            # A chain mod's bodyless twin names an EXISTING file: the key
-            # is that file's module qn, no key serves both modules (issue
-            # #1017), so the mapping drops like a class-body block's. A
-            # twin whose file is absent (a cfg-gated declaration in a
-            # checkout built the other way) claims nothing.
+            # Some prefix of the key is a FILE-owned module qn (a fn-local
+            # or cfg-twin Rust module, or a same-named module of ANOTHER
+            # language, since the qn scheme is language-agnostic): no key
+            # serves both modules (issue #1017), so the mapping drops like
+            # a class-body block's rather than overwrite the file's map
+            # and let this file's re-parse wipe it.
             scope_parts = None
         effective_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *scope_parts])
@@ -1819,30 +1825,29 @@ class ImportProcessor:
         if effective_qn != module_qn:
             self._rust_inline_scope_keys.setdefault(module_qn, set()).add(effective_qn)
 
-    def _rust_mod_twin_file_exists(
-        self, module_qn: str, twins: list[tuple[tuple[str, ...], str]]
-    ) -> bool:
+    def _rust_scope_key_owned_by_file(self, module_qn: str, parts: list[str]) -> bool:
+        # The probe answers a cgr-QN question, not rustc's module rule:
+        # module qns derive from file paths uniformly and language
+        # agnostically (a `<name>.<ext>` of ANY indexed language owns
+        # `<dir qn>.<name>`; only mod.rs and __init__.py collapse onto
+        # their directory, so a bare directory owns nothing). Entry files
+        # need no special case: their inline mods key under src.main.*
+        # while a declared sibling keys src.*, which never collide. Every
+        # PREFIX is probed: a fn-local `mod run` forging run.rs's
+        # namespace poisons everything keyed below it.
         segs = module_qn.split(cs.SEPARATOR_DOT)[1:]
         if not segs:
             return False
-        # The probe answers a cgr-QN question, not rustc's module rule:
-        # module qns derive from file paths uniformly (only mod.rs
-        # collapses), so a file whose qn is module_qn + prefix + name can
-        # only live under the file's own directory. Entry files need no
-        # special case: their inline mods key under src.main.* while a
-        # declared sibling keys src.*, which never collide.
         base = self.repo_path.joinpath(*segs)
-        for prefix, name in twins:
-            directory = base.joinpath(*prefix)
+        for idx, name in enumerate(parts):
+            directory = base.joinpath(*parts[:idx])
             entries = self._rust_dir_entries(directory)
-            # A bare directory owns no module qn; only mod.rs collapses
-            # onto it (a #[path]-attributed declaration may leave such a
-            # directory behind).
-            if f"{name}{cs.EXT_RS}" in entries or (
-                name in entries
-                and cs.MOD_RS in self._rust_dir_entries(directory / name)
-            ):
+            if any(f"{name}{ext}" in entries for ext in _MODULE_FILE_EXTENSIONS):
                 return True
+            if name in entries:
+                sub_entries = self._rust_dir_entries(directory / name)
+                if cs.MOD_RS in sub_entries or cs.INIT_PY in sub_entries:
+                    return True
         return False
 
     def finalise_rust_function_scope_uses(
