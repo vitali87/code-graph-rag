@@ -685,6 +685,61 @@ class TestRemoveLanguageCommand:
             assert '"foo"' not in content
             _assert_valid_python(content)
 
+    def test_removes_multiline_entry_with_tuple_on_first_line(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                "LANGUAGE_SPECS = {\n"
+                '    "foo": LanguageSpec(language="foo", file_extensions=(".foo",),\n'
+                '        function_node_types=("function_definition",),\n'
+                "    ),\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+            ):
+                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+
+            assert result.exit_code == 0
+            content = config.read_text(encoding="utf-8")
+            assert '"foo"' not in content
+            assert "function_node_types" not in content
+            _assert_valid_python(content)
+
+    def test_invalid_removal_result_never_written(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            original = (
+                "LANGUAGE_SPECS = {\n"
+                '    "foo": LanguageSpec(language="foo", file_extensions=(".foo",),\n'
+                '        function_node_types=("function_definition",),\n'
+                "    ),\n"
+                "}\n"
+            )
+            config.write_text(original, encoding="utf-8")
+
+            truncating_pattern = r"    (?:{keys}): LanguageSpec\([^\n]*\),\n"
+            with (
+                patch(
+                    "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                ),
+                patch(
+                    "codebase_rag.constants.LANG_REMOVE_ENTRY_PATTERN",
+                    truncating_pattern,
+                ),
+            ):
+                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+
+            assert result.exit_code == 0
+            assert "Error" in result.output
+            assert config.read_text(encoding="utf-8") == original
+
     def test_removes_enum_keyed_entry(self) -> None:
         runner = CliRunner()
         with runner.isolated_filesystem():
