@@ -1772,7 +1772,19 @@ class ImportProcessor:
         resolve_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *mod_parts]) if mod_parts else module_qn
         )
-        fn_node, scope_parts = rs_utils.rust_use_scope(use_node)
+        fn_node, scope_parts, twin_decls = rs_utils.rust_use_scope(use_node)
+        if (
+            fn_node is None
+            and scope_parts
+            and twin_decls
+            and self._rust_mod_twin_file_exists(module_qn, twin_decls)
+        ):
+            # A chain mod's bodyless twin names an EXISTING file: the key
+            # is that file's module qn, no key serves both modules (issue
+            # #1017), so the mapping drops like a class-body block's. A
+            # twin whose file is absent (a cfg-gated declaration in a
+            # checkout built the other way) claims nothing.
+            scope_parts = None
         effective_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *scope_parts])
             if scope_parts
@@ -1806,6 +1818,30 @@ class ImportProcessor:
         self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)
         if effective_qn != module_qn:
             self._rust_inline_scope_keys.setdefault(module_qn, set()).add(effective_qn)
+
+    def _rust_mod_twin_file_exists(
+        self, module_qn: str, twins: list[tuple[tuple[str, ...], str]]
+    ) -> bool:
+        segs = module_qn.split(cs.SEPARATOR_DOT)[1:]
+        if not segs:
+            return False
+        stem = segs[-1]
+        parent = self.repo_path.joinpath(*segs[:-1])
+        # Entry-named files declare their submodules BESIDE themselves;
+        # every other file declares them in its own directory.
+        base = (
+            parent
+            if f"{stem}{cs.EXT_RS}" in (cs.LIB_RS, cs.MAIN_RS, cs.MOD_RS)
+            else parent / stem
+        )
+        for prefix, name in twins:
+            directory = base.joinpath(*prefix)
+            entries = self._rust_dir_entries(directory)
+            if f"{name}{cs.EXT_RS}" in entries or (
+                name in entries and (directory / name).is_dir()
+            ):
+                return True
+        return False
 
     def finalise_rust_function_scope_uses(
         self,

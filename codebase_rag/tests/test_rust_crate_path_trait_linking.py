@@ -2310,3 +2310,159 @@ def test_cfg_gated_inline_mod_beside_bodyless_decl_keeps_its_map(
     # simple-name fallback.
     module_map = updater.factory.import_processor.import_mapping.get(f"{base}.foo.run")
     assert module_map == {"helper": f"{base}.alpha.helper"}, module_map
+
+
+def _assert_submodule_map_survives(
+    updater: object, file_qn: str, submodule_qn: str, expected: dict[str, str]
+) -> None:
+    processor = updater.factory.import_processor  # type: ignore[attr-defined]
+    tracked = processor._rust_inline_scope_keys.get(file_qn, set())
+    assert submodule_qn not in tracked, tracked
+    processor._parse_rust_imports({}, file_qn)
+    module_map = processor.import_mapping.get(submodule_qn)
+    assert module_map == expected, module_map
+
+
+def test_const_block_local_mod_beside_submodule_does_not_wipe_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A mod inside a file-level const initializer BLOCK crosses no
+    # function, yet it collides with `pub mod run;` exactly like the
+    # fn-local shape: the drop must fire on the bodyless twin plus an
+    # existing file, not on a function crossing.
+    project = temp_repo / "rs_const_block_submod"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_const_block_submod"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub mod run;\n\n"
+                "pub const X: u32 = {\n"
+                "    mod run {\n"
+                "        use crate::alpha::helper;\n\n"
+                "        pub const fn go2() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    run::go2()\n"
+                "};\n"
+            ),
+            "src/foo/run.rs": (
+                "use crate::beta::helper;\n\npub fn go() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_const_block_submod.src"
+    _assert_submodule_map_survives(
+        updater,
+        f"{base}.foo",
+        f"{base}.foo.run",
+        {"helper": f"{base}.beta.helper"},
+    )
+
+
+def test_two_level_fn_local_mod_collision_does_not_wipe_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The collision sits at the CHAIN HEAD: the fn-local `mod run` forges
+    # src/foo/run.rs's namespace, so `mod sub` inside it keys at
+    # foo.run.sub, colliding with run.rs's own inline `mod sub`. Each mod
+    # in the chain must be checked against its own enclosing module
+    # scope's bodyless declarations.
+    project = temp_repo / "rs_two_level_clash"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_two_level_clash"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub mod run;\n\n"
+                "pub fn f() -> u32 {\n"
+                "    mod run {\n"
+                "        pub fn g() -> u32 {\n"
+                "            mod sub {\n"
+                "                use crate::alpha::helper;\n\n"
+                "                pub fn h() -> u32 {\n"
+                "                    helper()\n"
+                "                }\n"
+                "            }\n"
+                "            sub::h()\n"
+                "        }\n"
+                "    }\n"
+                "    run::g()\n"
+                "}\n"
+            ),
+            "src/foo/run.rs": (
+                "pub mod sub {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn hh() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_two_level_clash.src"
+    _assert_submodule_map_survives(
+        updater,
+        f"{base}.foo",
+        f"{base}.foo.run.sub",
+        {"helper": f"{base}.beta.helper"},
+    )
+
+
+def test_cfg_gated_inline_mod_with_file_present_does_not_wipe_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The cfg twin with the gated file PRESENT (a cargo checkout ships
+    # every file; only compilation is gated): the inline mod's key IS
+    # run.rs's module qn, so its mapping must drop rather than track a
+    # foreign module qn for cleanup.
+    project = temp_repo / "rs_cfg_dup_mod_file"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_cfg_dup_mod_file"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                '#[cfg(feature = "ext")]\n'
+                "pub mod run;\n\n"
+                '#[cfg(not(feature = "ext"))]\n'
+                "pub mod run {\n"
+                "    use crate::alpha::helper;\n\n"
+                "    pub fn go2() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/foo/run.rs": (
+                "use crate::beta::helper;\n\npub fn go() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_cfg_dup_mod_file.src"
+    _assert_submodule_map_survives(
+        updater,
+        f"{base}.foo",
+        f"{base}.foo.run",
+        {"helper": f"{base}.beta.helper"},
+    )
