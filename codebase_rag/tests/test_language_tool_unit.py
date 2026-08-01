@@ -890,6 +890,32 @@ class TestRemoveLanguageCommand:
             assert list(config.parent.iterdir()) == [config]
             run.assert_not_called()
 
+    def test_removal_with_trailing_comment_spares_neighbour_entries(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                "LANGUAGE_SPECS = {\n"
+                '    "foo": LanguageSpec(),  # foo\n'
+                '    "bar": LanguageSpec(language="bar",\n'
+                '        function_node_types=("f",),\n'
+                "    ),\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+            ):
+                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+
+            assert result.exit_code == 0
+            assert "Error" not in result.output
+            content = config.read_text(encoding="utf-8")
+            _assert_valid_python(content)
+            assert _top_level_specs_keys(content) == ["bar"]
+
     def test_removes_enum_keyed_entry(self) -> None:
         runner = CliRunner()
         with runner.isolated_filesystem():
