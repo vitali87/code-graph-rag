@@ -529,6 +529,27 @@ class TestUpdateConfigFile:
             "_EXTENSION_TO_SPEC"
         )
 
+    def test_docstring_mention_does_not_divert_insertion(
+        self, tmp_path: Path
+    ) -> None:
+        config = tmp_path / "language_spec.py"
+        config.write_text(
+            '"""Registry docs: LANGUAGE_SPECS drives extraction."""\n\n'
+            "LANGUAGE_FQN_SPECS = {\n}\n\n"
+            "LANGUAGE_SPECS = {\n}\n",
+            encoding="utf-8",
+        )
+
+        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
+            assert _update_config_file("mylang", _spec("mylang")) is True
+
+        content = config.read_text(encoding="utf-8")
+        _assert_valid_python(content)
+        assert "LANGUAGE_FQN_SPECS = {\n}" in content
+        assert content.index("LANGUAGE_SPECS = {") < content.index(
+            '"mylang": LanguageSpec('
+        )
+
     def test_missing_brace_returns_false(self, tmp_path: Path) -> None:
         config = tmp_path / "language_spec.py"
         config.write_text("LANGUAGE_SPECS = broken\n", encoding="utf-8")
@@ -643,6 +664,27 @@ class TestRemoveLanguageCommand:
             content = config.read_text(encoding="utf-8")
             assert '"foo"' not in content
             assert "function_node_types" not in content
+            _assert_valid_python(content)
+
+    def test_removes_single_line_entry(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                'LANGUAGE_SPECS = {\n    "foo": LanguageSpec(language="foo"),\n}\n',
+                encoding="utf-8",
+            )
+
+            with patch(
+                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+            ):
+                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+
+            assert result.exit_code == 0
+            assert "Error" not in result.output
+            content = config.read_text(encoding="utf-8")
+            assert '"foo"' not in content
             _assert_valid_python(content)
 
     def test_removes_enum_keyed_entry(self) -> None:
