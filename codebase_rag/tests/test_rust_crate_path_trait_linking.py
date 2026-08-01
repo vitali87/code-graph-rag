@@ -2160,3 +2160,153 @@ def test_fn_local_mod_sharing_submodule_name_does_not_wipe_its_map(
     processor._parse_rust_imports({}, f"{base}.foo")
     module_map = processor.import_mapping.get(f"{base}.foo.run")
     assert module_map == {"helper": f"{base}.beta.helper"}, module_map
+
+
+def test_trait_const_block_mod_function_keeps_first_claimed_span(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The trait flavour of the impl-path first-claim rule: a fn inside a
+    # mod inside a trait const default is claimed first by the function
+    # pass (foo.T.inner.g); the trait's class pass must not overwrite the
+    # span record with its Method twin. The conftest graph audit is
+    # bypassed here: this fixture trips the PRE-EXISTING inline-mod
+    # Module-node inconsistency (issue #1018), identical on main and
+    # unrelated to the span claim under test.
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+
+    project = temp_repo / "rs_trait_const_mod"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_trait_const_mod"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "use crate::beta::helper;\n\n"
+                "pub trait T {\n"
+                "    const C: u32 = {\n"
+                "        mod inner {\n"
+                "            use crate::alpha::helper;\n\n"
+                "            pub const fn g() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        inner::g()\n"
+                "    };\n"
+                "}\n\n"
+                "pub const fn f() -> u32 {\n"
+                "    helper()\n"
+                "}\n"
+            ),
+        },
+    )
+    parsers, queries = load_parsers()
+    if "rust" not in parsers:
+        import pytest
+
+        pytest.skip("rust parser not available")
+    GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
+    ).run()
+
+    calls = _calls(mock_ingestor)
+    base = "rs_trait_const_mod.src"
+    assert (f"{base}.foo.T.inner.g", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.T.g", f"{base}.beta.helper") not in calls, calls
+
+
+def test_nested_fn_local_mod_collision_does_not_wipe_submodule_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The round-twelve collision one level down: the bodyless `mod run;`
+    # lives inside `pub mod outer`, and the fn-local `mod run` inside
+    # outer's function collides with src/foo/outer/run.rs's module qn.
+    # The scan must anchor at the module scope above the function, not at
+    # the file's top level.
+    project = temp_repo / "rs_nested_submod_clash"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_nested_submod_clash"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub mod outer {\n"
+                "    pub mod run;\n\n"
+                "    pub fn f() -> u32 {\n"
+                "        mod run {\n"
+                "            use crate::alpha::helper;\n\n"
+                "            pub fn go2() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        run::go2()\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/foo/outer/run.rs": (
+                "use crate::beta::helper;\n\npub fn go() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    processor = updater.factory.import_processor
+    base = "rs_nested_submod_clash.src"
+    tracked = processor._rust_inline_scope_keys.get(f"{base}.foo", set())
+    assert f"{base}.foo.outer.run" not in tracked, tracked
+    processor._parse_rust_imports({}, f"{base}.foo")
+    module_map = processor.import_mapping.get(f"{base}.foo.outer.run")
+    assert module_map == {"helper": f"{base}.beta.helper"}, module_map
+
+
+def test_cfg_gated_inline_mod_beside_bodyless_decl_keeps_its_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `#[cfg(feature)] pub mod run;` beside `#[cfg(not(feature))] pub mod
+    # run { ... }` compiles (the E0428 argument only holds without cfg):
+    # the collision drop must be restricted to FUNCTION-local mods, so a
+    # legitimate file-level inline mod keeps its import map. The gated
+    # file itself is absent here, as in a checkout built without the
+    # feature.
+    project = temp_repo / "rs_cfg_dup_mod"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_cfg_dup_mod"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                '#[cfg(feature = "ext")]\n'
+                "pub mod run;\n\n"
+                '#[cfg(not(feature = "ext"))]\n'
+                "pub mod run {\n"
+                "    use crate::alpha::helper;\n\n"
+                "    pub fn go2() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_cfg_dup_mod.src"
+    assert (f"{base}.foo.run.go2", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.run.go2", f"{base}.beta.helper") not in calls, calls
+    # The edge must come from the STORED inline-mod map, not from a lucky
+    # simple-name fallback.
+    module_map = updater.factory.import_processor.import_mapping.get(f"{base}.foo.run")
+    assert module_map == {"helper": f"{base}.alpha.helper"}, module_map

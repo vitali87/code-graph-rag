@@ -1337,14 +1337,21 @@ class ClassIngestMixin:
             # The walks diverge on preprocessor-distorted C++ class bodies
             # and on TS declaration merging, where the member registers
             # under the namespace's duplicate-suffixed qn (issue #652).
+            # For Rust, first claim wins: a fn in a mod inside a trait
+            # const default is already claimed by the function pass under
+            # its own qn, and overwriting would re-attribute its calls to
+            # this pass's twin.
             if ingested_qn is not None and module_qn is not None:
-                self.function_locations[function_span_key(module_qn, method_node)] = (
-                    FunctionLocation(
+                span = function_span_key(module_qn, method_node)
+                if (
+                    language != cs.SupportedLanguage.RUST
+                    or span not in self.function_locations
+                ):
+                    self.function_locations[span] = FunctionLocation(
                         label=cs.NodeLabel.METHOD.value,
                         qualified_name=ingested_qn,
                         container_qn=class_qn,
                     )
-                )
             if (
                 language == cs.SupportedLanguage.CSHARP
                 and ingested_qn is not None
