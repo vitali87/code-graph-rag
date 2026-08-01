@@ -384,6 +384,53 @@ def _specs_dict_span(config_content: str) -> tuple[int, int]:
     return start, end
 
 
+def _entry_key_matches(key: ast.expr, language_name: str) -> bool:
+    if isinstance(key, ast.Constant) and key.value == language_name:
+        return True
+    try:
+        member = cs.SupportedLanguage(language_name).name
+    except ValueError:
+        return False
+    return (
+        isinstance(key, ast.Attribute)
+        and ast.unparse(key) == cs.LANG_ENUM_KEY_TEMPLATE.format(member=member)
+    )
+
+
+def _extend_past_separator(config_content: str, end: int) -> int:
+    length = len(config_content)
+    while end < length and config_content[end] in " \t":
+        end += 1
+    if end < length and config_content[end] == ",":
+        end += 1
+    while end < length and config_content[end] in " \t":
+        end += 1
+    if end < length and config_content[end] == "#":
+        while end < length and config_content[end] != "\n":
+            end += 1
+    if end < length and config_content[end] == "\n":
+        end += 1
+    return end
+
+
+def _specs_entry_span(config_content: str, language_name: str) -> tuple[int, int]:
+    dict_node = _specs_dict(config_content)
+    for key, value in zip(dict_node.keys, dict_node.values, strict=True):
+        if key is None or not _entry_key_matches(key, language_name):
+            continue
+        end_lineno = value.end_lineno
+        end_col_offset = value.end_col_offset
+        if end_lineno is None or end_col_offset is None:
+            raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+        start = _content_offset(config_content, key.lineno, key.col_offset)
+        line_start = config_content.rfind("\n", 0, start) + 1
+        if not config_content[line_start:start].strip():
+            start = line_start
+        end = _content_offset(config_content, end_lineno, end_col_offset)
+        return start, _extend_past_separator(config_content, end)
+    raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
+
+
 def _write_language_config(config_entry: str, language_name: str) -> bool:
     config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
     closing_brace_pos = _specs_dict_span(config_content)[1]
@@ -594,24 +641,8 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
 def _remove_language_from_config(language_name: str) -> bool:
     try:
         original_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
-        key_patterns = [
-            cs.LANG_STRING_KEY_PATTERN.format(name=re.escape(language_name))
-        ]
-        try:
-            member = cs.SupportedLanguage(language_name).name
-        except ValueError:
-            pass
-        else:
-            key_patterns.append(cs.LANG_ENUM_KEY_PATTERN.format(member=member))
-        pattern = cs.LANG_REMOVE_ENTRY_PATTERN.format(keys="|".join(key_patterns))
-        span_start, span_end = _specs_dict_span(original_content)
-        region = original_content[span_start:span_end]
-        new_region = re.sub(pattern, "", region)
-        if new_region == region:
-            raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
-        new_content = (
-            original_content[:span_start] + new_region + original_content[span_end:]
-        )
+        entry_start, entry_end = _specs_entry_span(original_content, language_name)
+        new_content = original_content[:entry_start] + original_content[entry_end:]
         compile(new_content, cs.LANG_CONFIG_FILE, "exec")
 
         _write_config_atomically(new_content)

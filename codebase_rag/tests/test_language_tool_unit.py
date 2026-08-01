@@ -834,14 +834,14 @@ class TestRemoveLanguageCommand:
             )
             config.write_text(original, encoding="utf-8")
 
-            truncating_pattern = r"    (?:{keys}): LanguageSpec\([^\n]*\),\n"
+            truncating_span = (0, len("LANGUAGE_SPECS = {\n"))
             with (
                 patch(
                     "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
                 ),
                 patch(
-                    "codebase_rag.constants.LANG_REMOVE_ENTRY_PATTERN",
-                    truncating_pattern,
+                    "codebase_rag.tools.language._specs_entry_span",
+                    return_value=truncating_span,
                 ),
                 patch("codebase_rag.tools.language.subprocess.run") as run,
             ):
