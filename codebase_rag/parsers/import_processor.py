@@ -399,6 +399,7 @@ class ImportProcessor:
         "rust_fn_scope_imports",
         "_rust_fn_scope_keys",
         "_rust_pending_mod_scope_uses",
+        "_rust_mod_scope_shadows",
     )
 
     def __init__(
@@ -460,6 +461,12 @@ class ImportProcessor:
         self._rust_pending_mod_scope_uses: dict[
             str, list[tuple[str, bool, dict[str, str]]]
         ] = {}
+        # Sub-scope entries also commit into import_mapping for the
+        # duration of their OWN file's parse (its impl ingestion resolves
+        # traits through them), recording each overwritten value here so
+        # retract_rust_mod_scope_uses can restore the pre-commit state
+        # exactly (None means the name was absent).
+        self._rust_mod_scope_shadows: dict[str, list[tuple[str, str, str | None]]] = {}
         # Import-map entries registered by C++20 module DECLARATIONS (`module X;`,
         # `export module X;`, `import :partition;`). They exist for name resolution
         # only; a declaration is not an import, so no IMPORTS edge is emitted.
@@ -689,9 +696,9 @@ class ImportProcessor:
         the wrong root) emits no edge, because the phantom endpoint is
         silently dropped by the database anyway.
         """
-        # Deferred Rust sub-scope maps commit first: their collision
-        # arbitration needs the same complete module-qn view, and call
-        # resolution runs after this flush.
+        # Rust sub-scope maps normally commit earlier (run() finalises
+        # before the deferred inheritance pass reads them); flushing
+        # drains any pendings a direct caller queued without that pass.
         self.finalise_rust_mod_scope_uses(known_module_paths)
         deferred = self._deferred_import_edges
         if not deferred or self.ingestor is None:
@@ -1754,6 +1761,9 @@ class ImportProcessor:
         self._rust_entry_mod_decls.clear()
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
+        # Shadows linger only when the previous parse of this file aborted
+        # before its retraction ran.
+        self.retract_rust_mod_scope_uses(module_qn)
         self._rust_pending_fn_scope_uses.pop(module_qn, None)
         self._rust_pending_mod_scope_uses.pop(module_qn, None)
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
@@ -1822,10 +1832,32 @@ class ImportProcessor:
         # (a fn-local or cfg-twin Rust module file, or a same-named module
         # of another language, since the qn scheme is language-agnostic):
         # ownership is only knowable once every file is parsed, so the
-        # commit defers to finalise_rust_mod_scope_uses at flush time.
+        # permanent commit defers to finalise_rust_mod_scope_uses. The
+        # entries still commit for THIS file's parse window (its own impl
+        # ingestion resolves traits through them), shadow-recorded so
+        # retract_rust_mod_scope_uses restores the pre-commit state.
+        shadows = self._rust_mod_scope_shadows.setdefault(module_qn, [])
+        target = self.import_mapping.setdefault(effective_qn, {})
+        for name, resolved in resolved_imports.items():
+            shadows.append((effective_qn, name, target.get(name)))
+            target[name] = resolved
         self._rust_pending_mod_scope_uses.setdefault(module_qn, []).append(
             (effective_qn, pure_chain, resolved_imports)
         )
+
+    def retract_rust_mod_scope_uses(self, module_qn: str) -> None:
+        # Reverse replay so a key shadowing another file's entries (the
+        # collision finalise arbitrates later) gets them back exactly.
+        for key, name, old in reversed(self._rust_mod_scope_shadows.pop(module_qn, [])):
+            target = self.import_mapping.get(key)
+            if target is None:
+                continue
+            if old is None:
+                target.pop(name, None)
+                if not target:
+                    del self.import_mapping[key]
+            else:
+                target[name] = old
 
     def finalise_rust_mod_scope_uses(
         self, known_module_paths: Mapping[str, str]
@@ -1833,9 +1865,11 @@ class ImportProcessor:
         # Arbitrates every deferred sub-scope map with the indexer's own
         # answer (a file on disk that was ignored, excluded, or written in
         # an unindexed language owns nothing). A key whose module qn is a
-        # DIFFERENT file's keeps no writers from this side; two writers on
-        # one unowned key keep the PURE module chain over the fn-local or
-        # block-local forgery (issue #1017: no key can serve both).
+        # DIFFERENT file's keeps no writers from this side. On an unowned
+        # key, PURE module chains oust fn-local or block-local forgeries
+        # whatever file either lives in (issue #1017: no key can serve
+        # both), and same-purity entries surviving from multiple files are
+        # ambiguous cfg or macro twins, dropped rather than guessed.
         pending = self._rust_pending_mod_scope_uses
         self._rust_pending_mod_scope_uses = {}
         by_key: dict[str, list[tuple[str, bool, dict[str, str]]]] = {}
@@ -1849,13 +1883,11 @@ class ImportProcessor:
                 kept = [
                     w for w in writers if known_module_paths.get(w[0]) == owner_path
                 ]
-            elif len({w[0] for w in writers}) > 1:
-                pure_writers = {w[0] for w in writers if w[1]}
-                kept = (
-                    [w for w in writers if w[0] in pure_writers]
-                    if len(pure_writers) == 1
-                    else []
-                )
+            else:
+                if any(w[1] for w in writers) and not all(w[1] for w in writers):
+                    kept = [w for w in writers if w[1]]
+                if len({w[0] for w in kept}) > 1:
+                    kept = []
             for writer_qn, _pure, imports in kept:
                 self.import_mapping.setdefault(key, {}).update(imports)
                 self._rust_inline_scope_keys.setdefault(writer_qn, set()).add(key)

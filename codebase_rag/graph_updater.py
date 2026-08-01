@@ -723,6 +723,26 @@ class GraphUpdater:
         if inherits:
             logger.info("Resolved {} deferred C++ inheritance bases", inherits)
 
+        # IMPORTS edges and the Rust sub-scope arbitration verify against
+        # every module qn this run produced (files, inline modules,
+        # rehydrated unchanged files); an internal target that resolves
+        # nowhere emits no edge.
+        known_module_paths: dict[str, str] = {
+            str(qn): path.as_posix()
+            for qn, path in (
+                self.factory.definition_processor.module_qn_to_file_path.items()
+            )
+        }
+        for qn in self.factory.definition_processor.declared_module_qns:
+            known_module_paths.setdefault(qn, "")
+        for qn in self._rehydrated_module_qns:
+            known_module_paths.setdefault(qn, "")
+
+        # Inline-mod import maps commit BEFORE the deferred inheritance
+        # pass below: it re-resolves module-anchored trait guesses through
+        # them.
+        self.factory.import_processor.finalise_rust_mod_scope_uses(known_module_paths)
+
         # Same reasoning for every other language: parents resolve against
         # the full registry (including rehydrated definitions), and an
         # unresolvable parent emits no edge instead of a phantom.
@@ -739,19 +759,6 @@ class GraphUpdater:
         if module_impls:
             logger.info("Resolved {} C++20 module implementation links", module_impls)
 
-        # IMPORTS edges verify against every module qn this run produced
-        # (files, inline modules, rehydrated unchanged files); an internal
-        # target that resolves nowhere emits no edge.
-        known_module_paths: dict[str, str] = {
-            str(qn): path.as_posix()
-            for qn, path in (
-                self.factory.definition_processor.module_qn_to_file_path.items()
-            )
-        }
-        for qn in self.factory.definition_processor.declared_module_qns:
-            known_module_paths.setdefault(qn, "")
-        for qn in self._rehydrated_module_qns:
-            known_module_paths.setdefault(qn, "")
         imports_emitted = self.factory.import_processor.flush_deferred_import_edges(
             known_module_paths
         )

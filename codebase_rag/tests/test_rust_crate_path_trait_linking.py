@@ -2861,3 +2861,183 @@ def test_unowned_deeper_chain_keeps_map_below_owned_prefix(
     base = "rs_deep_unowned.src"
     assert (f"{base}.foo.run.inner.h", f"{base}.beta.helper") in calls, calls
     assert (f"{base}.foo.run.inner.h", f"{base}.alpha.helper") not in calls, calls
+
+
+def test_inline_mod_trait_impl_binds_to_imported_trait(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The impl-ingestion pass resolves the trait DURING the file's parse;
+    # an inline mod's use must be visible to it then, not only at flush.
+    project = temp_repo / "rs_inline_trait"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_inline_trait"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod tra;\npub mod trb;\npub mod foo;\n",
+            "src/tra.rs": "pub trait Greet {\n    fn hi(&self) -> u32;\n}\n",
+            "src/trb.rs": "pub trait Greet {\n    fn hi(&self) -> u32;\n}\n",
+            "src/foo.rs": (
+                "pub mod inner {\n"
+                "    use crate::trb::Greet;\n\n"
+                "    pub struct W;\n\n"
+                "    impl Greet for W {\n"
+                "        fn hi(&self) -> u32 {\n"
+                "            1\n"
+                "        }\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    impls = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_inline_trait.src"
+    assert (f"{base}.foo.inner.W", f"{base}.trb.Greet") in impls, impls
+    assert (f"{base}.foo.inner.W", f"{base}.tra.Greet") not in impls, impls
+
+
+def test_inline_mod_trait_impl_prefers_import_over_outer_same_name(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # No cross-file name clash needed: the enclosing FILE defines its own
+    # `Greet`, and the inline mod's import must still win inside the mod.
+    project = temp_repo / "rs_inline_shadow"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_inline_shadow"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod trb;\npub mod foo;\n",
+            "src/trb.rs": "pub trait Greet {\n    fn hi(&self) -> u32;\n}\n",
+            "src/foo.rs": (
+                "pub trait Greet {\n    fn hi(&self) -> u32;\n}\n\n"
+                "pub mod inner {\n"
+                "    use crate::trb::Greet;\n\n"
+                "    pub struct W;\n\n"
+                "    impl Greet for W {\n"
+                "        fn hi(&self) -> u32 {\n"
+                "            1\n"
+                "        }\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    impls = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_inline_shadow.src"
+    assert (f"{base}.foo.inner.W", f"{base}.trb.Greet") in impls, impls
+    assert (f"{base}.foo.inner.W", f"{base}.foo.Greet") not in impls, impls
+
+
+def test_inline_mod_trait_impl_resolves_aliased_trait(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `use ... as G; impl G for W`: only the import map can expand the
+    # alias, so an empty map at parse time externalises a phantom `G`.
+    project = temp_repo / "rs_inline_alias"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_inline_alias"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod trb;\npub mod foo;\n",
+            "src/trb.rs": "pub trait Greet {\n    fn hi(&self) -> u32;\n}\n",
+            "src/foo.rs": (
+                "pub mod inner {\n"
+                "    use crate::trb::Greet as G;\n\n"
+                "    pub struct W;\n\n"
+                "    impl G for W {\n"
+                "        fn hi(&self) -> u32 {\n"
+                "            1\n"
+                "        }\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    impls = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    base = "rs_inline_alias.src"
+    assert (f"{base}.foo.inner.W", f"{base}.trb.Greet") in impls, impls
+    assert (f"{base}.foo.inner.W.hi", f"{base}.trb.Greet.hi") in overrides, overrides
+
+
+def test_inline_mod_impl_on_imported_type_keeps_overrides(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The Self type is imported too, so the impl's child qn never
+    # registers and the deferred pass cannot repair a phantom
+    # interface_implementers key: the parse-time trait resolution alone
+    # decides whether the OVERRIDES edge exists.
+    project = temp_repo / "rs_inline_imported_self"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_inline_imported_self"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod trb;\npub mod foo;\n",
+            "src/trb.rs": (
+                "pub trait Greet {\n    fn hi(&self) -> u32;\n}\n\npub struct W;\n"
+            ),
+            "src/foo.rs": (
+                "pub mod inner {\n"
+                "    use crate::trb::{Greet, W};\n\n"
+                "    impl Greet for W {\n"
+                "        fn hi(&self) -> u32 {\n"
+                "            1\n"
+                "        }\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    base = "rs_inline_imported_self.src"
+    assert (f"{base}.foo.inner.W.hi", f"{base}.trb.Greet.hi") in overrides, overrides
+
+
+def test_samefile_pure_mod_beats_fn_local_twin(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # One file, two writers of foo.inner: a module-level `mod inner` and a
+    # fn-local twin. Only one key exists (issue #1017); the pure module
+    # chain must own it regardless of textual order.
+    project = temp_repo / "rs_samefile_purity"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_samefile_purity"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod foo;\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub mod inner {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn g() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn f() -> u32 {\n"
+                "    mod inner {\n"
+                "        use crate::gamma::helper;\n\n"
+                "        pub fn g() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    inner::g()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_samefile_purity.src"
+    assert (f"{base}.foo.inner.g", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.inner.g", f"{base}.gamma.helper") not in calls, calls
