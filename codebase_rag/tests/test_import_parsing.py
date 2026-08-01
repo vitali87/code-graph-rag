@@ -321,38 +321,48 @@ class TestExternalModuleNodeCreation:
 
 
 class TestRustCrateResolution:
-    def test_crate_import_from_nested_module_resolves_to_crate_root(self) -> None:
+    def test_crate_import_from_nested_module_resolves_to_crate_root(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "src" / "subdir").mkdir(parents=True)
+        (tmp_path / "src" / "lib.rs").touch()
         processor = ImportProcessor(
-            repo_path=Path("/tmp/test_project"),
+            repo_path=tmp_path,
             project_name="test_project",
             ingestor=None,
             function_registry=None,
         )
 
-        result = processor._resolve_rust_import_path(
-            import_path="crate::utils::helper",
+        result = processor._rewrite_rust_local_use_path(
+            "crate::utils::helper",
             module_qn="test_project.src.subdir.nested",
         )
 
-        assert result == "test_project.src.utils", (
-            f"crate:: should resolve relative to crate root (src), not parent module. "
-            f"Got {result}, expected test_project.src.utils"
+        assert result == "test_project.src.utils.helper", (
+            f"crate:: should resolve relative to the crate root (src), not the "
+            f"parent module. Got {result}"
         )
 
-    def test_crate_import_from_flat_module_resolves_correctly(self) -> None:
+    def test_crate_import_without_src_dir_resolves_to_entry_point_dir(
+        self, tmp_path: Path
+    ) -> None:
+        # ripgrep's core crate layout: the entry point is crates/core/main.rs
+        # and there is no src directory (issue #1007).
+        (tmp_path / "crates" / "core" / "flags").mkdir(parents=True)
+        (tmp_path / "crates" / "core" / "main.rs").touch()
         processor = ImportProcessor(
-            repo_path=Path("/tmp/test_project"),
+            repo_path=tmp_path,
             project_name="test_project",
             ingestor=None,
             function_registry=None,
         )
 
-        result = processor._resolve_rust_import_path(
-            import_path="crate::utils::helper",
-            module_qn="test_project.src.main",
+        result = processor._rewrite_rust_local_use_path(
+            "crate::flags::Flag",
+            module_qn="test_project.crates.core.flags.defs",
         )
 
-        assert result == "test_project.src.utils"
+        assert result == "test_project.crates.core.flags.Flag"
 
 
 class TestJsInternalModuleResolution:

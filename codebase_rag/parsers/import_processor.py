@@ -516,6 +516,39 @@ class ImportProcessor:
                 )
                 emitted += 1
                 continue
+            if entry.language == cs.SupportedLanguage.RUST and (
+                entry.full_name == self.project_name
+                or entry.full_name.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
+            ):
+                # A crate::/super::/self:: use path was rewritten to a project
+                # qn at parse time. Its final segment is the imported ITEM for
+                # item imports, the module itself for module imports; verify
+                # both readings and never externalise a local path (the
+                # phantom ExternalModule would orphan; issue #1007).
+                target = self._verify_internal_import_target(
+                    entry.full_name, known_module_paths, module_aliases, entry.language
+                )
+                if target is None and cs.SEPARATOR_DOT in entry.full_name:
+                    target = self._verify_internal_import_target(
+                        entry.full_name.rsplit(cs.SEPARATOR_DOT, 1)[0],
+                        known_module_paths,
+                        module_aliases,
+                        entry.language,
+                    )
+                if target is None:
+                    logger.debug(
+                        ls.IMP_DROPPED_PHANTOM_TARGET,
+                        from_module=entry.module_qn,
+                        to_module=entry.full_name,
+                    )
+                    continue
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, entry.module_qn),
+                    cs.RelationshipType.IMPORTS,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, target),
+                )
+                emitted += 1
+                continue
             module_path = self._resolve_module_path(
                 entry.full_name, entry.module_qn, entry.language
             )
@@ -734,8 +767,57 @@ class ImportProcessor:
 
         return full_name
 
-    def _is_local_rust_import(self, import_path: str) -> bool:
-        return import_path.startswith(cs.RUST_CRATE_PREFIX)
+    def _rust_crate_root_qn(self, module_qn: str) -> str:
+        # The crate root is the directory holding the crate entry point
+        # (lib.rs/main.rs). Cargo's default layout puts it under src/, but
+        # [lib]/[[bin]] path overrides may place it anywhere (ripgrep's core
+        # crate roots at crates/core/main.rs with no src directory), so walk
+        # the file's ancestor directories instead of assuming a src segment.
+        dir_parts = module_qn.split(cs.SEPARATOR_DOT)[1:-1]
+        for i in range(len(dir_parts), -1, -1):
+            candidate = self.repo_path.joinpath(*dir_parts[:i])
+            if (candidate / cs.LIB_RS).is_file() or (candidate / cs.MAIN_RS).is_file():
+                return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts[:i]])
+        return self.project_name
+
+    def _split_rust_local_use_path(
+        self, full_path: str, module_qn: str
+    ) -> tuple[str, list[str]] | None:
+        """Split a crate::/super::/self:: path into (base qn, remaining segments).
+
+        Returns None for external paths (std::fmt).
+        """
+        parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
+        head = parts[0]
+        if head == cs.RUST_CRATE_KEYWORD:
+            return self._rust_crate_root_qn(module_qn), parts[1:]
+        if head == cs.KEYWORD_SELF:
+            return module_qn, parts[1:]
+        if head == cs.KEYWORD_SUPER:
+            base_parts = module_qn.split(cs.SEPARATOR_DOT)
+            depth = 0
+            while depth < len(parts) and parts[depth] == cs.KEYWORD_SUPER:
+                depth += 1
+            # Each super:: pops one module segment (the file stem IS the
+            # module); the project root is the floor.
+            keep = max(len(base_parts) - depth, 1)
+            return cs.SEPARATOR_DOT.join(base_parts[:keep]), parts[depth:]
+        return None
+
+    def _rewrite_rust_local_use_path(self, full_path: str, module_qn: str) -> str:
+        """Rewrite a crate::/super::/self:: use path to a project qn.
+
+        Stored raw, these paths resolve nowhere: class resolution hands them
+        to the deferred-inherit pass, which externalises them into phantom
+        ExternalModule nodes (crate.flags.Flag) and the override pass never
+        links impl methods to their trait (issue #1007). External paths
+        (std::fmt) pass through unchanged.
+        """
+        split = self._split_rust_local_use_path(full_path, module_qn)
+        if split is None:
+            return full_path
+        base, rest = split
+        return cs.SEPARATOR_DOT.join([base, *rest]) if rest else base
 
     def _module_label(self, module_path: str) -> cs.NodeLabel:
         # #498: import targets outside the project prefix live under the
@@ -769,19 +851,9 @@ class ImportProcessor:
         )
 
     def _resolve_rust_import_path(self, import_path: str, module_qn: str) -> str:
-        # crate:: is always relative to the crate root, not the current module; find
-        # the src directory in the qualified name to identify the crate root.
-        if self._is_local_rust_import(import_path):
-            path_without_crate = import_path[len(cs.RUST_CRATE_PREFIX) :]
-            module_parts = module_qn.split(cs.SEPARATOR_DOT)
-            try:
-                src_index = module_parts.index(cs.LANG_SRC_DIR)
-                crate_root_qn = cs.SEPARATOR_DOT.join(module_parts[: src_index + 1])
-            except ValueError:
-                crate_root_qn = self.project_name
-            module_part = path_without_crate.split(cs.SEPARATOR_DOUBLE_COLON)[0]
-            return f"{crate_root_qn}{cs.SEPARATOR_DOT}{module_part}"
-
+        # Local (crate::/super::/self::) paths never reach this point: they
+        # are rewritten to project qns at parse time and short-circuited in
+        # flush_deferred_import_edges. Only external paths (std::fmt) remain.
         parts = import_path.split(cs.SEPARATOR_DOUBLE_COLON)
         module_path = (
             cs.SEPARATOR_DOUBLE_COLON.join(parts[:-1]) if len(parts) > 1 else parts[0]
@@ -1287,8 +1359,9 @@ class ImportProcessor:
         imports = rs_utils.extract_use_imports(use_node)
 
         for imported_name, full_path in imports.items():
-            self.import_mapping[module_qn][imported_name] = full_path
-            logger.debug(ls.IMP_RUST, name=imported_name, path=full_path)
+            resolved = self._rewrite_rust_local_use_path(full_path, module_qn)
+            self.import_mapping[module_qn][imported_name] = resolved
+            logger.debug(ls.IMP_RUST, name=imported_name, path=resolved)
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
