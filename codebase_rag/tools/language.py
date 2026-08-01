@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 import click
-import diff_match_patch as dmp
 from loguru import logger
 from rich.console import Console
 from rich.table import Table
@@ -333,11 +332,15 @@ def _update_config_file(language_name: str, spec: LanguageSpec) -> bool:
 
 def _write_language_config(config_entry: str, language_name: str) -> bool:
     config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
-    specs_pos = config_content.find(cs.LANG_SPECS_DICT_NAME)
-    if specs_pos == -1:
+    specs_match = re.search(
+        cs.LANG_SPECS_ASSIGNMENT_PATTERN, config_content, re.MULTILINE
+    )
+    if specs_match is None:
         raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
 
-    closing_newline_pos = config_content.find(cs.LANG_SPECS_DICT_CLOSING, specs_pos)
+    closing_newline_pos = config_content.find(
+        cs.LANG_SPECS_DICT_CLOSING, specs_match.end()
+    )
     if closing_newline_pos == -1:
         raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
     closing_brace_pos = closing_newline_pos + 1
@@ -543,12 +546,8 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
         if new_content == original_content:
             raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
 
-        dmp_obj = dmp.diff_match_patch()
-        patches = dmp_obj.patch_make(original_content, new_content)
-        result, _ = dmp_obj.patch_apply(patches, original_content)
-
         with open(cs.LANG_CONFIG_FILE, "w", encoding="utf-8") as f:
-            f.write(result)
+            f.write(new_content)
 
         click.echo(f"OK {cs.LANG_MSG_REMOVED_FROM_CONFIG.format(name=language_name)}")
 

@@ -529,9 +529,7 @@ class TestUpdateConfigFile:
             "_EXTENSION_TO_SPEC"
         )
 
-    def test_docstring_mention_does_not_divert_insertion(
-        self, tmp_path: Path
-    ) -> None:
+    def test_docstring_mention_does_not_divert_insertion(self, tmp_path: Path) -> None:
         config = tmp_path / "language_spec.py"
         config.write_text(
             '"""Registry docs: LANGUAGE_SPECS drives extraction."""\n\n'
