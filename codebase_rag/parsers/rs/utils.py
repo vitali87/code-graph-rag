@@ -246,12 +246,59 @@ def extract_use_imports(use_node: Node) -> dict[str, str]:
     return imports
 
 
+def _append_scope_name(node: Node, parts: list[str]) -> bool:
+    if name_node := node.child_by_field_name(cs.FIELD_NAME):
+        text = name_node.text
+        if text is not None:
+            parts.append(text.decode(cs.RS_ENCODING_UTF8))
+            return True
+    return False
+
+
+_RS_CLASS_SCOPE_TYPES = (
+    cs.TS_RS_STRUCT_ITEM,
+    cs.TS_RS_ENUM_ITEM,
+    cs.TS_RS_TRAIT_ITEM,
+)
+
+
+def build_rust_use_scope(node: Node) -> tuple[list[str], int | None]:
+    """Scope-key path for a `use` declaration, mirroring the REGISTERED qn
+    scheme: the innermost enclosing function contributes only when the use
+    sits directly below it (items nested deeper register flat, without any
+    function segment), the innermost impl/trait/struct/enum contributes its
+    single segment (class qns collapse every outer non-mod scope), and only
+    `mod` segments count above that. Returns the path and the contributing
+    function's 1-based start line (None when the use is not function-scoped).
+    """
+    path_parts: list[str] = []
+    fn_line: int | None = None
+    seen_class = False
+    current = node.parent
+    while current and current.type != cs.TS_RS_SOURCE_FILE:
+        if current.type == cs.TS_RS_MOD_ITEM:
+            _append_scope_name(current, path_parts)
+        elif current.type == cs.TS_RS_FUNCTION_ITEM:
+            if not path_parts and _append_scope_name(current, path_parts):
+                fn_line = current.start_point[0] + 1
+        elif not seen_class:
+            if current.type == cs.TS_IMPL_ITEM:
+                if target := extract_impl_target(current):
+                    path_parts.append(target)
+                seen_class = True
+            elif current.type in _RS_CLASS_SCOPE_TYPES:
+                _append_scope_name(current, path_parts)
+                seen_class = True
+        current = current.parent
+    path_parts.reverse()
+    return path_parts, fn_line
+
+
 def build_module_path(
     node: Node,
     include_impl_targets: bool = False,
     include_classes: bool = False,
     class_node_types: Sequence[str] | None = None,
-    include_functions: bool = False,
 ) -> list[str]:
     path_parts: list[str] = []
     current = node.parent
@@ -259,15 +306,6 @@ def build_module_path(
     while current and current.type != cs.TS_RS_SOURCE_FILE:
         match current.type:
             case cs.TS_RS_MOD_ITEM:
-                if name_node := current.child_by_field_name(cs.FIELD_NAME):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(text.decode(cs.RS_ENCODING_UTF8))
-            # Functions are NOT qn scopes: items nested below one register
-            # FLAT (a mod or fn inside a function body carries no function
-            # segment in its qn). Only the INNERMOST enclosing function
-            # contributes, completing the path to that function's own qn.
-            case cs.TS_RS_FUNCTION_ITEM if include_functions and not path_parts:
                 if name_node := current.child_by_field_name(cs.FIELD_NAME):
                     text = name_node.text
                     if text is not None:

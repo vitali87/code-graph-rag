@@ -393,6 +393,7 @@ class ImportProcessor:
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
         "_rust_inline_scope_keys",
+        "_rust_pending_fn_scope_uses",
     )
 
     def __init__(
@@ -434,6 +435,13 @@ class ImportProcessor:
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
+        # Function-body uses parsed BEFORE the file's functions register:
+        # a colliding natural qn is deduplicated to `natural@<start_line>`
+        # at registration, so the final storage key is only knowable after
+        # ingestion (finalise_rust_function_scope_uses).
+        self._rust_pending_fn_scope_uses: dict[
+            str, list[tuple[str, int, dict[str, str]]]
+        ] = {}
         # Import-map entries registered by C++20 module DECLARATIONS (`module X;`,
         # `export module X;`, `import :partition;`). They exist for name resolution
         # only; a declaration is not an import, so no IMPORTS edge is emitted.
@@ -1724,6 +1732,7 @@ class ImportProcessor:
         self._rust_entry_mod_decls.clear()
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
+        self._rust_pending_fn_scope_uses.pop(module_qn, None)
         for key in self._rust_inline_scope_keys.pop(module_qn, ()):
             self.import_mapping.pop(key, None)
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
@@ -1739,39 +1748,56 @@ class ImportProcessor:
         # they would shadow the file's own same-named items and rebind every
         # bare call in the file. A use inside a FUNCTION body shadows module
         # items only within that function, so it stores under the function's
-        # qn (the caller's scope walk reads it), while crate::/super::/self::
-        # still resolve against the module chain alone. The storage key must
-        # follow the caller-qn scheme exactly: impl/trait blocks are scopes
-        # (module.S.run), functions are not (anything nested below one
-        # registers flat), hence the innermost-function-only path.
+        # REGISTERED qn (the caller's scope walk reads it), while
+        # crate::/super::/self:: still resolve against the module chain alone.
         mod_parts = rs_utils.build_module_path(use_node)
         resolve_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *mod_parts]) if mod_parts else module_qn
         )
-        scope_parts = rs_utils.build_module_path(
-            use_node,
-            include_impl_targets=True,
-            include_classes=True,
-            class_node_types=cs.FQN_RS_SCOPE_TYPES,
-            include_functions=True,
-        )
+        scope_parts, fn_line = rs_utils.build_rust_use_scope(use_node)
         effective_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *scope_parts])
             if scope_parts
             else module_qn
         )
-        scope_map = self.import_mapping.setdefault(effective_qn, {})
+        resolved_imports: dict[str, str] = {}
         for imported_name, full_path in imports.items():
             resolved = self._rewrite_rust_local_use_path(full_path, resolve_qn)
-            scope_map[imported_name] = resolved
+            resolved_imports[imported_name] = resolved
             if effective_qn != module_qn:
-                self._rust_inline_scope_keys.setdefault(module_qn, set()).add(
-                    effective_qn
-                )
                 # The generic deferral loop only reads the file-level map;
-                # inline-mod imports still owe the file its IMPORTS edge.
+                # sub-scope imports still owe the file its IMPORTS edge.
                 self.defer_import_edge(module_qn, resolved, cs.SupportedLanguage.RUST)
             logger.debug(ls.IMP_RUST, name=imported_name, path=resolved)
+        if fn_line is not None:
+            # The enclosing function has not registered yet; its natural qn
+            # may be deduplicated to `natural@<start_line>` there, so the
+            # storage key is finalised after ingestion.
+            self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
+                (effective_qn, fn_line, resolved_imports)
+            )
+            return
+        self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)
+        if effective_qn != module_qn:
+            self._rust_inline_scope_keys.setdefault(module_qn, set()).add(effective_qn)
+
+    def finalise_rust_function_scope_uses(self, module_qn: str) -> None:
+        # Runs after the file's functions and methods register: a function
+        # whose natural qn collided was handed the `natural@<start_line>`
+        # variant by register_unique_qn, and the variant embeds the
+        # function's OWN start line, so the key the caller's scope walk will
+        # probe is recoverable exactly.
+        registry = self.function_registry
+        for natural_qn, start_line, imports in self._rust_pending_fn_scope_uses.pop(
+            module_qn, []
+        ):
+            key = natural_qn
+            if registry is not None:
+                variant = f"{natural_qn}{cs.DUP_QN_MARKER}{start_line}"
+                if variant in registry:
+                    key = variant
+            self.import_mapping.setdefault(key, {}).update(imports)
+            self._rust_inline_scope_keys.setdefault(module_qn, set()).add(key)
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):

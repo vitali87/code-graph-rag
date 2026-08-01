@@ -381,6 +381,11 @@ class DefinitionProcessor(
                 queries,
                 combined_captures=combined_captures,
             )
+            if language == cs.SupportedLanguage.RUST:
+                # Function-body uses key on the REGISTERED qn of their
+                # enclosing function, knowable only now that dedup variants
+                # (`natural@<line>`) have been handed out.
+                self.import_processor.finalise_rust_function_scope_uses(module_qn)
             if language in cs.JS_TS_LANGUAGES:
                 self._ingest_object_literal_methods(
                     root_node, module_qn, language, queries

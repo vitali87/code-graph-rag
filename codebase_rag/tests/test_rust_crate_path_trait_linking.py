@@ -1549,3 +1549,171 @@ def test_nested_fn_body_use_applies_to_nested_fn(
     base = "rs_nested_fn_use.src"
     assert (f"{base}.foo.inner", f"{base}.alpha.helper") in calls, calls
     assert (f"{base}.foo.inner", f"{base}.foo.helper") not in calls, calls
+
+
+def test_duplicate_method_qn_does_not_steal_body_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two traits implemented for the SAME type both name their method `run`,
+    # so the second registers as the dedup variant S.run@13. Its body `use`
+    # must key on THAT variant, not on the first impl's natural qn: Alpha::run
+    # has no use and its bare call binds the same-module foo::other.
+    project = temp_repo / "rs_dup_method_use"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_dup_method_use"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn other() -> u32 { 2 }\n",
+            "src/foo.rs": (
+                "pub trait Alpha { fn run(&self) -> u32; }\n"
+                "pub trait Beta { fn run(&self) -> u32; }\n\n"
+                "pub struct S;\n\n"
+                "impl Alpha for S {\n"
+                "    fn run(&self) -> u32 {\n"
+                "        other()\n"
+                "    }\n"
+                "}\n\n"
+                "impl Beta for S {\n"
+                "    fn run(&self) -> u32 {\n"
+                "        use crate::alpha::other;\n"
+                "        other()\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn other() -> u32 { 1 }\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_dup_method_use.src"
+    assert (f"{base}.foo.S.run", f"{base}.foo.other") in calls, calls
+    assert (f"{base}.foo.S.run", f"{base}.alpha.other") not in calls, calls
+    # Beta::run's use is keyed on its dedup variant, ready for the caller
+    # side: the method call pass still attributes Beta::run's calls to the
+    # natural qn (issue #1014), so no @13 caller edge exists yet.
+    scope_uses = updater.factory.import_processor.import_mapping.get(
+        f"{base}.foo.S.run@13"
+    )
+    assert scope_uses == {"other": f"{base}.alpha.other"}, scope_uses
+
+
+def test_duplicate_method_qn_external_use_does_not_drop_sibling_edge(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The second `run`'s external `use std::cmp::max as pick` must not land
+    # on the first `run`'s qn, where the deliberate external-import drop
+    # deletes Alpha::run's real edge to the project's foo::pick.
+    project = temp_repo / "rs_dup_method_ext_use"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_dup_method_ext_use"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod foo;\n",
+            "src/foo.rs": (
+                "pub trait Alpha { fn run(&self) -> u32; }\n"
+                "pub trait Beta { fn run(&self) -> u32; }\n\n"
+                "pub struct S;\n\n"
+                "impl Alpha for S {\n"
+                "    fn run(&self) -> u32 {\n"
+                "        pick(1, 2)\n"
+                "    }\n"
+                "}\n\n"
+                "impl Beta for S {\n"
+                "    fn run(&self) -> u32 {\n"
+                "        use std::cmp::max as pick;\n"
+                "        pick(1, 2)\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn pick(a: u32, b: u32) -> u32 { if a > b { a } else { b } }\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_dup_method_ext_use.src"
+    assert (f"{base}.foo.S.run", f"{base}.foo.pick") in calls, calls
+
+
+def test_nested_fn_use_does_not_leak_into_same_named_top_level_fn(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `other` at file scope registers first, so the nested `other` inside
+    # outer() becomes the dedup variant other@8. The nested body's use must
+    # key on the variant: the file-scope `other`'s helper() means foo::helper.
+    project = temp_repo / "rs_nested_name_clash"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_nested_name_clash"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 { 2 }\n",
+            "src/foo.rs": (
+                "pub fn helper() -> u32 { 1 }\n\n"
+                "pub fn other() -> u32 {\n"
+                "    helper()\n"
+                "}\n\n"
+                "pub fn outer() -> u32 {\n"
+                "    fn other() -> u32 {\n"
+                "        use crate::alpha::helper;\n"
+                "        helper()\n"
+                "    }\n"
+                "    other()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_nested_name_clash.src"
+    assert (f"{base}.foo.other", f"{base}.foo.helper") in calls, calls
+    assert (f"{base}.foo.other", f"{base}.alpha.helper") not in calls, calls
+    # The nested other (line 8 of foo.rs) keeps its shadowing use.
+    assert (f"{base}.foo.other@8", f"{base}.alpha.helper") in calls, calls
+
+
+def test_impl_nested_in_method_body_use_keys_under_its_own_impl(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An impl block inside a METHOD body registers its methods at
+    # module.S1.me1 (class qns collapse every outer non-mod scope), so the
+    # use storage key must not climb past the enclosing method and collect
+    # the outer impl target into module.S0.S1.me1, where nothing reads it.
+    project = temp_repo / "rs_impl_in_method"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_impl_in_method"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 { 2 }\n",
+            "src/foo.rs": (
+                "pub fn helper() -> u32 { 1 }\n\n"
+                "pub struct S0;\n\n"
+                "impl S0 {\n"
+                "    pub fn me0(&self) -> u32 {\n"
+                "        pub struct S1;\n"
+                "        impl S1 {\n"
+                "            pub fn me1(&self) -> u32 {\n"
+                "                use crate::alpha::helper;\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        S1.me1()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_impl_in_method.src"
+    assert (f"{base}.foo.S1.me1", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.S1.me1", f"{base}.foo.helper") not in calls, calls
