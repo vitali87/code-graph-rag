@@ -5,6 +5,7 @@
 # (H) memgraph's 600s query timeout on big projects (django: 31k roots, 101k
 # (H) CALLS edges), while a multi-source walk over the fetched edge list is
 # (H) linear and finishes in milliseconds.
+import re
 from collections import defaultdict
 from fnmatch import fnmatch
 
@@ -111,6 +112,14 @@ def _matches_test_path(path: str, patterns: tuple[str, ...]) -> bool:
         path if path.startswith(cs.SEPARATOR_SLASH) else cs.SEPARATOR_SLASH + path
     )
     return any(pattern in normalized for pattern in patterns)
+
+
+_WELL_KNOWN_SYMBOL_KEY_RE = re.compile(r"\[Symbol\.(?P<name>[A-Za-z_$][\w$]*)\]$")
+
+
+def is_well_known_symbol_member(name: str) -> bool:
+    m = _WELL_KNOWN_SYMBOL_KEY_RE.search(name)
+    return m is not None and m.group("name") in cs.JS_WELL_KNOWN_SYMBOLS
 
 
 def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) -> bool:
@@ -251,6 +260,10 @@ def dead_code_from_graph(
             qn in method_qns,
             str(props.get(cs.KEY_PATH, "")),
         ):
+            roots.add(qn)
+        elif is_well_known_symbol_member(leaf) and str(
+            props.get(cs.KEY_PATH, "")
+        ).endswith(cs.JS_TS_ALL_EXTENSIONS):
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)

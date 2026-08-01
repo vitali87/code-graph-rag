@@ -7,8 +7,9 @@ description: "Find functions and methods that are unreachable from any entry poi
 `cgr dead-code` reports functions and methods that are **unreachable** from any
 entry point in the knowledge graph. It walks the `CALLS` and `REFERENCES` edges
 outward from a set of roots (exported and public symbols, tests, decorated
-handlers such as routes/tasks/CLI commands, and dunder/lifecycle methods) and
-lists everything the walk never reaches.
+handlers such as routes/tasks/CLI commands, dunder/lifecycle methods, and
+JavaScript/TypeScript well-known symbol properties) and lists everything the
+walk never reaches.
 
 The results are **candidates for review, not a guaranteed delete list**. Code
 reached only through dynamic dispatch, reflection, string-keyed lookups, or an

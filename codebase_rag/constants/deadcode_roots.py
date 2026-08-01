@@ -176,3 +176,26 @@ PY_ENUM_HOOK_METHOD_NAMES: frozenset[str] = frozenset(
         "_missing_",
     }
 )
+
+# (H) ES well-known symbols (incl. Explicit Resource Management: dispose/asyncDispose)
+# (H) These are invoked implicitly by the runtime (e.g. [Symbol.iterator] by for..of)
+# (H) and never called by name, so they are dead-code liveness roots.
+JS_WELL_KNOWN_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "asyncIterator",
+        "hasInstance",
+        "isConcatSpreadable",
+        "iterator",
+        "match",
+        "matchAll",
+        "replace",
+        "search",
+        "species",
+        "split",
+        "toPrimitive",
+        "toStringTag",
+        "unscopables",
+        "dispose",
+        "asyncDispose",
+    }
+)
