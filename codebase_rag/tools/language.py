@@ -545,6 +545,7 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
         new_content = re.sub(pattern, "", original_content)
         if new_content == original_content:
             raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
+        compile(new_content, cs.LANG_CONFIG_FILE, "exec")
 
         with open(cs.LANG_CONFIG_FILE, "w", encoding="utf-8") as f:
             f.write(new_content)

@@ -161,7 +161,7 @@ LANG_SPECS_DICT_CLOSING = "\n}"
 LANG_STRING_KEY_PATTERN = '"{name}"'
 LANG_ENUM_KEY_PATTERN = r"cs\.SupportedLanguage\.{member}"
 LANG_REMOVE_ENTRY_PATTERN = (
-    r"    (?:{keys}): LanguageSpec\((?:[^\n]*\),\n|[\s\S]*?\n    \),\n)"
+    r"    (?:{keys}): LanguageSpec\((?:[^\n]*\),\n(?!        )|[\s\S]*?\n    \),\n)"
 )
 
 LANG_ERR_ENTRY_NOT_IN_CONFIG = "no config entry found for '{name}'"
