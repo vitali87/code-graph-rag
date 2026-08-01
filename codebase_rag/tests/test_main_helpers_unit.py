@@ -129,6 +129,23 @@ class TestBuildUserPrompt:
         assert result[0] == "look at"
         assert result[2] == "now"
 
+    def test_multiple_attachments_strip_separator_whitespace(
+        self, tmp_path: Path
+    ) -> None:
+        first = tmp_path / "a.png"
+        first.write_bytes(b"a")
+        second = tmp_path / "b.png"
+        second.write_bytes(b"b")
+
+        result = _build_user_prompt(f"Start {first} Middle {second} End")
+
+        assert isinstance(result, list)
+        assert result[0] == "Start"
+        assert isinstance(result[1], BinaryContent)
+        assert result[2] == "Middle"
+        assert isinstance(result[3], BinaryContent)
+        assert result[4] == "End"
+
     def test_missing_file_keeps_question_as_text(self, tmp_path: Path) -> None:
         question = f"describe {tmp_path / 'gone.png'} in detail"
         assert _build_user_prompt(question) == [question]
