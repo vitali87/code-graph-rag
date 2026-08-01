@@ -709,9 +709,9 @@ def _find_multimodal_paths(question: str) -> list[Path]:
 
 def _path_variants(path_str: str) -> tuple[str, ...]:
     return (
-        path_str.replace(" ", r"\ "),
         f"'{path_str}'",
         f'"{path_str}"',
+        path_str.replace(" ", r"\ "),
         path_str,
     )
 
