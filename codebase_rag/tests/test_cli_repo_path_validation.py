@@ -17,7 +17,7 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _plain(output: str) -> str:
-    # (H) ANSI-stripped output with Rich soft-wrap newlines rejoined
+    # ANSI-stripped output with Rich soft-wrap newlines rejoined
     return _ANSI.sub("", output).replace("\n", "")
 
 
@@ -79,7 +79,7 @@ class TestStartRepoPathValidation:
     def test_git_file_worktree_does_not_warn(
         self, mock_memgraph_connect: MagicMock, tmp_path: Path
     ) -> None:
-        # (H) worktrees and submodules use a .git file, not a directory
+        # worktrees and submodules use a .git file, not a directory
         (tmp_path / cs.GIT_DIR_NAME).write_text("gitdir: /repo/.git/worktrees/wt\n")
         result = runner.invoke(app, ["start", "--clean", "--repo-path", str(tmp_path)])
 

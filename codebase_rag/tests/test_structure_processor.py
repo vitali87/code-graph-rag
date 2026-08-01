@@ -321,7 +321,11 @@ class TestIdentifyStructure:
         from_spec, rel_type, to_spec = rel_calls[0][0]
         assert from_spec == ("Project", "name", "test_project")
         assert rel_type == "CONTAINS_FOLDER"
-        assert to_spec == ("Folder", "path", "folder")
+        assert to_spec == (
+            "Folder",
+            "absolute_path",
+            (temp_repo / "folder").resolve().as_posix(),
+        )
 
     def test_structural_elements_populated(
         self,
@@ -379,7 +383,11 @@ class TestProcessGenericFile:
         assert len(rel_calls) == 1
         from_spec, _, to_spec = rel_calls[0][0]
         assert from_spec == ("Package", "qualified_name", "test_project.pkg")
-        assert to_spec == ("File", "path", "pkg/data.json")
+        assert to_spec == (
+            "File",
+            "absolute_path",
+            (temp_repo / "pkg" / "data.json").resolve().as_posix(),
+        )
 
     def test_file_in_folder(
         self,
@@ -405,7 +413,11 @@ class TestProcessGenericFile:
         ]
         assert len(rel_calls) == 1
         from_spec, _, _ = rel_calls[0][0]
-        assert from_spec == ("Folder", "path", "folder")
+        assert from_spec == (
+            "Folder",
+            "absolute_path",
+            (temp_repo / "folder").resolve().as_posix(),
+        )
 
     def test_file_at_root(
         self,

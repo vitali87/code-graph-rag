@@ -35,9 +35,9 @@ def resolve_class_identity(
                 current = current.parent
             parts.reverse()
 
-            # (H) Use the module's already-resolved (and collision-disambiguated)
-            # (H) qualified name as the prefix rather than recomputing from the path,
-            # (H) so same-stem cross-language siblings get distinct class/method qns.
+            # Use the module's already-resolved (and collision-disambiguated)
+            # qualified name as the prefix rather than recomputing from the path,
+            # so same-stem cross-language siblings get distinct class/method qns.
             class_qn = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
             if language == cs.SupportedLanguage.CPP:
                 is_exported = (

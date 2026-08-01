@@ -1,0 +1,34 @@
+# ast-grep security rules for Scala (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic; treat findings as review prompts.
+ast_grep_id: scala
+extensions: [.scala, .sc]
+rules:
+  - id: os_command_exec
+    message: "Possible command injection: external process launched from code"
+    rule:
+      any:
+        # A bare $X.exec matched any method named exec; require a Runtime receiver.
+        - pattern: "Runtime.getRuntime.exec($$$)"
+        - pattern: "Process($$$)"
+        - pattern: "scala.sys.process.Process($$$)"
+  - id: sql_string_concat
+    # Security rule: favour recall. A SQL keyword string literal joined with +
+    # is a classic injection shape.
+    message: "Possible SQL injection: query built by string concatenation"
+    rule:
+      kind: infix_expression
+      all:
+        - has: { kind: string, regex: '(?i)\b(select|insert|update|delete)\b' }
+        - has: { kind: operator_identifier, regex: '^\+$' }
+  - id: hardcoded_secret
+    # Security rule: favour recall. A val/var whose name matches a credential
+    # keyword bound to a non-trivial (>=10 char) string literal.
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      all:
+        - any:
+            - kind: val_definition
+            - kind: var_definition
+        - has: { kind: identifier, regex: '(?i)(password|secret|api_key|token)' }
+        - has: { kind: string, regex: '^.{12,}$' }

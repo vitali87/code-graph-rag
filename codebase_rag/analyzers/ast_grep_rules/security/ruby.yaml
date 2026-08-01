@@ -1,0 +1,65 @@
+# ast-grep security rules for Ruby (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic and favour recall; treat findings as
+# review prompts.
+ast_grep_id: ruby
+extensions: [.rb]
+rules:
+  - id: eval_use
+    message: "eval/instance_eval/class_eval executes arbitrary code"
+    rule:
+      kind: call
+      has:
+        field: method
+        regex: '^(eval|instance_eval|class_eval|module_eval)$'
+  - id: os_command
+    message: "Possible command injection: shell command via system/exec/backticks/%x"
+    rule:
+      any:
+        # backticks `...` and %x{...} both parse as subshell
+        - kind: subshell
+        - kind: call
+          has:
+            field: method
+            regex: '^(system|exec|spawn)$'
+  - id: sql_injection
+    message: "Possible SQL injection: query built with interpolation or concatenation"
+    rule:
+      kind: call
+      all:
+        - has:
+            field: method
+            regex: '^(execute|exec_query|select_all|find_by_sql|query|where|find_by)$'
+        - has:
+            stopBy: end
+            any:
+              # string with #{...} interpolation
+              - kind: interpolation
+              # "..." + var concatenation
+              - kind: binary
+                has:
+                  kind: string
+                  stopBy: end
+  - id: hardcoded_secret
+    # Security rule: favour recall. Target name matches a credential keyword and
+    # the value is a non-trivial (>=8 char) string literal that is not a
+    # format/message template (an #{..} interpolation placeholder or a printf
+    # %s/%d specifier). Those two exclusions keep real secrets that contain %,
+    # spaces, URLs with embedded credentials, or SCREAMING_SNAKE shapes.
+    # Ceiling: without entropy scoring, identifier/word-shaped literals still
+    # surface as review prompts; that residual is the known limit of regex-only
+    # secret detection, not a defect.
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      kind: assignment
+      all:
+        - has: { field: left, regex: '(?i)(password|secret|api_key|token)' }
+        - has:
+            field: right
+            all:
+              - kind: string
+              - regex: '^.{10,}$'
+              - not:
+                  any:
+                    - has: { kind: interpolation, stopBy: end }
+                    - regex: '%[sdrifeEgGxXoc]'

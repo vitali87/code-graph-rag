@@ -179,7 +179,7 @@ def test_semantic_code_search_passes_top_k_to_search(
     ):
         semantic_code_search(mock_ingestor, "file handling", top_k=10)
 
-    mock_search_embeddings.assert_called_once_with([0.1] * 768, top_k=10)
+    mock_search_embeddings.assert_called_once_with([0.1] * 768, top_k=10, project=None)
 
 
 @pytest.mark.skipif(

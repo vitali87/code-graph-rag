@@ -1,15 +1,15 @@
-# (H) When the repo directory and its top-level package share a name (a django
-# (H) clone is django/django/..., celery is celery/celery/...), a written
-# (H) absolute import like `from django.http import HttpRequest` collides with
-# (H) the project prefix: the import processor trusted the written path as an
-# (H) already-qualified qn and returned it as-is, while every real node lives
-# (H) under the DOUBLED prefix (django.django.http.request.HttpRequest). Every
-# (H) absolute import in such a repo mapped to a nonexistent qn, severing
-# (H) INHERITS (and with it OVERRIDES dispatch revival: django's
-# (H) ASGIRequest._get_scheme, BaseUserCreationForm._post_clean,
-# (H) ArrayField._choices_is_value all reported dead). The as-is reading is
-# (H) only correct when NO project-named top-level directory exists (flat
-# (H) layout where the repo root doubles as the installed package).
+# When the repo directory and its top-level package share a name (a django
+# clone is django/django/..., celery is celery/celery/...), a written
+# absolute import like `from django.http import HttpRequest` collides with
+# the project prefix: the import processor trusted the written path as an
+# already-qualified qn and returned it as-is, while every real node lives
+# under the DOUBLED prefix (django.django.http.request.HttpRequest). Every
+# absolute import in such a repo mapped to a nonexistent qn, severing
+# INHERITS (and with it OVERRIDES dispatch revival: django's
+# ASGIRequest._get_scheme, BaseUserCreationForm._post_clean,
+# ArrayField._choices_is_value all reported dead). The as-is reading is
+# only correct when NO project-named top-level directory exists (flat
+# layout where the repo root doubles as the installed package).
 from __future__ import annotations
 
 from pathlib import Path
@@ -83,8 +83,8 @@ def _build(temp_repo: Path, mock_ingestor: MagicMock) -> None:
 def test_bare_name_base_imported_through_package_reexport_resolves(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `from pkgrepo.http import HttpRequest` + `class ASGIRequest(HttpRequest)`
-    # (H) must land on the class behind the package __init__'s explicit re-export.
+    # `from pkgrepo.http import HttpRequest` + `class ASGIRequest(HttpRequest)`
+    # must land on the class behind the package __init__'s explicit re-export.
     _build(temp_repo, mock_ingestor)
 
     assert (
@@ -107,9 +107,9 @@ def test_override_through_collided_import_is_recorded(
 def test_package_attribute_base_through_collided_import_resolves(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `from pkgrepo import forms` + `forms.ModelForm`: the #688 star-reexport
-    # (H) machinery only fires once the import maps to the project-prefixed
-    # (H) package qn instead of the written path.
+    # `from pkgrepo import forms` + `forms.ModelForm`: the #688 star-reexport
+    # machinery only fires once the import maps to the project-prefixed
+    # package qn instead of the written path.
     _build(temp_repo, mock_ingestor)
 
     assert (
@@ -125,9 +125,9 @@ def test_package_attribute_base_through_collided_import_resolves(
 def test_flat_layout_self_named_import_keeps_written_path(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) No project-named top-level dir: the repo root itself doubles as the
-    # (H) installed package (package_dir={'flatpkg': '.'}), so the written path
-    # (H) already IS the qn and must stay untouched.
+    # No project-named top-level dir: the repo root itself doubles as the
+    # installed package (package_dir={'flatpkg': '.'}), so the written path
+    # already IS the qn and must stay untouched.
     project = temp_repo / "flatpkg"
     project.mkdir()
     (project / "models.py").write_text(

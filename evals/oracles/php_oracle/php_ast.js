@@ -43,8 +43,8 @@ const edges = [];
 const nameEdges = [];
 const calls = [];
 
-// (H) A php-parser declaration name is an identifier object ({name:"foo"}) or a
-// (H) bare string depending on node/version; normalise to the string.
+// A php-parser declaration name is an identifier object ({name:"foo"}) or a
+// bare string depending on node/version; normalise to the string.
 function nameOf(n) {
   if (!n) return "anonymous";
   if (typeof n === "string") return n;
@@ -55,9 +55,9 @@ function emit(kind, file, line, endLine, name) {
   nodes.push({ kind, file, line, end_line: endLine, name: name || "decl" });
 }
 
-// (H) The callee simple name of a php-parser `call`: a bare function name
-// (H) (`foo()`), or the trailing member of a method (`$this->h()`) or static
-// (H) (`Bar::s()`) lookup. Dynamic callees (`$f()`, `$obj->$m()`) yield null.
+// The callee simple name of a php-parser `call`: a bare function name
+// (`foo()`), or the trailing member of a method (`$this->h()`) or static
+// (`Bar::s()`) lookup. Dynamic callees (`$f()`, `$obj->$m()`) yield null.
 function callName(what) {
   if (!what) return null;
   if (what.kind === "name") return what.name ? what.name.split("\\").pop() : null;
@@ -66,9 +66,9 @@ function callName(what) {
     what.kind === "nullsafepropertylookup" ||
     what.kind === "staticlookup"
   ) {
-    // (H) Only a static identifier offset is a real callee name; a dynamic
-    // (H) offset (`$obj->$m()`) is kind "variable" whose `name` is the variable
-    // (H) identifier, which must not be emitted as a call edge.
+    // Only a static identifier offset is a real callee name; a dynamic
+    // offset (`$obj->$m()`) is kind "variable" whose `name` is the variable
+    // identifier, which must not be emitted as a call edge.
     const off = what.offset;
     if (off && off.kind === "identifier" && typeof off.name === "string") {
       return off.name;
@@ -93,8 +93,8 @@ function emitNameEdge(rel, file, skind, sline, targetName) {
   });
 }
 
-// (H) Simple name of a php-parser Name ref: its last namespace segment, matching
-// (H) how cgr resolves bases by simple name (e.g. \App\Base -> Base).
+// Simple name of a php-parser Name ref: its last namespace segment, matching
+// how cgr resolves bases by simple name (e.g. \App\Base -> Base).
 function phpSimpleName(ref) {
   const n = ref && ref.name ? ref.name : "";
   return n.split("\\").pop();
@@ -105,8 +105,8 @@ function asList(refs) {
   return Array.isArray(refs) ? refs : [refs];
 }
 
-// (H) class extends -> INHERITS, implements -> IMPLEMENTS; interface extends
-// (H) (an array) -> INHERITS (cgr models superinterfaces as inheritance).
+// class extends -> INHERITS, implements -> IMPLEMENTS; interface extends
+// (an array) -> INHERITS (cgr models superinterfaces as inheritance).
 function emitInheritance(node, file, kind, line) {
   const extendsRel = "INHERITS";
   for (const ref of asList(node.extends)) {
@@ -162,8 +162,8 @@ function walk(node, file, ctx) {
   switch (node.kind) {
     case "class": {
       if (isAnonymous(node)) {
-        // (H) Anonymous class: no node; its methods are Functions bound to the
-        // (H) enclosing function/module, so keep funcRef and mark the container.
+        // Anonymous class: no node; its methods are Functions bound to the
+        // enclosing function/module, so keep funcRef and mark the container.
         walkChildren(node, file, { container: "anon", typeRef: null, funcRef: ctx.funcRef });
       } else {
         const line = declLine(node);
@@ -221,9 +221,9 @@ function walk(node, file, ctx) {
       return;
     }
     case "call": {
-      // (H) Emit the callee simple name; the Python side keeps only callees whose
-      // (H) name is a declared first-party Function/Method. Recurse for nested
-      // (H) calls in the arguments / receiver.
+      // Emit the callee simple name; the Python side keeps only callees whose
+      // name is a declared first-party Function/Method. Recurse for nested
+      // calls in the arguments / receiver.
       const name = callName(node.what);
       if (name) calls.push({ file, name });
       walkChildren(node, file, ctx);

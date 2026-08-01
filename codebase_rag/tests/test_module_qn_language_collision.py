@@ -1,8 +1,8 @@
-# (H) Regression: two source files that share a basename but differ by extension
-# (H) (foo.py and foo.cpp) must get distinct module qualified names. Path-based
-# (H) module naming strips the extension, so without disambiguation both map to
-# (H) the same module qn, cascading into identical class/method qns that collapse
-# (H) under the graph's qualified_name unique constraint (dropping one file's defs).
+# Regression: two source files that share a basename but differ by extension
+# (foo.py and foo.cpp) must get distinct module qualified names. Path-based
+# module naming strips the extension, so without disambiguation both map to
+# the same module qn, cascading into identical class/method qns that collapse
+# under the graph's qualified_name unique constraint (dropping one file's defs).
 from __future__ import annotations
 
 from pathlib import Path
@@ -66,8 +66,8 @@ def test_same_stem_methods_do_not_collide(
     assert py_area and cpp_area, f"both area methods expected: {area}"
     assert py_area != cpp_area, f"method qn collision across languages: {area}"
 
-    # (H) The method qn must derive from its own (disambiguated) module qn, not a
-    # (H) bare recomputed prefix patched up by register_unique_qn's @N dedup.
+    # The method qn must derive from its own (disambiguated) module qn, not a
+    # bare recomputed prefix patched up by register_unique_qn's @N dedup.
     modules = {
         str(node[0][1].get(KEY_PATH)): str(node[0][1].get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.MODULE)

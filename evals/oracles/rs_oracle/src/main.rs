@@ -110,17 +110,17 @@ fn call_json(file: &str, name: &str) -> String {
     format!("{{\"file\":\"{}\",\"name\":\"{}\"}}", esc(file), esc(name))
 }
 
-// (H) Last path segment of a trait reference (`a::b::Trait` / `Trait<T>` -> Trait).
+// Last path segment of a trait reference (`a::b::Trait` / `Trait<T>` -> Trait).
 fn trait_path_name(path: &syn::Path) -> Option<String> {
     path.segments.last().map(|s| s.ident.to_string())
 }
 
 // ---- call-site collection ----
 //
-// (H) Every call expression's (file, callee simple name): a path call's last
-// (H) segment (`foo()`, `a::b::foo()`, `Type::assoc()` -> foo / assoc) and a
-// (H) method call's method ident (`x.method()` -> method). Mirrors go_ast.go's
-// (H) call oracle so cgr's Rust CALLS edges grade against an independent parser.
+// Every call expression's (file, callee simple name): a path call's last
+// segment (`foo()`, `a::b::foo()`, `Type::assoc()` -> foo / assoc) and a
+// method call's method ident (`x.method()` -> method). Mirrors go_ast.go's
+// call oracle so cgr's Rust CALLS edges grade against an independent parser.
 
 struct CallCollector<'a> {
     file: &'a str,
@@ -204,12 +204,12 @@ impl<'ast, 'a> Visit<'ast> for NodeCollector<'a> {
 
 // ---- closure containment ----
 //
-// (H) A closure is DEFINEd by the nearest enclosing function-like scope: a free
-// (H) fn or another closure (Function), or an impl/trait method (Method); at item
-// (H) scope it falls back to the enclosing module. This mirrors cgr, which routes
-// (H) every closure through its free-function path and binds it to its lexical
-// (H) parent. The walk keeps a stack of enclosing function-likes so nested
-// (H) closures bind to the closure that contains them, not the outer method.
+// A closure is DEFINEd by the nearest enclosing function-like scope: a free
+// fn or another closure (Function), or an impl/trait method (Method); at item
+// scope it falls back to the enclosing module. This mirrors cgr, which routes
+// every closure through its free-function path and binds it to its lexical
+// parent. The walk keeps a stack of enclosing function-likes so nested
+// closures bind to the closure that contains them, not the outer method.
 
 struct ClosureEdges<'a> {
     file: &'a str,
@@ -383,7 +383,7 @@ fn process_edges(
                 edges.push(edge_json(
                     REL_DEFINES, file, KIND_MODULE, module_line, KIND_INTERFACE, tline,
                 ));
-                // (H) Supertrait bounds (`trait Sub: Super`) -> Sub INHERITS Super.
+                // Supertrait bounds (`trait Sub: Super`) -> Sub INHERITS Super.
                 for bound in &tr.supertraits {
                     if let syn::TypeParamBound::Trait(tb) = bound {
                         if let Some(name) = trait_path_name(&tb.path) {
@@ -399,8 +399,8 @@ fn process_edges(
                             REL_DEFINES_METHOD, file, KIND_INTERFACE, tline, KIND_METHOD,
                             m.sig.ident.span().start().line,
                         )),
-                        // (H) An associated type is a module-scoped Type declaration
-                        // (H) in cgr's model (DEFINEd by the enclosing module).
+                        // An associated type is a module-scoped Type declaration
+                        // in cgr's model (DEFINEd by the enclosing module).
                         syn::TraitItem::Type(t) => edges.push(edge_json(
                             REL_DEFINES, file, KIND_MODULE, module_line, KIND_TYPE,
                             t.ident.span().start().line,
@@ -412,7 +412,7 @@ fn process_edges(
             syn::Item::Impl(im) => {
                 let owner = impl_target_name(&im.self_ty)
                     .and_then(|name| resolve_type(modpath, &name, table));
-                // (H) `impl Trait for Type` -> Type IMPLEMENTS Trait.
+                // `impl Trait for Type` -> Type IMPLEMENTS Trait.
                 if let (Some((kind, tline)), Some((_, path, _))) = (&owner, &im.trait_) {
                     if let Some(name) = trait_path_name(path) {
                         name_edges.push(name_edge_json(
@@ -429,11 +429,11 @@ fn process_edges(
                                     m.sig.ident.span().start().line,
                                 ));
                             } else {
-                                // (H) An impl on a type declared elsewhere (Box<P>,
-                                // (H) primitives, external types) has no owner node;
-                                // (H) cgr anchors such methods to the module with
-                                // (H) DEFINES (orphan-prevention fallback), so the
-                                // (H) oracle models the same containment.
+                                // An impl on a type declared elsewhere (Box<P>,
+                                // primitives, external types) has no owner node;
+                                // cgr anchors such methods to the module with
+                                // DEFINES (orphan-prevention fallback), so the
+                                // oracle models the same containment.
                                 edges.push(edge_json(
                                     REL_DEFINES, file, KIND_MODULE, module_line, KIND_METHOD,
                                     m.sig.ident.span().start().line,

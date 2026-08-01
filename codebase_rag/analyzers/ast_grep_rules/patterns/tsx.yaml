@@ -1,0 +1,28 @@
+# ast-grep design-pattern rules for TSX (issue #413).
+ast_grep_id: tsx
+extensions: [.tsx]
+rules:
+  - id: singleton
+    message: "Singleton: class exposes a static getInstance()"
+    rule:
+      kind: method_definition
+      has: { field: name, regex: '^getInstance$' }
+  - id: promise_constructor
+    message: "Promise constructor: manual new Promise usage"
+    rule:
+      pattern: "new Promise($$$)"
+  - id: factory_function
+    message: "Factory function: name starts with create/make/build"
+    rule:
+      any:
+        - kind: function_declaration
+          has: { field: name, regex: '^(create|make|build)' }
+        - kind: variable_declarator
+          all:
+            - has: { field: name, regex: '^(create|make|build)' }
+            - has:
+                field: value
+                any:
+                  - kind: arrow_function
+                  - kind: function_expression
+                  - kind: generator_function

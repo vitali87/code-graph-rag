@@ -1,0 +1,991 @@
+"""Server route decorators must become endpoint Resource nodes (issue #425).
+
+Handlers decorated with FastAPI/Flask-style route decorators expose an HTTP
+endpoint; parsing the retained decorator text into ``METHOD /path/template``
+gives cross-project linking a server-side anchor that client request URLs
+can resolve to.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.parsers.endpoints import parse_route_decorator
+
+
+class TestParseRouteDecorator:
+    @pytest.mark.parametrize(
+        ("decorator", "expected"),
+        [
+            ('@app.get("/users/{id}")', [("GET", "/users/{id}")]),
+            ("@router.post('/orders')", [("POST", "/orders")]),
+            ('@api.put("/items/{item_id}/name")', [("PUT", "/items/{item_id}/name")]),
+            ('@app.delete("/users/{id}")', [("DELETE", "/users/{id}")]),
+            ('@app.patch("/users/{id}")', [("PATCH", "/users/{id}")]),
+            ('@app.route("/health")', [("GET", "/health")]),
+            (
+                '@app.route("/users", methods=["GET", "POST"])',
+                [("GET", "/users"), ("POST", "/users")],
+            ),
+            (
+                "@bp.route('/login', methods=['POST'])",
+                [("POST", "/login")],
+            ),
+        ],
+    )
+    def test_parses_route_decorators(
+        self, decorator: str, expected: list[tuple[str, str]]
+    ) -> None:
+        assert parse_route_decorator(decorator) == expected
+
+    @pytest.mark.parametrize(
+        "decorator",
+        [
+            "@staticmethod",
+            "@property",
+            '@pytest.mark.parametrize("x", [1])',
+            "@app.get",
+            "@app.get()",
+            '@task("/not/a/route")',
+            '@app.get(prefix + "/users")',
+            "@lru_cache(maxsize=128)",
+        ],
+    )
+    def test_non_routes_return_empty(self, decorator: str) -> None:
+        assert parse_route_decorator(decorator) == []
+
+    def test_websocket_route(self) -> None:
+        assert parse_route_decorator('@app.websocket("/ws")') == [("WEBSOCKET", "/ws")]
+
+
+class TestUrlTemplateMatch:
+    @pytest.mark.parametrize(
+        ("url", "template", "matches"),
+        [
+            ("http://user-service:8000/users/42", "/users/{id}", True),
+            ("https://api.internal/users/42", "/users/{id}", True),
+            ("http://svc/users", "/users", True),
+            ("http://svc/users/", "/users", True),
+            ("http://svc/users/42/name", "/users/{id}", False),
+            ("http://svc/orders/42", "/users/{id}", False),
+            ("http://svc/users/42?verbose=1", "/users/{id}", True),
+            ("http://svc/items/7/name", "/items/{item_id}/name", True),
+            ("not a url", "/users/{id}", False),
+            ("http://svc/", "/", True),
+        ],
+    )
+    def test_url_matches_template(self, url: str, template: str, matches: bool) -> None:
+        from codebase_rag.parsers.endpoints import url_matches_template
+
+        assert url_matches_template(url, template) is matches
+
+
+class TestEmitEndpoints:
+    def test_route_decorator_emits_endpoint_resource_and_exposes_edge(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import emit_endpoints
+
+        ingestor = MagicMock()
+        emit_endpoints(
+            ingestor,
+            cs.NodeLabel.FUNCTION,
+            "user-service.api.get_user",
+            ['@app.get("/users/{id}")'],
+        )
+
+        ingestor.ensure_node_batch.assert_called_once_with(
+            cs.NodeLabel.RESOURCE,
+            {
+                "qualified_name": "resource::ENDPOINT::user-service::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "user-service",
+            },
+        )
+        ingestor.ensure_relationship_batch.assert_called_once_with(
+            (cs.NodeLabel.FUNCTION, "qualified_name", "user-service.api.get_user"),
+            cs.RelationshipType.EXPOSES,
+            (
+                cs.NodeLabel.RESOURCE,
+                "qualified_name",
+                "resource::ENDPOINT::user-service::GET /users/{id}",
+            ),
+        )
+
+    def test_plain_decorators_emit_nothing(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import emit_endpoints
+
+        ingestor = MagicMock()
+        emit_endpoints(
+            ingestor, cs.NodeLabel.FUNCTION, "proj.mod.fn", ["@staticmethod"]
+        )
+
+        ingestor.ensure_node_batch.assert_not_called()
+        ingestor.ensure_relationship_batch.assert_not_called()
+
+
+class TestLinkEndpoints:
+    def test_network_urls_resolve_to_matching_endpoints(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        network_qn = "resource::NETWORK::http://user-service:8000/users/42"
+        endpoint_qn = "resource::ENDPOINT::GET /users/{id}"
+        other_endpoint_qn = "resource::ENDPOINT::POST /orders"
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": network_qn,
+                "name": "http://user-service:8000/users/42",
+                "kind": "NETWORK",
+            },
+            {
+                "qualified_name": endpoint_qn,
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+            },
+            {
+                "qualified_name": other_endpoint_qn,
+                "name": "POST /orders",
+                "kind": "ENDPOINT",
+            },
+        ]
+
+        created = link_endpoints(ingestor)
+
+        assert created == 1
+        ingestor.ensure_relationship_batch.assert_called_once_with(
+            (cs.NodeLabel.RESOURCE, "qualified_name", network_qn),
+            cs.RelationshipType.RESOLVES_TO,
+            (cs.NodeLabel.RESOURCE, "qualified_name", endpoint_qn),
+        )
+
+    def test_dynamic_urls_do_not_link(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": "resource::NETWORK::<dynamic>",
+                "name": "<dynamic>",
+                "kind": "NETWORK",
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+            },
+        ]
+
+        assert link_endpoints(ingestor) == 0
+        ingestor.ensure_relationship_batch.assert_not_called()
+
+
+class TestAllParameterTemplatesDoNotLink:
+    """Dogfood finding: a one-segment URL like ``http://host/docs`` matched
+    every one-segment wildcard template (``/{id}/``, ``/<path:path>``, ...)
+    across every indexed project, fabricating cross-service traces. A
+    template with no literal segment carries no evidence and must not link.
+    """
+
+    @staticmethod
+    def _rows(url: str, *endpoints: str) -> list[dict[str, str]]:
+        rows = [
+            {
+                "qualified_name": f"resource::NETWORK::{url}",
+                "name": url,
+                "kind": "NETWORK",
+            }
+        ]
+        rows += [
+            {
+                "qualified_name": f"resource::ENDPOINT::{identity}",
+                "name": identity,
+                "kind": "ENDPOINT",
+            }
+            for identity in endpoints
+        ]
+        return rows
+
+    def test_all_parameter_templates_do_not_link(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = self._rows(
+            "http://localhost:8000/docs",
+            "GET /{id}/",
+            "GET /<path:path>",
+            "GET /docs",
+        )
+
+        assert link_endpoints(ingestor) == 1
+        ingestor.ensure_relationship_batch.assert_called_once_with(
+            (
+                cs.NodeLabel.RESOURCE,
+                "qualified_name",
+                "resource::NETWORK::http://localhost:8000/docs",
+            ),
+            cs.RelationshipType.RESOLVES_TO,
+            (cs.NodeLabel.RESOURCE, "qualified_name", "resource::ENDPOINT::GET /docs"),
+        )
+
+    def test_root_template_does_not_link(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = self._rows("http://svc/", "GET /")
+
+        assert link_endpoints(ingestor) == 0
+        ingestor.ensure_relationship_batch.assert_not_called()
+
+    def test_mixed_template_with_literal_segment_still_links(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = self._rows(
+            "http://user-service:8000/users/42",
+            "GET /users/{id}",
+        )
+
+        assert link_endpoints(ingestor) == 1
+
+
+class TestReviewHardening:
+    @pytest.mark.parametrize(
+        ("decorator", "expected"),
+        [
+            ('@bp.route("/login", methods=("POST",))', [("POST", "/login")]),
+            ('@bp.route("/login", methods={"POST"})', [("POST", "/login")]),
+            (
+                '@bp.route("/x", methods=("PUT", "DELETE"))',
+                [("PUT", "/x"), ("DELETE", "/x")],
+            ),
+        ],
+    )
+    def test_flask_methods_accept_any_iterable_literal(
+        self, decorator: str, expected: list[tuple[str, str]]
+    ) -> None:
+        assert parse_route_decorator(decorator) == expected
+
+    @pytest.mark.parametrize(
+        ("url", "template", "matches"),
+        [
+            ("http://svc/users/42", "/users/<int:user_id>", True),
+            ("http://svc/users/42", "/users/<user_id>", True),
+            ("http://svc/files/report", "/files/<path:name>", True),
+            ("http://svc/users/42/x", "/users/<int:user_id>", False),
+        ],
+    )
+    def test_flask_angle_bracket_variables_match(
+        self, url: str, template: str, matches: bool
+    ) -> None:
+        from codebase_rag.parsers.endpoints import url_matches_template
+
+        assert url_matches_template(url, template) is matches
+
+    def test_relink_deletes_existing_resolves_to_first(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.parsers.endpoints import (
+            CYPHER_DELETE_RESOLVES_TO,
+            link_endpoints,
+        )
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = []
+
+        link_endpoints(ingestor)
+
+        ingestor.execute_write.assert_called_once_with(CYPHER_DELETE_RESOLVES_TO)
+
+    def test_link_only_considers_actively_referenced_resources(self) -> None:
+        # Resources whose caller or handler was deleted must not relink:
+        # the fetch queries anchor on live sink and EXPOSES edges.
+        from codebase_rag.parsers.endpoints import (
+            CYPHER_LIVE_ENDPOINT_RESOURCES,
+            CYPHER_LIVE_NETWORK_RESOURCES,
+        )
+
+        assert "READS_FROM|WRITES_TO" in CYPHER_LIVE_NETWORK_RESOURCES
+        assert "EXPOSES" in CYPHER_LIVE_ENDPOINT_RESOURCES
+
+
+class TestDirectionAwareLinking:
+    """Dogfood finding (issue #878): a ``requests.get`` URL resolved to a
+    write-only route (``DELETE /orders/{order_id}``). The only method
+    evidence on the client side is the sink edge type, so a read-only URL
+    must not link to a write-only endpoint and vice versa.
+    """
+
+    @staticmethod
+    def _network_row(url: str, directions: list[str]) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::NETWORK::{url}",
+            "name": url,
+            "kind": "NETWORK",
+            "directions": directions,
+        }
+
+    @staticmethod
+    def _endpoint_row(identity: str) -> dict[str, str]:
+        return {
+            "qualified_name": f"resource::ENDPOINT::{identity}",
+            "name": identity,
+            "kind": "ENDPOINT",
+        }
+
+    def _link(self, rows: list[dict[str, object]]) -> tuple[int, object]:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = rows
+        return link_endpoints(ingestor), ingestor
+
+    def test_read_url_does_not_link_to_write_only_endpoint(self) -> None:
+        created, ingestor = self._link(
+            [
+                self._network_row("http://svc/orders/9", ["READS_FROM"]),
+                self._endpoint_row("DELETE /orders/{order_id}"),
+            ]
+        )
+        assert created == 0
+        ingestor.ensure_relationship_batch.assert_not_called()
+
+    def test_write_url_does_not_link_to_read_only_endpoint(self) -> None:
+        created, ingestor = self._link(
+            [
+                self._network_row("http://svc/users/1", ["WRITES_TO"]),
+                self._endpoint_row("GET /users/{id}"),
+            ]
+        )
+        assert created == 0
+        ingestor.ensure_relationship_batch.assert_not_called()
+
+    def test_matching_direction_links(self) -> None:
+        created, _ = self._link(
+            [
+                self._network_row("http://svc/orders/9", ["READS_FROM"]),
+                self._endpoint_row("GET /orders/{order_id}"),
+            ]
+        )
+        assert created == 1
+
+    def test_write_url_links_to_write_endpoint(self) -> None:
+        created, _ = self._link(
+            [
+                self._network_row("http://svc/payments/5/refund", ["WRITES_TO"]),
+                self._endpoint_row("POST /payments/{id}/refund"),
+            ]
+        )
+        assert created == 1
+
+    def test_mixed_direction_url_links_to_both(self) -> None:
+        created, _ = self._link(
+            [
+                self._network_row("http://svc/items/7", ["READS_FROM", "WRITES_TO"]),
+                self._endpoint_row("GET /items/{id}"),
+                self._endpoint_row("PUT /items/{id}"),
+            ]
+        )
+        assert created == 2
+
+    def test_missing_directions_stay_permissive(self) -> None:
+        # Legacy graphs and fakes without the aggregated edge types must keep
+        # the old behaviour rather than dropping every link.
+        row: dict[str, object] = {
+            "qualified_name": "resource::NETWORK::http://svc/orders/9",
+            "name": "http://svc/orders/9",
+            "kind": "NETWORK",
+        }
+        created, _ = self._link([row, self._endpoint_row("DELETE /orders/{order_id}")])
+        assert created == 1
+
+    def test_network_query_aggregates_directions(self) -> None:
+        from codebase_rag.parsers.endpoints import CYPHER_LIVE_NETWORK_RESOURCES
+
+        assert "directions" in CYPHER_LIVE_NETWORK_RESOURCES
+
+
+class TestPerProjectEndpointIdentity:
+    def test_emit_scopes_endpoint_qn_by_project(self) -> None:
+        from codebase_rag.parsers.endpoints import emit_endpoints
+
+        ingestor = MagicMock()
+        emit_endpoints(
+            ingestor,
+            cs.NodeLabel.FUNCTION,
+            "user-service__abc.app.main.health",
+            ['@app.get("/health")'],
+        )
+        node = ingestor.ensure_node_batch.call_args.args[1]
+        assert node["qualified_name"] == (
+            "resource::ENDPOINT::user-service__abc::GET /health"
+        )
+        assert node["name"] == "GET /health"
+        assert node["project"] == "user-service__abc"
+
+
+class TestHostAwareLinking:
+    @staticmethod
+    def _network(url: str) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::NETWORK::{url}",
+            "name": url,
+            "kind": "NETWORK",
+            "directions": ["READS_FROM"],
+        }
+
+    @staticmethod
+    def _endpoint(project: str, identity: str) -> dict[str, str]:
+        return {
+            "qualified_name": f"resource::ENDPOINT::{project}::{identity}",
+            "name": identity,
+            "kind": "ENDPOINT",
+            "project": project,
+        }
+
+    def _link(self, rows: list[dict[str, object]]) -> tuple[int, object]:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = rows
+        return link_endpoints(ingestor), ingestor
+
+    def test_host_matching_a_project_links_only_that_project(self) -> None:
+        created, ingestor = self._link(
+            [
+                self._network("http://payment-service:8000/health"),
+                self._endpoint("payment-service__99e", "GET /health"),
+                self._endpoint("user-service__2ad", "GET /health"),
+            ]
+        )
+        assert created == 1
+        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        assert "payment-service__99e" in target
+
+    def test_underscore_host_matches_dash_project(self) -> None:
+        created, _ = self._link(
+            [
+                self._network("http://cast_service:8000/api/v1/casts/5/"),
+                self._endpoint("cast-service__1a2", "GET /api/v1/casts/{id}/"),
+            ]
+        )
+        assert created == 1
+
+    def test_unmatched_host_keeps_fanout(self) -> None:
+        created, _ = self._link(
+            [
+                self._network("http://localhost:8000/health"),
+                self._endpoint("payment-service__99e", "GET /health"),
+                self._endpoint("user-service__2ad", "GET /health"),
+            ]
+        )
+        assert created == 2
+
+    def test_host_match_excludes_other_projects_tail_templates(self) -> None:
+        created, ingestor = self._link(
+            [
+                self._network("http://user-service:8000/users/42"),
+                self._endpoint("user-service__2ad", "GET /users/{user_id}"),
+                self._endpoint("fst__be7", "GET /**/users/{user_id}"),
+            ]
+        )
+        assert created == 1
+        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        assert "user-service__2ad" in target
+
+    def test_legacy_rows_without_project_stay_permissive(self) -> None:
+        created, _ = self._link(
+            [
+                self._network("http://user-service:8000/health"),
+                {
+                    "qualified_name": "resource::ENDPOINT::GET /health",
+                    "name": "GET /health",
+                    "kind": "ENDPOINT",
+                },
+            ]
+        )
+        assert created == 1
+
+
+class TestHostAwareLinkingHardening:
+    def test_legacy_rows_stay_linkable_when_host_matches_a_project(self) -> None:
+        # A partially migrated graph: the host matches a scoped project, but
+        # a matching legacy (project-less) endpoint must not be dropped.
+        helper = TestHostAwareLinking()
+        created, _ = helper._link(
+            [
+                TestHostAwareLinking._network("http://user-service:8000/users/42"),
+                TestHostAwareLinking._endpoint("user-service__2ad", "GET /users/{id}"),
+                {
+                    "qualified_name": "resource::ENDPOINT::GET /users/{id}",
+                    "name": "GET /users/{id}",
+                    "kind": "ENDPOINT",
+                },
+            ]
+        )
+        assert created == 2
+
+    def test_project_stem_keeps_double_underscore_base_names(self) -> None:
+        helper = TestHostAwareLinking()
+        created, ingestor = helper._link(
+            [
+                TestHostAwareLinking._network("http://order--worker:8000/jobs/5"),
+                TestHostAwareLinking._endpoint(
+                    "order__worker__2adc9027", "GET /jobs/{id}"
+                ),
+                TestHostAwareLinking._endpoint("other__9f9f9f9f", "GET /jobs/{id}"),
+            ]
+        )
+        assert created == 1
+        target = ingestor.ensure_relationship_batch.call_args.args[2][2]
+        assert "order__worker__2adc9027" in target
+
+
+class TestPrefixTolerantLinking:
+    """Issue #911: infrastructure prefixes (ingress mounts, proxy rewrites)
+    put extra lead segments on the client path, so the exposed template
+    matches a tail of the URL. The suffix mode is bounded and only fires
+    when it is unambiguous.
+    """
+
+    @staticmethod
+    def _ingestor(rows: list[dict[str, object]]) -> object:
+        from unittest.mock import MagicMock
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = rows
+        return ingestor
+
+    @staticmethod
+    def _network(url: str, direction: str) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::NETWORK::{url}",
+            "name": url,
+            "kind": "NETWORK",
+            "directions": [direction],
+        }
+
+    @staticmethod
+    def _endpoint(identity: str, project: str) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::ENDPOINT::{project}::{identity}",
+            "name": identity,
+            "kind": "ENDPOINT",
+            "project": project,
+        }
+
+    def test_ingress_prefix_links_with_lead_recorded(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/y/some-service/review", "WRITES_TO"),
+                self._endpoint("POST /review", "some-service"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        _args, kwargs = ingestor.ensure_relationship_batch.call_args
+        assert kwargs.get("properties") == {"lead_prefix": "/y/some-service"}
+
+    def test_proxy_strip_links(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/api/cases", "READS_FROM"),
+                self._endpoint("GET /cases", "backend"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+
+    def test_absolute_url_with_gateway_prefix_links(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("http://gateway/y/svc/review", "WRITES_TO"),
+                self._endpoint("POST /review", "svc"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+
+    def test_ambiguous_suffix_ties_are_dropped(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/api/cases", "READS_FROM"),
+                self._endpoint("GET /cases", "service-a"),
+                self._endpoint("GET /cases", "service-b"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_exact_match_suppresses_suffix_candidates(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("http://svc/api/cases", "READS_FROM"),
+                self._endpoint("GET /api/cases", "svc"),
+                self._endpoint("GET /cases", "svc"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        _args, kwargs = ingestor.ensure_relationship_batch.call_args
+        assert "resource::ENDPOINT::svc::GET /api/cases" in _args[2]
+        assert not kwargs
+
+    def test_lead_naming_a_service_breaks_ties(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/y/service-b/cases", "READS_FROM"),
+                self._endpoint("GET /cases", "service-a"),
+                self._endpoint("GET /cases", "service-b"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        args = ingestor.ensure_relationship_batch.call_args.args
+        assert "resource::ENDPOINT::service-b::GET /cases" in args[2]
+
+    def test_lead_is_bounded_at_two_segments(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/a/b/c/users", "READS_FROM"),
+                self._endpoint("GET /users", "svc"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+
+class TestMountPrefixLinking:
+    """Issue #923: routers mounted under an infrastructure prefix register
+    templates like ``/admin/api/v1/cases/:caseUid`` while clients speak
+    ``/api/v1/cases/{caseUid}``. The mirror of the #911 suffix mode: a
+    bounded, all-literal template-side lead, unique matches only.
+    """
+
+    _ingestor = staticmethod(TestPrefixTolerantLinking._ingestor)
+    _network = staticmethod(TestPrefixTolerantLinking._network)
+    _endpoint = staticmethod(TestPrefixTolerantLinking._endpoint)
+
+    def test_template_mount_prefix_links_with_mount_recorded(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/api/v1/otp/verify", "WRITES_TO"),
+                self._endpoint("POST /admin/api/v1/otp/verify", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        _args, kwargs = ingestor.ensure_relationship_batch.call_args
+        assert kwargs.get("properties") == {"mount_prefix": "/admin"}
+
+    def test_absolute_url_with_mounted_template_links(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("http://gateway/api/v1/cases", "READS_FROM"),
+                self._endpoint("GET /admin/api/v1/cases", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+
+    def test_param_mount_prefix_is_not_evidence(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/users", "READS_FROM"),
+                self._endpoint("GET /:tenant/users", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_all_param_tail_is_not_evidence(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/42", "READS_FROM"),
+                self._endpoint("GET /admin/:id", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_mount_ambiguity_is_dropped(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/otp/verify", "WRITES_TO"),
+                self._endpoint("POST /admin/otp/verify", "service-a"),
+                self._endpoint("POST /auth/otp/verify", "service-b"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_mount_is_bounded_at_two_segments(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/users", "READS_FROM"),
+                self._endpoint("GET /a/b/c/users", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_exact_match_suppresses_mount_candidates(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("http://svc/api/users", "READS_FROM"),
+                self._endpoint("GET /api/users", "svc"),
+                self._endpoint("GET /admin/api/users", "svc"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        _args, kwargs = ingestor.ensure_relationship_batch.call_args
+        assert "resource::ENDPOINT::svc::GET /api/users" in _args[2]
+        assert not kwargs
+
+    def test_url_suffix_wins_over_template_mount(self) -> None:
+        # `/api/cases` strips its own lead to `GET /cases` before any
+        # template-side mount is considered.
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/api/cases", "READS_FROM"),
+                self._endpoint("GET /cases", "svc"),
+                self._endpoint("GET /admin/api/cases", "svc"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        args, kwargs = ingestor.ensure_relationship_batch.call_args
+        assert "resource::ENDPOINT::svc::GET /cases" in args[2]
+        assert kwargs.get("properties") == {"lead_prefix": "/api"}
+
+
+class TestSamePathInferredGroups:
+    """Issue #925: several methods on ONE template path are the same
+    resource, not an ambiguity; an inferred match links the whole group
+    exactly like an exact match would.
+    """
+
+    _ingestor = staticmethod(TestPrefixTolerantLinking._ingestor)
+    _endpoint = staticmethod(TestPrefixTolerantLinking._endpoint)
+
+    @staticmethod
+    def _network(url: str, directions: list[str]) -> dict[str, object]:
+        return {
+            "qualified_name": f"resource::NETWORK::{url}",
+            "name": url,
+            "kind": "NETWORK",
+            "directions": directions,
+        }
+
+    def test_mount_group_on_one_path_links_every_method(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/enterprises", ["READS_FROM", "WRITES_TO"]),
+                self._endpoint("GET /admin/enterprises", "gateway"),
+                self._endpoint("POST /admin/enterprises", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 2
+        for call in ingestor.ensure_relationship_batch.call_args_list:
+            assert call.kwargs.get("properties") == {"mount_prefix": "/admin"}
+
+    def test_suffix_group_on_one_path_links_every_method(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/api/cases", ["READS_FROM", "WRITES_TO"]),
+                self._endpoint("GET /cases", "backend"),
+                self._endpoint("POST /cases", "backend"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 2
+
+    def test_different_paths_still_drop(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/otp/verify", ["WRITES_TO"]),
+                self._endpoint("POST /admin/otp/verify", "service-a"),
+                self._endpoint("POST /auth/otp/verify", "service-b"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 0
+
+    def test_direction_filter_still_prunes_the_group(self) -> None:
+        # A read-only URL links only the GET half of the group.
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = self._ingestor(
+            [
+                self._network("/enterprises", ["READS_FROM"]),
+                self._endpoint("GET /admin/enterprises", "gateway"),
+                self._endpoint("POST /admin/enterprises", "gateway"),
+            ]
+        )
+        assert link_endpoints(ingestor) == 1
+        args = ingestor.ensure_relationship_batch.call_args.args
+        assert "GET /admin/enterprises" in args[2][2]
+
+
+class TestRootfulRelativeUrlMatch:
+    """Issue #908: same-origin clients fetch rootful relative paths.
+
+    A browser frontend's ``fetch("/api/users/42")`` carries no scheme or
+    host; the path alone must qualify as a match candidate. A schemeless
+    fragment without a leading slash stays rejected: it could be anything.
+    """
+
+    @pytest.mark.parametrize(
+        ("url", "template", "matches"),
+        [
+            ("/users/42", "/users/{id}", True),
+            ("/users/42?verbose=1", "/users/{id}", True),
+            ("/users/42/", "/users/{id}", True),
+            ("/api/users", "/users", False),
+            ("users/42", "/users/{id}", False),
+            ("not a url", "/users/{id}", False),
+            # Protocol-relative is an EXTERNAL reference, not a same-origin
+            # request; accepting it would fan out to every endpoint.
+            ("//cdn.example.com/users/42", "/users/{id}", False),
+        ],
+    )
+    def test_rootful_relative_urls(
+        self, url: str, template: str, matches: bool
+    ) -> None:
+        from codebase_rag.parsers.endpoints import url_matches_template
+
+        assert url_matches_template(url, template) is matches
+
+    def test_rootful_relative_url_links_to_endpoint(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag import constants as cs
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        network_qn = "resource::NETWORK::/users/42"
+        endpoint_qn = "resource::ENDPOINT::web::GET /users/{id}"
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": network_qn,
+                "name": "/users/42",
+                "kind": "NETWORK",
+                "directions": ["READS_FROM"],
+                "caller_projects": ["web"],
+            },
+            {
+                "qualified_name": endpoint_qn,
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "web",
+            },
+        ]
+
+        assert link_endpoints(ingestor) == 1
+        ingestor.ensure_relationship_batch.assert_called_once_with(
+            (cs.NodeLabel.RESOURCE, "qualified_name", network_qn),
+            cs.RelationshipType.RESOLVES_TO,
+            (cs.NodeLabel.RESOURCE, "qualified_name", endpoint_qn),
+        )
+
+
+class TestRootfulCandidateScoping:
+    """A rootful URL is a SAME-ORIGIN request: its candidates are the
+    endpoints of the projects that issued it (the sink edges' source
+    projects), never a global fan-out across every indexed project.
+    """
+
+    def test_rootful_links_only_within_caller_projects(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": "resource::NETWORK::/users/42",
+                "name": "/users/42",
+                "kind": "NETWORK",
+                "directions": ["READS_FROM"],
+                "caller_projects": ["frontend"],
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::frontend::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "frontend",
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::other::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "other",
+            },
+        ]
+
+        assert link_endpoints(ingestor) == 1
+        args = ingestor.ensure_relationship_batch.call_args.args
+        assert "resource::ENDPOINT::frontend::GET /users/{id}" in args[2]
+
+    def test_rootful_with_unknown_callers_does_not_fan_out(self) -> None:
+        from codebase_rag.parsers.endpoints import link_endpoints
+
+        ingestor = MagicMock()
+        ingestor.fetch_all.return_value = [
+            {
+                "qualified_name": "resource::NETWORK::/users/42",
+                "name": "/users/42",
+                "kind": "NETWORK",
+                "directions": ["READS_FROM"],
+                "caller_projects": [],
+            },
+            {
+                "qualified_name": "resource::ENDPOINT::other::GET /users/{id}",
+                "name": "GET /users/{id}",
+                "kind": "ENDPOINT",
+                "project": "other",
+            },
+        ]
+
+        assert link_endpoints(ingestor) == 0

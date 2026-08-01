@@ -1,0 +1,24 @@
+# ast-grep code-smell rules for PHP (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: php
+extensions: [.php]
+rules:
+  - id: debug_output
+    message: "Debug output call (var_dump/print_r/var_export) left in code"
+    rule:
+      kind: function_call_expression
+      has: { field: function, regex: '^(var_dump|print_r|var_export)$' }
+  - id: error_suppression
+    message: "Error suppression operator @ hides failures"
+    rule:
+      kind: error_suppression_expression
+  - id: loose_equality
+    # Loose == / != coerce operand types; anchored regex skips strict === / !==.
+    message: "Loose equality (== or !=) performs type coercion"
+    rule:
+      kind: binary_expression
+      has: { field: operator, regex: '^(==|!=)$' }
+  - id: global_declaration
+    message: "global declaration couples the function to global state"
+    rule:
+      kind: global_declaration

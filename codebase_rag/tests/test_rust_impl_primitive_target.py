@@ -1,7 +1,7 @@
-# (H) Regression: methods in an `impl Trait for <primitive>` block (e.g.
-# (H) `impl From<Foo> for u8`) must be captured. The impl target `u8` is a
-# (H) `primitive_type` node, which extract_impl_target did not recognise, so every
-# (H) method in such a block was silently dropped.
+# Regression: methods in an `impl Trait for <primitive>` block (e.g.
+# `impl From<Foo> for u8`) must be captured. The impl target `u8` is a
+# `primitive_type` node, which extract_impl_target did not recognise, so every
+# method in such a block was silently dropped.
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,5 +1,5 @@
-# (H) Tests for orphan node pruning in GraphUpdater._prune_orphan_nodes
-# (H) and Cypher deletion in _process_files for hash-cache-detected deletions.
+# Tests for orphan node pruning in GraphUpdater._prune_orphan_nodes
+# and Cypher deletion in _process_files for hash-cache-detected deletions.
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -59,6 +59,7 @@ class TestPruneOrphanNodes:
                 },
             ],
             [],
+            [],
         ]
         updater._prune_orphan_nodes()
 
@@ -68,7 +69,11 @@ class TestPruneOrphanNodes:
             if c.args[0] == cs.CYPHER_DELETE_MODULE
         ]
         assert len(delete_calls) == 1
-        assert delete_calls[0].args[1] == {cs.KEY_PATH: "old_project/main.py"}
+        assert delete_calls[0].args[1] == {
+            cs.KEY_PATH: "old_project/main.py",
+            cs.KEY_PROJECT_NAME: project_name,
+            cs.KEY_PROJECT_PREFIX: f"{project_name}.",
+        }
 
     def test_prune_removes_orphan_external_module_nodes(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -81,7 +86,7 @@ class TestPruneOrphanNodes:
             queries=queries,
         )
 
-        mock_ingestor.fetch_all.side_effect = [[], [], []]
+        mock_ingestor.fetch_all.side_effect = [[], [], [], []]
         updater._prune_orphan_nodes()
 
         external_calls = [
@@ -90,6 +95,27 @@ class TestPruneOrphanNodes:
             if c.args[0] == cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES
         ]
         assert len(external_calls) == 1
+
+    def test_prune_removes_unanchored_resource_nodes(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # A rebuild that drops a route or literal URL leaves its shared
+        # (prefix-less) Resource node behind with no anchoring code edge.
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+
+        mock_ingestor.fetch_all.side_effect = [[], [], [], []]
+        with patch(
+            "codebase_rag.graph_updater.prune_unanchored_resources"
+        ) as prune_resources:
+            updater._prune_orphan_nodes()
+
+        prune_resources.assert_called_once_with(mock_ingestor)
 
     def test_prune_skips_other_projects(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -106,6 +132,7 @@ class TestPruneOrphanNodes:
             [{"path": "app.py", "absolute_path": "/other/project/app.py"}],
             [{"path": "app.py", "qualified_name": "other_project.app"}],
             [{"path": "data", "absolute_path": "/other/project/data"}],
+            [],
         ]
         updater._prune_orphan_nodes()
 
@@ -134,6 +161,7 @@ class TestPruneOrphanNodes:
             [{"path": "module_a.py", "absolute_path": f"{repo_abs}/module_a.py"}],
             [{"path": "module_a.py", "qualified_name": f"{project_name}.module_a"}],
             [{"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"}],
+            [],
         ]
         updater._prune_orphan_nodes()
 
@@ -156,7 +184,7 @@ class TestPruneOrphanNodes:
             queries=queries,
         )
 
-        mock_ingestor.fetch_all.side_effect = [[], [], []]
+        mock_ingestor.fetch_all.side_effect = [[], [], [], []]
         updater._prune_orphan_nodes()
 
         path_deletes = [
@@ -185,6 +213,7 @@ class TestPruneOrphanNodes:
                 {"path": None, "qualified_name": f"{project_name}.something"},
                 {"path": "module_a.py", "qualified_name": f"{project_name}.module_a"},
             ],
+            [],
             [],
         ]
         updater._prune_orphan_nodes()
@@ -229,6 +258,7 @@ class TestPruneOrphanNodes:
                 {"path": "old_dir", "absolute_path": f"{repo_abs}/old_dir"},
                 {"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"},
             ],
+            [],
         ]
         updater._prune_orphan_nodes()
 
@@ -270,6 +300,7 @@ class TestPruneOrphanNodes:
                     "qualified_name": f"{project_name}.src.clipboard.macos",
                 },
             ],
+            [],
             [],
         ]
         updater._prune_orphan_nodes()
@@ -367,3 +398,60 @@ class TestDeletedFileInProcessFiles:
 
         updater.run(force=True)
         mock_prune.assert_called_once()
+
+
+class TestPruneSiblingRootPrefix:
+    """A sibling repo root sharing a string prefix must not be pruned (#897)."""
+
+    def _updater(self, py_project: Path, mock_ingestor: MagicMock) -> GraphUpdater:
+        parsers, queries = load_parsers()
+        return GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+
+    def test_prune_skips_sibling_root_sharing_path_prefix(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        updater = self._updater(py_project, mock_ingestor)
+        repo_abs = py_project.resolve().as_posix()
+        sibling_abs = f"{repo_abs}-old/app.py"
+
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": "app.py", "absolute_path": sibling_abs}],
+            [],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        file_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert file_deletes == []
+
+    def test_prune_still_sweeps_own_missing_file(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        updater = self._updater(py_project, mock_ingestor)
+        own_abs = (py_project / "gone.py").resolve().as_posix()
+
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": "gone.py", "absolute_path": own_abs}],
+            [],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        file_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert len(file_deletes) == 1
+        assert file_deletes[0].args[1] == {cs.KEY_PATH: own_abs}

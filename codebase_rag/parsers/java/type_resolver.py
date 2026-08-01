@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from ...types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
     from ..import_processor import ImportProcessor
 
-# (H) Node types an imported Java name can declare (records and annotation types
-# (H) register as CLASS).
+# Node types an imported Java name can declare (records and annotation types
+# register as CLASS).
 _JAVA_TYPE_DECL_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
 
 
@@ -106,13 +106,13 @@ class JavaTypeResolverMixin:
         return []
 
     def _imported_class_qn(self, target: str, type_name: str) -> str:
-        # (H) A LOCAL Java import is recorded as the imported file's MODULE qn
-        # (H) (repo.com.foo.util.Helper), but the registered class qn duplicates the
-        # (H) class segment (repo.com.foo.util.Helper.Helper); the raw target then
-        # (H) dead-ends because the project prefix also disables the fqn-map
-        # (H) fallback. Append the imported simple name when THAT is the registered
-        # (H) class. Registry-guarded, so targets that are already class qns and
-        # (H) external fqns pass through unchanged.
+        # A LOCAL Java import is recorded as the imported file's MODULE qn
+        # (repo.com.foo.util.Helper), but the registered class qn duplicates the
+        # class segment (repo.com.foo.util.Helper.Helper); the raw target then
+        # dead-ends because the project prefix also disables the fqn-map fallback.
+        # Append the imported simple name when THAT is the registered class.
+        # Registry-guarded, so targets already class qns and external fqns pass
+        # through unchanged.
         if (
             target in self.function_registry
             and self.function_registry[target] in _JAVA_TYPE_DECL_NODE_TYPES
@@ -145,7 +145,7 @@ class JavaTypeResolverMixin:
             return f"{resolved_base}{cs.JAVA_ARRAY_SUFFIX}"
 
         if cs.CHAR_ANGLE_OPEN in type_name and cs.CHAR_ANGLE_CLOSE in type_name:
-            base_type = type_name.split(cs.CHAR_ANGLE_OPEN)[0]
+            base_type = type_name.split(cs.CHAR_ANGLE_OPEN, maxsplit=1)[0]
             return self._resolve_java_type_name(base_type, module_qn)
 
         if module_qn in self.import_processor.import_mapping:
@@ -159,14 +159,14 @@ class JavaTypeResolverMixin:
         ] in [NodeType.CLASS, NodeType.INTERFACE]:
             return same_package_qn
 
-        # (H) A nested class referenced by its simple name from within the same file
-        # (H) (`RECORD_HELPER` typed by the nested `RecordHelper`): the qn is
-        # (H) `module.Outer.Nested`, not `module.Nested`, so the direct check above
-        # (H) misses it. Search only this module's trie subtree (bounded, not a
-        # (H) whole-registry scan) for a CLASS/INTERFACE whose last segment is the simple
-        # (H) name, and use it only when unambiguous so a same-named nested type elsewhere
-        # (H) cannot mis-resolve. The trie indexes by dot segment, so find_with_prefix
-        # (H) already excludes character-level prefix collisions.
+        # A nested class referenced by its simple name from within the same file
+        # (`RECORD_HELPER` typed by the nested `RecordHelper`): the qn is
+        # `module.Outer.Nested`, not `module.Nested`, so the direct check above
+        # misses it. Search only this module's trie subtree (bounded, not a
+        # whole-registry scan) for a CLASS/INTERFACE whose last segment is the simple
+        # name, used only when unambiguous so a same-named nested type elsewhere
+        # cannot mis-resolve. The trie indexes by dot segment, so find_with_prefix
+        # already excludes character-level prefix collisions.
         suffix = f"{cs.SEPARATOR_DOT}{type_name}"
         nested = [
             qn
@@ -230,10 +230,10 @@ class JavaTypeResolverMixin:
         target_class_name = parts[-1]
 
         file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is None or file_path not in self.ast_cache:
+        if file_path is None or not (entry := self.ast_cache.load(file_path)):
             return []
 
-        root_node, _ = self.ast_cache[file_path]
+        root_node, _ = entry
 
         return self._find_interfaces_using_ast(root_node, target_class_name, module_qn)
 

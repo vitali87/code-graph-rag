@@ -1,6 +1,6 @@
-# (H) L3 finding from the evals/ harness: instantiating a class (X()) is a call to
-# (H) X.__init__ at runtime, but cgr resolved the call to the class and dropped it.
-# (H) A constructor call must produce a CALLS edge to the class's __init__ method.
+# L3 finding from the evals/ harness: instantiating a class (X()) is a call to
+# X.__init__ at runtime, but cgr resolved the call to the class and dropped it.
+# A constructor call must produce a CALLS edge to the class's __init__ method.
 from __future__ import annotations
 
 from pathlib import Path
@@ -83,5 +83,5 @@ class TestConstructorCallResolution:
         self, tmp_path: Path
     ) -> None:
         calls = _calls(tmp_path)
-        # (H) Plain has no __init__; cgr must not emit a CALLS edge to the class node.
+        # Plain has no __init__; cgr must not emit a CALLS edge to the class node.
         assert ("proj.m.build_plain", "proj.m.Plain") not in calls, calls

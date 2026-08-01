@@ -4,9 +4,13 @@ import importlib.util
 from collections.abc import Sequence
 
 from codebase_rag.constants import (
+    MODULE_AST_GREP,
+    MODULE_PYMILVUS,
     MODULE_QDRANT_CLIENT,
     MODULE_TORCH,
     MODULE_TRANSFORMERS,
+    EmbeddingProvider,
+    VectorStoreBackend,
 )
 
 _dependency_cache: dict[str, bool] = {}
@@ -32,8 +36,31 @@ def has_qdrant_client() -> bool:
     return _check_dependency(MODULE_QDRANT_CLIENT)
 
 
+def has_pymilvus() -> bool:
+    return _check_dependency(MODULE_PYMILVUS)
+
+
+def has_ast_grep() -> bool:
+    return _check_dependency(MODULE_AST_GREP)
+
+
+def has_vector_store_dependencies() -> bool:
+    from codebase_rag.config import settings
+
+    backend = settings.VECTOR_STORE_BACKEND
+    if backend == VectorStoreBackend.MILVUS:
+        return has_pymilvus()
+    return has_qdrant_client()
+
+
 def has_semantic_dependencies() -> bool:
-    return has_qdrant_client() and has_torch() and has_transformers()
+    from codebase_rag.config import settings
+
+    # An OpenAI-compatible endpoint computes embeddings server-side, so
+    # only the vector store dependency is needed locally.
+    if settings.EMBEDDING_PROVIDER == EmbeddingProvider.OPENAI:
+        return has_vector_store_dependencies()
+    return has_vector_store_dependencies() and has_torch() and has_transformers()
 
 
 def check_dependencies(required_modules: Sequence[str]) -> bool:

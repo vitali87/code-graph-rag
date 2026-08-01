@@ -1,3 +1,5 @@
+"""Runtime configuration: settings, model providers, and environment loading."""
+
 from __future__ import annotations
 
 import os
@@ -44,6 +46,11 @@ API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
         "env_var": "AZURE_API_KEY",
         "url": "https://portal.azure.com/",
         "name": "Azure OpenAI",
+    },
+    cs.Provider.MINIMAX: {
+        "env_var": "MINIMAX_API_KEY",
+        "url": "https://platform.minimax.io/user-center/basic-information/interface-key",
+        "name": "MiniMax",
     },
 }
 
@@ -116,6 +123,7 @@ class ModelConfig:
         provider_env_keys = {
             cs.Provider.ANTHROPIC: cs.ENV_ANTHROPIC_API_KEY,
             cs.Provider.AZURE: cs.ENV_AZURE_API_KEY,
+            cs.Provider.MINIMAX: cs.ENV_MINIMAX_API_KEY,
         }
         env_key = provider_env_keys.get(provider_lower)
         if (
@@ -138,7 +146,7 @@ class ModelConfig:
 
 class AppConfig(BaseSettings):
     """
-    (H) All settings are loaded from environment variables or a .env file.
+    All settings are loaded from environment variables or a .env file.
     """
 
     model_config = SettingsConfigDict(
@@ -184,7 +192,15 @@ class AppConfig(BaseSettings):
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
-    CPP_FRONTEND: cs.CppFrontend = cs.CppFrontend.TREESITTER
+    # HYBRID degrades to pure tree-sitter when libclang or compile_commands.json
+    # is missing, so it is a safe default and strictly better (macros, includes,
+    # expansion calls) with one.
+    CPP_FRONTEND: cs.CppFrontend = cs.CppFrontend.HYBRID
+    # Opt-in Roslyn semantic layer for C#. Defaults to pure tree-sitter because
+    # HYBRID needs a dotnet SDK + a restorable .csproj/.sln and degrades without
+    # them. HYBRID augments (base-vs-interface, overload and extension binding,
+    # partial-class identity); tree-sitter stays the standalone-correct backbone.
+    CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.AUTO
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )
@@ -260,6 +276,25 @@ class AppConfig(BaseSettings):
     QDRANT_UPSERT_RETRIES: int = Field(default=3, gt=0)
     QDRANT_RETRY_BASE_DELAY: float = Field(default=0.5, gt=0)
     QDRANT_BATCH_SIZE: int = Field(default=50, gt=0)
+    VECTOR_STORE_BACKEND: cs.VectorStoreBackend = Field(
+        cs.VectorStoreBackend.QDRANT, validation_alias="CGR_VECTOR_STORE_BACKEND"
+    )
+    MILVUS_URI: str = "./.milvus_code_embeddings.db"
+    MILVUS_TOKEN: str | None = None
+    MILVUS_DB_NAME: str | None = None
+    MILVUS_COLLECTION_NAME: str = "code_embeddings"
+    MILVUS_VECTOR_DIM: int = 768
+    MILVUS_TOP_K: int = 5
+    MILVUS_CONSISTENCY_LEVEL: str = "Strong"
+    EMBEDDING_PROVIDER: cs.EmbeddingProvider = Field(
+        cs.EmbeddingProvider.UNIXCODER, validation_alias="CGR_EMBEDDING_PROVIDER"
+    )
+    OPENAI_EMBEDDING_BASE_URL: str = cs.OPENAI_DEFAULT_ENDPOINT
+    OPENAI_EMBEDDING_MODEL: str = cs.OPENAI_EMBEDDING_DEFAULT_MODEL
+    OPENAI_EMBEDDING_API_KEY: str | None = None
+    OPENAI_EMBEDDING_DIMENSIONS: int | None = Field(default=None, gt=0)
+    OPENAI_EMBEDDING_BATCH_SIZE: int = Field(default=128, gt=0)
+    OPENAI_EMBEDDING_TIMEOUT: float = Field(default=60.0, gt=0)
     EMBEDDING_MAX_LENGTH: int = 512
     EMBEDDING_PROGRESS_INTERVAL: int = 10
     SKIP_EMBEDDINGS: bool = Field(False, validation_alias="CGR_SKIP_EMBEDDINGS")
@@ -288,9 +323,17 @@ class AppConfig(BaseSettings):
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
 
-    MCP_HTTP_HOST: str = "0.0.0.0"
+    CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
+
+    # Loopback by default: the StreamableHTTP endpoint has no built-in
+    # auth, so exposing it beyond the host must be an explicit operator
+    # choice via MCP_HTTP_HOST (issue #808).
+    MCP_HTTP_HOST: str = "127.0.0.1"
     MCP_HTTP_PORT: int = 8080
     MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
+    # Bearer token for the HTTP MCP endpoint; unset means loopback-only
+    # (serve_http refuses a non-loopback bind without it).
+    MCP_HTTP_AUTH_TOKEN: str | None = None
 
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()
@@ -408,18 +451,16 @@ def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
 
 
 def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
-    # (H) Merged exclude/unignore set for indexing: root .gitignore (gitignored
-    # (H) paths are build artifacts / generated output whose symbols pollute the
-    # (H) graph and the dead-code report) plus .cgrignore, which stays the
-    # (H) authoritative cgr-specific channel. The runtime skip check gives
-    # (H) excludes precedence over unignores, so a negation can only override a
-    # (H) .gitignore exclude by CANCELLING the exact same pattern string here at
-    # (H) load time (`!generated/` drops `generated/`). .cgrignore excludes are
-    # (H) never cancelled by .gitignore negations.
-    # (H) ponytail: root .gitignore only, exact-string cancellation only; a
-    # (H) finer-grained negation (`!dist/keep.py` under excluded `dist/`) still
-    # (H) cannot rescue -- an ordered PathSpec soft layer in should_skip_path is
-    # (H) the upgrade path if real repos need it.
+    # Merged exclude/unignore set for indexing: root .gitignore (gitignored
+    # paths are build artifacts and generated output that pollute the graph and
+    # dead-code report) plus .cgrignore, the authoritative cgr channel. The skip
+    # check gives excludes precedence, so a negation overrides a .gitignore
+    # exclude only by CANCELLING the exact pattern (`!generated/` drops
+    # `generated/`); .cgrignore excludes are never cancelled.
+    # ponytail: root .gitignore only, exact-string cancellation only; a
+    # finer-grained negation (`!dist/keep.py` under excluded `dist/`) still
+    # cannot rescue -- an ordered PathSpec soft layer in should_skip_path is
+    # the upgrade path if real repos need it.
     cgr = _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
     git = _load_ignore_file(repo_path / GITIGNORE_FILENAME)
     negations = cgr.unignore | git.unignore

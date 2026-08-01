@@ -1,0 +1,31 @@
+# ast-grep design-pattern rules for C (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. C has no classic OO patterns, so these are heuristic
+# function-name idioms recognised via the declarator identifier.
+ast_grep_id: c
+extensions: [.c, .h]
+rules:
+  - id: constructor_like
+    message: "Constructor idiom: function name starts with create/make/new/alloc"
+    rule:
+      kind: function_definition
+      has:
+        kind: function_declarator
+        stopBy: end
+        has: { field: declarator, kind: identifier, regex: '^(create|make|new|alloc)' }
+  - id: initializer_like
+    message: "Initializer idiom: function name starts with init"
+    rule:
+      kind: function_definition
+      has:
+        kind: function_declarator
+        stopBy: end
+        has: { field: declarator, kind: identifier, regex: '^init' }
+  - id: destructor_like
+    message: "Destructor idiom: function name starts with free/destroy/release"
+    rule:
+      kind: function_definition
+      has:
+        kind: function_declarator
+        stopBy: end
+        has: { field: declarator, kind: identifier, regex: '^(free|destroy|release)' }

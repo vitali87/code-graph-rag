@@ -1,0 +1,56 @@
+# ast-grep design-pattern rules for Lua (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: lua
+extensions: [.lua]
+rules:
+  - id: metatable_oop
+    message: "Metatable OOP: setmetatable() wires a table to its class table"
+    rule:
+      kind: function_call
+      has: { kind: identifier, regex: '^setmetatable$' }
+  - id: index_metatable
+    message: "Class table: __index assigned for prototype-style inheritance"
+    rule:
+      kind: assignment_statement
+      has:
+        kind: dot_index_expression
+        has: { field: field, regex: '^__index$' }
+        stopBy: end
+  - id: factory_function
+    # Decide on the function NAME only. The old `stopBy: end` scanned the whole
+    # body, so a function merely calling `results.new(...)` was flagged. Match a
+    # bare name (`function create()`) or the last segment of a dotted name
+    # (`function results.new()`), never an identifier deep in the body.
+    message: "Factory function: name starts with new/create/make"
+    rule:
+      kind: function_declaration
+      has:
+        any:
+          - all:
+              - kind: identifier
+              - regex: '^(new|create|make)'
+          - all:
+              - kind: dot_index_expression
+              - has: { field: field, regex: '^(new|create|make)' }
+          # Colon syntax `function Class:new()` is the idiomatic Lua constructor;
+          # its name is a method_index_expression, not a dot_index_expression.
+          - all:
+              - kind: method_index_expression
+              - has: { field: method, regex: '^(new|create|make)' }
+  - id: module_return
+    # The idiomatic module export is the TOP-LEVEL trailing `return M`, not
+    # every `return x` inside a function; exclude returns nested in a function.
+    message: "Module pattern: chunk returns a single table variable"
+    rule:
+      kind: return_statement
+      all:
+        - has:
+            kind: expression_list
+            has: { kind: identifier, nthChild: 1 }
+        - not:
+            inside:
+              any:
+                - kind: function_declaration
+                - kind: function_definition
+              stopBy: end

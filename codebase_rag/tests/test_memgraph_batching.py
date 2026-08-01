@@ -20,11 +20,11 @@ def _create_ingestor_with_mocked_connection(
 def test_node_batch_flushes_when_threshold_reached() -> None:
     ingestor, cursor_mock = _create_ingestor_with_mocked_connection()
 
-    ingestor.ensure_node_batch("File", {"path": "a", "name": "a.txt"})
+    ingestor.ensure_node_batch("File", {"absolute_path": "/r/a", "name": "a.txt"})
     assert len(ingestor.node_buffer) == 1
     cursor_mock.execute.assert_not_called()
 
-    ingestor.ensure_node_batch("File", {"path": "b", "name": "b.txt"})
+    ingestor.ensure_node_batch("File", {"absolute_path": "/r/b", "name": "b.txt"})
 
     assert len(ingestor.node_buffer) == 0
     cursor_mock.execute.assert_called_once()

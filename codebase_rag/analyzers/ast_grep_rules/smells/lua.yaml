@@ -1,0 +1,35 @@
+# ast-grep code-smell rules for Lua (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: lua
+extensions: [.lua]
+rules:
+  - id: debug_print
+    message: "Leftover print() call looks like debug output"
+    rule:
+      kind: function_call
+      has: { kind: identifier, regex: '^print$' }
+  - id: global_assignment
+    # Require at least one bare-identifier target. A field/index write
+    # (`M.const = ...`, `t[k] = ...`) targets an existing table and never leaks
+    # a global, but a MIXED target (`leaked, M.field = 1, 2`) still leaks the
+    # bare `leaked`, so match on the presence of a bare identifier rather than
+    # the absence of an index write. Distinguishing a local reassignment from a
+    # true global still needs scope analysis ast-grep cannot do; that residual
+    # is a known recall-first ceiling.
+    message: "Assignment without local leaks a global"
+    rule:
+      kind: assignment_statement
+      all:
+        - not: { inside: { kind: variable_declaration } }
+        - has:
+            kind: variable_list
+            has: { kind: identifier }
+  - id: long_param_list
+    message: "Very long parameter list is hard to call correctly"
+    rule:
+      kind: parameters
+      has: { kind: identifier, nthChild: 8 }
+  - id: goto_statement
+    message: "goto makes control flow hard to follow"
+    rule:
+      kind: goto_statement

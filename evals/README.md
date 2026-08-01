@@ -340,6 +340,32 @@ multi-package fixtures whose cross-package edges are known by construction
 are correctly excluded. cgr resolves all of these; the eval stands as a
 regression guard for monorepo cross-package resolution.
 
+## Polyglot — cross-language ingestion integrity
+
+Every other eval indexes a single language (or a Python-dominant tree), so none
+checks what happens when cgr builds **one** graph over files from all 14
+supported languages at once — the mixed-language repo it is actually pointed at
+in the wild. This eval ingests a corpus spanning every `SupportedLanguage`, with
+a deliberate three-way basename collision (`shapes.rs` / `shapes.cpp` /
+`shapes.ts`), and grades cross-language integrity invariants that need no
+external oracle (`codebase_rag/tests/test_polyglot_eval.py`):
+
+1. every available language contributes at least one module and one definition
+   (no language silently dropped when mixed in),
+2. files that strip to the same module qn get **distinct** qns — the collision is
+   disambiguated, not overwritten under the `qualified_name` constraint (issue
+   #652 class),
+3. no `CALLS` / `INHERITS` / `OVERRIDES` / `IMPLEMENTS` / `INSTANTIATES` edge
+   crosses a language boundary (a Rust call resolving onto a Python node would be
+   cross-language qn bleed),
+4. the recorded graph is dangling/orphan free (the `create_and_run_updater`
+   audit), and the report is deterministic so the collision winner never churns.
+
+cgr satisfies all of these on a clean (full) build; the eval stands as a
+regression guard for polyglot ingestion. The collision winner on a full build is
+decided by sorted file order (`shapes.cpp` keeps the bare `…shapes`, `shapes.rs`
+and `shapes.ts` take the suffixed form).
+
 ## Static calls — function-level direct-call recall
 
 Grades cgr's `CALLS` graph at function granularity against an `ast` oracle that
@@ -843,6 +869,38 @@ recall. The residual is the diffuse receiver-type-inference tail every language 
 carries (implicit conversions such as `"" ~>`, deeply generic receivers), not a
 systematic gap.
 
+## Multi-language retrieval (C#) — C# CALLS vs Roslyn
+
+The same harness applied to C#: for each first-party C# symbol, which files call
+it. cgr's C# `CALLS` **and** `INSTANTIATES` edges, reduced to
+`(caller_file, callee_simple_name)`, are graded against invocation and
+object-creation sites extracted by Roslyn (the same oracle as the C# L1 structure
+eval), over the same first-party name universe. `INSTANTIATES` counts because
+`new T()` on a type with no explicit constructor has no ctor node to `CALL` — the
+oracle records the creation site by type name either way, and class names join
+the declared universe so a creation of a fully ctorless type is graded too.
+Roslyn's parser is independent of cgr's tree-sitter C# frontend.
+
+```bash
+uv run python -m evals.csharp_retrieval --target <csharp-sources>
+# opt-in Roslyn semantic frontend (issue #738):
+CSHARP_FRONTEND=hybrid uv run python -m evals.csharp_retrieval --target <csharp-sources>
+```
+
+Requires the `dotnet` toolchain on `PATH`; the eval exits cleanly if it is
+missing. Pinned by `codebase_rag/tests/test_csharp_retrieval_eval.py`, where
+cgr's C# call graph matches the Roslyn oracle on the fixture.
+
+**This is the eval that measures the #738 hybrid frontend's win.** On Polly
+(~600 files), precision is **1.0** in both modes and the hybrid frontend lifts
+recall **0.774 → 0.895** (F1 **0.873 → 0.945**): the location-keyed Roslyn call
+facts resolve the overloads, extension methods, and cross-project dispatch the
+tree-sitter heuristics cannot. The residual misses are dominated by BCL
+name collisions the simple-name universe cannot distinguish (`list.Add` graded
+against a first-party `Add`), plus call sites in projects outside the target's
+solution file (`samples/`, `bench/`), which the frontend deliberately degrades
+to heuristics for.
+
 ## Semantic search — query to function relevance
 
 cgr's semantic search embeds each function's source and retrieves by cosine
@@ -967,6 +1025,21 @@ uv run python -m evals.php_l1 --target /path/to/php/repo --project-name myrepo
 - **cgr side** (`cgr_graph.extract_cgr_php_nodes`), **score** (`score.score_node_kinds`), output to `php_scores.csv` / `php_diff.json`.
 
 Validated on `apache/thrift`'s PHP (`lib/php`): 1295 cgr nodes vs 1295 oracle nodes — exact, all kinds 1.0. No cgr gap found.
+
+## L1 (C#) — structure against the Roslyn syntax API
+
+The ninth native oracle is C#, checked against Roslyn's own syntax parser (independent of cgr's tree-sitter frontend and of the opt-in Roslyn semantic frontend).
+
+```bash
+uv run python -m evals.csharp_l1 --target /path/to/csharp/repo --project-name myrepo
+```
+
+- **Oracle** (`evals/oracles/csharp_oracle/`): a .NET program parsing every `.cs` file with `CSharpSyntaxTree` and emitting nodes (`Class`/`Interface`/`Enum`/`Method`/`Function`), containment (`DEFINES`, `DEFINES_METHOD`), and inheritance name-edges. Conventions match cgr's model: interface bases are `INHERITS`, class-declared interface bases are `IMPLEMENTS`, top-level script functions anchor to the file `Module`, and `#if`/`#elif`/`#else` directives are neutralized so every branch parses (cgr has no preprocessor and indexes all branches).
+- **Phantom-member suppression** (issue #768): an expression-bodied member whose body is split across `#if`/`#else` has two bodies once the directives are neutralized, which is ill-formed C#; Roslyn ends the member at the first branch's `;` and error-recovers the second branch's expression as a phantom member declaration. Members carrying parse diagnostics are dropped — real repos compile, so genuine members are diagnostic-free. Calls inside every branch still count (the walk visits the recovered expression's descendants).
+- **Known residual**: on such split members the two parsers' recoveries legitimately disagree — tree-sitter stretches the member's span across both branches and can swallow the next member's attribute into the garbled region. On Polly this leaves 1 member start-line disagreement and 2 span mismatches out of 6,551 nodes; neither view of the ill-formed neutralized source is "correct", so this is documented rather than bent to either parser.
+- **cgr side** (`cgr_graph.extract_cgr_csharp_graph`), output to `csharp_scores.csv` / `csharp_diff.json`.
+
+Validated on `App-vNext/Polly` (~6,550 nodes): nodes/DEFINES/DEFINES_METHOD 0.9998, INHERITS and IMPLEMENTS exact 1.0 (224 and 147 edges, same-scope arity pairs included per #764), spans 0.9997. The residual is exactly the documented preprocessor-split artifact.
 
 ## Latest results (target: `codebase_rag`)
 

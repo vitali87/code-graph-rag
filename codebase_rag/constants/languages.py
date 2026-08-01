@@ -1,4 +1,4 @@
-# (H) Supported languages, file extensions, metadata, and grammar modules.
+# Supported languages, file extensions, metadata, and grammar modules.
 
 from enum import StrEnum
 from typing import NamedTuple
@@ -17,11 +17,15 @@ BINARY_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
-# (H) Source file extensions by language
+# Source file extensions by language
 EXT_PY = ".py"
 EXT_JS = ".js"
 EXT_JSX = ".jsx"
+EXT_MJS = ".mjs"
+EXT_CJS = ".cjs"
 EXT_TS = ".ts"
+EXT_MTS = ".mts"
+EXT_CTS = ".cts"
 EXT_TSX = ".tsx"
 EXT_RS = ".rs"
 EXT_GO = ".go"
@@ -42,13 +46,24 @@ EXT_CCM = ".ccm"
 EXT_C = ".c"
 EXT_PHP = ".php"
 EXT_LUA = ".lua"
+EXT_CS = ".cs"
+EXT_DART = ".dart"
 
-# (H) File extension tuples by language
+# File extension tuples by language
 PY_EXTENSIONS = (EXT_PY,)
-JS_EXTENSIONS = (EXT_JS, EXT_JSX)
-TS_EXTENSIONS = (EXT_TS,)
+JS_EXTENSIONS = (EXT_JS, EXT_JSX, EXT_MJS, EXT_CJS)
+TS_EXTENSIONS = (EXT_TS, EXT_MTS, EXT_CTS)
 TSX_EXTENSIONS = (EXT_TSX,)
-JS_TS_ALL_EXTENSIONS = (EXT_JS, EXT_JSX, EXT_TS, EXT_TSX)
+JS_TS_ALL_EXTENSIONS = (
+    EXT_JS,
+    EXT_JSX,
+    EXT_MJS,
+    EXT_CJS,
+    EXT_TS,
+    EXT_MTS,
+    EXT_CTS,
+    EXT_TSX,
+)
 RS_EXTENSIONS = (EXT_RS,)
 GO_EXTENSIONS = (EXT_GO,)
 SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
@@ -66,16 +81,22 @@ CPP_EXTENSIONS = (
     EXT_CPPM,
     EXT_CCM,
 )
+# Translation-unit sources: only these can define a linkable OS entry point;
+# headers and C++ module interface files never are the entry unit.
+C_CPP_SOURCE_EXTENSIONS = (EXT_C, EXT_CPP, EXT_CC, EXT_CXX)
 PHP_EXTENSIONS = (EXT_PHP,)
 LUA_EXTENSIONS = (EXT_LUA,)
+CS_EXTENSIONS = (EXT_CS,)
+DART_EXTENSIONS = (EXT_DART,)
 
-# (H) Package indicator files
+# Package indicator files
 PKG_INIT_PY = "__init__.py"
 PKG_CARGO_TOML = "Cargo.toml"
 PKG_CMAKE_LISTS = "CMakeLists.txt"
 PKG_MAKEFILE = "Makefile"
 PKG_VCXPROJ_GLOB = "*.vcxproj"
 PKG_CONANFILE = "conanfile.txt"
+PKG_PUBSPEC_YAML = "pubspec.yaml"
 
 
 class CppFrontend(StrEnum):
@@ -84,19 +105,34 @@ class CppFrontend(StrEnum):
     HYBRID = "hybrid"
 
 
-# (H) JS/TS import specifier schemes that name genuinely external code (node
-# (H) builtins, package registries, URLs). A specifier with any OTHER scheme
-# (H) (`ext:` deno-runtime aliases, bundler virtual modules) points at first-party
-# (H) code under a non-file-path name, so its unresolved calls defer to the trie.
+class CSharpFrontend(StrEnum):
+    # AUTO resolves at run time: HYBRID where a dotnet toolchain is on PATH,
+    # TREESITTER otherwise (resolve_csharp_frontend). The parser fingerprint
+    # records the RESOLVED mode, so dotnet and non-dotnet graphs never share
+    # an identity.
+    AUTO = "auto"
+    TREESITTER = "treesitter"
+    ROSLYN = "roslyn"
+    HYBRID = "hybrid"
+
+
+# JS/TS import specifier schemes naming genuinely external code (node
+# builtins, registries, URLs). Any OTHER scheme (`ext:` deno aliases,
+# bundler virtual modules) points at first-party code under a non-file-path
+# name, so its unresolved calls defer to the trie.
 JS_EXTERNAL_IMPORT_SCHEMES: frozenset[str] = frozenset(
     {"node", "npm", "jsr", "bun", "http", "https", "data", "file", "blob"}
 )
-# (H) Module file extensions stripped when turning a tsconfig `paths` target into a
-# (H) module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
-# (H) compound suffixes are handled before the bare `.ts`.
+# Module extensions stripped when turning a tsconfig `paths` target into a
+# module qn (`src/util.ts` -> `src/util`), longest first so `.d.ts`-like
+# suffixes match before the bare `.ts`.
 JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
+    ".d.mts",
+    ".d.cts",
     ".d.ts",
     ".tsx",
+    ".mts",
+    ".cts",
     ".ts",
     ".jsx",
     ".mjs",
@@ -108,13 +144,61 @@ TSCONFIG_FILENAMES: tuple[str, ...] = (
     "tsconfig.base.json",
     "jsconfig.json",
 )
-# (H) When searching subdirectories for tsconfig files (monorepo `frontend/`,
-# (H) `packages/*`), skip dependency/build/VCS trees: their tsconfigs carry
-# (H) unrelated aliases and there can be thousands of them under node_modules.
+# When searching subdirectories for tsconfig files (monorepo `frontend/`,
+# `packages/*`), skip dependency/build/VCS trees: their tsconfigs carry
+# unrelated aliases and node_modules holds thousands of them.
 TS_ALIAS_SKIP_DIRS: frozenset[str] = frozenset(
     {"node_modules", "dist", "build", "out", ".git"}
 )
+# Contract files that declare service operations (issue #912): OpenAPI specs
+# in JSON or YAML, and protobuf service definitions. The markers gate parsing
+# so the JSON and YAML a repo is otherwise full of is never read as a spec.
+CONTRACT_JSON_EXTENSION = ".json"
+CONTRACT_SPEC_EXTENSIONS: frozenset[str] = frozenset({".json", ".yaml", ".yml"})
+CONTRACT_PROTO_EXTENSION = ".proto"
+CONTRACT_SPEC_VERSION_KEYS: tuple[str, ...] = ("openapi", "swagger")
+CONTRACT_SPEC_MARKERS: tuple[str, ...] = ("openapi", "swagger")
+CONTRACT_PATHS_KEY = "paths"
+# The keys under an OpenAPI path item that name an operation; every other key
+# there (parameters, servers, summary) describes the path, not an operation.
+CONTRACT_OPERATION_METHODS: frozenset[str] = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+)
+CONTRACT_OPERATION_ID_KEY = "operationId"
+# The mount a spec states its paths are relative to: `basePath` in Swagger 2,
+# the path component of each server URL in OpenAPI 3.
+CONTRACT_BASE_PATH_KEY = "basePath"
+CONTRACT_SERVERS_KEY = "servers"
+CONTRACT_SERVER_URL_KEY = "url"
+# A spec is a document, not a data dump; anything larger is not one, and the
+# cap keeps the walk from parsing a huge generated file.
+CONTRACT_MAX_FILE_BYTES = 8 * 1024 * 1024
+
 JS_INDEX_STEM = "index"
+# package.json fields read when mapping a workspace package name to the source
+# file a specifier names (issue #945). `exports` is the modern declaration and
+# may nest condition objects and `*` patterns; the entry keys are the legacy
+# root-only fallbacks.
+JS_PACKAGE_NAME_KEY = "name"
+JS_PACKAGE_EXPORTS_KEY = "exports"
+JS_PACKAGE_ENTRY_KEYS: tuple[str, ...] = ("main", "module", "types")
+JS_EXPORTS_WILDCARD = "*"
+# The conditions of an `exports` entry an ESM import is allowed to select.
+# Which of them wins is decided by the manifest, which lists them in the
+# order it wants them tried; these sets only say which keys are on offer to
+# a request this analysis can make. `require` is absent on purpose: the two
+# module systems can name different modules, so a request never selects the
+# other system's. `types` is absent too: it names the declaration module,
+# which no runtime selects and which therefore is not what a call graph
+# follows.
+JS_EXPORT_CONDITIONS: frozenset[str] = frozenset({"import", "module", "default"})
+# The same map read from the CommonJS side.
+JS_REQUIRE_CONDITIONS: frozenset[str] = frozenset({"require", "default"})
+# A manifest points at the PUBLISHED build, which is never indexed; dropping
+# one of these leading directories reaches the source it was built from
+# (`./dist/src/a.js` -> `src/a.ts`).
+JS_BUILD_OUTPUT_DIRS: frozenset[str] = frozenset({"dist", "build", "out", "lib"})
+JS_SOURCE_DIR = "src"
 TS_COMPILER_OPTIONS_KEY = "compilerOptions"
 TS_PATHS_KEY = "paths"
 TS_BASE_URL_KEY = "baseUrl"
@@ -137,6 +221,8 @@ class SupportedLanguage(StrEnum):
     CPP = "cpp"
     PHP = "php"
     LUA = "lua"
+    CSHARP = "c_sharp"
+    DART = "dart"
 
 
 class LanguageStatus(StrEnum):
@@ -211,21 +297,31 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "Classes, interfaces, traits, enums, namespaces, PHP 8 attributes",
         "PHP",
     ),
+    SupportedLanguage.CSHARP: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Namespaces (block and file-scoped), classes/structs/records/interfaces/enums, generics, inheritance/interfaces/overrides, typed call resolution with overloads, using directives",
+        "C#",
+    ),
+    SupportedLanguage.DART: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Classes, mixins, extensions, enhanced enums, factory/named constructors, Flutter widgets, package/relative/dart: imports, part directives, pubspec dependencies",
+        "Dart",
+    ),
 }
 
-# (H) Index file names
+# Index file names
 INDEX_INIT = "__init__"
 INDEX_INDEX = "index"
 INDEX_MOD = "mod"
 INDEX_LUA_INIT = "init"
 
-# (H) File stems whose module is importable through the CONTAINING directory's
-# (H) name: pkg/__init__.py, shared/index.js, utils/mod.rs, storage/init.lua.
+# File stems whose module is importable through the CONTAINING directory's
+# name: pkg/__init__.py, shared/index.js, utils/mod.rs, storage/init.lua.
 MODULE_INDEX_FILE_STEMS = frozenset(
     {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
 
-# (H) Parser loader paths and args
+# Parser loader paths and args
 GRAMMARS_DIR = "grammars"
 TREE_SITTER_PREFIX = "tree-sitter-"
 TREE_SITTER_MODULE_PREFIX = "tree_sitter_"
@@ -251,13 +347,25 @@ class TreeSitterModule(StrEnum):
     CPP = "tree_sitter_cpp"
     LUA = "tree_sitter_lua"
     PHP = "tree_sitter_php"
+    CSHARP = "tree_sitter_c_sharp"
+    DART = "tree_sitter_dart"
 
 
-# (H) Patterns to detect at repo root and offer as exclude candidates (user selects which to exclude)
+# Directory names with a context-dependent ignore: `bin` is build output
+# everywhere EXCEPT Cargo's first-party src/bin/ binary layout.
+DIR_BIN = "bin"
+DIR_SRC = "src"
+
+# Patterns detected at repo root and offered as exclude candidates (user picks which)
 IGNORE_PATTERNS = frozenset(
     {
         ".cache",
         ".claude",
+        # Android NDK per-ABI CMake build cache; ships compiler-probe
+        # sources (CMakeCCompilerId.c) that index as project code.
+        ".cxx",
+        # Dart/Flutter tool cache (package_config, generated plugin code).
+        ".dart_tool",
         ".eclipse",
         ".eggs",
         ".env",
@@ -305,5 +413,5 @@ IGNORE_SUFFIXES = frozenset(
     {".tmp", "~", ".pyc", ".pyo", ".o", ".a", ".so", ".dll", ".class"}
 )
 
-# (H) pathspec style for .cgrignore / --exclude patterns (#495).
+# pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"

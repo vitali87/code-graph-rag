@@ -1,3 +1,5 @@
+"""Command-line entry point wiring cgr subcommands to their handlers."""
+
 import asyncio
 import json
 import time
@@ -7,6 +9,7 @@ from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
 
+import click
 import typer
 from loguru import logger
 from rich.console import Console
@@ -17,6 +20,7 @@ from . import cgr_state
 from . import cli_help as ch
 from . import constants as cs
 from . import logs as ls
+from .capture import CaptureSelection, resolve_capture, split_spec
 from .config import load_ignore_patterns, settings
 from .graph_updater import GraphUpdater
 from .main import (
@@ -42,13 +46,14 @@ from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .types_defs import DeadCodeConfig, DeadCodeRow, ResultRow
 from .utils.path_utils import derive_project_name, resolve_repo_path
-from .vector_store import delete_project_embeddings
+from .vector_store import clear_all_embeddings, delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
 
 app = typer.Typer(
     name=cs.PACKAGE_NAME,
     help=ch.APP_DESCRIPTION,
+    epilog=ch.APP_EPILOG,
     no_args_is_help=True,
     add_completion=False,
 )
@@ -101,7 +106,7 @@ def _global_options(
         False,
         "--quiet",
         "-q",
-        help="Suppress non-essential output (progress messages, banners, informational logs).",
+        help=ch.HELP_QUIET,
         is_eager=True,
     ),
 ) -> None:
@@ -130,6 +135,7 @@ def _sync_workspace(
     config: WorkspaceConfig,
     batch_size: int,
     exclude: list[str] | None,
+    capture: list[str] | None = None,
     skip_embeddings: bool | None = None,
 ) -> None:
     total = len(config.repos)
@@ -163,6 +169,7 @@ def _sync_workspace(
             batch_size=batch_size,
             exclude=exclude,
             interactive_setup=False,
+            capture=capture,
             skip_embeddings=skip_embeddings,
         )
 
@@ -186,6 +193,12 @@ def _maybe_start_stack() -> None:
         raise typer.Exit(1) from e
 
 
+def _capture_selection(capture: list[str] | None) -> CaptureSelection:
+    # Env CGR_CAPTURE is the sticky baseline; --capture tokens are appended so
+    # a single run can override it (later tokens win in the resolver).
+    return resolve_capture([*split_spec(settings.CGR_CAPTURE), *(capture or [])])
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -194,6 +207,7 @@ def _run_graph_sync(
     interactive_setup: bool,
     clean: bool = False,
     output: str | None = None,
+    capture: list[str] | None = None,
     skip_embeddings: bool | None = None,
 ) -> None:
     cgrignore = load_ignore_patterns(repo)
@@ -211,6 +225,9 @@ def _run_graph_sync(
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
             ingestor.clean_database()
             _delete_hash_cache(repo)
+            # Stale vectors keyed by recycled node ids would crowd out live
+            # hits and can map onto unrelated nodes in the rebuilt graph.
+            clear_all_embeddings()
 
         ingestor.ensure_constraints()
 
@@ -224,6 +241,7 @@ def _run_graph_sync(
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
             project_name=project_name,
+            capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
         updater.run()
@@ -298,7 +316,12 @@ def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -
     delete_project_embeddings(project_name, node_ids)
 
 
-@app.command(help=ch.CMD_START)
+@app.command(
+    help=ch.CMD_START,
+    short_help=ch.CMD_START,
+    epilog=ch.EXAMPLES_START,
+    rich_help_panel=ch.PANEL_USE,
+)
 def start(
     repo_path: str | None = typer.Option(
         None, "--repo-path", help=ch.HELP_REPO_PATH_RETRIEVAL
@@ -354,6 +377,11 @@ def start(
         None,
         "--exclude",
         help=ch.HELP_EXCLUDE_PATTERNS,
+    ),
+    capture: list[str] | None = typer.Option(
+        None,
+        "--capture",
+        help=ch.HELP_CAPTURE,
     ),
     interactive_setup: bool = typer.Option(
         False,
@@ -427,6 +455,7 @@ def start(
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
             ingestor.clean_database()
 
+        clear_all_embeddings()
         _delete_hash_cache(repo_to_clean)
         _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
         return
@@ -450,6 +479,7 @@ def start(
             interactive_setup=interactive_setup,
             clean=clean,
             output=output,
+            capture=capture,
             skip_embeddings=no_embeddings or None,
         )
         _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
@@ -466,6 +496,7 @@ def start(
                 workspace_config,
                 effective_batch_size,
                 exclude,
+                capture=capture,
                 skip_embeddings=no_embeddings or None,
             )
             sync_message = cs.MSG_SYNCING_WORKSPACE.format(
@@ -479,6 +510,7 @@ def start(
                 batch_size=effective_batch_size,
                 exclude=exclude,
                 interactive_setup=interactive_setup,
+                capture=capture,
                 skip_embeddings=no_embeddings or None,
             )
 
@@ -519,7 +551,12 @@ def start(
         )
 
 
-@app.command(help=ch.CMD_INDEX)
+@app.command(
+    help=ch.CMD_INDEX,
+    short_help=ch.CMD_INDEX,
+    epilog=ch.EXAMPLES_INDEX,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
 def index(
     repo_path: str | None = typer.Option(
         None, "--repo-path", help=ch.HELP_REPO_PATH_INDEX
@@ -539,6 +576,11 @@ def index(
         None,
         "--exclude",
         help=ch.HELP_EXCLUDE_PATTERNS,
+    ),
+    capture: list[str] | None = typer.Option(
+        None,
+        "--capture",
+        help=ch.HELP_CAPTURE,
     ),
     interactive_setup: bool = typer.Option(
         False,
@@ -573,6 +615,7 @@ def index(
             queries=queries,
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
+            capture=_capture_selection(capture),
         )
 
         updater.run()
@@ -586,7 +629,12 @@ def index(
         raise typer.Exit(1) from e
 
 
-@app.command(help=ch.CMD_EXPORT)
+@app.command(
+    help=ch.CMD_EXPORT,
+    short_help=ch.CMD_EXPORT,
+    epilog=ch.EXAMPLES_EXPORT,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
 def export(
     output: str = typer.Option(..., "-o", "--output", help=ch.HELP_OUTPUT_PATH),
     format_json: bool = typer.Option(
@@ -622,7 +670,12 @@ def export(
         raise typer.Exit(1) from e
 
 
-@app.command(help=ch.CMD_OPTIMIZE)
+@app.command(
+    help=ch.CMD_OPTIMIZE,
+    short_help=ch.CMD_OPTIMIZE,
+    epilog=ch.EXAMPLES_OPTIMIZE,
+    rich_help_panel=ch.PANEL_USE,
+)
 def optimize(
     language: str = typer.Argument(
         ...,
@@ -689,7 +742,13 @@ def optimize(
         )
 
 
-@app.command(name=ch.CLICommandName.MCP_SERVER, help=ch.CMD_MCP_SERVER)
+@app.command(
+    name=ch.CLICommandName.MCP_SERVER,
+    help=ch.CMD_MCP_SERVER,
+    short_help=ch.CMD_MCP_SERVER,
+    epilog=ch.EXAMPLES_MCP_SERVER,
+    rich_help_panel=ch.PANEL_USE,
+)
 def mcp_server(
     transport: cs.MCPTransport = typer.Option(
         cs.MCPTransport.STDIO, help=ch.HELP_MCP_TRANSPORT
@@ -721,7 +780,13 @@ def mcp_server(
         )
 
 
-@app.command(name=ch.CLICommandName.GRAPH_LOADER, help=ch.CMD_GRAPH_LOADER)
+@app.command(
+    name=ch.CLICommandName.GRAPH_LOADER,
+    help=ch.CMD_GRAPH_LOADER,
+    short_help=ch.CMD_GRAPH_LOADER,
+    epilog=ch.EXAMPLES_GRAPH_LOADER,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
 def graph_loader_command(
     graph_file: str = typer.Argument(..., help=ch.HELP_GRAPH_FILE),
 ) -> None:
@@ -753,34 +818,102 @@ def graph_loader_command(
         raise typer.Exit(1) from e
 
 
+_DELEGATED_GROUP_CONTEXT = {
+    "allow_extra_args": True,
+    "allow_interspersed_args": False,
+    "ignore_unknown_options": True,
+}
+
+
+def _run_delegated_group(group: click.Group, ctx: typer.Context) -> None:
+    group.main(
+        args=list(ctx.args),
+        prog_name=ctx.command_path,
+        standalone_mode=False,
+    )
+
+
 @app.command(
     name=ch.CLICommandName.LANGUAGE,
     help=ch.CMD_LANGUAGE,
-    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+    short_help=ch.CMD_LANGUAGE,
+    add_help_option=False,
+    context_settings=_DELEGATED_GROUP_CONTEXT,
+    rich_help_panel=ch.PANEL_MANAGE,
 )
 def language_command(ctx: typer.Context) -> None:
-    language_cli(ctx.args, standalone_mode=False)
+    _run_delegated_group(language_cli, ctx)
 
 
 @app.command(
     name=ch.CLICommandName.DAEMON,
     help=ch.CMD_DAEMON,
-    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+    short_help=ch.CMD_DAEMON,
+    add_help_option=False,
+    context_settings=_DELEGATED_GROUP_CONTEXT,
+    rich_help_panel=ch.PANEL_MANAGE,
 )
 def daemon_command(ctx: typer.Context) -> None:
-    daemon_cli(ctx.args, standalone_mode=False)
+    _run_delegated_group(daemon_cli, ctx)
 
 
 @app.command(
     name=ch.CLICommandName.WORKSPACE,
     help=ch.CMD_WORKSPACE,
-    context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+    short_help=ch.CMD_WORKSPACE,
+    add_help_option=False,
+    context_settings=_DELEGATED_GROUP_CONTEXT,
+    rich_help_panel=ch.PANEL_MANAGE,
 )
 def workspace_command(ctx: typer.Context) -> None:
-    workspace_cli(ctx.args, standalone_mode=False)
+    _run_delegated_group(workspace_cli, ctx)
 
 
-@app.command(name=ch.CLICommandName.STOP, help=ch.CMD_STOP)
+@app.command(
+    name=ch.CLICommandName.HELP,
+    help=ch.CMD_HELP,
+    short_help=ch.CMD_HELP,
+    epilog=ch.EXAMPLES_HELP,
+    rich_help_panel=ch.PANEL_HELP,
+)
+def help_command(
+    ctx: typer.Context,
+    command: list[str] | None = typer.Argument(None, help=ch.HELP_COMMAND),
+) -> None:
+    root_context = ctx.find_root()
+    requested = command or []
+    if not requested:
+        typer.echo(root_context.get_help())
+        return
+
+    root_command = root_context.command
+    command_name, *command_args = requested
+    if not isinstance(root_command, click.Group):
+        raise typer.Exit(1)
+
+    target = root_command.get_command(root_context, command_name)
+    if target is None:
+        typer.echo(f"cgr: '{command_name}' is not a cgr command.", err=True)
+        typer.echo("See 'cgr help'.", err=True)
+        raise typer.Exit(2)
+
+    try:
+        target.main(
+            args=[*command_args, "--help"],
+            prog_name=f"{root_context.command_path} {command_name}",
+            standalone_mode=False,
+        )
+    except click.ClickException as error:
+        error.show()
+        raise typer.Exit(error.exit_code) from error
+
+
+@app.command(
+    name=ch.CLICommandName.STOP,
+    help=ch.CMD_STOP,
+    short_help=ch.CMD_STOP,
+    rich_help_panel=ch.PANEL_MANAGE,
+)
 def stop_command() -> None:
     mgr = StackManager()
     try:
@@ -791,7 +924,12 @@ def stop_command() -> None:
     _info(style("stack stopped", cs.Color.GREEN))
 
 
-@app.command(name=ch.CLICommandName.STATUS, help=ch.CMD_STATUS)
+@app.command(
+    name=ch.CLICommandName.STATUS,
+    help=ch.CMD_STATUS,
+    short_help=ch.CMD_STATUS,
+    rich_help_panel=ch.PANEL_MANAGE,
+)
 def status_command() -> None:
     status = StackManager().status()
     app_context.console.print(
@@ -809,7 +947,12 @@ def status_command() -> None:
         app_context.console.print(f"  - {project}: last sync {ts}")
 
 
-@app.command(name=ch.CLICommandName.DOCTOR, help=ch.CMD_DOCTOR)
+@app.command(
+    name=ch.CLICommandName.DOCTOR,
+    help=ch.CMD_DOCTOR,
+    short_help=ch.CMD_DOCTOR,
+    rich_help_panel=ch.PANEL_MANAGE,
+)
 def doctor() -> None:
     checker = HealthChecker()
     results = checker.run_all_checks()
@@ -885,7 +1028,12 @@ def _build_stats_table(
     return table
 
 
-@app.command(name=ch.CLICommandName.STATS, help=ch.CMD_STATS)
+@app.command(
+    name=ch.CLICommandName.STATS,
+    help=ch.CMD_STATS,
+    short_help=ch.CMD_STATS,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
 def stats() -> None:
     from .cypher_queries import (
         CYPHER_STATS_NODE_COUNTS,
@@ -943,9 +1091,8 @@ def _dead_code_config(
     entry_points: list[str],
     decorator_roots: list[str],
 ) -> DeadCodeConfig:
-    # (H) test_patterns is always set: with tests included it makes test
-    # (H) functions roots; with tests excluded it filters test modules out of the
-    # (H) module-load roots so test-only code is not kept alive.
+    # test_patterns is always set: included tests become roots; excluded, it
+    # filters test modules out of module-load roots so test-only code stays dead.
     return DeadCodeConfig(
         include_tests=include_tests,
         include_classes=include_classes,
@@ -959,10 +1106,9 @@ def _dead_code_config(
 
 
 def _filter_excluded_rows(rows: list[ResultRow], exclude: list[str]) -> list[ResultRow]:
-    # (H) Drop candidates whose file path matches an exclude glob (generated dirs
-    # (H) like client/core or *.gen.* have no in-repo caller, so every symbol
-    # (H) reports as dead). fnmatch treats '*' as spanning '/', so '*client/core*'
-    # (H) matches at any depth.
+    # Drop candidates whose file path matches an exclude glob (generated dirs
+    # like client/core or *.gen.* have no in-repo caller, so every symbol reports
+    # as dead). fnmatch's '*' spans '/', so '*client/core*' matches at any depth.
     if not exclude:
         return rows
     return [
@@ -1050,7 +1196,13 @@ def _emit_dead_code(
     )
 
 
-@app.command(name=ch.CLICommandName.DEAD_CODE, help=ch.CMD_DEAD_CODE)
+@app.command(
+    name=ch.CLICommandName.DEAD_CODE,
+    help=ch.CMD_DEAD_CODE,
+    short_help=ch.CMD_DEAD_CODE,
+    epilog=ch.EXAMPLES_DEAD_CODE,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
 def dead_code(
     project_name: str | None = typer.Option(
         None, "--project-name", "-n", help=ch.HELP_DEADCODE_PROJECT_NAME
@@ -1129,7 +1281,13 @@ def dead_code(
         raise typer.Exit(1)
 
 
-@app.command(name=ch.CLICommandName.DELETE_PROJECT, help=ch.CMD_DELETE_PROJECT)
+@app.command(
+    name=ch.CLICommandName.DELETE_PROJECT,
+    help=ch.CMD_DELETE_PROJECT,
+    short_help=ch.CMD_DELETE_PROJECT,
+    epilog=ch.EXAMPLES_DELETE_PROJECT,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
 def delete_project(
     name: str = typer.Option(
         ...,

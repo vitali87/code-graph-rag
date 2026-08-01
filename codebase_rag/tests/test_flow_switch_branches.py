@@ -1,0 +1,608 @@
+# Switch-family path-sensitivity for the lean non-Python flow walk: Go
+# switch/type-switch/select and Rust match arms are EXCLUSIVE (no
+# fallthrough), while C-family switches (JS/TS, Java colon groups, C++)
+# may fall through, so each case entry unions the previous case's exit.
+# MAY semantics throughout: a kill counts only when it happens on every
+# path through the statement.
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+from codebase_rag import constants as cs
+from codebase_rag.capture import resolve_capture
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+
+FLOWS_TO = cs.RelationshipType.FLOWS_TO.value
+_CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
+
+
+def _run_flow(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
+    parsers, queries = load_parsers()
+    for rel, content in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        capture=_CAPTURE_IO,
+    ).run()
+    return {
+        (c.args[0][2], c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == FLOWS_TO
+    }
+
+
+def test_python_match_arm_kill_does_not_erase_other_arms(tmp_path: Path) -> None:
+    # Python's own match statement needs the same arm isolation the other
+    # languages' switches got: a kill in one case must not erase the
+    # other arms' (or the no-match path's) taint.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case 1:\n"
+            "            s = 'clean'\n"
+            "        case 2:\n"
+            "            pass\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_python_match_kill_on_every_arm_with_wildcard_kills(tmp_path: Path) -> None:
+    # An unguarded `case _` always matches, so a kill on every arm
+    # including it kills on every path: no edge.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case 1:\n"
+            "            s = 'clean'\n"
+            "        case _:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_python_match_bare_capture_is_irrefutable(tmp_path: Path) -> None:
+    # `case other:` is a CAPTURE pattern (a bare name binds, it never
+    # compares), so it always matches like `case _`: a kill on every arm
+    # including it kills on every path.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case 1:\n"
+            "            s = 'clean'\n"
+            "        case other:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_python_match_as_wildcard_is_irrefutable(tmp_path: Path) -> None:
+    # `case _ as y:` wraps an irrefutable pattern: still always matches.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case _ as y:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_python_match_or_pattern_with_wildcard_is_irrefutable(
+    tmp_path: Path,
+) -> None:
+    # `case 1 | _:` covers everything through its wildcard alternative
+    # (only the LAST alternative may legally be irrefutable).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case 1 | _:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_python_match_or_pattern_with_capture_is_irrefutable(
+    tmp_path: Path,
+) -> None:
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case 1 | other:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_python_match_refutable_or_pattern_keeps_skip_path(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case 1 | 2:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_python_match_refutable_patterns_keep_skip_path(tmp_path: Path) -> None:
+    # A dotted value pattern (`case Color.RED`) and a sequence pattern
+    # compare rather than bind: the no-match path survives their kills.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case [a, b]:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_python_match_guarded_wildcard_keeps_skip_path(tmp_path: Path) -> None:
+    # `case _ if cond` can fail its guard, so the no-match path survives
+    # even when every listed arm kills.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x, cond):\n"
+            "    s = os.getenv('SECRET')\n"
+            "    match x:\n"
+            "        case _ if cond:\n"
+            "            s = 'clean'\n"
+            "    print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_python_match_arms_are_exclusive(tmp_path: Path) -> None:
+    # Taint bound in one arm must not reach a sink in another arm.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def work(x):\n"
+            "    s = 'clean'\n"
+            "    match x:\n"
+            "        case 1:\n"
+            "            s = os.getenv('SECRET')\n"
+            "        case 2:\n"
+            "            print(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_go_switch_case_kill_does_not_erase_other_arms(tmp_path: Path) -> None:
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func work(x int) {\n"
+            '\ts := os.Getenv("SECRET")\n'
+            "\tswitch x {\n"
+            "\tcase 1:\n"
+            '\t\ts = "clean"\n'
+            "\tcase 2:\n"
+            "\t\t_ = x\n"
+            "\t}\n"
+            '\tos.WriteFile("out.txt", []byte(s), 0644)\n'
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::FILE::out.txt") in flows
+
+
+def test_go_switch_kill_on_every_arm_with_default_kills(tmp_path: Path) -> None:
+    # With a default present some arm always runs, so a kill on EVERY arm
+    # (including default) kills on every path: no edge.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func work(x int) {\n"
+            '\ts := os.Getenv("SECRET")\n'
+            "\tswitch x {\n"
+            "\tcase 1:\n"
+            '\t\ts = "clean"\n'
+            "\tdefault:\n"
+            '\t\ts = "clean"\n'
+            "\t}\n"
+            '\tos.WriteFile("out.txt", []byte(s), 0644)\n'
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::FILE::out.txt") not in flows
+
+
+def test_go_switch_arms_are_exclusive(tmp_path: Path) -> None:
+    # Go has no implicit fallthrough: taint bound in case 1 must not reach
+    # a sink in case 2.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func work(x int) {\n"
+            '\ts := "clean"\n'
+            "\tswitch x {\n"
+            "\tcase 1:\n"
+            '\t\ts = os.Getenv("SECRET")\n'
+            "\tcase 2:\n"
+            '\t\tos.WriteFile("out.txt", []byte(s), 0644)\n'
+            "\t}\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::FILE::out.txt") not in flows
+
+
+def test_go_explicit_fallthrough_carries_case_taint(tmp_path: Path) -> None:
+    # Go's `fallthrough` keyword (legal only as an arm's last statement)
+    # transfers control into the next case: the taint bound in case 1 must
+    # reach the sink in case 2.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func work(x int) {\n"
+            '\ts := "clean"\n'
+            "\tswitch x {\n"
+            "\tcase 1:\n"
+            '\t\ts = os.Getenv("SECRET")\n'
+            "\t\tfallthrough\n"
+            "\tcase 2:\n"
+            '\t\tos.WriteFile("out.txt", []byte(s), 0644)\n'
+            "\t}\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::FILE::out.txt") in flows
+
+
+def test_go_type_switch_arm_kill_does_not_leak(tmp_path: Path) -> None:
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func work(x any) {\n"
+            '\ts := os.Getenv("SECRET")\n'
+            "\tswitch v := x.(type) {\n"
+            "\tcase int:\n"
+            '\t\ts = "clean"\n'
+            "\t\t_ = v\n"
+            "\tcase string:\n"
+            "\t\t_ = v\n"
+            "\t}\n"
+            '\tos.WriteFile("out.txt", []byte(s), 0644)\n'
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::FILE::out.txt") in flows
+
+
+def test_go_select_case_kill_does_not_erase_default_path(tmp_path: Path) -> None:
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func work(ch chan int) {\n"
+            '\ts := os.Getenv("SECRET")\n'
+            "\tselect {\n"
+            "\tcase <-ch:\n"
+            '\t\ts = "clean"\n'
+            "\tdefault:\n"
+            "\t}\n"
+            '\tos.WriteFile("out.txt", []byte(s), 0644)\n'
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::FILE::out.txt") in flows
+
+
+def test_java_colon_switch_case_kill_does_not_erase_other_paths(
+    tmp_path: Path,
+) -> None:
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x) {\n"
+            '    String s = System.getenv("SECRET");\n'
+            "    switch (x) {\n"
+            "      case 1:\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "      case 2:\n"
+            "        break;\n"
+            "    }\n"
+            "    System.out.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_java_arrow_switch_rule_kill_does_not_erase_other_rules(
+    tmp_path: Path,
+) -> None:
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x) {\n"
+            '    String s = System.getenv("SECRET");\n'
+            "    switch (x) {\n"
+            '      case 1 -> { s = "safe"; }\n'
+            "      default -> { }\n"
+            "    }\n"
+            "    System.out.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_java_stacked_default_label_kills_skip_path(tmp_path: Path) -> None:
+    # `case 1: default:` stacks both labels on ONE group: the arm is the
+    # default target, so some arm always runs and the kill inside it kills
+    # on every path. Only the first label being `case` must not hide the
+    # default.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x) {\n"
+            '    String s = System.getenv("SECRET");\n'
+            "    switch (x) {\n"
+            "      case 1:\n"
+            "      default:\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "    }\n"
+            "    System.out.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_java_conditional_break_before_kill_keeps_taint(tmp_path: Path) -> None:
+    # `if (c) break;` exits the switch BEFORE the kill, so the break path
+    # carries the taint out even though every arm ends with a kill: the
+    # exit state must be captured AT the break, not at the arm's end.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x, boolean c) {\n"
+            '    String s = System.getenv("SECRET");\n'
+            "    switch (x) {\n"
+            "      case 1:\n"
+            "        if (c) break;\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "      default:\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "    }\n"
+            "    System.out.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_java_break_in_nested_loop_does_not_exit_switch(tmp_path: Path) -> None:
+    # A break inside a loop nested in the arm targets the LOOP: the arm
+    # still ends with the kill on every switch-exiting path, so no edge.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x) {\n"
+            '    String s = System.getenv("SECRET");\n'
+            "    switch (x) {\n"
+            "      case 1:\n"
+            "        while (true) { break; }\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "      default:\n"
+            '        s = "safe";\n'
+            "        break;\n"
+            "    }\n"
+            "    System.out.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_java_trailing_break_does_not_fall_through(tmp_path: Path) -> None:
+    # An arm ending in an UNCONDITIONAL break has no fall-through path:
+    # its end state must not union into the next arm's entry, or taint
+    # bound in case 1 fabricates a flow into case 2's sink.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x) {\n"
+            '    String s = "clean";\n'
+            "    switch (x) {\n"
+            "      case 1:\n"
+            '        s = System.getenv("SECRET");\n'
+            "        break;\n"
+            "      case 2:\n"
+            "        System.out.println(s);\n"
+            "        break;\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+def test_java_colon_switch_fallthrough_carries_case_taint(tmp_path: Path) -> None:
+    # No break between the groups: taint bound in case 1 falls through to
+    # the sink in case 2.
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void work(int x) {\n"
+            '    String s = "clean";\n'
+            "    switch (x) {\n"
+            "      case 1:\n"
+            '        s = System.getenv("SECRET");\n'
+            "      case 2:\n"
+            "        System.out.println(s);\n"
+            "        break;\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_cpp_switch_case_kill_does_not_erase_other_cases(tmp_path: Path) -> None:
+    files = {
+        "main.cpp": (
+            "#include <cstdlib>\n"
+            "#include <iostream>\n"
+            "void work(int x) {\n"
+            '    const char* s = getenv("SECRET");\n'
+            "    switch (x) {\n"
+            "        case 1:\n"
+            '            s = "safe";\n'
+            "            break;\n"
+            "        default:\n"
+            "            break;\n"
+            "    }\n"
+            "    std::cout << s;\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_js_switch_case_kill_does_not_erase_other_cases(tmp_path: Path) -> None:
+    files = {
+        "m.js": (
+            "export function work(x) {\n"
+            "  let s = process.env.SECRET\n"
+            "  switch (x) {\n"
+            "    case 1:\n"
+            "      s = 'safe'\n"
+            "      break\n"
+            "    default:\n"
+            "      break\n"
+            "  }\n"
+            "  console.log(s)\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_js_switch_fallthrough_carries_case_taint(tmp_path: Path) -> None:
+    files = {
+        "m.js": (
+            "export function work(x) {\n"
+            "  let s = 'clean'\n"
+            "  switch (x) {\n"
+            "    case 1:\n"
+            "      s = process.env.SECRET\n"
+            "    case 2:\n"
+            "      console.log(s)\n"
+            "      break\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_js_do_while_loop_carried_taint(tmp_path: Path) -> None:
+    # The sink precedes the bind in source order; a later iteration
+    # carries the taint back: needs the mandatory-loop second pass.
+    files = {
+        "m.js": (
+            "export function work(x) {\n"
+            "  let s = ''\n"
+            "  do {\n"
+            "    console.log(s)\n"
+            "    s = process.env.SECRET\n"
+            "  } while (x)\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows

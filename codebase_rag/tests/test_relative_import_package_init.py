@@ -1,6 +1,6 @@
-# (H) L2 residual from the evals/ harness: relative imports inside an __init__.py
-# (H) resolved one level too high. A package's qualified name IS the package, so
-# (H) `from . import sub` in pkg/__init__.py must target pkg.sub, not the parent.
+# L2 residual from the evals/ harness: relative imports inside an __init__.py
+# resolved one level too high. A package's qualified name IS the package, so
+# `from . import sub` in pkg/__init__.py must target pkg.sub, not the parent.
 from __future__ import annotations
 
 from pathlib import Path

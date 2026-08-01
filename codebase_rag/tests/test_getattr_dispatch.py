@@ -1,8 +1,8 @@
-# (H) L3 finding from the evals/ harness: JavaTypeResolverMixin._find_registry_entries_under
-# (H) does `finder = getattr(self.function_registry, cs.METHOD_FIND_WITH_PREFIX, None)` then
-# (H) calls finder(...). The call dispatches to FunctionRegistryTrie.find_with_prefix at
-# (H) runtime. Resolving it needs getattr(recv, name) modelled as recv.<name>, where the
-# (H) name argument is a string literal or a module constant resolved to its string value.
+# L3 finding from the evals/ harness: JavaTypeResolverMixin._find_registry_entries_under
+# does `finder = getattr(self.function_registry, cs.METHOD_FIND_WITH_PREFIX, None)` then
+# calls finder(...). The call dispatches to FunctionRegistryTrie.find_with_prefix at
+# runtime. Resolving it needs getattr(recv, name) modelled as recv.<name>, where the
+# name argument is a string literal or a module constant resolved to its string value.
 from __future__ import annotations
 
 from pathlib import Path

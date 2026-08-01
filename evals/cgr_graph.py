@@ -86,18 +86,26 @@ _INHERITS_REL = cs.RelationshipType.INHERITS.value
 
 
 def _text(value: PropertyValue) -> str | None:
-    # (H) path / qualified_name / absolute_path are always textual; narrow the
-    # (H) general PropertyValue (which includes list[str]) so the row matches the
-    # (H) ResultValue shape the prune query consumer expects.
+    # path / qualified_name / absolute_path are always textual; narrow the
+    # general PropertyValue (which includes list[str]) to the ResultValue
+    # shape the prune query consumer expects.
     return value if isinstance(value, str) else None
 
 
+def _int(value: PropertyValue) -> int | None:
+    # start_line / end_line are always integral; narrow the general
+    # PropertyValue (whose list[str] member clashes with ResultValue) to the
+    # ResultValue shape. bool is an int subclass but line numbers are never
+    # bool, so the guard is exact.
+    return value if isinstance(value, int) else None
+
+
 class _StatefulIngestor:
-    # (H) A faithful in-memory stand-in for the persistent graph store. Unlike
-    # (H) _CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
-    # (H) the incremental updater issues, so a graph mutated by an incremental run
-    # (H) can be compared against a clean re-index. Only the exact queries cgr
-    # (H) emits are emulated (matched by identity), nothing more.
+    # A faithful in-memory stand-in for the persistent graph store. Unlike
+    # _CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
+    # the incremental updater issues, so an incrementally mutated graph can be
+    # compared against a clean re-index. Only the exact queries cgr emits are
+    # emulated (matched by identity).
     def __init__(self) -> None:
         self.nodes: dict[_NodeId, PropertyDict] = {}
         self.edges: set[_RelTuple] = set()
@@ -170,6 +178,8 @@ class _StatefulIngestor:
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
                         cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                        cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
+                        cs.KEY_END_LINE: _int(props.get(cs.KEY_END_LINE)),
                     }
                     defs.append(row)
                 return defs
@@ -225,9 +235,15 @@ class _StatefulIngestor:
             case cs.CYPHER_DELETE_MODULE:
                 self._delete_module_subtree(path)
             case cs.CYPHER_DELETE_FILE:
-                self._detach_delete(self._nodes_at_path(_FILE_LABEL, path))
+                # Mirrors the real query: File/Folder delete keys on the
+                # absolute path (issue #897).
+                self._detach_delete(
+                    self._nodes_at_path(_FILE_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
+                )
             case cs.CYPHER_DELETE_FOLDER:
-                self._detach_delete(self._nodes_at_path(_FOLDER_LABEL, path))
+                self._detach_delete(
+                    self._nodes_at_path(_FOLDER_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
+                )
             case cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES:
                 self._delete_orphan_external_modules()
             case _:
@@ -245,11 +261,13 @@ class _StatefulIngestor:
             rows.append(row)
         return rows
 
-    def _nodes_at_path(self, label: str, path: PropertyValue) -> set[_NodeId]:
+    def _nodes_at_path(
+        self, label: str, path: PropertyValue, key: str = cs.KEY_PATH
+    ) -> set[_NodeId]:
         return {
             (node_label, uid)
             for (node_label, uid), props in self.nodes.items()
-            if node_label == label and props.get(cs.KEY_PATH) == path
+            if node_label == label and props.get(key) == path
         }
 
     def _delete_module_subtree(self, path: PropertyValue) -> None:
@@ -356,10 +374,10 @@ def _lang_endpoint_key(
     suffix: str | tuple[str, ...],
     exclude_suffix: str | None = None,
 ) -> NodeKey | None:
-    # (H) Resolve any node (incl. the per-file Module, which carries no
-    # (H) start_line) to a NodeKey so containment edges can join on it. cgr keys
-    # (H) module-level DEFINES parents at the module node; mirror the ast oracle
-    # (H) by placing the module at MODULE_START_LINE.
+    # Resolve any node (incl. the per-file Module, which has no start_line)
+    # to a NodeKey so containment edges can join on it. cgr keys module-level
+    # DEFINES parents at the module node; mirror the ast oracle by placing the
+    # module at MODULE_START_LINE.
     path = props.get(cs.KEY_PATH)
     if path is None:
         return None
@@ -370,9 +388,9 @@ def _lang_endpoint_key(
         return None
     raw_start = props.get(cs.KEY_START_LINE)
     if label == cs.NodeLabel.MODULE.value:
-        # (H) The per-file module carries no start line (keyed at line 0); an
-        # (H) inline module (Rust `mod`) carries its declaration line, which keeps
-        # (H) it distinct from the file module so nested containment can join.
+        # The per-file module carries no start line (keyed at line 0); an
+        # inline module (Rust `mod`) carries its declaration line, keeping it
+        # distinct from the file module so nested containment can join.
         if isinstance(raw_start, int | float):
             return NodeKey(label, file, int(raw_start))
         return NodeKey(label, file, ec.MODULE_START_LINE)
@@ -411,26 +429,29 @@ def extract_cgr_lang_graph(
             if parent is not None and child is not None:
                 edges.add(EdgeKey(rel_type, parent, child))
         elif rel_type in ec.INHERITANCE_NAME_EDGE_TYPE_VALUES:
-            # (H) Inheritance is graded by the base's SIMPLE NAME (cgr's to-value
-            # (H) is the resolved base qn, or the bare name when unresolved).
+            # Inheritance is graded by the base's SIMPLE NAME (cgr's to-value
+            # is the resolved base qn, or the bare name when unresolved).
             source = by_uid.get((from_label, from_val))
             if source is not None:
-                # (H) Base simple name: cgr's resolved target may be a dotted qn
-                # (H) (`module.Base`) or a Rust path (`std::io::Read`), so split on
-                # (H) both `.` and `::`.
+                # Base simple name: cgr's resolved target may be a dotted qn
+                # (`module.Base`) or a Rust path (`std::io::Read`), so split on
+                # both `.` and `::`. A same-scope collision registers the base
+                # as a DUP_QN_MARKER variant (`ITtl@3`, issue #764); the oracle
+                # grades by the written name, so strip the marker.
                 flat = str(to_val).replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
-                target_name = flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                target_name = flat.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
+                    cs.DUP_QN_MARKER, 1
+                )[0]
                 name_edges.add(NameEdge(rel_type, source, target_name))
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
 
 
 def restrict_to_files(graph: GraphData, files: set[str]) -> GraphData:
-    # (H) Scope a graph to a file universe. A compile_commands.json oracle only
-    # (H) "sees" files its compiled TUs reach, while cgr indexes the whole tree
-    # (H) (bundled test deps, uncompiled sources). Grading cgr's out-of-universe
-    # (H) nodes against that oracle is meaningless, so restrict cgr to the files
-    # (H) the oracle actually parsed before scoring. Drops only false positives:
-    # (H) no oracle node lives outside its own universe, so recall is untouched.
+    # Scope a graph to a file universe. A compile_commands.json oracle only
+    # "sees" files its compiled TUs reach, while cgr indexes the whole tree
+    # (bundled test deps, uncompiled sources), so restrict cgr to the files
+    # the oracle parsed before scoring. Drops only false positives: no oracle
+    # node lives outside its universe, so recall is untouched.
     nodes = {k: v for k, v in graph.nodes.items() if k.file in files}
     edges = {e for e in graph.edges if e.parent.file in files and e.child.file in files}
     name_edges = {n for n in graph.name_edges if n.source.file in files}
@@ -509,6 +530,18 @@ def extract_cgr_java_graph(target: Path, project_name: str) -> GraphData:
     )
 
 
+def extract_cgr_csharp_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
+    return extract_cgr_lang_nodes(
+        target, project_name, ec.CS_SUFFIX, ec.CSHARP_SCORED_NODE_KIND_VALUES
+    )
+
+
+def extract_cgr_csharp_graph(target: Path, project_name: str) -> GraphData:
+    return extract_cgr_lang_graph(
+        target, project_name, ec.CS_SUFFIX, ec.CSHARP_SCORED_NODE_KIND_VALUES
+    )
+
+
 def extract_cgr_js_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
     return extract_cgr_lang_nodes(
         target, project_name, ec.JS_SUFFIXES, ec.JS_SCORED_NODE_KIND_VALUES
@@ -541,7 +574,7 @@ def extract_cgr_ts_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNo
         if path is None:
             continue
         file = str(path)
-        # (H) Match the oracle: real .ts/.tsx sources, excluding .d.ts type stubs.
+        # Match the oracle: real .ts/.tsx sources, excluding .d.ts type stubs.
         if not file.endswith(ec.TS_SUFFIXES) or file.endswith(ec.TS_DTS_SUFFIX):
             continue
         raw_start = props.get(cs.KEY_START_LINE)
@@ -612,11 +645,10 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
             edges.add(EdgeKey(rel_type, parent, child))
 
     prefix = project_name + cs.SEPARATOR_DOT
-    # (H) Only real in-repo Python modules count as internal import targets. cgr
-    # (H) also emits placeholder MODULE nodes for unresolved imports whose path is
-    # (H) the dotted import name (e.g. "thrift.TTornado", "std.set"); requiring a
-    # (H) .py path excludes those so IMPORTS is graded against real files only,
-    # (H) consistent with the .py node filter and the ast oracle.
+    # Only real in-repo Python modules count as internal import targets. cgr
+    # also emits placeholder MODULE nodes for unresolved imports keyed by the
+    # dotted import name (e.g. "thrift.TTornado", "std.set"); requiring a .py
+    # path excludes those so IMPORTS is graded against real files only.
     internal_modules: dict[str, str] = {
         str(uid): str(props[cs.KEY_PATH])
         for (label, uid), props in ingestor.nodes.items()
@@ -634,7 +666,13 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
         if source is None:
             continue
         if rel_type == cs.RelationshipType.INHERITS.value:
-            target = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            # Same DUP_QN_MARKER strip as the multi-language reducer: a base
+            # registered as a duplicate variant grades by its written name.
+            target = (
+                str(to_val)
+                .rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                .split(cs.DUP_QN_MARKER, 1)[0]
+            )
             name_edges.add(NameEdge(rel_type, source, target))
         elif rel_type == cs.RelationshipType.IMPORTS.value:
             target_path = _internal_target_file(str(to_val), internal_modules)

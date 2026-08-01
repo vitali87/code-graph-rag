@@ -872,7 +872,7 @@ class TestProcessFile:
         rel = contains_module[-1]
         from_tuple = rel[0][0]
         assert from_tuple[0] == "Folder"
-        assert from_tuple[2] == "scripts"
+        assert from_tuple[2] == (temp_repo / "scripts").resolve().as_posix()
 
     def test_process_file_registers_module_qn_to_file_path(
         self, temp_repo: Path, definition_processor: GraphUpdater

@@ -45,9 +45,9 @@ class TestStandardLibraryImports:
         mock_name_node.type = "dotted_name"
         mock_name_node.text = b"path"
 
-        mock_import_node.child_by_field_name.side_effect = lambda field: {
+        mock_import_node.child_by_field_name.side_effect = {
             "module_name": mock_module_name_node,
-        }.get(field)
+        }.get
 
         mock_import_node.children_by_field_name.side_effect = lambda field: {
             "name": [mock_name_node] if field == "name" else []
@@ -78,9 +78,9 @@ class TestStandardLibraryImports:
         mock_name_node.type = "dotted_name"
         mock_name_node.text = b"array"
 
-        mock_import_node.child_by_field_name.side_effect = lambda field: {
+        mock_import_node.child_by_field_name.side_effect = {
             "module_name": mock_module_name_node,
-        }.get(field)
+        }.get
 
         mock_import_node.children_by_field_name.side_effect = lambda field: {
             "name": [mock_name_node] if field == "name" else []
@@ -113,9 +113,9 @@ class TestStandardLibraryImports:
         mock_name_node.type = "dotted_name"
         mock_name_node.text = b"helper"
 
-        mock_import_node.child_by_field_name.side_effect = lambda field: {
+        mock_import_node.child_by_field_name.side_effect = {
             "module_name": mock_module_name_node,
-        }.get(field)
+        }.get
 
         mock_import_node.children_by_field_name.side_effect = lambda field: {
             "name": [mock_name_node] if field == "name" else []
@@ -146,9 +146,9 @@ class TestStandardLibraryImports:
         mock_name_node.type = "dotted_name"
         mock_name_node.text = b"settings"
 
-        mock_import_node.child_by_field_name.side_effect = lambda field: {
+        mock_import_node.child_by_field_name.side_effect = {
             "module_name": mock_module_name_node,
-        }.get(field)
+        }.get
 
         mock_import_node.children_by_field_name.side_effect = lambda field: {
             "name": [mock_name_node] if field == "name" else []
@@ -181,9 +181,9 @@ class TestStandardLibraryImports:
         mock_name_node.type = "dotted_name"
         mock_name_node.text = b"helper"
 
-        mock_import_node.child_by_field_name.side_effect = lambda field: {
+        mock_import_node.child_by_field_name.side_effect = {
             "module_name": mock_module_name_node,
-        }.get(field)
+        }.get
 
         mock_import_node.children_by_field_name.side_effect = lambda field: {
             "name": [mock_name_node] if field == "name" else []
@@ -214,9 +214,9 @@ class TestStandardLibraryImports:
         mock_name_node.type = "dotted_name"
         mock_name_node.text = b"database"
 
-        mock_import_node.child_by_field_name.side_effect = lambda field: {
+        mock_import_node.child_by_field_name.side_effect = {
             "module_name": mock_module_name_node,
-        }.get(field)
+        }.get
 
         mock_import_node.children_by_field_name.side_effect = lambda field: {
             "name": [mock_name_node] if field == "name" else []
@@ -318,10 +318,10 @@ class TestStandardLibraryImports:
         mock_alias_node = MagicMock()
         mock_alias_node.text = b"operating_system"
 
-        mock_aliased_import.child_by_field_name.side_effect = lambda field: {
+        mock_aliased_import.child_by_field_name.side_effect = {
             "name": mock_name_node,
             "alias": mock_alias_node,
-        }.get(field)
+        }.get
 
         mock_import_node.named_children = [mock_aliased_import]
 
@@ -350,10 +350,10 @@ class TestStandardLibraryImports:
         mock_alias_node = MagicMock()
         mock_alias_node.text = b"helpers"
 
-        mock_aliased_import.child_by_field_name.side_effect = lambda field: {
+        mock_aliased_import.child_by_field_name.side_effect = {
             "name": mock_name_node,
             "alias": mock_alias_node,
-        }.get(field)
+        }.get
 
         mock_import_node.named_children = [mock_aliased_import]
 

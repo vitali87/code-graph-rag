@@ -10,7 +10,7 @@ from codebase_rag.parser_loader import load_parsers
 
 
 def _run_calls(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
-    # (H) Build the graph for `files` and return CALLS edges as (caller_qn, callee_qn).
+    # Build the graph for `files` and return CALLS edges as (caller_qn, callee_qn).
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")
@@ -34,8 +34,8 @@ def _has(calls: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) ->
 
 
 def test_self_call_dispatches_to_subclass_override(tmp_path: Path) -> None:
-    # (H) Base.run invokes self.op(); Sub overrides op. The runtime receiver may be a
-    # (H) Sub, so the call graph must connect Base.run -> Sub.op or Sub.op is dead.
+    # Base.run invokes self.op(); Sub overrides op. The runtime receiver may be a
+    # Sub, so the call graph must connect Base.run -> Sub.op or Sub.op is dead.
     src = (
         "class Base:\n"
         "    def run(self):\n"
@@ -48,12 +48,12 @@ def test_self_call_dispatches_to_subclass_override(tmp_path: Path) -> None:
     )
     calls = _run_calls(tmp_path, {"m.py": src})
     assert _has(calls, "m.Base.run", "m.Sub.op")
-    # (H) The base edge must still be present.
+    # The base edge must still be present.
     assert _has(calls, "m.Base.run", "m.Base.op")
 
 
 def test_self_call_dispatches_to_transitive_override(tmp_path: Path) -> None:
-    # (H) Override two levels down must also be connected.
+    # Override two levels down must also be connected.
     src = (
         "class Base:\n"
         "    def run(self):\n"
@@ -71,9 +71,9 @@ def test_self_call_dispatches_to_transitive_override(tmp_path: Path) -> None:
 
 
 def test_super_call_does_not_fan_out_to_own_override(tmp_path: Path) -> None:
-    # (H) Sub.op delegates to the parent with super().op(); this explicitly targets
-    # (H) Base.op, not a virtual dispatch, so it must NOT create a false recursive
-    # (H) Sub.op -> Sub.op edge via override fan-out.
+    # Sub.op delegates to the parent with super().op(); this explicitly targets
+    # Base.op, not a virtual dispatch, so it must NOT create a false recursive
+    # Sub.op -> Sub.op edge via override fan-out.
     src = (
         "class Base:\n"
         "    def op(self):\n"
@@ -87,8 +87,8 @@ def test_super_call_does_not_fan_out_to_own_override(tmp_path: Path) -> None:
 
 
 def test_explicit_base_qualified_call_does_not_fan_out(tmp_path: Path) -> None:
-    # (H) A call naming the exact implementation (Base.op(x)) is not a virtual
-    # (H) dispatch, so it must not fan out to subclass overrides.
+    # A call naming the exact implementation (Base.op(x)) is not a virtual
+    # dispatch, so it must not fan out to subclass overrides.
     src = (
         "class Base:\n"
         "    def op(self):\n"
@@ -104,7 +104,7 @@ def test_explicit_base_qualified_call_does_not_fan_out(tmp_path: Path) -> None:
 
 
 def test_no_override_dispatch_without_subclasses(tmp_path: Path) -> None:
-    # (H) A method with no overriding subclass must not gain spurious edges.
+    # A method with no overriding subclass must not gain spurious edges.
     src = (
         "class Only:\n"
         "    def run(self):\n"
@@ -121,10 +121,10 @@ def test_no_override_dispatch_without_subclasses(tmp_path: Path) -> None:
 
 
 def test_self_call_in_abstract_base_reaches_all_overrides(tmp_path: Path) -> None:
-    # (H) Base._chunk calls self._raw(); Base._raw is @abstractmethod and TWO subclasses
-    # (H) override it. The edge must anchor on the enclosing class (Base) and reach BOTH
-    # (H) overrides plus the base declaration, not just the alphabetically-first override
-    # (H) the trie happens to pick (SqsBatchJob/SqsKick/SqsDelete shape).
+    # Base._chunk calls self._raw(); Base._raw is @abstractmethod and TWO subclasses
+    # override it. The edge must anchor on the enclosing class (Base) and reach BOTH
+    # overrides plus the base declaration, not just the alphabetically-first override
+    # the trie happens to pick (SqsBatchJob/SqsKick/SqsDelete shape).
     src = (
         "from abc import ABC, abstractmethod\n"
         "class Base(ABC):\n"
@@ -148,9 +148,9 @@ def test_self_call_in_abstract_base_reaches_all_overrides(tmp_path: Path) -> Non
 def test_self_call_binds_to_own_class_method_amid_cousin_overrides(
     tmp_path: Path,
 ) -> None:
-    # (H) OpenAIClient.gen calls self._generate(); a sibling subclass AnthropicClient also
-    # (H) defines _generate. The call must bind to the ENCLOSING class's own method
-    # (H) (OpenAIClient._generate), not an arbitrary cousin override (OpenAIClient shape).
+    # OpenAIClient.gen calls self._generate(); a sibling subclass AnthropicClient also
+    # defines _generate. The call must bind to the ENCLOSING class's own method
+    # (OpenAIClient._generate), not an arbitrary cousin override (OpenAIClient shape).
     src = (
         "from abc import ABC, abstractmethod\n"
         "class BaseLLM(ABC):\n"

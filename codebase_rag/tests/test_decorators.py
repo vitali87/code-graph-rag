@@ -354,11 +354,9 @@ class TestRecursionGuard:
 
         class Analyzer:
             @recursion_guard(
-                key_func=lambda self,
-                method_call,
-                module_qn,
-                *_,
-                **__: f"{module_qn}:{method_call}"
+                key_func=lambda self, method_call, module_qn, *_, **__: (
+                    f"{module_qn}:{method_call}"
+                )
             )
             def infer_type(
                 self,

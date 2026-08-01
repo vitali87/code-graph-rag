@@ -1,10 +1,10 @@
-# (H) Methods declared inside preprocessor conditionals (#ifdef/#else within a
-# (H) class body, souffle's BTreeDelete.h pattern) distort the AST enough that
-# (H) Pass 3's structural caller-qn walk diverged from the qn Pass 2 registered
-# (H) (dropping the enclosing template class from the chain), so every call
-# (H) inside them was attributed to a phantom caller the database drops (issue
-# (H) #652). The definition pass now records each ingested function's location
-# (H) and call attribution reuses that record instead of re-deriving.
+# Methods declared inside preprocessor conditionals (#ifdef/#else within a
+# class body, souffle's BTreeDelete.h pattern) distort the AST enough that
+# Pass 3's structural caller-qn walk diverged from the qn Pass 2 registered
+# (dropping the enclosing template class from the chain), so every call
+# inside them was attributed to a phantom caller the database drops (issue
+# #652). The definition pass now records each ingested function's location
+# and call attribution reuses that record instead of re-deriving.
 from __future__ import annotations
 
 from pathlib import Path

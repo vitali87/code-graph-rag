@@ -1,9 +1,9 @@
-# (H) A TS function with OVERLOAD signatures registers its implementation under a
-# (H) duplicate-variant qn (`useStore@27`, zustand's react.ts), but its inline
-# (H) function arguments register under the NATURAL qn (`useStore.anonymous_31_22`).
-# (H) The by-position reference candidates were built from the variant caller qn
-# (H) only, so the anons never matched and reported dead. Candidates must include
-# (H) the variant-stripped scope.
+# A TS function with OVERLOAD signatures registers its implementation under a
+# duplicate-variant qn (`useStore@27`, zustand's react.ts), but its inline
+# function arguments register under the NATURAL qn (`useStore.anonymous_31_22`).
+# The by-position reference candidates were built from the variant caller qn
+# only, so the anons never matched and reported dead. Candidates must include
+# the variant-stripped scope.
 from __future__ import annotations
 
 from pathlib import Path

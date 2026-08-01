@@ -22,9 +22,9 @@ def _make_repo(root: Path) -> None:
 
 @needs_go
 def test_go_method_call_caller_qn_includes_receiver(tmp_path: Path) -> None:
-    # (H) A call inside a Go receiver method must be attributed to the method's
-    # (H) real node qn (p.m.T.callsFree), which binds to the receiver type, not a
-    # (H) receiver-dropping qn (p.m.callsFree) that matches no node.
+    # A call inside a Go receiver method must be attributed to the method's
+    # real node qn (p.m.T.callsFree), which binds to the receiver type, not a
+    # receiver-dropping qn (p.m.callsFree) that matches no node.
     _make_repo(tmp_path)
     ingestor = _capture(tmp_path / "p", "p")
     calls = {
@@ -58,10 +58,10 @@ def _make_dispatch_repo(root: Path) -> None:
 
 @needs_go
 def test_go_receiver_method_dispatch_resolves(tmp_path: Path) -> None:
-    # (H) A method call on a Go receiver (`t.helper()`), a typed parameter
-    # (H) (`v.helper()`), and a composite-literal local (`x := T{}; x.helper()`)
-    # (H) must each resolve to the method node `p.m.T.helper` via local-variable
-    # (H) type inference, not be dropped for lack of a typed receiver.
+    # A method call on a Go receiver (`t.helper()`), a typed parameter
+    # (`v.helper()`), and a composite-literal local (`x := T{}; x.helper()`)
+    # must each resolve to the method node `p.m.T.helper` via local-variable
+    # type inference, not be dropped for lack of a typed receiver.
     _make_dispatch_repo(tmp_path)
     ingestor = _capture(tmp_path / "p", "p")
     calls = {

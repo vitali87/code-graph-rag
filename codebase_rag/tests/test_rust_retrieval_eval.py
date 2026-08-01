@@ -39,12 +39,12 @@ def test_oracle_captures_first_party_rust_calls(tmp_path: Path) -> None:
     _make_crate(tmp_path)
     edges, declared = oracle_rust_call_edges(tmp_path)
 
-    # (H) self.helper(), T::make(), free(), t.caller() are all first-party calls.
+    # self.helper(), T::make(), free(), t.caller() are all first-party calls.
     assert ("lib.rs", "helper") in edges
     assert ("lib.rs", "make") in edges
     assert ("lib.rs", "free") in edges
     assert ("lib.rs", "caller") in edges
-    # (H) orphan is declared but never called -> never a call edge.
+    # orphan is declared but never called -> never a call edge.
     assert ("lib.rs", "orphan") not in edges
     assert {"helper", "caller", "make", "free", "use_it", "orphan"} <= declared
 

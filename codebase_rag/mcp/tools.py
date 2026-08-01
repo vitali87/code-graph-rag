@@ -16,6 +16,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
 from codebase_rag.tools import tool_descriptions as td
+from codebase_rag.tools.ast_grep_service import AstGrepService
 from codebase_rag.tools.code_retrieval import (
     CodeRetriever,
     create_code_retrieval_tool,
@@ -29,6 +30,8 @@ from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 from codebase_rag.tools.shell_command import ShellCommander, create_shell_command_tool
+from codebase_rag.tools.structural_editor import create_structural_editor_tool
+from codebase_rag.tools.structural_search import create_structural_search_tool
 from codebase_rag.types_defs import (
     CodeSnippetResultDict,
     DeleteProjectErrorResult,
@@ -43,8 +46,30 @@ from codebase_rag.types_defs import (
     MCPToolSchema,
     QueryResultDict,
 )
-from codebase_rag.utils.dependencies import has_semantic_dependencies
-from codebase_rag.vector_store import delete_project_embeddings
+from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
+from codebase_rag.utils.path_utils import derive_project_name
+from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
+
+
+def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
+    with open(full_path, encoding=cs.ENCODING_UTF8) as f:
+        skipped_count = sum(1 for _ in itertools.islice(f, start))
+
+        if limit is not None:
+            sliced_lines = [line for _, line in zip(range(limit), f)]
+        else:
+            sliced_lines = list(f)
+
+        paginated_content = "".join(sliced_lines)
+        remaining_lines_count = sum(1 for _ in f)
+
+    total_lines = skipped_count + len(sliced_lines) + remaining_lines_count
+    header = cs.MCP_PAGINATION_HEADER.format(
+        start=start + 1,
+        end=start + len(sliced_lines),
+        total=total_lines,
+    )
+    return header + paginated_content
 
 
 class MCPToolsRegistry:
@@ -67,6 +92,7 @@ class MCPToolsRegistry:
         self.file_writer = FileWriter(project_root=project_root)
         self.directory_lister = DirectoryLister(project_root=project_root)
         self.shell_commander = ShellCommander(project_root=project_root)
+        self.ast_grep_service = AstGrepService(project_root=project_root)
 
         stderr_console = Console(file=sys.stderr, width=None, force_terminal=True)
         self._query_tool = create_query_tool(
@@ -82,6 +108,13 @@ class MCPToolsRegistry:
         self._shell_command_tool = create_shell_command_tool(
             shell_commander=self.shell_commander
         )
+        self._structural_search_tool = create_structural_search_tool(
+            service=self.ast_grep_service
+        )
+        self._structural_editor_tool = create_structural_editor_tool(
+            service=self.ast_grep_service
+        )
+        self._structural_available = has_ast_grep()
 
         self._rag_agent: Agent | None = None
 
@@ -312,6 +345,57 @@ class MCPToolsRegistry:
                 returns_json=False,
             )
 
+        if self._structural_available:
+            self._tools[cs.MCPToolName.STRUCTURAL_SEARCH] = ToolMetadata(
+                name=cs.MCPToolName.STRUCTURAL_SEARCH,
+                description=td.MCP_TOOLS[cs.MCPToolName.STRUCTURAL_SEARCH],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.PATTERN: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_PATTERN,
+                        ),
+                        cs.MCPParamName.LANGUAGE: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_LANGUAGE,
+                        ),
+                    },
+                    required=[cs.MCPParamName.PATTERN],
+                ),
+                handler=self.structural_search,
+                returns_json=False,
+            )
+            self._tools[cs.MCPToolName.STRUCTURAL_REPLACE] = ToolMetadata(
+                name=cs.MCPToolName.STRUCTURAL_REPLACE,
+                description=td.MCP_TOOLS[cs.MCPToolName.STRUCTURAL_REPLACE],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.PATTERN: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_PATTERN,
+                        ),
+                        cs.MCPParamName.REWRITE: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_REWRITE,
+                        ),
+                        cs.MCPParamName.LANGUAGE: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_LANGUAGE,
+                        ),
+                        cs.MCPParamName.DRY_RUN: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.BOOLEAN,
+                            description=td.MCP_PARAM_DRY_RUN,
+                            default=True,
+                        ),
+                    },
+                    required=[cs.MCPParamName.PATTERN, cs.MCPParamName.REWRITE],
+                ),
+                handler=self.structural_replace,
+                returns_json=False,
+            )
+
         self._tools[cs.MCPToolName.ASK_AGENT] = ToolMetadata(
             name=cs.MCPToolName.ASK_AGENT,
             description=td.MCP_TOOLS[cs.MCPToolName.ASK_AGENT],
@@ -348,12 +432,15 @@ class MCPToolsRegistry:
             ]
             if self._semantic_search_tool is not None:
                 tools.append(self._semantic_search_tool)
+            if self._structural_available:
+                tools.append(self._structural_search_tool)
+                tools.append(self._structural_editor_tool)
             self._rag_agent, _ = create_rag_orchestrator(
                 tools=tools, project_root=Path(self.project_root)
             )
         return self._rag_agent
 
-    # (H) Setter allows tests to inject a mock agent without triggering LLM init
+    # Setter lets tests inject a mock agent without triggering LLM init
     @rag_agent.setter
     def rag_agent(self, value: Agent) -> None:
         self._rag_agent = value
@@ -416,13 +503,16 @@ class MCPToolsRegistry:
         try:
             async with self._ingestor_lock:
                 await asyncio.to_thread(self.ingestor.clean_database)
+                await asyncio.to_thread(clear_all_embeddings)
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
             return cs.MCP_WIPE_ERROR.format(error=e)
 
     def _index_repository_sync(self) -> str:
-        project_name = Path(self.project_root).resolve().name
+        # Same collision-resistant derivation as the CLI: a bare directory
+        # name would let two repos named alike delete each other's graphs.
+        project_name = derive_project_name(Path(self.project_root))
         logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
@@ -454,7 +544,7 @@ class MCPToolsRegistry:
             return cs.MCP_INDEX_ERROR.format(error=e)
 
     def _update_repository_sync(self) -> str:
-        project_name = Path(self.project_root).resolve().name
+        project_name = derive_project_name(Path(self.project_root))
 
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
@@ -484,6 +574,24 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_SEMANTIC_SEARCH.format(query=natural_language_query))
         result = await self._semantic_search_tool.function(
             query=natural_language_query, top_k=top_k
+        )
+        return str(result)
+
+    async def structural_search(self, pattern: str, language: str | None = None) -> str:
+        result = await self._structural_search_tool.function(
+            pattern=pattern, language=language
+        )
+        return str(result)
+
+    async def structural_replace(
+        self,
+        pattern: str,
+        rewrite: str,
+        language: str | None = None,
+        dry_run: bool = True,
+    ) -> str:
+        result = await self._structural_editor_tool.function(
+            pattern=pattern, rewrite=rewrite, language=language, dry_run=dry_run
         )
         return str(result)
 
@@ -559,30 +667,18 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
         try:
             if offset is not None or limit is not None:
-                full_path = Path(self.project_root) / file_path
+                project_root = Path(self.project_root).resolve()
+                try:
+                    full_path = (project_root / file_path).resolve()
+                    full_path.relative_to(project_root)
+                except (ValueError, RuntimeError):
+                    return te.ERROR_WRAPPER.format(
+                        message=lg.FILE_OUTSIDE_ROOT.format(action="access")
+                    )
                 start = offset if offset is not None else 0
-
-                with open(full_path, encoding=cs.ENCODING_UTF8) as f:
-                    skipped_count = sum(1 for _ in itertools.islice(f, start))
-
-                    if limit is not None:
-                        sliced_lines = [line for _, line in zip(range(limit), f)]
-                    else:
-                        sliced_lines = list(f)
-
-                    paginated_content = "".join(sliced_lines)
-
-                    remaining_lines_count = sum(1 for _ in f)
-                    total_lines = (
-                        skipped_count + len(sliced_lines) + remaining_lines_count
-                    )
-
-                    header = cs.MCP_PAGINATION_HEADER.format(
-                        start=start + 1,
-                        end=start + len(sliced_lines),
-                        total=total_lines,
-                    )
-                    return header + paginated_content
+                return await asyncio.to_thread(
+                    _read_file_slice, full_path, start, limit
+                )
             else:
                 result = await self._file_reader_tool.function(file_path=file_path)
                 return str(result)

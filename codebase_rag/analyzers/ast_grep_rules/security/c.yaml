@@ -1,0 +1,35 @@
+# ast-grep security rules for C (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules favour recall; treat findings as review prompts.
+ast_grep_id: c
+extensions: [.c, .h]
+rules:
+  - id: dangerous_string_fn
+    message: "Unbounded string function (gets/strcpy/strcat/sprintf) risks buffer overflow"
+    rule:
+      kind: call_expression
+      has: { field: function, regex: '^(gets|strcpy|strcat|sprintf|vsprintf|scanf)$' }
+  - id: command_execution
+    message: "Possible command injection via system/popen/exec* call"
+    rule:
+      kind: call_expression
+      has: { field: function, regex: '^(system|popen|execl|execlp|execle|execv|execvp|execvpe)$' }
+  - id: hardcoded_secret
+    # Security rule: favour recall. Target name matches a credential word and the
+    # value is a non-trivial string literal (>=10 chars) that is not a printf-style
+    # format template. Handles both `char *password = "..."` (pointer_declarator)
+    # and `T token = "..."` (plain identifier) via a stopBy-end identifier probe.
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      kind: init_declarator
+      all:
+        - has: { stopBy: end, kind: identifier, regex: '(?i)(password|secret|api_key|token)' }
+        - has:
+            field: value
+            all:
+              - kind: string_literal
+              - regex: '^.{10,}$'
+              - not:
+                  any:
+                    - regex: '\{[^{}]*\}'
+                    - regex: '%[sdrifeEgGxXoc(]'

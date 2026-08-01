@@ -1,10 +1,10 @@
-# (H) Rust nested-module containment. cgr qualifies items inside `mod inner`
-# (H) with the module path (proj...inner.X), but used to (a) DEFINE them from the
-# (H) FILE module while leaving the inner Module node an orphan, and (b) qualify
-# (H) impl methods inside the mod against the file module, producing a phantom
-# (H) DEFINES_METHOD parent that never matched the real type node. Containment
-# (H) must be module-nested: file module -> inner module -> its items, and an
-# (H) impl method binds to the type under its enclosing module path.
+# Rust nested-module containment. cgr qualifies items inside `mod inner`
+# with the module path (proj...inner.X), but used to (a) DEFINE them from the
+# FILE module while leaving the inner Module node an orphan, and (b) qualify
+# impl methods inside the mod against the file module, producing a phantom
+# DEFINES_METHOD parent that never matched the real type node. Containment
+# must be module-nested: file module -> inner module -> its items, and an
+# impl method binds to the type under its enclosing module path.
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,7 +40,7 @@ def _project(temp_repo: Path) -> Path:
 
 
 def _defines_pairs(mock_ingestor: MagicMock) -> set[tuple[str, str, str]]:
-    # (H) (parent_label, parent_qn, child_qn) for DEFINES edges.
+    # (parent_label, parent_qn, child_qn) for DEFINES edges.
     return {
         (call[0][0][0], call[0][0][2], call[0][2][2])
         for call in get_relationships(mock_ingestor, RelationshipType.DEFINES.value)
@@ -55,9 +55,9 @@ def test_rust_nested_module_is_module_nested(
     inner = f"{file_mod}.inner"
     pairs = _defines_pairs(mock_ingestor)
 
-    # (H) file module DEFINES the inner module (no longer an orphan node).
+    # file module DEFINES the inner module (no longer an orphan node).
     assert (NodeLabel.MODULE.value, file_mod, inner) in pairs, pairs
-    # (H) inner module DEFINES its own items, not the file module.
+    # inner module DEFINES its own items, not the file module.
     assert (NodeLabel.MODULE.value, inner, f"{inner}.helper") in pairs, pairs
     assert (NodeLabel.MODULE.value, inner, f"{inner}.Widget") in pairs, pairs
 

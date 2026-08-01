@@ -1,0 +1,25 @@
+# ast-grep design-pattern rules for Go (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: go
+extensions: [.go]
+rules:
+  - id: constructor
+    message: "Constructor: function name starts with New"
+    rule:
+      kind: function_declaration
+      has: { field: name, regex: '^New' }
+  - id: factory_function
+    message: "Factory function: name starts with New/Make/Build/Create"
+    rule:
+      kind: function_declaration
+      has: { field: name, regex: '^(New|Make|Build|Create)' }
+  - id: singleton
+    message: "Singleton: struct embeds sync.Once to guard one-time init"
+    rule:
+      kind: struct_type
+      has: { kind: qualified_type, regex: 'sync\.Once', stopBy: end }
+  - id: interface_declaration
+    message: "Interface: a behavioural contract declared for satisfaction"
+    rule:
+      kind: interface_type

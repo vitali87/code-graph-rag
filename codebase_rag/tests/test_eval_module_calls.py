@@ -47,9 +47,9 @@ class TestModuleCallEval:
         proj = self._write(tmp_path)
         oracle = oracle_module_calls(proj, "proj")
 
-        # (H) make_default runs at module load (CONFIG = ... and the default arg);
-        # (H) main runs from the `if __name__` block; helper only runs inside main's
-        # (H) body, so it is NOT a module-level call.
+        # make_default runs at module load (CONFIG = ... and the default arg);
+        # main runs from the `if __name__` block; helper only runs inside main's
+        # body, so it is NOT a module-level call.
         assert _names(oracle) == {"make_default", "main"}
 
     def test_cgr_matches_oracle_module_calls(self, tmp_path: Path) -> None:
@@ -77,7 +77,7 @@ class TestModuleCallEval:
         return _names(oracle_module_calls(proj, "proj"))
 
     def test_lambda_body_call_is_deferred(self, tmp_path: Path) -> None:
-        # (H) `helper` runs only when `work()` is called, not at import.
+        # `helper` runs only when `work()` is called, not at import.
         names = self._oracle_for(
             tmp_path,
             "def helper():\n    return 1\n\n\nwork = lambda: helper()\n",
@@ -85,7 +85,7 @@ class TestModuleCallEval:
         assert "helper" not in names
 
     def test_generator_expression_call_is_deferred(self, tmp_path: Path) -> None:
-        # (H) a generator is lazy: `helper` runs only when the generator is consumed.
+        # a generator is lazy: `helper` runs only when the generator is consumed.
         names = self._oracle_for(
             tmp_path,
             "def helper():\n    return 1\n\n\ngen = (helper() for _ in range(2))\n",
@@ -93,9 +93,9 @@ class TestModuleCallEval:
         assert "helper" not in names
 
     def test_generator_outermost_iterable_is_eager(self, tmp_path: Path) -> None:
-        # (H) the first iterable of a generator is evaluated when the generator is
-        # (H) created (at import), so `load_items` is a module call but the lazy
-        # (H) body call `helper` is not.
+        # the first iterable of a generator is evaluated when the generator is
+        # created (at import), so `load_items` is a module call but the lazy
+        # body call `helper` is not.
         names = self._oracle_for(
             tmp_path,
             "def helper():\n    return 1\n\n\n"
@@ -106,7 +106,7 @@ class TestModuleCallEval:
         assert "helper" not in names
 
     def test_list_comprehension_call_is_module_attributed(self, tmp_path: Path) -> None:
-        # (H) a list comprehension runs eagerly at import, so its call counts.
+        # a list comprehension runs eagerly at import, so its call counts.
         names = self._oracle_for(
             tmp_path,
             "def helper():\n    return 1\n\n\nout = [helper() for _ in range(2)]\n",
@@ -114,7 +114,7 @@ class TestModuleCallEval:
         assert "helper" in names
 
     def test_class_decorator_is_module_attributed(self, tmp_path: Path) -> None:
-        # (H) a bare class decorator runs at module load -> a module call.
+        # a bare class decorator runs at module load -> a module call.
         names = self._oracle_for(
             tmp_path,
             "def deco(cls):\n    return cls\n\n\n@deco\nclass Widget:\n    pass\n",
@@ -130,9 +130,9 @@ class TestModuleCallEval:
     def test_classless_module_construction_credited_via_instantiates(
         self, tmp_path: Path
     ) -> None:
-        # (H) a dataclass has no explicit __init__, so cgr emits no CALLS for its
-        # (H) construction, only INSTANTIATES -> the class. The eval must still
-        # (H) credit the module-scope `Config(1)` so L2 recall stays 1.0.
+        # a dataclass has no explicit __init__, so cgr emits no CALLS for its
+        # construction, only INSTANTIATES -> the class. The eval must still
+        # credit the module-scope `Config(1)` so L2 recall stays 1.0.
         source = (
             "from dataclasses import dataclass\n\n\n"
             "@dataclass\nclass Config:\n    n: int\n\n\n"
@@ -143,7 +143,7 @@ class TestModuleCallEval:
     def test_return_annotation_counted_without_future_import(
         self, tmp_path: Path
     ) -> None:
-        # (H) without postponed annotations, `Result()` runs at import.
+        # without postponed annotations, `Result()` runs at import.
         names = self._oracle_for(
             tmp_path,
             "def Result():\n    return 1\n\n\ndef route() -> Result():\n    return 1\n",
@@ -151,7 +151,7 @@ class TestModuleCallEval:
         assert "Result" in names
 
     def test_annotation_not_counted_with_future_import(self, tmp_path: Path) -> None:
-        # (H) with postponed annotations, the annotation is a string and never runs.
+        # with postponed annotations, the annotation is a string and never runs.
         names = self._oracle_for(
             tmp_path,
             "from __future__ import annotations\n\n\n"

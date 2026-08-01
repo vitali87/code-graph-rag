@@ -1,8 +1,8 @@
-# (H) Regression tests for issue #1: incremental rebuild used to leave
-# (H) stale Function/DEFINES/IMPORTS/CALLS entities when a symbol was renamed
-# (H) across files, because the incremental path was additive-only. After the
-# (H) fix, an incremental rebuild after a rename must yield exactly the same
-# (H) graph as a fresh full rebuild of the renamed tree.
+# Regression tests for issue #1: incremental rebuild used to leave
+# stale Function/DEFINES/IMPORTS/CALLS entities when a symbol was renamed
+# across files, because the incremental path was additive-only. After the
+# fix, an incremental rebuild after a rename must yield exactly the same
+# graph as a fresh full rebuild of the renamed tree.
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,7 +31,7 @@ class InMemoryGraph:
         self.nodes: dict[NodeId, PropertyDict] = {}
         self.rels: set[RelTuple] = set()
 
-    # (H) IngestorProtocol
+    # IngestorProtocol
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         uid = properties[NODE_UNIQUE_KEYS[label]]
         self.nodes[(str(label), uid)] = dict(properties)
@@ -50,7 +50,7 @@ class InMemoryGraph:
     def flush_all(self) -> None:
         return None
 
-    # (H) QueryProtocol
+    # QueryProtocol
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
@@ -69,7 +69,6 @@ class InMemoryGraph:
             case _:
                 return None
 
-    # (H) delete helpers
     def _find_nodes(self, label: str, key: str, val: PropertyValue) -> list[NodeId]:
         return [
             nid
@@ -99,7 +98,9 @@ class InMemoryGraph:
         self._purge_nodes(to_delete)
 
     def _delete_node_by_path(self, label: str, path: PropertyValue) -> None:
-        self._purge_nodes(set(self._find_nodes(label, cs.KEY_PATH, path)))
+        # Mirrors the real query: File/Folder deletes key on the absolute
+        # path (issue #897).
+        self._purge_nodes(set(self._find_nodes(label, cs.KEY_ABSOLUTE_PATH, path)))
 
     def _purge_nodes(self, to_delete: set[NodeId]) -> None:
         deleted_props = {nid: self.nodes[nid] for nid in to_delete}
@@ -118,9 +119,32 @@ class InMemoryGraph:
             if not touches(fl, fk, fv) and not touches(tl, tk, tv)
         }
 
-    # (H) comparison
     def snapshot(self) -> tuple[frozenset[NodeId], frozenset[RelTuple]]:
-        return frozenset(self.nodes.keys()), frozenset(self.rels)
+        # File/Folder identity is the absolute path, which differs between
+        # the golden and incremental tmp roots; normalise those ids back to
+        # the relative path so the two graphs stay comparable.
+        alias: dict[PropertyValue, PropertyValue] = {
+            props[cs.KEY_ABSOLUTE_PATH]: props[cs.KEY_PATH]
+            for (label, _uid), props in self.nodes.items()
+            if label in (cs.NodeLabel.FILE, cs.NodeLabel.FOLDER)
+            and cs.KEY_ABSOLUTE_PATH in props
+        }
+        nodes = frozenset(
+            (label, alias.get(uid, uid)) for (label, uid) in self.nodes.keys()
+        )
+        rels = frozenset(
+            (
+                fl,
+                cs.KEY_PATH if fk == cs.KEY_ABSOLUTE_PATH else fk,
+                alias.get(fv, fv) if fk == cs.KEY_ABSOLUTE_PATH else fv,
+                rel,
+                tl,
+                cs.KEY_PATH if tk == cs.KEY_ABSOLUTE_PATH else tk,
+                alias.get(tv, tv) if tk == cs.KEY_ABSOLUTE_PATH else tv,
+            )
+            for (fl, fk, fv, rel, tl, tk, tv) in self.rels
+        )
+        return nodes, rels
 
 
 NODE_UNIQUE_KEYS = cs.NODE_UNIQUE_CONSTRAINTS
@@ -147,22 +171,22 @@ def _make_updater(root: Path, ingestor: InMemoryGraph) -> GraphUpdater:
 
 class TestIncrementalRenameStaleEntities:
     def test_incremental_rename_matches_full_rebuild(self, tmp_path: Path) -> None:
-        # (H) Golden: a fresh full rebuild of the already-renamed tree.
+        # Golden: a fresh full rebuild of the already-renamed tree.
         golden_root = tmp_path / "golden"
         golden_root.mkdir()
         _write_tree(golden_root, "new_name")
         golden_graph = InMemoryGraph()
         _make_updater(golden_root, golden_graph).run(force=True)
 
-        # (H) Sanity: golden truly contains the renamed symbol and not the old one.
+        # Sanity: golden truly contains the renamed symbol and not the old one.
         golden_funcs = {
             uid for (label, uid) in golden_graph.nodes if label == cs.NodeLabel.FUNCTION
         }
         assert any(str(qn).endswith(".new_name") for qn in golden_funcs)
         assert not any(str(qn).endswith(".old_name") for qn in golden_funcs)
 
-        # (H) Incremental: build original tree, then rename across both files
-        # (H) and rebuild incrementally (force=False).
+        # Incremental: build original tree, then rename across both files
+        # and rebuild incrementally (force=False).
         incr_root = tmp_path / "incr"
         incr_root.mkdir()
         _write_tree(incr_root, "old_name")
@@ -172,7 +196,7 @@ class TestIncrementalRenameStaleEntities:
         _write_tree(incr_root, "new_name")
         _make_updater(incr_root, incr_graph).run(force=False)
 
-        # (H) The stale old_name Function and its edges must be gone.
+        # The stale old_name Function and its edges must be gone.
         incr_nodes, incr_rels = incr_graph.snapshot()
         golden_nodes, golden_rels = golden_graph.snapshot()
 

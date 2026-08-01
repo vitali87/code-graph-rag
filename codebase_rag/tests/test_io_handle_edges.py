@@ -1,0 +1,1508 @@
+# Handle-aware I/O for the lean non-Python walk (issue #714): a call binding
+# a resource handle (`os.OpenFile`, `fs.createWriteStream`, `new FileWriter`,
+# `File::open`, `std::ifstream f("x")`) attributes later method calls on the
+# bound variable to the constructor's resource, exactly as Python's handle
+# walk does for `open()` / `sqlite3.connect()`.
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.capture import resolve_capture
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+
+READS_FROM = cs.RelationshipType.READS_FROM.value
+WRITES_TO = cs.RelationshipType.WRITES_TO.value
+_CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
+
+
+def _run_io(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
+    # Build the graph for `files` and return (caller_qn, rel_type, resource_qn)
+    # for READS_FROM / WRITES_TO edges only.
+    parsers, queries = load_parsers()
+    for rel, content in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        capture=_CAPTURE_IO,
+    ).run()
+    return {
+        (c.args[0][2], str(c.args[1]), c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) in (READS_FROM, WRITES_TO)
+    }
+
+
+def _has(rels: set[tuple[str, str, str]], caller: str, rel: str, resource: str) -> bool:
+    # Java method qns carry a parameter signature suffix (`A.fetch(String)`);
+    # match on the qn with any trailing `(...)` stripped.
+    return any(
+        a.partition("(")[0].endswith(caller) and r == rel and b == resource
+        for a, r, b in rels
+    )
+
+
+# Go tests below.
+
+
+def test_go_openfile_handle_write(tmp_path: Path) -> None:
+    # os.OpenFile is a handle constructor, NOT a direct sink (its direction
+    # depends on flags), so this WRITE can only come from the method binding.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func save(s string) {\n"
+            '\tf, _ := os.OpenFile("data.txt", os.O_WRONLY, 0644)\n'
+            "\tf.WriteString(s)\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.save", WRITES_TO, "resource::FILE::data.txt")
+
+
+def test_go_openfile_handle_read(tmp_path: Path) -> None:
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func load(buf []byte) {\n"
+            '\tf, _ := os.OpenFile("data.txt", os.O_RDONLY, 0)\n'
+            "\tf.Read(buf)\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.load", READS_FROM, "resource::FILE::data.txt")
+
+
+def test_go_sql_open_query_reads(tmp_path: Path) -> None:
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "database/sql"\n\n'
+            "func fetch() {\n"
+            '\tdb, _ := sql.Open("postgres", "dsn")\n'
+            '\tdb.Query("SELECT 1")\n'
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.fetch", READS_FROM, "resource::DATABASE::dsn")
+
+
+def test_go_sql_open_exec_writes(tmp_path: Path) -> None:
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "database/sql"\n\n'
+            "func store() {\n"
+            '\tdb, _ := sql.Open("postgres", "dsn")\n'
+            '\tdb.Exec("INSERT INTO t VALUES (1)")\n'
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.store", WRITES_TO, "resource::DATABASE::dsn")
+
+
+def test_go_net_dial_write(tmp_path: Path) -> None:
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "net"\n\n'
+            "func send(payload []byte) {\n"
+            '\tconn, _ := net.Dial("tcp", "example.com:80")\n'
+            "\tconn.Write(payload)\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.send", WRITES_TO, "resource::SOCKET::example.com:80")
+
+
+def test_go_handle_alias_tracks_binding(tmp_path: Path) -> None:
+    # `g := f` aliases the handle; I/O through the alias still attributes to
+    # the constructor's resource.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func save(s string) {\n"
+            '\tf, _ := os.OpenFile("data.txt", os.O_WRONLY, 0644)\n'
+            "\tg := f\n"
+            "\tg.WriteString(s)\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.save", WRITES_TO, "resource::FILE::data.txt")
+
+
+def test_go_rebound_handle_emits_nothing(tmp_path: Path) -> None:
+    # Rebinding the variable to a non-handle kills the binding.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func f(s string, other File) {\n"
+            '\tw, _ := os.OpenFile("data.txt", os.O_WRONLY, 0644)\n'
+            "\tw = other\n"
+            "\tw.WriteString(s)\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "main.f", WRITES_TO, "resource::FILE::data.txt")
+
+
+def test_go_block_local_handle_does_not_leak(tmp_path: Path) -> None:
+    # A handle declared inside a nested block is out of scope after the
+    # block; a same-named use outside must not attribute to it (greploop P1).
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func load(f Reader, buf []byte) {\n"
+            "\t{\n"
+            '\t\tf, _ := os.OpenFile("a.txt", os.O_RDONLY, 0)\n'
+            "\t\t_ = f\n"
+            "\t}\n"
+            "\tf.Read(buf)\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "main.load", READS_FROM, "resource::FILE::a.txt")
+
+
+def test_go_unbound_receiver_emits_nothing(tmp_path: Path) -> None:
+    files = {
+        "main.go": (
+            "package main\n\nfunc f(w Writer, s string) {\n\tw.WriteString(s)\n}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not any(r == WRITES_TO for _, r, _ in rels)
+
+
+# JS/TS tests below.
+
+
+def test_js_write_stream_handle(tmp_path: Path) -> None:
+    files = {
+        "app.js": (
+            "const fs = require('fs');\n"
+            "function save(data) {\n"
+            "  const ws = fs.createWriteStream('out.txt');\n"
+            "  ws.write(data);\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "app.save", WRITES_TO, "resource::FILE::out.txt")
+
+
+def test_js_read_stream_handle(tmp_path: Path) -> None:
+    files = {
+        "app.js": (
+            "const fs = require('fs');\n"
+            "function load() {\n"
+            "  const rs = fs.createReadStream('in.txt');\n"
+            "  rs.read();\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "app.load", READS_FROM, "resource::FILE::in.txt")
+
+
+def test_js_stream_end_writes(tmp_path: Path) -> None:
+    # `ws.end(data)` flushes the final chunk: a WRITE.
+    files = {
+        "app.js": (
+            "const fs = require('fs');\n"
+            "function finish(data) {\n"
+            "  const ws = fs.createWriteStream('log.txt');\n"
+            "  ws.end(data);\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "app.finish", WRITES_TO, "resource::FILE::log.txt")
+
+
+def test_js_unbound_receiver_emits_nothing(tmp_path: Path) -> None:
+    files = {
+        "app.js": ("function f(ws, data) {\n  ws.write(data);\n}\n"),
+    }
+    rels = _run_io(tmp_path, files)
+    assert not any(r == WRITES_TO for _, r, _ in rels)
+
+
+# Java tests below.
+
+
+def test_java_new_filewriter_write(tmp_path: Path) -> None:
+    files = {
+        "A.java": (
+            "import java.io.FileWriter;\n"
+            "class A {\n"
+            "  void save(String s) throws Exception {\n"
+            '    FileWriter w = new FileWriter("out.txt");\n'
+            "    w.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.save", WRITES_TO, "resource::FILE::out.txt")
+
+
+def test_java_buffered_reader_wrapper(tmp_path: Path) -> None:
+    # The idiomatic wrapper: the resource identity comes from the INNER
+    # constructor (`new FileReader("in.txt")`).
+    files = {
+        "A.java": (
+            "import java.io.BufferedReader;\n"
+            "import java.io.FileReader;\n"
+            "class A {\n"
+            "  void load() throws Exception {\n"
+            '    BufferedReader br = new BufferedReader(new FileReader("in.txt"));\n'
+            "    String line = br.readLine();\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.load", READS_FROM, "resource::FILE::in.txt")
+
+
+def test_java_files_new_buffered_reader_path_of(tmp_path: Path) -> None:
+    # `Files.newBufferedReader(Path.of("cfg.txt"))`: the identity unwraps
+    # through Path.of to the literal.
+    files = {
+        "A.java": (
+            "import java.nio.file.Files;\n"
+            "import java.nio.file.Path;\n"
+            "class A {\n"
+            "  void load() throws Exception {\n"
+            '    var r = Files.newBufferedReader(Path.of("cfg.txt"));\n'
+            "    r.readLine();\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.load", READS_FROM, "resource::FILE::cfg.txt")
+
+
+def test_java_connection_statement_query(tmp_path: Path) -> None:
+    # DriverManager.getConnection binds a DATABASE handle; createStatement
+    # DERIVES a same-resource handle; executeQuery reads through it.
+    files = {
+        "A.java": (
+            "import java.sql.Connection;\n"
+            "import java.sql.DriverManager;\n"
+            "import java.sql.Statement;\n"
+            "class A {\n"
+            "  void fetch(String url) throws Exception {\n"
+            "    Connection c = DriverManager.getConnection(url);\n"
+            "    Statement st = c.createStatement();\n"
+            '    st.executeQuery("SELECT 1");\n'
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.fetch", READS_FROM, "resource::DATABASE::<dynamic>")
+
+
+def test_java_fully_qualified_new_constructor(tmp_path: Path) -> None:
+    # `new java.io.FileWriter("out.txt")`: the fully qualified constructor
+    # type must bind exactly like the simple name (greploop P1).
+    files = {
+        "A.java": (
+            "class A {\n"
+            "  void save(String s) throws Exception {\n"
+            '    java.io.FileWriter w = new java.io.FileWriter("out.txt");\n'
+            "    w.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.save", WRITES_TO, "resource::FILE::out.txt")
+
+
+def test_java_scanner_new_file_identity(tmp_path: Path) -> None:
+    # `new Scanner(new File("x"))`: Scanner is a wrapper; File is not a handle
+    # itself but carries the identity literal.
+    files = {
+        "A.java": (
+            "import java.io.File;\n"
+            "import java.util.Scanner;\n"
+            "class A {\n"
+            "  void load() throws Exception {\n"
+            '    Scanner sc = new Scanner(new File("data.csv"));\n'
+            "    String line = sc.nextLine();\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.load", READS_FROM, "resource::FILE::data.csv")
+
+
+def test_java_printwriter_filename_overload(tmp_path: Path) -> None:
+    # PrintWriter is both a wrapper and a direct filename constructor; the
+    # filename overload must bind when arg0 is not a handle.
+    files = {
+        "A.java": (
+            "import java.io.PrintWriter;\n"
+            "class A {\n"
+            "  void save(String s) throws Exception {\n"
+            '    PrintWriter pw = new PrintWriter("report.txt");\n'
+            "    pw.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.save", WRITES_TO, "resource::FILE::report.txt")
+
+
+def test_java_statement_execute_sql_refinement(tmp_path: Path) -> None:
+    # `execute(sql)` is READ_WRITE by signature; a SELECT literal refines it
+    # to a READ only.
+    files = {
+        "A.java": (
+            "import java.sql.Connection;\n"
+            "import java.sql.DriverManager;\n"
+            "import java.sql.Statement;\n"
+            "class A {\n"
+            "  void fetch(String url) throws Exception {\n"
+            "    Connection c = DriverManager.getConnection(url);\n"
+            "    Statement st = c.createStatement();\n"
+            '    st.execute("SELECT * FROM t");\n'
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.fetch", READS_FROM, "resource::DATABASE::<dynamic>")
+    assert not _has(rels, "A.fetch", WRITES_TO, "resource::DATABASE::<dynamic>")
+
+
+def test_java_try_with_resources_binds_reader_handle(tmp_path: Path) -> None:
+    # The idiomatic home of a Java handle is a try-with-resources header:
+    # the `resource` declaration must bind exactly like a local declarator.
+    files = {
+        "A.java": (
+            "import java.io.BufferedReader;\n"
+            "import java.io.FileReader;\n"
+            "class A {\n"
+            "  void load() throws Exception {\n"
+            "    try (BufferedReader br ="
+            ' new BufferedReader(new FileReader("in.txt"))) {\n'
+            "      String line = br.readLine();\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.load", READS_FROM, "resource::FILE::in.txt")
+
+
+# Rust tests below.
+
+
+def test_rust_file_open_read_to_string(tmp_path: Path) -> None:
+    # `File::open("in.txt")?` binds through the try_expression wrapper.
+    files = {
+        "main.rs": (
+            "use std::fs::File;\n"
+            "use std::io::Read;\n"
+            "fn load() -> std::io::Result<()> {\n"
+            '    let mut f = File::open("in.txt")?;\n'
+            "    let mut s = String::new();\n"
+            "    f.read_to_string(&mut s)?;\n"
+            "    Ok(())\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.load", READS_FROM, "resource::FILE::in.txt")
+
+
+def test_rust_file_create_write_all_unwrap(tmp_path: Path) -> None:
+    # `.unwrap()` on the constructor call must unwrap to the inner binding.
+    files = {
+        "main.rs": (
+            "use std::fs::File;\n"
+            "use std::io::Write;\n"
+            "fn save(s: &str) {\n"
+            '    let mut out = File::create("out.txt").unwrap();\n'
+            "    out.write_all(s.as_bytes()).unwrap();\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.save", WRITES_TO, "resource::FILE::out.txt")
+
+
+def test_rust_fully_qualified_file_open(tmp_path: Path) -> None:
+    files = {
+        "main.rs": (
+            "use std::io::Read;\n"
+            "fn load() -> std::io::Result<()> {\n"
+            '    let mut f = std::fs::File::open("cfg.toml")?;\n'
+            "    let mut s = String::new();\n"
+            "    f.read_to_string(&mut s)?;\n"
+            "    Ok(())\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.load", READS_FROM, "resource::FILE::cfg.toml")
+
+
+def test_rust_bufreader_wrapper(tmp_path: Path) -> None:
+    # `BufReader::new(f)` wraps an existing handle: reads through the
+    # wrapper attribute to the underlying file.
+    files = {
+        "main.rs": (
+            "use std::fs::File;\n"
+            "use std::io::{BufRead, BufReader};\n"
+            "fn load() -> std::io::Result<()> {\n"
+            '    let f = File::open("in.txt")?;\n'
+            "    let mut r = BufReader::new(f);\n"
+            "    let mut line = String::new();\n"
+            "    r.read_line(&mut line)?;\n"
+            "    Ok(())\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.load", READS_FROM, "resource::FILE::in.txt")
+
+
+# C++ tests below.
+
+
+def test_cpp_ofstream_insertion_writes(tmp_path: Path) -> None:
+    # `std::ofstream out("out.txt"); out << line;` -- the declaration
+    # constructs a FILE handle; `<<` on it is a WRITE to that file.
+    files = {
+        "main.cpp": (
+            "#include <fstream>\n"
+            "void save(const std::string& line) {\n"
+            '    std::ofstream out("out.txt");\n'
+            "    out << line;\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.save", WRITES_TO, "resource::FILE::out.txt")
+
+
+def test_cpp_ifstream_extraction_reads(tmp_path: Path) -> None:
+    files = {
+        "main.cpp": (
+            "#include <fstream>\n"
+            "void load() {\n"
+            '    std::ifstream in("in.txt");\n'
+            "    std::string word;\n"
+            "    in >> word;\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.load", READS_FROM, "resource::FILE::in.txt")
+
+
+def test_cpp_ofstream_write_method(tmp_path: Path) -> None:
+    files = {
+        "main.cpp": (
+            "#include <fstream>\n"
+            "void save(const char* buf, int n) {\n"
+            '    std::ofstream out("blob.bin");\n'
+            "    out.write(buf, n);\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.save", WRITES_TO, "resource::FILE::blob.bin")
+
+
+def test_cpp_vexing_parse_dynamic_identity(tmp_path: Path) -> None:
+    # `std::ifstream dyn(path)` parses as a function_declarator (most vexing
+    # parse); it still binds a FILE handle with a <dynamic> identity.
+    files = {
+        "main.cpp": (
+            "#include <fstream>\n"
+            "void load(const std::string& path) {\n"
+            "    std::ifstream dyn(path);\n"
+            "    std::string word;\n"
+            "    dyn >> word;\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "main.load", READS_FROM, "resource::FILE::<dynamic>")
+
+
+def test_cpp_arithmetic_shift_no_edge(tmp_path: Path) -> None:
+    # `x << 2` on a non-handle base must not emit anything.
+    files = {
+        "main.cpp": (
+            "#include <fstream>\n"
+            "int shift(int x) {\n"
+            "    int y = x << 2;\n"
+            "    return y >> 1;\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not any(a.endswith("main.shift") for a, _, _ in rels)
+
+
+# Python derive tests below.
+
+
+def test_python_cursor_derives_connection_handle(tmp_path: Path) -> None:
+    # `cur = conn.cursor()` derives a same-resource DATABASE handle, so
+    # cur.fetchall() reads the connection's database (issue #714).
+    files = {
+        "m.py": (
+            "import sqlite3\n\n"
+            "def fetch():\n"
+            "    conn = sqlite3.connect('app.db')\n"
+            "    cur = conn.cursor()\n"
+            "    cur.fetchall()\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.fetch", READS_FROM, "resource::DATABASE::app.db")
+
+
+def test_python_cursor_execute_select_reads(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "import sqlite3\n\n"
+            "def query():\n"
+            "    conn = sqlite3.connect('app.db')\n"
+            "    cur = conn.cursor()\n"
+            "    cur.execute('SELECT * FROM t')\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.query", READS_FROM, "resource::DATABASE::app.db")
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
+
+
+class TestGoSprintfUrls:
+    """A Sprintf-built URL is the idiomatic Go way to add path parameters;
+    its format verbs must become placeholders instead of discarding the
+    whole URL (issue #885, the Go analogue of the f-string fix).
+    """
+
+    def test_http_get_sprintf_keeps_placeholder(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchProduct(id int) (*http.Response, error) {\n"
+                '\treturn http.Get(fmt.Sprintf("http://svc:8000/products/%d", id))\n'
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchProduct",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{*}",
+        ), rels
+
+    def test_double_percent_stays_literal(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchSale(id int) (*http.Response, error) {\n"
+                '\treturn http.Get(fmt.Sprintf("http://svc:8000/sale100%%/%v", id))\n'
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchSale",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/sale100%/{*}",
+        ), rels
+
+    def test_dynamic_format_string_stays_dynamic(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchAny(tpl string, id int) (*http.Response, error) {\n"
+                "\treturn http.Get(fmt.Sprintf(tpl, id))\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels, "main.fetchAny", READS_FROM, "resource::NETWORK::<dynamic>"
+        ), rels
+
+    def test_unrelated_wrapping_call_stays_dynamic(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"net/http"\n\t"strings"\n)\n\n'
+                "func fetchTrim(raw string) (*http.Response, error) {\n"
+                "\treturn http.Get(strings.TrimSpace(raw))\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels, "main.fetchTrim", READS_FROM, "resource::NETWORK::<dynamic>"
+        ), rels
+
+    def test_indexed_verbs_become_placeholders(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchReview(id int, slug string) (*http.Response, error) {\n"
+                "\treturn http.Get(fmt.Sprintf("
+                '"http://svc:8000/products/%[1]d/reviews/%[2]s", id, slug))\n'
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchReview",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{*}/reviews/{*}",
+        ), rels
+
+    def test_indexed_width_and_precision_become_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchScore(w, p int, v float64) (*http.Response, error) {\n"
+                "\treturn http.Get(fmt.Sprintf("
+                '"http://svc:8000/scores/%[3]*.[2]*[1]f", v, p, w))\n'
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchScore",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/scores/{*}",
+        ), rels
+
+    def test_raw_format_string_keeps_placeholder(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t"fmt"\n\t"net/http"\n)\n\n'
+                "func fetchRaw(id int) (*http.Response, error) {\n"
+                "\treturn http.Get(fmt.Sprintf("
+                "`http://svc:8000/products/%d`, id))\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchRaw",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{*}",
+        ), rels
+
+    def test_dot_imported_sprintf_keeps_placeholder(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import (\n\t. "fmt"\n\t"net/http"\n)\n\n'
+                "func fetchDot(id int) (*http.Response, error) {\n"
+                '\treturn http.Get(Sprintf("http://svc:8000/products/%d", id))\n'
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "main.fetchDot",
+            READS_FROM,
+            "resource::NETWORK::http://svc:8000/products/{*}",
+        ), rels
+
+
+class TestGoRpcClientSinks:
+    """Issue #912 slice 1: a connect-go generated client binding
+    (`c := userv1connect.NewUserServiceClient(...)`) makes every exported
+    method call on it an RPC sink on `resource::RPC::<Stem>.<Method>`, so
+    interior service-mesh traffic becomes visible without URL literals.
+    """
+
+    _RPC = "resource::RPC::UserService.GetUser"
+
+    def test_connect_client_call_emits_rpc_sink(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(base string) {\n"
+                "\tclient := userv1connect.NewUserServiceClient(nil, base)\n"
+                "\tclient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "main.fetch", READS_FROM, self._RPC), rels
+        assert _has(rels, "main.fetch", WRITES_TO, self._RPC), rels
+
+    def test_alias_tracks_the_rpc_binding(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(base string) {\n"
+                "\tc := userv1connect.NewUserServiceClient(nil, base)\n"
+                "\tg := c\n"
+                "\tg.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "main.fetch", READS_FROM, self._RPC), rels
+
+    def test_non_connect_package_is_not_rpc(self, tmp_path: Path) -> None:
+        # `api.NewHTTPClient` lacks the connect-go package marker.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/api"\n\n'
+                "func fetch(base string) {\n"
+                "\tclient := api.NewHTTPClient(base)\n"
+                "\tclient.Get(nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_unexported_method_is_ignored(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(base string) {\n"
+                "\tclient := userv1connect.NewUserServiceClient(nil, base)\n"
+                "\tclient.close()\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_bare_new_client_without_package_is_not_rpc(self, tmp_path: Path) -> None:
+        # A local helper `NewFooClient()` has no connect package qualifier.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                "func fetch() {\n"
+                "\tclient := NewFooClient()\n"
+                "\tclient.Call(nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_aliased_connect_import_binds(self, tmp_path: Path) -> None:
+        # A Go import alias hides the package name; the import map still
+        # records the real path, and that is what carries the evidence.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import userv1 "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(base string) {\n"
+                "\tclient := userv1.NewUserServiceClient(nil, base)\n"
+                "\tclient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "main.fetch", READS_FROM, self._RPC), rels
+
+    def test_shadowed_qualifier_is_not_rpc(self, tmp_path: Path) -> None:
+        # A parameter shadowing the imported package name is a value, not
+        # the generated package.
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(userv1connect FakeFactory) {\n"
+                '\tclient := userv1connect.NewUserServiceClient(nil, "")\n'
+                "\tclient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_unimported_qualifier_is_not_rpc(self, tmp_path: Path) -> None:
+        # No import maps `fooconnect`, so the name alone is no evidence
+        # (no parameter here: the missing-import guard must fail alone).
+        files = {
+            "main.go": (
+                "package main\n\n"
+                "func fetch() {\n"
+                "\tclient := fooconnect.NewBarClient()\n"
+                "\tclient.Do(nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+
+class TestGoRpcTypedClientEvidence:
+    """Issue #912 slice 1b: production code constructs the client once and
+    injects it; calls happen on struct fields or parameters DECLARED with the
+    generated client type (`userv1connect.UserServiceClient`). The declared
+    type carries the same evidence as the constructor.
+    """
+
+    _RPC = "resource::RPC::UserService.GetUser"
+
+    def test_struct_field_typed_client_call_emits_sink(self, tmp_path: Path) -> None:
+        files = {
+            "auth.go": (
+                "package auth\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Auth struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "func (a *Auth) Lookup() {\n"
+                "\ta.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "auth.Auth.Lookup", READS_FROM, self._RPC), rels
+        assert _has(rels, "auth.Auth.Lookup", WRITES_TO, self._RPC), rels
+
+    def test_parameter_typed_client_call_emits_sink(self, tmp_path: Path) -> None:
+        files = {
+            "main.go": (
+                "package main\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "func fetch(cl userv1connect.UserServiceClient) {\n"
+                "\tcl.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "main.fetch", READS_FROM, self._RPC), rels
+
+    def test_non_connect_field_type_is_not_rpc(self, tmp_path: Path) -> None:
+        files = {
+            "auth.go": (
+                "package auth\n\n"
+                'import "example.com/api"\n\n'
+                "type Auth struct {\n"
+                "\tuserClient api.HTTPClient\n"
+                "}\n\n"
+                "func (a *Auth) Lookup() {\n"
+                "\ta.userClient.GetUser(nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_pointer_typed_field_binds_too(self, tmp_path: Path) -> None:
+        files = {
+            "auth.go": (
+                "package auth\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Auth struct {\n"
+                "\tuserClient *userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "func (a *Auth) Lookup() {\n"
+                "\ta.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "auth.Auth.Lookup", READS_FROM, self._RPC), rels
+
+    def test_colliding_field_names_yield_nothing(self, tmp_path: Path) -> None:
+        # Two structs share a field name with DIFFERENT client types; the
+        # flat name lookup cannot tell the receivers apart, so the field
+        # drops out entirely rather than guess (never a wrong edge).
+        files = {
+            "auth.go": (
+                "package auth\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n'
+                'import "example.com/gen/billing/v1/billingv1connect"\n\n'
+                "type Auth struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "type Billing struct {\n"
+                "\tuserClient billingv1connect.BillingServiceClient\n"
+                "}\n\n"
+                "func (a *Auth) Lookup() {\n"
+                "\ta.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_same_stem_duplicate_fields_still_bind(self, tmp_path: Path) -> None:
+        # The same field name with the SAME client type is no conflict.
+        files = {
+            "auth.go": (
+                "package auth\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Auth struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "type Admin struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "func (a *Auth) Lookup() {\n"
+                "\ta.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "auth.Auth.Lookup", READS_FROM, self._RPC), rels
+
+    def test_field_declared_in_sibling_file_binds(self, tmp_path: Path) -> None:
+        # Go packages split declaration and use across files: the struct
+        # (and its connect-typed field) lives in service.go, the handler
+        # calling it in create.go. The field map is package-level.
+        files = {
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "Server.Create", READS_FROM, self._RPC), rels
+
+    def test_field_in_other_directory_does_not_leak(self, tmp_path: Path) -> None:
+        # A connect-typed field in a DIFFERENT package is not evidence here.
+        files = {
+            "other/service.go": (
+                "package other\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_sibling_test_file_field_is_ignored(self, tmp_path: Path) -> None:
+        # A `_test.go` sibling compiles only under `go test`; its fake
+        # struct fields are not production evidence.
+        files = {
+            "svc/service_test.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type fakeServer struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_requesting_test_file_own_field_is_ignored(self, tmp_path: Path) -> None:
+        # A `_test.go` file declaring its own fake connect-typed struct must
+        # not bind its own calls either.
+        files = {
+            "svc/service_test.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type fakeServer struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n\n"
+                "func (s *fakeServer) run() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_sibling_reparse_refreshes_the_field_map(self, tmp_path: Path) -> None:
+        # A long-lived processor (realtime updater) must not serve a stale
+        # package aggregate when a SIBLING re-parses while the requesting
+        # file's tree is unchanged: the cache key fingerprints every
+        # participating root id.
+        from codebase_rag.capture import resolve_capture
+        from codebase_rag.parser_loader import load_parsers
+        from codebase_rag.parsers.io_access.processor import IOAccessProcessor
+
+        parsers, _ = load_parsers()
+        caller_src = (
+            "package svc\n\nfunc (s *Server) Create() {\n"
+            "\ts.userClient.GetUser(nil, nil)\n}\n"
+        )
+        decl_v1 = "package svc\n\ntype Server struct{}\n"
+        decl_v2 = (
+            "package svc\n\n"
+            'import "example.com/gen/user/v1/userv1connect"\n\n'
+            "type Server struct {\n"
+            "\tuserClient userv1connect.UserServiceClient\n"
+            "}\n"
+        )
+        caller_tree = parsers["go"].parse(caller_src.encode())
+        decl_path = tmp_path / "svc" / "service.go"
+
+        class _FakeCache:
+            def __init__(self) -> None:
+                self.entry = (
+                    parsers["go"].parse(decl_v1.encode()).root_node,
+                    cs.SupportedLanguage.GO,
+                )
+
+            def load(self, key: Path) -> tuple[object, cs.SupportedLanguage]:
+                return self.entry
+
+        cache = _FakeCache()
+        import_processor = MagicMock()
+        import_processor.import_mapping = {
+            "proj.svc.service": {
+                "userv1connect": "example.com/gen/user/v1/userv1connect"
+            },
+            "proj.svc.create": {},
+        }
+        processor = IOAccessProcessor(
+            MagicMock(),
+            import_processor,
+            selection=resolve_capture([cs.CaptureGroup.IO.value]),
+            module_paths={"proj.svc.service": decl_path},
+            ast_cache=cache,  # type: ignore[arg-type]
+        )
+        caller_fn = next(
+            c
+            for c in caller_tree.root_node.named_children
+            if c.type == "method_declaration"
+        )
+        before = processor._go_rpc_fields(caller_fn, "proj.svc.create", {})
+        assert before == {}
+        cache.entry = (
+            parsers["go"].parse(decl_v2.encode()).root_node,
+            cs.SupportedLanguage.GO,
+        )
+        after = processor._go_rpc_fields(caller_fn, "proj.svc.create", {})
+        assert after == {"userClient": "UserService"}, after
+
+    def test_receiver_collision_across_packages_attributes_correctly(
+        self, tmp_path: Path
+    ) -> None:
+        # Issue #930: `Server` recurs across packages. The receiver struct is
+        # by Go definition in the METHOD'S OWN package; a same-named struct
+        # elsewhere must not steal the attribution and dangle the edge.
+        files = {
+            "aaa/server.go": (
+                "package aaa\n\n"
+                "type Server struct{}\n\n"
+                "func (s *Server) Unrelated() {}\n"
+            ),
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        matches = [a for a, r, b in rels if b == self._RPC and r == READS_FROM]
+        assert matches, rels
+        # The caller qn must be the REGISTERED method node
+        # (svc.service.Server.Create), never a receiver-dropping fallback.
+        assert all(".svc.service.Server.Create" in a for a in matches), matches
+
+    def test_external_test_package_sibling_does_not_block_resolution(
+        self, tmp_path: Path
+    ) -> None:
+        # An external `package svc_test` sibling can declare its own `Server`
+        # with the same method name, but production files can never see a
+        # type from a `_test.go` file, so it must not force the ambiguity
+        # fallback that dangles the production method's edges.
+        files = {
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+            "svc/helpers_test.go": (
+                "package svc_test\n\n"
+                "type Server struct{}\n\n"
+                "func (s *Server) Create() {}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        matches = [a for a, r, b in rels if b == self._RPC and r == READS_FROM]
+        assert matches, rels
+        assert all(".svc.service.Server.Create" in a for a in matches), matches
+
+    def test_external_test_method_does_not_consume_production_fields(
+        self, tmp_path: Path
+    ) -> None:
+        # The reverse direction: an external `package svc_test` file cannot
+        # reference unexported members of `package svc`, so a same-named
+        # field on its own harness type must not pick up the production
+        # file's typed-client evidence.
+        files = {
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/harness_test.go": (
+                "package svc_test\n\n"
+                "type harness struct {\n"
+                "\tuserClient fakeClient\n"
+                "}\n\n"
+                "func (h *harness) run() {\n"
+                "\th.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::RPC::" in b for _a, _r, b in rels), rels
+
+    def test_extension_disambiguated_module_keeps_its_package(
+        self, tmp_path: Path
+    ) -> None:
+        # `service.ts` shares the stem with `service.go`, so the Go module
+        # qn gets the extension appended (`svc.service.go`). Package
+        # membership must group by DIRECTORY, not qn prefix, or the struct
+        # file splits away from its siblings and attribution dangles.
+        files = {
+            "svc/service.ts": "export const unrelated = 1\n",
+            "svc/service.go": (
+                "package svc\n\n"
+                'import "example.com/gen/user/v1/userv1connect"\n\n'
+                "type Server struct {\n"
+                "\tuserClient userv1connect.UserServiceClient\n"
+                "}\n"
+            ),
+            "svc/create.go": (
+                "package svc\n\n"
+                "func (s *Server) Create() {\n"
+                "\ts.userClient.GetUser(nil, nil)\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        matches = [a for a, r, b in rels if b == self._RPC and r == READS_FROM]
+        assert matches, rels
+
+    def test_disambiguated_declaring_module_still_contributes_fields(
+        self, tmp_path: Path
+    ) -> None:
+        # Deterministic variant: the DECLARING module's qn carries the
+        # appended extension (`proj.svc.service.go`); grouping by qn prefix
+        # would place it in a phantom package. Directory grouping keeps it.
+        from codebase_rag.capture import resolve_capture
+        from codebase_rag.parser_loader import load_parsers
+        from codebase_rag.parsers.io_access.processor import IOAccessProcessor
+
+        parsers, _ = load_parsers()
+        decl_src = (
+            "package svc\n\n"
+            'import "example.com/gen/user/v1/userv1connect"\n\n'
+            "type Server struct {\n"
+            "\tuserClient userv1connect.UserServiceClient\n"
+            "}\n"
+        )
+        caller_src = (
+            "package svc\n\nfunc (s *Server) Create() {\n"
+            "\ts.userClient.GetUser(nil, nil)\n}\n"
+        )
+        caller_tree = parsers["go"].parse(caller_src.encode())
+        decl_path = tmp_path / "svc" / "service.go"
+
+        class _FakeCache:
+            def __init__(self) -> None:
+                self.entry = (
+                    parsers["go"].parse(decl_src.encode()).root_node,
+                    cs.SupportedLanguage.GO,
+                )
+
+            def load(self, key: Path) -> tuple[object, cs.SupportedLanguage]:
+                return self.entry
+
+        import_processor = MagicMock()
+        import_processor.import_mapping = {
+            "proj.svc.service.go": {
+                "userv1connect": "example.com/gen/user/v1/userv1connect"
+            },
+            "proj.svc.create": {},
+        }
+        processor = IOAccessProcessor(
+            MagicMock(),
+            import_processor,
+            selection=resolve_capture([cs.CaptureGroup.IO.value]),
+            module_paths={
+                "proj.svc.service.go": decl_path,
+                "proj.svc.create": tmp_path / "svc" / "create.go",
+            },
+            ast_cache=_FakeCache(),  # type: ignore[arg-type]
+        )
+        caller_fn = next(
+            c
+            for c in caller_tree.root_node.named_children
+            if c.type == "method_declaration"
+        )
+        fields = processor._go_rpc_fields(caller_fn, "proj.svc.create", {})
+        assert fields == {"userClient": "UserService"}, fields
+
+
+class TestTsGeneratedClientSinks:
+    """Issue #912 slice 3: HeyApi-style generated TS SDK methods call
+    `(options?.client ?? this.client).get({ url: '/x', ...options })`. The
+    verb plus an object argument carrying a literal `url` on a client-shaped
+    receiver is a NETWORK sink attributed to the generated method."""
+
+    def test_generated_get_emits_network_read(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  getRequestingUser(options?: any) {\n"
+                "    return (options?.client ?? this.client).get({ "
+                "url: '/auth/users/requesting', ...options });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "sdk.AuthClient.getRequestingUser",
+            READS_FROM,
+            "resource::NETWORK::/auth/users/requesting",
+        ), rels
+
+    def test_generated_post_emits_network_write(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  createUser(options?: any) {\n"
+                "    return (options?.client ?? this.client).post({ "
+                "url: '/auth/users', ...options });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "sdk.AuthClient.createUser",
+            WRITES_TO,
+            "resource::NETWORK::/auth/users",
+        ), rels
+
+    def test_plain_this_client_receiver_binds(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  del(options?: any) {\n"
+                "    return this.client.delete({ url: '/auth/users/1' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels,
+            "sdk.AuthClient.del",
+            WRITES_TO,
+            "resource::NETWORK::/auth/users/1",
+        ), rels
+
+    def test_non_client_receiver_is_not_a_sink(self, tmp_path: Path) -> None:
+        # `map.get({url})` is a lookup, not an HTTP request.
+        files = {
+            "app.ts": (
+                "export function lookup(map: Map<any, any>) {\n"
+                "  return map.get({ url: '/not-a-request' });\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels
+
+    def test_object_without_url_is_not_a_sink(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  misc(options?: any) {\n"
+                "    return this.client.get({ path: '/auth/users' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels
+
+    def test_quoted_url_key_binds(self, tmp_path: Path) -> None:
+        # Object keys may be string literals: `{ "url": '/q' }`.
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  q(options?: any) {\n"
+                "    return this.client.get({ \"url\": '/q' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(rels, "sdk.AuthClient.q", READS_FROM, "resource::NETWORK::/q"), rels
+
+    def test_template_literal_url_binds(self, tmp_path: Path) -> None:
+        # A template-literal url keeps fragments and renders substitutions as
+        # placeholders, like every other sink identity (issue #884).
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  t(id: string, options?: any) {\n"
+                "    return this.client.get({ url: `/users/${id}` });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert _has(
+            rels, "sdk.AuthClient.t", READS_FROM, "resource::NETWORK::/users/{id}"
+        ), rels
+
+    def test_empty_url_does_not_emit_degenerate_resource(self, tmp_path: Path) -> None:
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  e(options?: any) {\n"
+                "    return this.client.get({ url: '' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any(b == "resource::NETWORK::" for _a, _r, b in rels), rels
+
+    def test_nested_member_below_client_is_not_a_sink(self, tmp_path: Path) -> None:
+        # `this.client.cache.get({url})` calls the CACHE, not the client: the
+        # verb's immediate receiver must itself be client-shaped.
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  c(options?: any) {\n"
+                "    return this.client.cache.get({ url: '/entry' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels
+
+    def test_mixed_alternative_receiver_is_not_a_sink(self, tmp_path: Path) -> None:
+        # A wrapper that may select a NON-client at runtime is not client
+        # evidence: every alternative must be client-shaped.
+        files = {
+            "sdk.ts": (
+                "export class AuthClient {\n"
+                "  client: any;\n"
+                "  cache: any;\n"
+                "  m(flag: boolean, options?: any) {\n"
+                "    return (flag ? this.client : this.cache).get({ url: '/entry' });\n"
+                "  }\n"
+                "}\n"
+            ),
+        }
+        rels = _run_io(tmp_path, files)
+        assert not any("resource::NETWORK::" in b for _a, _r, b in rels), rels

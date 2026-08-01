@@ -419,10 +419,10 @@ console.log(result2); // [15, 20]
 
     run_updater(javascript_this_project, mock_ingestor)
 
-    # (H) bind/call/apply resolve to synthetic builtin Function.prototype qns
-    # (H) whose CALLS edges the database always dropped (issue #652); the
-    # (H) durable contract is that every first-party function handed to them
-    # (H) stays reachable through CALLS or REFERENCES edges.
+    # bind/call/apply resolve to synthetic builtin Function.prototype qns
+    # whose CALLS edges the database always dropped (issue #652); the
+    # durable contract is that every first-party function handed to them
+    # stays reachable through CALLS or REFERENCES edges.
     reachable_targets = {
         str(call.args[2][2])
         for rel in ("CALLS", "REFERENCES")
@@ -1149,9 +1149,9 @@ outer.call({ context: 'custom' });
         f"Expected at least 5 comprehensive this-related calls, found {len(comprehensive_calls)}"
     )
 
-    # (H) bind/call/apply resolve to synthetic builtin qns whose edges the
-    # (H) database always dropped (issue #652); no CALLS edge may carry a
-    # (H) builtin.* target anymore.
+    # bind/call/apply resolve to synthetic builtin qns whose edges the
+    # database always dropped (issue #652); no CALLS edge may carry a
+    # builtin.* target anymore.
     builtin_targets = [
         call
         for call in comprehensive_calls

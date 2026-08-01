@@ -1,10 +1,10 @@
-# (H) A C++ base class written in another header (`class Aggregator : public
-# (H) Argument` with Argument defined in Argument.h) used to be anchored to the
-# (H) CHILD's own module qn at parse time with no resolution at all, so every
-# (H) cross-file INHERITS edge pointed at a phantom the database drops (issue
-# (H) #652: 398 on souffle). Base emission is now deferred until every class is
-# (H) registered and resolved namespace-scoped across files; a base that
-# (H) resolves nowhere (std::exception) emits no edge rather than a lie.
+# A C++ base class written in another header (`class Aggregator : public
+# Argument` with Argument defined in Argument.h) used to be anchored to the
+# CHILD's own module qn at parse time with no resolution at all, so every
+# cross-file INHERITS edge pointed at a phantom the database drops (issue
+# #652: 398 on souffle). Base emission is now deferred until every class is
+# registered and resolved namespace-scoped across files; a base that
+# resolves nowhere (std::exception) emits no edge rather than a lie.
 from __future__ import annotations
 
 from pathlib import Path
@@ -89,8 +89,8 @@ def test_unresolvable_external_base_emits_no_phantom_edge(
 def test_spaced_template_base_resolves(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `public Base <int>` (space before the angle bracket) must strip to
-    # (H) `Base`, not `Base ` -- a trailing space can never match the registry.
+    # `public Base <int>` (space before the angle bracket) must strip to
+    # `Base`, not `Base ` -- a trailing space can never match the registry.
     (temp_repo / "spaced.h").write_text(
         """
 #pragma once
@@ -116,9 +116,9 @@ public:
 def test_unresolvable_qualified_base_never_self_inherits(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `class Type : public other::Type` with other::Type unindexed: the
-    # (H) module-scoped guess strips the qualifier to the leaf, which equals
-    # (H) the child's own qn -- the fallback must not emit a self-edge.
+    # `class Type : public other::Type` with other::Type unindexed: the
+    # module-scoped guess strips the qualifier to the leaf, which equals
+    # the child's own qn -- the fallback must not emit a self-edge.
     (temp_repo / "shadow.h").write_text(
         """
 #pragma once

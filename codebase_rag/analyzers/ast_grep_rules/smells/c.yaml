@@ -1,0 +1,20 @@
+# ast-grep code-smell rules for C (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: c
+extensions: [.c, .h]
+rules:
+  - id: goto_statement
+    message: "goto complicates control flow"
+    rule:
+      kind: goto_statement
+  - id: debug_print
+    message: "Leftover debug printf/fprintf output"
+    rule:
+      kind: call_expression
+      has: { field: function, regex: '^(printf|fprintf)$' }
+  - id: infinite_loop
+    message: "Infinite loop while(1)/for(;;) has no visible exit condition"
+    rule:
+      any:
+        - pattern: "while (1) $$$"
+        - pattern: "for (;;) $$$"

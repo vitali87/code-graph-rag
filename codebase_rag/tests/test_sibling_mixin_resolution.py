@@ -1,9 +1,9 @@
-# (H) L3 finding from the evals/ harness: PythonAstAnalyzerMixin._traverse_single_pass
-# (H) calls self._infer_instance_variable_types_from_assignments(...), a method defined
-# (H) on the sibling PythonVariableAnalyzerMixin. Neither is the other's base; both are
-# (H) combined into the concrete PythonTypeInferenceEngine. A same-named stub in another
-# (H) class makes the bare-name trie fallback ambiguous, so resolution must go through
-# (H) the concrete subclass's MRO to land on the real sibling method.
+# L3 finding from the evals/ harness: PythonAstAnalyzerMixin._traverse_single_pass
+# calls self._infer_instance_variable_types_from_assignments(...), a method defined
+# on the sibling PythonVariableAnalyzerMixin. Neither is the other's base; both are
+# combined into the concrete PythonTypeInferenceEngine. A same-named stub in another
+# class makes the bare-name trie fallback ambiguous, so resolution must go through
+# the concrete subclass's MRO to land on the real sibling method.
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,8 +17,8 @@ PROJECT = "proj"
 
 FILES = {
     "pkg/__init__.py": "",
-    # (H) A decoy class declaring the same method name (mirrors a TYPE_CHECKING stub)
-    # (H) so the trie fallback alone cannot pick the right target.
+    # A decoy class declaring the same method name (mirrors a TYPE_CHECKING stub)
+    # so the trie fallback alone cannot pick the right target.
     "pkg/decoy.py": ("class Deps:\n    def infer_vars(self):\n        return None\n"),
     "pkg/mixin_a.py": (
         "class AMixin:\n    def traverse(self):\n        return self.infer_vars()\n"

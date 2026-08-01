@@ -24,7 +24,7 @@ cgr start --repo-path /path/to/your/repo
 - "Find Rust structs and their methods"
 - "Show me Go interfaces and implementations"
 
-### Analyzing Relationships
+### Analysing Relationships
 
 - "Find all functions that call each other"
 - "What classes are in the user module"
@@ -35,7 +35,7 @@ cgr start --repo-path /path/to/your/repo
 ### C++ Specific Queries
 
 - "Find all C++ operator overloads in the Matrix class"
-- "Show me C++ template functions with their specializations"
+- "Show me C++ template functions with their specialisations"
 - "List all C++ namespaces and their contained classes"
 - "Find C++ lambda expressions used in algorithms"
 
@@ -45,7 +45,7 @@ cgr start --repo-path /path/to/your/repo
 - "Refactor the User class to use dependency injection"
 - "Convert these Python functions to async/await pattern"
 - "Add error handling to authentication methods"
-- "Optimize this function for better performance"
+- "Optimise this function for better performance"
 
 ## Semantic Code Search
 
@@ -61,22 +61,34 @@ Semantic search uses UniXcoder embeddings and requires the `semantic` extra:
 pip install 'code-graph-rag[semantic]'
 ```
 
+Qdrant remains the default vector store. To use Milvus Lite for semantic
+vectors, install the `milvus` extra (`code-graph-rag[semantic,milvus]`), then
+set `CGR_VECTOR_STORE_BACKEND=milvus` and `MILVUS_URI` to a local `.db` file
+before indexing.
+
+To compute embeddings on an OpenAI-compatible endpoint (OpenAI, Ollama, vLLM)
+instead of locally, set `CGR_EMBEDDING_PROVIDER=openai`; see
+[Semantic Search](../sdk/semantic-search.md) for configuration.
+
 ## Agentic Tools
 
 The interactive agent has access to these tools:
 
+<!-- SECTION:agentic_tools -->
 | Tool | Description |
-|------|-------------|
-| `query_graph` | Query the knowledge graph using natural language |
-| `read_file` | Read the content of text-based files |
-| `create_file` | Create a new file with content |
-| `replace_code` | Surgically replace specific code blocks |
-| `list_directory` | List directory contents |
-| `analyze_document` | Analyze documents (PDFs, images) |
-| `execute_shell` | Execute shell commands from allowlist |
-| `semantic_search` | Semantic function search by description |
-| `get_function_source` | Retrieve source code by node ID |
-| `get_code_snippet` | Retrieve source code by qualified name |
+|----|-----------|
+| `query_graph` | Query the codebase knowledge graph using natural language questions. Ask in plain English about classes, functions, methods, dependencies, or code structure. Examples: 'Find all functions that call each other', 'What classes are in the user module', 'Show me functions with the longest call chains'. |
+| `read_file` | Reads the content of text-based files. Images and PDFs the user references are attached inline; read them directly. |
+| `create_file` | Creates a new file with content. IMPORTANT: Check file existence first! Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications. |
+| `replace_code` | Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching. |
+| `list_directory` | Lists the contents of a directory to explore the codebase. |
+| `execute_shell` | Executes shell commands from allowlist. Read-only commands run without approval; write operations require user confirmation. |
+| `semantic_search` | Performs a semantic search for functions based on a natural language query describing their purpose, returning a list of potential matches with similarity scores. Pass a project name to restrict matches to a single indexed project. |
+| `get_function_source` | Retrieves the source code for a specific function or method using its internal node ID, typically obtained from a semantic search result. |
+| `get_code_snippet` | Retrieves the source code for a specific function, class, or method using its full qualified name. |
+| `structural_search` | Search code by AST pattern using ast-grep syntax (not text/regex). Patterns use metavariables: $NAME matches one node, $$$NAME matches many (e.g. 'print($A)', 'def $F($$$ARGS): $$$BODY'). Returns file:line:column and the matched code. Optional 'language' (e.g. 'python', 'typescript', 'csharp') restricts the search. |
+| `structural_replace` | Rewrite code by AST pattern using ast-grep syntax. Give a 'pattern' to match and a 'rewrite' template; metavariables captured by the pattern ($A, $$$ARGS) are substituted into the rewrite. Defaults to dry_run=True, which returns a diff without touching files; call again with dry_run=false to apply. Optional 'language' restricts the rewrite to one language. |
+<!-- /SECTION:agentic_tools -->
 
 ## Intelligent File Editing
 

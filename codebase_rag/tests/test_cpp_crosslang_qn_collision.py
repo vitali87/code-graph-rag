@@ -1,7 +1,7 @@
-# (H) Regression: a C++ out-of-class method (Widget::render) must not bind to a
-# (H) same-named class in another language (Python's Widget), which would give the
-# (H) two methods an identical qualified_name and collapse them under the graph's
-# (H) qualified_name unique constraint (silently dropping the Python method).
+# Regression: a C++ out-of-class method (Widget::render) must not bind to a
+# same-named class in another language (Python's Widget), which would give the
+# two methods an identical qualified_name and collapse them under the graph's
+# qualified_name unique constraint (silently dropping the Python method).
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,8 +19,8 @@ def _make_project(temp_repo: Path) -> Path:
         encoding="utf-8",
         data="class Widget:\n    def render(self):\n        return 1\n",
     )
-    # (H) Out-of-class C++ method with no C++ Widget class anywhere in the repo:
-    # (H) the only Widget class cgr knows is the Python one.
+    # Out-of-class C++ method with no C++ Widget class anywhere in the repo:
+    # the only Widget class cgr knows is the Python one.
     (project_path / "lib" / "widget.cpp").write_text(
         encoding="utf-8",
         data="int Widget::render() {\n    return 2;\n}\n",
@@ -46,8 +46,8 @@ def test_cpp_method_does_not_steal_python_method_qn(
 
     renders = _methods_named(mock_ingestor, "render")
     qns = [qn for qn, _ in renders]
-    # (H) The Python and C++ render methods must each have a distinct qn; no two
-    # (H) render method nodes may collide on the same qualified_name.
+    # The Python and C++ render methods must each have a distinct qn; no two
+    # render method nodes may collide on the same qualified_name.
     assert len(qns) == len(set(qns)), f"colliding render qns: {renders}"
 
     py_qns = {qn for qn, path in renders if path.endswith("widget.py")}

@@ -9,7 +9,12 @@ from .. import cli_help as ch
 from .manager import StackError, StackManager
 
 
-@click.group(help=ch.CMD_DAEMON_GROUP)
+@click.group(
+    help=ch.CMD_DAEMON_GROUP,
+    short_help=ch.CMD_DAEMON_GROUP,
+    epilog=ch.EPILOG_DAEMON,
+    no_args_is_help=True,
+)
 def cli() -> None:
     pass
 
@@ -26,7 +31,7 @@ def _print_status(mgr: StackManager) -> None:
     click.echo(f"compose:  {status.compose_file}")
 
 
-@cli.command("up", help=ch.CMD_DAEMON_UP)
+@cli.command("up", help=ch.CMD_DAEMON_UP, short_help=ch.CMD_DAEMON_UP)
 def up_cmd() -> None:
     mgr = StackManager()
     try:
@@ -38,7 +43,7 @@ def up_cmd() -> None:
         sys.exit(1)
 
 
-@cli.command("down", help=ch.CMD_DAEMON_DOWN)
+@cli.command("down", help=ch.CMD_DAEMON_DOWN, short_help=ch.CMD_DAEMON_DOWN)
 def down_cmd() -> None:
     mgr = StackManager()
     try:
@@ -50,12 +55,12 @@ def down_cmd() -> None:
         sys.exit(1)
 
 
-@cli.command("status", help=ch.CMD_DAEMON_STATUS)
+@cli.command("status", help=ch.CMD_DAEMON_STATUS, short_help=ch.CMD_DAEMON_STATUS)
 def status_cmd() -> None:
     _print_status(StackManager())
 
 
-@cli.command("restart", help=ch.CMD_DAEMON_RESTART)
+@cli.command("restart", help=ch.CMD_DAEMON_RESTART, short_help=ch.CMD_DAEMON_RESTART)
 def restart_cmd() -> None:
     mgr = StackManager()
     try:
@@ -68,7 +73,7 @@ def restart_cmd() -> None:
         sys.exit(1)
 
 
-@cli.command("logs", help=ch.CMD_DAEMON_LOGS)
+@cli.command("logs", help=ch.CMD_DAEMON_LOGS, short_help=ch.CMD_DAEMON_LOGS)
 @click.option("--follow", "-f", is_flag=True, help=ch.HELP_DAEMON_LOGS_FOLLOW)
 @click.option("--service", "-s", default=None, help=ch.HELP_DAEMON_LOGS_SERVICE)
 def logs_cmd(follow: bool, service: str | None) -> None:

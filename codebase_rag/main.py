@@ -1,3 +1,5 @@
+"""Interactive agent loop: turn natural-language questions into graph queries."""
+
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +16,7 @@ from collections import deque
 from collections.abc import Callable, Coroutine
 from contextlib import contextmanager
 from dataclasses import replace
+from decimal import Decimal
 from html import escape as html_escape
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -54,6 +57,7 @@ from .providers.base import get_provider_from_config
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
+from .tools.ast_grep_service import AstGrepService
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
 from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
@@ -65,6 +69,8 @@ from .tools.semantic_search import (
     create_semantic_search_tool,
 )
 from .tools.shell_command import ShellCommander, create_shell_command_tool
+from .tools.structural_editor import create_structural_editor_tool
+from .tools.structural_search import create_structural_search_tool
 from .types_defs import (
     CHAT_LOOP_UI,
     OPTIMIZATION_LOOP_UI,
@@ -78,6 +84,7 @@ from .types_defs import (
     RawToolArgs,
     ReplaceCodeArgs,
     ShellCommandArgs,
+    StructuralReplaceArgs,
     ToolArgs,
 )
 from .utils.rich_markdown import LeftAlignedMarkdown
@@ -87,6 +94,7 @@ if TYPE_CHECKING:
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models import Model
+    from pydantic_ai.usage import RunUsage
 
 
 def style(
@@ -240,6 +248,13 @@ def _to_tool_args(
             )
         case tool_names.shell_command:
             return ShellCommandArgs(command=raw_args.command)
+        case tool_names.structural_replace:
+            return StructuralReplaceArgs(
+                pattern=raw_args.pattern,
+                rewrite=raw_args.rewrite,
+                language=raw_args.language,
+                dry_run=raw_args.dry_run,
+            )
         case _:
             return ShellCommandArgs()
 
@@ -269,6 +284,33 @@ def _display_tool_call_diff(
             app_context.console.print(f"\n{cs.UI_SHELL_COMMAND_HEADER}")
             app_context.console.print(
                 style(f"$ {command}", cs.Color.YELLOW, cs.StyleModifier.NONE)
+            )
+
+        case tool_names.structural_replace:
+            pattern = str(tool_args.get(cs.ARG_PATTERN, ""))
+            rewrite = str(tool_args.get(cs.ARG_REWRITE, ""))
+            dry_run = tool_args.get(cs.ARG_DRY_RUN, True)
+            app_context.console.print(f"\n{cs.AST_GREP_APPROVAL_HEADER}")
+            app_context.console.print(
+                style(
+                    cs.AST_GREP_APPROVAL_PATTERN.format(pattern=pattern),
+                    cs.Color.YELLOW,
+                    cs.StyleModifier.NONE,
+                )
+            )
+            app_context.console.print(
+                style(
+                    cs.AST_GREP_APPROVAL_REWRITE.format(rewrite=rewrite),
+                    cs.Color.YELLOW,
+                    cs.StyleModifier.NONE,
+                )
+            )
+            app_context.console.print(
+                style(
+                    cs.AST_GREP_APPROVAL_DRY_RUN.format(dry_run=dry_run),
+                    cs.Color.YELLOW,
+                    cs.StyleModifier.NONE,
+                )
             )
 
         case _:
@@ -347,7 +389,7 @@ async def _confirm_with_toggle(question: str) -> bool:
                 prompt_text,
                 key_bindings=bindings,
                 style=ORANGE_STYLE,
-                bottom_toolbar=lambda: _status_bar_label(),
+                bottom_toolbar=_status_bar_label,
                 refresh_interval=0.5,
             )
         except (KeyboardInterrupt, EOFError):
@@ -372,7 +414,7 @@ async def _prompt_with_toggle(question: str) -> str:
             prompt_text,
             key_bindings=bindings,
             style=ORANGE_STYLE,
-            bottom_toolbar=lambda: _status_bar_label(),
+            bottom_toolbar=_status_bar_label,
             refresh_interval=0.5,
         )
     except (KeyboardInterrupt, EOFError):
@@ -500,21 +542,14 @@ async def run_with_cancellation[T](
         return await asyncio.wait_for(task, timeout=timeout) if timeout else await task
     except TimeoutError:
         task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        await asyncio.gather(task, return_exceptions=True)
         app_context.console.print(
             f"\n{style(cs.MSG_TIMEOUT_FORMAT.format(timeout=timeout), cs.Color.YELLOW)}"
         )
         return CancelledResult(cancelled=True)
     except (asyncio.CancelledError, KeyboardInterrupt):
-        if not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
         app_context.console.print(
             f"\n{style(cs.MSG_THINKING_CANCELLED, cs.Color.YELLOW)}"
         )
@@ -544,6 +579,44 @@ def _cancel_orphaned_tool_calls(message_history: list[ModelMessage]) -> None:
     )
 
 
+def _price_current_run(
+    usage: RunUsage, model_config: ModelConfig | None
+) -> Decimal | None:
+    if model_config is None:
+        try:
+            model_config = settings.active_orchestrator_config
+        except Exception:  # noqa: BLE001 - pricing is display-only, never fatal
+            return None
+    from .services.usage_cost import price_run
+
+    return price_run(usage, model_config.provider, model_config.model_id)
+
+
+def _record_and_print_turn_usage(
+    turn_input: int, turn_output: int, turn_cost: Decimal, turn_priced: bool
+) -> None:
+    session = app_context.session
+    session.total_input_tokens += turn_input
+    session.total_output_tokens += turn_output
+    session.total_cost_usd += turn_cost
+    if not turn_priced:
+        session.cost_incomplete = True
+    line = cs.UI_TURN_USAGE_TOKENS.format(
+        ti=turn_input,
+        to=turn_output,
+        si=session.total_input_tokens,
+        so=session.total_output_tokens,
+    )
+    if turn_priced:
+        template = (
+            cs.UI_TURN_USAGE_COST_PARTIAL
+            if session.cost_incomplete
+            else cs.UI_TURN_USAGE_COST
+        )
+        line += template.format(tc=turn_cost, sc=session.total_cost_usd)
+    app_context.console.print(dim(line))
+
+
 async def _run_agent_response_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
@@ -551,9 +624,13 @@ async def _run_agent_response_loop(
     config: AgentLoopUI,
     tool_names: ConfirmationToolNames,
     model_override: Model | None = None,
+    model_override_config: ModelConfig | None = None,
 ) -> None:
     deferred_results: DeferredToolResults | None = None
     pending_prompt: str | list[UserContent] | None = question_with_context
+    turn_input = turn_output = 0
+    turn_cost = Decimal(0)
+    turn_priced = False
 
     while True:
         with _thinking_with_status_bar(config.status_message):
@@ -575,6 +652,14 @@ async def _run_agent_response_loop(
 
         message_history.extend(response.new_messages())
 
+        run_usage = response.usage()
+        turn_input += run_usage.input_tokens
+        turn_output += run_usage.output_tokens
+        run_cost = _price_current_run(run_usage, model_override_config)
+        if run_cost is not None:
+            turn_cost += run_cost
+            turn_priced = True
+
         if isinstance(response.output, DeferredToolRequests):
             deferred_results = await _process_tool_approvals(
                 response.output,
@@ -584,7 +669,7 @@ async def _run_agent_response_loop(
             )
             continue
 
-        asyncio.create_task(_refresh_context_tokens(list(message_history)))
+        _spawn_background(_refresh_context_tokens(list(message_history)))
 
         output_text = response.output
         if not isinstance(output_text, str):
@@ -599,6 +684,7 @@ async def _run_agent_response_loop(
         )
 
         log_session_event(f"{cs.SESSION_PREFIX_ASSISTANT}{output_text}")
+        _record_and_print_turn_usage(turn_input, turn_output, turn_cost, turn_priced)
         break
 
 
@@ -741,6 +827,15 @@ def _token_usage() -> tuple[int, int, float]:
     return used, max_ctx, pct
 
 
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+def _spawn_background(coro: Coroutine[None, None, None]) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
 async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
     try:
         config = settings.active_orchestrator_config
@@ -765,7 +860,7 @@ def _prime_context_token_counter(system_prompt: str) -> None:
     baseline_messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content=system_prompt)])
     ]
-    asyncio.create_task(_refresh_context_tokens(baseline_messages))
+    _spawn_background(_refresh_context_tokens(baseline_messages))
 
 
 def _short_model_id() -> tuple[str, str]:
@@ -1034,11 +1129,8 @@ def _thinking_with_status_bar(message: str):
 
         async def _refresh_bar() -> None:
             while True:
-                try:
-                    live.update(render())
-                    await asyncio.sleep(0.25)
-                except asyncio.CancelledError:
-                    return
+                live.update(render())
+                await asyncio.sleep(0.25)
 
         refresh_task = asyncio.get_running_loop().create_task(_refresh_bar())
         try:
@@ -1087,7 +1179,7 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
         key_bindings=bindings,
         wrap_lines=True,
         style=ORANGE_STYLE,
-        bottom_toolbar=lambda: _status_bar_label(),
+        bottom_toolbar=_status_bar_label,
         refresh_interval=0.5,
     )
     if result is None:
@@ -1229,6 +1321,7 @@ async def _run_interactive_loop(
                 config,
                 tool_names,
                 model_override,
+                model_override_config,
             )
 
             initial_question = None
@@ -1540,6 +1633,7 @@ def _initialize_services_and_agent(
         is_yolo=app_context.session.is_yolo,
     )
     directory_lister = DirectoryLister(project_root=repo_path)
+    ast_grep_service = AstGrepService(project_root=repo_path)
 
     query_tool = create_query_tool(ingestor, cypher_generator, app_context.console)
     code_tool = create_code_retrieval_tool(code_retriever)
@@ -1550,11 +1644,14 @@ def _initialize_services_and_agent(
     directory_lister_tool = create_directory_lister_tool(directory_lister)
     semantic_search_tool = create_semantic_search_tool(ingestor)
     function_source_tool = create_get_function_source_tool(ingestor)
+    structural_search_tool = create_structural_search_tool(ast_grep_service)
+    structural_editor_tool = create_structural_editor_tool(ast_grep_service)
 
     confirmation_tool_names = ConfirmationToolNames(
         replace_code=file_editor_tool.name,
         create_file=file_writer_tool.name,
         shell_command=shell_command_tool.name,
+        structural_replace=structural_editor_tool.name,
     )
 
     rag_agent, system_prompt = create_rag_orchestrator(
@@ -1568,6 +1665,8 @@ def _initialize_services_and_agent(
             directory_lister_tool,
             semantic_search_tool,
             function_source_tool,
+            structural_search_tool,
+            structural_editor_tool,
         ],
         project_root=Path(repo_path),
         load_instructions=app_context.session.load_cgr_instructions,
@@ -1584,7 +1683,7 @@ def main_single_query(
     output_format: cs.QueryFormat = cs.QueryFormat.TABLE,
 ) -> None:
     _setup_common_initialization(repo_path)
-    # (H) Override logger to stderr so stdout is clean for scripted output
+    # Override logger to stderr so stdout is clean for scripted output
     logger.remove()
     logger.add(sys.stderr, level=cs.LOG_LEVEL_ERROR, format=cs.LOG_FORMAT)
 

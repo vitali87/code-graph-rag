@@ -75,7 +75,7 @@ def engine(
         module_qn_to_file_path={},
         class_inheritance={},
         simple_name_lookup=defaultdict(set),
-        js_type_inference_getter=lambda: MagicMock(),
+        js_type_inference_getter=MagicMock,
     )
 
 
@@ -635,7 +635,7 @@ class TestTraverseSinglePassWithQueries:
             module_qn_to_file_path={},
             class_inheritance={},
             simple_name_lookup=defaultdict(set),
-            js_type_inference_getter=lambda: MagicMock(),
+            js_type_inference_getter=MagicMock,
         )
 
     def test_traverse_with_query_path(

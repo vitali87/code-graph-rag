@@ -98,6 +98,6 @@ for func in functions[:5]:
 
 - [CLI Reference](../guide/cli-reference.md) for all available commands
 - [Interactive Querying](../guide/interactive-querying.md) for query examples
-- [Code Optimization](../guide/code-optimization.md) for AI-powered improvements
+- [Code Optimisation](../guide/code-optimization.md) for AI-powered improvements
 - [MCP Server](../guide/mcp-server.md) for Claude Code integration
 - [Python SDK](../sdk/overview.md) for programmatic access

@@ -438,9 +438,9 @@ myTask.outputTaskDetails();
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # (H) Object.create resolves to a synthetic builtin.* qn with no node, so
-    # (H) its CALLS edge was always dropped by the database (issue #652); no
-    # (H) edge may be emitted for it at all.
+    # Object.create resolves to a synthetic builtin.* qn with no node, so
+    # its CALLS edge was always dropped by the database (issue #652); no
+    # edge may be emitted for it at all.
     object_create_calls = [
         call for call in call_relationships if "Object.create" in str(call.args[2][2])
     ]
@@ -646,10 +646,10 @@ square.scale(2);
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
-    # (H) A prototype method call resolves to the method's first-party qn
-    # (H) (Constructor.method); the old `.prototype.` matches were synthetic
-    # (H) builtin Function.prototype.call/apply qns whose edges the database
-    # (H) always dropped (issue #652) and which are no longer emitted.
+    # A prototype method call resolves to the method's first-party qn
+    # (Constructor.method); the old `.prototype.` matches were synthetic
+    # builtin Function.prototype.call/apply qns whose edges the database
+    # always dropped (issue #652) and which are no longer emitted.
     prototype_calls = [
         call
         for call in call_relationships

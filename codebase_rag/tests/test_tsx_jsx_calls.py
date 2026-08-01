@@ -10,9 +10,9 @@ from codebase_rag.parser_loader import load_parsers
 
 
 def _run_rels(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
-    # (H) Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
-    # (H) Skip on the parser each fixture actually needs: an environment can have
-    # (H) typescript without tsx (pip package predating language_tsx).
+    # Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
+    # Skip on the parser each fixture actually needs: an environment can have
+    # typescript without tsx (pip package predating language_tsx).
     parsers, queries = load_parsers()
     required = {"tsx" if rel.endswith(".tsx") else "typescript" for rel in files}
     if missing := sorted(required - parsers.keys()):
@@ -41,10 +41,10 @@ def _has_call(
 
 
 def test_tsx_call_inside_jsx_attribute_is_traced(tmp_path: Path) -> None:
-    # (H) .tsx must parse with the tsx grammar; the plain typescript grammar turns
-    # (H) JSX into an ERROR forest and every call inside any React component is
-    # (H) silently dropped (cn() in className={cn(...)} -- the shadcn/ui shape
-    # (H) that made whole component libraries report as dead code).
+    # .tsx must parse with the tsx grammar; the plain typescript grammar turns
+    # JSX into an ERROR forest and every call inside any React component is
+    # silently dropped (cn() in className={cn(...)} -- the shadcn/ui shape
+    # that made whole component libraries report as dead code).
     files = {
         "utils.ts": "export function cn(...args: string[]) { return args.join(' ') }\n",
         "card.tsx": (
@@ -59,8 +59,8 @@ def test_tsx_call_inside_jsx_attribute_is_traced(tmp_path: Path) -> None:
 
 
 def test_tsx_call_in_jsx_event_handler_is_traced(tmp_path: Path) -> None:
-    # (H) An arrow handler inside a JSX attribute (onClick={() => save(id)}) lives
-    # (H) inside the JSX expression tree; its call must reach the graph.
+    # An arrow handler inside a JSX attribute (onClick={() => save(id)}) lives
+    # inside the JSX expression tree; its call must reach the graph.
     files = {
         "api.ts": "export function save(id: string) { return id }\n",
         "button.tsx": (
@@ -75,7 +75,7 @@ def test_tsx_call_in_jsx_event_handler_is_traced(tmp_path: Path) -> None:
 
 
 def test_tsx_plain_typescript_constructs_still_work(tmp_path: Path) -> None:
-    # (H) The tsx grammar must not regress ordinary TS constructs inside .tsx.
+    # The tsx grammar must not regress ordinary TS constructs inside .tsx.
     files = {
         "svc.tsx": (
             "class Service {\n"
@@ -92,9 +92,9 @@ def test_tsx_plain_typescript_constructs_still_work(tmp_path: Path) -> None:
 
 
 def test_ts_generic_arrow_function_still_parses(tmp_path: Path) -> None:
-    # (H) Plain .ts keeps the typescript grammar: a bare generic arrow
-    # (H) (`<T>(x: T) => x`) is legal .ts but parses as JSX under the tsx
-    # (H) grammar, so .ts and .tsx need SEPARATE grammars, not a shared one.
+    # Plain .ts keeps the typescript grammar: a bare generic arrow
+    # (`<T>(x: T) => x`) is legal .ts but parses as JSX under the tsx
+    # grammar, so .ts and .tsx need SEPARATE grammars, not a shared one.
     files = {
         "gen.ts": (
             "export function target() { return 1 }\n\n"

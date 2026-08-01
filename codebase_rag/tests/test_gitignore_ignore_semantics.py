@@ -1,7 +1,7 @@
-# (H) #495: .cgrignore and --exclude patterns follow .gitignore conventions
-# (H) (gitwildmatch): globs, anchoring, dir-only trailing slash, and `!` unignore
-# (H) lines rescuing built-in ignores. Bare-name patterns keep their existing
-# (H) match-at-any-depth behavior, so old ignore files stay valid.
+# #495: .cgrignore and --exclude patterns follow .gitignore conventions
+# (gitwildmatch): globs, anchoring, dir-only trailing slash, and `!` unignore
+# lines rescuing built-in ignores. Bare-name patterns keep their existing
+# match-at-any-depth behavior, so old ignore files stay valid.
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -27,8 +27,8 @@ def _skip(
 
 class TestGitignoreExcludeSemantics:
     def test_bare_name_still_matches_at_any_depth(self) -> None:
-        # (H) backward compatibility: plain directory names keep working
-        # (H) ("thirdparty" is NOT a built-in ignore, so this tests excludes).
+        # backward compatibility: plain directory names keep working
+        # ("thirdparty" is NOT a built-in ignore, so this tests excludes).
         exclude = frozenset({"thirdparty"})
         assert _skip("thirdparty/lib.py", exclude)
         assert _skip("a/b/thirdparty/lib.py", exclude)
@@ -53,13 +53,13 @@ class TestGitignoreExcludeSemantics:
         assert not _skip("a/fixture/x.py", exclude)
 
     def test_leading_slash_anchors_to_root(self) -> None:
-        # (H) "generated" is not a built-in ignore, so anchoring is what decides.
+        # "generated" is not a built-in ignore, so anchoring is what decides.
         exclude = frozenset({"/generated"})
         assert _skip("generated/x.py", exclude)
         assert not _skip("src/generated/x.py", exclude)
 
     def test_middle_slash_anchors_to_root(self) -> None:
-        # (H) gitignore: a pattern containing a non-trailing slash is anchored.
+        # gitignore: a pattern containing a non-trailing slash is anchored.
         exclude = frozenset({"a/generated"})
         assert _skip("a/generated/x.py", exclude)
         assert not _skip("z/a/generated/x.py", exclude)
@@ -88,19 +88,19 @@ class TestGitignoreExcludeSemantics:
 
 class TestGitignoreUnignoreSemantics:
     def test_unignore_glob_rescues_builtin_ignore(self) -> None:
-        # (H) "bin" is a built-in ignore; a glob unignore rescues matching files.
+        # "bin" is a built-in ignore; a glob unignore rescues matching files.
         assert _skip("bin/tool.py")
         assert not _skip("bin/tool.py", unignore=frozenset({"bin/*.py"}))
         assert _skip("bin/data.txt", unignore=frozenset({"bin/*.py"}))
 
     def test_unignore_exact_prefix_still_works(self) -> None:
-        # (H) backward compatibility: plain path unignores keep working.
+        # backward compatibility: plain path unignores keep working.
         assert not _skip("bin/keep/x.py", unignore=frozenset({"bin/keep"}))
         assert _skip("bin/other/x.py", unignore=frozenset({"bin/keep"}))
 
     def test_user_exclude_beats_unignore(self) -> None:
-        # (H) existing precedence: unignore rescues only built-in ignores,
-        # (H) never explicit user excludes.
+        # existing precedence: unignore rescues only built-in ignores,
+        # never explicit user excludes.
         assert _skip(
             "gen/x.py",
             exclude=frozenset({"gen"}),
@@ -109,9 +109,9 @@ class TestGitignoreUnignoreSemantics:
 
 
 class TestDirPruning:
-    # (H) greptile P1 on #596: an explicitly excluded directory must stay pruned
-    # (H) even when an unignore pattern targets something beneath it, because
-    # (H) excludes always beat unignores at the file level anyway.
+    # greptile P1 on #596: an explicitly excluded directory must stay pruned
+    # even when an unignore pattern targets something beneath it, because
+    # excludes always beat unignores at the file level anyway.
     def _updater(
         self,
         exclude: frozenset[str] | None,
@@ -139,9 +139,9 @@ class TestDirPruning:
 
 
 class TestDirectoryStructureRescue:
-    # (H) greptile P1 round 2 on #596: structure traversal must not skip a
-    # (H) built-in-ignored directory when an unignore pattern targets files
-    # (H) beneath it, or rescued files lose their Folder/Package ancestry.
+    # greptile P1 round 2 on #596: structure traversal must not skip a
+    # built-in-ignored directory when an unignore pattern targets files
+    # beneath it, or rescued files lose their Folder/Package ancestry.
     def test_builtin_dir_kept_when_unignore_targets_beneath(
         self, tmp_path: Path
     ) -> None:
@@ -155,7 +155,7 @@ class TestDirectoryStructureRescue:
         )
 
     def test_excluded_dir_not_rescued(self, tmp_path: Path) -> None:
-        # (H) explicit excludes still beat unignore at the directory level.
+        # explicit excludes still beat unignore at the directory level.
         target = tmp_path / "gen"
         assert should_skip_path(
             target,

@@ -991,7 +991,7 @@ void demonstrateLambdaInitCaptures() {
 
     total_calls = len(call_relationships)
 
-    # (H) builtin operator edges no longer emitted (#652)
+    # builtin operator edges no longer emitted (#652)
     assert total_calls >= 12, (
         f"Expected at least 15 total calls across all tests, found {total_calls}"
     )

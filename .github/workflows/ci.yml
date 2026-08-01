@@ -10,8 +10,12 @@ on:
 permissions: read-all
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PRs group by ref so rapid pushes cancel superseded runs (saves minutes).
+  # Non-PR events (main push, version-bump push, dispatch) group by SHA so each
+  # commit gets its own group and can neither cancel nor be cancelled, even in a
+  # burst. A cancelled run is what makes the branch CI badge flash "failing".
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
@@ -68,7 +72,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra semantic --extra test --group dev
+          uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --group dev
 
       - name: Run type checking
         run: |
@@ -77,7 +81,10 @@ jobs:
   test-unit:
     name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Slow runners (ubuntu/windows py3.13) can exceed 20 min on the full -n auto
+    # suite and hit the cap as a spurious CANCELLED; 30 min absorbs the variance
+    # while still bounding a genuine hang.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -104,12 +111,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --group dev
+          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
 
-      # (H) --no-sync is required: a bare `uv run` re-syncs to .python-version
-      # (H) (3.12) with default deps only, so on a 3.13 matrix (and on Windows,
-      # (H) where interpreter discovery mismatches the venv) it silently rebuilds
-      # (H) the venv without the test extra and pytest loses the xdist -n flag.
+      # --no-sync is required: a bare `uv run` re-syncs to .python-version
+      # (3.12) with default deps only, so on a 3.13 matrix (and on Windows,
+      # where interpreter discovery mismatches the venv) it silently rebuilds
+      # the venv without the test extra and pytest loses the xdist -n flag.
       - name: Run unit tests (parallel, with coverage)
         if: matrix.os == 'macos-latest' && matrix.python-version == '3.12'
         run: |
@@ -167,7 +174,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra test --extra semantic --group dev
+          uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
 
       - name: Run integration tests
         env:

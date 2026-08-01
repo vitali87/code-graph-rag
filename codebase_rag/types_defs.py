@@ -21,6 +21,12 @@ type LanguageLoader = Callable[[], Language] | None
 PropertyValue = str | int | float | bool | list[str] | None
 PropertyDict = dict[str, PropertyValue]
 
+# Any value a parsed JSON document can hold (a package.json manifest, a
+# tsconfig, an OpenAPI spec): recursive, so nested mappings stay typed.
+type JsonValue = (
+    str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
+)
+
 type ResultScalar = str | int | float | bool | None
 type ResultValue = ResultScalar | list[ResultScalar] | dict[str, ResultScalar]
 type ResultRow = dict[str, ResultValue]
@@ -32,6 +38,22 @@ class FunctionMatch(TypedDict):
     qualified_name: str
     parent_class: str | None
     line_number: int
+
+
+class StructuralSearchMatch(TypedDict):
+    file: str
+    line: int
+    column: int
+    end_line: int
+    end_column: int
+    text: str
+
+
+class StructuralReplaceChange(TypedDict):
+    file: str
+    matches: int
+    diff: str
+    applied: bool
 
 
 class NodeBatchRow(TypedDict):
@@ -127,6 +149,7 @@ class ASTCacheProtocol(Protocol):
     def __delitem__(self, key: Path) -> None: ...
     def __contains__(self, key: Path) -> bool: ...
     def items(self) -> ItemsView[Path, tuple[Node, SupportedLanguage]]: ...
+    def load(self, key: Path) -> tuple[Node, SupportedLanguage] | None: ...
 
 
 class ColumnDescriptor(Protocol):
@@ -294,11 +317,11 @@ ORANGE_STYLE = Style.from_dict(
 )
 
 OPTIMIZATION_LOOP_UI = AgentLoopUI(
-    status_message="[bold green]Agent is analyzing codebase... (Press Ctrl+C to cancel)[/bold green]",
+    status_message="[bold green]Agent is analysing codebase... (Press Ctrl+C to cancel)[/bold green]",
     cancelled_log="ASSISTANT: [Analysis was cancelled]",
-    approval_prompt="Do you approve this optimization?",
-    denial_default="User rejected this optimization without feedback",
-    panel_title="[bold green]Optimization Agent[/bold green]",
+    approval_prompt="Do you approve this optimisation?",
+    denial_default="User rejected this optimisation without feedback",
+    panel_title="[bold green]Optimisation Agent[/bold green]",
 )
 
 CHAT_LOOP_UI = AgentLoopUI(
@@ -330,6 +353,7 @@ class ConfirmationToolNames(NamedTuple):
     replace_code: str
     create_file: str
     shell_command: str
+    structural_replace: str
 
 
 class ReplaceCodeArgs(TypedDict, total=False):
@@ -347,6 +371,13 @@ class ShellCommandArgs(TypedDict, total=False):
     command: str
 
 
+class StructuralReplaceArgs(TypedDict, total=False):
+    pattern: str
+    rewrite: str
+    language: str
+    dry_run: bool
+
+
 @dataclass
 class RawToolArgs:
     file_path: str = ""
@@ -354,9 +385,13 @@ class RawToolArgs:
     replacement_code: str = ""
     content: str = ""
     command: str = ""
+    pattern: str = ""
+    rewrite: str = ""
+    language: str = ""
+    dry_run: bool = True
 
 
-ToolArgs = ReplaceCodeArgs | CreateFileArgs | ShellCommandArgs
+ToolArgs = ReplaceCodeArgs | CreateFileArgs | ShellCommandArgs | StructuralReplaceArgs
 
 
 class LanguageQueries(TypedDict):
@@ -526,10 +561,15 @@ class DeferredParentLink(NamedTuple):
     rel_type: str = RelationshipType.DEFINES.value
     fallback_label: str | None = None
     fallback_qn: str | None = None
+    # Span key of the parent's NODE when the guess qn cannot carry the
+    # registered identity (a C# overload registers signature-suffixed, so
+    # the parameterless sibling shadows the guess); the resolver prefers
+    # this span's recorded location over the qn match.
+    parent_span: tuple[str, int, int] | None = None
 
 
-# (H) (module_qn, 1-based start line, 0-based start column) of a function
-# (H) node; the full span identifies the function even on shared lines.
+# (module_qn, 1-based start line, 0-based start column) of a function
+# node; the span identifies the function even on shared lines.
 type FunctionSpanKey = tuple[str, int, int]
 
 
@@ -548,10 +588,10 @@ class FunctionLocation(NamedTuple):
     label: str
     qualified_name: str
     container_qn: str | None
-    # (H) False when the qn was GENERATED (anonymous_row_col, iife_*): Pass-3
-    # (H) lets an unnamed JS/TS function expression adopt a NAMED record (the
-    # (H) node a named pass registered for `exports.f = function`), while a
-    # (H) generated record keeps the historical bubble-to-module attribution.
+    # False when the qn was GENERATED (anonymous_row_col, iife_*): Pass-3
+    # lets an unnamed JS/TS function expression adopt a NAMED record (the
+    # node registered for `exports.f = function`), while a generated record
+    # keeps the historical bubble-to-module attribution.
     is_named: bool = True
 
 
@@ -581,6 +621,24 @@ class PendingMacroCall(NamedTuple):
     rel_path: str
     line: int
     callee_qn: str
+    fallback_module_qn: str
+
+
+class PendingExpansionCall(NamedTuple):
+    """A call that exists only after macro expansion, seen by the hybrid frontend.
+
+    The call's text lives inside a macro definition body, so tree-sitter never
+    sees it at the expansion site. Both ends carry only locations: the caller
+    joins to the tightest tree-sitter definition span containing the expansion
+    site (falling back to the Module), the callee to the span containing the
+    referenced definition (dropped when none exists) -- so the emitted CALLS
+    edge is tree-sitter-scheme on both ends.
+    """
+
+    caller_rel_path: str
+    caller_line: int
+    callee_rel_path: str
+    callee_line: int
     fallback_module_qn: str
 
 
@@ -637,8 +695,14 @@ class RelationshipSchema(NamedTuple):
     targets: tuple[NodeLabel, ...]
 
 
+# shared property string for the ast-grep finding node labels (issue #413)
+_FINDING_NODE_PROPS = (
+    "{qualified_name: string, name: string, message: string, "
+    "start_line: int, end_line: int, path: string, snippet: string?}"
+)
+
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
-    NodeSchema(NodeLabel.PROJECT, "{name: string}"),
+    NodeSchema(NodeLabel.PROJECT, "{name: string, root_path: string?}"),
     NodeSchema(
         NodeLabel.PACKAGE,
         "{qualified_name: string, name: string, path: string, absolute_path: string}",
@@ -693,6 +757,13 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         NodeLabel.EXTERNAL_MODULE,
         "{qualified_name: string, name: string, path: string}",
     ),
+    NodeSchema(
+        NodeLabel.RESOURCE,
+        "{qualified_name: string, name: string, kind: string}",
+    ),
+    NodeSchema(NodeLabel.PATTERN, _FINDING_NODE_PROPS),
+    NodeSchema(NodeLabel.CODE_SMELL, _FINDING_NODE_PROPS),
+    NodeSchema(NodeLabel.SECURITY_ISSUE, _FINDING_NODE_PROPS),
 )
 
 
@@ -765,9 +836,9 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     RelationshipSchema(
         (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.FUNCTION),
         RelationshipType.INHERITS,
-        # (H) ExternalModule: a positively-external base (typing.Protocol,
-        # (H) js builtin.Error) keeps its edge by targeting the same external
-        # (H) node the import pass mints, mirroring Module IMPORTS.
+        # ExternalModule: a positively-external base (typing.Protocol,
+        # js builtin.Error) keeps its edge by targeting the same external
+        # node the import pass mints, mirroring Module IMPORTS.
         (
             NodeLabel.CLASS,
             NodeLabel.INTERFACE,
@@ -778,11 +849,18 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     RelationshipSchema(
         (NodeLabel.CLASS, NodeLabel.ENUM),
         RelationshipType.IMPLEMENTS,
-        (NodeLabel.INTERFACE, NodeLabel.EXTERNAL_MODULE),
+        # CLASS/ENUM targets: Dart has no `interface` keyword, so `implements
+        # X` names a concrete class (its implicit interface) or an enum.
+        (
+            NodeLabel.INTERFACE,
+            NodeLabel.CLASS,
+            NodeLabel.ENUM,
+            NodeLabel.EXTERNAL_MODULE,
+        ),
     ),
     RelationshipSchema(
-        # (H) A method-body anonymous-class override is registered as a Function node,
-        # (H) so it can be the source of an OVERRIDES edge onto the base Method.
+        # A method-body anonymous-class override is a Function node, so it
+        # can source an OVERRIDES edge onto the base Method.
         (NodeLabel.METHOD, NodeLabel.FUNCTION),
         RelationshipType.OVERRIDES,
         (NodeLabel.METHOD,),
@@ -811,5 +889,45 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
         RelationshipType.INSTANTIATES,
         (NodeLabel.CLASS,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.READS_FROM,
+        (NodeLabel.RESOURCE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.WRITES_TO,
+        (NodeLabel.RESOURCE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
+        RelationshipType.FLOWS_TO,
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.RESOURCE),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.FILE),
+        RelationshipType.EXPOSES,
+        (NodeLabel.RESOURCE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.RESOURCE,),
+        RelationshipType.RESOLVES_TO,
+        (NodeLabel.RESOURCE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.IMPLEMENTS_PATTERN,
+        (NodeLabel.PATTERN,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.HAS_SMELL,
+        (NodeLabel.CODE_SMELL,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.HAS_VULNERABILITY,
+        (NodeLabel.SECURITY_ISSUE,),
     ),
 )

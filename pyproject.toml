@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.299"
+version = "0.0.523"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -36,7 +36,7 @@ keywords = [
 ]
 dependencies = [
     "loguru>=0.7.3",
-    "mcp>=1.25.0",
+    "mcp>=1.28.1",
     "pydantic-ai>=1.102.0",
     "pydantic-settings>=2.12.0",
     "pymgclient>=1.5.1",
@@ -70,9 +70,9 @@ cgr = "codebase_rag.cli:app"
 [tool.uv]
 package = true
 
-# (H) Patched grammars: upstream tree-sitter-c drops declarations after a
-# (H) #define whose value embeds a block comment (issue #555). Our forks carry
-# (H) the repeat(preproc_arg) fix; drop these overrides once upstream releases it.
+# Patched grammars: upstream tree-sitter-c drops declarations after a
+# #define whose value embeds a block comment (issue #555). Our forks carry
+# the repeat(preproc_arg) fix; drop these overrides once upstream releases it.
 [tool.uv.sources]
 tree-sitter-c = { git = "https://github.com/vitali87/tree-sitter-c", rev = "fa327ad98f847f8173fc46926be4165c7971f960" }
 tree-sitter-cpp = { git = "https://github.com/vitali87/tree-sitter-cpp", rev = "b4a7be2f62f36dd460a14b2d1728d42d81d2c486" }
@@ -82,7 +82,13 @@ include = ["codebase_rag*", "codec*", "cgr*"]
 exclude = ["*.tests", "*.tests.*"]
 
 [tool.setuptools.package-data]
-codebase_rag = ["docker-compose.yaml"]
+codebase_rag = [
+    "docker-compose.yaml",
+    "parsers/csharp_frontend/roslyn/*.cs",
+    "parsers/csharp_frontend/roslyn/*.csproj",
+    "parsers/ast_grep_patterns/*.yaml",
+    "analyzers/ast_grep_rules/*/*.yaml",
+]
 
 [project.optional-dependencies]
 test = [
@@ -92,6 +98,9 @@ test = [
     "pytest-xdist>=3.8.0",
     "testcontainers>=4.9.0",
     "libclang>=18.1.1",
+    "filelock>=3.12",
+    "ast-grep-py>=0.44.0",
+    "pyyaml>=6.0",
 ]
 
 treesitter-full = [
@@ -106,12 +115,23 @@ treesitter-full = [
     "tree-sitter-cpp>=0.23.0",
     "tree-sitter-lua>=0.0.19",
     "tree-sitter-php>=0.24.1",
+    "tree-sitter-c-sharp>=0.23.5",
+    "tree-sitter-dart>=0.1.0",
 ]
 
 semantic = [
     "qdrant-client>=1.9.0",
     "torch>=2.6.0",
     "transformers>=4.0.0",
+]
+
+milvus = [
+    "pymilvus[milvus-lite]>=3.0.0",
+]
+
+ast-grep = [
+    "ast-grep-py>=0.44.0",
+    "pyyaml>=6.0",
 ]
 
 [tool.ruff]
@@ -148,12 +168,12 @@ exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-# (H) loadgroup honors the xdist_group marker that pins the integration dir to
-# (H) one worker; for unmarked tests it schedules identically to the default.
-# (H) xdist workers decide their grouping flag from the parsed args/ini before
-# (H) any conftest hook fires (xdist remote.py setup_config), so this must be
-# (H) an ini-level option; every dependency set that carries pytest also
-# (H) carries pytest-xdist, so the flag always parses.
+# loadgroup honors the xdist_group marker that pins the integration dir to
+# one worker; for unmarked tests it schedules identically to the default.
+# xdist workers decide their grouping flag from the parsed args/ini before
+# any conftest hook fires (xdist remote.py setup_config), so this must be
+# an ini-level option; every dependency set that carries pytest also
+# carries pytest-xdist, so the flag always parses.
 addopts = "--dist=loadgroup"
 testpaths = ["codebase_rag/tests"]
 norecursedirs = ["grammars", ".git", "__pycache__", "*.egg-info", ".venv", "venv"]

@@ -1,9 +1,11 @@
+from collections.abc import Mapping
 from pathlib import Path
 
 from loguru import logger
 
 from .. import constants as cs
 from .. import logs
+from ..language_spec import LANGUAGE_SPECS
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeIdentifier
 from ..utils.path_utils import (
@@ -29,7 +31,7 @@ class StructureProcessor:
         ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
     ):
@@ -48,7 +50,13 @@ class StructureProcessor:
             return (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
         if parent_container_qn:
             return (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
-        return (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
+        # Folder identity is the absolute path: relative paths collide across
+        # same-layout projects in the shared graph (issue #897).
+        return (
+            cs.NodeLabel.FOLDER,
+            cs.KEY_ABSOLUTE_PATH,
+            cached_resolve_posix(self.repo_path / parent_rel_path),
+        )
 
     def identify_structure(self) -> None:
         directories = {self.repo_path}
@@ -61,9 +69,11 @@ class StructureProcessor:
             ):
                 directories.add(path)
 
+        # Package detection needs only the static language specs, never a
+        # loaded grammar; iterating self.queries.values() would force every
+        # lazy grammar to load (issue #68).
         package_indicators: set[str] = set()
-        for lang_queries in self.queries.values():
-            lang_config = lang_queries[cs.QUERY_CONFIG]
+        for lang_config in LANGUAGE_SPECS.values():
             package_indicators.update(lang_config.package_indicators)
 
         for root in sorted(directories):
@@ -122,7 +132,11 @@ class StructureProcessor:
                 self.ingestor.ensure_relationship_batch(
                     parent_identifier,
                     cs.RelationshipType.CONTAINS_FOLDER,
-                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, relative_root.as_posix()),
+                    (
+                        cs.NodeLabel.FOLDER,
+                        cs.KEY_ABSOLUTE_PATH,
+                        cached_resolve_posix(root),
+                    ),
                 )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
@@ -147,5 +161,5 @@ class StructureProcessor:
         self.ingestor.ensure_relationship_batch(
             parent_identifier,
             cs.RelationshipType.CONTAINS_FILE,
-            (cs.NodeLabel.FILE, cs.KEY_PATH, relative_filepath),
+            (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, cached_resolve_posix(file_path)),
         )

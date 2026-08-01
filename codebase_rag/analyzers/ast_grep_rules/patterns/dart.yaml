@@ -1,0 +1,28 @@
+# ast-grep design-pattern rules for Dart (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: dart
+extensions: [.dart]
+rules:
+  - id: factory_constructor
+    message: "Factory: class exposes a factory constructor"
+    rule:
+      kind: factory_constructor_signature
+  - id: singleton
+    message: "Singleton: class holds a static instance field"
+    rule:
+      kind: class_declaration
+      has:
+        kind: static_final_declaration
+        stopBy: end
+        has: { kind: identifier, regex: '(?i)instance' }
+  - id: builder
+    message: "Builder: class name ends in Builder"
+    rule:
+      kind: class_declaration
+      has: { field: name, regex: 'Builder$' }
+  - id: abstract_class
+    message: "Abstract class declares an interface for subclasses"
+    rule:
+      kind: class_declaration
+      regex: '^abstract\s'

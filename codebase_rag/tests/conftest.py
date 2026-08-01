@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import os
 import shutil
 import sys
@@ -49,6 +50,12 @@ class MockNode:
         return self.node_type
 
     @property
+    def id(self) -> int:
+        # Real tree-sitter nodes expose a per-parse identity; object identity
+        # is the mock's equivalent.
+        return builtins.id(self)
+
+    @property
     def children(self) -> list[MockNode]:
         return self.node_children
 
@@ -96,6 +103,39 @@ def _disable_stack_autostart() -> Generator[None, None, None]:
 
     with patch("codebase_rag.cli._maybe_start_stack"):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _pin_csharp_frontend_treesitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The shipped default is AUTO (hybrid wherever dotnet exists), which would
+    # run a real MSBuild workspace load in any unit test whose fixture carries
+    # a .csproj. Tests pin pure tree-sitter and opt into Roslyn explicitly.
+    from codebase_rag import constants as cs
+    from codebase_rag.config import settings
+
+    monkeypatch.setattr(settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vector_store(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Tests must never touch the developer's real vector store: a clean-path
+    # test would purge it for real, and parallel xdist workers would collide
+    # on its file lock. A developer .env sets QDRANT_URL to the live daemon
+    # stack, and URL mode never reads QDRANT_DB_PATH, so the URL must be
+    # cleared too or the purge lands on the live server.
+    from codebase_rag.config import settings
+
+    monkeypatch.setattr(settings, "QDRANT_URL", None)
+    monkeypatch.setattr(
+        settings, "QDRANT_DB_PATH", str(tmp_path_factory.mktemp("qdrant-iso"))
+    )
+    monkeypatch.setattr(
+        settings,
+        "MILVUS_URI",
+        str(tmp_path_factory.mktemp("milvus-iso") / "milvus.db"),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -246,6 +286,7 @@ def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
     mock.ingestor = mock_ingestor
     mock.parsers = parsers
     mock.queries = queries
+    mock.project_name = temp_repo.resolve().name
 
     mock.factory = MagicMock()
     mock.factory.definition_processor = MagicMock()
@@ -268,16 +309,8 @@ def cleanup_qdrant_client() -> Generator[None, None, None]:
     yield
 
     try:
-        from codebase_rag.utils.dependencies import has_qdrant_client
+        import codebase_rag.vector_store as vs
 
-        if has_qdrant_client():
-            import codebase_rag.vector_store as vs
-
-            if vs._CLIENT is not None:
-                try:
-                    vs._CLIENT.close()
-                except Exception:
-                    pass
-                vs._CLIENT = None
+        vs.close_vector_store_client()
     except Exception:
         pass

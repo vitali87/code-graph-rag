@@ -22,9 +22,9 @@ needs_ts_grammar = pytest.mark.skipif(
 
 
 def _make(root: Path) -> None:
-    # (H) tsconfig `paths` maps the alias `@/*` to `src/*`; a call to a function
-    # (H) imported via the alias must resolve to the real first-party file, not be
-    # (H) dropped as external. JSONC (comments) is tolerated.
+    # tsconfig `paths` maps the alias `@/*` to `src/*`; a call to a function
+    # imported via the alias must resolve to the real first-party file, not be
+    # dropped as external. JSONC (comments) is tolerated.
     (root / "tsconfig.json").write_text(
         "{\n"
         "  // project config\n"
@@ -44,7 +44,7 @@ def _make(root: Path) -> None:
     (src / "lib" / "index.ts").write_text(
         "export function libEntry(): number { return 2; }\n", encoding="utf-8"
     )
-    # (H) A first-party function whose name collides with an external package import.
+    # A first-party function whose name collides with an external package import.
     (src / "collide.ts").write_text(
         "export function pkgCollide(): number { return 9; }\n", encoding="utf-8"
     )
@@ -60,11 +60,11 @@ def _make(root: Path) -> None:
 
 @needs_ts_grammar
 def test_tsconfig_paths_alias_in_subdirectory_resolves(tmp_path: Path) -> None:
-    # (H) The tsconfig lives in a subdirectory (a monorepo `frontend/`), not the
-    # (H) indexed repo root. Its `@/* -> ./src/*` alias is relative to that
-    # (H) subdirectory, so an `@/util` import must resolve to `frontend/src/util`
-    # (H) (the full-stack-fastapi-template layout). Reading only the root tsconfig
-    # (H) leaves every `@/` import unresolved and its callees reported as dead.
+    # The tsconfig lives in a subdirectory (a monorepo `frontend/`), not the
+    # indexed repo root. Its `@/* -> ./src/*` alias is relative to that
+    # subdirectory, so an `@/util` import must resolve to `frontend/src/util`
+    # (the full-stack-fastapi-template layout). Reading only the root tsconfig
+    # leaves every `@/` import unresolved and its callees reported as dead.
     fe = tmp_path / "frontend"
     (fe / "src").mkdir(parents=True)
     (fe / "tsconfig.json").write_text(
@@ -102,11 +102,11 @@ def test_tsconfig_paths_alias_calls_resolve_to_first_party_files(
         for _fl, from_val, rel, _tl, to_val in ingestor.rels
         if rel == "CALLS"
     }
-    # (H) wildcard alias `@/*` -> `src/*`
+    # wildcard alias `@/*` -> `src/*`
     assert ("proj.a.useAliases", "proj.src.util.aliasedHelper") in calls
-    # (H) exact (non-wildcard) alias `~lib` -> `src/lib/index.ts`
+    # exact (non-wildcard) alias `~lib` -> `src/lib/index.ts`
     assert ("proj.a.useAliases", "proj.src.lib.index.libEntry") in calls
-    # (H) the catch-all `"*": ["src/*"]` maps `lodash` -> `src/lodash`, which has NO
-    # (H) first-party file, so the alias must NOT apply and the external `pkgCollide`
-    # (H) call must not rebind to the first-party `src/collide.pkgCollide`.
+    # the catch-all `"*": ["src/*"]` maps `lodash` -> `src/lodash`, which has NO
+    # first-party file, so the alias must NOT apply and the external `pkgCollide`
+    # call must not rebind to the first-party `src/collide.pkgCollide`.
     assert ("proj.a.useExternal", "proj.src.collide.pkgCollide") not in calls

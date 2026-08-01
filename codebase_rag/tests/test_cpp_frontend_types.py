@@ -14,9 +14,9 @@ pytestmark = pytest.mark.skipif(
     reason="libclang not available",
 )
 
-# (H) C++ type aliases: namespace-scoped `using`/`typedef` and a class-scoped
-# (H) member alias. The tree-sitter path emits no Type nodes for these, so the
-# (H) frontend adds them (mirroring how Go/Rust type decls become Type nodes).
+# C++ type aliases: namespace-scoped `using`/`typedef` and a class-scoped
+# member alias. The tree-sitter path emits no Type nodes for these, so the
+# frontend adds them (mirroring how Go/Rust type decls become Type nodes).
 _HEADER = """
 namespace n {
 
@@ -71,7 +71,7 @@ def test_frontend_emits_type_aliases(temp_repo: Path) -> None:
         for c in ingestor.ensure_relationship_batch.call_args_list
         if c.args[1] == "DEFINES"
     ]
-    # (H) namespace-scoped alias defined by its Module; member alias by its Class.
+    # namespace-scoped alias defined by its Module; member alias by its Class.
     assert any(
         src_label == "Module" and child.endswith(".n.Meters")
         for src_label, _, child in defines

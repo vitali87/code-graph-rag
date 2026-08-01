@@ -40,7 +40,7 @@ pre-commit autoupdate
 
 ```bash
 make lint          # Lint check
-make format        # Format check
+make format        # Apply formatting (ruff format writes files; CI uses ruff format --check)
 make typecheck     # Type check
 make test-parallel # Unit tests in parallel
 make test-integration  # Integration tests (requires Docker)
@@ -78,7 +78,7 @@ This project uses automated code review bots (**Greptile** and **Gemini Code Ass
 ## Technical Requirements
 
 - **PydanticAI Only**: Do not introduce other agentic frameworks (LangChain, CrewAI, AutoGen, etc.)
-- **Heavy Pydantic Usage**: Use Pydantic models for data validation, serialization, and configuration
+- **Heavy Pydantic Usage**: Use Pydantic models for data validation, serialisation, and configuration
 - **Package Management**: Use `uv` for all dependency management
 - **Code Quality**: Use `ruff` for linting and formatting
 - **Type Safety**: Use type hints everywhere and run `uv run ty check`
@@ -95,11 +95,7 @@ This project uses automated code review bots (**Greptile** and **Gemini Code Ass
 
 ## Comment Policy
 
-No inline comments are allowed unless they:
-
-1. Appear before any code at the top of the file
-2. Contain the `(H)` marker (intentional, human-written comment)
-3. Are type annotations (`type:`, `noqa`, `pyright`, `ty:`)
+Write comments that explain why and how, not what. A comment that only restates the adjacent code adds no value.
 
 ## Questions?
 

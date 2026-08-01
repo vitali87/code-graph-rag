@@ -304,15 +304,25 @@ class ShellCommander:
             if not executable:
                 executable = cmd_parts[0]
 
-            proc = await asyncio.create_subprocess_exec(
-                executable,
-                *cmd_parts[1:],
-                stdin=asyncio.subprocess.PIPE if input_data is not None else None,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.project_root,
-                env=env,
-            )
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    executable,
+                    *cmd_parts[1:],
+                    stdin=asyncio.subprocess.PIPE if input_data is not None else None,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.project_root,
+                    env=env,
+                )
+            except OSError as e:
+                # A bare str(OSError) hides WHICH segment failed to spawn, so
+                # an intermittent runner failure surfaces as an opaque -1
+                # (issue #902). Name the segment and the resolved executable.
+                raise RuntimeError(
+                    te.COMMAND_SPAWN_FAILED.format(
+                        segment=segment, executable=executable, error=e
+                    )
+                ) from e
             try:
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(input=input_data), timeout=remaining_timeout

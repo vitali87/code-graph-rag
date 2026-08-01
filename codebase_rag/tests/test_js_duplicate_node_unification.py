@@ -1,13 +1,13 @@
-# (H) The thrift sweep found 521 JS/TS source locations minting MULTIPLE nodes:
-# (H) the generic function pass registers every unnamed function expression as
-# (H) `anonymous_row_col` BEFORE the named JS passes (object literals, exports,
-# (H) assignment arrows, prototype methods) register the same source function
-# (H) under its real name, and two named passes registering the same function
-# (H) collide in register_unique_qn, minting a spurious `name@line` twin. One
-# (H) source function must yield exactly one node: named passes claim their
-# (H) function node's span in function_locations (first claim wins), and the
-# (H) generic pass defers anonymous JS registration until after the named
-# (H) passes, registering only unclaimed spans.
+# The thrift sweep found 521 JS/TS source locations minting MULTIPLE nodes:
+# the generic function pass registers every unnamed function expression as
+# `anonymous_row_col` BEFORE the named JS passes (object literals, exports,
+# assignment arrows, prototype methods) register the same source function
+# under its real name, and two named passes registering the same function
+# collide in register_unique_qn, minting a spurious `name@line` twin. One
+# source function must yield exactly one node: named passes claim their
+# function node's span in function_locations (first claim wins), and the
+# generic pass defers anonymous JS registration until after the named
+# passes, registering only unclaimed spans.
 from __future__ import annotations
 
 from pathlib import Path
@@ -186,8 +186,8 @@ def test_prototype_method_yields_single_constructor_scoped_node(
 def test_true_anonymous_callback_still_gets_its_node(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) A callback argument is claimed by NO named pass; deferring anonymous
-    # (H) registration must not lose it.
+    # A callback argument is claimed by NO named pass; deferring anonymous
+    # registration must not lose it.
     (temp_repo / "timer.js").write_text(CALLBACK_JS)
     run_updater(temp_repo, mock_ingestor, skip_if_missing="javascript")
 
@@ -208,10 +208,10 @@ def _defines_pairs(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
 def test_nested_function_parents_to_claimed_named_node(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) The enclosing function's span is claimed under `receiver`; deriving
-    # (H) the nested function's parent structurally would produce the
-    # (H) since-unregistered anonymous qn and hoist the child to the module.
-    # (H) The parent derivation must reuse the claimed identity.
+    # The enclosing function's span is claimed under `receiver`; deriving
+    # the nested function's parent structurally would produce the
+    # since-unregistered anonymous qn and hoist the child to the module.
+    # The parent derivation must reuse the claimed identity.
     (temp_repo / "transport.js").write_text(NESTED_RETURN_JS)
     run_updater(temp_repo, mock_ingestor, skip_if_missing="javascript")
 
@@ -225,10 +225,10 @@ def test_nested_function_parents_to_claimed_named_node(
 def test_nested_function_parents_to_its_own_same_name_enclosing(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Two function expressions share the name `t`; the second registers as
-    # (H) `t@line`. A function nested in the SECOND must parent to `t@line`,
-    # (H) not to the first `t` (structural re-derivation binds the wrong
-    # (H) function; the span record knows which one encloses the child).
+    # Two function expressions share the name `t`; the second registers as
+    # `t@line`. A function nested in the SECOND must parent to `t@line`,
+    # not to the first `t` (structural re-derivation binds the wrong
+    # function; the span record knows which one encloses the child).
     (temp_repo / "suite.js").write_text(SAME_NAME_EXPR_JS)
     run_updater(temp_repo, mock_ingestor, skip_if_missing="javascript")
 
@@ -246,11 +246,11 @@ def test_nested_function_parents_to_its_own_same_name_enclosing(
 def test_named_nested_function_parents_to_later_claimed_node(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) `helper` registers EAGERLY (generic pass) while its enclosing
-    # (H) function expression is still unnamed; the parent guess is the
-    # (H) anonymous placeholder, deferred. By resolve time the enclosing span
-    # (H) is claimed under `receiver`; the resolver must re-consult the claim
-    # (H) (the placeholder embeds the span) instead of falling back to module.
+    # `helper` registers EAGERLY (generic pass) while its enclosing
+    # function expression is still unnamed; the parent guess is the
+    # anonymous placeholder, deferred. By resolve time the enclosing span
+    # is claimed under `receiver`; the resolver must re-consult the claim
+    # (the placeholder embeds the span) instead of falling back to module.
     (temp_repo / "eager.js").write_text(NAMED_NESTED_JS)
     run_updater(temp_repo, mock_ingestor, skip_if_missing="javascript")
 
@@ -268,9 +268,9 @@ def test_named_nested_function_parents_to_later_claimed_node(
 def test_calls_from_exported_function_attribute_to_named_node(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) With the anonymous twin gone, Pass-3 caller attribution must bind the
-    # (H) body's calls to the surviving NAMED node, not re-derive a phantom
-    # (H) anonymous caller (the conftest gate would flag that as dangling).
+    # With the anonymous twin gone, Pass-3 caller attribution must bind the
+    # body's calls to the surviving NAMED node, not re-derive a phantom
+    # anonymous caller (the conftest gate would flag that as dangling).
     (temp_repo / "word.js").write_text(CALLER_JS)
     run_updater(temp_repo, mock_ingestor, skip_if_missing="javascript")
 
@@ -286,11 +286,11 @@ def test_calls_from_exported_function_attribute_to_named_node(
 def test_same_line_named_functions_each_keep_one_node(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Two named functions on ONE line must each claim their own span: a
-    # (H) line-only claim record lets the first claim block the second, so the
-    # (H) second function's named passes collide into a `b@line` twin AND its
-    # (H) deferred anonymous registration flushes as an `anonymous_row_col`
-    # (H) twin (minified/one-line code).
+    # Two named functions on ONE line must each claim their own span: a
+    # line-only claim record lets the first claim block the second, so the
+    # second function's named passes collide into a `b@line` twin AND its
+    # deferred anonymous registration flushes as an `anonymous_row_col`
+    # twin (minified/one-line code).
     (temp_repo / "same_line.js").write_text(SAME_LINE_EXPORTS_JS)
     run_updater(temp_repo, mock_ingestor, skip_if_missing="javascript")
 

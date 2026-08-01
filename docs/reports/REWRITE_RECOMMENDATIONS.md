@@ -1,4 +1,4 @@
-# Rewrite Recommendations: code-graph-rag Performance Optimization
+# Rewrite Recommendations: code-graph-rag Performance Optimisation
 
 ## Executive Summary
 
@@ -10,7 +10,7 @@ A comprehensive performance analysis of the code-graph-rag codebase (31.2s total
 
 2. **Replace pathlib with string operations in `should_skip_path`** (Python refactor): Eliminates 13.7% of total CPU time. `pathlib.relative_to()` creates intermediate objects on every call (59,012 calls, 3.39s total). Benchmarked fix: **45x to 634x speedup** on path operations. Projected total speedup: ~1.15x.
 
-3. **Cache `build_local_variable_type_map` results** (Python memoization): Eliminates 8.3% of total CPU time. 5,228 uncached AST traversals. Projected total speedup: ~1.07x.
+3. **Cache `build_local_variable_type_map` results** (Python memoisation): Eliminates 8.3% of total CPU time. 5,228 uncached AST traversals. Projected total speedup: ~1.07x.
 
 **Combined Tier 1 impact:** ~3.7x total speedup (31.2s to ~8.5s) from pure Python fixes with zero integration overhead.
 
@@ -105,7 +105,7 @@ The security auditor approved all recommended candidates with zero disputes. The
 ### Candidate 3: Cache Type Inference Results
 
 **Priority:** 3
-**Type:** Python memoization
+**Type:** Python memoisation
 **Effort:** Low
 **Files:** `codebase_rag/parsers/type_inference.py:119`
 
@@ -114,7 +114,7 @@ The security auditor approved all recommended candidates with zero disputes. The
 - Call count: 5,228 calls
 - Root cause: Re-traverses AST nodes per function for type inference without caching
 
-**Fix:** Memoize results keyed by `(file_path, function_start_line, function_end_line)`. Cache invalidation handled by existing incremental update system.
+**Fix:** Memoise results keyed by `(file_path, function_start_line, function_end_line)`. Cache invalidation handled by existing incremental update system.
 
 **Projected Net Gain:** ~1.07x total speedup (2.0s saved)
 **Integration Overhead:** ~2MB memory for cache
@@ -162,7 +162,7 @@ The security auditor approved all recommended candidates with zero disputes. The
 
 ---
 
-### Candidate 6: orjson for JSON Serialization
+### Candidate 6: orjson for JSON Serialisation
 
 **Priority:** 6
 **Type:** Dependency swap
@@ -263,7 +263,7 @@ The security auditor approved all recommended candidates with zero disputes. The
 
 ---
 
-## Optimize-First Recommendations (Non-Rewrite)
+## Optimise-First Recommendations (Non-Rewrite)
 
 These Python-level improvements should be implemented before any language rewrite consideration:
 
@@ -323,7 +323,7 @@ Run all benchmarks: `uv run python benchmarks/run_all.py`
 | Language research | #7 | language-researcher | Target language recommendations (Rust via PyO3) |
 | Integration feasibility | #8 | integration-architect | FFI overhead analysis, build system impact, net gain calculations |
 | Benchmarks | #9 | benchmark-designer | Measured performance for all candidates |
-| Scorecard | #10 | evaluator | Prioritized ranking with scores |
+| Scorecard | #10 | evaluator | Prioritised ranking with scores |
 | Adversarial review | #11 | adversarial-reviewer | No rewrite justified at current scale |
 | Security audit | #12 | security-auditor | All candidates approved, zero disputes |
 
@@ -331,10 +331,10 @@ Run all benchmarks: `uv run python benchmarks/run_all.py`
 
 ## Conclusion
 
-The performance analysis produced a clear, data-driven result: **optimize Python first, rewrite later (if ever).**
+The performance analysis produced a clear, data-driven result: **optimise Python first, rewrite later (if ever).**
 
 The top 5 bottlenecks consuming 72.8% of runtime are all pure Python algorithmic issues (linear scan fallback, pathlib object overhead, uncached traversals, debug logging, duplicate traversals). Fixing them provides ~3.7x total speedup with zero integration overhead, zero build system changes, and zero maintenance burden.
 
-The Rust AST extension, while technically sound as a future optimization for large-scale workloads, targets only 3.1% of current CPU time and provides ~1.03x total improvement after Python fixes. It should be reconsidered only when the codebase routinely processes 5,000+ file repositories and the Python fixes have been applied.
+The Rust AST extension, while technically sound as a future optimisation for large-scale workloads, targets only 3.1% of current CPU time and provides ~1.03x total improvement after Python fixes. It should be reconsidered only when the codebase routinely processes 5,000+ file repositories and the Python fixes have been applied.
 
 No language rewrite recommendation survived the adversarial review at current scale.

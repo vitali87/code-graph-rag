@@ -1,9 +1,9 @@
-# (H) A lambda in an out-of-line C++ method body (`void Directive::print()
-# (H) { join(xs, [](){...}); }` in a .cpp, class declared in a header) must get
-# (H) its DEFINES parent from the real class-anchored Method node. The parent
-# (H) walk used to recompute a free-function qn that drops the `Class::` scope
-# (H) (module.ns.print), which matches no node, so the database dropped the
-# (H) edge and every such lambda was an orphan (issue #650: 234 on souffle).
+# A lambda in an out-of-line C++ method body (`void Directive::print()
+# { join(xs, [](){...}); }` in a .cpp, class declared in a header) must get
+# its DEFINES parent from the real class-anchored Method node. The parent
+# walk used to recompute a free-function qn that drops the `Class::` scope
+# (module.ns.print), which matches no node, so the database dropped the
+# edge and every such lambda was an orphan (issue #650: 234 on souffle).
 from __future__ import annotations
 
 from pathlib import Path
@@ -88,9 +88,9 @@ void Widget::print() const {
 def test_same_leaf_classes_bind_lambdas_to_their_own_namespace(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) alpha::Widget and beta::Widget share a leaf name; each out-of-line
-    # (H) method's lambda must bind to its own namespace's Method node, not
-    # (H) whichever Widget resolves first from the simple-name index.
+    # alpha::Widget and beta::Widget share a leaf name; each out-of-line
+    # method's lambda must bind to its own namespace's Method node, not
+    # whichever Widget resolves first from the simple-name index.
     (temp_repo / "Widget.h").write_text(TWO_NAMESPACES_HDR)
     (temp_repo / "Widget.cpp").write_text(TWO_NAMESPACES_CPP)
     run_updater(temp_repo, mock_ingestor)
@@ -131,6 +131,6 @@ def test_cpp_lambda_fixture_has_no_orphans_or_dangling_defines(
         GraphRelRecord(c.args[0], str(c.args[1]), c.args[2])
         for c in mock_ingestor.ensure_relationship_batch.call_args_list
     ]
-    # (H) Orphan detection counts only edges the database would keep, so this
-    # (H) fails if the lambda's DEFINES parent is a phantom qn.
+    # Orphan detection counts only edges the database would keep, so this
+    # fails if the lambda's DEFINES parent is a phantom qn.
     assert ga.find_orphans(nodes, rels) == []

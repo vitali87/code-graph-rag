@@ -1,9 +1,9 @@
-# (H) Incremental runs rehydrate the function registry from the graph but used
-# (H) to leave simple_name_lookup (and the qn->file map behind _is_cpp_defined)
-# (H) empty for unchanged files. Deferred C++ INHERITS resolution runs after
-# (H) rehydration, so a re-parsed file inheriting from a class in an UNCHANGED
-# (H) header could not find the base and the edge silently disappeared from the
-# (H) graph on every incremental update (PR #663 review finding).
+# Incremental runs rehydrate the function registry from the graph but used
+# to leave simple_name_lookup (and the qn->file map behind _is_cpp_defined)
+# empty for unchanged files. Deferred C++ INHERITS resolution runs after
+# rehydration, so a re-parsed file inheriting from a class in an UNCHANGED
+# header could not find the base and the edge silently disappeared from the
+# graph on every incremental update (PR #663 review finding).
 from __future__ import annotations
 
 from pathlib import Path
@@ -63,8 +63,8 @@ def test_incremental_reparse_keeps_cross_header_inherits(temp_repo: Path) -> Non
     _index(store, temp_repo, force=True)
     assert expected in _inherits_edges(store)
 
-    # (H) A trailing comment changes the hash but not the AST, so only
-    # (H) Derived.h re-parses; Base.h stays rehydration-only.
+    # A trailing comment changes the hash but not the AST, so only
+    # Derived.h re-parses; Base.h stays rehydration-only.
     derived = temp_repo / "Derived.h"
     derived.write_text(DERIVED_HDR + "// touched\n")
     _index(store, temp_repo, force=False)

@@ -1,10 +1,10 @@
-# (H) L3 finding from the evals/ harness: TypeInferenceEngine.build_local_variable_type_map
-# (H) calls self.python_type_inference.build_local_variable_type_map(...), where the
-# (H) python_type_inference property returns PythonTypeInferenceEngine imported via a
-# (H) package re-export (from .py import PythonTypeInferenceEngine). The caller's import
-# (H) map points the name at the re-export module, not the class's real definition, so
-# (H) the chained method must follow the re-export hop to resolve to the concrete class
-# (H) rather than collapsing to an ambiguous same-named method (the caller itself).
+# L3 finding from the evals/ harness: TypeInferenceEngine.build_local_variable_type_map
+# calls self.python_type_inference.build_local_variable_type_map(...), where the
+# python_type_inference property returns PythonTypeInferenceEngine imported via a
+# package re-export (from .py import PythonTypeInferenceEngine). The caller's import
+# map points the name at the re-export module, not the class's real definition, so
+# the chained method must follow the re-export hop to resolve to the concrete class
+# rather than collapsing to an ambiguous same-named method (the caller itself).
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,8 +16,8 @@ from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
 
 PROJECT = "proj"
 
-# (H) PythonEngine lives in pkg/py/engine.py and is re-exported from pkg/py/__init__.py.
-# (H) A sibling JsEngine.build_map exists so the bare name is ambiguous in the trie.
+# PythonEngine lives in pkg/py/engine.py and is re-exported from pkg/py/__init__.py.
+# A sibling JsEngine.build_map exists so the bare name is ambiguous in the trie.
 FILES = {
     "pkg/__init__.py": "",
     "pkg/py/__init__.py": "from .engine import PythonEngine\n\n__all__ = ['PythonEngine']\n",

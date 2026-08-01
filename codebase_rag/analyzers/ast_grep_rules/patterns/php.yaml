@@ -1,0 +1,31 @@
+# ast-grep design-pattern rules for PHP (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: php
+extensions: [.php]
+rules:
+  - id: singleton
+    message: "Singleton: class exposes a static getInstance accessor"
+    rule:
+      kind: class_declaration
+      has:
+        kind: method_declaration
+        stopBy: end
+        all:
+          - has: { kind: static_modifier }
+          - has: { field: name, regex: '^getInstance$' }
+  - id: factory_function
+    message: "Factory function: name starts with create/make/build"
+    rule:
+      kind: function_definition
+      has: { field: name, regex: '^(create|make|build)' }
+  - id: factory_method
+    message: "Factory method: name starts with create/make/build"
+    rule:
+      kind: method_declaration
+      has: { field: name, regex: '^(create|make|build)' }
+  - id: abstract_class
+    message: "Abstract class: declared with the abstract modifier"
+    rule:
+      kind: class_declaration
+      has: { kind: abstract_modifier }

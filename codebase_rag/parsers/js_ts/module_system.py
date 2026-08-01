@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import textwrap
 from abc import abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import QueryCursor
+from tree_sitter import Language, QueryCursor
 
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode
 from ..utils import (
+    function_span_key,
     get_cached_query,
     ingest_exported_function,
     safe_decode_text,
@@ -23,7 +25,9 @@ from .utils import get_js_ts_language_obj
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
     from ...types_defs import (
+        FunctionLocation,
         FunctionRegistryTrieProtocol,
+        FunctionSpanKey,
         LanguageQueries,
         SimpleNameLookup,
     )
@@ -31,7 +35,7 @@ if TYPE_CHECKING:
 
 
 class JsTsModuleSystemMixin:
-    __slots__ = ("_processed_imports",)
+    __slots__ = ("_processed_imports", "_pending_direct_module_exports")
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
@@ -39,6 +43,7 @@ class JsTsModuleSystemMixin:
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
+    function_locations: dict[FunctionSpanKey, FunctionLocation]
     _processed_imports: set[str]
 
     @abstractmethod
@@ -47,10 +52,10 @@ class JsTsModuleSystemMixin:
     @abstractmethod
     def _is_export_inside_function(self, node: ASTNode) -> bool: ...
 
-    # (H) Span-claim protocol (implemented by FunctionIngestMixin): one source
-    # (H) function must mint exactly one node PER NAME, so every JS/TS
-    # (H) registration path checks the claim before registering and claims
-    # (H) after (deliberate different-name twins still register).
+    # Span-claim protocol (implemented by FunctionIngestMixin): one source
+    # function must mint exactly one node PER NAME, so every JS/TS registration
+    # path checks the claim before registering and claims after (deliberate
+    # different-name twins still register).
     @abstractmethod
     def _span_claimed_for_qn(
         self, module_qn: str, func_node: ASTNode, candidate_qn: str
@@ -63,13 +68,14 @@ class JsTsModuleSystemMixin:
 
     def __init__(self) -> None:
         self._processed_imports = set()
+        self._pending_direct_module_exports: list[tuple[ASTNode, bool]] = []
 
     def _ingest_missing_import_patterns(
         self,
         root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         language_obj = get_js_ts_language_obj(language, queries)
         if not language_obj:
@@ -182,17 +188,20 @@ class JsTsModuleSystemMixin:
         language: cs.SupportedLanguage,
     ) -> None:
         try:
+            # A destructured `require()` reads a dual-package exports map from
+            # the require side, so the CommonJS condition, not the ESM one,
+            # names the source module.
             resolved_source_module = self.import_processor._resolve_js_module_path(
-                module_name, module_qn
+                module_name, module_qn, require=True
             )
 
             import_key = f"{module_qn}->{resolved_source_module}"
             if import_key not in self._processed_imports:
-                # (H) Route through the same deferred verification as every
-                # (H) other IMPORTS edge: an internal target must be a real
-                # (H) module, an external one gets its ExternalModule node at
-                # (H) flush (issue #652: this path emitted directly and was the
-                # (H) last source of phantom import targets).
+                # Route through the same deferred verification as every
+                # other IMPORTS edge: an internal target must be a real
+                # module, an external one gets its ExternalModule node at
+                # flush (issue #652: this path emitted directly and was the
+                # last source of phantom import targets).
                 self.import_processor.defer_import_edge(
                     module_qn, resolved_source_module, language
                 )
@@ -292,12 +301,121 @@ class JsTsModuleSystemMixin:
                     cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
                 )
 
+    def _ingest_direct_module_export(
+        self,
+        root_node: ASTNode,
+        module_qn: str,
+        language_obj: Language,
+    ) -> list[tuple[ASTNode, bool]]:
+        # `module.exports = function (...) {...}` makes the WHOLE module one
+        # function; `module.exports = function (...) {...}(args)` (with or
+        # without parens, fastify's generated error-serializer) exports the
+        # IIFE's RETURN value and runs the wrapper at module load. Collect
+        # the function nodes now; the caller finalises AFTER the deferred
+        # anonymous flush, resolving each node's qn by its own SOURCE SPAN so
+        # a name collision or refused registration can never point the edge
+        # or the alias map at an unrelated namesake.
+        pending: list[tuple[ASTNode, bool]] = []
+        try:
+            cursor = QueryCursor(
+                get_cached_query(language_obj, cs.JS_COMMONJS_DIRECT_EXPORT_QUERY)
+            )
+            captures = sorted_captures(cursor, root_node)
+        except Exception as e:
+            logger.debug(ls.JS_COMMONJS_EXPORTS_QUERY_FAILED, error=e)
+            return pending
+        for module_obj, exports_prop, export_function in zip(
+            captures.get(cs.CAPTURE_MODULE_OBJ, []),
+            captures.get(cs.CAPTURE_EXPORTS_PROP, []),
+            captures.get(cs.CAPTURE_EXPORT_FUNCTION, []),
+        ):
+            if safe_decode_text(module_obj) != cs.JS_MODULE_KEYWORD:
+                continue
+            if safe_decode_text(exports_prop) != cs.JS_EXPORTS_KEYWORD:
+                continue
+            if self._is_export_inside_function(export_function):
+                # Assigned when the enclosing function runs, not at module
+                # load: neither a load-time call nor the module's export.
+                continue
+            entry = self._pending_direct_export_entry(export_function, module_qn)
+            if entry is not None:
+                pending.append(entry)
+        return pending
+
+    def _pending_direct_export_entry(
+        self, export_function: ASTNode, module_qn: str
+    ) -> tuple[ASTNode, bool] | None:
+        if export_function.type == cs.TS_CALL_EXPRESSION:
+            callee: ASTNode | None = export_function.child_by_field_name(
+                cs.FIELD_FUNCTION
+            )
+            while callee is not None and callee.type == cs.TS_PARENTHESIZED_EXPRESSION:
+                callee = callee.named_children[0] if callee.named_children else None
+            if callee is None or callee.type not in (
+                cs.TS_FUNCTION_EXPRESSION,
+                cs.TS_ARROW_FUNCTION,
+            ):
+                # Any other call expression is not a function export.
+                return None
+            return callee, True
+        # The function IS the export: register it (own name, or its position
+        # when anonymous) marked exported. A refusal (span already claimed by
+        # the node's earlier registration) is fine: finalisation reads the
+        # claimed span either way.
+        name_node = export_function.child_by_field_name(cs.FIELD_NAME)
+        function_name = safe_decode_text(name_node) if name_node is not None else None
+        if not function_name:
+            row, col = export_function.start_point
+            function_name = f"{cs.PREFIX_ANONYMOUS}{row}_{col}"
+        self._ingest_export_function(
+            export_function,
+            function_name,
+            module_qn,
+            cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
+        )
+        return export_function, False
+
+    def _finalise_direct_module_exports(
+        self, module_qn: str, pending: list[tuple[ASTNode, bool]]
+    ) -> None:
+        # Runs AFTER the deferred anonymous flush: every function node's
+        # minted qn is now in the span registry. An unregistered span means
+        # the node was refused everywhere; emit nothing rather than guess.
+        for node, invoked in pending:
+            loc = self.function_locations.get(function_span_key(module_qn, node))
+            if loc is None or loc.qualified_name not in self.function_registry:
+                # No claim, or a STALE claim from before a watch-mode removal
+                # purged the registry: writing anything would resurrect a
+                # sparse node for a function that no longer exists.
+                continue
+            if invoked:
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    cs.RelationshipType.CALLS,
+                    (loc.label, cs.KEY_QUALIFIED_NAME, loc.qualified_name),
+                )
+            else:
+                # The module's one export: aliases calling the whole-module
+                # require resolve to it, and it is exported by definition
+                # (the named form's earlier registration may have recorded
+                # is_exported False; the merge fixes it up).
+                self.ingestor.ensure_node_batch(
+                    loc.label,
+                    {
+                        cs.KEY_QUALIFIED_NAME: loc.qualified_name,
+                        cs.KEY_IS_EXPORTED: True,
+                    },
+                )
+                self.import_processor.commonjs_direct_exports[module_qn] = (
+                    loc.qualified_name
+                )
+
     def _ingest_commonjs_exports(
         self,
         root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         if language not in cs.JS_TS_LANGUAGES:
             return
@@ -306,10 +424,16 @@ class JsTsModuleSystemMixin:
         if not language_obj:
             return
 
+        # Reset first: an exception in a later pass must not leak a stale
+        # pending list into the next file's finalisation.
+        self._pending_direct_module_exports = []
         query_texts = [
             cs.JS_COMMONJS_EXPORTS_FUNCTION_QUERY,
             cs.JS_COMMONJS_MODULE_EXPORTS_QUERY,
         ]
+        self._pending_direct_module_exports = self._ingest_direct_module_export(
+            root_node, module_qn, language_obj
+        )
 
         for query_text in query_texts:
             try:
@@ -339,7 +463,7 @@ class JsTsModuleSystemMixin:
         root_node: ASTNode,
         module_qn: str,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         try:
             lang_query = queries[language][cs.QUERY_LANGUAGE]

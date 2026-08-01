@@ -1,8 +1,8 @@
-# (H) L3 finding from the evals/ harness: a mixin declares an @abstractmethod stub
-# (H) for a method a sibling mixin implements; self.method() dispatches to the
-# (H) concrete sibling at runtime. cgr's ambiguous-name tiebreak preferred the
-# (H) same-module abstract stub by import distance. A concrete implementation must
-# (H) win over an abstract stub of the same name.
+# L3 finding from the evals/ harness: a mixin declares an @abstractmethod stub
+# for a method a sibling mixin implements; self.method() dispatches to the
+# concrete sibling at runtime. cgr's ambiguous-name tiebreak preferred the
+# same-module abstract stub by import distance. A concrete implementation must
+# win over an abstract stub of the same name.
 from __future__ import annotations
 
 from pathlib import Path

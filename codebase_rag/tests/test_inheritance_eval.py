@@ -38,13 +38,13 @@ def test_oracle_resolves_inherits_and_overrides(tmp_path: Path) -> None:
     oracle = oracle_inheritance(src, "proj")
 
     assert ("proj.derived.Dog", "proj.base.Animal") in oracle.inherits
-    # (H) speak is redefined in Dog and exists in the base -> an override.
+    # speak is redefined in Dog and exists in the base -> an override.
     assert ("proj.derived.Dog", "proj.base.Animal", "speak") in oracle.overrides
-    # (H) fetch is new (not in base); move is inherited (not redefined). Neither
-    # (H) is an override.
+    # fetch is new (not in base); move is inherited (not redefined). Neither
+    # is an override.
     assert ("proj.derived.Dog", "proj.base.Animal", "fetch") not in oracle.overrides
     assert all(m != "move" for (_c, _b, m) in oracle.overrides)
-    # (H) Dog is single-base and top-level, so it is eligible for override grading.
+    # Dog is single-base and top-level, so it is eligible for override grading.
     assert "proj.derived.Dog" in oracle.override_scope
 
 

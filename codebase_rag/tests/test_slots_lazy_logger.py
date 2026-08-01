@@ -25,8 +25,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 SLOTS_CLASSES: list[tuple[type, tuple[str, ...]]] = [
-    (FileEditor, ("project_root", "dmp", "parsers")),
-    (CodeRetriever, ("project_root", "ingestor")),
+    (FileEditor, ("project_root", "dmp", "parsers", "_write_lock")),
+    (CodeRetriever, ("project_root", "ingestor", "_project_roots")),
     (FileReader, ("project_root",)),
     (FileWriter, ("project_root",)),
     (DirectoryLister, ("project_root",)),

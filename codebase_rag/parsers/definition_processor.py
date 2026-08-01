@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,8 +24,10 @@ from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
+from .csharp_frontend import CallSiteKey, CSharpCallSite
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
+from .go import utils as go_utils
 from .handlers import get_handler
 from .js_ts.ingest import JsTsIngestMixin
 from .utils import safe_decode_with_fallback, sorted_captures
@@ -62,90 +65,183 @@ class DefinitionProcessor(
         self.simple_name_lookup = simple_name_lookup
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
+        # {go module qn: its `package` clause name}; Go package membership is
+        # (directory, clause), so receiver binding needs both.
+        self.go_package_names: dict[str, str] = {}
         self.class_inheritance: dict[str, list[str]] = {}
-        # (H) {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
-        # (H) resolver can redirect an interface-typed call `I.m` to the concrete
-        # (H) `Impl.m` when I has exactly one first-party implementer (unambiguous).
+        # {class_qn: [(method_qn, method_name)]} for Dart @override methods;
+        # whether they override an EXTERNAL base is only decidable once every
+        # class is registered, so resolve_deferred_inherits consumes this.
+        self.dart_annotated_overrides: dict[str, list[tuple[str, str]]] = {}
+        # {class_qn: [type_arg_qns]} for a Dart `extends Base<T, ...>` clause;
+        # read at call resolution to bind a member call on an undeclared
+        # receiver against the type arguments of an EXTERNAL base (#875).
+        self.dart_extends_type_args: dict[str, list[str]] = {}
+        # {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
+        # resolver can redirect an interface-typed call `I.m` to the concrete
+        # `Impl.m` when I has exactly one first-party implementer (unambiguous).
         self.interface_implementers: dict[str, set[str]] = {}
-        # (H) {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
-        # (H) member call `field_.method()` in a (possibly out-of-line, cross-file)
-        # (H) method resolves via the field's declared type. Populated at class
-        # (H) ingestion, read by the type-inference engine at call resolution.
+        # {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
+        # member call `field_.method()` in a (possibly out-of-line, cross-file)
+        # method resolves via the field's declared type. Populated at class
+        # ingestion, read by the type-inference engine at call resolution.
         self.class_field_types: dict[str, dict[str, str]] = {}
-        # (H) Java anonymous-class override methods: (anon_method_qn, method_name,
-        # (H) base_type_name, module_qn). An anon class `new Base(){ @Override m(){} }`
-        # (H) is not modelled as a subclass, so its overrides register under the
-        # (H) enclosing class with no OVERRIDES edge and look dead. Recorded at method
-        # (H) ingestion, resolved to OVERRIDES edges once every base type is registered.
+        # Java anonymous-class override methods: (anon_method_qn, method_name,
+        # base_type_name, module_qn). An anon class `new Base(){ @Override m(){} }`
+        # is not modelled as a subclass, so its overrides register under the
+        # enclosing class with no OVERRIDES edge and look dead. Recorded at method
+        # ingestion, resolved to OVERRIDES edges once every base type is registered.
         self.java_anon_overrides: list[tuple[str, str, str, str]] = []
-        # (H) {class_qn: {field_name: inner_type}} for Rust guard-container fields
-        # (H) (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
-        # (H) the WRAPPER; this inner is applied only when a receiver chain reaches a
-        # (H) lock/read/borrow guard accessor (guards do not deref-coerce).
+        # C# override tracking. `csharp_methods` is every C# method qn;
+        # `csharp_override_methods` the subset carrying the `override` modifier.
+        # C# base-CLASS overrides require `override` (a `new`/implicit-hide
+        # member is not an override), so the shared override walk emits a
+        # class-parent match only for C# methods in the override subset;
+        # interface implementations need no modifier and are unaffected.
+        self.csharp_methods: set[str] = set()
+        self.csharp_override_methods: set[str] = set()
+        # C# partial-class unification. A `partial` type split across files
+        # becomes N path-distinct Class nodes; parts sharing a
+        # namespace-qualified name are one logical type. Each part qn maps to
+        # the SHARED list of all its part qns (grows as parts are ingested),
+        # so member/base resolution on any part spans the whole group. The
+        # private index groups parts by their namespace-qualified key.
+        self.csharp_partial_groups: dict[str, list[str]] = {}
+        self._csharp_partial_index: dict[str, list[str]] = {}
+        # C# extension methods indexed for call binding: {method simple name:
+        # [(method_qn, receiver_type_simple_name)]}. `s.WordCount()` resolves
+        # to a `static WordCount(this string s)` whose receiver type matches
+        # the call's receiver, a lookup the instance-hierarchy walk can't make
+        # (the method lives on an unrelated static class). Populated at method
+        # ingestion, read by the type-inference engine as a fallback.
+        self.csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]] = {}
+        # C# local functions: {local_fn_qn: (host span key, parameter count)}.
+        # The host (method/ctor/enclosing local fn) is pinned by SPAN because
+        # at Function-pass time the host method's signatured identity may not
+        # be registered yet; the resolver joins the span to function_locations
+        # lazily. Bare-name resolution uses this to honor C# scoping: a local
+        # fn is callable only from inside its host, and shadows same-name
+        # method overloads there (Polly's PredicateBuilder.HandleInner).
+        self.csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] = {}
+        # qns of C# methods declared WITH type parameters (`M<T>(X)`), so
+        # bare-call resolution can prefer the overload whose genericness
+        # matches the callee shape (`M<TResult>(x)` vs `M(x)`) when
+        # parameter arity alone cannot tell same-name twins apart.
+        self.csharp_generic_methods: set[str] = set()
+        # {class qn: declared type-parameter count} for C# generic types,
+        # so `Builder` vs `Builder<TResult>` (same simple name) can be told
+        # apart when a type reference's written arity is known.
+        self.csharp_class_generic_arity: dict[str, int] = {}
+        # {method qn: (normalized return type, its written generic arity)}
+        # for chained-receiver typing; separate from the cross-language
+        # method_return_types because the arity is C#-specific.
+        self.csharp_method_return_types: dict[str, tuple[str, int]] = {}
+        # C# Roslyn hybrid frontend (issue #738): {(rel_file, type_start_line):
+        # {base_simple_name: "class"|"interface"}}. When the opt-in Roslyn
+        # frontend ran, split_csharp_bases reads a base's kind here (exact,
+        # from the semantic model) instead of guessing by the I-prefix
+        # convention; empty when the frontend is off or unavailable.
+        self.csharp_base_kinds: dict[tuple[str, int], dict[str, str]] = {}
+        # C# Roslyn hybrid frontend (issue #738): per-invocation exact call
+        # targets keyed on the callee NAME token location. The C# resolver
+        # consults this before any heuristic; MUTATED IN PLACE across runs
+        # because the type-inference engine holds a reference.
+        self.csharp_call_sites: dict[CallSiteKey, CSharpCallSite] = {}
+        # Sites Roslyn resolved to METADATA (external) methods: the resolver
+        # returns the external sentinel there instead of letting the
+        # name-trie fabricate a first-party edge. Same in-place mutation
+        # discipline as csharp_call_sites.
+        self.csharp_external_sites: set[CallSiteKey] = set()
+        # (rel_file, type_start_line) -> class qn for every ingested C# type,
+        # the reverse of the Roslyn fact keys, so partial declaration groups
+        # join back to the Pass-2 Class nodes.
+        self.csharp_type_locations: dict[tuple[str, int], str] = {}
+        # {class_qn: {field_name: inner_type}} for Rust guard-container fields
+        # (`state: Mutex<State>` -> {"state": "State"}). The field map above keeps
+        # the WRAPPER; this inner is applied only when a receiver chain reaches a
+        # lock/read/borrow guard accessor (guards do not deref-coerce).
         self.class_field_guard_inner: dict[str, dict[str, str]] = {}
-        # (H) {alias_name: underlying_bare_type} for C++ typedef/using aliases, so a
-        # (H) receiver declared with an alias resolves to the aliased class. Collected
-        # (H) across all files (an alias in a header is used in a .cc), read by the
-        # (H) resolver when mapping a receiver type name to a class.
+        # {alias_name: underlying_bare_type} for C++ typedef/using aliases, so a
+        # receiver declared with an alias resolves to the aliased class. Collected
+        # across all files (an alias in a header is used in a .cc), read by the
+        # resolver when mapping a receiver type name to a class.
         self.type_aliases: dict[str, str] = {}
-        # (H) {func_or_method_qn: bare_return_type_name} captured at definition
-        # (H) ingestion, so a chained call `x.foo().bar()` can resolve `bar` on the
-        # (H) type `foo()` returns. Read by the resolver's chained-call path.
+        # {func_or_method_qn: bare_return_type_name} captured at definition
+        # ingestion, so a chained call `x.foo().bar()` can resolve `bar` on the
+        # type `foo()` returns. Read by the resolver's chained-call path.
         self.method_return_types: dict[str, str] = {}
-        # (H) Alias names seen with conflicting underlying types across scopes/files;
-        # (H) dropped from type_aliases so their receivers fall back to name-only.
+        # {go_free_fn_qn: first_return_type} for typing `v, err := f()`
+        # bindings. Kept OFF method_return_types deliberately: that map
+        # feeds chained-call resolution, where a multi-return callee is
+        # uncallable and first-type recording would shift edge behavior.
+        self.go_function_return_types: dict[str, str] = {}
+        # Alias names seen with conflicting underlying types across scopes/files;
+        # dropped from type_aliases so their receivers fall back to name-only.
         self._type_alias_conflicts: set[str] = set()
         self._deferred_cpp_methods: list = []
         self._deferred_go_methods: list = []
         self._deferred_cpp_containment: list = []
         self._deferred_parent_links: list = []
         self._deferred_forward_decls: list = []
-        # (H) Unnamed JS/TS function expressions held back until the named
-        # (H) JS passes have claimed their spans (one node per source function).
+        # Unnamed JS/TS function expressions held back until the named
+        # JS passes have claimed their spans (one node per source function).
         self._deferred_js_anonymous: list = []
-        # (H) (module_qn, def start_line) -> (method_qn, class_qn) for every
-        # (H) out-of-class C++ method the definition pass bound; Pass-3 call
-        # (H) attribution reuses these decisions instead of re-resolving.
+        # Macro-invocation-shaped C++ nodes held until every class (incl.
+        # rehydrated ones) is known; resolve_deferred_cpp_artifacts decides
+        # orphaned-ctor vs macro.
+        self._deferred_cpp_artifacts: list = []
+        # Free-function prototypes held until every bodied definition is
+        # registered; resolve_deferred_cpp_prototypes drops duplicates (#893).
+        self._deferred_cpp_prototypes: list = []
+        # (module_qn, def start_line) -> (method_qn, class_qn) for every
+        # out-of-class C++ method the definition pass bound; Pass-3 call
+        # attribution reuses these decisions instead of re-resolving.
         self.cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] = {}
-        # (H) (module_qn, def start_line) -> location of EVERY C++ function or
-        # (H) method node Pass 2 registered, so Pass-3 caller attribution reuses
-        # (H) the registered label/qn instead of re-deriving them structurally
-        # (H) (the walks diverge on preprocessor-distorted class bodies).
+        # (module_qn, def start_line) -> location of EVERY C++ function or
+        # method node Pass 2 registered, so Pass-3 caller attribution reuses
+        # the registered label/qn instead of re-deriving them structurally
+        # (the walks diverge on preprocessor-distorted class bodies).
         self.function_locations: dict[FunctionSpanKey, FunctionLocation] = {}
-        # (H) {rel path: [full line spans]} of every C/C++ function/method the
-        # (H) tree-sitter pass ingested; the hybrid C++ frontend's macro-use
-        # (H) CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
+        # {rel path: [full line spans]} of every C/C++ function/method the
+        # tree-sitter pass ingested; the hybrid C++ frontend's macro-use
+        # CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
         self.cpp_definition_spans: dict[str, list[CppDefinitionSpan]] = {}
         self._deferred_cpp_inherits: list[DeferredCppInherit] = []
-        # (H) Non-C++ INHERITS/IMPLEMENTS held back until every class is
-        # (H) registered; resolve_deferred_inherits re-resolves the guesses.
+        # Non-C++ INHERITS/IMPLEMENTS held back until every class is
+        # registered; resolve_deferred_inherits re-resolves the guesses.
         self._deferred_inherits: list[DeferredInherit] = []
-        # (H) C++20 module interfaces declared this run (export module X), and
-        # (H) implementation units whose IMPLEMENTS edge waits for its
-        # (H) interface to be known.
+        # C++20 module interfaces declared this run (export module X), and
+        # implementation units whose IMPLEMENTS edge waits for its
+        # interface to be known.
         self.cpp_module_interfaces: set[str] = set()
         self._deferred_cpp_module_impls: list[tuple[str, str]] = []
-        # (H) Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
-        # (H) import verification counts them as real internal targets.
+        # Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
+        # import verification counts them as real internal targets.
         self.declared_module_qns: set[str] = set()
-        # (H) Registered qns that are macro definitions (Rust macro_rules!):
-        # (H) macros register as Function nodes but live in a separate namespace,
-        # (H) so Pass-3 gates macro-invocation call sites to these targets and
-        # (H) fn-namespace call sites away from them.
+        # Route-decorated handlers deferred from Pass 2: endpoint templates
+        # need router mount prefixes, which may live in modules parsed later
+        # (issue #877). (label, qn, route decorators, module_qn).
+        self.pending_endpoints: list[
+            tuple[cs.NodeLabel, str, list[str], str | None]
+        ] = []
+        # Registered qns that are macro definitions (Rust macro_rules!):
+        # macros register as Function nodes but live in a separate namespace,
+        # so Pass-3 gates macro-invocation call sites to these targets and
+        # fn-namespace call sites away from them.
         self.macro_qns: set[str] = set()
-        # (H) {qn: file path} for definitions rehydrated from the graph on an
-        # (H) incremental run, whose modules are absent from module_qn_to_file_path
-        # (H) (only re-parsed files populate it). _is_cpp_defined falls back to
-        # (H) this so cross-file resolution into UNCHANGED headers still works.
+        # {qn: file path} for definitions rehydrated from the graph on an
+        # incremental run, whose modules are absent from module_qn_to_file_path
+        # (only re-parsed files populate it). _is_cpp_defined falls back to
+        # this so cross-file resolution into UNCHANGED headers still works.
         self.rehydrated_definition_paths: dict[str, str] = {}
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 
     def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
-        # (H) Two files that share a basename but differ by extension (foo.py /
-        # (H) foo.cpp) strip to the same module qn. Append the extension to the
-        # (H) later one so their module nodes and all derived class/method qns stay
-        # (H) distinct instead of colliding under the qualified_name constraint.
+        # Two files that share a basename but differ by extension (foo.py /
+        # foo.cpp) strip to the same module qn. Append the extension to the
+        # later one so their module nodes and all derived class/method qns stay
+        # distinct instead of colliding under the qualified_name constraint.
         existing = self.module_qn_to_file_path.get(module_qn)
         if existing is None or existing == file_path:
             return module_qn
@@ -157,7 +253,7 @@ class DefinitionProcessor(
         self,
         file_path: Path,
         language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         structural_elements: dict[Path, str | None],
         source_bytes: bytes | None = None,
         pre_parsed: tuple[ASTNode, dict[str, list] | None] | None = None,
@@ -203,6 +299,10 @@ class DefinitionProcessor(
                 )
             module_qn = self._disambiguate_module_qn(module_qn, file_path)
             self.module_qn_to_file_path[module_qn] = file_path
+            if language == cs.SupportedLanguage.GO and (
+                package_name := go_utils.extract_package_name(root_node)
+            ):
+                self.go_package_names[module_qn] = package_name
 
             self.ingestor.ensure_node_batch(
                 cs.NodeLabel.MODULE,
@@ -220,7 +320,11 @@ class DefinitionProcessor(
                 (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
                 if parent_container_qn
                 else (
-                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
+                    (
+                        cs.NodeLabel.FOLDER,
+                        cs.KEY_ABSOLUTE_PATH,
+                        cached_resolve_posix(self.repo_path / parent_rel_path),
+                    )
                     if parent_rel_path != Path(".")
                     else (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
                 )
@@ -289,10 +393,16 @@ class DefinitionProcessor(
                 self._ingest_prototype_inheritance(
                     root_node, module_qn, language, queries
                 )
-                # (H) Named passes above have claimed their function nodes;
-                # (H) only genuinely anonymous spans (callbacks, IIFEs) still
-                # (H) need their held-back registration.
+                # Named passes above have claimed their function nodes;
+                # only genuinely anonymous spans (callbacks, IIFEs) still
+                # need their held-back registration.
                 self._flush_deferred_js_anonymous()
+                # Direct module.exports functions finalise by SPAN now that
+                # every node's minted qn is recorded.
+                self._finalise_direct_module_exports(
+                    module_qn, self._pending_direct_module_exports
+                )
+                self._pending_direct_module_exports = []
 
             return (root_node, language)
 

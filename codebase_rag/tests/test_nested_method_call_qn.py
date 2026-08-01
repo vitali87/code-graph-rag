@@ -19,9 +19,9 @@ def _make_repo(root: Path) -> None:
 
 
 def test_method_nested_function_call_uses_full_caller_qn(tmp_path: Path) -> None:
-    # (H) A call inside a function nested in a method must be attributed to that
-    # (H) nested function's real node qn (Class.method.nested), not to a
-    # (H) method-dropping qn (Class.nested) that matches no node.
+    # A call inside a function nested in a method must be attributed to that
+    # nested function's real node qn (Class.method.nested), not to a
+    # method-dropping qn (Class.nested) that matches no node.
     _make_repo(tmp_path)
     ingestor = _capture(tmp_path / "proj", "proj")
     calls = {
@@ -31,9 +31,9 @@ def test_method_nested_function_call_uses_full_caller_qn(tmp_path: Path) -> None
     }
     node_qns = {str(uid) for (_label, uid) in ingestor.nodes}
 
-    # (H) the nested function node exists with its full qn
+    # the nested function node exists with its full qn
     assert "proj.m.C.method.nested" in node_qns
-    # (H) and its outbound call is attributed to that full qn
+    # and its outbound call is attributed to that full qn
     assert ("proj.m.C.method.nested", "proj.m.target") in calls
-    # (H) never to the malformed method-dropping qn
+    # never to the malformed method-dropping qn
     assert ("proj.m.C.nested", "proj.m.target") not in calls

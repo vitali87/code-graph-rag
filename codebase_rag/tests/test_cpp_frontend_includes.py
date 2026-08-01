@@ -13,11 +13,11 @@ pytestmark = pytest.mark.skipif(
     reason="libclang not available",
 )
 
-# (H) `#include "calc.h"` is the C++ import: the frontend must emit an IMPORTS
-# (H) edge Module -> Module for every within-repo inclusion (transitively --
-# (H) calc.h including util.h counts, from calc.h). System headers (<vector>)
-# (H) resolve outside the repo and emit nothing, and a file never imports itself
-# (H) (the tree-sitter path's self-import bug must not be replicated).
+# `#include "calc.h"` is the C++ import: the frontend must emit an IMPORTS
+# edge Module -> Module for every within-repo inclusion (transitively --
+# calc.h including util.h counts, from calc.h). System headers (<vector>)
+# resolve outside the repo and emit nothing, and a file never imports itself
+# (the tree-sitter path's self-import bug must not be replicated).
 _UTIL_H = """
 #pragma once
 namespace m { int util(int x); }
@@ -81,9 +81,9 @@ def test_within_repo_includes_emit_imports(temp_repo: Path) -> None:
     run_cpp_frontend(ingestor, root, root.name, root)
 
     imports = _imports(ingestor)
-    # (H) The resolver's module qns: calc.cpp -> incproj.calc (extension
-    # (H) stripped), calc.h -> incproj.calc.h (extension kept on stem
-    # (H) collision), util.h -> incproj.util.
+    # The resolver's module qns: calc.cpp -> incproj.calc (extension
+    # stripped), calc.h -> incproj.calc.h (extension kept on stem
+    # collision), util.h -> incproj.util.
     assert ("Module", "incproj.calc", "Module", "incproj.calc.h") in imports, sorted(
         imports
     )
@@ -91,6 +91,6 @@ def test_within_repo_includes_emit_imports(temp_repo: Path) -> None:
         from_qn == "incproj.calc.h" and to_qn == "incproj.util"
         for _, from_qn, _, to_qn in imports
     ), f"expected calc.h IMPORTS util.h, got {sorted(imports)}"
-    # (H) no self-imports, no system-header edges
+    # no self-imports, no system-header edges
     assert not any(f == t for _, f, _, t in imports), sorted(imports)
     assert not any("vector" in t for _, _, _, t in imports), sorted(imports)

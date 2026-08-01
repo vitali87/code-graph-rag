@@ -1,7 +1,7 @@
-# (H) L2 finding from the evals/ harness: `from . import <submodule>` at the
-# (H) package root (e.g. cli.py doing `from . import constants as cs`) produced
-# (H) no IMPORTS edge, because relative-import resolution dropped the project
-# (H) name and computed an empty base module. In a subpackage it worked.
+# L2 finding from the evals/ harness: `from . import <submodule>` at the
+# package root (e.g. cli.py doing `from . import constants as cs`) produced
+# no IMPORTS edge, because relative-import resolution dropped the project
+# name and computed an empty base module. In a subpackage it worked.
 from __future__ import annotations
 
 from pathlib import Path

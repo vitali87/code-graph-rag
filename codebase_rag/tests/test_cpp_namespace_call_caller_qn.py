@@ -10,14 +10,14 @@ from codebase_rag.tests.conftest import (
     run_updater,
 )
 
-# (H) A free function and an inline class method, both inside a namespace, each
-# (H) calling a namespaced free function. The definition pass binds their nodes
-# (H) WITH the enclosing namespace (qn `...ns.free_caller`, `...ns.K.method`), but
-# (H) the call pass built the caller qn WITHOUT the namespace (`...free_caller`,
-# (H) `...K.method`), so every such CALLS edge's source dangled (matched no node)
-# (H) and the call was lost. On real namespaced C++ (e.g. all of leveldb, in
-# (H) `namespace leveldb`) this silently dropped the bulk of cross-file calls. The
-# (H) caller qn must include the enclosing namespace, matching the node.
+# A free function and an inline class method, both inside a namespace, each
+# calling a namespaced free function. The definition pass binds their nodes
+# WITH the enclosing namespace (qn `...ns.free_caller`, `...ns.K.method`), but
+# the call pass built the caller qn WITHOUT the namespace (`...free_caller`,
+# `...K.method`), so every such CALLS edge's source dangled (matched no node)
+# and the call was lost. On real namespaced C++ (e.g. all of leveldb, in
+# `namespace leveldb`) this silently dropped the bulk of cross-file calls. The
+# caller qn must include the enclosing namespace, matching the node.
 CPP_SOURCE = """
 namespace acme {
 
@@ -64,8 +64,8 @@ def test_namespaced_callers_attribute_calls_to_namespaced_qn(
     assert method_qn is not None, "no ns.K.method Method node"
 
     calls = get_relationships(mock_ingestor, "CALLS")
-    # (H) ensure_relationship_batch(from_spec, rel_type, to_spec): from_spec[2] is
-    # (H) the caller qn, to_spec[2] the callee qn.
+    # ensure_relationship_batch(from_spec, rel_type, to_spec): from_spec[2] is
+    # the caller qn, to_spec[2] the callee qn.
     callers_of_callee = {
         c.args[0][2] for c in calls if str(c.args[2][2]).endswith(".callee")
     }

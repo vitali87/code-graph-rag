@@ -107,6 +107,7 @@ message GraphCodeIndex {
       Type type_node = 14;
       Union union_node = 15;
       ExternalModule external_module = 16;
+      Resource resource = 17;
     }
   }
 
@@ -130,6 +131,8 @@ message GraphCodeIndex {
       IMPLEMENTS = 13;
       EXPORTS = 14;
       EXPORTS_MODULE = 15;
+      READS_FROM = 16;
+      WRITES_TO = 17;
     }
 
     RelationshipType type = 1;
@@ -211,6 +214,16 @@ message GraphCodeIndex {
   message ExternalPackage {
     // Primary Key
     string name = 1;
+  }
+
+  // An external I/O resource a callable reads from or writes to
+  // (file, network endpoint, database, stream, env var, ...).
+  message Resource {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string kind = 3;
   }
 
   message Function {

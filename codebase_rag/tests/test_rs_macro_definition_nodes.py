@@ -1,9 +1,9 @@
-# (H) `macro_rules!` definitions were invisible: invocation SITES were captured
-# (H) (macro_invocation is in SPEC_RS_CALL_TYPES) but there was no definition
-# (H) node to bind to, so `square!(3)` could never resolve to first-party code.
-# (H) Macros register as Function nodes (the cross-language decision: C/C++/Rust
-# (H) macros all map onto Function); invocations then resolve like any call and
-# (H) dead-code treats macros like any function.
+# `macro_rules!` definitions were invisible: invocation SITES were captured
+# (macro_invocation is in SPEC_RS_CALL_TYPES) but there was no definition
+# node to bind to, so `square!(3)` could never resolve to first-party code.
+# Macros register as Function nodes (the cross-language decision: C/C++/Rust
+# macros all map onto Function); invocations then resolve like any call and
+# dead-code treats macros like any function.
 from __future__ import annotations
 
 from pathlib import Path
@@ -49,10 +49,10 @@ def test_macro_rules_registers_function_and_invocation_resolves(
 def test_macro_and_fn_namespaces_do_not_cross_bind(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Rust macros and functions live in SEPARATE namespaces: `write!(f, ..)`
-    # (H) (std prelude, no use statement) must not bind a same-module `fn write`
-    # (H) (a false edge that revives dead code), and `write(buf)` must not bind
-    # (H) a same-module `macro_rules! write`-alike either.
+    # Rust macros and functions live in SEPARATE namespaces: `write!(f, ..)`
+    # (std prelude, no use statement) must not bind a same-module `fn write`
+    # (a false edge that revives dead code), and `write(buf)` must not bind
+    # a same-module `macro_rules! write`-alike either.
     root = temp_repo / "rsns"
     src = root / "src"
     src.mkdir(parents=True)
@@ -97,13 +97,13 @@ def test_macro_and_fn_namespaces_do_not_cross_bind(
 
 
 def test_incremental_reparse_keeps_cross_file_macro_call(temp_repo: Path) -> None:
-    # (H) Incremental runs rehydrate function_registry from the graph, but the
-    # (H) macro-namespace gate consults macro_qns, which only definition
-    # (H) ingest populated. A re-parsed file invoking a macro from an UNCHANGED
-    # (H) file would resolve the macro qn, see it missing from macro_qns, and
-    # (H) drop the CALLS edge -- the macro then reports dead only on
-    # (H) incremental runs. Macro nodes persist is_macro and rehydration
-    # (H) restores it (the is_property pattern).
+    # Incremental runs rehydrate function_registry from the graph, but the
+    # macro-namespace gate consults macro_qns, which only definition
+    # ingest populated. A re-parsed file invoking a macro from an UNCHANGED
+    # file would resolve the macro qn, see it missing from macro_qns, and
+    # drop the CALLS edge -- the macro then reports dead only on
+    # incremental runs. Macro nodes persist is_macro and rehydration
+    # restores it (the is_property pattern).
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
     from evals.cgr_graph import _StatefulIngestor
@@ -148,7 +148,7 @@ def test_incremental_reparse_keeps_cross_file_macro_call(temp_repo: Path) -> Non
     ]
     assert expected, sorted(_calls(store))
 
-    # (H) touch only the CALLING file; util.rs stays rehydration-only
+    # touch only the CALLING file; util.rs stays rehydration-only
     (src / "lib.rs").write_text(lib_src + "// touched\n", encoding="utf-8")
     _index(store, force=False)
     assert any(
@@ -159,9 +159,9 @@ def test_incremental_reparse_keeps_cross_file_macro_call(temp_repo: Path) -> Non
 def test_macro_export_attribute_marks_exported(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) macro_rules! takes no `pub`; #[macro_export] is what publishes it (to
-    # (H) the crate root) as library API -- without is_exported an exported but
-    # (H) internally-uninvoked macro would report dead.
+    # macro_rules! takes no `pub`; #[macro_export] is what publishes it (to
+    # the crate root) as library API -- without is_exported an exported but
+    # internally-uninvoked macro would report dead.
     root = temp_repo / "rsexport"
     src = root / "src"
     src.mkdir(parents=True)

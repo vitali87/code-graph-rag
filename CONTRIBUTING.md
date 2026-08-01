@@ -5,8 +5,8 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
 ## Getting Started
 
 1. **Browse Issues**: Check out our [issue tracker](https://github.com/vitali87/code-graph-rag/issues) to find tasks that need work
-   - Look for issues labeled `good first issue` for beginner-friendly tasks
-   - Issues labeled `help wanted` are open for community contributions
+   - Look for issues labelled `good first issue` for beginner-friendly tasks
+   - Issues labelled `help wanted` are open for community contributions
 2. **Pick an Issue**: Choose an issue that interests you and matches your skill level
 3. **Comment on the Issue**: Let us know you're working on it to avoid duplicate effort
 4. **Fork the Repository**: Create your own fork to work on
@@ -14,7 +14,7 @@ Thank you for your interest in contributing to Code Graph RAG! We welcome contri
 
 ### Issue Labels
 
-Our repository uses standardized labels to categorize issues and PRs:
+Our repository uses standardised labels to categorise issues and PRs:
 
 | Label              | Purpose                                                           |
 | ------------------ | ----------------------------------------------------------------- |
@@ -106,7 +106,7 @@ All checks run in parallel and must pass before a PR can be merged. A summary jo
 
 ```bash
 make lint          # Lint check
-make format        # Format check
+make format        # Apply formatting (ruff format writes files; CI uses ruff format --check)
 make typecheck     # Type check
 make test-parallel # Unit tests in parallel
 make test-integration  # Integration tests (requires Docker)
@@ -151,7 +151,7 @@ This process ensures that human reviewers focus on high-level design and logic r
 
 ### Code Standards
 
-- **Heavy Pydantic Usage**: Use Pydantic models extensively for data validation, serialization, and configuration
+- **Heavy Pydantic Usage**: Use Pydantic models extensively for data validation, serialisation, and configuration
 - **Package Management**: Use `uv` for all dependency management and virtual environments
 - **Code Quality**: Use `ruff` for linting and formatting - run `ruff check` and `ruff format` before submitting
 - **Type Safety**: Use type hints everywhere and run `uv run ty check` for type checking
@@ -220,8 +220,8 @@ uv run ruff format .
 | **StrEnum**            | Constrained string constants used in comparisons, defaults, assignments |
 | **NamedTuple**         | Immutable records with named fields (lightweight, hashable)             |
 | **TypedDict**          | Dict shapes for function return types or JSON-like data                 |
-| **dataclass**          | Mutable class instances with behavior/methods                           |
-| **Pydantic BaseModel** | Configs needing validation, serialization, or schema generation         |
+| **dataclass**          | Mutable class instances with behaviour/methods                           |
+| **Pydantic BaseModel** | Configs needing validation, serialisation, or schema generation         |
 
 ```python
 from dataclasses import dataclass
@@ -330,14 +330,14 @@ class MyProtocol(Protocol):
 
 Only use `Callable` attributes when reusing complex callable types is necessary.
 
-### Code Organization
+### Code Organisation
 
 #### File Structure
 
 Standard files in each module:
 
 - `types_defs.py` - Type aliases, TypedDicts, NamedTuples (immutable structural types)
-- `models.py` - Dataclasses only (runtime data structures with behavior)
+- `models.py` - Dataclasses only (runtime data structures with behaviour)
 - `constants.py` - StrEnums, string literals, and application constants
 - `config.py` - Pydantic settings, environment config, and runtime configuration instances
 - `schemas.py` - All Pydantic BaseModel classes (data transfer objects, results, responses)
@@ -345,7 +345,7 @@ Standard files in each module:
 - `tool_errors.py` - Error messages returned by tools to the LLM/user
 - `exceptions.py` - Exception classes and their error message templates (for raise statements)
 
-#### Modularization
+#### Modularisation
 
 - Soft rule: keep files under 700 lines (after linting); split larger files into submodules
 - Group related functionality into submodules (e.g., `stem_ops/`, `tools/`, `srg_parser/`)
@@ -416,9 +416,9 @@ def process(mode: Mode = Mode.FAST): ...
 if status == Status.PENDING: ...
 ```
 
-#### Centralized Error Messages
+#### Centralised Error Messages
 
-Use an Enum with `__call__` for parameterized error messages:
+Use an Enum with `__call__` for parameterised error messages:
 
 ```python
 from enum import Enum
@@ -627,7 +627,7 @@ If a helper function is trivial and used once, inline it.
 
 #### Move Assignments Close to Usage
 
-Declare variables as close to their usage as possible to minimize cognitive load and prevent stranded variables:
+Declare variables as close to their usage as possible to minimise cognitive load and prevent stranded variables:
 
 ```python
 # Bad - assignment far from usage
@@ -687,10 +687,6 @@ def save_order(order):
 def save_item(item):
     _save(SQL_ITEM, item.dict())
 ```
-
-#### No Comments or Docstrings
-
-Code should be self-documenting. Exception: comments prefixed with `(H)` are allowed.
 
 #### No Type Ignores, Casts, Any, or object
 
@@ -809,21 +805,7 @@ The scope (in parentheses) is optional and can contain alphanumeric characters, 
 
 ### Comment Policy
 
-**No inline comments are allowed** unless they meet one of these criteria:
-
-1. **Top-of-file comments**: Comments that appear before any code (including imports) are allowed
-2. **`(H)` marker**: Comments containing `(H)` are allowed - this stands for "Human" and indicates an intentional, human-written comment
-3. **Type annotations**: Comments containing `type:`, `noqa`, `pyright`, or `ty:` are allowed
-
-**Why this rule exists**: AI tools (like code assistants and LLMs) tend to generate redundant, obvious comments that clutter the codebase. Comments like `# Loop through items` or `# Return the result` add no value. This policy prevents AI-generated comment slop from polluting the code.
-
-If you need to add a comment, prefix it with `(H)`:
-
-```python
-# (H) This algorithm uses memoization because the recursive solution times out on large inputs
-```
-
-The pre-commit hook `no-inline-comments` enforces this rule automatically.
+Write comments that explain **why** and **how**, not **what**. A comment that only restates the adjacent code adds no value; one that captures a non-obvious reason, a tricky invariant, or a concrete edge case earns its place.
 
 ## Questions?
 

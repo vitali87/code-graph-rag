@@ -1,8 +1,8 @@
-# (H) Regression: a DEFINES_METHOD relationship is matched in the graph by the
-# (H) parent's LABEL and qualified_name, so a method on a non-Class container
-# (H) (a Rust trait -> Interface node) must be emitted with the parent's real
-# (H) label. It was hardcoded to Class, so MATCH (a:Class {qn: trait}) found
-# (H) nothing and the trait -> method containment edge was silently dropped.
+# Regression: a DEFINES_METHOD relationship is matched in the graph by the
+# parent's LABEL and qualified_name, so a method on a non-Class container
+# (a Rust trait -> Interface node) must be emitted with the parent's real
+# label. It was hardcoded to Class, so MATCH (a:Class {qn: trait}) found
+# nothing and the trait -> method containment edge was silently dropped.
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,12 +32,12 @@ def test_rust_trait_method_defined_by_interface_node(
     defines_method = get_relationships(
         mock_ingestor, RelationshipType.DEFINES_METHOD.value
     )
-    # (H) (parent_label, parent_qn) pairs for the trait's method.
+    # (parent_label, parent_qn) pairs for the trait's method.
     parents = {
         (call[0][0][0], call[0][0][2])
         for call in defines_method
         if str(call[0][2][2]).endswith(".Shape.area")
     }
     assert (NodeLabel.INTERFACE.value, "rs_trait.src.lib.Shape") in parents, parents
-    # (H) The wrong Class-labelled parent must not be emitted.
+    # The wrong Class-labelled parent must not be emitted.
     assert (NodeLabel.CLASS.value, "rs_trait.src.lib.Shape") not in parents, parents

@@ -1,5 +1,4 @@
 from statistics import fmean
-from typing import TypeVar
 
 from codebase_rag import constants as cs
 
@@ -14,8 +13,6 @@ from .types_defs import (
     ScoreResult,
     ScoreRow,
 )
-
-T = TypeVar("T")
 
 
 def score(cgr: GraphData, oracle: GraphData) -> ScoreResult:
@@ -74,8 +71,8 @@ def score(cgr: GraphData, oracle: GraphData) -> ScoreResult:
                 cgr_set_n, oracle_set_n
             )
 
-    # (H) The Python ast oracle records real end_lineno, so spans are graded like
-    # (H) the native-oracle languages (Class/Function/Method; Module is excluded).
+    # The Python ast oracle records real end_lineno, so spans are graded like
+    # the native-oracle languages (Class/Function/Method; Module is excluded).
     span_result = score_span(cgr, oracle, ec.SPANNED_NODE_KINDS_TUPLE)
     rows.extend(span_result.rows)
     diff.update(span_result.diff)
@@ -163,10 +160,10 @@ _SpanKey = tuple[str, str, int, int]
 def score_span(
     cgr: GraphData, oracle: GraphData, kinds: tuple[cs.NodeLabel, ...]
 ) -> ScoreResult:
-    # (H) Grade node SPANS (end_line) only on nodes both sides identify by
-    # (H) (kind, file, start), so an end_line disagreement is not masked by, nor
-    # (H) conflated with, a node-identity miss. Restricted to the shared key set,
-    # (H) fp and fn each count one end_line mismatch (precision == recall).
+    # Grade node SPANS (end_line) only on nodes both sides identify by
+    # (kind, file, start), so an end_line disagreement is not masked by nor
+    # conflated with a node-identity miss. On the shared key set, fp and fn each
+    # count one end_line mismatch (precision == recall).
     rows: list[ScoreRow] = []
     diff: dict[str, DiffBucket] = {}
     cgr_all: set[_SpanKey] = set()
@@ -210,11 +207,11 @@ def score_structure(
 ) -> ScoreResult:
     node_result = score_node_kinds(cgr, oracle, node_kinds)
     edge_result = score_edge_types(cgr, oracle, edge_types)
-    # (H) Inheritance name-edges only produce rows when a side has them, so this
-    # (H) is a no-op for languages without inheritance (Go, Lua).
+    # Inheritance name-edges only produce rows when a side has them, so this
+    # is a no-op for languages without inheritance (Go, Lua).
     name_result = score_name_edge_types(cgr, oracle, ec.INHERITANCE_NAME_EDGE_TYPES)
-    # (H) Spans are opt-in per language: only oracles that emit end_line can grade
-    # (H) them, else every multi-line node reads as a mismatch against the start.
+    # Spans are opt-in per language: only oracles that emit end_line can grade
+    # them, else every multi-line node reads as a mismatch against the start.
     span_result = (
         score_span(cgr, oracle, node_kinds)
         if grade_spans
@@ -247,7 +244,7 @@ def _name_edge_bucket(cgr_set: set[NameEdge], oracle_set: set[NameEdge]) -> Diff
     return DiffBucket(missing=missing, extra=extra)
 
 
-def _prf(category: str, label: str, cgr: set[T], oracle: set[T]) -> ScoreRow | None:
+def _prf[T](category: str, label: str, cgr: set[T], oracle: set[T]) -> ScoreRow | None:
     tp = len(cgr & oracle)
     fp = len(cgr - oracle)
     fn = len(oracle - cgr)

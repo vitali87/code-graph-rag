@@ -1,8 +1,8 @@
-# (H) Java override detection matched the full method signature including generic
-# (H) type-variable NAMES, so a subclass that renames a type parameter
-# (H) (`Adapter<T,A>` base declares `readField(A,...)`, `FieldReflectionAdapter<T> extends
-# (H) Adapter<T,T>` declares `readField(T,...)`) produced no OVERRIDES edge and its
-# (H) override looked dead. Overriding is by name + arity regardless of type-var names.
+# Java override detection matched the full method signature including generic
+# type-variable NAMES, so a subclass that renames a type parameter
+# (`Adapter<T,A>` base declares `readField(A,...)`, `FieldReflectionAdapter<T> extends
+# Adapter<T,T>` declares `readField(T,...)`) produced no OVERRIDES edge and its
+# override looked dead. Overriding is by name + arity regardless of type-var names.
 from __future__ import annotations
 
 from pathlib import Path
@@ -35,8 +35,8 @@ def test_generic_type_var_rename_still_overrides(
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="java")
     overrides = _edges(mock_ingestor, "OVERRIDES")
-    # (H) Impl.readField(T,int) overrides Base.readField(A,int) despite the type-var
-    # (H) rename (A -> T); matched by name + arity.
+    # Impl.readField(T,int) overrides Base.readField(A,int) despite the type-var
+    # rename (A -> T); matched by name + arity.
     assert any(
         f.endswith(".Impl.readField(T,int)") and t.endswith(".Base.readField(A,int)")
         for f, t in overrides

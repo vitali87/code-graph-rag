@@ -1,4 +1,4 @@
-# (H) Graph schema: node labels, relationships, keys, and Cypher queries.
+# Graph schema: node labels, relationships, keys, and Cypher queries.
 
 from enum import StrEnum
 
@@ -8,6 +8,7 @@ KEY_NODE_ID = "node_id"
 KEY_LABELS = "labels"
 KEY_LABEL = "label"
 KEY_PROPERTIES = "properties"
+KEY_PURGED = "purged"
 KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
@@ -19,6 +20,7 @@ KEY_RELATIONSHIP_TYPES = "relationship_types"
 KEY_EXPORTED_AT = "exported_at"
 KEY_PARSER = "parser"
 KEY_NAME = "name"
+KEY_ROOT_PATH = "root_path"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
 KEY_IS_MACRO = "is_macro"
@@ -44,16 +46,17 @@ KEY_PROJECT_PREFIX = "project_prefix"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+# ast-grep finding node properties (issue #413)
+KEY_MESSAGE = "message"
+KEY_SNIPPET = "snippet"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"
 
-# (H) Protobuf file names
 PROTOBUF_INDEX_FILE = "index.bin"
 PROTOBUF_NODES_FILE = "nodes.bin"
 PROTOBUF_RELS_FILE = "relationships.bin"
 
-# (H) Protobuf oneof field names
 ONEOF_PROJECT = "project"
 ONEOF_PACKAGE = "package"
 ONEOF_FOLDER = "folder"
@@ -70,11 +73,13 @@ ONEOF_INTERFACE = "interface_node"
 ONEOF_ENUM = "enum_node"
 ONEOF_TYPE = "type_node"
 ONEOF_UNION = "union_node"
+ONEOF_RESOURCE = "resource"
 
 
 class UniqueKeyType(StrEnum):
     NAME = KEY_NAME
     PATH = KEY_PATH
+    ABSOLUTE_PATH = KEY_ABSOLUTE_PATH
     QUALIFIED_NAME = KEY_QUALIFIED_NAME
 
 
@@ -95,13 +100,23 @@ class NodeLabel(StrEnum):
     MODULE_IMPLEMENTATION = "ModuleImplementation"
     EXTERNAL_PACKAGE = "ExternalPackage"
     EXTERNAL_MODULE = "ExternalModule"
+    RESOURCE = "Resource"
+    # ast-grep findings (issue #413): quality/security signals attached to a
+    # Module. Opt-in via CaptureGroup.FINDINGS.
+    PATTERN = "Pattern"
+    CODE_SMELL = "CodeSmell"
+    SECURITY_ISSUE = "SecurityIssue"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.PROJECT: UniqueKeyType.NAME,
     NodeLabel.PACKAGE: UniqueKeyType.QUALIFIED_NAME,
-    NodeLabel.FOLDER: UniqueKeyType.PATH,
-    NodeLabel.FILE: UniqueKeyType.PATH,
+    # Folder and File identity must be per checkout: keyed on the bare
+    # relative path, two same-layout projects in the shared graph merge
+    # onto one node and delete-project crosses into the sibling's subtree
+    # (issue #897).
+    NodeLabel.FOLDER: UniqueKeyType.ABSOLUTE_PATH,
+    NodeLabel.FILE: UniqueKeyType.ABSOLUTE_PATH,
     NodeLabel.MODULE: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.CLASS: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.FUNCTION: UniqueKeyType.QUALIFIED_NAME,
@@ -114,6 +129,10 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.MODULE_IMPLEMENTATION: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
     NodeLabel.EXTERNAL_MODULE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.RESOURCE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.PATTERN: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.CODE_SMELL: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.SECURITY_ISSUE: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -142,6 +161,113 @@ class RelationshipType(StrEnum):
     REFERENCES = "REFERENCES"
     INSTANTIATES = "INSTANTIATES"
     DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
+    READS_FROM = "READS_FROM"
+    WRITES_TO = "WRITES_TO"
+    FLOWS_TO = "FLOWS_TO"
+    EXPOSES = "EXPOSES"
+    RESOLVES_TO = "RESOLVES_TO"
+    IMPLEMENTS_PATTERN = "IMPLEMENTS_PATTERN"
+    HAS_SMELL = "HAS_SMELL"
+    HAS_VULNERABILITY = "HAS_VULNERABILITY"
+
+
+class CaptureGroup(StrEnum):
+    STRUCTURE = "structure"
+    CALLS = "calls"
+    TYPES = "types"
+    IMPORTS = "imports"
+    IO = "io"
+    FINDINGS = "findings"
+
+
+# Each relationship type belongs to exactly one capture group. The guard below
+# enforces total coverage, so a new RelationshipType cannot silently escape the
+# capture model.
+CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
+    CaptureGroup.STRUCTURE: frozenset(
+        {
+            RelationshipType.CONTAINS_PACKAGE,
+            RelationshipType.CONTAINS_FOLDER,
+            RelationshipType.CONTAINS_FILE,
+            RelationshipType.CONTAINS_MODULE,
+            RelationshipType.DEFINES,
+            RelationshipType.DEFINES_METHOD,
+        }
+    ),
+    CaptureGroup.CALLS: frozenset(
+        {
+            RelationshipType.CALLS,
+            RelationshipType.REFERENCES,
+            RelationshipType.INSTANTIATES,
+        }
+    ),
+    CaptureGroup.TYPES: frozenset(
+        {
+            RelationshipType.INHERITS,
+            RelationshipType.IMPLEMENTS,
+            RelationshipType.IMPLEMENTS_MODULE,
+            RelationshipType.OVERRIDES,
+        }
+    ),
+    CaptureGroup.IMPORTS: frozenset(
+        {
+            RelationshipType.IMPORTS,
+            RelationshipType.EXPORTS,
+            RelationshipType.EXPORTS_MODULE,
+            RelationshipType.DEPENDS_ON_EXTERNAL,
+        }
+    ),
+    CaptureGroup.IO: frozenset(
+        {
+            RelationshipType.READS_FROM,
+            RelationshipType.WRITES_TO,
+            RelationshipType.FLOWS_TO,
+            RelationshipType.EXPOSES,
+            RelationshipType.RESOLVES_TO,
+        }
+    ),
+    CaptureGroup.FINDINGS: frozenset(
+        {
+            RelationshipType.IMPLEMENTS_PATTERN,
+            RelationshipType.HAS_SMELL,
+            RelationshipType.HAS_VULNERABILITY,
+        }
+    ),
+}
+
+# Node labels a group exclusively owns; the label is captured only while the
+# owning group has an enabled relationship. Labels owned by no group are always
+# captured.
+CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
+    CaptureGroup.IO: frozenset({NodeLabel.RESOURCE}),
+    CaptureGroup.FINDINGS: frozenset(
+        {NodeLabel.PATTERN, NodeLabel.CODE_SMELL, NodeLabel.SECURITY_ISSUE}
+    ),
+}
+
+# Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
+DEFAULT_CAPTURE_GROUPS: frozenset[CaptureGroup] = frozenset(
+    {
+        CaptureGroup.STRUCTURE,
+        CaptureGroup.CALLS,
+        CaptureGroup.TYPES,
+        CaptureGroup.IMPORTS,
+    }
+)
+
+CAPTURE_TOKEN_ALL = "all"
+CAPTURE_TOKEN_NONE = "none"
+CAPTURE_DROP_PREFIX = "-"
+CAPTURE_ADD_PREFIX = "+"
+CAPTURE_TOKEN_SEPARATORS = ",; "
+
+_capture_covered = frozenset().union(*CAPTURE_GROUP_RELS.values())
+_capture_missing = set(RelationshipType) - _capture_covered
+if _capture_missing:
+    raise RuntimeError(
+        f"RelationshipType(s) missing from CAPTURE_GROUP_RELS: {_capture_missing}. "
+        "Every RelationshipType MUST belong to exactly one capture group."
+    )
 
 
 class AuditCheck(StrEnum):
@@ -153,7 +279,7 @@ class AuditCheck(StrEnum):
     DANGLING_RELATIONSHIP = "dangling_relationship"
 
 
-# (H) Graph audit violation details (issue #646)
+# Graph audit violation details (issue #646)
 AUDIT_DETAIL_ORPHAN = "{label} '{key}' has no relationships"
 AUDIT_DETAIL_UNDOCUMENTED_LABEL = "label '{label}' is not documented in NODE_SCHEMAS"
 AUDIT_DETAIL_UNDOCUMENTED_PROPERTY = (
@@ -169,7 +295,7 @@ AUDIT_DETAIL_DANGLING = (
     " references a nonexistent node and would be dropped by the database"
 )
 
-# (H) Live-graph audit details (doctor)
+# Live-graph audit details (doctor)
 AUDIT_DETAIL_ORPHAN_COUNT = "{count} {label} node(s) have no relationships"
 AUDIT_DETAIL_UNDOCUMENTED_PROPERTY_LIVE = (
     "{label} nodes carry undocumented property '{prop}'"
@@ -178,24 +304,22 @@ AUDIT_DETAIL_MISSING_REQUIRED_LIVE = (
     "{count} {label} node(s) are missing required properties"
 )
 
-# (H) Node schema property-string tokens ("{name: string, extension: string?}")
+# Node schema property-string tokens ("{name: string, extension: string?}")
 SCHEMA_PROPS_BRACES = "{}"
 SCHEMA_OPTIONAL_SUFFIX = "?"
 
 NODE_PROJECT = NodeLabel.PROJECT
 
-# (H) Property keys
 KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
 KEY_MODIFIERS = "modifiers"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"
-# (H) Marks a method that overrides a method of an EXTERNAL stdlib base class
-# (H) (click's textwrap.TextWrapper subclass): invoked by the base's machinery,
-# (H) never by first-party code, so dead-code reachability roots it.
+# Marks a method that overrides a method of an EXTERNAL stdlib base class
+# (click's textwrap.TextWrapper subclass): invoked by the base's machinery,
+# never by first-party code, so dead-code reachability roots it.
 KEY_OVERRIDES_EXTERNAL = "overrides_external"
 
-# (H) Cypher queries
 CYPHER_DEFAULT_LIMIT = 50
 
 _CYPHER_EMBEDDING_BASE = """
@@ -218,20 +342,41 @@ PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
 
 CYPHER_DELETE_MODULE = (
+    # Scoped to the project: two projects in the shared graph can hold the
+    # same relative path, and a path-only match would take the sibling's
+    # module subtree with it. A repository-root __init__.py's module qn IS
+    # the bare project name (no trailing dot), so the prefix test alone
+    # would miss it.
     "MATCH (m:Module {path: $path}) "
+    "WHERE m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix "
     "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..]->(c) "
     "DETACH DELETE m, c"
 )
-CYPHER_DELETE_FILE = "MATCH (f:File {path: $path}) DETACH DELETE f"
-CYPHER_DELETE_FOLDER = "MATCH (f:Folder {path: $path}) DETACH DELETE f"
+# Keyed on absolute_path: the relative path is shared across same-layout
+# projects, and a path-only delete would take the sibling's node (issue #897).
+CYPHER_DELETE_FILE = "MATCH (f:File {absolute_path: $path}) DETACH DELETE f"
+CYPHER_DELETE_FOLDER = "MATCH (f:Folder {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
-# (H) Removes external import-target Module nodes that no module imports anymore
-# (H) (e.g. an imported name that was renamed/removed on an incremental rebuild).
+# Removes external import-target Module nodes that no module imports anymore
+# (e.g. an imported name that was renamed/removed on an incremental rebuild).
 CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
     "MATCH (m:ExternalModule) WHERE NOT (m)<--() DETACH DELETE m"
 )
+CYPHER_PROJECT_MODULE_PATHS = (
+    # The bare-name alternative covers the repository-root __init__.py,
+    # whose module qn is the project name itself.
+    "MATCH (m:Module) WHERE m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix "
+    "RETURN m.path AS path"
+)
+CYPHER_COUNT_PROJECT_MODULES = (
+    "MATCH (m:Module) WHERE m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix "
+    "RETURN count(m) AS count"
+)
 
-# (H) Queries for orphan pruning — returns all paths stored in the graph
+# Queries for orphan pruning: return all paths stored in the graph
 CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
@@ -242,30 +387,36 @@ CYPHER_ALL_FOLDER_PATHS = (
     "MATCH (f:Folder) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
 
-# (H) Rehydrate the in-memory function registry on an incremental run: returns
-# (H) every definition node's qualified name and label so call/instantiation
-# (H) resolution can see symbols defined in files that were not re-parsed.
+# Rehydrate the in-memory function registry on an incremental run: returns
+# every definition node's qualified name and label so call/instantiation
+# resolution can see symbols defined in files that were not re-parsed. The
+# $project_prefix filter scopes it to the project being indexed; without it,
+# another project's same-named symbols pollute the resolver trie and the
+# bare-name fallback binds calls across the project boundary (issue #711).
 CYPHER_ALL_DEFINITION_QNS = (
-    "MATCH (n) WHERE n:Function OR n:Method OR n:Class OR n:Interface "
-    "OR n:Enum OR n:Type OR n:Union "
+    "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
+    "OR n:Enum OR n:Type OR n:Union) "
+    "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
-    "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path"
+    "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
+    "n.start_line AS start_line, n.end_line AS end_line"
 )
 
-# (H) Module-level qns (plus C++20 module interfaces) for incremental runs:
-# (H) deferred import verification must count modules in UNCHANGED files as
-# (H) real targets, or editing one file would drop cross-file IMPORTS edges.
+# Module-level qns (plus C++20 module interfaces) for incremental runs:
+# deferred import verification must count modules in UNCHANGED files as
+# targets, or editing one file would drop cross-file IMPORTS edges.
 CYPHER_ALL_MODULE_QNS = (
-    "MATCH (n) WHERE n:Module OR n:ModuleInterface "
+    "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
+    "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
 )
 
-# (H) Inbound reference edges (from unchanged files) into symbols defined in one
-# (H) of $paths. Captured BEFORE a changed file's subtree is deleted so the exact
-# (H) edges can be restored verbatim afterwards (issue #532, inbound half).
-# (H) Re-resolving the callers instead would diverge from a clean index, because
-# (H) cgr's call resolution is context-sensitive (protocol vs concrete receiver,
-# (H) import granularity); the original edges already match a clean re-index.
+# Inbound reference edges (from unchanged files) into symbols defined in one
+# of $paths. Captured BEFORE a changed file's subtree is deleted so the exact
+# edges can be restored verbatim afterwards (issue #532, inbound half).
+# Re-resolving the callers instead would diverge from a clean index, because
+# cgr's call resolution is context-sensitive (protocol vs concrete receiver,
+# import granularity); the original edges already match a clean re-index.
 CYPHER_INBOUND_EDGES = (
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|OVERRIDES]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
@@ -274,17 +425,18 @@ CYPHER_INBOUND_EDGES = (
     "caller.qualified_name AS caller_qn, type(r) AS rel, "
     "head(labels(target)) AS target_label, target.qualified_name AS target_qn"
 )
-# (H) Rehydrate class_inheritance on an incremental run: every INHERITS edge
-# (H) (child -> base) with resolved qns, so protocol dispatch and inherited-method
-# (H) resolution still see the hierarchy of classes defined in files that were not
-# (H) re-parsed. Without it, editing a caller drops the protocol/inheritance
-# (H) redirect (issue #532 residual): a call resolves to the Protocol stub instead
-# (H) of the concrete implementer because _protocol_classes() is empty. Ordered by
-# (H) base_index so multiple-inheritance base order matches the original source,
-# (H) which method resolution and override attribution depend on.
+# Rehydrate class_inheritance on an incremental run: every INHERITS edge
+# (child -> base) with resolved qns, so protocol dispatch and inherited-method
+# resolution still see the hierarchy of classes defined in files that were not
+# re-parsed. Without it, editing a caller drops the protocol/inheritance
+# redirect (issue #532 residual): a call resolves to the Protocol stub instead
+# of the concrete implementer because _protocol_classes() is empty. Ordered by
+# base_index so multiple-inheritance base order matches the original source,
+# which method resolution and override attribution depend on.
 CYPHER_ALL_INHERITS = (
     "MATCH (child)-[r:INHERITS]->(base) "
     "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
+    "AND child.qualified_name STARTS WITH $project_prefix "
     "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn, "
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
@@ -302,9 +454,26 @@ KEY_TARGET_QN = "target_qn"
 
 REL_TYPE_CALLS = "CALLS"
 
+# Rel types where multiple semantically-distinct edges may exist between the
+# same node pair; these props join the MERGE key so parallel edges are not
+# collapsed at write time (issue #722). Props absent from a batch's rows are
+# dropped from the key at flush time, so resource-level FLOWS_TO (no `via`)
+# still dedups on endpoints.
+MERGE_KEY_PROPS_BY_REL: dict[str, tuple[str, ...]] = {
+    RelationshipType.FLOWS_TO.value: ("via", "kind"),
+}
+
 NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
     label.value: key.value for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
 }
+
+# Superseded unique constraints that must be dropped from existing shared
+# databases; a leftover Folder/File path constraint would keep rejecting the
+# second same-relative-path node the fix now creates (issue #897).
+LEGACY_NODE_CONSTRAINTS: tuple[tuple[str, str], ...] = (
+    (NodeLabel.FOLDER.value, UniqueKeyType.PATH.value),
+    (NodeLabel.FILE.value, UniqueKeyType.PATH.value),
+)
 
 CYPHER_MEMORY_LIMIT_SUFFIX = " QUERY MEMORY LIMIT {mb} MB"
 CYPHER_MEMORY_LIMIT_TOKEN = "QUERY MEMORY LIMIT"

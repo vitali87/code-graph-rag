@@ -1,10 +1,10 @@
-# (H) A nested class defined out-of-class (`class Outer::Inner : ... {}` in a
-# (H) header) registers its name as the literal `Outer::Inner`, so an
-# (H) out-of-line method in a .cpp (`bool Inner::transform()`, typically via a
-# (H) `using Inner = Outer::Inner;` alias) failed the leaf lookup and the
-# (H) endswith guard, fell back to a phantom class qn, and both the method and
-# (H) its DEFINES_METHOD edge dangled (issue #650: the ~21-method tail of
-# (H) #496/#512 on souffle's MagicSet.cpp).
+# A nested class defined out-of-class (`class Outer::Inner : ... {}` in a
+# header) registers its name as the literal `Outer::Inner`, so an
+# out-of-line method in a .cpp (`bool Inner::transform()`, typically via a
+# `using Inner = Outer::Inner;` alias) failed the leaf lookup and the
+# endswith guard, fell back to a phantom class qn, and both the method and
+# its DEFINES_METHOD edge dangled (issue #650: the ~21-method tail of
+# #496/#512 on souffle's MagicSet.cpp).
 from __future__ import annotations
 
 from pathlib import Path
@@ -62,9 +62,9 @@ def test_out_of_line_method_of_nested_class_binds_to_real_class(
         for c in mock_ingestor.ensure_node_batch.call_args_list
         if str(c.args[0]) == cs.NodeLabel.CLASS.value
     }
-    # (H) The forward-declared member also mints a dot-form Class node
-    # (H) (Outer.Inner); the defined class keeps the literal Outer::Inner
-    # (H) segment, and that is the node out-of-line methods must bind to.
+    # The forward-declared member also mints a dot-form Class node
+    # (Outer.Inner); the defined class keeps the literal Outer::Inner
+    # segment, and that is the node out-of-line methods must bind to.
     nested_class_qn = next(
         qn for qn in class_qns if qn.endswith("::NormaliseDatabaseTransformer")
     )

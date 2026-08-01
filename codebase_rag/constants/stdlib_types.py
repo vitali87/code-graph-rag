@@ -1,6 +1,6 @@
-# (H) Language stdlib entity tables for external-call classification.
+# Language stdlib entity tables for external-call classification.
 
-# (H) JavaScript built-in types
+# JavaScript built-in types
 JS_BUILTIN_TYPES: frozenset[str] = frozenset(
     {
         "Array",
@@ -18,10 +18,10 @@ JS_BUILTIN_TYPES: frozenset[str] = frozenset(
     }
 )
 
-# (H) JavaScript built-in function patterns
-# (H) JS/TS runtime global classes usable as `extends` bases with no import.
-# (H) A base matching one of these that resolves to no first-party class is
-# (H) positively external (builtin.<Name>), not an unresolvable guess.
+# JavaScript built-in function patterns
+# JS/TS runtime global classes usable as `extends` bases with no import.
+# A base matching one that resolves to no first-party class is positively
+# external (builtin.<Name>), not an unresolvable guess.
 JS_GLOBAL_CLASS_NAMES: frozenset[str] = frozenset(
     {
         "Error",
@@ -106,15 +106,15 @@ JS_FUNCTION_PROTOTYPE_SUFFIXES: dict[str, str] = {
     JS_SUFFIX_CALL: JS_METHOD_CALL,
     JS_SUFFIX_APPLY: JS_METHOD_APPLY,
 }
-# (H) `fn.bind(ctx)` / `fn.call(...)` / `fn.apply(...)` all use `fn`; when such a
-# (H) call sits in a value position (`onError: handleError.bind(toast)`) the `.bind`
-# (H) resolves to the Function.prototype builtin, so `fn` itself must be referenced
-# (H) separately or it reports as dead.
+# `fn.bind(ctx)` / `fn.call(...)` / `fn.apply(...)` all use `fn`; in a value
+# position (`onError: handleError.bind(toast)`) the `.bind` resolves to the
+# Function.prototype builtin, so `fn` must be referenced separately or it
+# reports as dead.
 JS_FUNCTION_PROTOTYPE_METHODS = frozenset(
     {JS_METHOD_BIND, JS_METHOD_CALL, JS_METHOD_APPLY}
 )
 
-# (H) Lua stdlib module names
+# Lua stdlib module names
 LUA_STDLIB_MODULES = frozenset(
     {
         "string",
@@ -130,12 +130,12 @@ LUA_STDLIB_MODULES = frozenset(
     }
 )
 
-# (H) C++ stdlib namespace and type inference prefixes
+# C++ stdlib namespace and type inference prefixes
 CPP_STD_NAMESPACE = "std"
 CPP_PREFIX_IS = "is_"
 CPP_PREFIX_HAS = "has_"
 
-# (H) C++ stdlib entity names for heuristic detection
+# C++ stdlib entity names for heuristic detection
 CPP_STDLIB_ENTITIES = frozenset(
     {
         "vector",
@@ -160,7 +160,7 @@ CPP_STDLIB_ENTITIES = frozenset(
     }
 )
 
-# (H) Java stdlib package prefixes for static stdlib detection
+# Java stdlib package prefixes for static stdlib detection
 JAVA_STDLIB_PREFIXES = (
     "java.",
     "javax.",
@@ -174,7 +174,7 @@ JAVA_STDLIB_PREFIXES = (
     "netscape.",
 )
 
-# (H) Java common class names for heuristic detection
+# Java common class names for heuristic detection
 JAVA_STDLIB_CLASSES = frozenset(
     {
         "String",
@@ -194,7 +194,7 @@ JAVA_STDLIB_CLASSES = frozenset(
     }
 )
 
-# (H) Java type inference constants
+# Java type inference constants
 JAVA_LANG_PREFIX = "java.lang."
 JAVA_ARRAY_SUFFIX = "[]"
 JAVA_SUFFIX_EXCEPTION = "Exception"
@@ -224,11 +224,10 @@ JAVA_WRAPPER_TYPES = frozenset(
     }
 )
 
-# (H) java.lang types Java code names WITHOUT an import (the implicit java.lang
-# (H) import). A bare `extends`/`implements` base matching one of these that
-# (H) resolves to no first-party type is positively external
-# (H) (java.lang.<Name>), not an unresolvable guess; mirrors the JS global
-# (H) class rule (JS_GLOBAL_CLASS_NAMES -> builtin.<Name>).
+# java.lang types Java code names WITHOUT an import (the implicit java.lang
+# import). A bare `extends`/`implements` base matching one that resolves to
+# no first-party type is positively external (java.lang.<Name>); mirrors the
+# JS global class rule (JS_GLOBAL_CLASS_NAMES -> builtin.<Name>).
 JAVA_LANG_CLASS_NAMES = JAVA_WRAPPER_TYPES | frozenset(
     {
         "Byte",
@@ -281,5 +280,118 @@ JAVA_LANG_CLASS_NAMES = JAVA_WRAPPER_TYPES | frozenset(
         "CharSequence",
         "Appendable",
         "Readable",
+    }
+)
+
+# C# base class library / framework roots. A qualified name under one of
+# these namespaces (`System.Collections.Generic.List`) is external stdlib,
+# not first-party code, so stdlib extraction folds the trailing PascalCase
+# type into its namespace path.
+CSHARP_STDLIB_PREFIXES = (
+    "System.",
+    "Microsoft.",
+    "Windows.",
+    "Mono.",
+)
+
+# Recognized BCL types. ONLY a name in this set folds into its namespace
+# (`System.Collections.Generic.List` -> `System.Collections.Generic`); every
+# other PascalCase leaf is kept whole as a namespace, because C# namespaces
+# are PascalCase too and a case heuristic would misfold them
+# (`Microsoft.Extensions.Logging`).
+CSHARP_STDLIB_CLASSES = frozenset(
+    {
+        # System primitives / core types
+        "Object",
+        "String",
+        "Int32",
+        "Int64",
+        "Boolean",
+        "Double",
+        "Decimal",
+        "Single",
+        "Byte",
+        "Char",
+        "Guid",
+        "DateTime",
+        "DateTimeOffset",
+        "TimeSpan",
+        "Uri",
+        "Exception",
+        "Nullable",
+        "Type",
+        "Action",
+        "Func",
+        "Console",
+        # System.Threading.Tasks
+        "Task",
+        "ValueTask",
+        "CancellationToken",
+        # System.Collections.Generic
+        "List",
+        "Dictionary",
+        "HashSet",
+        "Queue",
+        "Stack",
+        "SortedList",
+        "SortedDictionary",
+        "LinkedList",
+        "IEnumerable",
+        "ICollection",
+        "IList",
+        "IDictionary",
+        "IReadOnlyList",
+        "IReadOnlyDictionary",
+        "KeyValuePair",
+        # System.Linq
+        "Enumerable",
+        "IQueryable",
+        # System interfaces
+        "IDisposable",
+        "IAsyncDisposable",
+        "IComparable",
+        "IEquatable",
+        # Other ubiquitous BCL types (curated common set; a complete list
+        # is unbounded, so the tail stays as full type paths rather than risk
+        # a case heuristic that would misfold PascalCase namespaces).
+        "Math",
+        "MathF",
+        "Random",
+        "Convert",
+        "Environment",
+        "Array",
+        "Span",
+        "Memory",
+        "Tuple",
+        "Lazy",
+        "GC",
+        "StringBuilder",
+        "StringComparer",
+        "Regex",
+        "Match",
+        "Encoding",
+        "File",
+        "Directory",
+        "Path",
+        "Stream",
+        "MemoryStream",
+        "FileStream",
+        "StreamReader",
+        "StreamWriter",
+        "TextReader",
+        "TextWriter",
+        "HttpClient",
+        "HttpResponseMessage",
+        "HttpRequestMessage",
+        "JsonSerializer",
+        "Thread",
+        "Mutex",
+        "SemaphoreSlim",
+        "Stopwatch",
+        "Timer",
+        "CultureInfo",
+        "IServiceProvider",
+        "IServiceCollection",
+        "ILogger",
     }
 )

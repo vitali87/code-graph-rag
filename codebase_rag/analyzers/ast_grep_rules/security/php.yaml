@@ -1,0 +1,59 @@
+# ast-grep security rules for PHP (issue #413).
+# Each match becomes a SecurityIssue node linked to the file's Module via
+# HAS_VULNERABILITY. Rules are heuristic and favour recall; treat findings as
+# review prompts.
+ast_grep_id: php
+extensions: [.php]
+rules:
+  - id: eval_use
+    message: "eval() executes arbitrary code"
+    rule:
+      kind: function_call_expression
+      has: { field: function, regex: '^eval$' }
+  - id: command_exec
+    # Shell/process execution sinks: user-controlled args risk command injection.
+    message: "Command execution sink (system/exec/shell_exec/passthru/proc_open/popen)"
+    rule:
+      kind: function_call_expression
+      has:
+        field: function
+        regex: '^(system|exec|shell_exec|passthru|proc_open|popen)$'
+  - id: sqli_concat
+    # SQL built by string concatenation (binary '.') passed to a query sink.
+    # Favour recall: match either a bare mysqli_query call or any ->query() method
+    # whose argument list contains a concatenation.
+    message: "Possible SQL injection: query built with string concatenation"
+    rule:
+      any:
+        - kind: function_call_expression
+          all:
+            - has: { field: function, regex: '(?i)^(mysqli_query|pg_query|sqlsrv_query|db_query)$' }
+            - has: { kind: binary_expression, stopBy: end }
+        - kind: member_call_expression
+          all:
+            - has: { field: name, regex: '(?i)^query$' }
+            - has: { kind: binary_expression, stopBy: end }
+  - id: hardcoded_secret
+    # Security rule: favour recall. Value must be a non-trivial literal (>=10
+    # chars) that is not a format/message template (a {..} placeholder or a
+    # printf-style %s/%d specifier). Those two exclusions are the only ones, so
+    # real secrets containing %, spaces, or URLs with embedded credentials still
+    # surface. Ceiling: without entropy scoring, ordinary word/URL literals bound
+    # to a credential-named variable still surface as review prompts; that
+    # residual is the known limit of regex-only secret detection, not a defect.
+    message: "Hardcoded secret assigned to a credential-named variable"
+    rule:
+      kind: assignment_expression
+      all:
+        - has: { field: left, regex: '(?i)(password|secret|api_key|token)' }
+        - has:
+            field: right
+            all:
+              - any:
+                  - kind: encapsed_string  # double-quoted
+                  - kind: string           # single-quoted
+              - regex: '^.{10,}$'
+              - not:
+                  any:
+                    - regex: '\{[^{}]*\}'
+                    - regex: '%[sdrifeEgGxXoc(]'

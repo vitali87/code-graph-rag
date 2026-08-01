@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from loguru import logger
@@ -97,7 +97,7 @@ class GoogleProvider(ModelProvider):
         if self.provider_type == cs.GoogleProviderType.VERTEX:
             credentials = None
             if self.service_account_file:
-                # (H) Convert service account file to credentials object for pydantic-ai
+                # Convert service account file to credentials object for pydantic-ai
                 from google.oauth2 import service_account
 
                 credentials = service_account.Credentials.from_service_account_file(
@@ -110,7 +110,7 @@ class GoogleProvider(ModelProvider):
                 credentials=credentials,
             )
         else:
-            # (H) api_key is guaranteed to be set by validate_config for gla type
+            # api_key is guaranteed to be set by validate_config for gla type
             assert self.api_key is not None
             provider = PydanticGoogleProvider(api_key=self.api_key)
 
@@ -205,7 +205,7 @@ class AnthropicProvider(ModelProvider):
 
     def create_model(self, model_id: str, **kwargs: str | int | None) -> AnthropicModel:
         self.validate_config()
-        # (H) api_key is guaranteed to be set by validate_config
+        # api_key is guaranteed to be set by validate_config
         assert self.api_key is not None
         provider = PydanticAnthropicProvider(api_key=self.api_key)
         model_settings = AnthropicModelSettings(
@@ -245,7 +245,7 @@ class AzureOpenAIProvider(ModelProvider):
         self, model_id: str, **kwargs: str | int | None
     ) -> OpenAIChatModel:
         self.validate_config()
-        # (H) api_key and endpoint are guaranteed to be set by validate_config
+        # api_key and endpoint are guaranteed to be set by validate_config
         assert self.api_key is not None
         assert self.endpoint is not None
         provider = PydanticAzureProvider(
@@ -256,15 +256,52 @@ class AzureOpenAIProvider(ModelProvider):
         return OpenAIChatModel(model_id, provider=provider)
 
 
+class MiniMaxProvider(ModelProvider):
+    __slots__ = ("api_key", "endpoint")
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        **kwargs: str | int | None,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_MINIMAX_API_KEY)
+        self.endpoint = endpoint or cs.MINIMAX_DEFAULT_ENDPOINT
+
+    @property
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.MINIMAX
+
+    def validate_config(self) -> None:
+        if not self.api_key:
+            raise ValueError(ex.MINIMAX_NO_KEY)
+
+    def create_model(
+        self, model_id: str, **kwargs: str | int | None
+    ) -> OpenAIChatModel | AnthropicModel:
+        self.validate_config()
+        # api_key is guaranteed to be set by validate_config
+        assert self.api_key is not None
+        if urlsplit(self.endpoint).path.rstrip("/") == cs.MINIMAX_ANTHROPIC_SDK_PATH:
+            anthropic_provider = PydanticAnthropicProvider(
+                api_key=self.api_key, base_url=self.endpoint
+            )
+            return AnthropicModel(model_id, provider=anthropic_provider)
+        provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
+        return OpenAIChatModel(model_id, provider=provider)
+
+
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.GOOGLE: GoogleProvider,
     cs.Provider.OPENAI: OpenAIProvider,
     cs.Provider.OLLAMA: OllamaProvider,
     cs.Provider.ANTHROPIC: AnthropicProvider,
     cs.Provider.AZURE: AzureOpenAIProvider,
+    cs.Provider.MINIMAX: MiniMaxProvider,
 }
 
-# (H) Import LiteLLM provider after base classes are defined to avoid circular import
+# Import LiteLLM provider after base classes are defined to avoid circular import
 try:
     from .litellm import LiteLLMProvider
 
@@ -337,7 +374,7 @@ def check_litellm_proxy_running(
             if response.status_code == cs.HTTP_OK:
                 return True
 
-            # (H) Fallback to models endpoint for authenticated proxies
+            # Fallback to models endpoint for authenticated proxies
             if api_key:
                 models_url = urljoin(base_url, "/v1/models")
                 response = client.get(models_url, headers=headers)

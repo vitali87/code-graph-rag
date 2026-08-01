@@ -1,7 +1,7 @@
-# (H) Covers the L1 ast oracle (evals/ast_oracle.py): functions defined inside an
-# (H) except handler or a match/case block must be captured. cgr captures these
-# (H) function-local defs, so an oracle that skips them produces spurious Function
-# (H) false positives (e.g. thrift's sslcompat.py `def match` inside `except`).
+# Covers the L1 ast oracle (evals/ast_oracle.py): functions defined inside an
+# except handler or a match/case block must be captured. cgr captures these
+# function-local defs, so an oracle that skips them produces spurious Function
+# false positives (e.g. thrift's sslcompat.py `def match` inside `except`).
 from __future__ import annotations
 
 from pathlib import Path

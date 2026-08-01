@@ -28,8 +28,8 @@ def _make_project(root: Path) -> None:
         "int orphan(void) { return 9; }\n",
         encoding="utf-8",
     )
-    # (H) No system #includes: the fixture parses cleanly regardless of whether an
-    # (H) SDK sysroot is discoverable, so coverage is deterministic in any CI.
+    # No system #includes: the fixture parses cleanly regardless of whether an
+    # SDK sysroot is discoverable, so coverage is deterministic in any CI.
     (root / "main.c").write_text(
         '#include "util.h"\n'
         "static int compute(int x, int y) { return add(x, y) + mul(x, y); }\n"
@@ -43,14 +43,14 @@ def test_oracle_captures_first_party_c_calls(tmp_path: Path) -> None:
     _make_project(tmp_path)
     edges, declared, covered = oracle_c_call_edges(tmp_path)
 
-    # (H) add(), mul() (in compute), compute() (in main) are first-party calls.
+    # add(), mul() (in compute), compute() (in main) are first-party calls.
     assert ("main.c", "add") in edges
     assert ("main.c", "mul") in edges
     assert ("main.c", "compute") in edges
-    # (H) orphan is defined but never called -> never a call edge.
+    # orphan is defined but never called -> never a call edge.
     assert ("util.c", "orphan") not in edges
     assert {"add", "mul", "compute", "main", "orphan"} <= declared
-    # (H) Both header-free sources parse cleanly, so both are graded.
+    # Both header-free sources parse cleanly, so both are graded.
     assert {"main.c", "util.c"} <= covered
 
 

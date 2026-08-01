@@ -1,9 +1,11 @@
+"""Orchestrate parsing a repository into graph nodes and edges and ingest them."""
+
 import hashlib
 import json
 import os
 import sys
-from collections import OrderedDict, defaultdict
-from collections.abc import Callable, ItemsView, KeysView
+from collections import defaultdict
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from loguru import logger
@@ -12,10 +14,20 @@ from tree_sitter import Node, Parser, QueryCursor
 
 from . import constants as cs
 from . import logs as ls
+from .analyzers import FindingAnalyzer
+from .ast_cache import BoundedASTCache
+from .capture import CaptureSelection, default_capture
 from .config import settings
-from .language_spec import LANGUAGE_FQN_SPECS, get_language_spec
+from .function_registry import FunctionRegistryTrie
+from .language_spec import (
+    LANGUAGE_FQN_SPECS,
+    get_language_for_extension,
+    get_language_spec,
+)
 from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
+from .parsers.ast_grep_tier import AstGrepTier
+from .parsers.contract_linking import link_contracts
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.cpp_frontend import (
     cpp_frontend_available,
@@ -23,19 +35,47 @@ from .parsers.cpp_frontend import (
     run_cpp_frontend,
     run_cpp_frontend_hybrid,
 )
+from .parsers.csharp_frontend import (
+    CSharpQueryCall,
+    csharp_frontend_available,
+    find_csharp_project,
+    run_csharp_frontend,
+)
+from .parsers.endpoint_prefixes import (
+    CYPHER_DELETE_HANDLER_EXPOSES,
+    CYPHER_PROJECT_PY_MODULES,
+    CYPHER_PROJECT_ROUTE_HANDLERS,
+    build_router_registry,
+)
+from .parsers.endpoint_routes import (
+    CYPHER_DELETE_MODULE_EXPOSES,
+    CYPHER_PROJECT_MODULES,
+    ROUTE_CALL_LANGUAGES,
+    ROUTE_MODULE_EXTENSIONS,
+    RouteRegistration,
+    collect_route_registrations,
+)
+from .parsers.endpoints import (
+    _emit_endpoint,
+    emit_endpoints,
+    link_endpoints,
+    parse_route_decorator,
+)
 from .parsers.factory import ProcessorFactory
 from .parsers.utils import sorted_captures
-from .services import IngestorProtocol, QueryProtocol
+from .path_filters import matches_test_path
+from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
+from .services.resource_cleanup import prune_unanchored_resources
 from .types_defs import (
+    CppDefinitionSpan,
     EmbeddingQueryResult,
-    FunctionRegistry,
+    FunctionLocation,
     LanguageQueries,
     NodeType,
+    PendingExpansionCall,
     PendingMacroCall,
-    QualifiedName,
     ResultRow,
     SimpleNameLookup,
-    TrieNode,
 )
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
@@ -48,320 +88,43 @@ from .utils.path_utils import (
 )
 from .utils.source_extraction import extract_source_with_fallback
 
+
+def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
+    owner: str | None = None
+    for candidate in module_qns:
+        if qn.startswith(candidate + cs.SEPARATOR_DOT) and (
+            owner is None or len(candidate) > len(owner)
+        ):
+            owner = candidate
+    return owner
+
+
+def _route_handler_entry(
+    row: Mapping[str, object], already_pending: set[str], module_qns: set[str]
+) -> tuple[cs.NodeLabel, str, list[str], str | None] | None:
+    qn = row.get(cs.KEY_QUALIFIED_NAME)
+    decorators = row.get(cs.KEY_DECORATORS)
+    if not isinstance(qn, str) or qn in already_pending:
+        return None
+    if not isinstance(decorators, list):
+        return None
+    routes = [d for d in decorators if isinstance(d, str) and parse_route_decorator(d)]
+    if not routes:
+        return None
+    labels = row.get("labels")
+    label = (
+        cs.NodeLabel.METHOD
+        if isinstance(labels, list) and cs.NodeLabel.METHOD.value in labels
+        else cs.NodeLabel.FUNCTION
+    )
+    return (label, qn, routes, _owning_module_qn(qn, module_qns))
+
+
 type FileHashCache = dict[str, str]
 type DirMtimesCache = dict[str, float]
 
 
-class FunctionRegistryTrie:
-    __slots__ = (
-        "root",
-        "_entries",
-        "_simple_name_lookup",
-        "_ending_with_cache",
-        "_duplicates",
-        "_properties",
-        "_property_names",
-        "_abstracts",
-        "_callable_params",
-    )
-
-    def __init__(self, simple_name_lookup: SimpleNameLookup | None = None) -> None:
-        self.root: TrieNode = {}
-        self._entries: FunctionRegistry = {}
-        self._simple_name_lookup = simple_name_lookup
-        self._ending_with_cache: dict[str, list[QualifiedName]] = {}
-        self._duplicates: dict[QualifiedName, list[QualifiedName]] = {}
-        self._properties: set[QualifiedName] = set()
-        self._property_names: set[str] = set()
-        self._abstracts: set[QualifiedName] = set()
-        self._callable_params: dict[QualifiedName, dict[str, int]] = {}
-
-    def mark_callable_params(
-        self, qualified_name: QualifiedName, params: dict[str, int]
-    ) -> None:
-        if params:
-            self._callable_params[qualified_name] = params
-
-    def callable_params(self, qualified_name: QualifiedName) -> dict[str, int] | None:
-        return self._callable_params.get(qualified_name)
-
-    def mark_property(self, qualified_name: QualifiedName) -> None:
-        self._properties.add(qualified_name)
-        self._property_names.add(qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1])
-
-    def is_property(self, qualified_name: QualifiedName) -> bool:
-        return qualified_name in self._properties
-
-    def property_names(self) -> set[str]:
-        return self._property_names
-
-    def mark_abstract(self, qualified_name: QualifiedName) -> None:
-        self._abstracts.add(qualified_name)
-
-    def is_abstract(self, qualified_name: QualifiedName) -> bool:
-        return qualified_name in self._abstracts
-
-    def register_unique_qn(
-        self, natural_qn: QualifiedName, start_line: int
-    ) -> QualifiedName:
-        if natural_qn not in self._entries:
-            return natural_qn
-        variant = f"{natural_qn}{cs.DUP_QN_MARKER}{start_line}"
-        bucket = self._duplicates.setdefault(natural_qn, [natural_qn])
-        if variant not in bucket:
-            bucket.append(variant)
-        return variant
-
-    def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]:
-        return self._duplicates.get(qualified_name, [qualified_name])
-
-    def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
-        qualified_name = sys.intern(qualified_name)
-        self._entries[qualified_name] = func_type
-
-        simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        if self._simple_name_lookup is not None:
-            self._simple_name_lookup[simple_name].add(qualified_name)
-        self._invalidate_ending_with_cache(qualified_name, simple_name)
-
-        parts = qualified_name.split(cs.SEPARATOR_DOT)
-        current: TrieNode = self.root
-
-        for part in parts:
-            if part not in current:
-                current[part] = {}
-            child = current[part]
-            assert isinstance(child, dict)
-            current = child
-
-        current[cs.TRIE_TYPE_KEY] = func_type
-        current[cs.TRIE_QN_KEY] = qualified_name
-
-    def get(
-        self, qualified_name: QualifiedName, default: NodeType | None = None
-    ) -> NodeType | None:
-        return self._entries.get(qualified_name, default)
-
-    def __contains__(self, qualified_name: QualifiedName) -> bool:
-        return qualified_name in self._entries
-
-    def __getitem__(self, qualified_name: QualifiedName) -> NodeType:
-        return self._entries[qualified_name]
-
-    def __setitem__(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
-        self.insert(qualified_name, func_type)
-
-    def __delitem__(self, qualified_name: QualifiedName) -> None:
-        if qualified_name not in self._entries:
-            return
-
-        del self._entries[qualified_name]
-        self._duplicates.pop(qualified_name, None)
-        for natural, bucket in list(self._duplicates.items()):
-            if qualified_name in bucket:
-                bucket.remove(qualified_name)
-                if len(bucket) <= 1:
-                    self._duplicates.pop(natural, None)
-        simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-
-        if qualified_name in self._properties:
-            self._properties.discard(qualified_name)
-            if not any(
-                p.rsplit(cs.SEPARATOR_DOT, 1)[-1] == simple_name
-                for p in self._properties
-            ):
-                self._property_names.discard(simple_name)
-        self._abstracts.discard(qualified_name)
-        self._callable_params.pop(qualified_name, None)
-
-        self._invalidate_ending_with_cache(qualified_name, simple_name)
-
-        if self._simple_name_lookup is not None:
-            if simple_name in self._simple_name_lookup:
-                self._simple_name_lookup[simple_name].discard(qualified_name)
-
-        parts = qualified_name.split(cs.SEPARATOR_DOT)
-        self._cleanup_trie_path(parts, self.root)
-
-    def _cleanup_trie_path(self, parts: list[str], node: TrieNode) -> bool:
-        if not parts:
-            node.pop(cs.TRIE_QN_KEY, None)
-            node.pop(cs.TRIE_TYPE_KEY, None)
-            return not node
-
-        part = parts[0]
-        if part not in node:
-            return False
-
-        child = node[part]
-        assert isinstance(child, dict)
-        if self._cleanup_trie_path(parts[1:], child):
-            del node[part]
-
-        is_endpoint = cs.TRIE_QN_KEY in node
-        has_children = any(not key.startswith(cs.TRIE_INTERNAL_PREFIX) for key in node)
-        return not has_children and not is_endpoint
-
-    def _navigate_to_prefix(self, prefix: str) -> TrieNode | None:
-        parts = prefix.split(cs.SEPARATOR_DOT) if prefix else []
-        current: TrieNode = self.root
-        for part in parts:
-            if part not in current:
-                return None
-            child = current[part]
-            assert isinstance(child, dict)
-            current = child
-        return current
-
-    def _collect_from_subtree(
-        self,
-        node: TrieNode,
-        filter_fn: Callable[[QualifiedName], bool] | None = None,
-    ) -> list[tuple[QualifiedName, NodeType]]:
-        results: list[tuple[QualifiedName, NodeType]] = []
-
-        def dfs(n: TrieNode) -> None:
-            if cs.TRIE_QN_KEY in n:
-                qn = n[cs.TRIE_QN_KEY]
-                func_type = n[cs.TRIE_TYPE_KEY]
-                assert isinstance(qn, str) and isinstance(func_type, NodeType)
-                if filter_fn is None or filter_fn(qn):
-                    results.append((qn, func_type))
-
-            for key, child in n.items():
-                if not key.startswith(cs.TRIE_INTERNAL_PREFIX):
-                    assert isinstance(child, dict)
-                    dfs(child)
-
-        dfs(node)
-        return results
-
-    def keys(self) -> KeysView[QualifiedName]:
-        return self._entries.keys()
-
-    def items(self) -> ItemsView[QualifiedName, NodeType]:
-        return self._entries.items()
-
-    def __len__(self) -> int:
-        return len(self._entries)
-
-    def find_with_prefix_and_suffix(
-        self, prefix: str, suffix: str
-    ) -> list[QualifiedName]:
-        node = self._navigate_to_prefix(prefix)
-        if node is None:
-            return []
-        suffix_pattern = f".{suffix}"
-        matches = self._collect_from_subtree(
-            node, lambda qn: qn.endswith(suffix_pattern)
-        )
-        return [qn for qn, _ in matches]
-
-    def _invalidate_ending_with_cache(
-        self, qualified_name: QualifiedName, simple_name: str
-    ) -> None:
-        if not self._ending_with_cache:
-            return
-        self._ending_with_cache.pop(simple_name, None)
-        # (H) dotted suffixes are cached too (#513); drop any the qn ends with.
-        for key in [
-            k
-            for k in self._ending_with_cache
-            if cs.SEPARATOR_DOT in k and qualified_name.endswith(f".{k}")
-        ]:
-            del self._ending_with_cache[key]
-
-    def find_ending_with(self, suffix: str) -> list[QualifiedName]:
-        cached = self._ending_with_cache.get(suffix)
-        if cached is not None:
-            return cached
-        if self._simple_name_lookup is not None:
-            if suffix in self._simple_name_lookup:
-                result = sorted(self._simple_name_lookup[suffix])
-            elif cs.SEPARATOR_DOT in suffix:
-                # (H) #513: the index only holds last segments, so a dotted
-                # (H) suffix ("Class.method") always misses it; fall back to
-                # (H) the linear scan instead of dropping the match.
-                result = sorted(
-                    qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")
-                )
-            else:
-                # (H) dot-free miss is authoritative: insert() indexes every
-                # (H) entry's last segment, so nothing can end with ".suffix".
-                result = []
-        else:
-            result = sorted(
-                qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")
-            )
-        self._ending_with_cache[suffix] = result
-        return result
-
-    def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
-        node = self._navigate_to_prefix(prefix)
-        return [] if node is None else self._collect_from_subtree(node)
-
-
-class BoundedASTCache:
-    __slots__ = ("cache", "max_entries", "max_memory_bytes")
-
-    def __init__(
-        self,
-        max_entries: int | None = None,
-        max_memory_mb: int | None = None,
-    ):
-        self.cache: OrderedDict[Path, tuple[Node, cs.SupportedLanguage]] = OrderedDict()
-        self.max_entries = (
-            max_entries if max_entries is not None else settings.CACHE_MAX_ENTRIES
-        )
-        max_mem = (
-            max_memory_mb if max_memory_mb is not None else settings.CACHE_MAX_MEMORY_MB
-        )
-        self.max_memory_bytes = max_mem * cs.BYTES_PER_MB
-
-    def __setitem__(self, key: Path, value: tuple[Node, cs.SupportedLanguage]) -> None:
-        if key in self.cache:
-            del self.cache[key]
-
-        self.cache[key] = value
-
-        self._enforce_limits()
-
-    def __getitem__(self, key: Path) -> tuple[Node, cs.SupportedLanguage]:
-        value = self.cache[key]
-        self.cache.move_to_end(key)
-        return value
-
-    def __delitem__(self, key: Path) -> None:
-        if key in self.cache:
-            del self.cache[key]
-
-    def __contains__(self, key: Path) -> bool:
-        return key in self.cache
-
-    def items(self) -> ItemsView[Path, tuple[Node, cs.SupportedLanguage]]:
-        return self.cache.items()
-
-    def _enforce_limits(self) -> None:
-        while len(self.cache) > self.max_entries:
-            self.cache.popitem(last=False)  # (H) Remove least recently used
-
-        if self._should_evict_for_memory():
-            entries_to_remove = max(
-                1, len(self.cache) // settings.CACHE_EVICTION_DIVISOR
-            )
-            for _ in range(entries_to_remove):
-                if self.cache:
-                    self.cache.popitem(last=False)
-
-    def _should_evict_for_memory(self) -> bool:
-        try:
-            cache_size = sum(sys.getsizeof(v) for v in self.cache.values())
-            return cache_size > self.max_memory_bytes
-        except Exception:
-            return (
-                len(self.cache)
-                > self.max_entries * settings.CACHE_MEMORY_THRESHOLD_RATIO
-            )
+_CPP_SPAN_FILE_EXTENSIONS = frozenset(cs.CPP_EXTENSIONS) | frozenset(cs.C_EXTENSIONS)
 
 
 def _hash_file(filepath: Path) -> str:
@@ -451,19 +214,38 @@ def _touch_empty_json(cache_path: Path) -> None:
 
 
 class GraphUpdater:
+    """Drive a full or incremental ingest of a repository into the graph.
+
+    Parses each supported source file into definitions, imports, and calls,
+    resolves them across files, and streams the resulting nodes and edges to
+    the configured ingestor.
+    """
+
     def __init__(
         self,
         ingestor: IngestorProtocol,
         repo_path: Path,
-        parsers: dict[cs.SupportedLanguage, Parser],
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        parsers: Mapping[cs.SupportedLanguage, Parser],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
         project_name: str | None = None,
+        capture: CaptureSelection | None = None,
         skip_embeddings: bool | None = None,
     ):
+        self.capture = capture if capture is not None else default_capture()
+        # `ingestor` stays the raw object for DB queries (QueryProtocol),
+        # flushes, and test introspection. `_sink` is a filtering wrapper that
+        # drops disabled relationships/nodes at one choke point, so the ~20
+        # parser emission sites stay untouched. All emission goes through
+        # `_sink`; everything else uses `ingestor`.
         self.ingestor = ingestor
+        self._sink: IngestorProtocol = FilteringIngestor(ingestor, self.capture)
         self._single_file: Path | None = None
+        # True while the current sync re-parses EVERY file (no cache/force):
+        # such a run re-resolves all edges itself, so graph reads may degrade
+        # on failure; an incremental run's correctness depends on them.
+        self._is_full_build = False
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
@@ -478,33 +260,45 @@ class GraphUpdater:
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup
         )
-        self.ast_cache = BoundedASTCache()
-        # (H) Every file parsed this run, in parse order. The AST cache is bounded
-        # (H) and evicts on large repos, so Pass 3 must iterate this full list (not
-        # (H) the cache) and re-parse evicted files, or their calls are dropped.
+        self.ast_cache = BoundedASTCache(loader=self._load_ast_from_disk)
+        # Every file parsed this run, in parse order. The AST cache is bounded
+        # and evicts on large repos, so Pass 3 must iterate this full list (not
+        # the cache) and re-parse evicted files, or their calls are dropped.
         self._parsed_files: list[tuple[Path, cs.SupportedLanguage]] = []
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
-        # (H) None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
-        # (H) callers (MCP, workspace sync) opt out without a CLI flag.
+        # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
+        # callers (MCP, workspace sync) opt out without a CLI flag.
         self.skip_embeddings = (
             settings.SKIP_EMBEDDINGS if skip_embeddings is None else skip_embeddings
         )
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
-        # (H) Hybrid-mode macro uses awaiting a caller: attribution needs the
-        # (H) tree-sitter definition spans, which exist only after Pass 2.
+        # Hybrid-mode macro uses awaiting a caller: attribution needs the
+        # tree-sitter definition spans, which exist only after Pass 2.
         self._pending_cpp_macro_calls: list[PendingMacroCall] = []
-        # (H) Files (re)parsed by Pass 2 this run: the only files whose
-        # (H) definition spans exist for hybrid macro-call attribution.
+        # Hybrid-mode expansion-produced calls (call text lives inside a
+        # macro body): BOTH ends join to tree-sitter spans after Pass 2.
+        self._pending_cpp_expansion_calls: list[PendingExpansionCall] = []
+        # Definition spans read back from the graph on incremental runs:
+        # an expansion call's CALLEE may live in an UNCHANGED file whose
+        # spans Pass 2 never recorded this run.
+        self._rehydrated_cpp_spans: dict[str, list[CppDefinitionSpan]] = {}
+        # C# Roslyn hybrid facts awaiting their join point: partial
+        # declaration groups join to Class qns after Pass 2, and LINQ
+        # query-operator calls join to function locations after Pass 3.
+        self._csharp_partial_decls: list[list[tuple[str, int]]] = []
+        self._csharp_query_calls: list[CSharpQueryCall] = []
+        # Files (re)parsed by Pass 2 this run: the only files whose
+        # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
-        # (H) Module qns read back from the graph on incremental runs; deferred
-        # (H) import verification counts them as real internal targets.
+        # Module qns read back from the graph on incremental runs; deferred
+        # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
 
         self.factory = ProcessorFactory(
-            ingestor=self.ingestor,
+            ingestor=self._sink,
             repo_path=self.repo_path,
             project_name=self.project_name,
             queries=self.queries,
@@ -513,23 +307,37 @@ class GraphUpdater:
             ast_cache=self.ast_cache,
             unignore_paths=self.unignore_paths,
             exclude_paths=self.exclude_paths,
+            capture=self.capture,
+        )
+        # Fallback structural tier for languages with no tree-sitter
+        # LanguageSpec (e.g. Ruby), driven by ast-grep pattern configs.
+        self.ast_grep_tier = AstGrepTier(self._sink, self.repo_path, self.project_name)
+        # Opt-in ast-grep finding analyzer (issue #413): Pattern/CodeSmell/
+        # SecurityIssue nodes from categorized YAML rules, run as a post-pass.
+        self.finding_analyzer = FindingAnalyzer(
+            self._sink, self.repo_path, self.capture
         )
 
     def _run_cpp_frontend(self) -> None:
-        # (H) Optional libclang C++ pre-pass when a compile_commands.json is
-        # (H) discoverable. LIBCLANG: emit macro-accurate C/C++ nodes/edges
-        # (H) directly (tree-sitter cannot expand macros) and skip covered
-        # (H) files in the tree-sitter definition pass. HYBRID: tree-sitter
-        # (H) stays the backbone (nothing is skipped); libclang layers on only
-        # (H) macro Function nodes and #include IMPORTS, whose qns are
-        # (H) scheme-identical, and hands back macro uses for span attribution
-        # (H) after Pass 2. Missing either condition falls back to tree-sitter.
+        # Optional libclang C++ pre-pass when a compile_commands.json is
+        # discoverable. LIBCLANG: emit macro-accurate C/C++ nodes/edges
+        # directly (tree-sitter cannot expand macros) and skip covered files
+        # in the definition pass. HYBRID: tree-sitter stays the backbone
+        # (nothing skipped); libclang layers on only macro Function nodes and
+        # #include IMPORTS, whose qns are scheme-identical, and hands back
+        # macro uses for span attribution after Pass 2. Missing either
+        # condition falls back to tree-sitter.
         self._cpp_frontend_covered = frozenset()
         self._pending_cpp_macro_calls = []
         if settings.CPP_FRONTEND not in (
             cs.CppFrontend.LIBCLANG,
             cs.CppFrontend.HYBRID,
         ):
+            return
+        if not self._repo_has_c_or_cpp_files():
+            # HYBRID is the default, so a repo with no C/C++ sources must
+            # skip silently instead of warning about libclang or a missing
+            # compile_commands.json on every index of a Python/Go project.
             return
         if not cpp_frontend_available():
             logger.warning(ls.CPP_FRONTEND_UNAVAILABLE)
@@ -540,8 +348,11 @@ class GraphUpdater:
             return
         logger.info(ls.CPP_FRONTEND_RUNNING.format(path=compdb_dir))
         if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
-            self._pending_cpp_macro_calls = run_cpp_frontend_hybrid(
-                self.ingestor,
+            (
+                self._pending_cpp_macro_calls,
+                self._pending_cpp_expansion_calls,
+            ) = run_cpp_frontend_hybrid(
+                self._sink,
                 self.repo_path,
                 self.project_name,
                 compdb_dir,
@@ -554,11 +365,12 @@ class GraphUpdater:
             logger.info(
                 ls.CPP_FRONTEND_HYBRID_PENDING.format(
                     count=len(self._pending_cpp_macro_calls)
+                    + len(self._pending_cpp_expansion_calls)
                 )
             )
             return
         self._cpp_frontend_covered = run_cpp_frontend(
-            self.ingestor,
+            self._sink,
             self.repo_path,
             self.project_name,
             compdb_dir,
@@ -570,22 +382,151 @@ class GraphUpdater:
             ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
         )
 
+    def _run_csharp_frontend(self) -> None:
+        # Optional Roslyn semantic pre-pass. ROSLYN/HYBRID: load the repo's
+        # real .csproj/.sln via MSBuildWorkspace and collect facts syntax
+        # alone cannot derive: exact INHERITS-vs-IMPLEMENTS base kinds (Pass
+        # 2), exact per-invocation call targets (Pass 3), partial-type
+        # identity groups (joined after Pass 2), and LINQ query-operator
+        # calls (after Pass 3). Missing dotnet, project, or a build/restore
+        # failure all fall back to pure tree-sitter (empty facts). Reset first
+        # so a reused updater (watch mode) that previously ran hybrid does not
+        # keep applying stale facts on a later run with the frontend off.
+        # csharp_call_sites is mutated in place because the type-inference
+        # engine holds a reference.
+        dp = self.factory.definition_processor
+        dp.csharp_base_kinds = {}
+        dp.csharp_call_sites.clear()
+        dp.csharp_external_sites.clear()
+        self._csharp_partial_decls = []
+        self._csharp_query_calls = []
+        if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
+            return
+        project = find_csharp_project(self.repo_path)
+        if project is None:
+            # Skip silently when there is no C# project: nothing to augment,
+            # and building the net tool for a non-C# repo would be wasteful.
+            return
+        if not csharp_frontend_available():
+            # AUTO promises hybrid only where the toolchain exists, so a
+            # missing dotnet is the expected fallback (info); an EXPLICIT
+            # hybrid/roslyn request that cannot run stays a warning.
+            if settings.CSHARP_FRONTEND == cs.CSharpFrontend.AUTO:
+                logger.info(ls.CSHARP_FRONTEND_AUTO_FALLBACK)
+            else:
+                logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
+            return
+        logger.info(ls.CSHARP_FRONTEND_RUNNING.format(path=project))
+        facts = run_csharp_frontend(self.repo_path)
+        dp.csharp_base_kinds = facts.base_kinds
+        dp.csharp_call_sites.update(facts.call_sites)
+        dp.csharp_external_sites.update(facts.external_sites)
+        self._csharp_partial_decls = facts.partial_groups
+        self._csharp_query_calls = facts.query_calls
+        logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
+        logger.info(
+            ls.CSHARP_FRONTEND_FACTS.format(
+                calls=len(facts.call_sites),
+                partials=len(facts.partial_groups),
+                queries=len(facts.query_calls),
+                externals=len(facts.external_sites),
+            )
+        )
+
+    def _join_csharp_partials(self) -> None:
+        # Replace the directory-keyed syntactic partial grouping with the
+        # Roslyn symbol-identity groups wherever Roslyn saw the type: parts
+        # in DIFFERENT directories of one project merge (the syntactic rule
+        # deliberately under-merges there), and unrelated same-name types a
+        # syntactic merge would conflate split apart (each arrives as its
+        # own group). Group lists stay SHARED objects because the resolver
+        # compares them by identity.
+        if not self._csharp_partial_decls:
+            return
+        dp = self.factory.definition_processor
+        groups: list[list[str]] = []
+        covered: set[str] = set()
+        for decls in self._csharp_partial_decls:
+            qns = sorted({qn for d in decls if (qn := dp.csharp_type_locations.get(d))})
+            covered.update(qns)
+            if len(qns) > 1:
+                groups.append(qns)
+        for qn in covered:
+            old = dp.csharp_partial_groups.pop(qn, None)
+            if old is not None and qn in old:
+                # Also shrink the shared syntactic list so members NOT
+                # covered by Roslyn stop spanning to this part.
+                old.remove(qn)
+        for group in groups:
+            for qn in group:
+                dp.csharp_partial_groups[qn] = group
+        if groups:
+            logger.info(ls.CSHARP_FRONTEND_PARTIALS_JOINED.format(count=len(groups)))
+
+    def _emit_csharp_query_calls(self) -> None:
+        # LINQ query syntax has no invocation nodes for tree-sitter to see;
+        # each Roslyn query-operator fact becomes a direct CALLS edge, both
+        # ends resolved through the Pass-2 function-location registry (a miss
+        # on either end drops the fact rather than risk a dangling edge).
+        if not self._csharp_query_calls:
+            return
+        dp = self.factory.definition_processor
+        rel_to_module = {
+            cached_relative_path(path, self.repo_path).as_posix(): qn
+            for qn, path in dp.module_qn_to_file_path.items()
+        }
+
+        def located(rel_file: str, line: int, col: int) -> FunctionLocation | None:
+            module_qn = rel_to_module.get(rel_file)
+            if module_qn is None:
+                return None
+            return dp.function_locations.get((module_qn, line, col))
+
+        emitted = 0
+        for fact in self._csharp_query_calls:
+            caller = located(fact.caller_file, fact.caller_line, fact.caller_col)
+            target = located(fact.target_file, fact.target_line, fact.target_col)
+            if caller is None or target is None:
+                continue
+            self.ingestor.ensure_relationship_batch(
+                (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
+                cs.RelationshipType.CALLS,
+                (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
+            )
+            emitted += 1
+        if emitted:
+            logger.info(ls.CSHARP_FRONTEND_QUERY_EDGES.format(count=emitted))
+
+    def _tightest_containing_span(
+        self, rel_path: str, line: int
+    ) -> CppDefinitionSpan | None:
+        spans = self.factory.definition_processor.cpp_definition_spans
+        candidates = spans.get(rel_path)
+        if candidates is None and rel_path not in self._reparsed_file_keys:
+            # An unchanged file on an incremental run has no fresh spans;
+            # its definitions (and their lines) are unchanged too, so the
+            # graph-rehydrated spans are exact.
+            candidates = self._rehydrated_cpp_spans.get(rel_path)
+        containing = [s for s in candidates or () if s.start_line <= line <= s.end_line]
+        if not containing:
+            return None
+        return min(containing, key=lambda s: s.end_line - s.start_line)
+
     def _resolve_hybrid_macro_calls(self) -> None:
-        # (H) Attribute each hybrid macro use to the tightest enclosing
-        # (H) TREE-SITTER definition span (recorded during Pass 2), falling
-        # (H) back to the use site's Module -- the mirror of the libclang
-        # (H) frontend's own span resolution, but against the qn scheme the
-        # (H) rest of the graph actually uses.
+        # Attribute each hybrid macro use to the tightest enclosing
+        # TREE-SITTER definition span (recorded during Pass 2), falling back
+        # to the use site's Module: the mirror of the libclang frontend's own
+        # span resolution, but against the qn scheme the rest of the graph
+        # actually uses.
         if not self._pending_cpp_macro_calls:
             return
         spans = self.factory.definition_processor.cpp_definition_spans
         emitted = 0
         for call in self._pending_cpp_macro_calls:
-            # (H) The frontend parses every TU each run, but an incremental
-            # (H) run records spans only for re-parsed files. An unchanged
-            # (H) file has no spans here AND already carries its caller->macro
-            # (H) edges in the graph, so resolving it would re-attribute
-            # (H) in-function uses to the Module.
+            # The frontend parses every TU each run, but an incremental run
+            # records spans only for re-parsed files. An unchanged file has no
+            # spans here AND already carries its caller->macro edges, so
+            # resolving it would re-attribute in-function uses to the Module.
             if call.rel_path not in self._reparsed_file_keys:
                 continue
             containing = [
@@ -600,13 +541,60 @@ class GraphUpdater:
             else:
                 caller_label = cs.NodeLabel.MODULE.value
                 caller_qn = call.fallback_module_qn
-            self.ingestor.ensure_relationship_batch(
+            self._sink.ensure_relationship_batch(
                 (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, call.callee_qn),
             )
             emitted += 1
         logger.info(ls.CPP_FRONTEND_MACRO_CALLS.format(count=emitted))
+
+    def _resolve_hybrid_expansion_calls(self) -> None:
+        # A call whose text lives inside a macro body exists only after
+        # expansion, so tree-sitter never emits it. Join BOTH ends to
+        # tree-sitter definition spans: the caller by expansion site (Module
+        # fallback, like macro uses), the callee by its referenced
+        # definition's location (dropped when no span contains it, since an
+        # unindexed or template-only definition has no tree-sitter node to
+        # target).
+        if not self._pending_cpp_expansion_calls:
+            return
+        emitted = 0
+        for call in self._pending_cpp_expansion_calls:
+            if call.caller_rel_path not in self._reparsed_file_keys:
+                continue
+            callee = self._tightest_containing_span(
+                call.callee_rel_path, call.callee_line
+            )
+            if callee is None:
+                continue
+            caller = self._tightest_containing_span(
+                call.caller_rel_path, call.caller_line
+            )
+            if caller is not None:
+                caller_label: str = caller.label
+                caller_qn = caller.qualified_name
+            else:
+                caller_label = cs.NodeLabel.MODULE.value
+                caller_qn = call.fallback_module_qn
+            self._sink.ensure_relationship_batch(
+                (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
+                cs.RelationshipType.CALLS,
+                (callee.label, cs.KEY_QUALIFIED_NAME, callee.qualified_name),
+            )
+            emitted += 1
+        logger.info(ls.CPP_FRONTEND_EXPANSION_CALLS.format(count=emitted))
+
+    def _repo_has_c_or_cpp_files(self) -> bool:
+        # Cheap early-exit scan: the frontend (and its warnings) only make
+        # sense when there is C/C++ to index.
+        extensions = set(cs.CPP_EXTENSIONS) | set(cs.C_EXTENSIONS)
+        for _root, dirs, files in os.walk(self.repo_path):
+            dirs[:] = [d for d in dirs if not d.startswith(cs.SEPARATOR_DOT)]
+            # splitext, not Path(): no object allocation per repo file.
+            if any(os.path.splitext(f)[1].lower() in extensions for f in files):
+                return True
+        return False
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
         return (
@@ -615,21 +603,27 @@ class GraphUpdater:
         )
 
     def run(self, force: bool = False) -> None:
+        """Ingest the repository; ``force`` rebuilds instead of updating incrementally."""
         py_engine = self.factory.type_inference._python_type_inference
         if py_engine is not None:
             py_engine._available_classes_cache.clear()
             py_engine._return_stmt_cache.clear()
             py_engine._method_return_type_cache.clear()
             py_engine._self_assignment_cache.clear()
-        # (H) Reset per-run parse tracking so a reused updater does not reprocess
-        # (H) a previous run's files in Pass 3.
+        # Reset per-run parse tracking so a reused updater does not reprocess
+        # a previous run's files in Pass 3.
         self._parsed_files.clear()
-        self.ingestor.ensure_node_batch(
-            cs.NODE_PROJECT, {cs.KEY_NAME: self.project_name}
+        self._sink.ensure_node_batch(
+            cs.NODE_PROJECT,
+            {
+                cs.KEY_NAME: self.project_name,
+                cs.KEY_ROOT_PATH: str(self.repo_path.resolve()),
+            },
         )
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
 
         if not force and self._single_file is None:
+            self._drop_cache_if_graph_lost()
             self._warn_if_parser_changed()
 
         if not force and self._is_already_in_sync():
@@ -641,18 +635,27 @@ class GraphUpdater:
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
 
-        # (H) LIBCLANG must run before Pass 2: _process_files consumes the
-        # (H) covered-file set to skip those files.
+        # LIBCLANG must run before Pass 2: _process_files consumes the
+        # covered-file set to skip those files.
         if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID:
             self._run_cpp_frontend()
+
+        # The C# Roslyn frontend must run before Pass 2: it produces a
+        # base-classification oracle that split_csharp_bases consults while
+        # ingesting each type's INHERITS/IMPLEMENTS edges during Pass 2.
+        self._run_csharp_frontend()
 
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
 
-        # (H) HYBRID must run after Pass 2: an incremental run deletes each
-        # (H) changed file's Module subtree before re-parsing it, so macro
-        # (H) nodes and include IMPORTS emitted earlier would be deleted with
-        # (H) it and vanish until a forced rebuild.
+        # Partial groups join AFTER Pass 2: the Roslyn declaration
+        # locations resolve against the Class qns Pass 2 just registered.
+        self._join_csharp_partials()
+
+        # HYBRID must run after Pass 2: an incremental run deletes each
+        # changed file's Module subtree before re-parsing it, so macro
+        # nodes and include IMPORTS emitted earlier would be deleted with
+        # it and vanish until a forced rebuild.
         if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
             self._run_cpp_frontend()
 
@@ -664,9 +667,9 @@ class GraphUpdater:
         if contained:
             logger.info("Resolved {} deferred C++ nested containments", contained)
 
-        # (H) After resolve_deferred_cpp_methods: an out-of-class method's span
-        # (H) is recorded only once its class binding resolves, and a macro use
-        # (H) inside such a method must attribute to it, not the Module.
+        # After resolve_deferred_cpp_methods: an out-of-class method's span
+        # is recorded only once its class binding resolves, and a macro use
+        # inside such a method must attribute to it, not the Module.
         self._resolve_hybrid_macro_calls()
 
         go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
@@ -676,10 +679,14 @@ class GraphUpdater:
         if not force:
             self._rehydrate_registry_from_graph()
 
-        # (H) After rehydration so the "does a real definition exist?" check sees
-        # (H) definitions in files an incremental run did not re-parse; otherwise a
-        # (H) forward declaration whose definition lives in an unchanged file would be
-        # (H) kept as a phantom and re-fragment the class.
+        # After rehydration: an expansion call's callee join needs spans
+        # for unchanged files too.
+        self._resolve_hybrid_expansion_calls()
+
+        # After rehydration so the "does a real definition exist?" check sees
+        # definitions in files an incremental run did not re-parse; otherwise a
+        # forward declaration whose definition lives in an unchanged file is
+        # kept as a phantom and re-fragments the class.
         kept_forwards = (
             self.factory.definition_processor.resolve_deferred_forward_declarations()
         )
@@ -689,15 +696,36 @@ class GraphUpdater:
                 kept_forwards,
             )
 
-        # (H) After forward declarations so a base whose only representation is
-        # (H) a kept forward declaration still resolves to a real node.
+        # After rehydration (an incremental run's class may live in an
+        # unchanged header) and after forward declarations (a kept
+        # forward-declared TYPE also proves the name is a class, not a
+        # macro).
+        orphan_ctors = (
+            self.factory.definition_processor.resolve_deferred_cpp_artifacts()
+        )
+        if orphan_ctors:
+            logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
+
+        # After artifact resolution so a recovery-registered definition also
+        # counts; a prototype duplicating any bodied definition is dropped.
+        kept_prototypes = (
+            self.factory.definition_processor.resolve_deferred_cpp_prototypes()
+        )
+        if kept_prototypes:
+            logger.info(
+                "Registered {} C/C++ function prototypes with no definition",
+                kept_prototypes,
+            )
+
+        # After forward declarations so a base whose only representation is
+        # a kept forward declaration still resolves to a real node.
         inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()
         if inherits:
             logger.info("Resolved {} deferred C++ inheritance bases", inherits)
 
-        # (H) Same reasoning for every other language: parents resolve against
-        # (H) the full registry (including rehydrated definitions), and an
-        # (H) unresolvable parent emits no edge instead of a phantom.
+        # Same reasoning for every other language: parents resolve against
+        # the full registry (including rehydrated definitions), and an
+        # unresolvable parent emits no edge instead of a phantom.
         generic_inherits = self.factory.definition_processor.resolve_deferred_inherits()
         if generic_inherits:
             logger.info(
@@ -711,9 +739,9 @@ class GraphUpdater:
         if module_impls:
             logger.info("Resolved {} C++20 module implementation links", module_impls)
 
-        # (H) IMPORTS edges verify against every module qn this run produced
-        # (H) (files, inline modules, rehydrated unchanged files); an internal
-        # (H) target that resolves nowhere emits no edge.
+        # IMPORTS edges verify against every module qn this run produced
+        # (files, inline modules, rehydrated unchanged files); an internal
+        # target that resolves nowhere emits no edge.
         known_module_paths: dict[str, str] = {
             str(qn): path.as_posix()
             for qn, path in (
@@ -730,9 +758,9 @@ class GraphUpdater:
         if imports_emitted:
             logger.info("Emitted {} verified IMPORTS edges", imports_emitted)
 
-        # (H) Last containment step: every node-registering pass above (deferred
-        # (H) C++ methods, Go receivers, kept forward declarations) must finish
-        # (H) before parent qns are verified against the registry.
+        # Last containment step: every node-registering pass above (deferred
+        # C++ methods, Go receivers, kept forward declarations) must finish
+        # before parent qns are verified against the registry.
         linked = self.factory.definition_processor.resolve_deferred_parent_links()
         if linked:
             logger.info("Resolved {} deferred containment parents", linked)
@@ -741,26 +769,309 @@ class GraphUpdater:
         logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
 
+        # LINQ query-operator edges join AFTER Pass 3 with the complete
+        # function-location registry (both ends must be registered nodes).
+        self._emit_csharp_query_calls()
+
         self.factory.definition_processor.process_all_method_overrides()
+
+        # Deferred endpoint emission: every module is parsed now, so router
+        # mount prefixes (possibly cross-module) can resolve (issue #877).
+        self._emit_pending_endpoints()
+
+        # Call-registered routes (Express, net/http, echo, gin) become
+        # endpoints too, so JS and Go servers are linkable (issue #886).
+        self._emit_route_call_endpoints()
+
+        # ast-grep findings post-pass (opt-in FINDINGS group). Links to the
+        # Modules the definition pass already emitted, so no dangling edges.
+        self.finding_analyzer.analyze(
+            self.factory.definition_processor.module_qn_to_file_path
+        )
 
         logger.info(ls.ANALYSIS_COMPLETE)
         self.ingestor.flush_all()
+
+        self._link_endpoint_resources()
 
         self._prune_orphan_nodes()
 
         self._generate_semantic_embeddings()
 
+    def _emit_pending_endpoints(self) -> None:
+        if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
+            return
+        dp = self.factory.definition_processor
+        module_files = self._python_module_files()
+        module_asts = self._python_module_asts(module_files)
+        entries = list(dp.pending_endpoints)
+        # A mount-only incremental change re-parses just the mounting module;
+        # the unchanged handlers must still re-emit under the new prefix, so
+        # they come back from the graph. A full build queued them all already.
+        if not self._is_full_build:
+            entries.extend(
+                self._rehydrated_route_handlers(
+                    {qn for _label, qn, _decorators, _module in entries},
+                    set(module_asts),
+                )
+            )
+        if not entries:
+            return
+        self._drop_stale_handler_exposes(
+            [qn for _label, qn, _decorators, _module in entries]
+        )
+        registry = build_router_registry(module_asts)
+        for label, qn, decorators, module_qn in entries:
+            # Test modules stay in the stale-EXPOSES drop above (so a
+            # legacy graph sheds their endpoints) but emit nothing: a route
+            # spun up inside a test is not a production endpoint (#910).
+            # Rehydrated handlers live in graph-backed modules absent from
+            # the re-parse map, so the merged python-files map goes first.
+            path = module_files.get(
+                module_qn or ""
+            ) or self.factory.definition_processor.module_qn_to_file_path.get(
+                module_qn or ""
+            )
+            if self._is_test_module(path):
+                continue
+            emit_endpoints(
+                self._sink,
+                label,
+                qn,
+                decorators,
+                module_qn=module_qn,
+                prefix_resolver=registry.mount_prefixes,
+            )
+        dp.pending_endpoints.clear()
+
+    def _drop_stale_handler_exposes(self, handler_qns: list[str]) -> None:
+        # Re-emitted handlers drop their previous EXPOSES first, so a
+        # template that changed prefix loses its stale anchor and the orphan
+        # cleanup prunes the outdated endpoint node.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            self.ingestor.execute_write(
+                CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
+            )
+        except Exception:
+            logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+
+    def _emit_route_call_endpoints(self) -> None:
+        if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
+            return
+        modules = self._route_module_asts()
+        if not modules:
+            return
+        # Cleanup keyed on every scanned module, BEFORE emission:
+        # a module whose last route disappeared (or whose attribution moved)
+        # still sheds its old EXPOSES edges even though it contributes no new
+        # registrations.
+        self._drop_stale_module_exposes(sorted(modules))
+        for module_qn, (root, language, path) in modules.items():
+            # Kept in the cleanup above, skipped for emission (#910).
+            if self._is_test_module(path):
+                continue
+            for registration in collect_route_registrations(root, language):
+                label, source_qn = self._route_source(module_qn, registration)
+                identity = f"{registration.method} {registration.path}"
+                _emit_endpoint(self._sink, label, source_qn, identity)
+
+    def _drop_stale_module_exposes(self, module_qns: list[str]) -> None:
+        # Ownership is the DEFINES containment closure from each Module
+        # node, so prefix-sharing sibling modules keep their endpoints.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            self.ingestor.execute_write(
+                CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
+            )
+        except Exception:
+            logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+
+    def _route_source(
+        self, module_qn: str, registration: RouteRegistration
+    ) -> tuple[cs.NodeLabel, str]:
+        # Attribution ladder: identifier handler, else the registering call's
+        # enclosing function, else the module, so the endpoint stays anchored
+        # and the trace lands at the wiring site.
+        registry = self.factory.definition_processor.function_registry
+        candidates = []
+        if registration.handler_name:
+            candidates.append(
+                f"{module_qn}{cs.SEPARATOR_DOT}{registration.handler_name}"
+            )
+        if registration.scope:
+            candidates.append(f"{module_qn}{cs.SEPARATOR_DOT}{registration.scope}")
+        for qn in candidates:
+            node_type = registry.get(qn)
+            if node_type is not None:
+                label = (
+                    cs.NodeLabel.METHOD
+                    if node_type == NodeType.METHOD
+                    else cs.NodeLabel.FUNCTION
+                )
+                return label, qn
+        return cs.NodeLabel.MODULE, module_qn
+
+    def _route_module_asts(
+        self,
+    ) -> dict[str, tuple[Node, cs.SupportedLanguage, Path]]:
+        dp = self.factory.definition_processor
+        files: dict[str, Path] = dict(dp.module_qn_to_file_path)
+        for qn, path in self._graph_route_module_paths():
+            files.setdefault(qn, path)
+        out: dict[str, tuple[Node, cs.SupportedLanguage, Path]] = {}
+        for qn, path in files.items():
+            entry = self.ast_cache.load(path)
+            if entry is not None and entry[1] in ROUTE_CALL_LANGUAGES:
+                out[qn] = (entry[0], entry[1], path)
+        return out
+
+    def _is_test_module(self, path: Path | None) -> bool:
+        # Judged on the repo-relative POSIX path; an unknown path (a
+        # rehydrated legacy handler) stays permissive. The repo-relative cut
+        # keeps a `/tmp/pytest-*/` parent from classifying the whole run.
+        if path is None:
+            return False
+        try:
+            relative = path.relative_to(self.repo_path)
+        except ValueError:
+            # Outside the repo means the repo-relative judgement is
+            # impossible; stay permissive rather than matching absolute
+            # segments like a `/tmp/tests/` parent.
+            return False
+        return matches_test_path(relative.as_posix())
+
+    def _graph_route_module_paths(self) -> list[tuple[str, Path]]:
+        # Unchanged modules come back from the graph on an incremental run,
+        # already narrowed to route-capable extensions at the query.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        params = {
+            cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+            "extensions": list(ROUTE_MODULE_EXTENSIONS),
+        }
+        try:
+            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_MODULES, params))
+        except Exception:
+            return []
+        out: list[tuple[str, Path]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+            if isinstance(qn, str) and isinstance(rel_path, str):
+                out.append((qn, self.repo_path / rel_path))
+        return out
+
+    def _rehydrated_route_handlers(
+        self, already_pending: set[str], module_qns: set[str]
+    ) -> list[tuple[cs.NodeLabel, str, list[str], str | None]]:
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
+        try:
+            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_ROUTE_HANDLERS, params))
+        except Exception:
+            return []
+        out: list[tuple[cs.NodeLabel, str, list[str], str | None]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            entry = _route_handler_entry(row, already_pending, module_qns)
+            if entry is not None:
+                out.append(entry)
+        return out
+
+    def _python_module_files(self) -> dict[str, Path]:
+        # Re-parsed files first; on an incremental run the unchanged modules
+        # come back from the graph's Module nodes.
+        dp = self.factory.definition_processor
+        files: dict[str, Path] = {
+            qn: path
+            for qn, path in dp.module_qn_to_file_path.items()
+            if path.suffix == ".py"
+        }
+        for qn, path in self._graph_python_modules():
+            files.setdefault(qn, path)
+        return files
+
+    def _python_module_asts(self, files: Mapping[str, Path]) -> dict[str, Node]:
+        # Loaded through the disk-backed AST cache.
+        asts: dict[str, Node] = {}
+        for qn, path in files.items():
+            entry = self.ast_cache.load(path)
+            if entry is not None and entry[1] == cs.SupportedLanguage.PYTHON:
+                asts[qn] = entry[0]
+        return asts
+
+    def _graph_python_modules(self) -> list[tuple[str, Path]]:
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
+        try:
+            rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_PY_MODULES, params))
+        except Exception:
+            return []
+        out: list[tuple[str, Path]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+            if isinstance(qn, str) and isinstance(rel_path, str):
+                out.append((qn, self.repo_path / rel_path))
+        return out
+
+    def _link_endpoint_resources(self) -> None:
+        # After flush_all so this run's Resource nodes are queryable; NETWORK
+        # resources of previously indexed projects join here too, which is
+        # what makes client-URL-to-endpoint edges cross-project (issue #425).
+        # The raw ingestor bypasses the capture filter, so gate explicitly.
+        if not self.capture.rel_enabled(cs.RelationshipType.RESOLVES_TO):
+            return
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        created = link_endpoints(self.ingestor)
+        if created:
+            logger.info("Resolved {} client request URLs to endpoints", created)
+            self.ingestor.flush_all()
+        # Contract files name the operations the generated artefacts on both
+        # sides implement, so they anchor after the artefacts exist.
+        anchored = link_contracts(
+            self.ingestor,
+            self.repo_path,
+            self.project_name,
+            self.exclude_paths,
+            self.unignore_paths,
+        )
+        if anchored:
+            logger.info("Anchored {} artefacts to contract operations", anchored)
+            self.ingestor.flush_all()
+
     def _rehydrate_registry_from_graph(self) -> None:
-        # (H) Incremental runs populate the function registry only from re-parsed
-        # (H) files. Read every definition's qualified name back from the graph and
-        # (H) re-register the ones missing locally, so calls and instantiations
-        # (H) into files that were not re-parsed still resolve and their edges are
-        # (H) re-emitted. Without this, editing one file drops cross-file CALLS /
-        # (H) INSTANTIATES into any unchanged file (issue #532, outbound half).
+        # Incremental runs populate the function registry only from re-parsed
+        # files. Read every definition's qualified name back from the graph and
+        # re-register the ones missing locally, so calls and instantiations
+        # into files that were not re-parsed still resolve and their edges are
+        # re-emitted. Without this, editing one file drops cross-file CALLS /
+        # INSTANTIATES into any unchanged file (issue #532, outbound half).
         if not isinstance(self.ingestor, QueryProtocol):
             return
         added = 0
-        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS):
+        project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
+        try:
+            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params)
+        except Exception:
+            # Rehydration completes cross-file resolution for files this run
+            # did not re-parse: a FULL build parsed them all, so it degrades
+            # to the freshly parsed registry; an incremental run would drop
+            # cross-file edges, so the outage aborts it.
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
             if not isinstance(qn, str) or not isinstance(label, str):
@@ -772,28 +1083,50 @@ class GraphUpdater:
             except ValueError:
                 continue
             self.function_registry[qn] = node_type
-            # (H) Restore the property-name set for unchanged files: property-dispatch
-            # (H) resolution (`obj.prop`) consults it, so a re-parsed file's call to a
-            # (H) @property defined elsewhere would otherwise drop vs a clean index.
+            # Restore the property-name set for unchanged files: property-dispatch
+            # resolution (`obj.prop`) consults it, so a re-parsed file's call to a
+            # @property defined elsewhere would otherwise drop.
             if row.get(cs.KEY_IS_PROPERTY):
                 self.function_registry.mark_property(qn)
-            # (H) Restore the macro-namespace set for unchanged files: the Rust
-            # (H) macro/fn gate consults it, so a re-parsed file's invocation of
-            # (H) a macro defined elsewhere would otherwise drop vs a clean index.
+            # Restore the macro-namespace set for unchanged files: the Rust
+            # macro/fn gate consults it, so a re-parsed file's invocation of a
+            # macro defined elsewhere would otherwise drop.
             if row.get(cs.KEY_IS_MACRO):
                 self.factory.definition_processor.macro_qns.add(qn)
-            # (H) Record the defining file so _is_cpp_defined can language-check
-            # (H) rehydrated candidates (deferred C++ INHERITS resolution runs
-            # (H) after this and must reach bases in UNCHANGED headers).
+            # Record the defining file so _is_cpp_defined can language-check
+            # rehydrated candidates (deferred C++ INHERITS resolution runs
+            # after this and must reach bases in UNCHANGED headers).
             if isinstance(path := row.get(cs.KEY_PATH), str):
                 self.factory.definition_processor.rehydrated_definition_paths[qn] = path
+                # Spans for hybrid expansion-call callee joins: only C/C++
+                # Function/Method rows carry a usable span.
+                start = row.get(cs.KEY_START_LINE)
+                end = row.get(cs.KEY_END_LINE)
+                if (
+                    node_type in (NodeType.FUNCTION, NodeType.METHOD)
+                    and isinstance(start, int)
+                    and isinstance(end, int)
+                    and os.path.splitext(path)[1].lower() in _CPP_SPAN_FILE_EXTENSIONS
+                ):
+                    self._rehydrated_cpp_spans.setdefault(path, []).append(
+                        CppDefinitionSpan(start, end, node_type.value, qn)
+                    )
             added += 1
         if added:
             logger.info(ls.REGISTRY_REHYDRATED, count=added)
-        # (H) Module qns from unchanged files: deferred import verification and
-        # (H) C++20 module-impl resolution must count them as real targets, or
-        # (H) an incremental run would drop edges a clean index emits.
-        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS):
+        # Module qns from unchanged files: deferred import verification and
+        # C++20 module-impl resolution must count them as real targets, or
+        # an incremental run would drop edges a clean index emits.
+        try:
+            module_rows = self.ingestor.fetch_all(
+                cs.CYPHER_ALL_MODULE_QNS, project_params
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        for row in module_rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
             if not isinstance(qn, str) or not isinstance(label, str):
@@ -804,20 +1137,59 @@ class GraphUpdater:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
 
+    def _seed_module_qns_from_graph(self, eligible_paths: set[str]) -> None:
+        # Cross-language module-qn disambiguation (definition_processor.
+        # _disambiguate_module_qn) only sees files processed this run. On an
+        # incremental ADD of a file whose basename collides with an already-
+        # indexed sibling of another language (shapes.rs owns proj.shapes,
+        # then shapes.cpp is added), the added file would re-claim the bare qn
+        # and overwrite the existing module under the qualified_name
+        # constraint. Seed the qn->file map from the graph BEFORE processing so
+        # the disambiguator sees taken qns; a re-parsed file keeps its bare qn.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        # Only incremental runs seed (full builds process every file), so a
+        # failed read here always aborts: a missing seed can silently let an
+        # added file overwrite a sibling module's qn.
+        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not isinstance(qn, str) or not isinstance(path, str) or not path:
+                continue
+            if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+                continue
+            # Only seed modules whose file survives this run (still eligible).
+            # A file deleted OR newly excluded this cycle is gone from
+            # eligible_paths, so a same-basename ADD (delete shapes.rs + add
+            # shapes.cpp) takes the bare qn a clean index would give it.
+            if path not in eligible_paths:
+                continue
+            module_map.setdefault(qn, self.repo_path / path)
+
     def _rehydrate_class_inheritance_from_graph(self) -> None:
-        # (H) Incremental runs rebuild class_inheritance only from re-parsed files.
-        # (H) Restore the child->bases map for classes defined in files that were
-        # (H) not re-parsed, so protocol dispatch and inherited-method resolution
-        # (H) work in Pass 3 (issue #532 residual). Only fill entries missing
-        # (H) locally: a re-parsed class already has its fresh, correctly ordered
-        # (H) bases, so we must not overwrite or duplicate them. CYPHER_ALL_INHERITS
-        # (H) is ordered by base_index, so a rehydrated class's bases keep their
-        # (H) original source order (multiple inheritance resolves the same base a
-        # (H) clean index would).
+        # Incremental runs rebuild class_inheritance only from re-parsed files.
+        # Restore the child->bases map for classes defined in files that were
+        # not re-parsed, so protocol dispatch and inherited-method resolution
+        # work in Pass 3 (issue #532 residual). Only fill entries missing
+        # locally: a re-parsed class already has its fresh, correctly ordered
+        # bases, so we must not overwrite or duplicate them. CYPHER_ALL_INHERITS
+        # is ordered by base_index, so a rehydrated class's bases keep their
+        # original source order (multiple inheritance resolves the same base a
+        # clean index would).
         if not isinstance(self.ingestor, QueryProtocol):
             return
         class_inheritance = self.factory.definition_processor.class_inheritance
-        rows = self.ingestor.fetch_all(cs.CYPHER_ALL_INHERITS)
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_ALL_INHERITS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
         for child, bases in self._rehydrated_bases_by_child(
             rows, class_inheritance
         ).items():
@@ -827,16 +1199,15 @@ class GraphUpdater:
     def _rehydrated_bases_by_child(
         rows: list[ResultRow], existing: dict[str, list[str]]
     ) -> dict[str, list[str]]:
-        # (H) Group persisted INHERITS rows into child -> ordered bases, restoring
-        # (H) the original source order from base_index. Skip children already
-        # (H) present locally (freshly re-parsed). A class with more than one base
-        # (H) needs a reliable order (method resolution / override attribution are
-        # (H) first-match-wins over the base list); if any of its edges lacks a
-        # (H) base_index -- e.g. an INHERITS relationship written by an older index
-        # (H) before base_index existed -- the order cannot be trusted, so that
-        # (H) class is NOT rehydrated and falls back to name-based resolution rather
-        # (H) than risk binding to the wrong base. Single-base classes are
-        # (H) order-independent and always safe.
+        # Group persisted INHERITS rows into child -> ordered bases, restoring
+        # source order from base_index. Skip children already present locally
+        # (freshly re-parsed). A class with more than one base needs a reliable
+        # order (method resolution / override attribution are first-match-wins
+        # over the base list); if any of its edges lacks a base_index (e.g. an
+        # INHERITS written by an older index before base_index existed) the
+        # order cannot be trusted, so that class is NOT rehydrated and falls
+        # back to name-based resolution rather than risk the wrong base.
+        # Single-base classes are order-independent and always safe.
         collected: dict[str, list[tuple[int | None, str]]] = {}
         for row in rows:
             child = row.get(cs.KEY_CHILD_QN)
@@ -857,21 +1228,31 @@ class GraphUpdater:
         return result
 
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
-        # (H) Record the reference edges that unchanged files point at the
-        # (H) re-indexed files, BEFORE those files' subtrees (and thus the inbound
-        # (H) edges) are deleted. Capturing and restoring the exact edges avoids
-        # (H) re-resolving the callers, whose resolution would diverge from a clean
-        # (H) index (cgr resolution is context-sensitive).
+        # Record the reference edges unchanged files point at the re-indexed
+        # files, BEFORE those files' subtrees (and thus the inbound edges) are
+        # deleted. Restoring the exact edges avoids re-resolving the callers,
+        # whose resolution would diverge from a clean index (cgr resolution is
+        # context-sensitive).
         if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
             return []
-        return self.ingestor.fetch_all(
-            cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
-        )
+        try:
+            return self.ingestor.fetch_all(
+                cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
+            )
+        except Exception:
+            # A FULL build re-parses every caller, so nothing is lost and the
+            # sync may continue; an incremental run cannot re-resolve edges
+            # from files it will not parse, so the outage must abort it
+            # rather than silently drop them.
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.INBOUND_CAPTURE_FAILED)
+            return []
 
     def _restore_inbound_edges(self, captured: list[ResultRow]) -> None:
-        # (H) Re-emit each captured inbound edge whose target still exists after the
-        # (H) re-index. A target that was renamed or removed is correctly left
-        # (H) without its stale inbound edge, matching a clean re-index.
+        # Re-emit each captured inbound edge whose target still exists after the
+        # re-index. A target that was renamed or removed is correctly left
+        # without its stale inbound edge, matching a clean re-index.
         if not captured:
             return
         module_label = cs.NodeLabel.MODULE.value
@@ -896,7 +1277,7 @@ class GraphUpdater:
             target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
             if caller_key is None or target_key is None:
                 continue
-            self.ingestor.ensure_relationship_batch(
+            self._sink.ensure_relationship_batch(
                 (caller_label, caller_key, caller_qn),
                 rel,
                 (target_label, target_key, target_qn),
@@ -919,6 +1300,9 @@ class GraphUpdater:
             else relative_path.with_suffix("").parts
         )
         module_qn_prefix = cs.SEPARATOR_DOT.join([self.project_name, *path_parts])
+        self.factory.import_processor.commonjs_direct_exports.pop(
+            module_qn_prefix, None
+        )
 
         qns_to_remove = set()
 
@@ -937,6 +1321,39 @@ class GraphUpdater:
                 self.simple_name_lookup[simple_name] = new_qn_set
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
+    def _existing_module_paths(self) -> frozenset[str] | None:
+        """Paths of this project's Module nodes already in the graph.
+
+        Empty when the sink has no query surface (offline writers, unit
+        fakes) or answers with something that is not rows: such a sink holds
+        no readable state worth deleting first. None when the sink CLAIMS
+        readability but the query itself failed: the graph state is unknown,
+        and treating it as empty would skip every delete and recreate the
+        stale accumulation this probe exists to prevent.
+        """
+        fetch_all = getattr(self.ingestor, "fetch_all", None)
+        if fetch_all is None:
+            return frozenset()
+        try:
+            rows = fetch_all(
+                cs.CYPHER_PROJECT_MODULE_PATHS,
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + ".",
+                },
+            )
+        except Exception:
+            return None
+        try:
+            return frozenset(
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_PATH), str)
+                and not path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+            )
+        except (TypeError, AttributeError):
+            return frozenset()
+
     def _delete_module_entities(self, file_key: str) -> None:
         """Remove a changed/deleted file's Module subtree from the graph.
 
@@ -948,7 +1365,12 @@ class GraphUpdater:
         """
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(
-                cs.CYPHER_DELETE_MODULE, {cs.KEY_PATH: file_key}
+                cs.CYPHER_DELETE_MODULE,
+                {
+                    cs.KEY_PATH: file_key,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + ".",
+                },
             )
 
     def _diff_dir_against_cache(
@@ -1029,13 +1451,21 @@ class GraphUpdater:
 
     def _should_keep_dir(self, dirname: str, dir_prefix: str) -> bool:
         rel_dir = f"{dir_prefix}{dirname}"
-        # (H) an explicit exclude can never be rescued by unignore (excludes win
-        # (H) at the file level too), so prune the subtree outright.
+        # an explicit exclude can never be rescued by unignore (excludes win
+        # at the file level too), so prune the subtree outright.
         if self.exclude_paths and matches_ignore_patterns(
             f"{rel_dir}/", self.exclude_paths
         ):
             return False
         if dirname not in cs.IGNORE_PATTERNS:
+            return True
+        # Cargo's src/bin/ holds first-party binaries, not build output;
+        # mirrors has_ignored_dir_part.
+        if (
+            dirname == cs.DIR_BIN
+            and dir_prefix.rstrip(cs.SEPARATOR_SLASH).rsplit(cs.SEPARATOR_SLASH, 1)[-1]
+            == cs.DIR_SRC
+        ):
             return True
         return bool(
             self.unignore_paths
@@ -1044,16 +1474,55 @@ class GraphUpdater:
             )
         )
 
+    def _drop_cache_if_graph_lost(self) -> None:
+        """Discard the hash cache when the graph no longer holds this project.
+
+        The cache lives inside the repo, but the database is shared: cleaning
+        the database while indexing another repo, an MCP wipe_database, or a
+        fresh Memgraph instance voids the cache without touching it, and an
+        incremental sync that trusts it would skip every file and leave the
+        project silently empty.
+        """
+        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        if not cache_path.is_file():
+            return
+        fetch_all = getattr(self.ingestor, "fetch_all", None)
+        if fetch_all is None:
+            return
+        try:
+            rows = fetch_all(
+                cs.CYPHER_COUNT_PROJECT_MODULES,
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + ".",
+                },
+            )
+        except Exception:
+            # A graph that cannot answer (connection refused, a sink that
+            # rejects reads) cannot invalidate the cache: fail open.
+            return
+        try:
+            # count() always yields exactly one row; anything else means the
+            # sink did not really answer and cannot invalidate the cache.
+            count = int(rows[0]["count"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            return
+        if count:
+            return
+        logger.warning(ls.HASH_CACHE_ORPHANED.format(project=self.project_name))
+        cache_path.unlink(missing_ok=True)
+        (self.repo_path / cs.DIR_MTIMES_FILENAME).unlink(missing_ok=True)
+
     def _warn_if_parser_changed(self) -> None:
-        # (H) No hash cache means a full build is coming: nothing to compare.
+        # No hash cache means a full build is coming: nothing to compare.
         if not (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
             return
         stored = _load_parser_fingerprint(
             self.repo_path / cs.PARSER_FINGERPRINT_FILENAME
         )
-        # (H) A missing stamp on an existing graph means it was built by an
-        # (H) unknown (pre-fingerprint) parser: treat it as stale too, without
-        # (H) paying for a fingerprint computation that cannot match.
+        # A missing stamp on an existing graph means it was built by an
+        # unknown (pre-fingerprint) parser: treat it as stale too, without
+        # paying for a fingerprint computation that cannot match.
         if stored is None or stored != compute_parser_fingerprint():
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
 
@@ -1157,6 +1626,7 @@ class GraphUpdater:
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
         is_full_build = (force or not old_hashes) and self._single_file is None
+        self._is_full_build = is_full_build
         cache_mtime = cache_path.stat().st_mtime if cache_path.is_file() else 0.0
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
@@ -1165,10 +1635,24 @@ class GraphUpdater:
         _touch_empty_json(dir_mtimes_path)
 
         eligible_files = self._collect_eligible_files()
+
+        if not is_full_build:
+            self._seed_module_qns_from_graph({key for _fp, key in eligible_files})
+        # A full build can still land on a graph that already holds this
+        # project: the cache lives in the repo working tree, the graph does
+        # not, so a fresh clone of an indexed repo (or a force run) parses
+        # every file as "new" while the previous parse's state is still
+        # there. A file whose Module already exists must take the
+        # delete-before-reingest path or renamed-away symbols and their
+        # CALLS/REFERENCES edges accumulate alongside the fresh parse.
+        preexisting_paths = (
+            self._existing_module_paths() if is_full_build else frozenset()
+        )
         new_hashes: FileHashCache = {}
         skipped_count = 0
         changed_count = 0
         unreadable_count = 0
+        unreadable_keys: set[str] = set()
 
         current_file_keys: set[str] = set()
 
@@ -1181,6 +1665,7 @@ class GraphUpdater:
                     file_mtime = filepath.stat().st_mtime
                 except OSError:
                     unreadable_count += 1
+                    unreadable_keys.add(file_key)
                     continue
                 if file_mtime <= cache_mtime:
                     new_hashes[file_key] = old_hashes[file_key]
@@ -1191,6 +1676,7 @@ class GraphUpdater:
             hashed = _hash_file_with_bytes(filepath)
             if hashed is None:
                 unreadable_count += 1
+                unreadable_keys.add(file_key)
                 continue
             current_hash, file_bytes = hashed
 
@@ -1206,18 +1692,22 @@ class GraphUpdater:
                 skipped_count += 1
                 continue
 
-            is_new = file_key not in old_hashes
+            is_new = (
+                file_key not in old_hashes
+                and preexisting_paths is not None
+                and file_key not in preexisting_paths
+            )
             if not is_new:
                 logger.debug(ls.FILE_HASH_CHANGED, path=file_key)
             else:
                 logger.debug(ls.FILE_HASH_NEW, path=file_key)
             changed_entries.append((filepath, file_key, is_new, file_bytes))
 
-        # (H) Before deleting any changed file's subtree (which removes the inbound
-        # (H) CALLS/IMPORTS/INSTANTIATES edges incident on it), capture those edges
-        # (H) so they can be restored verbatim afterwards (issue #532, inbound
-        # (H) half). New files have no prior inbound edges, so only re-indexed
-        # (H) (changed, non-new) files matter.
+        # Before deleting any changed file's subtree (which removes the inbound
+        # CALLS/IMPORTS/INSTANTIATES edges incident on it), capture those edges
+        # so they can be restored verbatim afterwards (issue #532, inbound
+        # half). New files have no prior inbound edges, so only re-indexed
+        # (changed, non-new) files matter.
         reindexed_keys = sorted(
             file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
         )
@@ -1263,7 +1753,20 @@ class GraphUpdater:
                     description=ls.PROGRESS_FILES_PROCESSED.format(count=changed_count),
                 )
 
-        deleted_keys = set(old_hashes.keys()) - current_file_keys
+        # On a cacheless rebuild old_hashes cannot name what disappeared, so
+        # the graph's own module paths join the reconciliation: a file that
+        # was deleted OR newly excluded since the previous index is absent
+        # from current_file_keys and its subtree must go. (Disk-deleted files
+        # are also swept by orphan pruning; excluded ones still exist on disk
+        # and only this reconciliation catches them.) A file that merely
+        # could not be READ this run still exists: sweeping it would erase
+        # live state over a transient error, so unreadable keys are exempt.
+        graph_paths = (
+            preexisting_paths if preexisting_paths is not None else frozenset()
+        )
+        deleted_keys = (
+            (set(old_hashes.keys()) | graph_paths) - current_file_keys - unreadable_keys
+        )
         if deleted_keys:
             logger.info(ls.INCREMENTAL_DELETED, count=len(deleted_keys))
             for deleted_key in deleted_keys:
@@ -1271,8 +1774,11 @@ class GraphUpdater:
                 self.remove_file_from_state(deleted_path)
                 self._delete_module_entities(deleted_key)
                 if isinstance(self.ingestor, QueryProtocol):
+                    # Keyed on the absolute path: a sibling project's File
+                    # node can share the relative path (issue #897).
                     self.ingestor.execute_write(
-                        cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: deleted_key}
+                        cs.CYPHER_DELETE_FILE,
+                        {cs.KEY_PATH: deleted_path.resolve().as_posix()},
                     )
 
         self._restore_inbound_edges(captured_inbound)
@@ -1286,9 +1792,9 @@ class GraphUpdater:
 
         _save_hash_cache(cache_path, new_hashes)
         _save_dir_mtimes(dir_mtimes_path, self._collected_dir_mtimes)
-        # (H) Stamp only full builds: re-stamping an incremental run would
-        # (H) silence the staleness warning while unchanged files still carry
-        # (H) the old parser's edges.
+        # Stamp only full builds: re-stamping an incremental run would
+        # silence the staleness warning while unchanged files still carry
+        # the old parser's edges.
         if is_full_build:
             _save_parser_fingerprint(
                 self.repo_path / cs.PARSER_FINGERPRINT_FILENAME,
@@ -1331,8 +1837,8 @@ class GraphUpdater:
         if self._cpp_frontend_covered:
             rel = cached_relative_path(filepath, self.repo_path).as_posix()
             if rel in self._cpp_frontend_covered:
-                # (H) The libclang frontend already emitted this file's
-                # (H) definitions; keep only the generic File node.
+                # The libclang frontend already emitted this file's
+                # definitions; keep only the generic File node.
                 self.factory.structure_processor.process_generic_file(
                     filepath, filepath.name
                 )
@@ -1358,17 +1864,26 @@ class GraphUpdater:
                 self._parsed_files.append((filepath, language))
         elif self._is_dependency_file(filepath.name, filepath):
             self.factory.definition_processor.process_dependencies(filepath)
+        elif self.ast_grep_tier.handles(filepath.suffix):
+            self.ast_grep_tier.process_file(
+                filepath, self.factory.structure_processor.structural_elements
+            )
 
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
 
-    def _ast_for(self, file_path: Path, language: cs.SupportedLanguage) -> Node | None:
-        # (H) Return the file's AST from the bounded cache, or re-parse from disk
-        # (H) when it was evicted. Evicted files carry stale captures (nodes from
-        # (H) the discarded tree), so drop them: downstream recomputes captures
-        # (H) from this fresh tree. Re-caching keeps the cache bounded across the
-        # (H) two Pass-3 loops.
-        if file_path in self.ast_cache:
-            return self.ast_cache[file_path][0]
+    def _ast_for(self, file_path: Path) -> Node | None:
+        entry = self.ast_cache.load(file_path)
+        return entry[0] if entry else None
+
+    def _load_ast_from_disk(
+        self, file_path: Path
+    ) -> tuple[Node, cs.SupportedLanguage] | None:
+        # BoundedASTCache loader: re-parse an evicted file. Evicted files carry
+        # stale captures (nodes from the discarded tree), so drop them:
+        # downstream recomputes captures from the fresh tree.
+        language = get_language_for_extension(file_path.suffix)
+        if language is None or language not in self.parsers:
+            return None
         parser = self.queries[language].get(cs.KEY_PARSER)
         if parser is None:
             return None
@@ -1378,17 +1893,21 @@ class GraphUpdater:
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
             return None
         root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
-        self.ast_cache[file_path] = (root_node, language)
         self.factory._func_class_captures_cache.pop(file_path, None)
-        return root_node
+        return (root_node, language)
 
     def _process_function_calls(self) -> None:
+        # A reused updater (watch mode, a second run) re-parses files; the
+        # JS receiver-binding index holds nodes from the PREVIOUS parse,
+        # whose spans would resolve against the refreshed registry onto
+        # whatever now sits at the old line/column.
+        self.factory.call_processor.reset_js_receiver_bindings()
         captures_cache = self.factory._func_class_captures_cache
-        # (H) Iterate every file parsed this run, not the bounded AST cache: on a
-        # (H) large repo the cache evicts most files, and iterating it drops their
-        # (H) calls (a whole module ends up with zero CALLS edges).
+        # Iterate every file parsed this run, not the bounded AST cache: on a
+        # large repo the cache evicts most files, and iterating it drops their
+        # calls (a whole module ends up with zero CALLS edges).
         for file_path, language in self._parsed_files:
-            root_node = self._ast_for(file_path, language)
+            root_node = self._ast_for(file_path)
             if root_node is None:
                 continue
             self.factory.call_processor.collect_callable_field_bindings(
@@ -1398,12 +1917,12 @@ class GraphUpdater:
                 self.queries,
                 func_class_captures_cache=captures_cache,
             )
-        # (H) Bindings are pending until every file's ctor metadata (param order,
-        # (H) param->attribute renames) is in: a construction site may be scanned
-        # (H) before the file defining its class.
+        # Bindings are pending until every file's ctor metadata (param order,
+        # param->attribute renames) is in: a construction site may be scanned
+        # before the file defining its class.
         self.factory.call_processor.finalize_callable_field_bindings()
         for file_path, language in self._parsed_files:
-            root_node = self._ast_for(file_path, language)
+            root_node = self._ast_for(file_path)
             if root_node is None:
                 continue
             if captures_cache is not None and file_path in captures_cache:
@@ -1420,6 +1939,8 @@ class GraphUpdater:
                 func_class_captures_cache=captures_cache,
             )
         self.factory.call_processor.finalize_callable_param_flow()
+        self.factory.call_processor.finalize_flow()
+        self.factory.call_processor.finalize_dispatch()
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""
@@ -1441,8 +1962,16 @@ class GraphUpdater:
             (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, "Folder"),
         ]
 
+        read_failed = False
         for query_all, delete_query, label in prune_specs:
-            rows = self.ingestor.fetch_all(query_all)
+            try:
+                rows = self.ingestor.fetch_all(query_all)
+            except Exception:
+                # A graph that cannot be read cannot be pruned safely; the
+                # next healthy run sweeps whatever this one left behind.
+                logger.warning(ls.PRUNE_QUERY_FAILED, label=label)
+                read_failed = True
+                continue
             orphans = []
             for r in rows:
                 path = r.get("path")
@@ -1452,25 +1981,51 @@ class GraphUpdater:
                     continue
                 abs_path = r.get("absolute_path")
                 qn = r.get("qualified_name", "")
-                if isinstance(abs_path, str) and not abs_path.startswith(repo_abs):
+                # Component-aware containment: a bare prefix test would also
+                # match a sibling root such as <repo>-old (issue #897).
+                if isinstance(abs_path, str) and not (
+                    abs_path == repo_abs or abs_path.startswith(repo_abs + "/")
+                ):
                     continue
                 if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
                     continue
                 if not (self.repo_path / path).exists():
-                    orphans.append(path)
+                    # File/Folder deletes key on the absolute path: a sibling
+                    # project's node can share the relative path (issue #897).
+                    key = (
+                        abs_path
+                        if isinstance(abs_path, str) and abs_path
+                        else (self.repo_path / path).resolve().as_posix()
+                    )
+                    orphans.append((path, key))
 
             if orphans:
                 logger.info(ls.PRUNE_FOUND, count=len(orphans), label=label)
-                for orphan_path in orphans:
+                for orphan_path, orphan_key in orphans:
                     logger.debug(ls.PRUNE_DELETING, label=label, path=orphan_path)
-                    self.ingestor.execute_write(
-                        delete_query, {cs.KEY_PATH: orphan_path}
-                    )
+                    if delete_query == cs.CYPHER_DELETE_MODULE:
+                        # Module deletes are project-scoped; a sibling
+                        # project's module can share the relative path.
+                        self._delete_module_entities(orphan_path)
+                    else:
+                        self.ingestor.execute_write(
+                            delete_query, {cs.KEY_PATH: orphan_key}
+                        )
                 total_pruned += len(orphans)
 
-        # (H) Drop external import-target modules that no module imports anymore,
-        # (H) e.g. an imported name renamed/removed on an incremental rebuild.
+        if read_failed:
+            # The same outage that broke the path reads would break (or act
+            # on stale state through) the cleanup below; leave everything
+            # for the next healthy run.
+            return
+
+        # Drop external import-target modules that no module imports anymore,
+        # e.g. an imported name renamed/removed on an incremental rebuild.
         self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+
+        # Drop shared Resource nodes whose component no longer reaches any
+        # code node, e.g. an endpoint whose route changed on a rebuild.
+        prune_unanchored_resources(self.ingestor)
 
         if total_pruned:
             logger.info(ls.PRUNE_COMPLETE, count=total_pruned)

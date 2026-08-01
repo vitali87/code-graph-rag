@@ -1,0 +1,49 @@
+# ast-grep design-pattern rules for Python (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: python
+extensions: [.py]
+rules:
+  - id: singleton
+    message: "Singleton: class holds a private _instance"
+    rule:
+      kind: class_definition
+      has:
+        pattern: "_instance = None"
+        stopBy: end
+  - id: context_manager
+    message: "Context manager: class defines __enter__ and __exit__"
+    rule:
+      kind: class_definition
+      all:
+        - has:
+            kind: function_definition
+            has: { field: name, regex: '^__enter__$' }
+            stopBy: end
+        - has:
+            kind: function_definition
+            has: { field: name, regex: '^__exit__$' }
+            stopBy: end
+  - id: iterator
+    message: "Iterator: class defines __iter__ and __next__"
+    rule:
+      kind: class_definition
+      all:
+        - has:
+            kind: function_definition
+            has: { field: name, regex: '^__iter__$' }
+            stopBy: end
+        - has:
+            kind: function_definition
+            has: { field: name, regex: '^__next__$' }
+            stopBy: end
+  - id: abstract_base
+    message: "Abstract base class: inherits ABC"
+    rule:
+      kind: class_definition
+      has: { field: superclasses, regex: 'ABC' }
+  - id: factory_function
+    message: "Factory function: name starts with make_/create_/build_"
+    rule:
+      kind: function_definition
+      has: { field: name, regex: '^(make|create|build)_' }

@@ -1,6 +1,6 @@
-# (H) Covers the Go structure oracle harness (evals/oracles/go_ast.go +
-# (H) evals/go_l1.py): the go/ast oracle is authoritative ground truth, and cgr's
-# (H) captured Go nodes are graded against it on (kind, file, start_line).
+# Covers the Go structure oracle harness (evals/oracles/go_ast.go +
+# evals/go_l1.py): the go/ast oracle is authoritative ground truth, and cgr's
+# captured Go nodes are graded against it on (kind, file, start_line).
 from __future__ import annotations
 
 from pathlib import Path
@@ -63,7 +63,7 @@ def test_oracle_labels_go_declarations(tmp_path: Path) -> None:
     assert _names(oracle, cs.NodeLabel.INTERFACE) == {"Shape"}
     assert _names(oracle, cs.NodeLabel.TYPE) == {"Celsius"}
     assert _names(oracle, cs.NodeLabel.FUNCTION) == {"NewPoint"}
-    # (H) go/ast knows Area has a receiver, so it is a Method, not a Function.
+    # go/ast knows Area has a receiver, so it is a Method, not a Function.
     assert _names(oracle, cs.NodeLabel.METHOD) == {"Area"}
 
 

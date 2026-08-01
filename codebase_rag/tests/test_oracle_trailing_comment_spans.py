@@ -1,10 +1,10 @@
-# (H) Python's ast ends a def at its last STATEMENT; a trailing comment
-# (H) inside the body (thrift's THttpServer.shutdown ends with a commented-out
-# (H) call) is invisible to it, while tree-sitter's block extends over the
-# (H) comment. The comment lexically belongs to the suite, so the oracle
-# (H) extends a def's end over trailing comment lines indented deeper than
-# (H) the def itself; a comment at the def's own indentation is a sibling
-# (H) and must not extend the span.
+# Python's ast ends a def at its last STATEMENT; a trailing comment
+# inside the body (thrift's THttpServer.shutdown ends with a commented-out
+# call) is invisible to it, while tree-sitter's block extends over the
+# comment. The comment lexically belongs to the suite, so the oracle
+# extends a def's end over trailing comment lines indented deeper than
+# the def itself; a comment at the def's own indentation is a sibling
+# and must not extend the span.
 from __future__ import annotations
 
 from pathlib import Path
@@ -35,5 +35,5 @@ def test_trailing_body_comment_extends_span(tmp_path: Path) -> None:
     }
     assert ends[("Method", 5)] == 7, ends
     assert ends[("Method", 10)] == 11, ends
-    # (H) The class block includes its last member's trailing extent.
+    # The class block includes its last member's trailing extent.
     assert ends[("Class", 1)] == 11, ends

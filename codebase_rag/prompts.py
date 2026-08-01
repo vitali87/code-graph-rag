@@ -2,15 +2,18 @@ from typing import TYPE_CHECKING
 
 from .cypher_queries import (
     CYPHER_EXAMPLE_CLASS_METHODS,
+    CYPHER_EXAMPLE_CODE_SMELLS,
     CYPHER_EXAMPLE_CONTENT_BY_PATH,
     CYPHER_EXAMPLE_DECORATED_FUNCTIONS,
     CYPHER_EXAMPLE_FILES_IN_FOLDER,
     CYPHER_EXAMPLE_FIND_FILE,
+    CYPHER_EXAMPLE_FIND_PATTERN,
     CYPHER_EXAMPLE_KEYWORD_SEARCH,
     CYPHER_EXAMPLE_LIMIT_ONE,
     CYPHER_EXAMPLE_PROJECT_SCOPED,
     CYPHER_EXAMPLE_PYTHON_FILES,
     CYPHER_EXAMPLE_README,
+    CYPHER_EXAMPLE_SECURITY_ISSUES,
     CYPHER_EXAMPLE_TASKS,
 )
 from .schema_builder import GRAPH_SCHEMA_DEFINITION
@@ -205,7 +208,7 @@ def build_rag_orchestrator_prompt(
 
 
 def _cypher_literal(name: str) -> str:
-    # (H) Escape for a single-quoted Cypher literal so apostrophe names stay valid.
+    # Escape for a single-quoted Cypher literal so apostrophe names stay valid.
     return name.replace("\\", "\\\\").replace("'", "\\'")
 
 
@@ -287,16 +290,25 @@ cypher// "show all classes in myproject" (multi-project database)
 // Filter on the qualified_name prefix to keep results within one project.
 {CYPHER_EXAMPLE_PROJECT_SCOPED}
 
+**Pattern: Design Patterns, Code Smells & Security Issues (ast-grep findings)**
+cypher// "find all Singleton classes" / "which patterns are used"
+// Finding nodes (Pattern/CodeSmell/SecurityIssue) hang off a Module; name is the rule id.
+{CYPHER_EXAMPLE_FIND_PATTERN}
+cypher// "show functions with SQL injection risk" / "list security issues"
+{CYPHER_EXAMPLE_SECURITY_ISSUES}
+cypher// "find code smells" / "show bare excepts"
+{CYPHER_EXAMPLE_CODE_SMELLS}
+
 **4. Output Format**
 Provide only the Cypher query.
 """
 
 
-# (H) Backwards-compatible default (no project scope injected)
+# Backwards-compatible default (no project scope injected)
 CYPHER_SYSTEM_PROMPT = build_cypher_system_prompt()
 
 
-# (H) Stricter prompt for less capable open-source/local models (e.g., Ollama)
+# Stricter prompt for less capable open-source/local models (e.g., Ollama)
 def build_local_cypher_system_prompt(active_projects: list[str] | None = None) -> str:
     return f"""
 You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher query. Do not add explanations or markdown.
@@ -376,7 +388,7 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
 """
 
 
-# (H) Backwards-compatible default (no project scope injected)
+# Backwards-compatible default (no project scope injected)
 LOCAL_CYPHER_SYSTEM_PROMPT = build_local_cypher_system_prompt()
 
 

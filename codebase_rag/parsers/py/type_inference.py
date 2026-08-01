@@ -19,7 +19,7 @@ from .expression_analyzer import PythonExpressionAnalyzerMixin
 from .variable_analyzer import PythonVariableAnalyzerMixin
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from ..factory import ASTCacheProtocol
     from ..js_ts import JsTypeInferenceEngine
@@ -56,7 +56,7 @@ class PythonTypeInferenceEngine(
         repo_path: Path,
         project_name: str,
         ast_cache: ASTCacheProtocol,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         module_qn_to_file_path: dict[str, Path],
         class_inheritance: dict[str, list[str]],
         simple_name_lookup: SimpleNameLookup,
@@ -76,8 +76,12 @@ class PythonTypeInferenceEngine(
         self._method_return_type_cache: dict[str, str | None] = {}
         self._type_inference_in_progress: set[str] = set()
         self._available_classes_cache: dict[str, list[str]] = {}
-        self._return_stmt_cache: dict[int, list] = {}
-        self._self_assignment_cache: dict[tuple[int, str], dict[str, str] | None] = {}
+        # Keyed by the Node itself, never id(node): Node hashes by its tree-sitter
+        # identity, while a freed wrapper's id() is reused by unrelated nodes,
+        # producing stale hits that vary with memory layout (nondeterministic graphs,
+        # caught by the determinism test). Keys hold the node, so entries never collide.
+        self._return_stmt_cache: dict[Node, list] = {}
+        self._self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None] = {}
         self._class_member_type_cache: dict[str, dict[str, str]] = {}
 
     def build_local_variable_type_map(
@@ -87,7 +91,7 @@ class PythonTypeInferenceEngine(
 
         try:
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
-            # (H) Single-pass traversal avoids O(5*N) multiple traversals for type inference.
+            # Single-pass traversal avoids O(5*N) traversals for type inference.
             self._traverse_single_pass(caller_node, local_var_types, module_qn)
             self._infer_instance_attributes_from_init(
                 caller_node, local_var_types, module_qn

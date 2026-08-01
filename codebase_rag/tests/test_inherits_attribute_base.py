@@ -1,6 +1,6 @@
-# (H) L2 finding from the evals/ harness: cgr captured INHERITS for direct-name
-# (H) bases (class C(Base)) but dropped attribute-style bases (class C(mod.Base),
-# (H) e.g. class UniXcoder(nn.Module)). Those inheritance edges must be captured.
+# L2 finding from the evals/ harness: cgr captured INHERITS for direct-name
+# bases (class C(Base)) but dropped attribute-style bases (class C(mod.Base),
+# e.g. class UniXcoder(nn.Module)). Those inheritance edges must be captured.
 from __future__ import annotations
 
 from pathlib import Path

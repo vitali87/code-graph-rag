@@ -272,11 +272,13 @@ class TestBuildLuaLocalVariableTypeMap:
         mock_function_registry: MagicMock,
     ) -> None:
         mock_function_registry.__contains__ = MagicMock(
-            side_effect=lambda x: x
-            in {
-                "myapp.main.Person",
-                "myapp.main.Logger",
-            }
+            side_effect=lambda x: (
+                x
+                in {
+                    "myapp.main.Person",
+                    "myapp.main.Logger",
+                }
+            )
         )
 
         var_decl1 = create_lua_variable_declaration("person", "Person", "new")

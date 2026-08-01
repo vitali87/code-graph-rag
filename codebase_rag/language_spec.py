@@ -31,6 +31,13 @@ def _python_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 
 
 def _js_get_name(node: Node) -> str | None:
+    if node.type == cs.TS_CLASS_EXPRESSION:
+        # An anonymous class expression carries its name on the binding it is
+        # the value of (`static Proxy = class {...}`); recover it so the class
+        # and its methods get a real qn (issue #970).
+        from .parsers.js_ts import utils as js_ts_utils
+
+        return js_ts_utils.class_binding_name(node)
     if node.type in cs.JS_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         return (
@@ -83,10 +90,10 @@ def _rust_get_name(node: Node) -> str | None:
         if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
             return name_node.text.decode(cs.ENCODING_UTF8)
     elif node.type == cs.TS_IMPL_ITEM:
-        # (H) An `impl Foo` block is an FQN scope, but it has no `name` field; its
-        # (H) target type is the segment that anchors its methods' qns
-        # (H) (owner_module.Foo.method). Without this the scope walk drops `Foo`, so
-        # (H) a closure/nested fn in an impl method binds to a phantom parent qn.
+        # An `impl Foo` block is an FQN scope but has no `name` field; its
+        # target type anchors its methods' qns (owner_module.Foo.method).
+        # Without this the scope walk drops `Foo`, so a nested fn in an impl
+        # method binds to a phantom parent qn.
         from .parsers.rs import utils as rs_utils
 
         return rs_utils.extract_impl_target(node)
@@ -138,9 +145,9 @@ def _c_get_name(node: Node) -> str | None:
 
 
 def _cpp_get_name(node: Node) -> str | None:
-    # (H) C++17 `namespace a::b {` is ONE node named `a::b`; render it as
-    # (H) dotted segments so both nesting spellings, the namespace walk in
-    # (H) cpp/utils, and the libclang frontend agree on qns.
+    # C++17 `namespace a::b {` is ONE node named `a::b`; render it as
+    # dotted segments so both nesting spellings, the namespace walk in
+    # cpp/utils, and the libclang frontend agree on qns.
     if node.type == cs.CppNodeType.NAMESPACE_DEFINITION:
         name = _generic_get_name(node)
         if name:
@@ -158,6 +165,59 @@ def _cpp_get_name(node: Node) -> str | None:
                 return name_node.text.decode(cs.ENCODING_UTF8)
 
     return _generic_get_name(node)
+
+
+def _csharp_get_name(node: Node) -> str | None:
+    # A file-scoped `namespace N;` is a SIBLING of the declarations it
+    # governs, not their ancestor, so it never appears in a type's ancestor
+    # walk. compilation_unit IS every top-level type's ancestor, so fold the
+    # file-scoped namespace in here. Block `namespace N { }` is an ordinary
+    # ancestor and needs no shim.
+    if node.type == cs.TS_CSHARP_COMPILATION_UNIT:
+        for child in node.children:
+            if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
+                name_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+                if name_node and name_node.text:
+                    return name_node.text.decode(cs.ENCODING_UTF8)
+        return None
+    # Operators expose no `name` field and a destructor's `name` collides
+    # with the constructor; delegate to the shared synthesizer so the FQN
+    # scope walk and the registered node qn agree. Local import avoids a
+    # module-load cycle (csharp.utils -> parsers.utils).
+    if node.type in cs.CSHARP_SYNTHESIZED_NAME_TYPES:
+        from .parsers.csharp import utils as csharp_utils
+
+        return csharp_utils.synthesize_method_name(node)
+    name = _generic_get_name(node)
+    # A reserved keyword as the name means tree-sitter parse-recovered a broken
+    # construct into a declaration node (e.g. a `#if` splitting an if/else chain
+    # makes the trailing `else if` parse as a local_function named `if`). Such a
+    # node is never a real definition, so drop it.
+    if name in cs.CSHARP_RESERVED_KEYWORDS:
+        return None
+    return name
+
+
+def _dart_get_name(node: Node) -> str | None:
+    # Most Dart declarations expose a `name` field (functions, getters,
+    # setters, classes, enums, extensions). Constructors/factories and mixins
+    # do not: their LAST bare `identifier` child is the declared name
+    # (`C.named` -> `named`, `mixin Swimmer` -> `Swimmer`, a default
+    # constructor `C(...)` -> `C`). The constructor check comes FIRST: the
+    # grammar's `name` field on constructor_signature is the CLASS identifier,
+    # which would collapse every named constructor into a duplicate default.
+    if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
+        ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
+        if ids:
+            return ids[-1].text.decode(cs.ENCODING_UTF8)
+        return None
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    if name_node and name_node.text:
+        return name_node.text.decode(cs.ENCODING_UTF8)
+    ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
+    if ids:
+        return ids[-1].text.decode(cs.ENCODING_UTF8)
+    return None
 
 
 PYTHON_FQN_SPEC = FQNSpec(
@@ -237,6 +297,20 @@ PHP_FQN_SPEC = FQNSpec(
     file_to_module_parts=_php_file_to_module,
 )
 
+CSHARP_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_CSHARP_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_CSHARP_FUNCTION_TYPES),
+    get_name=_csharp_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+DART_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_DART_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_DART_FUNCTION_TYPES),
+    get_name=_dart_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
     cs.SupportedLanguage.JS: JS_FQN_SPEC,
@@ -250,10 +324,12 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.GO: GO_FQN_SPEC,
     cs.SupportedLanguage.SCALA: SCALA_FQN_SPEC,
     cs.SupportedLanguage.PHP: PHP_FQN_SPEC,
+    cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
+    cs.SupportedLanguage.DART: DART_FQN_SPEC,
 }
 
 
-# (H) Node-type sets shared by the typescript and tsx grammar variants.
+# Node-type sets shared by the typescript and tsx grammar variants.
 _TS_FUNCTION_NODE_TYPES = cs.JS_TS_FUNCTION_NODES + (cs.TS_FUNCTION_SIGNATURE,)
 _TS_CLASS_NODE_TYPES = cs.JS_TS_CLASS_NODES + (
     cs.TS_ABSTRACT_CLASS_DECLARATION,
@@ -295,10 +371,10 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         import_node_types=cs.JS_TS_IMPORT_NODES,
         import_from_node_types=cs.JS_TS_IMPORT_NODES,
     ),
-    # (H) .tsx needs the SEPARATE tsx grammar: the plain typescript grammar turns
-    # (H) JSX into an ERROR forest (dropping every call inside a component), and
-    # (H) the tsx grammar misparses bare generic arrows (`<T>(x) => x`) that are
-    # (H) legal .ts -- so each extension keeps its own grammar with a shared spec.
+    # .tsx needs the SEPARATE tsx grammar: the plain typescript grammar turns
+    # JSX into an ERROR forest (dropping every call inside a component), and
+    # the tsx grammar misparses bare generic arrows (`<T>(x) => x`) that are
+    # legal .ts, so each extension keeps its own grammar with a shared spec.
     cs.SupportedLanguage.TSX: LanguageSpec(
         language=cs.SupportedLanguage.TSX,
         file_extensions=cs.TSX_EXTENSIONS,
@@ -529,6 +605,56 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         module_node_types=cs.SPEC_LUA_MODULE_TYPES,
         call_node_types=cs.SPEC_LUA_CALL_TYPES,
         import_node_types=cs.SPEC_LUA_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.CSHARP: LanguageSpec(
+        language=cs.SupportedLanguage.CSHARP,
+        file_extensions=cs.CS_EXTENSIONS,
+        function_node_types=cs.SPEC_CSHARP_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_CSHARP_CLASS_TYPES,
+        module_node_types=cs.SPEC_CSHARP_MODULE_TYPES,
+        call_node_types=cs.SPEC_CSHARP_CALL_TYPES,
+        import_node_types=cs.SPEC_CSHARP_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_CSHARP_IMPORT_TYPES,
+        # Bare captures (like C/C++): names come from _csharp_get_name, since
+        # operators/ctors/dtors have no uniform `name` field.
+        function_query="""
+        (method_declaration) @function
+        (constructor_declaration) @function
+        (destructor_declaration) @function
+        (local_function_statement) @function
+        (operator_declaration) @function
+        (conversion_operator_declaration) @function
+        (property_declaration) @function
+        """,
+        class_query="""
+        (class_declaration) @class
+        (struct_declaration) @class
+        (record_declaration) @class
+        (interface_declaration) @class
+        (enum_declaration) @class
+        """,
+        call_query="""
+        (invocation_expression) @call
+        (object_creation_expression) @call
+        (implicit_object_creation_expression) @call
+        """,
+    ),
+    cs.SupportedLanguage.DART: LanguageSpec(
+        language=cs.SupportedLanguage.DART,
+        file_extensions=cs.DART_EXTENSIONS,
+        function_node_types=cs.SPEC_DART_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_DART_CLASS_TYPES,
+        module_node_types=cs.SPEC_DART_MODULE_TYPES,
+        # The grammar has no call-expression node: a call site is a
+        # `selector` (or `cascade_section`) holding an `argument_part`,
+        # invoking whatever the preceding sibling chain names; the call
+        # name is reassembled by dart_call_name. Names come from
+        # _dart_get_name (bare captures); the signature/body split is
+        # repaired by dart_definition_end_point at ingestion.
+        call_node_types=cs.SPEC_DART_CALL_TYPES,
+        call_query=cs.DART_CALL_QUERY,
+        import_node_types=cs.SPEC_DART_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_DART_IMPORT_TYPES,
     ),
 }
 

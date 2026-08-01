@@ -1,8 +1,8 @@
-# (H) A class declared inside a TypeScript `namespace` must carry the namespace
-# (H) in its qualified name (proj...geo.Widget), like a nested function does.
-# (H) The class FQN scope walk listed the wrong node type ("namespace_definition"
-# (H) instead of the grammar's "internal_module"), so it skipped the namespace
-# (H) and produced an unscoped qn that collides with a top-level same-named type.
+# A class declared inside a TypeScript `namespace` must carry the namespace
+# in its qualified name (proj...geo.Widget), like a nested function does.
+# The class FQN scope walk listed the wrong node type ("namespace_definition"
+# instead of the grammar's "internal_module"), so it skipped the namespace
+# and produced an unscoped qn that collides with a top-level same-named type.
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,6 +36,6 @@ def test_typescript_namespace_class_qn_includes_namespace(
         str(node[0][1].get(KEY_QUALIFIED_NAME))
         for node in get_nodes(mock_ingestor, NodeLabel.CLASS)
     }
-    # (H) The namespaced class and the top-level class must be distinct nodes.
+    # The namespaced class and the top-level class must be distinct nodes.
     assert "ts_ns.lib.geo.Widget" in class_qns, class_qns
     assert "ts_ns.lib.Widget" in class_qns, class_qns

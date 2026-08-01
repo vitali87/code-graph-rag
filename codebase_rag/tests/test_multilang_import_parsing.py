@@ -296,3 +296,29 @@ func main() {
             assert actual_imports[name] == path, (
                 f"Wrong path for {name}: expected {path}, got {actual_imports[name]}"
             )
+
+
+def test_go_dot_import_binds_sentinel_not_package_name() -> None:
+    # `import . "fmt"` exposes the package's exported names, NOT the `fmt`
+    # identifier, so only the `.`-prefixed sentinel may be recorded.
+    test_code = 'package main\n\nimport . "fmt"\n\nfunc main() {\n\tPrintln("x")\n}\n'
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_file = Path(temp_dir) / "test.go"
+        test_file.write_text(encoding="utf-8", data=test_code)
+
+        parsers, queries = load_parsers()
+        if "go" not in parsers:
+            return
+
+        updater = GraphUpdater(
+            ingestor=MagicMock(),
+            repo_path=Path(temp_dir),
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        module = f"{Path(temp_dir).name}.test"
+        actual = updater.factory.import_processor.import_mapping.get(module, {})
+        assert actual.get(".fmt") == "fmt", actual
+        assert "fmt" not in actual, actual

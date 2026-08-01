@@ -1,12 +1,12 @@
-# (H) A base class that is POSITIVELY external (import-mapped like
-# (H) typing.Protocol, ::-qualified like std::fmt::Display, or a JS global
-# (H) like Error) carries real information the dead-code and protocol-dispatch
-# (H) layers consume, but its INHERITS/IMPLEMENTS edge always pointed at a
-# (H) first-party label that has no node, so the database silently dropped it
-# (H) (issue #652). Mirroring the ExternalModule convention for imports, the
-# (H) edge now targets an ExternalModule node that is minted if the import
-# (H) pass did not already create it. A module-anchored GUESS that resolves
-# (H) nowhere still emits no edge; knowledge and guesses are not the same.
+# A base class that is POSITIVELY external (import-mapped like
+# typing.Protocol, ::-qualified like std::fmt::Display, or a JS global
+# like Error) carries real information the dead-code and protocol-dispatch
+# layers consume, but its INHERITS/IMPLEMENTS edge always pointed at a
+# first-party label that has no node, so the database silently dropped it
+# (issue #652). Mirroring the ExternalModule convention for imports, the
+# edge now targets an ExternalModule node that is minted if the import
+# pass did not already create it. A module-anchored GUESS that resolves
+# nowhere still emits no edge; knowledge and guesses are not the same.
 from __future__ import annotations
 
 from pathlib import Path
@@ -111,7 +111,7 @@ def test_js_global_base_emits_external_edge(
         cs.NodeLabel.EXTERNAL_MODULE.value,
         external_error_qn,
     ) in pairs, pairs
-    # (H) The first-party chain must keep its first-party label.
+    # The first-party chain must keep its first-party label.
     assert (
         f"{project}.errors.TimeoutError",
         cs.NodeLabel.CLASS.value,

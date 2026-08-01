@@ -1,6 +1,6 @@
-# (H) End-to-end (real Memgraph) verification that an incremental rebuild prunes
-# (H) external import-target Module nodes that are no longer imported by anyone,
-# (H) e.g. an imported name renamed on a subsequent index.
+# End-to-end (real Memgraph) verification that an incremental rebuild prunes
+# external import-target Module nodes that are no longer imported by anyone,
+# e.g. an imported name renamed on a subsequent index.
 from __future__ import annotations
 
 from pathlib import Path

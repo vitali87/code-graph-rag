@@ -4,17 +4,17 @@ description: "Architecture overview of Code-Graph-RAG's two-component system for
 
 # Architecture Overview
 
-Code-Graph-RAG consists of two main components that work together to analyze and query codebases.
+Code-Graph-RAG consists of two main components that work together to analyse and query codebases.
 
 ## Components
 
 ### 1. Multi-Language Parser
 
-A Tree-sitter based parsing system that analyzes codebases and ingests data into Memgraph.
+A Tree-sitter based parsing system that analyses codebases and ingests data into Memgraph.
 
 - Uses Tree-sitter for robust, language-agnostic AST parsing
 - Extracts functions, classes, methods, modules, and their relationships
-- Supports 11 programming languages with a unified graph schema
+- Supports 13 programming languages with a unified graph schema (plus Scala in development)
 - Handles complex patterns like nested functions, class hierarchies, and cross-module calls
 
 ### 2. RAG System (`codebase_rag/`)
@@ -24,7 +24,7 @@ An interactive CLI for querying the stored knowledge graph.
 - Translates natural language questions into Cypher queries
 - Retrieves source code snippets for found elements
 - Supports AI-powered code editing with AST-based targeting
-- Provides code optimization with interactive approval workflow
+- Provides code optimisation with interactive approval workflow
 
 ## Data Flow
 

@@ -1,8 +1,8 @@
-# (H) Covers the L1 eval span grading (evals/score.score_span): among nodes both
-# (H) cgr and the oracle identify by (kind, file, start), it grades how often cgr's
-# (H) end_line agrees with the oracle's. A disagreement must surface as fp+fn (not
-# (H) be masked by node identity already being 1.0), and nodes only one side has
-# (H) must not be graded at all.
+# Covers the L1 eval span grading (evals/score.score_span): among nodes both
+# cgr and the oracle identify by (kind, file, start), it grades how often cgr's
+# end_line agrees with the oracle's. A disagreement must surface as fp+fn (not
+# be masked by node identity already being 1.0), and nodes only one side has
+# must not be graded at all.
 from __future__ import annotations
 
 from codebase_rag import constants as cs
@@ -15,7 +15,7 @@ _KINDS = (cs.NodeLabel.FUNCTION,)
 
 
 def _graph(*nodes: tuple[str, int, int]) -> GraphData:
-    # (H) Each node is (file, start, end) for a Function.
+    # Each node is (file, start, end) for a Function.
     mapping: dict[NodeKey, DefNode] = {}
     for file, start, end in nodes:
         key = NodeKey(_FUNC, file, start)
@@ -46,7 +46,7 @@ def test_span_end_line_mismatch_is_penalized_and_surfaced() -> None:
 
 
 def test_span_only_grades_co_identified_nodes() -> None:
-    # (H) cgr has an extra node (start 30) the oracle lacks; it must not be graded.
+    # cgr has an extra node (start 30) the oracle lacks; it must not be graded.
     cgr = _graph(("a.rs", 1, 5), ("a.rs", 30, 40))
     oracle = _graph(("a.rs", 1, 5))
     by_label = {row["label"]: row for row in score_span(cgr, oracle, _KINDS).rows}

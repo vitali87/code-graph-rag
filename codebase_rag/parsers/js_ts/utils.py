@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from tree_sitter import Language, Node, QueryCursor
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
 
 def get_js_ts_language_obj(
     language: cs.SupportedLanguage,
-    queries: dict[cs.SupportedLanguage, "LanguageQueries"],
+    queries: Mapping[cs.SupportedLanguage, "LanguageQueries"],
 ) -> Language | None:
     if language not in cs.JS_TS_LANGUAGES:
         return None
@@ -127,6 +128,71 @@ def extract_constructor_name(new_expr_node: Node) -> str | None:
             return safe_decode_text(constructor_node)
 
     return None
+
+
+_BINDING_WRAPPER_TYPES = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
+
+
+def arrow_binding_name(func_node: Node) -> str | None:
+    # An arrow / function expression has no `name` field. Recover the binding
+    # name for the two named forms whose VALUE is the arrow: a module/local
+    # `const f = () => ...` (variable_declarator) and a class field
+    # `helper = () => ...` (public_field_definition). Both the definition pass
+    # (registering the arrow's qn) and the call pass (attributing the body's
+    # calls) must derive the SAME name, or the caller qn is a phantom and the
+    # arrow's body callbacks report dead; sharing this one helper keeps them in
+    # step. Anonymous / destructured arrows, and arrows that are merely an
+    # argument to a call bound to a name (`const m = useMutation(() => {})`),
+    # stay unnamed: the arrow is not the binding's own value there.
+    if func_node.type not in (
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_GENERATOR_FUNCTION,
+    ):
+        return None
+    return _value_binding_name(func_node)
+
+
+def _value_binding_name(node: Node) -> str | None:
+    # Recover the name a nameless expression is bound to: the `name` of the
+    # variable_declarator / public_field_definition whose `value` is this node.
+    # The node may sit behind transparent wrappers (parens, TS casts:
+    # `export const create = ((s) => ...) as Create`); climb them first so the
+    # node is recognised as the binding's value.
+    parent = node.parent
+    while parent is not None and parent.type in _BINDING_WRAPPER_TYPES:
+        node = parent
+        parent = node.parent
+    if parent is None:
+        return None
+    # `==` not `is`: py-tree-sitter returns a fresh Node wrapper per access, so
+    # identity comparison always fails.
+    if parent.child_by_field_name(cs.FIELD_VALUE) != node:
+        return None
+    name_node = parent.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None or name_node.type not in (
+        cs.TS_IDENTIFIER,
+        cs.TS_PROPERTY_IDENTIFIER,
+    ):
+        return None
+    return safe_decode_text(name_node)
+
+
+def class_binding_name(class_node: Node) -> str | None:
+    # An anonymous CLASS EXPRESSION (`static Proxy = class {...}`,
+    # `const Proxy = class {...}`) has no `name` field. Recover the field /
+    # declarator binding name so its methods attribute to `Outer.Proxy.<method>`
+    # and are enumerated as callers; without it the class expression is skipped
+    # in the caller pass and every callback inside its methods reports dead
+    # (issue #970). A NAMED class expression (`class Named {}`) keeps its own
+    # name. Non-class nodes and unbound anonymous classes (`foo(class {})`)
+    # return None, matching today's skip.
+    if class_node.type != cs.TS_CLASS_EXPRESSION:
+        return None
+    name_node = class_node.child_by_field_name(cs.FIELD_NAME)
+    if name_node is not None and name_node.text:
+        return safe_decode_text(name_node)
+    return _value_binding_name(class_node)
 
 
 def analyze_return_expression(expr_node: Node, method_qn: str) -> str | None:

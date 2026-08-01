@@ -14,7 +14,7 @@ STRATEGIES = (
 
 
 def _run_rels(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
-    # (H) Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
+    # Build the graph for `files` and return (caller_qn, rel_type, callee_qn).
     parsers, queries = load_parsers()
     if "python" not in parsers:
         pytest.skip("python parser not available")
@@ -35,9 +35,9 @@ def _run_rels(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]
 def test_external_attribute_constructor_receiver_is_not_misbound(
     tmp_path: Path,
 ) -> None:
-    # (H) df is constructed by an external attribute constructor (pd.DataFrame); its
-    # (H) .apply must NOT rebind by bare name to an unrelated first-party apply. The
-    # (H) callback reference must still be emitted.
+    # df is constructed by an external attribute constructor (pd.DataFrame); its
+    # .apply must NOT rebind by bare name to an unrelated first-party apply. The
+    # callback reference must still be emitted.
     files = {
         "strategies.py": STRATEGIES,
         "report.py": (
@@ -54,9 +54,9 @@ def test_external_attribute_constructor_receiver_is_not_misbound(
     assert not any(
         r == "CALLS" and b.endswith("BatchingStrategyBase.apply") for _, r, b in rels
     )
-    # (H) With the receiver judged external the callee resolves to nothing, so the
-    # (H) callback keep-alive edge comes from the external-callee path (CALLS) rather
-    # (H) than the first-party REFERENCES path; either keeps it reachable.
+    # With the receiver judged external the callee resolves to nothing, so the
+    # callback keep-alive edge comes from the external-callee path (CALLS) rather
+    # than the first-party REFERENCES path; either keeps it reachable.
     assert any(
         r in ("CALLS", "REFERENCES")
         and a.endswith("write_report")
@@ -66,8 +66,8 @@ def test_external_attribute_constructor_receiver_is_not_misbound(
 
 
 def test_first_party_attribute_constructor_receiver_resolves(tmp_path: Path) -> None:
-    # (H) The same attribute-constructor shape with a FIRST-PARTY class must resolve
-    # (H) the member call precisely (models.Helper() -> helper.process()).
+    # The same attribute-constructor shape with a FIRST-PARTY class must resolve
+    # the member call precisely (models.Helper() -> helper.process()).
     files = {
         "models.py": ("class Helper:\n    def process(self):\n        return 1\n"),
         "app.py": (

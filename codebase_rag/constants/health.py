@@ -1,4 +1,4 @@
-# (H) Health-check statuses and messages.
+# Health-check statuses and messages.
 
 HEALTH_CHECK_DOCKER_RUNNING = "Docker daemon is running"
 HEALTH_CHECK_DOCKER_NOT_RUNNING = "Docker daemon is not running"

@@ -1,11 +1,11 @@
-# (H) A src-root distribution (setup.py maps src/ to the package named after
-# (H) the project) writes absolute imports against the DISTRIBUTION name
-# (H) (`from thrift.Thrift import TProcessor`) while the oracle indexes
-# (H) modules by PATH (`thrift.src.Thrift`), so every such import was called
-# (H) external and cgr's correctly resolved edges graded as false positives
-# (H) (thrift: IMPORTS precision 0.15). When an absolute import claims the
-# (H) project's own top-level name but misses the index, it must be internal;
-# (H) a UNIQUE whole-segment suffix match recovers the file.
+# A src-root distribution (setup.py maps src/ to the package named after
+# the project) writes absolute imports against the DISTRIBUTION name
+# (`from thrift.Thrift import TProcessor`) while the oracle indexes
+# modules by PATH (`thrift.src.Thrift`), so every such import was called
+# external and cgr's correctly resolved edges graded as false positives
+# (thrift: IMPORTS precision 0.15). When an absolute import claims the
+# project's own top-level name but misses the index, it must be internal;
+# a UNIQUE whole-segment suffix match recovers the file.
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,8 +43,8 @@ def test_distribution_name_imports_resolve_via_unique_suffix(tmp_path: Path) -> 
     }
     assert "src/Thrift.py" in import_targets, import_targets
     assert "src/protocol/TProtocol.py" in import_targets, import_targets
-    # (H) `import a.b.c` of a C extension still imports the deepest importable
-    # (H) parent package.
+    # `import a.b.c` of a C extension still imports the deepest importable
+    # parent package.
     assert "src/protocol/__init__.py" in import_targets, import_targets
-    # (H) `import struct` has a foreign top level; it must stay external.
+    # `import struct` has a foreign top level; it must stay external.
     assert len(import_targets) == 3, import_targets

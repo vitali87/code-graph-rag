@@ -1,11 +1,11 @@
-# (H) An inline function assigned to a member expression (`api.setState =
-# (H) (state, replace) => {...}`, zustand's middleware store-patching shape) was
-# (H) orphaned two ways: (a) the assignment-reference walk stopped at EVERY function
-# (H) boundary, so an assignment inside an anonymous curried arrow (which gets no
-# (H) caller pass of its own) was scanned by nobody; (b) the def pass used to ALSO
-# (H) register a position-named anonymous twin for the assigned arrow. Span-claim
-# (H) unification cured (b) at the root (one node per source function), so only
-# (H) the property-named node exists and it must be referenced.
+# An inline function assigned to a member expression (`api.setState =
+# (state, replace) => {...}`, zustand's middleware store-patching shape) was
+# orphaned two ways: (a) the assignment-reference walk stopped at EVERY function
+# boundary, so an assignment inside an anonymous curried arrow (which gets no
+# caller pass of its own) was scanned by nobody; (b) the def pass used to ALSO
+# register a position-named anonymous twin for the assigned arrow. Span-claim
+# unification cured (b) at the root (one node per source function), so only
+# the property-named node exists and it must be referenced.
 from __future__ import annotations
 
 from pathlib import Path
@@ -38,8 +38,8 @@ def test_member_assigned_arrow_in_curried_anon_is_referenced(
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
     refs = _refs(mock_ingestor)
-    # (H) the single (property-named) registration of the assigned arrow must
-    # (H) be reachable, and the position-named anonymous twin must not exist.
+    # the single (property-named) registration of the assigned arrow must
+    # be reachable, and the position-named anonymous twin must not exist.
     assert any(t.endswith(".persistImpl.setState") for _, t in refs), sorted(
         t for _, t in refs if "persistImpl" in t
     )
@@ -54,9 +54,9 @@ def test_member_assigned_arrow_in_curried_anon_is_referenced(
 def test_cast_wrapped_member_assignment_rhs_is_referenced(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) devtools' shape: LHS behind a cast-paren (`;(api as any).dispatch = ...`)
-    # (H) and RHS wrapped in a cast (`(... ) as SetState`); both wrappers are
-    # (H) transparent for the reference.
+    # devtools' shape: LHS behind a cast-paren (`;(api as any).dispatch = ...`)
+    # and RHS wrapped in a cast (`(... ) as SetState`); both wrappers are
+    # transparent for the reference.
     root = temp_repo / "zmemb2"
     root.mkdir(parents=True)
     (root / "mw.ts").write_text(
@@ -81,9 +81,9 @@ def test_cast_wrapped_member_assignment_rhs_is_referenced(
 def test_local_reassigned_arrow_in_anon_is_referenced(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) subscribeWithSelector's shape: a LOCAL is reassigned to an arrow inside an
-    # (H) anonymous scope (`listener = (state) => {...}`); the position-named node
-    # (H) must be referenced so it does not report dead.
+    # subscribeWithSelector's shape: a LOCAL is reassigned to an arrow inside an
+    # anonymous scope (`listener = (state) => {...}`); the position-named node
+    # must be referenced so it does not report dead.
     root = temp_repo / "zmemb3"
     root.mkdir(parents=True)
     (root / "mw.ts").write_text(

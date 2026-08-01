@@ -1,0 +1,32 @@
+# ast-grep code-smell rules for Java (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: java
+extensions: [.java]
+rules:
+  - id: system_out_println
+    message: "Debug print left in code: System.out.println"
+    rule:
+      pattern: "System.out.println($$$)"
+  - id: empty_catch
+    message: "Empty catch block swallows the exception"
+    rule:
+      kind: catch_clause
+      has:
+        field: body
+        kind: block
+        regex: '^\{\s*\}$'
+  - id: broad_catch
+    message: "Broad catch of Exception/Throwable catches too much"
+    rule:
+      kind: catch_clause
+      has:
+        kind: catch_formal_parameter
+        has:
+          kind: type_identifier
+          regex: '^(Exception|Throwable)$'
+          stopBy: end
+  - id: print_stack_trace
+    message: "printStackTrace used instead of a logger"
+    rule:
+      kind: method_invocation
+      has: { field: name, regex: '^printStackTrace$' }

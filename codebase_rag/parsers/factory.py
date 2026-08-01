@@ -1,5 +1,7 @@
+from collections.abc import Mapping
 from pathlib import Path
 
+from ..capture import ALL_ENABLED, CaptureSelection
 from ..constants import SupportedLanguage
 from ..services import IngestorProtocol
 from ..types_defs import (
@@ -26,6 +28,7 @@ class ProcessorFactory:
         "ast_cache",
         "unignore_paths",
         "exclude_paths",
+        "capture",
         "module_qn_to_file_path",
         "_import_processor",
         "_structure_processor",
@@ -40,12 +43,13 @@ class ProcessorFactory:
         ingestor: IngestorProtocol,
         repo_path: Path,
         project_name: str,
-        queries: dict[SupportedLanguage, LanguageQueries],
+        queries: Mapping[SupportedLanguage, LanguageQueries],
         function_registry: FunctionRegistryTrieProtocol,
         simple_name_lookup: SimpleNameLookup,
         ast_cache: ASTCacheProtocol,
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
+        capture: CaptureSelection | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -56,6 +60,7 @@ class ProcessorFactory:
         self.ast_cache = ast_cache
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
+        self.capture = capture if capture is not None else ALL_ENABLED
 
         self.module_qn_to_file_path: dict[str, Path] = {}
         self._func_class_captures_cache: dict[Path, dict] = {}
@@ -121,6 +126,17 @@ class ProcessorFactory:
                 class_field_types=self.definition_processor.class_field_types,
                 class_field_guard_inner=self.definition_processor.class_field_guard_inner,
                 method_return_types=self.definition_processor.method_return_types,
+                go_function_return_types=self.definition_processor.go_function_return_types,
+                csharp_partial_groups=self.definition_processor.csharp_partial_groups,
+                csharp_extension_methods=self.definition_processor.csharp_extension_methods,
+                csharp_call_sites=self.definition_processor.csharp_call_sites,
+                csharp_external_sites=self.definition_processor.csharp_external_sites,
+                csharp_local_functions=self.definition_processor.csharp_local_functions,
+                csharp_generic_methods=self.definition_processor.csharp_generic_methods,
+                csharp_class_generic_arity=self.definition_processor.csharp_class_generic_arity,
+                csharp_method_return_types=self.definition_processor.csharp_method_return_types,
+                function_locations=self.definition_processor.function_locations,
+                dart_extends_type_args=self.definition_processor.dart_extends_type_args,
             )
         return self._type_inference
 
@@ -137,9 +153,15 @@ class ProcessorFactory:
                 class_inheritance=self.definition_processor.class_inheritance,
                 type_aliases=self.definition_processor.type_aliases,
                 interface_implementers=self.definition_processor.interface_implementers,
+                capture=self.capture,
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 cpp_out_of_class_methods=self.definition_processor.cpp_out_of_class_methods,
                 function_locations=self.definition_processor.function_locations,
                 macro_qns=self.definition_processor.macro_qns,
+                ast_cache=self.ast_cache,
+                go_package_names=self.definition_processor.go_package_names,
+                rehydrated_definition_paths=(
+                    self.definition_processor.rehydrated_definition_paths
+                ),
             )
         return self._call_processor

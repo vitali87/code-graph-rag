@@ -162,7 +162,7 @@ class TestMixedEventSequences:
         mock_updater.factory.reset_mock()
         handler.dispatch(FileDeletedEvent(str(f)))
 
-        # (H) After delete, no re-parse or file node creation
+        # After delete, no re-parse or file node creation
         mock_updater.factory.definition_processor.process_file.assert_not_called()
         mock_updater.factory.structure_processor.process_generic_file.assert_not_called()
         assert mock_updater.ingestor.execute_write.call_count == 3
@@ -207,4 +207,10 @@ class TestCypherDeleteFileQuery:
             if c.args[0] == cs.CYPHER_DELETE_MODULE
         ]
         assert len(delete_module_calls) == 1
-        assert delete_module_calls[0].args[1] == {cs.KEY_PATH: "remove.py"}
+        # The module delete is project-scoped: the query requires the scope
+        # parameters or a realtime change fails the delete outright.
+        assert delete_module_calls[0].args[1] == {
+            cs.KEY_PATH: "remove.py",
+            cs.KEY_PROJECT_NAME: mock_updater.project_name,
+            cs.KEY_PROJECT_PREFIX: f"{mock_updater.project_name}.",
+        }

@@ -1,0 +1,46 @@
+# ast-grep design-pattern rules for C# (issue #413).
+# Each match becomes a Pattern node linked to the file's Module via
+# IMPLEMENTS_PATTERN. Rules are heuristic and syntactic.
+ast_grep_id: csharp
+extensions: [.cs]
+rules:
+  - id: singleton
+    message: "Singleton: class exposes a static Instance member"
+    rule:
+      kind: class_declaration
+      has:
+        stopBy: end
+        any:
+          # static property named Instance / _instance
+          - kind: property_declaration
+            all:
+              - has: { kind: modifier, regex: '^static$', stopBy: end }
+              - has: { kind: identifier, regex: '^_?[Ii]nstance$', stopBy: end }
+          # static backing field named Instance / _instance
+          - kind: field_declaration
+            all:
+              - has: { kind: modifier, regex: '^static$', stopBy: end }
+              - has: { kind: identifier, regex: '^_?[Ii]nstance$', stopBy: end }
+  - id: factory_method
+    message: "Factory method: name starts with Create/Make/Build"
+    rule:
+      kind: method_declaration
+      has: { field: name, regex: '^(Create|Make|Build)' }
+  - id: builder
+    message: "Builder: class name ends with Builder"
+    rule:
+      kind: class_declaration
+      has: { field: name, regex: 'Builder$' }
+  - id: abstract_class
+    message: "Abstract base class: declared with the abstract modifier"
+    rule:
+      kind: class_declaration
+      has: { kind: modifier, regex: '^abstract$' }
+  - id: disposable
+    message: "Disposable: class defines a Dispose method"
+    rule:
+      kind: class_declaration
+      has:
+        stopBy: end
+        kind: method_declaration
+        has: { field: name, regex: '^Dispose$' }

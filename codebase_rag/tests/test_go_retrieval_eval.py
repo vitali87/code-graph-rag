@@ -32,7 +32,7 @@ def test_oracle_captures_first_party_go_calls(tmp_path: Path) -> None:
 
     assert ("main.go", "helper") in edges
     assert ("main.go", "run") in edges
-    # (H) orphan is declared but never called -> never a call edge.
+    # orphan is declared but never called -> never a call edge.
     assert ("main.go", "orphan") not in edges
     assert {"helper", "run", "orphan", "main"} <= declared
 

@@ -1,16 +1,17 @@
-# (H) Dead-code reachability engine. Roots (entry points, framework hooks,
-# (H) module-load callees, test code) are expanded over CALLS/REFERENCES edges;
-# (H) whatever is never reached is reported. Reachability runs client-side in
-# (H) Python: the per-root *BFS Cypher formulation is O(roots x graph) and hit
-# (H) memgraph's 600s query timeout on big projects (django: 31k roots, 101k
-# (H) CALLS edges), while a multi-source walk over the fetched edge list is
-# (H) linear and finishes in milliseconds.
-import re
+
+# Dead-code reachability engine. Roots (entry points, framework hooks,
+# module-load callees, test code) expand over CALLS/REFERENCES edges;
+# whatever is never reached is reported. Reachability runs client-side in
+# Python: the per-root *BFS Cypher formulation is O(roots x graph) and hit
+# memgraph's 600s timeout on big projects (django: 31k roots, 101k CALLS
+# edges), whereas a multi-source walk over the fetched edges is linear and
+# finishes in milliseconds.
 from collections import defaultdict
 from fnmatch import fnmatch
 
 from . import constants as cs
 from . import cypher_queries as cq
+from .path_filters import matches_test_path
 from .types_defs import (
     DeadCodeConfig,
     GraphQueryClient,
@@ -31,6 +32,8 @@ _INHERITS = cs.RelationshipType.INHERITS.value
 _DEFINES = cs.RelationshipType.DEFINES.value
 _DEFINES_METHOD = cs.RelationshipType.DEFINES_METHOD.value
 _OVERRIDES = cs.RelationshipType.OVERRIDES.value
+_IMPLEMENTS = cs.RelationshipType.IMPLEMENTS.value
+_JS_TS_EXTS = cs.TS_EXTENSIONS + cs.TSX_EXTENSIONS + cs.JS_EXTENSIONS
 _NodeId = tuple[str, PropertyValue]
 _RelTuple = tuple[str, PropertyValue, str, str, PropertyValue]
 
@@ -51,16 +54,19 @@ def default_dead_code_config(
 
 
 def _norm_decorator(decorator: str) -> str:
-    # (H) Drop '@', take the text before '(', then the last dotted segment,
-    # (H) lowercased -> `@app.route(...)` becomes `route`.
-    head = decorator.replace(cs.DECORATOR_AT, "").split(cs.CHAR_PAREN_OPEN)[0]
-    return head.split(cs.SEPARATOR_DOT)[-1].lower()
+    # Drop '@' and any surrounding attribute brackets, take the text before
+    # '(', then the last dotted segment, lowercased -> `@app.route(...)` and a
+    # C# `[Route("x")]` both become `route`. Bracket-stripping keeps the
+    # normalization robust to whatever a highlight query captures.
+    cleaned = decorator.replace(cs.DECORATOR_AT, "").strip("[] ")
+    head = cleaned.split(cs.CHAR_PAREN_OPEN)[0]
+    return head.split(cs.SEPARATOR_DOT)[-1].strip("[]").lower()
 
 
 def _is_dunder(name: str) -> bool:
-    # (H) A __dunder__ method is invoked by the Python runtime (async with, iteration,
-    # (H) operators, ...), never by an explicit call the call graph can see, so it is a
-    # (H) reachability root rather than dead code.
+    # A __dunder__ method is invoked by the Python runtime (async with,
+    # iteration, operators), never by an explicit call the graph can see, so it
+    # is a reachability root, not dead code.
     return (
         len(name) > len(cs.PY_NAME_DUNDER) * 2
         and name.startswith(cs.PY_NAME_DUNDER)
@@ -69,33 +75,85 @@ def _is_dunder(name: str) -> bool:
 
 
 def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
-    # (H) A Rust `.rs` symbol the language/runtime invokes with no call site: `fn
-    # (H) main()` (entry) or a trait-impl method (Display::fmt, Iterator::next, ...).
-    # (H) Name-scoped like Python dunders; trait methods must be methods.
+    # A Rust `.rs` symbol the language/runtime invokes with no call site: `fn
+    # main()` (entry) or a trait-impl method (Display::fmt, Iterator::next).
+    # Name-scoped like Python dunders; trait methods must be methods.
     if not path.endswith(cs.EXT_RS):
         return False
-    # (H) `main` is only the entry point as a receiverless `fn main()`; a method
-    # (H) named main is not, so gate it to non-methods. Trait methods are the reverse.
+    # `main` is only the entry point as a receiverless `fn main()`; a method
+    # named main is not, so gate it to non-methods. Trait methods are the reverse.
     if name in cs.RUST_ROOT_FUNCTION_NAMES:
         return not is_method
     return is_method and name in cs.RUST_TRAIT_METHOD_NAMES
 
 
+def _is_c_cpp_entry_root(
+    name: str, is_method: bool, path: str, qn: str, project_prefix: str
+) -> bool:
+    # A C/C++ program entry (`main`, Windows' `wWinMain`/`WinMain`/`wmain`, a
+    # DLL's `DllMain`) is invoked by the OS runtime, never by a call the graph
+    # sees, so it roots its whole call tree (an unrooted wWinMain reported all
+    # 34 windows/runner symbols of a Flutter desktop shim dead). Only a free
+    # function at FILE scope in a translation-unit source counts: a method, a
+    # namespace-scoped `main`, or a header-defined `WinMain` is ordinary code
+    # the OS cannot invoke. (Linkage is not captured in the graph, so a
+    # file-scope `static DllMain` in a source file still roots.)
+    if is_method or name not in cs.C_CPP_ENTRY_FUNCTION_NAMES:
+        return False
+    if not path.endswith(cs.C_CPP_SOURCE_EXTENSIONS):
+        return False
+    # File scope, exactly: a file-scope definition's qn is the project prefix
+    # plus the path's dotted form (extension dropped) plus the name
+    # (`proj.runner.main.wWinMain` for runner/main.cpp). A namespace inserts
+    # its own segment, even one named like the file stem (`namespace main`
+    # in main.cpp), so nothing short of the exact qn earns the root.
+    dotted_module = path.rsplit(cs.SEPARATOR_DOT, 1)[0].replace(
+        cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
+    )
+    return qn == f"{project_prefix}{dotted_module}{cs.SEPARATOR_DOT}{name}"
+
+
 def _is_cpp_operator_root(name: str, path: str) -> bool:
-    # (H) A C++ operator overload / user-defined literal (`operator==`, `operator[]`,
-    # (H) `operator""_json`) is invoked by operator/literal SYNTAX, not a named call the
-    # (H) graph can see, so it is a reachability root (like Python dunders / Rust trait
-    # (H) methods). `operator` heads every such definition (member or free), so the name
-    # (H) prefix on a C++ file identifies them uniquely.
+    # A C++ operator overload / user-defined literal (`operator==`, `operator[]`,
+    # `operator""_json`) is invoked by operator/literal SYNTAX, not a named call
+    # the graph sees, so it is a reachability root (like Python dunders / Rust
+    # trait methods). `operator` heads every such definition (member or free),
+    # so the name prefix on a C++ file identifies them.
     return name.startswith(cs.CPP_OPERATOR_PREFIX) and path.endswith(cs.CPP_EXTENSIONS)
 
 
+def _is_js_well_known_symbol_root(name: str, is_method: bool, path: str) -> bool:
+    # A JS/TS class member keyed by a well-known symbol (`[Symbol.iterator]`,
+    # `get [Symbol.toStringTag]`) is invoked implicitly by the language
+    # runtime (iteration protocol, Object.prototype.toString, using/dispose),
+    # never by a name the graph can see, so it is a reachability root (like
+    # Python dunders / Rust trait methods). The registered leaf keeps the
+    # computed-name brackets, so the `[Symbol.` prefix on a JS/TS file
+    # identifies exactly these members; a user symbol key registers without
+    # the `Symbol.` path and stays ordinary code.
+    if not is_method or not path.endswith(_JS_TS_EXTS):
+        return False
+    # Formatting must not decide (`[ Symbol.iterator ]`, `[\tSymbol.iterator\t]`,
+    # `[Symbol["iterator"]]` spell the same protocol member): compare free of
+    # ALL whitespace, accepting the dotted and the bracket-notation access off
+    # the Symbol global. Deliberately any Symbol access, not an allowlist of
+    # the well-known set: `Symbol.for(...)` registry members (Node invokes
+    # `Symbol.for('nodejs.util.inspect.custom')`) are runtime-reached too. A
+    # string key (`['Symbol.fake']`) or user symbol variable (`[mySym]`) keeps
+    # its own spelling and never matches.
+    compact = "".join(name.split())
+    return compact.endswith(cs.JS_COMPUTED_NAME_SUFFIX) and (
+        compact.startswith(cs.JS_WELL_KNOWN_SYMBOL_NAME_PREFIX)
+        or compact.startswith(cs.JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX)
+    )
+
+
 def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
-    # (H) A Java serialization hook (`readObject`/`writeObject`/`writeReplace`/
-    # (H) `readResolve`/`readObjectNoData`) is invoked reflectively by the java.io
-    # (H) serialization runtime, never by a named call the graph can see, so it is a
-    # (H) reachability root (like Python dunders / Rust trait methods). Gated to methods
-    # (H) on a .java file; `name` is the bare method name (signature stripped by caller).
+    # A Java serialization hook (`readObject`/`writeObject`/`writeReplace`/
+    # `readResolve`/`readObjectNoData`) is invoked reflectively by the java.io
+    # runtime, never by a named call the graph sees, so it is a reachability root
+    # (like Python dunders / Rust trait methods). Gated to methods on a .java
+    # file; `name` is the bare method name (signature stripped by caller).
     return (
         is_method
         and path.endswith(cs.EXT_JAVA)
@@ -103,15 +161,35 @@ def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
     )
 
 
-def _matches_test_path(path: str, patterns: tuple[str, ...]) -> bool:
-    # (H) Match test-path patterns against a leading-slash-normalized path so a dir
-    # (H) pattern like `/tests/` also matches a ROOT `tests/` dir (Rust integration
-    # (H) tests, a top-level tests/ folder) -- not just a nested `src/tests/`. The
-    # (H) leading slash keeps `contests/` from matching `/tests/` (no false segment).
-    normalized = (
-        path if path.startswith(cs.SEPARATOR_SLASH) else cs.SEPARATOR_SLASH + path
+def _is_csharp_attribute_root(props: PropertyDict, path: str) -> bool:
+    # A C# method carrying a framework/runtime attribute ([Fact], [HttpGet],
+    # [OnDeserialized]) is invoked reflectively, never by a call the graph sees,
+    # so it is a reachability root. Gated to .cs; the decorator set matches via
+    # the normalized (lowercased, arg-stripped) form.
+    return path.endswith(cs.EXT_CS) and _has_root_decorator(
+        props, cs.CSHARP_ROOT_ATTRIBUTES
     )
-    return any(pattern in normalized for pattern in patterns)
+
+
+def _is_csharp_dispose_root(name: str, is_method: bool, path: str) -> bool:
+    # `Dispose`/`DisposeAsync` are invoked by a `using` block's teardown, not
+    # a named call; a reachability root on a .cs method (like the Java hooks).
+    return (
+        is_method
+        and path.endswith(cs.EXT_CS)
+        and name in cs.CSHARP_DISPOSE_METHOD_NAMES
+    )
+
+
+def _is_csharp_operator_or_finalizer_root(name: str, path: str) -> bool:
+    # An operator overload is invoked by operator SYNTAX (`a + b`) and a
+    # finalizer (`~Foo`) by the GC, never a named call the graph sees, so both
+    # are reachability roots on a .cs file (cf. the C++ operator root). The
+    # synthesized leaf carries the `operator_`/`~` prefix.
+    return path.endswith(cs.EXT_CS) and (
+        name.startswith(cs.TS_CSHARP_OPERATOR_NAME_PREFIX)
+        or name.startswith(cs.TS_CSHARP_DESTRUCTOR_NAME_PREFIX)
+    )
 
 
 _WELL_KNOWN_SYMBOL_KEY_RE = re.compile(r"\[Symbol\.(?P<name>[A-Za-z_$][\w$]*)\]$")
@@ -127,6 +205,92 @@ def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) ->
     if not isinstance(decorators, list):
         return False
     return any(_norm_decorator(str(d)) in root_decorators for d in decorators)
+
+
+def _is_nest_component_class(
+    class_qn: str,
+    class_decorators_norm: dict[str, frozenset[str]],
+    nest_factory_classes: set[str],
+) -> bool:
+    if class_qn in nest_factory_classes:
+        return True
+    decorators = class_decorators_norm.get(class_qn)
+    return bool(decorators and decorators & cs.NEST_ROOT_CLASS_DECORATORS)
+
+
+def _is_nest_root(
+    qn: str,
+    member: str,
+    is_method: bool,
+    path: str,
+    method_to_class: dict[str, str],
+    class_decorators_norm: dict[str, frozenset[str]],
+    nest_factory_classes: set[str],
+) -> bool:
+    # NestJS runs code the static graph sees no call to. A class decorated
+    # @Injectable/@Controller/@Module/... is instantiated by the DI container
+    # (root its constructor) and driven by the framework through lifecycle and
+    # single-method interface contracts (root those methods by name). A class
+    # implementing an EXTERNAL `...OptionsFactory` interface has its factory
+    # method invoked by Nest, so root all its methods (mirrors overrides_external).
+    # Gated to JS/TS; a same-named ordinary method on a plain class is untouched.
+    if not path.endswith(_JS_TS_EXTS):
+        return False
+    if not is_method:
+        # A CLASS-node candidate (only present with --classes): the component
+        # class is instantiated by the container, so it roots itself -- a rooted
+        # constructor cannot revive it because DEFINES_METHOD is not a
+        # reachability edge. (A non-class, non-method candidate -- a bare
+        # function -- is not in either map, so this returns False.)
+        return _is_nest_component_class(qn, class_decorators_norm, nest_factory_classes)
+    cls = method_to_class.get(qn)
+    if cls is None:
+        return False
+    if cls in nest_factory_classes:
+        return True
+    decorators = class_decorators_norm.get(cls)
+    if decorators and decorators & cs.NEST_ROOT_CLASS_DECORATORS:
+        return (
+            member == cs.KEYWORD_CONSTRUCTOR or member in cs.NEST_FRAMEWORK_METHOD_NAMES
+        )
+    return False
+
+
+def _is_react_base_qn(base_qn: str) -> bool:
+    # A React component base: the simple name is `Component`/`PureComponent` AND
+    # it lives in a react-namespaced module (`react.Component`, `React.Component`,
+    # `react.PureComponent`). The namespace check keeps an unrelated base that
+    # merely SHARES the `Component` simple name (Ember/Glimmer's
+    # `@glimmer/component.Component`, a bespoke `ui.Component`) from being taken
+    # for React.
+    namespace, sep, leaf = base_qn.rpartition(cs.SEPARATOR_DOT)
+    return (
+        bool(sep)
+        and leaf in cs.REACT_COMPONENT_BASE_NAMES
+        and namespace.lower() == cs.REACT_NAMESPACE_TOKEN
+    )
+
+
+def _is_react_root(
+    qn: str,
+    member: str,
+    is_method: bool,
+    path: str,
+    method_to_class: dict[str, str],
+    react_component_classes: set[str],
+) -> bool:
+    # A React class-component lifecycle method (render/componentDidMount/... and
+    # the constructor React calls on instantiation) is invoked by React, never by
+    # a first-party call the graph sees, so it is a reachability root on a class
+    # that INHERITS a React component base. The methods/callbacks it reaches via
+    # `this.` then expand from it. Gated to JS/TS methods; a same-named method on
+    # a plain (non-React) class is untouched.
+    if not is_method or not path.endswith(_JS_TS_EXTS):
+        return False
+    if member not in cs.REACT_LIFECYCLE_METHOD_NAMES:
+        return False
+    cls = method_to_class.get(qn)
+    return cls is not None and cls in react_component_classes
 
 
 def _walk(
@@ -164,14 +328,24 @@ def dead_code_from_graph(
     props_by_qn: dict[str, PropertyDict] = {}
     method_qns: set[str] = set()
     module_path: dict[str, str] = {}
+    # Normalized decorators per CLASS qn (collected for every class, not just
+    # class candidates), so a method root rule can consult its class's
+    # @Injectable/@Controller/@Module marker (NestJS DI roots, issue #973).
+    class_decorators_norm: dict[str, frozenset[str]] = {}
     for (label, uid), props in nodes.items():
         if label == _MODULE:
             module_path[str(uid)] = str(props.get(cs.KEY_PATH, ""))
-        elif label in labels and str(uid).startswith(project_prefix):
-            # (H) With tests excluded, a test-file symbol's only callers are
-            # (H) excluded as roots, so reporting it is unconditional noise (test
-            # (H) helpers and mocks are infrastructure, not dead production code).
-            if not config.include_tests and _matches_test_path(
+        if label == _CLASS:
+            decorators = props.get(cs.KEY_DECORATORS)
+            if isinstance(decorators, list):
+                class_decorators_norm[str(uid)] = frozenset(
+                    _norm_decorator(str(d)) for d in decorators
+                )
+        if label in labels and str(uid).startswith(project_prefix):
+            # With tests excluded, a test-file symbol's only callers are
+            # excluded as roots, so reporting it is noise (test helpers and
+            # mocks are infrastructure, not dead production code).
+            if not config.include_tests and matches_test_path(
                 str(props.get(cs.KEY_PATH) or ""), config.test_patterns
             ):
                 continue
@@ -181,84 +355,141 @@ def dead_code_from_graph(
                 method_qns.add(str(uid))
 
     roots: set[str] = set()
-    # (H) A method of a typing.Protocol subclass is an interface stub whose callers
-    # (H) resolve to the implementations, and DEFINES edges from functions/methods
-    # (H) feed the live-owner registration round below.
+    # A method of a typing.Protocol subclass is an interface stub whose callers
+    # resolve to the implementations; DEFINES edges from functions/methods feed
+    # the live-owner registration round below.
     defines_pairs: list[tuple[str, str]] = []
     protocol_classes: set[str] = set()
     class_methods: list[tuple[str, str]] = []
     nested_class_pairs: list[tuple[str, str]] = []
+    # A class implementing an EXTERNAL NestJS `...OptionsFactory` interface (one
+    # not defined in this project) has its factory method invoked by Nest, so its
+    # methods are roots (issue #973). Restricted to that naming convention so an
+    # unrelated third-party interface implementer is not force-rooted.
+    nest_factory_classes: set[str] = set()
+    # A class that `extends` a React component base (directly or through a
+    # first-party intermediate base) is a class component whose lifecycle methods
+    # React drives at runtime (issue #978). Seeds are direct extenders; the
+    # transitive closure over INHERITS is computed after the scan.
+    react_component_classes: set[str] = set()
+    inherits_subclasses: dict[str, set[str]] = defaultdict(set)
     for from_label, from_val, rel_type, to_label, to_val in rels:
         if rel_type == _DEFINES and from_label in (_FUNCTION, _METHOD):
             defines_pairs.append((str(from_val), str(to_val)))
             if to_label == _CLASS:
                 nested_class_pairs.append((str(from_val), str(to_val)))
-        elif rel_type == _INHERITS and str(to_val) in cs.PROTOCOL_BASE_QNS:
-            protocol_classes.add(str(from_val))
+        elif rel_type == _INHERITS:
+            inherits_subclasses[str(to_val)].add(str(from_val))
+            if str(to_val) in cs.PROTOCOL_BASE_QNS:
+                protocol_classes.add(str(from_val))
+            elif _is_react_base_qn(str(to_val)):
+                react_component_classes.add(str(from_val))
         elif rel_type == _DEFINES_METHOD:
             class_methods.append((str(from_val), str(to_val)))
+        elif (
+            rel_type == _IMPLEMENTS
+            and not str(to_val).startswith(project_prefix)
+            and str(to_val)
+            .rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            .endswith(cs.NEST_OPTIONS_FACTORY_SUFFIX)
+        ):
+            nest_factory_classes.add(str(from_val))
         if from_label != _MODULE or rel_type not in module_rels:
             continue
         target_qn = str(to_val)
         if target_qn not in candidates:
             continue
         path = module_path.get(str(from_val), "")
-        is_test = _matches_test_path(path, config.test_patterns)
+        is_test = matches_test_path(path, config.test_patterns)
         if config.include_tests or not is_test:
             roots.add(target_qn)
     protocol_stubs = {m for c, m in class_methods if c in protocol_classes}
+    method_to_class = {m: c for c, m in class_methods}
+    # Expand React components down the inheritance tree: a class extending a
+    # first-party base that (transitively) extends react.Component is itself a
+    # React component (a shared `BaseComponent extends React.Component` is common).
+    _walk(set(react_component_classes), inherits_subclasses, react_component_classes)
 
     for qn in candidates:
         if qn in roots:
             continue
         props = props_by_qn[qn]
-        # (H) The duplicate-qn marker (`init@51`, a SECOND Go init() in one
-        # (H) file) is a registration artifact, never part of the written
-        # (H) name; strip it so every name-scoped root rule sees the real leaf
-        # (H) (kubernetes pkg.apis.abac register.init@51 reported dead).
+        # The duplicate-qn marker (`init@51`, a SECOND Go init() in one file)
+        # is a registration artifact, never part of the written name; strip it
+        # so every name-scoped root rule sees the real leaf (kubernetes
+        # pkg.apis.abac register.init@51 reported dead).
         leaf = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
+        path = str(props.get(cs.KEY_PATH, ""))
         if _has_root_decorator(props, config.root_decorators):
             roots.add(qn)
         elif props.get(cs.KEY_IS_EXPORTED) is True:
             roots.add(qn)
-        # (H) A method overriding an EXTERNAL stdlib base's method (click's
-        # (H) textwrap.TextWrapper subclass) is invoked by the base's machinery,
-        # (H) never by a first-party call -- a root.
+        # A method overriding an EXTERNAL stdlib base's method (click's
+        # textwrap.TextWrapper subclass) is invoked by the base's machinery,
+        # never by a first-party call, so it is a root.
         elif props.get(cs.KEY_OVERRIDES_EXTERNAL) is True:
             roots.add(qn)
         elif qn in protocol_stubs:
             roots.add(qn)
-        elif (
-            qn in method_qns
-            and _is_dunder(leaf)
-            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
-        ):
+        elif qn in method_qns and _is_dunder(leaf) and path.endswith(cs.EXT_PY):
             roots.add(qn)
-        # (H) Python Enum protocol hooks (_generate_next_value_, _missing_) are
-        # (H) invoked by the enum machinery by NAME, like dunders -- roots, not
-        # (H) dead code (django's TextChoices._generate_next_value_).
+        # Python Enum protocol hooks (_generate_next_value_, _missing_) are
+        # invoked by the enum machinery by NAME, like dunders: roots, not
+        # dead code (django's TextChoices._generate_next_value_).
         elif (
             qn in method_qns
             and leaf in cs.PY_ENUM_HOOK_METHOD_NAMES
-            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_PY)
+            and path.endswith(cs.EXT_PY)
         ):
             roots.add(qn)
         elif (
             qn not in method_qns
             and leaf in cs.GO_ROOT_FUNCTION_NAMES
-            and str(props.get(cs.KEY_PATH, "")).endswith(cs.EXT_GO)
+            and path.endswith(cs.EXT_GO)
         ):
             roots.add(qn)
-        elif _is_rust_runtime_root(
-            leaf, qn in method_qns, str(props.get(cs.KEY_PATH, ""))
+        elif _is_rust_runtime_root(leaf, qn in method_qns, path):
+            roots.add(qn)
+        # NOT leaf-based: the computed name contains a dot, so the qn's
+        # last dotted segment is `toStringTag]`; match on the bracketed
+        # member name as registered.
+        elif _is_js_well_known_symbol_root(
+            str(props.get(cs.KEY_NAME) or ""), qn in method_qns, path
         ):
             roots.add(qn)
-        elif _is_cpp_operator_root(leaf, str(props.get(cs.KEY_PATH, ""))):
+        elif _is_cpp_operator_root(leaf, path) or _is_c_cpp_entry_root(
+            leaf, qn in method_qns, path, qn, project_prefix
+        ):
             roots.add(qn)
         elif _is_java_serialization_root(
+            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0], qn in method_qns, path
+        ):
+            roots.add(qn)
+        elif _is_csharp_attribute_root(props, path):
+            roots.add(qn)
+        elif _is_csharp_dispose_root(
+            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0], qn in method_qns, path
+        ):
+            roots.add(qn)
+        elif _is_csharp_operator_or_finalizer_root(leaf, path):
+            roots.add(qn)
+        elif _is_nest_root(
+            qn,
             leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
             qn in method_qns,
-            str(props.get(cs.KEY_PATH, "")),
+            path,
+            method_to_class,
+            class_decorators_norm,
+            nest_factory_classes,
+        ):
+            roots.add(qn)
+        elif _is_react_root(
+            qn,
+            leaf.split(cs.CHAR_PAREN_OPEN, 1)[0],
+            qn in method_qns,
+            path,
+            method_to_class,
+            react_component_classes,
         ):
             roots.add(qn)
         elif is_well_known_symbol_member(leaf) and str(
@@ -267,14 +498,12 @@ def dead_code_from_graph(
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)
-        elif config.include_tests and _matches_test_path(
-            str(props.get(cs.KEY_PATH, "")), config.test_patterns
-        ):
+        elif config.include_tests and matches_test_path(path, config.test_patterns):
             roots.add(qn)
 
     adjacency: dict[str, set[str]] = defaultdict(set)
-    # (H) OVERRIDES is recorded overrider -> overridden; keep the REVERSE mapping
-    # (H) (overridden -> overriders) to expand virtual-dispatch targets below.
+    # OVERRIDES is recorded overrider -> overridden; keep the REVERSE mapping
+    # (overridden -> overriders) to expand virtual-dispatch targets below.
     override_rev: dict[str, set[str]] = defaultdict(set)
     for from_label, from_val, rel_type, _to_label, to_val in rels:
         if rel_type in traversal:
@@ -285,12 +514,12 @@ def dead_code_from_graph(
     live = set(roots)
     _walk(roots, adjacency, live)
 
-    # (H) Second expansion: a decorated function DEFINED by a LIVE owner is
-    # (H) framework-registered when the owner runs, so it and its callees are
-    # (H) live; the closure of a DEAD owner never registers and stays in the
-    # (H) reported cluster. ponytail: one round, so a registration chain nested
-    # (H) two closures deep is missed; iterate to fixed point if real code ever
-    # (H) registers closures from inside registered closures.
+    # Second expansion: a decorated function DEFINED by a LIVE owner is
+    # framework-registered when the owner runs, so it and its callees are
+    # live; the closure of a DEAD owner never registers and stays in the
+    # reported cluster. ponytail: one round, so a registration chain nested
+    # two closures deep is missed; iterate to fixed point if real code ever
+    # registers closures from inside registered closures.
     closure_roots = {
         c
         for o, c in defines_pairs
@@ -302,28 +531,25 @@ def dead_code_from_graph(
     live |= closure_roots
     _walk(closure_roots, adjacency, live)
 
-    # (H) Factory-class and override expansions, iterated together to a fixed
-    # (H) point because they feed each other (a factory revived only via an
-    # (H) override's callee still needs its class rooted, and vice versa).
-    # (H)
-    # (H) Factory-class rule: a class defined inside a LIVE function or method
-    # (H) (django's create_reverse_many_to_one_manager) escapes through the
-    # (H) factory's return value or arguments, so its instances live behind
-    # (H) receivers the call graph cannot type and no call edge ever lands on
-    # (H) the methods. Treat the methods as dispatch surface (like exported
-    # (H) API) and revive their callee closure; a DEAD factory's class stays
-    # (H) dead.
-    # (H)
-    # (H) Override rule: a call to a base or interface method dispatches at
-    # (H) runtime to any override, so every (transitive) override of a LIVE
-    # (H) method is a reachable dispatch target, as is its callee closure.
-    # (H) `override_rev` walks all multi-level overriders (Base<-Sub<-SubSub);
-    # (H) an override of a DEAD base stays dead.
-    # (H)
-    # (H) Each round scans only the nodes revived since the last one (the pair
-    # (H) maps and override_rev are static, so a rescanned node cannot yield
-    # (H) anything new), keeping the loop O(live) total; a round that adds
-    # (H) nothing terminates it.
+    # Factory-class and override expansions, iterated together to a fixed
+    # point because they feed each other (a factory revived only via an
+    # override's callee still needs its class rooted, and vice versa).
+    #
+    # Factory-class rule: a class defined inside a LIVE function
+    # (django's create_reverse_many_to_one_manager) escapes via its return
+    # value or arguments, so no call edge lands on its methods. Treat them as
+    # dispatch surface and revive their callee closure; a DEAD factory's
+    # class stays dead.
+    #
+    # Override rule: a call to a base or interface method dispatches at
+    # runtime to any override, so every transitive override of a LIVE method
+    # is a reachable dispatch target, as is its callee closure. `override_rev`
+    # walks all multi-level overriders (Base<-Sub<-SubSub); an override of a
+    # DEAD base stays dead.
+    #
+    # Each round scans only nodes revived since the last (the pair maps and
+    # override_rev are static, so a rescanned node yields nothing new),
+    # keeping the loop O(live) total; a round that adds nothing ends it.
     classes_by_owner: dict[str, set[str]] = defaultdict(set)
     for owner, cls in nested_class_pairs:
         classes_by_owner[owner].add(cls)
@@ -360,10 +586,10 @@ def dead_code_from_graph(
         frontier = added
 
     dead = candidates - live
-    # (H) Suppress generated files (openapi-ts client/core, routeTree.gen.ts) from
-    # (H) the REPORT only, after reachability: they stay full participants as roots
-    # (H) and callers, so a real function invoked only from generated glue is not
-    # (H) newly flagged -- excluding earlier would drop those live edges.
+    # Suppress generated files (openapi-ts client/core, routeTree.gen.ts) from
+    # the REPORT only, after reachability: they stay full participants as roots
+    # and callers, so a real function invoked only from generated glue is not
+    # newly flagged; excluding earlier would drop those live edges.
     if config.exclude_patterns:
         dead = {
             qn
@@ -383,11 +609,15 @@ def _as_str_list(value: ResultValue | None) -> list[str]:
 
 
 def _node_props(row: ResultRow) -> PropertyDict:
-    # (H) Coalesce NULL column values at the fetch boundary so the engine never
-    # (H) sees None where a str/list/bool is expected. Only the properties the
-    # (H) engine reads are kept; the report is built from the raw rows.
+    # Coalesce NULL column values at the fetch boundary so the engine never
+    # sees None where a str/list/bool is expected. Only properties the engine
+    # reads are kept; the report is built from the raw rows.
     return {
         cs.KEY_PATH: str(row.get(cs.KEY_PATH) or ""),
+        # The registered member NAME survives here because a computed
+        # well-known-symbol name (`[Symbol.toStringTag]`) contains a dot and
+        # cannot be recovered from the qn's last dotted segment.
+        cs.KEY_NAME: str(row.get(cs.KEY_NAME) or ""),
         cs.KEY_DECORATORS: _as_str_list(row.get(cs.KEY_DECORATORS)),
         cs.KEY_IS_EXPORTED: row.get(cs.KEY_IS_EXPORTED) is True,
         cs.KEY_OVERRIDES_EXTERNAL: row.get(cs.KEY_OVERRIDES_EXTERNAL) is True,

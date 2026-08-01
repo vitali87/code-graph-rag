@@ -1360,8 +1360,8 @@ void testTemplateInheritance() {
     )
 
     for relationship in comprehensive_inherits:
-        # (H) from_spec, "INHERITS", to_spec, and a base_index property dict so
-        # (H) incremental rehydration can restore multiple-inheritance base order.
+        # from_spec, "INHERITS", to_spec, and a base_index property dict so
+        # incremental rehydration can restore multiple-inheritance base order.
         assert len(relationship.args) == 4, (
             "Inheritance relationship should have 4 args (incl. base_index props)"
         )

@@ -1,10 +1,10 @@
-# (H) An inline function passed as a call argument was referenced only when the
-# (H) callee resolved to a registered first-party callable (callable-params path).
-# (H) An external/unresolvable callee -- a parameter (`create((set) => ({ inc: () =>
-# (H) set((state) => ...) }))`, zustand's store shape) or a cast-wrapped callee
-# (H) (`;(set as NamedSet<S>)((state) => reducer(state, action), ...)`) -- consumed
-# (H) the arrow invisibly, so the registered anonymous node reported dead. Passing a
-# (H) function to ANY call hands it over: reference it from the calling scope.
+# An inline function passed as a call argument was referenced only when the
+# callee resolved to a registered first-party callable (callable-params path).
+# An external/unresolvable callee -- a parameter (`create((set) => ({ inc: () =>
+# set((state) => ...) }))`, zustand's store shape) or a cast-wrapped callee
+# (`;(set as NamedSet<S>)((state) => reducer(state, action), ...)`) -- consumed
+# the arrow invisibly, so the registered anonymous node reported dead. Passing a
+# function to ANY call hands it over: reference it from the calling scope.
 from __future__ import annotations
 
 from pathlib import Path

@@ -4,6 +4,11 @@ from .cpp_oracle import (
     run_cpp_call_oracle,
     run_cpp_oracle,
 )
+from .csharp_oracle import (
+    csharp_oracle_available,
+    run_csharp_call_oracle,
+    run_csharp_oracle,
+)
 from .go_oracle import go_available, run_go_call_oracle, run_go_oracle
 from .java_oracle import java_available, run_java_call_oracle, run_java_oracle
 from .lua_oracle import lua_oracle_available, run_lua_call_oracle, run_lua_oracle
@@ -23,6 +28,9 @@ __all__ = [
     "run_c_call_oracle",
     "run_cpp_call_oracle",
     "run_cpp_oracle",
+    "csharp_oracle_available",
+    "run_csharp_call_oracle",
+    "run_csharp_oracle",
     "go_available",
     "run_go_call_oracle",
     "run_go_oracle",

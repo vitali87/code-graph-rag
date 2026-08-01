@@ -1,11 +1,9 @@
-# (H) A Python function whose qn carries a duplicate-variant suffix (click's
-# (H) `command` -- @t.overload stubs claim the natural qn, the REAL def registers as
-# (H) `command@168`) calls its own nested function (`return decorator(func)`). The
-# (H) enclosing-scope walk probed `command@168.decorator`, which never exists (the
-# (H) def pass registers the nested under the NATURAL qn `command.decorator`), so
-# (H) resolution fell to the module trie and mis-bound to an alphabetically-earlier
-# (H) sibling's nested (`argument.decorator`) -- a false edge AND a false-dead
-# (H) `command.decorator`. The walk must also probe the variant-stripped scope.
+# A Python function whose qn carries a duplicate-variant suffix (click's
+# `command`: @t.overload stubs claim the natural qn, the REAL def registers as
+# `command@168`) calls its own nested `decorator`. The enclosing-scope walk
+# probed `command@168.decorator`, which never exists (the nested registers
+# under the NATURAL qn `command.decorator`), so resolution mis-bound to a
+# sibling's `argument.decorator`. The walk must also probe the stripped scope.
 from __future__ import annotations
 
 from pathlib import Path

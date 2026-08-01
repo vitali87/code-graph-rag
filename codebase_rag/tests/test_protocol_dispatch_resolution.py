@@ -1,9 +1,8 @@
-# (H) L3 finding from the evals/ harness: DefinitionProcessor._extract_decorators calls
-# (H) self._handler.extract_decorators(node), where _handler is annotated as the Protocol
-# (H) LanguageHandler (class-level annotation) and assigned dynamically via
-# (H) get_handler(language). The runtime type is one of several conformers, so the sound
-# (H) call graph emits an edge to extract_decorators on every conformer (capturing the
-# (H) traced PythonHandler edge) and never to the Protocol stub, which never runs.
+# L3 finding from the evals/ harness: DefinitionProcessor._extract_decorators calls
+# self._handler.extract_decorators(node), where _handler is annotated as the Protocol
+# LanguageHandler but assigned dynamically via get_handler(language). The runtime type
+# is one of several conformers, so the call graph emits an edge to extract_decorators
+# on every conformer (capturing the traced PythonHandler edge), never the stub.
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,6 +35,14 @@ FILES = {
         "class JsHandler(BaseHandler):\n"
         "    def extract(self, node):\n"
         "        return ['js']\n"
+    ),
+    # A same-named method in another language: no Python Protocol conformer
+    # is written in TypeScript, so the dispatch fan-out must not reach it
+    # (issue #945; in the dogfooded monorepo a `claims.get(...)` reached eight
+    # generated TS `HeyApiRegistry.get` methods this way).
+    "web/registry.ts": (
+        "export class HeyApiRegistry {\n  extract(node: unknown) {\n"
+        "    return [node];\n  }\n}\n"
     ),
     "pkg/proc.py": (
         "from .proto import HandlerLike\n\n\n"
@@ -114,6 +121,13 @@ class TestProtocolDispatchResolution:
             "proj.pkg.proc.Proc.go",
             "proj.pkg.base.BaseHandler.extract",
         ) in calls, calls
+
+    def test_does_not_dispatch_across_languages(self, tmp_path: Path) -> None:
+        calls = _calls(tmp_path)
+        assert (
+            "proj.pkg.proc.Proc.go",
+            "proj.web.registry.HeyApiRegistry.extract",
+        ) not in calls, calls
 
     def test_does_not_emit_protocol_stub_edge(self, tmp_path: Path) -> None:
         calls = _calls(tmp_path)

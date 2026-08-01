@@ -17,6 +17,7 @@ from codebase_rag.types_defs import CursorProtocol, ResultValue
 from .. import exceptions as ex
 from .. import logs as ls
 from ..constants import (
+    CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
     CYPHER_MEMORY_LIMIT_SUFFIX,
     CYPHER_MEMORY_LIMIT_TOKEN,
     CYPHER_SEMICOLON,
@@ -24,22 +25,33 @@ from ..constants import (
     ERR_SUBSTR_CONSTRAINT,
     KEY_CREATED,
     KEY_FROM_VAL,
+    KEY_LABEL,
     KEY_NAME,
     KEY_PROJECT_NAME,
+    KEY_PROPERTIES,
     KEY_PROPS,
+    KEY_PURGED,
     KEY_TO_VAL,
+    LEGACY_NODE_CONSTRAINTS,
+    MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
 )
 from ..cypher_queries import (
+    CYPHER_ANY_KEYLESS_STRUCTURE,
+    CYPHER_ANY_SHARED_STRUCTURE,
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
     CYPHER_EXPORT_NODES,
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
+    CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
+    CYPHER_PURGE_KEYLESS_STRUCTURE,
+    CYPHER_SHOW_CONSTRAINTS,
     build_constraint_query,
     build_create_node_query,
     build_create_relationship_query,
+    build_drop_constraint_query,
     build_index_query,
     build_merge_node_query,
     build_merge_relationship_query,
@@ -56,6 +68,8 @@ from ..types_defs import (
     RelBatchRow,
     ResultRow,
 )
+from ..utils.path_utils import project_roots_from_rows
+from .resource_cleanup import prune_unanchored_resources
 
 
 def _apply_memory_limit(query: str, mb: int) -> str:
@@ -129,9 +143,9 @@ class MemgraphIngestor:
         try:
             if exc_type:
                 logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
-                # (H) Best-effort flush: attempt to persist buffered nodes/relationships
-                # (H) even when an exception occurred. Catching broad Exception so a
-                # (H) secondary flush failure never masks the original exception.
+                # Best-effort flush: persist buffered nodes/relationships even when
+                # an exception occurred. Catch broad Exception so a secondary flush
+                # failure never masks the original.
                 try:
                     self.flush_all()
                 except Exception as flush_err:
@@ -270,13 +284,21 @@ class MemgraphIngestor:
         result = self.fetch_all(CYPHER_LIST_PROJECTS)
         return [str(r[KEY_NAME]) for r in result]
 
+    def list_project_roots(self) -> dict[str, str | None]:
+        return project_roots_from_rows(self.fetch_all(CYPHER_LIST_PROJECTS))
+
     def delete_project(self, project_name: str) -> None:
         logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))
         self._execute_query(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
+        # Shared prefix-less nodes (Resources, ExternalModules) only lose
+        # their edges above; drop the ones this project alone anchored.
+        prune_unanchored_resources(self)
+        self._execute_query(CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
 
     def ensure_constraints(self) -> None:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
+        self._migrate_legacy_path_keys()
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(build_constraint_query(label, prop))
@@ -284,6 +306,46 @@ class MemgraphIngestor:
                 pass
         logger.info(ls.MG_CONSTRAINTS_DONE)
         self._ensure_indexes()
+
+    def _migrate_legacy_path_keys(self) -> None:
+        """Retire the superseded Folder/File relative-path keys (issue #897).
+
+        A database that still enforces the legacy constraints was written by
+        the old key, which merged same-layout projects onto shared nodes; the
+        leftover constraint would also reject the second same-relative-path
+        node the current scheme creates. Merged nodes cannot be split, so
+        they are purged along with keyless legacy rows; re-indexing rebuilds
+        them with per-project identity. Dropping a constraint is idempotent
+        in Memgraph, so any failure here is real and propagates. The purge
+        keys off the data, not the constraints: damage outlives the schema
+        when an earlier partial upgrade already dropped them.
+        """
+        existing_rows = self._execute_query(CYPHER_SHOW_CONSTRAINTS)
+        legacy_present = [
+            (label, prop)
+            for label, prop in LEGACY_NODE_CONSTRAINTS
+            if any(
+                row.get(KEY_LABEL) == label and row.get(KEY_PROPERTIES) == [prop]
+                for row in existing_rows
+            )
+        ]
+        for label, prop in legacy_present:
+            self._execute_query(build_drop_constraint_query(label, prop))
+        damaged = bool(self._execute_query(CYPHER_ANY_SHARED_STRUCTURE)) or bool(
+            self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
+        )
+        if not damaged:
+            return
+        purged = 0
+        for purge_query in (
+            CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
+            CYPHER_PURGE_KEYLESS_STRUCTURE,
+        ):
+            rows = self._execute_query(purge_query)
+            if rows:
+                purged += int(str(rows[0][KEY_PURGED]))
+        if purged:
+            logger.warning(ls.MG_LEGACY_PURGE.format(count=purged))
 
     def _ensure_indexes(self) -> None:
         logger.info(ls.MG_ENSURING_INDEXES)
@@ -454,15 +516,38 @@ class MemgraphIngestor:
         conn: mgclient.Connection | None = None,
     ) -> tuple[int, int]:
         from_label, from_key, rel_type, to_label, to_key = pattern
-        build_rel_query = (
-            build_merge_relationship_query
-            if self._use_merge
-            else build_create_relationship_query
-        )
         has_props = any(p[KEY_PROPS] for p in params_list)
-        query = build_rel_query(
-            from_label, from_key, rel_type, to_label, to_key, has_props
-        )
+        if self._use_merge:
+            candidate = MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
+            by_keys: defaultdict[tuple[str, ...], list[RelBatchRow]] = defaultdict(list)
+            for row in params_list:
+                props = row[KEY_PROPS] or {}
+                by_keys[tuple(p for p in candidate if p in props)].append(row)
+            if len(by_keys) > 1:
+                # Rows for the same endpoints may carry different distinguishing
+                # props (issue #722); flush each merge-key signature on its own so
+                # a prop absent from one row is not dropped from the key for the
+                # rest, which would re-collapse the parallel provenance edges.
+                # Pass `conn` through unchanged to preserve the lock semantics.
+                totals = [
+                    self._flush_rel_pattern_group(pattern, rows, conn=conn)
+                    for rows in by_keys.values()
+                ]
+                return sum(t for t, _ in totals), sum(s for _, s in totals)
+            merge_key_props = next(iter(by_keys), ())
+            query = build_merge_relationship_query(
+                from_label,
+                from_key,
+                rel_type,
+                to_label,
+                to_key,
+                has_props,
+                merge_key_props=merge_key_props,
+            )
+        else:
+            query = build_create_relationship_query(
+                from_label, from_key, rel_type, to_label, to_key, has_props
+            )
 
         target_conn = conn or self.conn
         if not target_conn:

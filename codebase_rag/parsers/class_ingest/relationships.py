@@ -31,6 +31,7 @@ def create_class_relationships(
     interface_implementers: dict[str, set[str]] | None = None,
     defer_cpp_inherits: list[DeferredCppInherit] | None = None,
     defer_inherits: list[DeferredInherit] | None = None,
+    csharp_base_kinds: dict[str, str] | None = None,
 ) -> None:
     cpp_bases: list[tuple[str, str]] | None = None
     if class_node.type in cs.CPP_CLASS_TYPES:
@@ -38,13 +39,13 @@ def create_class_relationships(
         parent_classes = [guess for _, guess in cpp_bases]
     else:
         parent_classes = pe.extract_parent_classes(
-            class_node, module_qn, import_processor, resolve_to_qn
+            class_node, module_qn, import_processor, resolve_to_qn, csharp_base_kinds
         )
     class_inheritance[class_qn] = parent_classes
 
-    # (H) The DEFINES containment edge is emitted by the caller via
-    # (H) _emit_or_defer_defines, so a non-module parent is verified against
-    # (H) the registry after all passes instead of risking a phantom endpoint.
+    # The DEFINES containment edge is emitted by the caller via
+    # _emit_or_defer_defines, so a non-module parent is verified against
+    # the registry after all passes instead of risking a phantom endpoint.
 
     if is_exported and language == cs.SupportedLanguage.CPP:
         ingestor.ensure_relationship_batch(
@@ -54,10 +55,10 @@ def create_class_relationships(
         )
 
     if cpp_bases is not None and defer_cpp_inherits is not None:
-        # (H) A C++ base often lives in another header, so its qn cannot resolve
-        # (H) until every class is registered; hold the INHERITS edge back for
-        # (H) resolve_deferred_cpp_inherits instead of emitting the module-anchored
-        # (H) guess (a phantom the database drops for every cross-file base).
+        # A C++ base often lives in another header, so its qn cannot resolve
+        # until every class is registered; hold the INHERITS edge back for
+        # resolve_deferred_cpp_inherits instead of emitting the module-anchored
+        # guess (a phantom the database drops for every cross-file base).
         namespace_path = cs.SEPARATOR_DOT.join(
             cpp_utils.extract_namespace_path(class_node)
         )
@@ -73,10 +74,10 @@ def create_class_relationships(
                 )
             )
     elif defer_inherits is not None:
-        # (H) A non-C++ parent may live in a file not yet parsed, in which case
-        # (H) the qn above is only the module-anchored fallback guess; hold the
-        # (H) edge back for resolve_deferred_inherits so it is re-resolved
-        # (H) against the full registry (an unresolvable parent emits no edge).
+        # A non-C++ parent may live in a file not yet parsed, in which case
+        # the qn above is only the module-anchored fallback guess; hold the
+        # edge back for resolve_deferred_inherits so it is re-resolved
+        # against the full registry (an unresolvable parent emits no edge).
         for base_index, parent_class_qn in enumerate(parent_classes):
             defer_inherits.append(
                 DeferredInherit(
@@ -99,11 +100,20 @@ def create_class_relationships(
                 base_index,
             )
 
-    # (H) A class OR an enum can `implements` interfaces; both expose them via the
-    # (H) `interfaces` field (a super_interfaces clause), so handle both.
-    if class_node.type in (cs.TS_CLASS_DECLARATION, cs.TS_ENUM_DECLARATION):
+    # A class OR an enum can `implements` interfaces; both expose them via the
+    # `interfaces` field (a super_interfaces clause), so handle both. C#
+    # struct/record types implement interfaces through their base_list too
+    # (a C# class reuses the class_declaration node type already listed);
+    # a C# interface's base_list is inheritance, so it is excluded here.
+    if class_node.type in (
+        cs.TS_CLASS_DECLARATION,
+        cs.TS_ENUM_DECLARATION,
+        cs.TS_CSHARP_STRUCT_DECLARATION,
+        cs.TS_CSHARP_RECORD_DECLARATION,
+        cs.TS_DART_CLASS_DEFINITION,
+    ):
         for interface_qn in pe.extract_implemented_interfaces(
-            class_node, module_qn, resolve_to_qn
+            class_node, module_qn, resolve_to_qn, csharp_base_kinds
         ):
             if defer_inherits is not None:
                 defer_inherits.append(
@@ -120,8 +130,8 @@ def create_class_relationships(
                 create_implements_relationship(
                     node_type, class_qn, interface_qn, ingestor
                 )
-            # (H) Record implementers so the resolver can dispatch an interface-typed
-            # (H) call to the concrete method when the interface has exactly one impl.
+            # Record implementers so the resolver can dispatch an interface-typed
+            # call to the concrete method when the interface has exactly one impl.
             if interface_implementers is not None:
                 interface_implementers.setdefault(interface_qn, set()).add(class_qn)
 
@@ -146,10 +156,10 @@ def create_inheritance_relationship(
     parent_type = parent_label or get_node_type_for_inheritance(
         parent_qn, function_registry
     )
-    # (H) Persist the base's position in the child's base list. An incremental run
-    # (H) rehydrates class_inheritance from these edges; ordering by base_index
-    # (H) restores the original source order, which method resolution (Pass 3) and
-    # (H) override attribution (Pass 4) depend on for multiple inheritance.
+    # Persist the base's position in the child's base list. An incremental run
+    # rehydrates class_inheritance from these edges; ordering by base_index
+    # restores the original source order, which method resolution (Pass 3) and
+    # override attribution (Pass 4) depend on for multiple inheritance.
     ingestor.ensure_relationship_batch(
         (child_node_type, cs.KEY_QUALIFIED_NAME, child_qn),
         cs.RelationshipType.INHERITS,

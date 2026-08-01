@@ -1,8 +1,8 @@
-# (H) A Rust closure is a value constructed where it is written (a `.map(|x| ..)`
-# (H) arg, a spawn body, a `let` binding). For dead-code reachability (which walks
-# (H) CALLS/REFERENCES, not DEFINES), the closure must carry an incoming REFERENCES
-# (H) edge from its enclosing function -- else every closure is an orphan and reports
-# (H) as dead. This mirrors the inline-callback REFERENCES edge JS/TS already emit.
+# A Rust closure is a value constructed where it is written (a `.map(|x| ..)`
+# arg, a spawn body, a `let` binding). For dead-code reachability (which walks
+# CALLS/REFERENCES, not DEFINES), the closure must carry an incoming REFERENCES
+# edge from its enclosing function -- else every closure is an orphan and reports
+# as dead. This mirrors the inline-callback REFERENCES edge JS/TS already emit.
 from pathlib import Path
 
 from evals.cgr_graph import _capture
@@ -26,8 +26,8 @@ def _make_crate(root: Path, body: str) -> None:
 
 
 def test_closure_arg_referenced_by_enclosing_fn(tmp_path: Path) -> None:
-    # (H) `xs.iter().map(|s| s.len())` inside a free fn: the closure must be
-    # (H) referenced by the enclosing function so it is reachable, not orphaned.
+    # `xs.iter().map(|s| s.len())` inside a free fn: the closure must be
+    # referenced by the enclosing function so it is reachable, not orphaned.
     _make_crate(
         tmp_path,
         "pub fn run(xs: Vec<String>) -> usize {\n"
@@ -45,7 +45,7 @@ def test_closure_arg_referenced_by_enclosing_fn(tmp_path: Path) -> None:
 
 
 def test_closure_in_method_referenced(tmp_path: Path) -> None:
-    # (H) A closure in an impl method body must be referenced by that method.
+    # A closure in an impl method body must be referenced by that method.
     _make_crate(
         tmp_path,
         "pub struct Db {}\n"

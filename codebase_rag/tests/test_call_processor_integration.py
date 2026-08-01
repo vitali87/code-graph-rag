@@ -317,9 +317,9 @@ function process(data) {
             if c.args[1] == cs.RelationshipType.CALLS
         ]
 
-        # (H) A synthetic builtin.* qn never has a node, so its CALLS edge was
-        # (H) always dropped by the database (issue #652); builtin resolution
-        # (H) must therefore emit NO edge, mirroring the C++ operator rule.
+        # A synthetic builtin.* qn never has a node, so its CALLS edge was
+        # always dropped by the database (issue #652); builtin resolution
+        # must therefore emit NO edge, mirroring the C++ operator rule.
         call_targets = [c.args[2][2] for c in calls]
         builtin_calls = [t for t in call_targets if cs.BUILTIN_PREFIX in t]
         assert not builtin_calls, builtin_calls
@@ -821,7 +821,7 @@ def main():
         ]
         assert len(calls) >= 1
 
-        # (H) Builder() is a class instantiation, not a function call
+        # Builder() is a class instantiation, not a function call
         class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
         assert len(class_targets) == 0
 

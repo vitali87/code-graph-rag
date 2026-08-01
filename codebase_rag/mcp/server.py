@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import contextlib
 import json
 import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from mcp.server import Server
@@ -18,7 +21,13 @@ from codebase_rag.mcp.tools import create_mcp_tools_registry
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
+from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import close_qdrant_client
+
+if TYPE_CHECKING:
+    # starlette is a lazy dependency of the HTTP path only; its ASGI
+    # types are needed solely for annotations
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 def setup_logging() -> None:
@@ -78,7 +87,12 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         password=settings.MEMGRAPH_PASSWORD,
     )
 
-    cypher_generator = CypherGenerator()
+    # Scope Cypher generation to this server's project (named exactly as
+    # indexing names it) so queries don't bleed into other projects sharing
+    # the database (issue #425).
+    cypher_generator = CypherGenerator(
+        active_projects=[derive_project_name(project_root)]
+    )
 
     tools = create_mcp_tools_registry(
         project_root=str(project_root),
@@ -144,9 +158,9 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
     """Manage shared service lifetimes for the MCP server.
 
-    Opens the Memgraph ingestor connection and guarantees the embedded Qdrant
-    client lock is released on shutdown, so a CLI indexing run can reuse the
-    storage folder once the server stops.
+    Opens the Memgraph ingestor connection and releases the vector store client
+    on shutdown, so a CLI indexing run can reuse local resources once the server
+    stops.
     """
     try:
         with ingestor:
@@ -179,6 +193,57 @@ async def serve_stdio() -> None:
             logger.info(lg.MCP_SERVER_SHUTDOWN)
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _validate_http_exposure(host: str, auth_token: str | None) -> None:
+    # The StreamableHTTP endpoint's only protection is the bearer token;
+    # refusing a non-loopback bind without one makes accidental network
+    # exposure of the unauthenticated transport impossible (follow-up to
+    # #808: the loopback default protects default deployments, this
+    # protects intentional remote ones).
+    if host not in _LOOPBACK_HOSTS and not auth_token:
+        raise ValueError(lg.MCP_HTTP_EXPOSURE_REFUSED.format(host=host))
+
+
+def _require_bearer_auth(app: ASGIApp, auth_token: str) -> ASGIApp:
+    import secrets
+
+    token_bytes = auth_token.encode(cs.ENCODING_UTF8)
+
+    async def guarded(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        provided: bytes | None = None
+        for key, value in scope.get("headers", []):
+            if key.lower() == b"authorization":
+                provided = value
+                break
+        # RFC 7235: the SCHEME compares case-insensitively (not secret, so
+        # an ordinary compare is fine); only the token value needs
+        # constant-time compare_digest
+        authorized = False
+        if provided is not None:
+            scheme, _, credential = provided.partition(b" ")
+            authorized = scheme.lower() == b"bearer" and secrets.compare_digest(
+                credential, token_bytes
+            )
+        if not authorized:
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"www-authenticate", b"Bearer")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b""})
+            return
+        await app(scope, receive, send)
+
+    return guarded
+
+
 async def serve_http(
     host: str = settings.MCP_HTTP_HOST,
     port: int = settings.MCP_HTTP_PORT,
@@ -187,6 +252,9 @@ async def serve_http(
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
     from starlette.routing import Mount
+
+    auth_token = settings.MCP_HTTP_AUTH_TOKEN
+    _validate_http_exposure(host, auth_token)
 
     logger.info(lg.MCP_HTTP_SERVER_STARTING.format(host=host, port=port))
 
@@ -205,9 +273,16 @@ async def serve_http(
                 logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
                 yield
 
+    # With a token, bearer auth fronts the mount even on loopback
+    # (defense in depth for shared hosts); without one the exposure
+    # guard above already confined the bind.
+    endpoint = session_manager.handle_request
+    if auth_token:
+        endpoint = _require_bearer_auth(endpoint, auth_token)
+
     starlette_app = Starlette(
         routes=[
-            Mount(settings.MCP_HTTP_ENDPOINT_PATH, app=session_manager.handle_request),
+            Mount(settings.MCP_HTTP_ENDPOINT_PATH, app=endpoint),
         ],
         lifespan=lifespan,
     )

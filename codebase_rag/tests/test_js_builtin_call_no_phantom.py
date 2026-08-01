@@ -1,10 +1,10 @@
-# (H) JS/TS calls resolving to synthetic `builtin.*` qns (console.log,
-# (H) Date.now, JSON.stringify) emitted CALLS edges to Function nodes that are
-# (H) never created, so the database dropped every one (issue #652: 485 across
-# (H) the fixture suite). A builtin is not a first-party callee; mirroring the
-# (H) C++ builtin-operator rule, no edge is emitted at all. A first-party
-# (H) callback handed to a builtin must still be kept reachable via the
-# (H) argument-reference path.
+# JS/TS calls resolving to synthetic `builtin.*` qns (console.log,
+# Date.now, JSON.stringify) emitted CALLS edges to Function nodes that are
+# never created, so the database dropped every one (issue #652: 485 across
+# the fixture suite). A builtin is not a first-party callee; mirroring the
+# C++ builtin-operator rule, no edge is emitted at all. A first-party
+# callback handed to a builtin must still be kept reachable via the
+# argument-reference path.
 from __future__ import annotations
 
 from pathlib import Path
@@ -52,8 +52,8 @@ def test_builtin_calls_emit_no_phantom_edges(
 def test_callback_passed_to_builtin_stays_reachable(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # (H) Dropping the builtin edge must not drop the argument-flow edge that
-    # (H) keeps a first-party callback handed to the builtin reachable.
+    # Dropping the builtin edge must not drop the argument-flow edge that
+    # keeps a first-party callback handed to the builtin reachable.
     (temp_repo / "app.js").write_text(APP_JS)
     run_updater(temp_repo, mock_ingestor)
 

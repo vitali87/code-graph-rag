@@ -202,7 +202,7 @@ class HealthChecker:
 
         def fetch_all(query: str) -> list[ResultRow]:
             cursor.execute(query)
-            # (H) mgclient.Column is not subscriptable; the name is an attribute.
+            # mgclient.Column is not subscriptable; the name is an attribute.
             columns = [column.name for column in cursor.description or []]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 

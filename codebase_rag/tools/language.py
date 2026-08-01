@@ -373,12 +373,21 @@ def _show_review_hints() -> None:
     click.echo(f"Hint: {cs.LANG_MSG_LIST_HINT}")
 
 
-@click.group(help=ch.CMD_LANGUAGE_GROUP)
+@click.group(
+    help=ch.CMD_LANGUAGE_GROUP,
+    short_help=ch.CMD_LANGUAGE_GROUP,
+    epilog=ch.EPILOG_LANGUAGE,
+    no_args_is_help=True,
+)
 def cli() -> None:
     pass
 
 
-@cli.command(help=ch.CMD_LANGUAGE_ADD)
+@cli.command(
+    help=ch.CMD_LANGUAGE_ADD,
+    short_help=ch.CMD_LANGUAGE_ADD,
+    epilog=ch.EXAMPLES_LANGUAGE_ADD,
+)
 @click.argument("language_name", required=False)
 @click.option(
     "--grammar-url",
@@ -462,7 +471,7 @@ def add_grammar(
     _update_config_file(language_name, new_language_spec)
 
 
-@cli.command(help=ch.CMD_LANGUAGE_LIST)
+@cli.command(help=ch.CMD_LANGUAGE_LIST, short_help=ch.CMD_LANGUAGE_LIST)
 def list_languages() -> None:
     console = Console()
 
@@ -500,7 +509,11 @@ def list_languages() -> None:
     console.print(table)
 
 
-@cli.command(help=ch.CMD_LANGUAGE_REMOVE)
+@cli.command(
+    help=ch.CMD_LANGUAGE_REMOVE,
+    short_help=ch.CMD_LANGUAGE_REMOVE,
+    epilog=ch.EXAMPLES_LANGUAGE_REMOVE,
+)
 @click.argument("language_name")
 @click.option("--keep-submodule", is_flag=True, help=ch.HELP_KEEP_SUBMODULE)
 def remove_language(language_name: str, keep_submodule: bool = False) -> None:
@@ -571,7 +584,7 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     click.echo(f"Done: {cs.LANG_MSG_LANG_REMOVED.format(name=language_name)}")
 
 
-@cli.command(help=ch.CMD_LANGUAGE_CLEANUP)
+@cli.command(help=ch.CMD_LANGUAGE_CLEANUP, short_help=ch.CMD_LANGUAGE_CLEANUP)
 def cleanup_orphaned_modules() -> None:
     modules_dir = f".git/modules/{cs.LANG_GRAMMARS_DIR}"
     if not os.path.exists(modules_dir):

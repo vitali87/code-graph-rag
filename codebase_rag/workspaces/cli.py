@@ -11,12 +11,17 @@ from . import storage as st
 from .storage import WorkspaceError
 
 
-@click.group(help=ch.CMD_WORKSPACE_GROUP)
+@click.group(
+    help=ch.CMD_WORKSPACE_GROUP,
+    short_help=ch.CMD_WORKSPACE_GROUP,
+    epilog=ch.EPILOG_WORKSPACE,
+    no_args_is_help=True,
+)
 def cli() -> None:
     pass
 
 
-@cli.command("list", help=ch.CMD_WORKSPACE_LIST)
+@cli.command("list", help=ch.CMD_WORKSPACE_LIST, short_help=ch.CMD_WORKSPACE_LIST)
 def list_cmd() -> None:
     names = st.list_workspaces()
     if not names:
@@ -26,7 +31,7 @@ def list_cmd() -> None:
         click.echo(name)
 
 
-@cli.command("create", help=ch.CMD_WORKSPACE_CREATE)
+@cli.command("create", help=ch.CMD_WORKSPACE_CREATE, short_help=ch.CMD_WORKSPACE_CREATE)
 @click.argument("name")
 @click.option("--description", "-d", default="", help=ch.HELP_WORKSPACE_DESCRIPTION)
 @click.option("--force", is_flag=True, help=ch.HELP_WORKSPACE_FORCE)
@@ -40,7 +45,7 @@ def create_cmd(name: str, description: str, force: bool) -> None:
     click.echo(wcs.MSG_WORKSPACE_CREATED.format(name=name, path=path))
 
 
-@cli.command("delete", help=ch.CMD_WORKSPACE_DELETE)
+@cli.command("delete", help=ch.CMD_WORKSPACE_DELETE, short_help=ch.CMD_WORKSPACE_DELETE)
 @click.argument("name")
 def delete_cmd(name: str) -> None:
     try:
@@ -52,7 +57,7 @@ def delete_cmd(name: str) -> None:
     click.echo(wcs.MSG_WORKSPACE_DELETED.format(name=name, path=path))
 
 
-@cli.command("show", help=ch.CMD_WORKSPACE_SHOW)
+@cli.command("show", help=ch.CMD_WORKSPACE_SHOW, short_help=ch.CMD_WORKSPACE_SHOW)
 @click.argument("name")
 def show_cmd(name: str) -> None:
     try:
@@ -69,7 +74,11 @@ def show_cmd(name: str) -> None:
         click.echo(f"  - {repo.path} ({repo.project_name})")
 
 
-@cli.command("add-repo", help=ch.CMD_WORKSPACE_ADD_REPO)
+@cli.command(
+    "add-repo",
+    help=ch.CMD_WORKSPACE_ADD_REPO,
+    short_help=ch.CMD_WORKSPACE_ADD_REPO,
+)
 @click.argument("name")
 @click.argument("repo_path")
 @click.option(
@@ -89,7 +98,11 @@ def add_repo_cmd(name: str, repo_path: str, project_name: str | None) -> None:
     )
 
 
-@cli.command("remove-repo", help=ch.CMD_WORKSPACE_REMOVE_REPO)
+@cli.command(
+    "remove-repo",
+    help=ch.CMD_WORKSPACE_REMOVE_REPO,
+    short_help=ch.CMD_WORKSPACE_REMOVE_REPO,
+)
 @click.argument("name")
 @click.argument("repo_path")
 def remove_repo_cmd(name: str, repo_path: str) -> None:

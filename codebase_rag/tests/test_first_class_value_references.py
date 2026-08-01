@@ -1,8 +1,8 @@
-# (H) First-class function values hiding inside containers and class bodies
-# (H) (django's backend data_types dispatch dicts, model field validators
-# (H) lists, pickle __reduce__ tuples, conditional arguments): each stored
-# (H) name is wired for later dynamic invocation the call graph cannot see,
-# (H) so it must be REFERENCED from the scope that stores it.
+# First-class function values hiding inside containers and class bodies
+# (django's backend data_types dispatch dicts, model field validators
+# lists, pickle __reduce__ tuples, conditional arguments): each stored
+# name is wired for later dynamic invocation the call graph cannot see,
+# so it must be REFERENCED from the scope that stores it.
 from __future__ import annotations
 
 from pathlib import Path
@@ -64,8 +64,8 @@ def compile_it(flag):
 
 
 def _references(root: Path) -> set[tuple[str, str]]:
-    # (H) Dispatch-table values keep the historical CALLS edge; argument and
-    # (H) return passes record REFERENCES. Both keep a symbol reachable.
+    # Dispatch-table values keep the historical CALLS edge; argument and
+    # return passes record REFERENCES. Both keep a symbol reachable.
     ingestor = _capture(root, "proj")
     return {
         (str(f), str(t))
@@ -142,9 +142,9 @@ def get_related_selections(flag):
 
 
 def test_dict_value_ternary_references_both_branches(tmp_path: Path) -> None:
-    # (H) django's SQLCompiler stores `(partial(...) if cond else
-    # (H) local_setter_noop)` as a dict VALUE: the parenthesized ternary hides
-    # (H) both dispatch candidates one level down inside the table entry.
+    # django's SQLCompiler stores `(partial(...) if cond else
+    # local_setter_noop)` as a dict VALUE: the parenthesized ternary hides
+    # both dispatch candidates one level down inside the table entry.
     root = tmp_path / "dictternary"
     root.mkdir()
     (root / "m.py").write_text(DICT_TERNARY_PY, encoding="utf-8")

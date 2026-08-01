@@ -1,0 +1,22 @@
+# ast-grep code-smell rules for Scala (issue #413).
+# Each match becomes a CodeSmell node linked to the file's Module via HAS_SMELL.
+ast_grep_id: scala
+extensions: [.scala, .sc]
+rules:
+  - id: debug_println
+    message: "println left in code; use a logger instead"
+    rule:
+      pattern: "println($$$)"
+  - id: mutable_var
+    message: "Mutable var declaration; prefer val where possible"
+    rule:
+      kind: var_definition
+  - id: null_usage
+    message: "null literal; prefer Option to represent absence"
+    rule:
+      kind: null_literal
+  - id: instanceof_cast
+    message: "asInstanceOf cast bypasses the type system"
+    rule:
+      kind: generic_function
+      regex: 'asInstanceOf'

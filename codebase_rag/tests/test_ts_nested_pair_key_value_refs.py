@@ -1,10 +1,10 @@
-# (H) An object-literal function value nested under ANOTHER pair-arrow
-# (H) (`configure({ onCreated: (state) => { state.setEvents({ compute: (e, s) =>
-# (H) {...} }) } })`, zustand's demo Scene) registers under the pair-key PATH
-# (H) (Canvas.onCreated.compute), but the dispatch-table scan built its named
-# (H) candidate from the caller scope alone (Canvas.compute) -- a miss, so the
-# (H) nested handler reported dead. The candidate must include the ancestor pair
-# (H) keys between the value and the scanning caller.
+# An object-literal function value nested under ANOTHER pair-arrow
+# (`configure({ onCreated: (state) => { state.setEvents({ compute: (e, s) =>
+# {...} }) } })`, zustand's demo Scene) registers under the pair-key PATH
+# (Canvas.onCreated.compute), but the dispatch-table scan built its named
+# candidate from the caller scope alone (Canvas.compute) -- a miss, so the
+# nested handler reported dead. The candidate must include the ancestor pair
+# keys between the value and the scanning caller.
 from __future__ import annotations
 
 from pathlib import Path

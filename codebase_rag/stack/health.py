@@ -46,12 +46,13 @@ def wait_for_memgraph(
 
 
 def wait_for_qdrant(
-    host: str,
     port: int,
     timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,
     interval: float = cs.DEFAULT_HEALTH_INTERVAL_S,
 ) -> bool:
-    url = f"http://{host}:{port}/readyz"
+    # Plain HTTP is deliberate: the stack manager only launches containers on
+    # this machine, so the probe is pinned to loopback.
+    url = f"http://127.0.0.1:{port}/readyz"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if _http_reachable(url):

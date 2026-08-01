@@ -9,13 +9,13 @@ from codebase_rag.tests.conftest import (
     run_updater,
 )
 
-# (H) A C++ forward declaration (`class Widget;`) is a bodyless class_specifier. The
-# (H) definition pass registered it as its own Class node (zero methods), so the real
-# (H) definition that followed collided on the qn and was suffixed (`Widget@<line>`),
-# (H) fragmenting one class into several same-named nodes across files. That made
-# (H) member-call resolution pick among duplicate candidates (a correctness bug) and,
-# (H) via hash-ordered candidate selection, produced non-reproducible graphs. A
-# (H) forward declaration must NOT create a Class node; only the real definition does.
+# A C++ forward declaration (`class Widget;`) is a bodyless class_specifier. The
+# definition pass registered it as its own Class node (zero methods), so the real
+# definition that followed collided on the qn and was suffixed (`Widget@<line>`),
+# fragmenting one class into several same-named nodes across files. That made
+# member-call resolution pick among duplicate candidates (a correctness bug) and,
+# via hash-ordered candidate selection, produced non-reproducible graphs. A
+# forward declaration must NOT create a Class node; only the real definition does.
 CPP_SOURCE = """
 namespace ns {
 
@@ -46,21 +46,21 @@ def test_forward_declaration_does_not_create_phantom_class(
     widgets = [q for q in class_qns if q.rsplit(".", 1)[-1].startswith("Widget")]
     assert len(widgets) == 1, f"expected exactly one Widget Class node, got {widgets}"
 
-    # (H) The single surviving node is the real definition, so its qn carries no
-    # (H) collision suffix and its method registers cleanly under it.
+    # The single surviving node is the real definition, so its qn carries no
+    # collision suffix and its method registers cleanly under it.
     method_qns = get_qualified_names(get_nodes(mock_ingestor, "Method"))
     assert any(q.endswith(".ns.Widget.run") for q in method_qns), (
         f"expected ns.Widget.run method node, got {sorted(method_qns)}"
     )
 
 
-# (H) A template class forward declaration (`template <T> class Box;`) is a
-# (H) template_declaration wrapping a bodyless class_specifier, so the plain guard on
-# (H) class_specifier node type missed it and it still fragmented the class. It must
-# (H) be dropped the same way -- BUT only when a real definition exists, because a
-# (H) primary template forward-declared and defined solely via specializations is the
-# (H) canonical node and must be kept. The invariant: a template forward declaration
-# (H) that is followed by a real definition adds no Box node beyond the definition's.
+# A template class forward declaration (`template <T> class Box;`) is a
+# template_declaration wrapping a bodyless class_specifier, so the plain guard on
+# class_specifier node type missed it and it still fragmented the class. It must
+# be dropped the same way -- BUT only when a real definition exists, because a
+# primary template forward-declared and defined solely via specializations is the
+# canonical node and must be kept. The invariant: a template forward declaration
+# that is followed by a real definition adds no Box node beyond the definition's.
 _TEMPLATE_DEF_ONLY = """
 namespace ns {
 template <typename T>
@@ -120,11 +120,11 @@ def test_template_forward_declaration_adds_no_node(temp_repo: Path) -> None:
     )
 
 
-# (H) A forward declaration must be dropped only when a definition of the SAME
-# (H) namespace-qualified type exists. Here `A::Thing` is defined but `B::Thing` is
-# (H) only forward-declared (a distinct type). Dropping the forward on a bare
-# (H) simple-name match would erase `B::Thing` entirely; the namespace-qualified
-# (H) comparison must keep it.
+# A forward declaration must be dropped only when a definition of the SAME
+# namespace-qualified type exists. Here `A::Thing` is defined but `B::Thing` is
+# only forward-declared (a distinct type). Dropping the forward on a bare
+# simple-name match would erase `B::Thing` entirely; the namespace-qualified
+# comparison must keep it.
 _CROSS_NAMESPACE_SOURCE = """
 namespace A {
 class Thing {

@@ -156,6 +156,12 @@ def _extract_name_from_function_definition(func_node: Node) -> str | None:
                 cs.CppNodeType.POINTER_DECLARATOR,
                 cs.CppNodeType.REFERENCE_DECLARATOR,
                 cs.CppNodeType.FUNCTION_DECLARATOR,
+                cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+                # A macro-attributed ctor buries its REAL declarator inside
+                # the ERROR while the base-initializer (`: exception(...)`)
+                # survives as a sibling declarator; depth-first source order
+                # must enter the ERROR so the ctor's own name wins.
+                cs.TS_ERROR,
             ):
                 result = find_function_declarator(child)
                 if result:
@@ -223,8 +229,8 @@ def _extract_name_from_function_declarator(func_node: Node) -> str | None:
 
 
 def _find_rightmost_name(node: Node) -> str | None:
-    # (H) Handle out-of-class method definitions like Calculator::add
-    # (H) or deeply nested like Outer::Inner::MyClass::method
+    # Handle out-of-class method definitions like Calculator::add
+    # or deeply nested like Outer::Inner::MyClass::method
     last_name = None
     for qchild in node.children:
         match qchild.type:
@@ -256,7 +262,115 @@ def _extract_name_from_template_declaration(func_node: Node) -> str | None:
     )
 
 
+def _enclosing_class_name(node: Node) -> str | None:
+    current = node.parent
+    while current is not None:
+        if current.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES:
+            name = current.child_by_field_name(cs.FIELD_NAME)
+            if name is None:
+                return None
+            # A specialization's name (`formatter<T, char>`) is a
+            # template_type; the ctor identifier repeats only the bare name.
+            if name.type == cs.CppNodeType.TEMPLATE_TYPE:
+                inner = name.child_by_field_name(cs.FIELD_NAME)
+                return safe_decode_text(inner) if inner is not None else None
+            return safe_decode_text(name)
+        current = current.parent
+    return None
+
+
+def _has_named_parameter(declarator: Node) -> bool:
+    # A macro invocation's "parameters" are expressions (`(...)`, bare
+    # identifiers parsed as type-only declarations, or call shapes), so none
+    # carries a NAMED declarator. A real definition's `int fd` / `const S& s`
+    # does. One named parameter is proof of a genuine declaration even when
+    # recovery orphaned it from its class.
+    params = declarator.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return False
+
+    def declares_identifier(node: Node) -> bool:
+        # Follow only the declarator-field spine (plus the two wrapper nodes
+        # holding their declarator as a bare child): identifiers reachable
+        # ONLY off that path are array bounds (`int[MAX_SIZE]`) or an inner
+        # fn-ptr's parameter names (`void (*)(int x)`), not names of THIS
+        # parameter.
+        if node.type in (cs.CppNodeType.IDENTIFIER, cs.CppNodeType.FIELD_IDENTIFIER):
+            return True
+        inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
+        if inner is not None:
+            return declares_identifier(inner)
+        if node.type in (
+            cs.CppNodeType.REFERENCE_DECLARATOR,
+            cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+        ):
+            return any(
+                declares_identifier(child) for child in node.children if child.is_named
+            )
+        return False
+
+    for param in params.children:
+        if param.type not in (
+            cs.CppNodeType.PARAMETER_DECLARATION,
+            cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
+        ):
+            continue
+        inner = param.child_by_field_name(cs.FIELD_DECLARATOR)
+        if inner is not None and declares_identifier(inner):
+            return True
+    return False
+
+
+def is_recovery_artifact_shape(func_node: Node) -> bool:
+    # `FMT_CATCH(...) {}` (a macro invocation followed by a block) parses as a
+    # TYPE-LESS function_definition (or declaration, when member-init recovery
+    # sweeps it into a class body) named after the macro. Valid C++ only omits
+    # the return type on a constructor, whose plain-identifier declarator
+    # repeats the enclosing class name; every OTHER type-less plain-identifier
+    # definition shares one shape with two meanings: a macro invocation, or a
+    # real definition recovery orphaned from its class or stripped of its type.
+    # The registered-class tiebreak and named-parameter evidence (see
+    # is_macro_invocation_artifact) decide.
+    if func_node.type not in (
+        cs.CppNodeType.FUNCTION_DEFINITION,
+        cs.CppNodeType.DECLARATION,
+    ):
+        return False
+    if func_node.child_by_field_name(cs.FIELD_TYPE) is not None:
+        return False
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    if declarator is None or declarator.type != cs.CppNodeType.FUNCTION_DECLARATOR:
+        return False
+    inner = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    if inner is None or inner.type != cs.CppNodeType.IDENTIFIER or not inner.text:
+        return False
+    return safe_decode_text(inner) != _enclosing_class_name(func_node)
+
+
+def has_named_parameter(func_node: Node) -> bool:
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    return declarator is not None and _has_named_parameter(declarator)
+
+
+def is_macro_invocation_artifact(func_node: Node) -> bool:
+    # A macro invocation's "parameters" are expressions, so the artifact shape
+    # WITH a named parameter is proof of a genuine (recovery-mangled)
+    # definition; without one, only a registered class bearing the name (an
+    # orphaned zero-param ctor) saves the node from being dropped.
+    return is_recovery_artifact_shape(func_node) and not has_named_parameter(func_node)
+
+
 def extract_function_name(func_node: Node) -> str | None:
+    name = _extract_function_name_by_type(func_node)
+    # A reserved keyword in declarator position is an error-recovery
+    # artifact (macro access-label + `const decltype(MACRO_)` members), not
+    # a definition; registering it mints a phantom Method (reader.decltype).
+    if name in cs.CPP_RESERVED_DEF_NAMES:
+        return None
+    return name
+
+
+def _extract_function_name_by_type(func_node: Node) -> str | None:
     match func_node.type:
         case (
             cs.CppNodeType.FUNCTION_DEFINITION
@@ -290,10 +404,10 @@ def _get_inner_function_node(node: Node) -> Node:
 
 
 def _scope_segment_name(scope: Node) -> str | None:
-    # (H) The name of one scope segment of a qualified return type. A namespace or
-    # (H) plain type reads directly, but a TEMPLATE_TYPE scope (`Outer<T>::Inner`)
-    # (H) must reduce to its `type_identifier` -- the raw text carries `<T>` template
-    # (H) arguments that no registry class QN holds, so it would never suffix-match.
+    # The name of one scope segment of a qualified return type. A namespace or
+    # plain type reads directly, but a TEMPLATE_TYPE scope (`Outer<T>::Inner`)
+    # must reduce to its `type_identifier`: the raw text carries `<T>` template
+    # arguments that no registry class QN holds, so it would never suffix-match.
     if scope.type == cs.CppNodeType.TEMPLATE_TYPE:
         name = scope.child_by_field_name(cs.FIELD_NAME)
         return safe_decode_text(name) if name is not None else None
@@ -301,14 +415,14 @@ def _scope_segment_name(scope: Node) -> str | None:
 
 
 def _return_type_path(type_node: Node) -> str | None:
-    # (H) Reduce a return-type node to a dotted namespace-qualified class path:
-    # (H) `::nlohmann::detail::parser<...>` -> "nlohmann.detail.parser", a bare
-    # (H) `Widget` -> "Widget". Descend a qualified_identifier's `name` field,
-    # (H) collecting each `scope` namespace, and unwrap a template_type
-    # (H) (`parser<J, A>`) to its `type_identifier`. A primitive/auto/other return
-    # (H) type has no class name and yields None so a chained hop off it stays
-    # (H) unresolved. The qualified path disambiguates a factory-returned class from
-    # (H) a same-named factory method (nlohmann's basic_json has both).
+    # Reduce a return-type node to a dotted namespace-qualified class path:
+    # `::nlohmann::detail::parser<...>` -> "nlohmann.detail.parser", a bare
+    # `Widget` -> "Widget". Descend a qualified_identifier's `name` field,
+    # collecting each `scope` namespace, and unwrap a template_type to its
+    # `type_identifier`. A primitive/auto/other return type has no class name
+    # and yields None so a chained hop off it stays unresolved. The qualified
+    # path disambiguates a factory-returned class from a same-named factory
+    # method (nlohmann's basic_json has both).
     parts: list[str] = []
     current: Node | None = type_node
     while current is not None:
@@ -329,10 +443,19 @@ def _return_type_path(type_node: Node) -> str | None:
     return cs.SEPARATOR_DOT.join(parts) if parts else None
 
 
+def new_expression_class_path(type_node: Node) -> str | None:
+    # The dotted class path a `new_expression`'s `type` field constructs.
+    # Shares the return-type reducer so template arguments reduce
+    # structurally: `Outer<int>::Inner` -> "Outer.Inner" (a textual cut at
+    # the first `<` would drop the `::Inner` suffix, issue #896 review), a
+    # primitive type yields None and the allocation stays silent.
+    return _return_type_path(type_node)
+
+
 def extract_return_type_name(func_node: Node) -> str | None:
-    # (H) The qualified class path a C++ function/method returns, for chained-call
-    # (H) typing (`parser(...).parse(...)`). Unwraps a template_declaration to the
-    # (H) inner function_definition, then reduces its `type` field to a class path.
+    # The qualified class path a C++ function/method returns, for chained-call
+    # typing (`parser(...).parse(...)`). Unwraps a template_declaration to the
+    # inner function_definition, then reduces its `type` field to a class path.
     inner = _get_inner_function_node(func_node)
     type_node = inner.child_by_field_name(cs.FIELD_TYPE)
     if type_node is None:
@@ -344,6 +467,29 @@ def _find_qualified_identifier_in_declarator(func_node: Node) -> Node | None:
     inner_node = _get_inner_function_node(func_node)
 
     declarator = inner_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    # A pointer/reference-returning definition (`const wchar_t*
+    # C::GetWindowClass()`) wraps the function_declarator in
+    # pointer/reference_declarator layers; reference_declarator exposes no
+    # `declarator` field, so fall back to scanning children (issue #896).
+    while declarator is not None and declarator.type in (
+        cs.CppNodeType.POINTER_DECLARATOR,
+        cs.CppNodeType.REFERENCE_DECLARATOR,
+        cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+    ):
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR) or next(
+            (
+                child
+                for child in declarator.children
+                if child.type
+                in (
+                    cs.CppNodeType.POINTER_DECLARATOR,
+                    cs.CppNodeType.REFERENCE_DECLARATOR,
+                    cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+                    cs.CppNodeType.FUNCTION_DECLARATOR,
+                )
+            ),
+            None,
+        )
     if not declarator:
         return None
 
@@ -424,3 +570,211 @@ def extract_class_name_from_out_of_class_method_qualified(
     if len(names) >= 2:
         return cs.SEPARATOR_DOUBLE_COLON.join(names[:-1])
     return None
+
+
+def _declarator_bound_name(declarator: Node) -> str | None:
+    # Unwrap pointer/reference/init/array declarators to the bound identifier.
+    current: Node | None = declarator
+    while current is not None:
+        if current.type in (
+            cs.CppNodeType.IDENTIFIER,
+            cs.CppNodeType.FIELD_IDENTIFIER,
+        ):
+            return safe_decode_text(current)
+        if inner := current.child_by_field_name(cs.FIELD_DECLARATOR):
+            current = inner
+            continue
+        # reference_declarator holds its identifier positionally.
+        current = next(
+            (
+                child
+                for child in current.named_children
+                if child.type
+                in (
+                    cs.CppNodeType.IDENTIFIER,
+                    cs.CppNodeType.FIELD_IDENTIFIER,
+                )
+                or child.type.endswith(cs.CPP_DECLARATOR_SUFFIX)
+            ),
+            None,
+        )
+    return None
+
+
+def cpp_vexing_parse_argument_names(decl_node: Node) -> list[str]:
+    # The bare "parameter type" names of a most-vexing-parse candidate
+    # (`FlutterWindow window(project);` swallows each construction argument
+    # as a nameless parameter_declaration whose sole content is a
+    # type_identifier). Empty when the declaration is not candidate-shaped:
+    # an empty parameter list is a function declaration by the standard, and
+    # any typed/named parameter marks a genuine prototype.
+    if decl_node.type != cs.CppNodeType.DECLARATION:
+        return []
+    declarator = next(
+        (
+            child
+            for child in decl_node.children_by_field_name(cs.FIELD_DECLARATOR)
+            if child.type == cs.CppNodeType.FUNCTION_DECLARATOR
+        ),
+        None,
+    )
+    if declarator is None:
+        return []
+    params = declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return []
+    names: list[str] = []
+    for param in params.named_children:
+        if param.type != cs.CppNodeType.PARAMETER_DECLARATION:
+            return []
+        if param.child_by_field_name(cs.FIELD_DECLARATOR) is not None:
+            return []
+        type_node = param.child_by_field_name(cs.FIELD_TYPE)
+        if (
+            type_node is None
+            or type_node.type != cs.CppNodeType.TYPE_IDENTIFIER
+            or not (name := safe_decode_text(type_node))
+        ):
+            return []
+        names.append(name)
+    return names
+
+
+def cpp_enclosing_function_value_names(node: Node) -> set[str]:
+    # Parameter and local-variable names VISIBLE at `node`, the in-scope
+    # evidence that disambiguates a most-vexing-parse construction from a
+    # genuine local prototype. Lexical semantics matter (review round 1): a
+    # later declaration or a sibling nested block's local is not visible at
+    # the candidate site and must not reclassify it, so only declarations
+    # that PRECEDE the node among the direct children of its ancestor chain
+    # count (which also covers a for-init declaration when the node sits in
+    # the loop body). Parameters come from the enclosing function's own
+    # declarator.
+    names: set[str] = set()
+    current = node.parent
+    while current is not None:
+        _collect_preceding_declaration_names(current, node, names)
+        if current.type == cs.CppNodeType.FUNCTION_DEFINITION:
+            _collect_cpp_parameter_names(current, names)
+            return names
+        if current.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+            # A lambda or local-class member body opens its own scope; a
+            # candidate inside one takes evidence only from that scope,
+            # which for a lambda includes its parameters and captured
+            # names. A default capture (`[=]`/`[&]`) pulls in every
+            # enclosing local, so the walk continues outward instead.
+            if current.type != cs.TS_CPP_LAMBDA_EXPRESSION:
+                return names
+            _collect_cpp_parameter_names(current, names)
+            if not _lambda_captures_by_default(current, names):
+                return names
+        current = current.parent
+    return set()
+
+
+def _collect_preceding_declaration_names(
+    scope: Node, node: Node, names: set[str]
+) -> None:
+    # Declared names among `scope`'s direct children that lexically precede
+    # `node`. An if/switch condition declaration (`if (int p = 1)`) nests
+    # one level down inside condition_clause yet scopes over the branch
+    # body, so that wrapper's declarations count too.
+    for sibling in scope.children:
+        if sibling.start_byte >= node.start_byte:
+            return
+        if sibling.type == cs.TS_CPP_CONDITION_CLAUSE:
+            _collect_preceding_declaration_names(sibling, node, names)
+            continue
+        if sibling.type != cs.CppNodeType.DECLARATION:
+            continue
+        for declarator in sibling.children_by_field_name(cs.FIELD_DECLARATOR):
+            if name := _declarator_bound_name(declarator):
+                names.add(name)
+
+
+def _lambda_captures_by_default(lambda_node: Node, names: set[str]) -> bool:
+    # Collect explicit capture names; True when a default capture
+    # (`[=]` / `[&]`) is present, meaning every enclosing local is visible.
+    has_default = False
+    for child in lambda_node.children:
+        if child.type != cs.TS_CPP_LAMBDA_CAPTURE_SPECIFIER:
+            continue
+        for cap in child.children:
+            if cap.type == cs.CppNodeType.IDENTIFIER:
+                if name := safe_decode_text(cap):
+                    names.add(name)
+            elif cap.type == cs.TS_CPP_LAMBDA_CAPTURE_INITIALIZER:
+                # `[project = expr]` binds its LEADING identifier.
+                for part in cap.children:
+                    if cap_name := (
+                        safe_decode_text(part)
+                        if part.type == cs.CppNodeType.IDENTIFIER
+                        else None
+                    ):
+                        names.add(cap_name)
+                        break
+            elif cap.type == cs.TS_CPP_LAMBDA_DEFAULT_CAPTURE:
+                has_default = True
+    return has_default
+
+
+def _collect_cpp_parameter_names(func_node: Node, names: set[str]) -> None:
+    # A lambda's parameter list hangs off an abstract_function_declarator
+    # (no name to declare); a function's off its function_declarator.
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None:
+        if declarator.type in (
+            cs.CppNodeType.FUNCTION_DECLARATOR,
+            cs.TS_CPP_ABSTRACT_FUNCTION_DECLARATOR,
+        ):
+            break
+        declarator = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+    if declarator is None:
+        return
+    params = declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return
+    for param in params.named_children:
+        if param.type not in (
+            cs.CppNodeType.PARAMETER_DECLARATION,
+            cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
+        ):
+            continue
+        for decl in param.children_by_field_name(cs.FIELD_DECLARATOR):
+            if name := _declarator_bound_name(decl):
+                names.add(name)
+
+
+def is_cpp_vexing_parse_construction(decl_node: Node) -> bool:
+    # `FlutterWindow window(project);` inside a function body: tree-sitter
+    # parses this stack-object construction as a function DECLARATION named
+    # `window` returning FlutterWindow (issue #871). Conservative recovery:
+    # every declarator argument must be a bare type-less identifier and at
+    # least one must name an in-scope local or parameter, so genuine nested
+    # prototypes keep working.
+    names = cpp_vexing_parse_argument_names(decl_node)
+    if not names:
+        return False
+    in_scope = cpp_enclosing_function_value_names(decl_node)
+    return any(name in in_scope for name in names)
+
+
+def cpp_declaration_has_internal_linkage(decl_node: Node) -> bool:
+    # `static int helper();` or a declaration inside an anonymous
+    # namespace: internal linkage marks a TU-local function, so no
+    # cross-module definition can ever be its definition.
+    if any(
+        child.type == cs.TS_CPP_STORAGE_CLASS_SPECIFIER
+        and child.text is not None
+        and safe_decode_text(child) == cs.CPP_KEYWORD_STATIC
+        for child in decl_node.children
+    ):
+        return True
+    current = decl_node.parent
+    while current is not None:
+        if current.type == cs.CppNodeType.NAMESPACE_DEFINITION:
+            name_node = current.child_by_field_name(cs.KEY_NAME)
+            if name_node is None:
+                return True
+        current = current.parent
+    return False

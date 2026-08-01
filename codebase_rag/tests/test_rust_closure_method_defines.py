@@ -1,9 +1,9 @@
-# (H) Rust closures nested in an impl-method body must get a DEFINES edge from
-# (H) the enclosing METHOD, exactly as closures in free functions get one from
-# (H) the enclosing function. cgr used to derive the closure's DEFINES parent via
-# (H) the FQN scope walk, which could not read an impl block's target type, so the
-# (H) parent endpoint dropped the impl target (`lib.run` instead of `lib.Foo.run`)
-# (H) and never matched the real Method node, silently dropping the containment.
+# Rust closures nested in an impl-method body must get a DEFINES edge from
+# the enclosing METHOD, exactly as closures in free functions get one from
+# the enclosing function. cgr used to derive the closure's DEFINES parent via
+# the FQN scope walk, which could not read an impl block's target type, so the
+# parent endpoint dropped the impl target (`lib.run` instead of `lib.Foo.run`)
+# and never matched the real Method node, silently dropping the containment.
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,7 +43,7 @@ def _project(temp_repo: Path) -> Path:
 
 
 def _defines_pairs(mock_ingestor: MagicMock) -> set[tuple[str, str, str]]:
-    # (H) (parent_label, parent_qn, child_qn) for DEFINES edges.
+    # (parent_label, parent_qn, child_qn) for DEFINES edges.
     return {
         (call[0][0][0], call[0][0][2], call[0][2][2])
         for call in get_relationships(mock_ingestor, RelationshipType.DEFINES.value)
@@ -68,8 +68,8 @@ def test_rust_closure_in_impl_method_defined_by_method(
     }
 
     pairs = _defines_pairs(mock_ingestor)
-    # (H) Every DEFINES edge's parent endpoint must resolve to a real node;
-    # (H) the method-closure edge used to point at the phantom `lib.run`.
+    # Every DEFINES edge's parent endpoint must resolve to a real node;
+    # the method-closure edge used to point at the phantom `lib.run`.
     method_defines = {
         (parent_qn, child_qn)
         for (parent_label, parent_qn, child_qn) in pairs

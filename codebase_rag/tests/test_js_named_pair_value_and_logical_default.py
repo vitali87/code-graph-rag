@@ -1,10 +1,10 @@
-# (H) Two express residuals:
-# (H) 1. a NAMED function expression as an object-pair value (`get: function
-# (H)    getrouter() {...}`) registers by its OWN name, which neither the pair-key
-# (H)    nor the position candidate matches;
-# (H) 2. a function expression behind a LOGICAL DEFAULT (`done = done ||
-# (H)    function (err, str) {...}`) sits in a binary RHS the assignment walker
-# (H)    never descended into.
+# Two express residuals:
+# 1. a NAMED function expression as an object-pair value (`get: function
+#    getrouter() {...}`) registers by its OWN name, which neither the pair-key
+#    nor the position candidate matches;
+# 2. a function expression behind a LOGICAL DEFAULT (`done = done ||
+#    function (err, str) {...}`) sits in a binary RHS the assignment walker
+#    never descended into.
 from __future__ import annotations
 
 from pathlib import Path
