@@ -355,6 +355,7 @@ def _specs_dict(config_content: str) -> ast.Dict:
         module = ast.parse(config_content)
     except SyntaxError as exc:
         raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND) from exc
+    found: ast.Dict | None = None
     for node in module.body:
         targets, value = _specs_assignment(node)
         is_specs = any(
@@ -362,8 +363,10 @@ def _specs_dict(config_content: str) -> ast.Dict:
             for target in targets
         )
         if is_specs and isinstance(value, ast.Dict):
-            return value
-    raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+            found = value
+    if found is None:
+        raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+    return found
 
 
 def _content_offset(config_content: str, lineno: int, byte_col: int) -> int:
