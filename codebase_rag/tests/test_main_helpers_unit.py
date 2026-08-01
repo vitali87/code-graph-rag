@@ -72,6 +72,11 @@ class TestPathVariants:
         assert '"/tmp/a b.png"' in variants
         assert r"/tmp/a\ b.png" in variants
 
+    def test_quoted_forms_precede_plain(self) -> None:
+        variants = _path_variants("/tmp/a.png")
+        assert variants.index("'/tmp/a.png'") < variants.index("/tmp/a.png")
+        assert variants.index('"/tmp/a.png"') < variants.index("/tmp/a.png")
+
 
 class TestGuessMediaType:
     def test_known_extension(self) -> None:
@@ -97,6 +102,31 @@ class TestBuildUserPrompt:
         assert result[1].data == b"fakepng"
         assert result[1].media_type == "image/png"
         assert result[2] == "in detail"
+
+    def test_single_quoted_path_without_spaces_consumes_quotes(
+        self, tmp_path: Path
+    ) -> None:
+        image = tmp_path / "shot.png"
+        image.write_bytes(b"fakepng")
+
+        result = _build_user_prompt(f"look at '{image}' now")
+
+        assert isinstance(result, list)
+        assert result[0] == "look at"
+        assert isinstance(result[1], BinaryContent)
+        assert result[2] == "now"
+
+    def test_double_quoted_path_without_spaces_consumes_quotes(
+        self, tmp_path: Path
+    ) -> None:
+        image = tmp_path / "shot.png"
+        image.write_bytes(b"fakepng")
+
+        result = _build_user_prompt(f'look at "{image}" now')
+
+        assert isinstance(result, list)
+        assert result[0] == "look at"
+        assert result[2] == "now"
 
     def test_missing_file_keeps_question_as_text(self, tmp_path: Path) -> None:
         question = f"describe {tmp_path / 'gone.png'} in detail"
