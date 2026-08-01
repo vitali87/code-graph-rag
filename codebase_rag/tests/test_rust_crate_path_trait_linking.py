@@ -1048,3 +1048,277 @@ def test_mod_rs_module_dir_with_incidental_main_is_not_crate_root(
     base = "rs_modrs_main.src"
     assert (f"{base}.foo.bar.B", f"{base}.lib.Tr") in implements, implements
     assert (f"{base}.foo.bar.B", f"{base}.foo.main.Tr") not in implements, implements
+
+
+def test_escaped_quote_char_literal_keeps_entry_scan_alive(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # '\'' contains an ESCAPED quote: a lexer that pairs the first following
+    # quote closes the literal too early, the orphan quote swallows the rest
+    # of the entry file, and main.rs appears to declare nothing.
+    project = temp_repo / "rs_char_escape"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_char_escape"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod shared;\n\npub trait Err {\n    fn code(&self) -> u32;\n}\n"
+            ),
+            "src/shared.rs": "pub fn s() -> u32 {\n    0\n}\n",
+            "src/main.rs": (
+                "const SPECIALS: [char; 3] = ['\\'', '\"', '\\\\'];\n\n"
+                "mod cli;\n\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n\n"
+                'fn main() {\n    println!("{:?}", SPECIALS);\n}\n'
+            ),
+            "src/cli.rs": (
+                "use crate::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_char_escape.src"
+    assert (f"{base}.cli.F", f"{base}.main.Err") in implements, implements
+    assert (f"{base}.cli.F", f"{base}.lib.Err") not in implements, implements
+
+
+def test_inline_mod_block_does_not_claim_sibling_file_for_crate(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # lib.rs holds an INLINE `pub mod sys { ... }`, which pulls no file into
+    # the lib crate; src/sys.rs is declared only by main.rs, so `crate::` in
+    # it can only mean the bin crate.
+    project = temp_repo / "rs_inline_claim"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_inline_claim"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod sys {\n"
+                "    pub fn tick() -> u32 {\n"
+                "        0\n"
+                "    }\n"
+                "}\n\n"
+                "pub trait Runner {\n"
+                "    fn go(&self) -> u32;\n"
+                "}\n"
+            ),
+            "src/main.rs": (
+                "mod sys;\n\n"
+                "pub trait Runner {\n"
+                "    fn go(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/sys.rs": (
+                "use crate::Runner;\n\n"
+                "pub struct U;\n\n"
+                "impl Runner for U {\n"
+                "    fn go(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_inline_claim.src"
+    assert (f"{base}.sys.U", f"{base}.main.Runner") in implements, implements
+    assert (f"{base}.sys.U", f"{base}.lib.Runner") not in implements, implements
+
+
+def test_entry_inline_module_wins_over_other_crates_sibling_file(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # src/inner.rs is definitively in the lib crate, and lib.rs declares sys
+    # as an INLINE module: crate::sys::tick must reach src.lib.sys.tick, not
+    # the bin crate's src/sys.rs that happens to sit beside the entry.
+    project = temp_repo / "rs_inline_wins"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_inline_wins"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod inner;\n\n"
+                "pub mod sys {\n"
+                "    pub fn tick() -> u32 {\n"
+                "        0\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/inner.rs": (
+                "use crate::sys::tick;\n\npub fn go() -> u32 {\n    tick()\n}\n"
+            ),
+            "src/main.rs": (
+                'mod sys;\n\nfn main() {\n    println!("{}", sys::tick());\n}\n'
+            ),
+            "src/sys.rs": "pub fn tick() -> u32 {\n    9\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_inline_wins.src"
+    assert (f"{base}.inner.go", f"{base}.lib.sys.tick") in calls, calls
+    assert (f"{base}.inner.go", f"{base}.sys.tick") not in calls, calls
+
+
+def test_macro_rules_body_mod_declaration_counts_for_entry(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `mod cli;` emitted from a macro body still declares src/cli.rs; the
+    # brace-depth filter must not blind the entry scan to it.
+    project = temp_repo / "rs_macro_decl"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_macro_decl"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod shared;\n\npub trait Err {\n    fn code(&self) -> u32;\n}\n"
+            ),
+            "src/shared.rs": "pub fn s() -> u32 {\n    0\n}\n",
+            "src/main.rs": (
+                "macro_rules! declare { () => { mod cli; }; }\n"
+                "declare!();\n\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {\n    let _ = cli::F;\n}\n"
+            ),
+            "src/cli.rs": (
+                "use crate::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_macro_decl.src"
+    assert (f"{base}.cli.F", f"{base}.main.Err") in implements, implements
+    assert (f"{base}.cli.F", f"{base}.lib.Err") not in implements, implements
+
+
+def test_macro_invocation_body_mod_declaration_counts_for_entry(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The cfg_if! shape used by libc/backtrace/getrandom: platform `mod`
+    # declarations live inside a macro invocation's brace body.
+    project = temp_repo / "rs_cfgif_decl"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_cfgif_decl"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod shared;\n\npub trait Err {\n    fn code(&self) -> u32;\n}\n"
+            ),
+            "src/shared.rs": "pub fn s() -> u32 {\n    0\n}\n",
+            "src/main.rs": (
+                "cfg_if::cfg_if! {\n"
+                "    if #[cfg(unix)] {\n"
+                "        mod cli;\n"
+                "    }\n"
+                "}\n\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/cli.rs": (
+                "use crate::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_cfgif_decl.src"
+    assert (f"{base}.cli.F", f"{base}.main.Err") in implements, implements
+    assert (f"{base}.cli.F", f"{base}.lib.Err") not in implements, implements
+
+
+def test_raw_identifier_mod_declaration_counts_for_entry(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `mod r#type;` declares src/type.rs (windows-core, zerocopy,
+    # derive_more all ship this); the raw-identifier prefix must not hide
+    # the declaration from the entry scan.
+    project = temp_repo / "rs_raw_ident"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_raw_ident"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod shared;\n\npub trait Err {\n    fn code(&self) -> u32;\n}\n"
+            ),
+            "src/shared.rs": "pub fn s() -> u32 {\n    0\n}\n",
+            "src/main.rs": (
+                "mod r#type;\n\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/type.rs": (
+                "use crate::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_raw_ident.src"
+    assert (f"{base}.type.F", f"{base}.main.Err") in implements, implements
+    assert (f"{base}.type.F", f"{base}.lib.Err") not in implements, implements
+
+
+def test_item_pattern_matches_static_mut_extern_fn_and_raw_idents() -> None:
+    # log's `static mut LOGGER` and signal-hook-registry's `extern "C" fn`
+    # are real entry-file items the tie-break must see.
+    from codebase_rag.parsers.import_processor import (
+        _RS_ITEM_DECL_PATTERN,
+        _RS_MOD_DECL_PATTERN,
+        _rs_strip_comments_and_strings,
+        _rs_top_level_only,
+    )
+
+    source = (
+        "static mut LOGGER: u32 = 0;\n"
+        'pub unsafe extern "C" fn handler() {}\n'
+        "pub mod r#async;\n"
+        "pub fn r#type() -> u32 {\n    0\n}\n"
+    )
+    top = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    items = set(_RS_ITEM_DECL_PATTERN.findall(top))
+    assert {"LOGGER", "handler", "type"} <= items, items
+    mods = set(_RS_MOD_DECL_PATTERN.findall(top))
+    assert "async" in mods, mods

@@ -53,18 +53,28 @@ _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
 # a comment marker can flip the crate attribution.
 _RS_MOD_DECL_PATTERN = re.compile(
     r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
-    r"mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*[;{]",
+    r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
     re.MULTILINE,
 )
-# Top-level item declarations in an entry file, used to disambiguate
-# `crate::Item` when BOTH src/lib.rs and src/main.rs declare the importing
-# module: the entry that declares the item is the one the path can mean.
+# Top-level item declarations in an entry file: `crate::Item` attaches under
+# the entry module's qn when the entry declares Item, and the declaring entry
+# disambiguates the path when BOTH src/lib.rs and src/main.rs declare the
+# importing module. `mod` here catches INLINE `mod x { ... }` blocks, which
+# declare a name in the entry module but pull no file into the crate (the
+# bodyless pattern above is what assigns files).
 _RS_ITEM_DECL_PATTERN = re.compile(
     r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
-    r"(?:unsafe\s+)?(?:async\s+)?(?:const\s+)?"
+    r'(?:(?:unsafe|async|const|extern\s+"[^"]*")\s+)*'
     r"(?:trait|struct|enum|fn|type|const|static|union|mod)"
-    r"\s+([A-Za-z_][A-Za-z0-9_]*)",
+    r"\s+(?:mut\s+)?(?:r#)?([A-Za-z_][A-Za-z0-9_]*)",
     re.MULTILINE,
+)
+# A depth-0 `{` opens a macro body rather than an item body when the text
+# before it ends in `!` (an invocation: `cfg_if! {`) or names a macro_rules
+# definition. Macro bodies stay visible to the declaration scans: libc,
+# backtrace and getrandom declare their platform `mod` files inside cfg_if!.
+_RS_MACRO_OPEN_RE = re.compile(
+    r"(?:!|\bmacro_rules!\s*(?:r#)?[A-Za-z_][A-Za-z0-9_]*)\s*$"
 )
 
 
@@ -124,12 +134,27 @@ def _rs_strip_comments_and_strings(source: str) -> str:
             out.append('""')
             continue
         if c == "'":
-            # A char literal ('x', '\n'); a lifetime ('a) has no closing
-            # quote nearby and passes through untouched.
-            close = source.find("'", i + 1)
-            if close != -1 and close - i <= 4 and "\n" not in source[i:close]:
+            # A char literal ('x', '\n', '\u{7f}'); a lifetime ('a) has no
+            # closing quote and passes through untouched. The escape must be
+            # honoured: pairing '\'' at its FIRST following quote leaves an
+            # orphan quote that swallows the rest of the file.
+            j = i + 1
+            if j < n and source[j] == "\\":
+                k = j + 1
+                if source.startswith("u{", k):
+                    brace = source.find("}", k + 2)
+                    k = k + 2 if brace == -1 else brace + 1
+                elif k < n and source[k] == "x":
+                    k += 3
+                else:
+                    k += 1
+                if k < n and source[k] == "'":
+                    out.append("''")
+                    i = k + 1
+                    continue
+            elif j + 1 < n and source[j] not in ("'", "\n") and source[j + 1] == "'":
                 out.append("''")
-                i = close + 1
+                i = j + 2
                 continue
         out.append(c)
         i += 1
@@ -142,22 +167,38 @@ def _rs_top_level_only(stripped: str) -> str:
     A `mod unix;` nested in an inline `mod sys { ... }` block declares a
     file in a DIFFERENT directory, and a method inside an `impl` block is
     not a crate-root item; both would otherwise match the line-anchored
-    declaration patterns. A depth-0 `}` becomes a newline so a declaration
-    following it on the same line stays anchored.
+    declaration patterns. Depth-0 MACRO bodies (`cfg_if! { ... }`,
+    `macro_rules! m { ... }`) are kept instead: the declarations they emit
+    are top-level, so their braces and semicolons become newlines to keep
+    each one line-anchored. A depth-0 `}` becomes a newline so a
+    declaration following it on the same line stays anchored.
     """
     out: list[str] = []
     depth = 0
+    in_macro = False
     for c in stripped:
         if c == "{":
             if depth == 0:
+                in_macro = bool(_RS_MACRO_OPEN_RE.search("".join(out[-80:])))
                 out.append(c)
+                if in_macro:
+                    out.append("\n")
+            elif in_macro:
+                out.append("\n")
             depth += 1
         elif c == "}":
             depth = max(depth - 1, 0)
             if depth == 0:
                 out.append("\n")
+                in_macro = False
+            elif in_macro:
+                out.append("\n")
         elif depth == 0 or c == "\n":
             out.append(c)
+        elif in_macro:
+            out.append(c)
+            if c == ";":
+                out.append("\n")
     return "".join(out)
 
 
@@ -1046,25 +1087,34 @@ class ImportProcessor:
         # A crate-root-relative path: the first segment names either a
         # submodule FILE/directory beside the entry point (crate::flags ->
         # src.flags) or an item/inline mod declared IN the entry file
-        # (crate::Config -> src.main.Config).
+        # (crate::Config -> src.main.Config). The entry's OWN declarations
+        # outrank the filesystem probe: a sibling file the entry never
+        # declares belongs to the other crate, and an inline `mod sys` in
+        # lib.rs owns crate::sys even when a bin-crate src/sys.rs exists.
         directory = self.repo_path.joinpath(*dir_parts)
         entries = self._rust_dir_entries(directory)
+        chosen = self._rust_entry_decls(dir_parts).get(stem)
+        if rest and chosen is not None:
+            file_mods, items = chosen
+            if rest[0] in file_mods:
+                return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
+            if rest[0] in items:
+                return cs.SEPARATOR_DOT.join(
+                    [self.project_name, *dir_parts, stem, *rest]
+                )
         if rest and (
             f"{rest[0]}{cs.EXT_RS}" in entries
             or (rest[0] in entries and (directory / rest[0]).is_dir())
         ):
             return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
-        if rest and not definitive:
+        if rest and not definitive and chosen is not None:
             # When a file compiles into BOTH crates (lib.rs and main.rs each
             # declare its module), the path can only mean the entry that
-            # DECLARES the item.
-            decls = self._rust_entry_decls(dir_parts)
-            chosen = decls.get(stem)
-            if chosen is not None and rest[0] not in chosen[1]:
-                for other, (_mods, items) in decls.items():
-                    if other != stem and rest[0] in items:
-                        stem = other
-                        break
+            # DECLARES the item; the chosen entry declaring it returned above.
+            for other, (_mods, items) in self._rust_entry_decls(dir_parts).items():
+                if other != stem and rest[0] in items:
+                    stem = other
+                    break
         return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, stem, *rest])
 
     def _rust_resolve_relative(
