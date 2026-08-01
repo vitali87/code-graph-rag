@@ -372,7 +372,10 @@ class TestAddGitSubmodule:
         ):
             _add_git_submodule("https://example.com/repo.git", "grammars/repo")
 
-    def test_existing_submodule_reinstalls(self, tmp_path: Path) -> None:
+    def test_existing_submodule_reinstalls(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
         with patch(
             "codebase_rag.tools.language.subprocess.run",
             side_effect=[
@@ -401,11 +404,19 @@ class TestAddGitSubmodule:
 
 
 class TestHandleReinstallFailure:
-    def test_called_process_error_uses_stderr(self) -> None:
+    def test_called_process_error_uses_stderr(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         assert _handle_reinstall_failure(_proc_error("boom"), "grammars/repo") is None
 
-    def test_os_error_uses_str(self) -> None:
+        out = capsys.readouterr().out
+        assert "boom" in out
+        assert "git submodule deinit -f grammars/repo" in out
+
+    def test_os_error_uses_str(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert _handle_reinstall_failure(OSError("disk gone"), "grammars/repo") is None
+
+        assert "disk gone" in capsys.readouterr().out
 
 
 class TestParseNodeTypesFile:
@@ -479,8 +490,13 @@ def _config_entry(name: str) -> str:
     return f"""    "{name}": LanguageSpec(
         language="{name}",
         file_extensions=('.{name}',),
+        function_node_types=('function_definition',),
     ),
 """
+
+
+def _assert_valid_python(content: str) -> None:
+    compile(content, "language_spec.py", "exec")
 
 
 class TestUpdateConfigFile:
@@ -494,6 +510,27 @@ class TestUpdateConfigFile:
         content = config.read_text(encoding="utf-8")
         assert '"mylang": LanguageSpec(' in content
         assert content.rstrip().endswith("}")
+
+    def test_inserts_into_language_specs_not_trailing_dict(
+        self, tmp_path: Path
+    ) -> None:
+        config = tmp_path / "language_spec.py"
+        config.write_text(
+            "LANGUAGE_SPECS = {\n"
+            "}\n"
+            "\n"
+            "_EXTENSION_TO_SPEC = {}\n",
+            encoding="utf-8",
+        )
+
+        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
+            assert _update_config_file("mylang", _spec("mylang")) is True
+
+        content = config.read_text(encoding="utf-8")
+        _assert_valid_python(content)
+        assert content.index('"mylang": LanguageSpec(') < content.index(
+            "_EXTENSION_TO_SPEC"
+        )
 
     def test_missing_brace_returns_false(self, tmp_path: Path) -> None:
         config = tmp_path / "language_spec.py"
@@ -542,7 +579,10 @@ class TestAddGrammarCommand:
 
     def test_custom_url_declined(self) -> None:
         runner = CliRunner()
-        with patch("codebase_rag.tools.language.subprocess.run") as run:
+        with (
+            runner.isolated_filesystem(),
+            patch("codebase_rag.tools.language.subprocess.run") as run,
+        ):
             result = runner.invoke(
                 add_grammar,
                 ["mylang", "--grammar-url", "https://example.com/foo.git"],
@@ -603,7 +643,33 @@ class TestRemoveLanguageCommand:
                 result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
 
             assert result.exit_code == 0
-            assert '"foo"' not in config.read_text(encoding="utf-8")
+            content = config.read_text(encoding="utf-8")
+            assert '"foo"' not in content
+            assert "function_node_types" not in content
+            _assert_valid_python(content)
+
+    def test_removes_enum_keyed_entry(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                "LANGUAGE_SPECS = {\n"
+                "    cs.SupportedLanguage.PYTHON: LanguageSpec(\n"
+                "        language=cs.SupportedLanguage.PYTHON,\n"
+                "        file_extensions=cs.PY_EXTENSIONS,\n"
+                "        function_node_types=('function_definition',),\n"
+                "    ),\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            result = runner.invoke(remove_language, ["python", "--keep-submodule"])
+
+            assert result.exit_code == 0
+            content = config.read_text(encoding="utf-8")
+            assert "SupportedLanguage.PYTHON" not in content
+            _assert_valid_python(content)
 
     def test_removes_submodule_directory(self) -> None:
         runner = CliRunner()
@@ -721,6 +787,21 @@ class TestCleanupOrphanedModulesCommand:
 
             assert result.exit_code == 0
             assert orphan.exists()
+
+    def test_crlf_gitmodules_keeps_tracked_modules(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            tracked = Path(".git/modules/grammars/tree-sitter-kept")
+            tracked.mkdir(parents=True)
+            Path(".gitmodules").write_bytes(
+                b'[submodule "grammars/tree-sitter-kept"]\r\n'
+                b"\tpath = grammars/tree-sitter-kept\r\n"
+            )
+
+            result = runner.invoke(cleanup_orphaned_modules, [], input="y\n")
+
+            assert result.exit_code == 0
+            assert tracked.exists()
 
     def test_no_orphans(self) -> None:
         runner = CliRunner()
