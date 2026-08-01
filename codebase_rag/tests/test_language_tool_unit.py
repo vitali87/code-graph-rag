@@ -671,6 +671,27 @@ class TestRemoveLanguageCommand:
             assert "SupportedLanguage.PYTHON" not in content
             _assert_valid_python(content)
 
+    def test_entry_missing_from_config_stops_before_submodule_removal(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            config.write_text("LANGUAGE_SPECS = {\n}\n", encoding="utf-8")
+            submodule = Path("grammars/tree-sitter-foo")
+            submodule.mkdir(parents=True)
+
+            with (
+                patch(
+                    "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                ),
+                patch("codebase_rag.tools.language.subprocess.run") as run,
+            ):
+                result = runner.invoke(remove_language, ["foo"])
+
+            assert result.exit_code == 0
+            assert "Error" in result.output
+            run.assert_not_called()
+
     def test_removes_submodule_directory(self) -> None:
         runner = CliRunner()
         with runner.isolated_filesystem():
