@@ -3153,3 +3153,167 @@ def test_watch_reparse_recommits_inline_mod_map(
     calls = _calls(mock_ingestor)
     assert (f"{base}.foo.env.go2", f"{base}.beta.helper") in calls, calls
     assert (f"{base}.foo.env.go2", f"{base}.alpha.helper") not in calls, calls
+
+
+def test_initializer_block_use_does_not_hijack_mod_functions(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `use` inside a static initializer block is scoped to that block
+    # alone (at mod level it could not even coexist with a same-named
+    # item, E0255), so the mod's functions must keep binding their
+    # sibling, not the initializer's import.
+    project = temp_repo / "rs_init_block_use"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_init_block_use"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod gamma;\npub mod foo;\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub mod inner {\n"
+                "    pub static K: u32 = {\n"
+                "        use crate::gamma::helper;\n"
+                "        helper()\n"
+                "    };\n\n"
+                "    pub fn helper() -> u32 {\n"
+                "        1\n"
+                "    }\n\n"
+                "    pub fn q() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_init_block_use.src"
+    assert (f"{base}.foo.inner.q", f"{base}.foo.inner.helper") in calls, calls
+    assert (f"{base}.foo.inner.q", f"{base}.gamma.helper") not in calls, calls
+
+
+def test_nested_fn_shadows_fn_local_mod_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A fn declared inside g's body shadows the enclosing mod's use for
+    # g's calls and for its own recursion; the fanned-out mod use must
+    # rank below local items, not above them.
+    project = temp_repo / "rs_nested_fn_shadow"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_nested_fn_shadow"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod gamma;\npub mod foo;\n",
+            "src/gamma.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub fn wrap() {\n"
+                "    mod inner {\n"
+                "        use crate::gamma::helper;\n\n"
+                "        pub fn g() -> u32 {\n"
+                "            fn helper() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_nested_fn_shadow.src"
+    assert (f"{base}.foo.inner.g", f"{base}.foo.inner.helper") in calls, calls
+    assert (f"{base}.foo.inner.g", f"{base}.gamma.helper") not in calls, calls
+    assert (f"{base}.foo.inner.helper", f"{base}.foo.inner.helper") in calls, calls
+    assert (f"{base}.foo.inner.helper", f"{base}.gamma.helper") not in calls, calls
+
+
+def test_watch_touch_cannot_flip_mod_key_arbitration(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two files write one key (issue #1017): a pure inline-mod chain and
+    # a fn-local forgery. On the watch path only the touched file's uses
+    # are pending, so arbitration must remember EVERY writer or a no-op
+    # touch of the impure file hands it the key.
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_watch_arbitration"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_watch_arbitration"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                '#[cfg(feature = "inline")]\n'
+                "pub mod b {\n"
+                "    pub mod c {\n"
+                "        use crate::beta::helper;\n\n"
+                "        pub fn go() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "}\n"
+                '#[cfg(not(feature = "inline"))]\n'
+                "pub mod b;\n"
+            ),
+            "src/a/b.rs": (
+                "pub fn wrap() {\n"
+                "    mod c {\n"
+                "        use crate::gamma::helper;\n\n"
+                "        pub fn gb() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_watch_arbitration.src"
+    assert (f"{base}.a.b.c.go", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.a.b.c.gb", f"{base}.gamma.helper") in calls, calls
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "a" / "b.rs")))
+
+    # The pure writer's own callers cannot be re-asserted through edges
+    # here: the watch delete sweeps every registration under the touched
+    # file's qn prefix, taking a.rs's inline-mod functions with it (a
+    # pre-existing watch defect, filed separately). The arbitration's own
+    # output contract is the committed key, so pin that, plus the touched
+    # file's re-registered caller whose edge recomputes cleanly.
+    key = f"{base}.a.b.c"
+    mapping = updater.factory.import_processor.import_mapping.get(key)
+    assert mapping == {"helper": f"{base}.beta.helper"}, mapping
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.a.b.c.gb", f"{base}.gamma.helper") in calls, calls
+
+    # A later unrelated event re-arbitrates again; the pure writer must
+    # still hold the key.
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "gamma.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(key)
+    assert mapping == {"helper": f"{base}.beta.helper"}, mapping

@@ -1223,10 +1223,12 @@ class CallResolver:
         `mod run` and `fn run` occupy different Rust namespaces but share
         one qn string, so the module-keyed map must never answer for the
         function itself), then walks the enclosing inline modules down to
-        the file module, checking each scope's own items and its import map.
-        Returns a 1-tuple so a deliberate drop (the scope imports the name
-        from OUTSIDE the indexed first-party graph) is distinguishable from
-        "no scope claims it".
+        the file module, checking each scope's own items, the caller's
+        weak entries (its enclosing mod's use fanned out per function, in
+        case the mod's shared key was arbitrated to a twin), and the
+        scope's import map. Returns a 1-tuple so a deliberate drop (the
+        scope imports the name from OUTSIDE the indexed first-party graph)
+        is distinguishable from "no scope claims it".
         """
         if (
             cs.SEPARATOR_DOT in call_name
@@ -1239,12 +1241,19 @@ class CallResolver:
             call_name
         )
         if target is None:
+            weak = self.import_processor.rust_fn_scope_mod_imports.get(
+                caller_qn, {}
+            ).get(call_name)
             scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
             while len(scope) > len(module_qn):
                 local_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
                 if (local_type := self.function_registry.get(local_qn)) is not None:
                     return ((local_type, local_qn),)
-                target = import_mapping.get(scope, {}).get(call_name)
+                target = (
+                    weak
+                    if weak is not None
+                    else import_mapping.get(scope, {}).get(call_name)
+                )
                 if target is not None:
                     break
                 scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]

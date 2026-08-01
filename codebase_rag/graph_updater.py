@@ -1317,6 +1317,10 @@ class GraphUpdater:
         self.factory.import_processor.commonjs_direct_exports.pop(
             module_qn_prefix, None
         )
+        # A deleted file is no writer: its mod-scope registry entries must
+        # not weigh in the next arbitration (a modified file re-drops this
+        # in its own re-parse, harmlessly twice).
+        self.factory.import_processor.drop_rust_module_import_state(module_qn_prefix)
 
         qns_to_remove = set()
 

@@ -397,8 +397,10 @@ class ImportProcessor:
         "_rust_inline_scope_keys",
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
+        "rust_fn_scope_mod_imports",
         "_rust_fn_scope_keys",
         "_rust_pending_mod_scope_uses",
+        "_rust_mod_scope_registry",
         "_rust_mod_scope_shadows",
     )
 
@@ -447,8 +449,7 @@ class ImportProcessor:
         # ingestion, so entries queue by the function node's span until
         # finalise_rust_function_scope_uses resolves them.
         # The bool marks WEAK entries: an impure inline mod's use fanned
-        # out to the functions declared in its block, applied with
-        # setdefault so a function's own body use always wins.
+        # out to the functions declared in its block.
         self._rust_pending_fn_scope_uses: dict[
             str, list[tuple[int, int, dict[str, str], bool]]
         ] = {}
@@ -457,11 +458,22 @@ class ImportProcessor:
         # in different namespaces, so a function qn may equal a module qn
         # and the module-keyed map must never answer for the function.
         self.rust_fn_scope_imports: dict[str, dict[str, str]] = {}
+        # Weak counterpart: an impure mod's own use fanned out to the
+        # functions declared in its block. Mod-level precedence, so the
+        # resolver consults it only after local items, unlike the body-use
+        # map above which shadows everything.
+        self.rust_fn_scope_mod_imports: dict[str, dict[str, str]] = {}
         self._rust_fn_scope_keys: dict[str, set[str]] = {}
         # Sub-scope (inline mod) maps held back until every file is
         # parsed: whether the key collides with an indexer-registered
         # module is only knowable then (finalise_rust_mod_scope_uses).
         self._rust_pending_mod_scope_uses: dict[
+            str, list[tuple[str, bool, dict[str, str]]]
+        ] = {}
+        # Every file's live mod-scope uses, surviving finalisation: the
+        # watch path re-parses one file at a time, and arbitration must
+        # weigh ALL writers of a key, not just the touched file's.
+        self._rust_mod_scope_registry: dict[
             str, list[tuple[str, bool, dict[str, str]]]
         ] = {}
         # Sub-scope entries also commit into import_mapping for the
@@ -1763,16 +1775,24 @@ class ImportProcessor:
         self._rust_dir_listing.clear()
         self._rust_entry_mod_decls.clear()
 
-    def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
-        # Shadows linger only when the previous parse of this file aborted
-        # before its retraction ran.
+    def drop_rust_module_import_state(self, module_qn: str) -> None:
+        # Everything a file's parse contributed to the Rust import maps,
+        # dropped so a re-parse rebuilds it or a deletion leaves nothing:
+        # shadows (linger only when a parse aborted before its retraction
+        # ran), pendings, the file's mod-scope registry entries, and the
+        # committed fn-scope and inline-scope keys.
         self.retract_rust_mod_scope_uses(module_qn)
         self._rust_pending_fn_scope_uses.pop(module_qn, None)
         self._rust_pending_mod_scope_uses.pop(module_qn, None)
+        self._rust_mod_scope_registry.pop(module_qn, None)
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
             self.rust_fn_scope_imports.pop(key, None)
+            self.rust_fn_scope_mod_imports.pop(key, None)
         for key in self._rust_inline_scope_keys.pop(module_qn, ()):
             self.import_mapping.pop(key, None)
+
+    def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
+        self.drop_rust_module_import_state(module_qn)
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_USE_DECLARATION:
                 self._parse_rust_use_declaration(import_node, module_qn)
@@ -1851,8 +1871,9 @@ class ImportProcessor:
         if not pure_chain:
             # A fn-local mod can lose the shared-key arbitration to a pure
             # twin (issue #1017: one qn, two modules), yet its own functions
-            # still see this use: fan it out to their spans so the fn-scope
-            # map answers for them ahead of whatever the key ends up holding.
+            # still see this use: fan it out to their spans so the weak
+            # fn-scope map answers for them instead of whatever the key
+            # ends up holding.
             for line, col in rs_utils.enclosing_mod_fn_spans(use_node):
                 self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
                     (line, col, resolved_imports, True)
@@ -1883,10 +1904,22 @@ class ImportProcessor:
         # whatever file either lives in (issue #1017: no key can serve
         # both), and same-purity entries surviving from multiple files are
         # ambiguous cfg or macro twins, dropped rather than guessed.
+        # Arbitration runs over the persistent registry of EVERY file's
+        # mod-scope uses, not just the pending ones: the watch path parses
+        # one file at a time, and a contest decided from the touched
+        # file's entries alone would be won by whoever was touched last.
+        # Previous commits retract first so a changed outcome cannot leave
+        # a stale key standing.
         pending = self._rust_pending_mod_scope_uses
         self._rust_pending_mod_scope_uses = {}
-        by_key: dict[str, list[tuple[str, bool, dict[str, str]]]] = {}
         for writer_qn, entries in pending.items():
+            self._rust_mod_scope_registry[writer_qn] = entries
+        for keys in self._rust_inline_scope_keys.values():
+            for key in keys:
+                self.import_mapping.pop(key, None)
+        self._rust_inline_scope_keys = {}
+        by_key: dict[str, list[tuple[str, bool, dict[str, str]]]] = {}
+        for writer_qn, entries in self._rust_mod_scope_registry.items():
             for key, pure, imports in entries:
                 by_key.setdefault(key, []).append((writer_qn, pure, imports))
         for key, writers in by_key.items():
@@ -1927,14 +1960,14 @@ class ImportProcessor:
             if location is None:
                 continue
             key = location.qualified_name
-            target = self.rust_fn_scope_imports.setdefault(key, {})
             if weak:
-                # Fanned out from an enclosing impure mod's use; the
-                # function's own body use outranks it in either order.
-                for name, value in imports.items():
-                    target.setdefault(name, value)
+                # Fanned out from an enclosing impure mod's use: mod-level
+                # precedence, so it lives in the weak map the resolver
+                # consults only after the function's own body uses and the
+                # scope's local items.
+                self.rust_fn_scope_mod_imports.setdefault(key, {}).update(imports)
             else:
-                target.update(imports)
+                self.rust_fn_scope_imports.setdefault(key, {}).update(imports)
             self._rust_fn_scope_keys.setdefault(module_qn, set()).add(key)
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
