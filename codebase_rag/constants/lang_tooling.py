@@ -155,6 +155,7 @@ LANG_GITMODULES_FILE = ".gitmodules"
 LANG_CALL_KEYWORD_EXCLUDE = "call"
 
 LANG_GITMODULES_REGEX = r"path = (grammars/tree-sitter-[^\n]+)"
+LANG_CONFIG_TMP_SUFFIX = ".tmp"
 
 LANG_SPECS_ASSIGNMENT_PATTERN = r"^LANGUAGE_SPECS\b[^=\n]*=\s*\{"
 LANG_SPECS_DICT_CLOSING = "\n}"

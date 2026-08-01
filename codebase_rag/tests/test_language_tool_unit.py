@@ -747,7 +747,9 @@ class TestRemoveLanguageCommand:
         with runner.isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
-            original = 'LANGUAGE_SPECS = {\n    "foo": LanguageSpec(language="foo"),\n}\n'
+            original = (
+                'LANGUAGE_SPECS = {\n    "foo": LanguageSpec(language="foo"),\n}\n'
+            )
             config.write_text(original, encoding="utf-8")
 
             real_open = open

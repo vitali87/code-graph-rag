@@ -330,6 +330,17 @@ def _update_config_file(language_name: str, spec: LanguageSpec) -> bool:
         return False
 
 
+def _write_config_atomically(new_content: str) -> None:
+    temp_path = f"{cs.LANG_CONFIG_FILE}{cs.LANG_CONFIG_TMP_SUFFIX}"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        os.replace(temp_path, cs.LANG_CONFIG_FILE)
+    except Exception:
+        pathlib.Path(temp_path).unlink(missing_ok=True)
+        raise
+
+
 def _write_language_config(config_entry: str, language_name: str) -> bool:
     config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
     specs_match = re.search(
@@ -352,8 +363,7 @@ def _write_language_config(config_entry: str, language_name: str) -> bool:
         + config_content[closing_brace_pos:]
     )
 
-    with open(cs.LANG_CONFIG_FILE, "w", encoding="utf-8") as f:
-        f.write(new_content)
+    _write_config_atomically(new_content)
 
     click.echo(f"OK {cs.LANG_MSG_LANG_ADDED.format(name=language_name)}")
     click.echo(f"Note: {cs.LANG_MSG_UPDATED_CONFIG.format(path=cs.LANG_CONFIG_FILE)}")
@@ -565,8 +575,7 @@ def _remove_language_from_config(language_name: str) -> bool:
             raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
         compile(new_content, cs.LANG_CONFIG_FILE, "exec")
 
-        with open(cs.LANG_CONFIG_FILE, "w", encoding="utf-8") as f:
-            f.write(new_content)
+        _write_config_atomically(new_content)
 
         click.echo(f"OK {cs.LANG_MSG_REMOVED_FROM_CONFIG.format(name=language_name)}")
         return True
