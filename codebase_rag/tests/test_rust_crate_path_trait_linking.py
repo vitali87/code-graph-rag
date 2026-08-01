@@ -1434,3 +1434,118 @@ def test_spaced_pub_visibility_declarations_count() -> None:
     assert mods == {"sub"}, mods
     items = set(_RS_ITEM_DECL_PATTERN.findall(top))
     assert {"S", "sub"} <= items, items
+
+
+def test_method_body_use_keys_under_method_qn(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A use inside a METHOD body must store under the method's qn
+    # (module.S.run, impl blocks are qn scopes) rather than under the free
+    # function sharing its name: keyed at module.run it both rebinds the
+    # method's call to the wrong helper and leaks into the free run().
+    project = temp_repo / "rs_method_body_use"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_method_body_use"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/foo.rs": (
+                "pub struct S;\n\n"
+                "impl S {\n"
+                "    pub fn run(&self) -> u32 {\n"
+                "        use crate::alpha::helper;\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn helper() -> u32 {\n"
+                "    1\n"
+                "}\n\n"
+                "pub fn run() -> u32 {\n"
+                "    helper()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_method_body_use.src"
+    assert (f"{base}.foo.S.run", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.S.run", f"{base}.foo.helper") not in calls, calls
+    assert (f"{base}.foo.run", f"{base}.foo.helper") in calls, calls
+    assert (f"{base}.foo.run", f"{base}.alpha.helper") not in calls, calls
+
+
+def test_inline_mod_inside_function_body_keeps_module_scope_key(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Functions are NOT qn scopes: `mod n` declared inside a function body
+    # registers its items at module.n, so a use inside that mod must store
+    # at module.n too, not module.outer.n where nothing reads it.
+    project = temp_repo / "rs_fn_body_mod"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_fn_body_mod"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/foo.rs": (
+                "pub fn helper() -> u32 {\n"
+                "    1\n"
+                "}\n\n"
+                "pub fn outer() -> u32 {\n"
+                "    mod n {\n"
+                "        use crate::alpha::helper;\n\n"
+                "        pub fn deep() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    n::deep()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_fn_body_mod.src"
+    assert (f"{base}.foo.n.deep", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.n.deep", f"{base}.foo.helper") not in calls, calls
+
+
+def test_nested_fn_body_use_applies_to_nested_fn(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A nested fn registers FLAT (module.inner, functions are not scopes),
+    # so a use inside its body must key at module.inner for the caller's
+    # scope walk to find it.
+    project = temp_repo / "rs_nested_fn_use"
+    _write(
+        project,
+        {
+            "Cargo.toml": ('[package]\nname = "rs_nested_fn_use"\nversion = "0.1.0"\n'),
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/foo.rs": (
+                "pub fn helper() -> u32 {\n"
+                "    1\n"
+                "}\n\n"
+                "pub fn outer() -> u32 {\n"
+                "    fn inner() -> u32 {\n"
+                "        use crate::alpha::helper;\n"
+                "        helper()\n"
+                "    }\n"
+                "    inner()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_nested_fn_use.src"
+    assert (f"{base}.foo.inner", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.inner", f"{base}.foo.helper") not in calls, calls

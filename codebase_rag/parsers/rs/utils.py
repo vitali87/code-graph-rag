@@ -258,9 +258,16 @@ def build_module_path(
 
     while current and current.type != cs.TS_RS_SOURCE_FILE:
         match current.type:
-            case cs.TS_RS_MOD_ITEM | cs.TS_RS_FUNCTION_ITEM if (
-                current.type == cs.TS_RS_MOD_ITEM or include_functions
-            ):
+            case cs.TS_RS_MOD_ITEM:
+                if name_node := current.child_by_field_name(cs.FIELD_NAME):
+                    text = name_node.text
+                    if text is not None:
+                        path_parts.append(text.decode(cs.RS_ENCODING_UTF8))
+            # Functions are NOT qn scopes: items nested below one register
+            # FLAT (a mod or fn inside a function body carries no function
+            # segment in its qn). Only the INNERMOST enclosing function
+            # contributes, completing the path to that function's own qn.
+            case cs.TS_RS_FUNCTION_ITEM if include_functions and not path_parts:
                 if name_node := current.child_by_field_name(cs.FIELD_NAME):
                     text = name_node.text
                     if text is not None:

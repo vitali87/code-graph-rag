@@ -1740,12 +1740,21 @@ class ImportProcessor:
         # bare call in the file. A use inside a FUNCTION body shadows module
         # items only within that function, so it stores under the function's
         # qn (the caller's scope walk reads it), while crate::/super::/self::
-        # still resolve against the module chain alone.
+        # still resolve against the module chain alone. The storage key must
+        # follow the caller-qn scheme exactly: impl/trait blocks are scopes
+        # (module.S.run), functions are not (anything nested below one
+        # registers flat), hence the innermost-function-only path.
         mod_parts = rs_utils.build_module_path(use_node)
         resolve_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *mod_parts]) if mod_parts else module_qn
         )
-        scope_parts = rs_utils.build_module_path(use_node, include_functions=True)
+        scope_parts = rs_utils.build_module_path(
+            use_node,
+            include_impl_targets=True,
+            include_classes=True,
+            class_node_types=cs.FQN_RS_SCOPE_TYPES,
+            include_functions=True,
+        )
         effective_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *scope_parts])
             if scope_parts
