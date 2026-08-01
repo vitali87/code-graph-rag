@@ -350,7 +350,7 @@ def _specs_assignment(node: ast.stmt) -> tuple[list[ast.expr], ast.expr | None]:
     return [], None
 
 
-def _find_specs_closing_brace(config_content: str) -> int:
+def _specs_dict(config_content: str) -> ast.Dict:
     try:
         module = ast.parse(config_content)
     except SyntaxError as exc:
@@ -362,25 +362,31 @@ def _find_specs_closing_brace(config_content: str) -> int:
             for target in targets
         )
         if is_specs and isinstance(value, ast.Dict):
-            return _offset_of_closing_brace(config_content, value)
+            return value
     raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
 
 
-def _offset_of_closing_brace(config_content: str, dict_node: ast.Dict) -> int:
+def _content_offset(config_content: str, lineno: int, byte_col: int) -> int:
+    lines = config_content.split("\n")
+    prefix = sum(len(line) + 1 for line in lines[: lineno - 1])
+    line = lines[lineno - 1]
+    return prefix + len(line.encode("utf-8")[:byte_col].decode("utf-8"))
+
+
+def _specs_dict_span(config_content: str) -> tuple[int, int]:
+    dict_node = _specs_dict(config_content)
     end_lineno = dict_node.end_lineno
     end_col_offset = dict_node.end_col_offset
     if end_lineno is None or end_col_offset is None:
         raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
-    lines = config_content.split("\n")
-    prefix = sum(len(line) + 1 for line in lines[: end_lineno - 1])
-    line = lines[end_lineno - 1]
-    char_col = len(line.encode("utf-8")[: end_col_offset - 1].decode("utf-8"))
-    return prefix + char_col
+    start = _content_offset(config_content, dict_node.lineno, dict_node.col_offset)
+    end = _content_offset(config_content, end_lineno, end_col_offset - 1)
+    return start, end
 
 
 def _write_language_config(config_entry: str, language_name: str) -> bool:
     config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
-    closing_brace_pos = _find_specs_closing_brace(config_content)
+    closing_brace_pos = _specs_dict_span(config_content)[1]
 
     head = config_content[:closing_brace_pos]
     tail = config_content[closing_brace_pos:]
@@ -598,9 +604,14 @@ def _remove_language_from_config(language_name: str) -> bool:
         else:
             key_patterns.append(cs.LANG_ENUM_KEY_PATTERN.format(member=member))
         pattern = cs.LANG_REMOVE_ENTRY_PATTERN.format(keys="|".join(key_patterns))
-        new_content = re.sub(pattern, "", original_content)
-        if new_content == original_content:
+        span_start, span_end = _specs_dict_span(original_content)
+        region = original_content[span_start:span_end]
+        new_region = re.sub(pattern, "", region)
+        if new_region == region:
             raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
+        new_content = (
+            original_content[:span_start] + new_region + original_content[span_end:]
+        )
         compile(new_content, cs.LANG_CONFIG_FILE, "exec")
 
         _write_config_atomically(new_content)
