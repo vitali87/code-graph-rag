@@ -47,14 +47,95 @@ from .utils import (
 _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
 # Bodyless `mod NAME;` declarations in a Rust crate entry file: the mod graph
 # is what assigns a file to the lib or the bin crate (issue #1007). Attribute
-# prefixes on the same line (`#[cfg(unix)] mod unix;`) are idiomatic; comments
-# are stripped before scanning so a commented-out declaration cannot match.
+# prefixes on the same line (`#[cfg(unix)] mod unix;`) are idiomatic; the
+# source is lexed through _rs_strip_comments_and_strings first so neither a
+# commented-out declaration nor one hidden behind a string literal containing
+# a comment marker can flip the crate attribution.
 _RS_MOD_DECL_PATTERN = re.compile(
     r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
     r"mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;",
     re.MULTILINE,
 )
-_RS_COMMENT_PATTERN = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
+# Top-level item declarations in an entry file, used to disambiguate
+# `crate::Item` when BOTH src/lib.rs and src/main.rs declare the importing
+# module: the entry that declares the item is the one the path can mean.
+_RS_ITEM_DECL_PATTERN = re.compile(
+    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
+    r"(?:unsafe\s+)?(?:async\s+)?(?:const\s+)?"
+    r"(?:trait|struct|enum|fn|type|const|static|union|mod)"
+    r"\s+([A-Za-z_][A-Za-z0-9_]*)",
+    re.MULTILINE,
+)
+
+
+def _rs_strip_comments_and_strings(source: str) -> str:
+    """Blank Rust comments and string/char contents, keeping line structure.
+
+    A regex cannot do this: block comments NEST, and string literals may
+    contain comment markers (`const P: &str = "/*";`) or newline-separated
+    text that would fake a `mod x;` line.
+    """
+    out: list[str] = []
+    i, n = 0, len(source)
+    while i < n:
+        c = source[i]
+        nxt = source[i + 1] if i + 1 < n else ""
+        if c == "/" and nxt == "/":
+            j = source.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if c == "/" and nxt == "*":
+            depth = 1
+            i += 2
+            while i < n and depth:
+                if source.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif source.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    if source[i] == "\n":
+                        out.append("\n")
+                    i += 1
+            continue
+        if c == "r" and nxt in ('"', "#"):
+            j = i + 1
+            hashes = 0
+            while j < n and source[j] == "#":
+                hashes += 1
+                j += 1
+            if j < n and source[j] == '"':
+                end_marker = '"' + "#" * hashes
+                k = source.find(end_marker, j + 1)
+                i = n if k == -1 else k + len(end_marker)
+                out.append('""')
+                continue
+        if c == '"':
+            i += 1
+            while i < n:
+                if source[i] == "\\":
+                    i += 2
+                    continue
+                if source[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            out.append('""')
+            continue
+        if c == "'":
+            # A char literal ('x', '\n'); a lifetime ('a) has no closing
+            # quote nearby and passes through untouched.
+            close = source.find("'", i + 1)
+            if close != -1 and close - i <= 4 and "\n" not in source[i:close]:
+                out.append("''")
+                i = close + 1
+                continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 _JSONC_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _JSONC_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
 _JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
@@ -279,7 +360,9 @@ class ImportProcessor:
         # Rust path rewriting (issue #1007); cleared per run by
         # reset_rust_path_caches so watch re-runs re-observe the filesystem.
         self._rust_dir_listing: dict[str, frozenset[str]] = {}
-        self._rust_entry_mod_decls: dict[tuple[str, ...], dict[str, set[str]]] = {}
+        self._rust_entry_mod_decls: dict[
+            tuple[str, ...], dict[str, tuple[set[str], set[str]]]
+        ] = {}
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
@@ -856,10 +939,24 @@ class ImportProcessor:
                     self.repo_path.joinpath(*parent)
                 ) and self._rust_is_auto_target_dir(parent, name):
                     return "file", dir_parts[:i]
-            entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts[:i]))
-            if cs.LIB_RS in entries or cs.MAIN_RS in entries:
+            if self._rust_is_crate_root_dir(dir_parts[:i]):
                 return "classic", dir_parts[:i]
         return None
+
+    def _rust_is_crate_root_dir(self, dir_parts: list[str]) -> bool:
+        # A directory is a crate root only when it holds an entry file AND is
+        # not itself a MODULE directory of an enclosing tree: src/app/ with
+        # an incidental module file main.rs is app.rs's module dir (the
+        # sibling app.rs is the tell), not a crate (verified against rustc:
+        # self::foo inside app::main is app::main::foo).
+        entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+        if cs.LIB_RS not in entries and cs.MAIN_RS not in entries:
+            return False
+        if dir_parts and f"{dir_parts[-1]}{cs.EXT_RS}" in self._rust_dir_entries(
+            self.repo_path.joinpath(*dir_parts[:-1])
+        ):
+            return False
+        return True
 
     def _rust_entry_stem(self, dir_parts: list[str], module_qn: str) -> str:
         """Entry-file stem (lib/main) of the crate that contains module_qn.
@@ -869,6 +966,23 @@ class ImportProcessor:
         declarations reach the file's top-level module segment. An entry file
         is its own crate; ties prefer lib.rs.
         """
+        decls = self._rust_entry_decls(dir_parts)
+        segments = module_qn.split(cs.SEPARATOR_DOT)[1 + len(dir_parts) :]
+        top = segments[0] if segments else ""
+        if top in decls:
+            return top
+        for stem, (mods, _items) in decls.items():
+            if top in mods:
+                return stem
+        for stem in ("lib", "main"):
+            if stem in decls:
+                return stem
+        return "lib"
+
+    def _rust_entry_decls(
+        self, dir_parts: list[str]
+    ) -> dict[str, tuple[set[str], set[str]]]:
+        """Per entry stem: (mod declarations, top-level item names)."""
         key = tuple(dir_parts)
         decls = self._rust_entry_mod_decls.get(key)
         if decls is None:
@@ -884,20 +998,13 @@ class ImportProcessor:
                     )
                 except OSError:
                     source = ""
-                stripped = _RS_COMMENT_PATTERN.sub("", source)
-                decls[stem] = set(_RS_MOD_DECL_PATTERN.findall(stripped))
+                stripped = _rs_strip_comments_and_strings(source)
+                decls[stem] = (
+                    set(_RS_MOD_DECL_PATTERN.findall(stripped)),
+                    set(_RS_ITEM_DECL_PATTERN.findall(stripped)),
+                )
             self._rust_entry_mod_decls[key] = decls
-        segments = module_qn.split(cs.SEPARATOR_DOT)[1 + len(dir_parts) :]
-        top = segments[0] if segments else ""
-        if top in decls:
-            return top
-        for stem in decls:
-            if top in decls[stem]:
-                return stem
-        for stem in ("lib", "main"):
-            if stem in decls:
-                return stem
-        return "lib"
+        return decls
 
     def _rust_attach(self, dir_parts: list[str], stem: str, rest: list[str]) -> str:
         # A crate-root-relative path: the first segment names either a
@@ -911,6 +1018,17 @@ class ImportProcessor:
             or (rest[0] in entries and (directory / rest[0]).is_dir())
         ):
             return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
+        if rest:
+            # When a file compiles into BOTH crates (lib.rs and main.rs each
+            # declare its module), the path can only mean the entry that
+            # DECLARES the item.
+            decls = self._rust_entry_decls(dir_parts)
+            chosen = decls.get(stem)
+            if chosen is not None and rest[0] not in chosen[1]:
+                for other, (_mods, items) in decls.items():
+                    if other != stem and rest[0] in items:
+                        stem = other
+                        break
         return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, stem, *rest])
 
     def _rust_resolve_relative(
@@ -926,16 +1044,20 @@ class ImportProcessor:
         """
         parts = base_qn.split(cs.SEPARATOR_DOT)[1:]
         entries = self._rust_dir_entries(self.repo_path.joinpath(*parts))
-        if cs.MOD_RS not in entries and (cs.LIB_RS in entries or cs.MAIN_RS in entries):
+        if cs.MOD_RS not in entries and self._rust_is_crate_root_dir(parts):
             return self._rust_attach(
                 parts, self._rust_entry_stem(parts, importer_qn), rest
             )
-        if parts and parts[-1] in ("lib", "main"):
-            parent = parts[:-1]
-            if f"{parts[-1]}{cs.EXT_RS}" in self._rust_dir_entries(
-                self.repo_path.joinpath(*parent)
-            ):
-                return self._rust_attach(parent, parts[-1], rest)
+        if (
+            parts
+            and parts[-1] in ("lib", "main")
+            and f"{parts[-1]}{cs.EXT_RS}"
+            in self._rust_dir_entries(self.repo_path.joinpath(*parts[:-1]))
+            and self._rust_is_crate_root_dir(parts[:-1])
+        ):
+            # The base IS a crate entry module (self:: in lib.rs); a module
+            # merely NAMED main/lib deeper in the tree attaches normally.
+            return self._rust_attach(parts[:-1], parts[-1], rest)
         return cs.SEPARATOR_DOT.join([base_qn, *rest]) if rest else base_qn
 
     def _rewrite_rust_local_use_path(self, full_path: str, module_qn: str) -> str:

@@ -651,6 +651,218 @@ def test_mapped_but_unregistered_target_falls_back_to_registry(
     assert (f"{base}.user.f", f"{base}.other.Config.apply") in calls, calls
 
 
+def test_shared_module_tie_resolves_item_by_declaring_entry(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # BOTH src/lib.rs and src/main.rs declare `mod cli;` (the file compiles
+    # into both crates); `crate::Err` from cli.rs must bind the entry that
+    # actually DECLARES Err, not whichever entry a tie-break happens to pick.
+    project = temp_repo / "rs_tie_item"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_tie_item"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod cli;\n\npub fn shared() -> u32 {\n    0\n}\n",
+            "src/main.rs": (
+                "mod cli;\n\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/cli.rs": (
+                "use crate::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_tie_item.src"
+    assert (f"{base}.cli.F", f"{base}.main.Err") in implements, implements
+
+
+def test_string_literal_comment_marker_does_not_hide_mod_decl(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A string literal containing "/*" must not swallow the following
+    # `mod cli;` declaration when the entry chooser scans main.rs.
+    project = temp_repo / "rs_str_marker"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_str_marker"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod shared;\n\npub trait Err {\n    fn code(&self) -> u32;\n}\n"
+            ),
+            "src/shared.rs": "pub fn s() -> u32 {\n    0\n}\n",
+            "src/main.rs": (
+                'const PAT: &str = "/*";\n'
+                "mod cli;\n"
+                "/* a block comment */\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/cli.rs": (
+                "use crate::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_str_marker.src"
+    assert (f"{base}.cli.F", f"{base}.main.Err") in implements, implements
+    assert (f"{base}.cli.F", f"{base}.lib.Err") not in implements, implements
+
+
+def test_nested_block_comment_hides_mod_decl(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Rust block comments NEST: a `mod cli;` inside an outer comment that
+    # also contains an inner comment stays commented out, so lib.rs must not
+    # steal cli from the main.rs that really declares it.
+    project = temp_repo / "rs_nested_comment"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_nested_comment"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": (
+                "/* outer\n"
+                "  /* inner */\n"
+                "  mod cli;\n"
+                "*/\n"
+                "pub mod shared;\n\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n"
+            ),
+            "src/shared.rs": "pub fn s() -> u32 {\n    0\n}\n",
+            "src/main.rs": (
+                "mod cli;\n\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/cli.rs": (
+                "use crate::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_nested_comment.src"
+    assert (f"{base}.cli.F", f"{base}.main.Err") in implements, implements
+    assert (f"{base}.cli.F", f"{base}.lib.Err") not in implements, implements
+
+
+def test_module_named_main_is_not_a_crate_entry(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # src/app/main.rs here is a plain module DECLARED by app.rs, not a crate
+    # entry (verified against rustc: `self::foo` inside app::main is
+    # app::main::foo from src/app/main/foo.rs, never the sibling
+    # src/app/foo.rs).
+    project = temp_repo / "rs_mod_named_main"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_mod_named_main"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod app;\n",
+            "src/app.rs": "pub mod main;\npub mod foo;\n",
+            "src/app/foo.rs": ("pub trait Sib {\n    fn s(&self) -> u32;\n}\n"),
+            "src/app/main.rs": (
+                "pub mod foo;\n\n"
+                "use self::foo::Sib;\n\n"
+                "pub struct M;\n\n"
+                "impl Sib for M {\n"
+                "    fn s(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/app/main/foo.rs": ("pub trait Sib {\n    fn s(&self) -> u32;\n}\n"),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_mod_named_main.src"
+    assert (
+        f"{base}.app.main.M",
+        f"{base}.app.main.foo.Sib",
+    ) in implements, implements
+    assert (f"{base}.app.main.M", f"{base}.app.foo.Sib") not in implements, implements
+
+
+def test_call_inside_inline_mod_uses_its_own_imports(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A call INSIDE `mod tests` must resolve through the inline module's own
+    # imports (its `use crate::foo::helper` shadows the file's helper for
+    # code in the mod), while file-level calls stay on the file's items.
+    project = temp_repo / "rs_inline_scope_calls"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_inline_scope_calls"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod foo;\n",
+            "src/foo.rs": "pub mod bar;\n\npub fn helper() -> u32 {\n    1\n}\n",
+            "src/foo/bar.rs": (
+                "pub fn helper() -> u32 {\n"
+                "    2\n"
+                "}\n\n"
+                "pub fn run() -> u32 {\n"
+                "    helper()\n"
+                "}\n\n"
+                "#[cfg(test)]\n"
+                "mod tests {\n"
+                "    use crate::foo::helper;\n\n"
+                "    #[test]\n"
+                "    fn t() {\n"
+                "        assert_eq!(helper(), 1);\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_inline_scope_calls.src"
+    assert (f"{base}.foo.bar.tests.t", f"{base}.foo.helper") in calls, calls
+    assert (f"{base}.foo.bar.tests.t", f"{base}.foo.bar.helper") not in calls, calls
+    assert (f"{base}.foo.bar.run", f"{base}.foo.bar.helper") in calls, calls
+
+
 def test_enum_variant_use_path_keeps_imports_edge(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

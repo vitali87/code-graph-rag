@@ -703,6 +703,16 @@ class CallResolver:
             language == cs.SupportedLanguage.DART
             and class_context in self.type_inference.dart_extends_type_args
         )
+        # A Rust caller nested below the file module (an inline `mod` block)
+        # resolves caller-dependently: its scope's imports shadow file items,
+        # so the file-keyed cache would serve it another caller's answer.
+        if (
+            language == cs.SupportedLanguage.RUST
+            and caller_qn
+            and caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+            and cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
+        ):
+            use_cache = False
         if use_cache:
             cache_key = (call_name, module_qn)
             if cache_key in self._simple_resolution_cache:
@@ -731,6 +741,17 @@ class CallResolver:
                 caller_qn,
                 language,
             )
+
+        # A Rust caller INSIDE an inline `mod` block sees that module's own
+        # items and imports first (its `use` shadows the enclosing file's
+        # items for code within the block). Caller-dependent, so never
+        # cached under the file-scoped key.
+        if language == cs.SupportedLanguage.RUST and caller_qn:
+            scoped = self._try_resolve_rust_inline_scope(
+                call_name, module_qn, caller_qn
+            )
+            if scoped is not None:
+                return scoped[0]
 
         # Rust name resolution prefers items defined in the module itself: a
         # glob import NEVER shadows a local item, and a named use colliding
@@ -1184,6 +1205,37 @@ class CallResolver:
             if wildcard_qn in self.function_registry:
                 logger.debug(ls.CALL_WILDCARD, call_name=call_name, qn=wildcard_qn)
                 return self.function_registry[wildcard_qn], wildcard_qn
+        return None
+
+    def _try_resolve_rust_inline_scope(
+        self, call_name: str, module_qn: str, caller_qn: str
+    ) -> tuple[tuple[str, str] | None] | None:
+        """Resolve a bare call through the caller's enclosing inline-mod scopes.
+
+        Walks innermost-out between the caller and the file module, checking
+        each inline module's own items and its import map (stored under the
+        inline qn by _parse_rust_use_declaration). Returns a 1-tuple so a
+        deliberate drop (the scope imports the name from OUTSIDE the indexed
+        first-party graph) is distinguishable from "no scope claims it".
+        """
+        if (
+            cs.SEPARATOR_DOT in call_name
+            or cs.SEPARATOR_DOUBLE_COLON in call_name
+            or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+        ):
+            return None
+        scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        import_mapping = self.import_processor.import_mapping
+        while len(scope) > len(module_qn):
+            local_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
+            if (local_type := self.function_registry.get(local_qn)) is not None:
+                return ((local_type, local_qn),)
+            target = import_mapping.get(scope, {}).get(call_name)
+            if target is not None:
+                if (target_type := self.function_registry.get(target)) is not None:
+                    return ((target_type, target),)
+                return (None,)
+            scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return None
 
     def _try_resolve_same_module(
