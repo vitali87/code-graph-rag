@@ -1,7 +1,7 @@
 const local = Symbol('local')
 
 export class Collection<T> {
-  private items: T[] = []
+  private items: T[] = [];
 
   [Symbol.iterator]() { return this.items[Symbol.iterator]() }             // runtime → NOT dead
   async *[Symbol.asyncIterator]() { for (const i of this.items) yield i }  // runtime → NOT dead
