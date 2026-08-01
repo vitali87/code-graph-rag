@@ -1128,14 +1128,18 @@ class ClassIngestMixin:
             # Record where this method landed, same as the generic method
             # path: the registered qn (a collision deduplicates it to
             # `natural@<line>`) is recoverable afterwards only by span.
+            # First claim wins: a fn nested in a mod inside a const
+            # initializer is already claimed by the function pass under
+            # its own qn, and overwriting the record would re-attribute
+            # its calls to this pass's twin.
             if ingested_qn is not None:
-                self.function_locations[function_span_key(module_qn, method_node)] = (
-                    FunctionLocation(
+                span = function_span_key(module_qn, method_node)
+                if span not in self.function_locations:
+                    self.function_locations[span] = FunctionLocation(
                         label=cs.NodeLabel.METHOD.value,
                         qualified_name=ingested_qn,
                         container_qn=class_qn,
                     )
-                )
             # Record the method's return type (Self -> impl target) so a chained
             # call (`Ping::new(msg).into_frame()`) and a call-bound local
             # (`let cmd = Command::from_frame(f)`) can resolve the next hop.

@@ -277,18 +277,38 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None]:
     if nearest.type != cs.TS_RS_MOD_ITEM:
         return None, None
     parts: list[str] = []
+    has_class_segment = False
     current = node.parent
     while current and current.type != cs.TS_RS_SOURCE_FILE:
         if current.type == cs.TS_IMPL_ITEM:
             if target := extract_impl_target(current):
                 parts.append(target)
+                has_class_segment = True
         elif current.type in cs.FQN_RS_SCOPE_TYPES:
             if name_node := current.child_by_field_name(cs.FIELD_NAME):
                 text = name_node.text
                 if text is not None:
                     parts.append(text.decode(cs.RS_ENCODING_UTF8))
+                    if current.type != cs.TS_RS_MOD_ITEM:
+                        has_class_segment = True
         current = current.parent
     parts.reverse()
+    # A function-local `mod run { ... }` legally coexists with a bodyless
+    # `mod run;` in the same file (at file level the pair is E0428), and a
+    # mods-only key would then BE the submodule FILE's module qn: storing
+    # there merges two distinct modules' imports, and tracking it for
+    # cleanup lets this file's re-parse wipe the other file's map. No key
+    # serves both modules; drop the mapping, keep the IMPORTS edges.
+    if parts and not has_class_segment and current is not None:
+        for child in current.named_children:
+            if (
+                child.type == cs.TS_RS_MOD_ITEM
+                and child.child_by_field_name(cs.FIELD_BODY) is None
+                and (decl_name := child.child_by_field_name(cs.FIELD_NAME)) is not None
+                and decl_name.text is not None
+                and decl_name.text.decode(cs.RS_ENCODING_UTF8) == parts[0]
+            ):
+                return None, None
     return None, parts
 
 

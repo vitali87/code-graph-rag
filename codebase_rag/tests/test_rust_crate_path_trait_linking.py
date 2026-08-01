@@ -2063,3 +2063,100 @@ def test_method_local_mod_use_reaches_its_own_functions(
     base = "rs_method_local_only.src"
     assert (f"{base}.foo.S.inner.g", f"{base}.alpha.helper") in calls, calls
     assert (f"{base}.foo.S.inner.g", f"{base}.foo.helper") not in calls, calls
+
+
+def test_const_block_mod_function_keeps_first_claimed_span(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A fn inside a mod inside an associated-const initializer is claimed
+    # FIRST by the generic function pass (foo.S.inner.g); the impl-method
+    # pass also reaches it and must not overwrite that span record with
+    # its own Method claim (first claim wins), or the caller reads the
+    # file map instead of its mod's own use.
+    project = temp_repo / "rs_const_block_mod"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_const_block_mod"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "use crate::beta::helper;\n\n"
+                "pub struct S;\n\n"
+                "impl S {\n"
+                "    pub const C: u32 = {\n"
+                "        mod inner {\n"
+                "            use crate::alpha::helper;\n\n"
+                "            pub const fn g() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        inner::g()\n"
+                "    };\n"
+                "}\n\n"
+                "pub const fn f() -> u32 {\n"
+                "    helper()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_const_block_mod.src"
+    assert (f"{base}.foo.S.inner.g", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.S.g", f"{base}.beta.helper") not in calls, calls
+
+
+def test_fn_local_mod_sharing_submodule_name_does_not_wipe_its_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `mod run { ... }` inside a free fn legally coexists with `pub mod
+    # run;` in the same file (at file level the pair would be E0428), and
+    # its mods-only key IS src/foo/run.rs's module qn. Storing there would
+    # merge two distinct modules' imports, and tracking it for cleanup
+    # lets a watch re-parse of foo.rs wipe run.rs's whole import map.
+    project = temp_repo / "rs_fn_local_submod"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_fn_local_submod"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub mod run;\n\n"
+                "pub fn f() -> u32 {\n"
+                "    mod run {\n"
+                "        use crate::alpha::helper;\n\n"
+                "        pub fn go2() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    run::go2()\n"
+                "}\n"
+            ),
+            "src/foo/run.rs": (
+                "use crate::beta::helper;\n\npub fn go() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_fn_local_submod.src"
+    assert (f"{base}.foo.run.go", f"{base}.beta.helper") in calls, calls
+
+    processor = updater.factory.import_processor
+    tracked = processor._rust_inline_scope_keys.get(f"{base}.foo", set())
+    assert f"{base}.foo.run" not in tracked, tracked
+    # Simulate the start of a re-parse of foo.rs alone: run.rs's module
+    # import map must survive.
+    processor._parse_rust_imports({}, f"{base}.foo")
+    module_map = processor.import_mapping.get(f"{base}.foo.run")
+    assert module_map == {"helper": f"{base}.beta.helper"}, module_map
