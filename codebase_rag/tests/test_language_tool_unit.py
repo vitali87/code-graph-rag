@@ -768,6 +768,33 @@ class TestRemoveLanguageCommand:
             assert '"foo"' not in content
             _assert_valid_python(content)
 
+    def test_removal_spares_matching_entry_outside_registry(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                "LANGUAGE_FQN_SPECS = {\n"
+                '    "foo": LanguageSpec(language="foo"),\n'
+                "}\n"
+                "LANGUAGE_SPECS = {\n"
+                '    "foo": LanguageSpec(language="foo"),\n'
+                "}\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+            ):
+                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+
+            assert result.exit_code == 0
+            assert "Error" not in result.output
+            content = config.read_text(encoding="utf-8")
+            _assert_valid_python(content)
+            assert 'LANGUAGE_FQN_SPECS = {\n    "foo": LanguageSpec(' in content
+            assert _top_level_specs_keys(content) == []
+
     def test_removes_multiline_entry_with_tuple_on_first_line(self) -> None:
         runner = CliRunner()
         with runner.isolated_filesystem():
