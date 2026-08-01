@@ -1319,20 +1319,20 @@ class GraphUpdater:
         )
         # A deleted file is no writer: its mod-scope registry entries must
         # not weigh in the next arbitration (a modified file re-drops this
-        # in its own re-parse, harmlessly twice). The drop keys on Rust's
-        # own qn scheme, where mod.rs collapses to its directory, and only
-        # for Rust files: a same-stem file of another language
-        # (src/foo/__init__.py beside src/foo.rs) shares the qn without
-        # owning the Rust state.
+        # in its own re-parse, harmlessly twice). The drop keys on the qn
+        # the parse actually RECORDED, which can differ from any path-derived
+        # form twice over: mod.rs collapses to its directory, and
+        # _disambiguate_module_qn suffixes a qn whose bare form an
+        # earlier-parsed file already owns (src/a/mod.rs beside src/a.rs or
+        # src/a.py records as ...a.rs). Recomputing from the path would wipe
+        # the bare qn's real owner, which this event does not re-parse, while
+        # the deleted file's own writers kept voting forever. A Rust file
+        # with no recorded qn was never parsed and owns no import state.
         if file_path.suffix == cs.EXT_RS:
-            rust_parts = (
-                relative_path.parent.parts
-                if file_path.name == cs.MOD_RS
-                else relative_path.with_suffix("").parts
-            )
-            self.factory.import_processor.drop_rust_module_import_state(
-                cs.SEPARATOR_DOT.join([self.project_name, *rust_parts])
-            )
+            qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+            for qn, path in qn_to_path.items():
+                if path == file_path:
+                    self.factory.import_processor.drop_rust_module_import_state(qn)
 
         qns_to_remove = set()
 

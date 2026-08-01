@@ -3549,3 +3549,126 @@ def test_watch_create_of_owned_module_keeps_its_own_imports(
 
     mapping = updater.factory.import_processor.import_mapping.get(key)
     assert mapping == {"ah": f"{base}.alpha.helper"}, mapping
+
+
+def test_watch_touch_of_mod_rs_beside_same_stem_rs_keeps_sibling_state(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # src/a.rs parses first and keeps the bare qn; src/a/mod.rs is
+    # disambiguated to ...a.rs (a stale pre-2018-layout leftover on disk).
+    # A watch event on the mod.rs must drop state under the qn ITS parse
+    # recorded, not a qn recomputed from the path: the path form collapses
+    # to the bare qn, which belongs to a.rs, and a.rs is not re-parsed by
+    # this event so nothing would recommit its wiped writer.
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_modrs_sibling"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_modrs_sibling"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "use crate::gamma::helper;\n\n"
+                "pub mod inner {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn g() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn top() -> u32 {\n    helper()\n}\n"
+            ),
+            "src/a/mod.rs": "pub fn other() -> u32 {\n    5\n}\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_modrs_sibling.src"
+    assert (f"{base}.a.inner.g", f"{base}.beta.helper") in calls, calls
+    key = f"{base}.a.inner"
+    expected = {"helper": f"{base}.beta.helper"}
+    assert updater.factory.import_processor.import_mapping.get(key) == expected
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "a" / "mod.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(key)
+    assert mapping == expected, mapping
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.a.inner.g", f"{base}.beta.helper") in calls, calls
+
+
+def test_watch_delete_of_disambiguated_mod_rs_drops_its_writer(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The converse direction: src/a.py owns the bare qn, so src/a/mod.rs
+    # parses under the disambiguated ...a.rs and its inline mod commits
+    # ...a.rs.c. The delete must drop the writer under the qn the parse
+    # actually used; keyed on the path form it drops nothing and the
+    # deleted file keeps voting its uses into every later arbitration.
+    from watchdog.events import FileDeletedEvent, FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_poly_delete"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_poly_delete"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod a;\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/a.py": "X = 1\n",
+            "src/a/mod.rs": (
+                "pub mod c {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn go() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_poly_delete.src"
+    key = f"{base}.a.rs.c"
+    expected = {"helper": f"{base}.beta.helper"}
+    assert updater.factory.import_processor.import_mapping.get(key) == expected
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    mod_rs = project / "src" / "a" / "mod.rs"
+    mod_rs.unlink()
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileDeletedEvent(str(mod_rs)))
+
+    mapping = updater.factory.import_processor.import_mapping.get(key)
+    assert mapping is None, mapping
+
+    # A later unrelated event re-arbitrates; the dead writer must stay dead.
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "beta.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(key)
+    assert mapping is None, mapping
