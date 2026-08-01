@@ -7,7 +7,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 from unittest.mock import MagicMock
+
+import pytest
 
 from codebase_rag.constants import RelationshipType
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
@@ -3041,3 +3044,112 @@ def test_samefile_pure_mod_beats_fn_local_twin(
     base = "rs_samefile_purity.src"
     assert (f"{base}.foo.inner.g", f"{base}.beta.helper") in calls, calls
     assert (f"{base}.foo.inner.g", f"{base}.gamma.helper") not in calls, calls
+
+
+def test_samefile_impure_twin_callers_keep_their_own_import(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The losing side of the purity arbitration: the fn-local twin's own
+    # function (deduplicated to g@13) must still resolve through ITS mod's
+    # use, not inherit the pure winner's map through the shared key.
+    project = temp_repo / "rs_samefile_twin_callers"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_samefile_twin_callers"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod foo;\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub mod inner {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn g() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn f() -> u32 {\n"
+                "    mod inner {\n"
+                "        use crate::gamma::helper;\n\n"
+                "        pub fn g() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    inner::g()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_samefile_twin_callers.src"
+    assert (f"{base}.foo.inner.g", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.inner.g@13", f"{base}.gamma.helper") in calls, calls
+    assert (f"{base}.foo.inner.g@13", f"{base}.beta.helper") not in calls, calls
+
+
+def test_watch_reparse_recommits_inline_mod_map(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The realtime watcher re-parses a file through process_file and then
+    # recomputes CALLS repo-wide; it never passes through run(), so the
+    # end-of-parse retraction must be re-arbitrated on ITS path too or the
+    # inline mod's callers inherit the enclosing file's imports.
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_watch_inline_mod"
+    foo_rs = (
+        "use crate::alpha::helper;\n\n"
+        "pub mod env {\n"
+        "    use crate::beta::helper;\n\n"
+        "    pub fn go2() -> u32 {\n"
+        "        helper()\n"
+        "    }\n"
+        "}\n\n"
+        "pub fn f() -> u32 {\n"
+        "    helper()\n"
+        "}\n"
+    )
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_watch_inline_mod"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": foo_rs,
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "foo.rs")))
+
+    calls = _calls(mock_ingestor)
+    base = "rs_watch_inline_mod.src"
+    assert (f"{base}.foo.env.go2", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.env.go2", f"{base}.alpha.helper") not in calls, calls
+
+    # A later event on an UNRELATED file recomputes calls repo-wide; the
+    # recommitted inline map must still be standing.
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "alpha.rs")))
+
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.foo.env.go2", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.env.go2", f"{base}.alpha.helper") not in calls, calls

@@ -303,6 +303,35 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
     return None, parts, pure
 
 
+def enclosing_mod_fn_spans(node: Node) -> list[tuple[int, int]]:
+    """Spans of every fn declared in the mod block enclosing this use.
+
+    A `use` inside a mod applies mod-wide, so its imports must reach the
+    functions declared there (through impl/trait blocks and nested fns)
+    even when the mod's shared qn key is lost to a same-named twin. A
+    nested mod is its own scope and does not inherit the use, so descent
+    stops at mod boundaries.
+    """
+    mod_node = node.parent
+    while mod_node and mod_node.type != cs.TS_RS_MOD_ITEM:
+        mod_node = mod_node.parent
+    if mod_node is None:
+        return []
+    body = mod_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return []
+    spans: list[tuple[int, int]] = []
+    stack = list(body.children)
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_RS_MOD_ITEM:
+            continue
+        if current.type == cs.TS_RS_FUNCTION_ITEM:
+            spans.append((current.start_point[0] + 1, current.start_point[1]))
+        stack.extend(current.children)
+    return spans
+
+
 def build_module_path(
     node: Node,
     include_impl_targets: bool = False,

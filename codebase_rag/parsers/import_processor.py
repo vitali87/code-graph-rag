@@ -446,8 +446,11 @@ class ImportProcessor:
         # deduplicated to `natural@<start_line>`) is only knowable after
         # ingestion, so entries queue by the function node's span until
         # finalise_rust_function_scope_uses resolves them.
+        # The bool marks WEAK entries: an impure inline mod's use fanned
+        # out to the functions declared in its block, applied with
+        # setdefault so a function's own body use always wins.
         self._rust_pending_fn_scope_uses: dict[
-            str, list[tuple[int, int, dict[str, str]]]
+            str, list[tuple[int, int, dict[str, str], bool]]
         ] = {}
         # Function-body uses, keyed by the enclosing function's registered
         # qn. Kept OUT of import_mapping: Rust puts `mod run` and `fn run`
@@ -1816,6 +1819,7 @@ class ImportProcessor:
                     fn_node.start_point[0] + 1,
                     fn_node.start_point[1],
                     resolved_imports,
+                    False,
                 )
             )
             return
@@ -1844,6 +1848,15 @@ class ImportProcessor:
         self._rust_pending_mod_scope_uses.setdefault(module_qn, []).append(
             (effective_qn, pure_chain, resolved_imports)
         )
+        if not pure_chain:
+            # A fn-local mod can lose the shared-key arbitration to a pure
+            # twin (issue #1017: one qn, two modules), yet its own functions
+            # still see this use: fan it out to their spans so the fn-scope
+            # map answers for them ahead of whatever the key ends up holding.
+            for line, col in rs_utils.enclosing_mod_fn_spans(use_node):
+                self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
+                    (line, col, resolved_imports, True)
+                )
 
     def retract_rust_mod_scope_uses(self, module_qn: str) -> None:
         # Reverse replay so a key shadowing another file's entries (the
@@ -1904,14 +1917,24 @@ class ImportProcessor:
         # was never registered (e.g. an impl whose target has no extractable
         # name): no caller exists to read the key, and a name-derived
         # fallback could collide with a real function's qn, so drop it.
-        for start_line, start_col, imports in self._rust_pending_fn_scope_uses.pop(
-            module_qn, []
-        ):
+        for (
+            start_line,
+            start_col,
+            imports,
+            weak,
+        ) in self._rust_pending_fn_scope_uses.pop(module_qn, []):
             location = function_locations.get((module_qn, start_line, start_col))
             if location is None:
                 continue
             key = location.qualified_name
-            self.rust_fn_scope_imports.setdefault(key, {}).update(imports)
+            target = self.rust_fn_scope_imports.setdefault(key, {})
+            if weak:
+                # Fanned out from an enclosing impure mod's use; the
+                # function's own body use outranks it in either order.
+                for name, value in imports.items():
+                    target.setdefault(name, value)
+            else:
+                target.update(imports)
             self._rust_fn_scope_keys.setdefault(module_qn, set()).add(key)
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:

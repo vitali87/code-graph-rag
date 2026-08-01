@@ -257,6 +257,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 path, path.name
             )
 
+        # Rust inline-mod import maps retract at the end of every parse
+        # and only re-commit through arbitration; run() is not on this
+        # path, so arbitrate here before calls recompute through the maps.
+        self.updater.factory.import_processor.finalise_rust_mod_scope_uses(
+            self.updater.known_module_paths()
+        )
+
         # Step 4
         logger.info(logs.RECALC_CALLS)
         ingestor.execute_write(CYPHER_DELETE_CALLS)

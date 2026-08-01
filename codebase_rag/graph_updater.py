@@ -727,16 +727,7 @@ class GraphUpdater:
         # every module qn this run produced (files, inline modules,
         # rehydrated unchanged files); an internal target that resolves
         # nowhere emits no edge.
-        known_module_paths: dict[str, str] = {
-            str(qn): path.as_posix()
-            for qn, path in (
-                self.factory.definition_processor.module_qn_to_file_path.items()
-            )
-        }
-        for qn in self.factory.definition_processor.declared_module_qns:
-            known_module_paths.setdefault(qn, "")
-        for qn in self._rehydrated_module_qns:
-            known_module_paths.setdefault(qn, "")
+        known_module_paths = self.known_module_paths()
 
         # Inline-mod import maps commit BEFORE the deferred inheritance
         # pass below: it re-resolves module-anchored trait guesses through
@@ -1292,6 +1283,22 @@ class GraphUpdater:
             restored += 1
         if restored:
             logger.info(ls.INCREMENTAL_REBUILD_INBOUND, count=restored)
+
+    def known_module_paths(self) -> dict[str, str]:
+        # Module qns this updater has produced, mapped to file paths;
+        # declared and rehydrated qns carry no path and never win the
+        # Rust sub-scope ownership arbitration.
+        known: dict[str, str] = {
+            str(qn): path.as_posix()
+            for qn, path in (
+                self.factory.definition_processor.module_qn_to_file_path.items()
+            )
+        }
+        for qn in self.factory.definition_processor.declared_module_qns:
+            known.setdefault(qn, "")
+        for qn in self._rehydrated_module_qns:
+            known.setdefault(qn, "")
+        return known
 
     def remove_file_from_state(self, file_path: Path) -> None:
         logger.debug(ls.REMOVING_STATE, path=file_path)
