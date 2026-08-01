@@ -3310,6 +3310,7 @@ class CallProcessor:
                     class_context,
                     caller_qn,
                     language,
+                    call_point=call_node.start_byte,
                 )
             if callee_info and language == cs.SupportedLanguage.RUST:
                 # Rust macros and functions live in SEPARATE namespaces:

@@ -285,6 +285,7 @@ class CallResolver:
         class_context: str | None = None,
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> tuple[str, str] | None:
         return self._redirect_protocol_method(
             self._resolve_function_call(
@@ -294,6 +295,7 @@ class CallResolver:
                 class_context,
                 caller_qn,
                 language,
+                call_point,
             )
         )
 
@@ -680,6 +682,7 @@ class CallResolver:
         class_context: str | None = None,
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> tuple[str, str] | None:
         # Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # before the module-keyed cache/trie, which would otherwise return a sibling
@@ -706,17 +709,18 @@ class CallResolver:
         # A Rust caller nested below the file module (an inline `mod` block)
         # or holding function-body `use` declarations of its own resolves
         # caller-dependently: its scope's imports shadow file items, so the
-        # file-keyed cache would serve it another caller's answer.
-        if (
-            language == cs.SupportedLanguage.RUST
-            and caller_qn
-            and caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
-            and (
+        # file-keyed cache would serve it another caller's answer. A file
+        # holding initializer-block uses resolves SITE-dependently (the
+        # block's use answers only calls inside its span), so no caller in
+        # it may share cached answers either.
+        if language == cs.SupportedLanguage.RUST and caller_qn:
+            if module_qn in self.import_processor.rust_block_scope_imports:
+                use_cache = False
+            elif caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}") and (
                 cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
                 or caller_qn in self.import_processor.rust_fn_scope_imports
-            )
-        ):
-            use_cache = False
+            ):
+                use_cache = False
         if use_cache:
             cache_key = (call_name, module_qn)
             if cache_key in self._simple_resolution_cache:
@@ -752,7 +756,7 @@ class CallResolver:
         # cached under the file-scoped key.
         if language == cs.SupportedLanguage.RUST and caller_qn:
             scoped = self._try_resolve_rust_inline_scope(
-                call_name, module_qn, caller_qn
+                call_name, module_qn, caller_qn, call_point
             )
             if scoped is not None:
                 return scoped[0]
@@ -1215,31 +1219,45 @@ class CallResolver:
         return None
 
     def _try_resolve_rust_inline_scope(
-        self, call_name: str, module_qn: str, caller_qn: str
+        self, call_name: str, module_qn: str, caller_qn: str, call_point: int | None
     ) -> tuple[tuple[str, str] | None] | None:
         """Resolve a bare call through the caller's enclosing Rust scopes.
 
-        Probes the caller's OWN body uses first (kept in a separate map:
-        `mod run` and `fn run` occupy different Rust namespaces but share
-        one qn string, so the module-keyed map must never answer for the
-        function itself), then walks the enclosing inline modules down to
-        the file module, checking each scope's own items, the caller's
-        weak entries (its enclosing mod's use fanned out per function, in
-        case the mod's shared key was arbitrated to a twin), and the
-        scope's import map. Returns a 1-tuple so a deliberate drop (the
-        scope imports the name from OUTSIDE the indexed first-party graph)
-        is distinguishable from "no scope claims it".
+        A call whose site falls inside a const/static initializer block
+        binds that block's own use first (the innermost containing block
+        wins): the block is the most local scope there is, shadowing even
+        the enclosing function's body uses. Otherwise probes the caller's
+        OWN body uses (kept in a separate map: `mod run` and `fn run`
+        occupy different Rust namespaces but share one qn string, so the
+        module-keyed map must never answer for the function itself), then
+        walks the enclosing inline modules down to the file module,
+        checking each scope's own items, the caller's weak entries (its
+        enclosing mod's use fanned out per function, in case the mod's
+        shared key was arbitrated to a twin), and the scope's import map.
+        Returns a 1-tuple so a deliberate drop (the scope imports the
+        name from OUTSIDE the indexed first-party graph) is
+        distinguishable from "no scope claims it".
         """
-        if (
-            cs.SEPARATOR_DOT in call_name
-            or cs.SEPARATOR_DOUBLE_COLON in call_name
-            or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
-        ):
+        if cs.SEPARATOR_DOT in call_name or cs.SEPARATOR_DOUBLE_COLON in call_name:
             return None
         import_mapping = self.import_processor.import_mapping
-        target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
-            call_name
-        )
+        target = None
+        if call_point is not None and (
+            blocks := self.import_processor.rust_block_scope_imports.get(module_qn)
+        ):
+            best_size: int | None = None
+            for start, end, imports in blocks:
+                if start <= call_point < end and call_name in imports:
+                    size = end - start
+                    if best_size is None or size < best_size:
+                        best_size = size
+                        target = imports[call_name]
+        if target is None:
+            if not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
+                return None
+            target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
+                call_name
+            )
         if target is None:
             weak = self.import_processor.rust_fn_scope_mod_imports.get(
                 caller_qn, {}

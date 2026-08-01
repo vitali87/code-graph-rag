@@ -3672,3 +3672,103 @@ def test_watch_delete_of_disambiguated_mod_rs_drops_its_writer(
 
     mapping = updater.factory.import_processor.import_mapping.get(key)
     assert mapping is None, mapping
+
+
+def test_initializer_block_use_binds_the_blocks_own_call_at_file_level(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A use inside a const/static initializer block is in scope for that
+    # block itself: the call written next to it must bind through it even
+    # though the use stores no module-level mapping. Two same-named
+    # helpers exist so the simple-name fallback cannot mask a dropped
+    # import.
+    project = temp_repo / "rs_block_call_file"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_call_file"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::helper;\n"
+                "    helper()\n"
+                "};\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_call_file.src"
+    assert (f"{base}.a", f"{base}.gamma.helper") in calls, calls
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
+    assert not mapping or "helper" not in mapping, mapping
+
+
+def test_initializer_block_use_binds_the_blocks_own_call_in_a_fn(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The fn-nested form: a const declared in a function body whose
+    # initializer block carries its own use. The call inside the block is
+    # attributed to the enclosing function but must still resolve through
+    # the block's use, not the function's or file's imports.
+    project = temp_repo / "rs_block_call_fn"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_call_fn"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub fn outer() -> u32 {\n"
+                "    const INNER: u32 = {\n"
+                "        use crate::gamma::helper;\n"
+                "        helper()\n"
+                "    };\n"
+                "    INNER\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_call_fn.src"
+    assert (f"{base}.a.outer", f"{base}.gamma.helper") in calls, calls
+
+
+def test_initializer_block_use_binds_the_blocks_own_call_at_mod_level(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The mod-level form: a static declared inside an inline mod with a
+    # block-scoped use. The block's own call must bind through the use
+    # while the mod's import map stays free of it (sibling calls in the
+    # mod are E0425 and must not inherit the name).
+    project = temp_repo / "rs_block_call_mod"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_call_mod"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub mod inner {\n"
+                "    pub static J: u32 = {\n"
+                "        use crate::gamma::helper;\n"
+                "        helper()\n"
+                "    };\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_call_mod.src"
+    assert any(dst == f"{base}.gamma.helper" for _src, dst in calls), calls
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a.inner")
+    assert not mapping or "helper" not in mapping, mapping

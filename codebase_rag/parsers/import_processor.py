@@ -398,6 +398,7 @@ class ImportProcessor:
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
         "rust_fn_scope_mod_imports",
+        "rust_block_scope_imports",
         "_rust_fn_scope_keys",
         "_rust_pending_mod_scope_uses",
         "_rust_mod_scope_registry",
@@ -463,6 +464,14 @@ class ImportProcessor:
         # resolver consults it only after local items, unlike the body-use
         # map above which shadows everything.
         self.rust_fn_scope_mod_imports: dict[str, dict[str, str]] = {}
+        # Uses inside const/static initializer blocks, keyed by file
+        # module qn: (block start byte, block end byte, imports). No qn
+        # scope corresponds to such a block and the use is E0425 outside
+        # it, so the resolver serves these span-gated, only to calls
+        # whose site falls inside the block.
+        self.rust_block_scope_imports: dict[
+            str, list[tuple[int, int, dict[str, str]]]
+        ] = {}
         self._rust_fn_scope_keys: dict[str, set[str]] = {}
         # Sub-scope (inline mod) maps held back until every file is
         # parsed: whether the key collides with an indexer-registered
@@ -1785,6 +1794,7 @@ class ImportProcessor:
         self._rust_pending_fn_scope_uses.pop(module_qn, None)
         self._rust_pending_mod_scope_uses.pop(module_qn, None)
         self._rust_mod_scope_registry.pop(module_qn, None)
+        self.rust_block_scope_imports.pop(module_qn, None)
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
             self.rust_fn_scope_imports.pop(key, None)
             self.rust_fn_scope_mod_imports.pop(key, None)
@@ -1817,13 +1827,13 @@ class ImportProcessor:
         resolve_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *mod_parts]) if mod_parts else module_qn
         )
-        fn_node, scope_parts, pure_chain = rs_utils.rust_use_scope(use_node)
+        scope_node, scope_parts, pure_chain = rs_utils.rust_use_scope(use_node)
         effective_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *scope_parts])
             if scope_parts
             else module_qn
         )
-        sub_scope = fn_node is not None or scope_parts != []
+        sub_scope = scope_node is not None or scope_parts != []
         resolved_imports: dict[str, str] = {}
         for imported_name, full_path in imports.items():
             resolved = self._rewrite_rust_local_use_path(full_path, resolve_qn)
@@ -1833,21 +1843,28 @@ class ImportProcessor:
                 # sub-scope imports still owe the file its IMPORTS edge.
                 self.defer_import_edge(module_qn, resolved, cs.SupportedLanguage.RUST)
             logger.debug(ls.IMP_RUST, name=imported_name, path=resolved)
-        if fn_node is not None:
-            self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
-                (
-                    fn_node.start_point[0] + 1,
-                    fn_node.start_point[1],
-                    resolved_imports,
-                    False,
+        if scope_node is not None:
+            if scope_node.type == cs.TS_RS_FUNCTION_ITEM:
+                self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
+                    (
+                        scope_node.start_point[0] + 1,
+                        scope_node.start_point[1],
+                        resolved_imports,
+                        False,
+                    )
                 )
-            )
+            else:
+                # A const/static initializer block: no qn scope, so the
+                # entry is span-gated and answers only calls written
+                # inside the block.
+                self.rust_block_scope_imports.setdefault(module_qn, []).append(
+                    (scope_node.start_byte, scope_node.end_byte, resolved_imports)
+                )
             return
         if scope_parts is None:
-            # A class-body block (an associated-const initializer): no qn
-            # scope corresponds to it, and any key would serve a real
-            # scope's readers (sibling methods or the whole file). Keep
-            # only the IMPORTS edges.
+            # No enclosing block could be attributed (defensive): no qn
+            # scope corresponds to the use, and any key would serve a
+            # real scope's readers. Keep only the IMPORTS edges.
             return
         if not scope_parts:
             self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)

@@ -256,20 +256,25 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
     nearest scope is a module chain, with parts mirroring the
     registered-qn path of the items inside it (mod names, impl targets,
     and class names, with functions contributing nothing; [] is file
-    scope). `pure` is False when the chain passes through a function or a
-    const/static initializer: such a mod forges a qn namespace it does
-    not own, so on a key collision the pure writer's map wins. Returns
-    (None, None, True) when the use sits inside a const/static
-    initializer block, wherever the item is declared (mod level, file
-    level, or a class body): the use is scoped to that block alone
-    (E0425 outside it), no qn scope corresponds to the block, and any
-    key would serve a REAL scope's readers.
+    scope). Returns (block_node, None, True) when the use sits inside a
+    const/static initializer block, wherever the item is declared (mod
+    level, file level, or a class body): the use is scoped to its
+    innermost enclosing block alone (E0425 outside it), no qn scope
+    corresponds to the block, and any key would serve a REAL scope's
+    readers, so it stores span-gated and answers only calls written
+    inside the block. `pure` is False when a mod chain passes through a
+    function or a const/static initializer: such a mod forges a qn
+    namespace it does not own, so on a key collision the pure writer's
+    map wins.
     """
     nearest = None
+    block = None
     current = node.parent
     while current and current.type != cs.TS_RS_SOURCE_FILE:
+        if block is None and current.type == cs.TS_RS_BLOCK:
+            block = current
         if current.type in (cs.TS_RS_CONST_ITEM, cs.TS_RS_STATIC_ITEM):
-            return None, None, True
+            return block, None, True
         if (
             current.type == cs.TS_RS_FUNCTION_ITEM
             or current.type in cs.FQN_RS_SCOPE_TYPES
