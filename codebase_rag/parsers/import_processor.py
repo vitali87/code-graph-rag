@@ -80,12 +80,6 @@ _RS_ITEM_DECL_PATTERN = re.compile(
 _RS_MACRO_OPEN_RE = re.compile(
     r"(?:[A-Za-z0-9_]!|\bmacro_rules!\s*(?:r#)?[A-Za-z_][A-Za-z0-9_]*)\s*$"
 )
-# Every extension that maps a file to a module qn: the scheme is
-# language-agnostic, so a Rust inline-mod scope key can collide with a
-# same-named module of any indexed language.
-_MODULE_FILE_EXTENSIONS = frozenset(
-    ext for spec in LANGUAGE_SPECS.values() for ext in spec.file_extensions
-)
 
 
 def _rs_strip_comments_and_strings(source: str) -> str:
@@ -404,6 +398,7 @@ class ImportProcessor:
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
         "_rust_fn_scope_keys",
+        "_rust_pending_mod_scope_uses",
     )
 
     def __init__(
@@ -459,6 +454,12 @@ class ImportProcessor:
         # and the module-keyed map must never answer for the function.
         self.rust_fn_scope_imports: dict[str, dict[str, str]] = {}
         self._rust_fn_scope_keys: dict[str, set[str]] = {}
+        # Sub-scope (inline mod) maps held back until every file is
+        # parsed: whether the key collides with an indexer-registered
+        # module is only knowable then (finalise_rust_mod_scope_uses).
+        self._rust_pending_mod_scope_uses: dict[
+            str, list[tuple[str, bool, dict[str, str]]]
+        ] = {}
         # Import-map entries registered by C++20 module DECLARATIONS (`module X;`,
         # `export module X;`, `import :partition;`). They exist for name resolution
         # only; a declaration is not an import, so no IMPORTS edge is emitted.
@@ -688,6 +689,10 @@ class ImportProcessor:
         the wrong root) emits no edge, because the phantom endpoint is
         silently dropped by the database anyway.
         """
+        # Deferred Rust sub-scope maps commit first: their collision
+        # arbitration needs the same complete module-qn view, and call
+        # resolution runs after this flush.
+        self.finalise_rust_mod_scope_uses(known_module_paths)
         deferred = self._deferred_import_edges
         if not deferred or self.ingestor is None:
             return 0
@@ -1750,6 +1755,7 @@ class ImportProcessor:
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
         self._rust_pending_fn_scope_uses.pop(module_qn, None)
+        self._rust_pending_mod_scope_uses.pop(module_qn, None)
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
             self.rust_fn_scope_imports.pop(key, None)
         for key in self._rust_inline_scope_keys.pop(module_qn, ()):
@@ -1778,19 +1784,7 @@ class ImportProcessor:
         resolve_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *mod_parts]) if mod_parts else module_qn
         )
-        fn_node, scope_parts = rs_utils.rust_use_scope(use_node)
-        if (
-            fn_node is None
-            and scope_parts
-            and self._rust_scope_key_owned_by_file(module_qn, scope_parts)
-        ):
-            # Some prefix of the key is a FILE-owned module qn (a fn-local
-            # or cfg-twin Rust module, or a same-named module of ANOTHER
-            # language, since the qn scheme is language-agnostic): no key
-            # serves both modules (issue #1017), so the mapping drops like
-            # a class-body block's rather than overwrite the file's map
-            # and let this file's re-parse wipe it.
-            scope_parts = None
+        fn_node, scope_parts, pure_chain = rs_utils.rust_use_scope(use_node)
         effective_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *scope_parts])
             if scope_parts
@@ -1821,34 +1815,50 @@ class ImportProcessor:
             # scope's readers (sibling methods or the whole file). Keep
             # only the IMPORTS edges.
             return
-        self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)
-        if effective_qn != module_qn:
-            self._rust_inline_scope_keys.setdefault(module_qn, set()).add(effective_qn)
+        if not scope_parts:
+            self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)
+            return
+        # A sub-scope key may collide with a module the INDEXER registered
+        # (a fn-local or cfg-twin Rust module file, or a same-named module
+        # of another language, since the qn scheme is language-agnostic):
+        # ownership is only knowable once every file is parsed, so the
+        # commit defers to finalise_rust_mod_scope_uses at flush time.
+        self._rust_pending_mod_scope_uses.setdefault(module_qn, []).append(
+            (effective_qn, pure_chain, resolved_imports)
+        )
 
-    def _rust_scope_key_owned_by_file(self, module_qn: str, parts: list[str]) -> bool:
-        # The probe answers a cgr-QN question, not rustc's module rule:
-        # module qns derive from file paths uniformly and language
-        # agnostically (a `<name>.<ext>` of ANY indexed language owns
-        # `<dir qn>.<name>`; only mod.rs and __init__.py collapse onto
-        # their directory, so a bare directory owns nothing). Entry files
-        # need no special case: their inline mods key under src.main.*
-        # while a declared sibling keys src.*, which never collide. Every
-        # PREFIX is probed: a fn-local `mod run` forging run.rs's
-        # namespace poisons everything keyed below it.
-        segs = module_qn.split(cs.SEPARATOR_DOT)[1:]
-        if not segs:
-            return False
-        base = self.repo_path.joinpath(*segs)
-        for idx, name in enumerate(parts):
-            directory = base.joinpath(*parts[:idx])
-            entries = self._rust_dir_entries(directory)
-            if any(f"{name}{ext}" in entries for ext in _MODULE_FILE_EXTENSIONS):
-                return True
-            if name in entries:
-                sub_entries = self._rust_dir_entries(directory / name)
-                if cs.MOD_RS in sub_entries or cs.INIT_PY in sub_entries:
-                    return True
-        return False
+    def finalise_rust_mod_scope_uses(
+        self, known_module_paths: Mapping[str, str]
+    ) -> None:
+        # Arbitrates every deferred sub-scope map with the indexer's own
+        # answer (a file on disk that was ignored, excluded, or written in
+        # an unindexed language owns nothing). A key whose module qn is a
+        # DIFFERENT file's keeps no writers from this side; two writers on
+        # one unowned key keep the PURE module chain over the fn-local or
+        # block-local forgery (issue #1017: no key can serve both).
+        pending = self._rust_pending_mod_scope_uses
+        self._rust_pending_mod_scope_uses = {}
+        by_key: dict[str, list[tuple[str, bool, dict[str, str]]]] = {}
+        for writer_qn, entries in pending.items():
+            for key, pure, imports in entries:
+                by_key.setdefault(key, []).append((writer_qn, pure, imports))
+        for key, writers in by_key.items():
+            owner_path = known_module_paths.get(key)
+            kept = writers
+            if owner_path:
+                kept = [
+                    w for w in writers if known_module_paths.get(w[0]) == owner_path
+                ]
+            elif len({w[0] for w in writers}) > 1:
+                pure_writers = {w[0] for w in writers if w[1]}
+                kept = (
+                    [w for w in writers if w[0] in pure_writers]
+                    if len(pure_writers) == 1
+                    else []
+                )
+            for writer_qn, _pure, imports in kept:
+                self.import_mapping.setdefault(key, {}).update(imports)
+                self._rust_inline_scope_keys.setdefault(writer_qn, set()).add(key)
 
     def finalise_rust_function_scope_uses(
         self,

@@ -246,21 +246,23 @@ def extract_use_imports(use_node: Node) -> dict[str, str]:
     return imports
 
 
-def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None]:
+def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
     """Classify a `use` declaration's storage scope.
 
-    Returns (fn_node, None) when the use sits directly in a function
-    body: it keys on that function's REGISTERED qn, resolved by span
-    after ingestion (never re-derived from source names, which diverge on
-    qn collisions). Returns (None, parts) when the nearest scope is a
-    module chain, with parts mirroring the registered-qn path of the
-    items inside it (mod names, impl targets, and class names, with
-    functions contributing nothing; [] is file scope); whether the key
-    collides with a FILE-owned module qn is the import processor's
-    filesystem question. Returns (None, None) when the use sits in a
-    class-body block with no intervening mod or fn (an associated-const
-    initializer): no qn scope corresponds to such a block, and any key
-    would serve a REAL scope's readers.
+    Returns (fn_node, None, True) when the use sits directly in a
+    function body: it keys on that function's REGISTERED qn, resolved by
+    span after ingestion (never re-derived from source names, which
+    diverge on qn collisions). Returns (None, parts, pure) when the
+    nearest scope is a module chain, with parts mirroring the
+    registered-qn path of the items inside it (mod names, impl targets,
+    and class names, with functions contributing nothing; [] is file
+    scope). `pure` is False when the chain passes through a function or a
+    const/static initializer: such a mod forges a qn namespace it does
+    not own, so on a key collision the pure writer's map wins. Returns
+    (None, None, True) when the use sits in a class-body block with no
+    intervening mod or fn (an associated-const initializer): no qn scope
+    corresponds to such a block, and any key would serve a REAL scope's
+    readers.
     """
     nearest = None
     current = node.parent
@@ -273,15 +275,22 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None]:
             break
         current = current.parent
     if nearest is None:
-        return None, []
+        return None, [], True
     if nearest.type == cs.TS_RS_FUNCTION_ITEM:
-        return nearest, None
+        return nearest, None, True
     if nearest.type != cs.TS_RS_MOD_ITEM:
-        return None, None
+        return None, None, True
     parts: list[str] = []
+    pure = True
     current = node.parent
     while current and current.type != cs.TS_RS_SOURCE_FILE:
-        if current.type == cs.TS_IMPL_ITEM:
+        if current.type in (
+            cs.TS_RS_FUNCTION_ITEM,
+            cs.TS_RS_CONST_ITEM,
+            cs.TS_RS_STATIC_ITEM,
+        ):
+            pure = False
+        elif current.type == cs.TS_IMPL_ITEM:
             if target := extract_impl_target(current):
                 parts.append(target)
         elif current.type in cs.FQN_RS_SCOPE_TYPES:
@@ -291,7 +300,7 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None]:
                     parts.append(text.decode(cs.RS_ENCODING_UTF8))
         current = current.parent
     parts.reverse()
-    return None, parts
+    return None, parts, pure
 
 
 def build_module_path(

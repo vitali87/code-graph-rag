@@ -2739,3 +2739,125 @@ def test_bare_directory_with_python_package_still_drops(
         f"{base}.foo.sub",
         {"helper": f"{base}.foo.sub.other.helper"},
     )
+
+
+def test_inline_mod_beside_unindexed_directory_keeps_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # src/foo/env/mod.rs sits in an IGNORED directory (env is in the
+    # walker's ignore patterns), so no module qn is ever registered for
+    # it: ownership is the INDEXER's answer, not the filesystem's, and
+    # the inline `mod env` must keep its map.
+    project = temp_repo / "rs_ignored_dir"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_ignored_dir"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "use crate::alpha::helper;\n\n"
+                "pub mod env {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn go2() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn f() -> u32 {\n"
+                "    helper()\n"
+                "}\n"
+            ),
+            "src/foo/env/mod.rs": "pub fn plat() -> u32 {\n    7\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_ignored_dir.src"
+    assert (f"{base}.foo.env.go2", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.env.go2", f"{base}.alpha.helper") not in calls, calls
+
+
+def test_type_named_file_does_not_swallow_method_local_mod(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # src/foo/Widget.rs owns foo.Widget, but the dropped key would be
+    # foo.Widget.inner, which nothing owns: a class-segment prefix is not
+    # a directory, and the method-local mod must keep its map.
+    project = temp_repo / "rs_type_named_file"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_type_named_file"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "use crate::alpha::helper;\n\n"
+                "pub mod Widget;\n\n"
+                "pub struct Widget;\n\n"
+                "impl Widget {\n"
+                "    pub fn m(&self) -> u32 {\n"
+                "        mod inner {\n"
+                "            use crate::beta::helper;\n\n"
+                "            pub fn g() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        inner::g()\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/foo/Widget.rs": "pub fn plat() -> u32 {\n    7\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_type_named_file.src"
+    assert (f"{base}.foo.Widget.inner.g", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.Widget.inner.g", f"{base}.alpha.helper") not in calls, calls
+
+
+def test_unowned_deeper_chain_keeps_map_below_owned_prefix(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # run.rs owns foo.run, but the key is foo.run.inner and run.rs
+    # declares no inline `mod inner`: nothing owns the full key, so
+    # dropping it trades a hypothetical collision for a guaranteed wrong
+    # edge. The full key decides, not each prefix.
+    project = temp_repo / "rs_deep_unowned"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_deep_unowned"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "use crate::alpha::helper;\n\n"
+                "pub mod run;\n\n"
+                "pub fn f() -> u32 {\n"
+                "    mod run {\n"
+                "        pub mod inner {\n"
+                "            use crate::beta::helper;\n\n"
+                "            pub fn h() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "    }\n"
+                "    run::inner::h()\n"
+                "}\n"
+            ),
+            "src/foo/run.rs": "pub fn go() -> u32 {\n    1\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_deep_unowned.src"
+    assert (f"{base}.foo.run.inner.h", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.run.inner.h", f"{base}.alpha.helper") not in calls, calls
