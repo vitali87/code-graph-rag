@@ -631,6 +631,38 @@ class TestUpdateConfigFile:
         _assert_valid_python(content)
         assert _top_level_specs_keys(content) == ["a", "mylang"]
 
+    def test_insertion_targets_last_registry_binding(self, tmp_path: Path) -> None:
+        config = tmp_path / "language_spec.py"
+        config.write_text(
+            "LANGUAGE_SPECS = {}\n"
+            "LANGUAGE_SPECS = {\n"
+            '    "a": LanguageSpec(language="a"),\n'
+            "}\n",
+            encoding="utf-8",
+        )
+
+        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
+            assert _update_config_file("mylang", _spec("mylang")) is True
+
+        content = config.read_text(encoding="utf-8")
+        _assert_valid_python(content)
+        specs_dicts = [
+            node.value
+            for node in ast.parse(content).body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "LANGUAGE_SPECS"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Dict)
+        ]
+        last_keys = [
+            key.value
+            for key in specs_dicts[-1].keys
+            if isinstance(key, ast.Constant)
+        ]
+        assert last_keys == ["a", "mylang"]
+
     def test_missing_brace_returns_false(self, tmp_path: Path) -> None:
         config = tmp_path / "language_spec.py"
         config.write_text("LANGUAGE_SPECS = broken\n", encoding="utf-8")
