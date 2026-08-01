@@ -1622,6 +1622,7 @@ class GraphUpdater:
         return eligible
 
     def _process_files(self, force: bool = False) -> None:
+        self.factory.import_processor.reset_rust_path_caches()
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}

@@ -304,6 +304,188 @@ def test_super_import_reaching_crate_root_file(
     assert (f"{base}.impls.Mine.run", f"{base}.lib.Tr.run") in overrides, overrides
 
 
+def test_super_sibling_module_path_links_and_imports(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `use super::error::Err;` from src/foo.rs reaches the crate ROOT, whose
+    # child modules are FILES beside the entry point (src/error.rs ->
+    # p.src.error), never children of the entry module qn (p.src.lib.error).
+    # The wrong reading loses the trait link and anchors IMPORTS at the
+    # crate root instead of the error module.
+    project = temp_repo / "rs_super_sibling"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_super_sibling"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod foo;\npub mod error;\n",
+            "src/error.rs": ("pub trait Err {\n    fn code(&self) -> u32;\n}\n"),
+            "src/foo.rs": (
+                "use super::error::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    imports = _pairs(mock_ingestor, RelationshipType.IMPORTS.value)
+    base = "rs_super_sibling.src"
+
+    assert (f"{base}.foo.F", f"{base}.error.Err") in implements, implements
+    assert (f"{base}.foo.F.code", f"{base}.error.Err.code") in overrides, overrides
+    assert (f"{base}.foo", f"{base}.error") in imports, imports
+    assert (f"{base}.foo", f"{base}.lib") not in imports, imports
+
+
+def test_self_reexport_in_entry_file_keeps_imports_edge(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `pub use self::inner::Tr;` in src/lib.rs: self:: names the crate root
+    # module, whose child `inner` is the FILE src/inner.rs.
+    project = temp_repo / "rs_self_reexport"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_self_reexport"\nversion = "0.1.0"\n',
+            "src/lib.rs": ("pub mod inner;\n\npub use self::inner::Tr;\n"),
+            "src/inner.rs": ("pub trait Tr {\n    fn run(&self) -> u32;\n}\n"),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    imports = _pairs(mock_ingestor, RelationshipType.IMPORTS.value)
+    base = "rs_self_reexport.src"
+    assert (f"{base}.lib", f"{base}.inner") in imports, imports
+
+
+def test_named_use_inside_inline_mod_does_not_hijack_file_calls(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A NAMED import inside an inline `mod tests` block scopes to that
+    # module; leaking it to file scope rebinds the file's own same-named
+    # function calls to the imported one.
+    project = temp_repo / "rs_inline_named"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_inline_named"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod foo;\n",
+            "src/foo.rs": "pub mod bar;\n\npub fn helper() -> u32 {\n    1\n}\n",
+            "src/foo/bar.rs": (
+                "pub fn helper() -> u32 {\n"
+                "    2\n"
+                "}\n\n"
+                "pub fn run() -> u32 {\n"
+                "    helper()\n"
+                "}\n\n"
+                "#[cfg(test)]\n"
+                "mod tests {\n"
+                "    use crate::foo::helper;\n\n"
+                "    #[test]\n"
+                "    fn t() {\n"
+                "        assert_eq!(helper(), 1);\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_inline_named.src"
+    assert (f"{base}.foo.bar.run", f"{base}.foo.bar.helper") in calls, calls
+    assert (f"{base}.foo.bar.run", f"{base}.foo.helper") not in calls, calls
+
+
+def test_bin_crate_root_item_prefers_declaring_entry(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # src/lib.rs + src/main.rs in one package: `use crate::Err` written in a
+    # module that main.rs declares belongs to the BIN crate, so the item
+    # resolves in src/main.rs, not src/lib.rs.
+    project = temp_repo / "rs_bin_lib"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_bin_lib"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod shared;\n",
+            "src/shared.rs": "pub fn s() -> u32 {\n    0\n}\n",
+            "src/main.rs": (
+                "mod cli;\n\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/cli.rs": (
+                "use crate::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    base = "rs_bin_lib.src"
+
+    assert (f"{base}.cli.F", f"{base}.main.Err") in implements, implements
+    assert (f"{base}.cli.F.code", f"{base}.main.Err.code") in overrides, overrides
+
+
+def test_root_item_sharing_lowercase_module_name_stays_root_item(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `use crate::Err` where the entry file declares trait Err AND a module
+    # file err.rs exists: on a case-insensitive filesystem a naive
+    # (dir / "Err.rs").is_file() probe matches err.rs and misclassifies the
+    # ITEM as a submodule. Type-vs-snake_case module is the normal Rust
+    # naming convention, not a contrived collision.
+    project = temp_repo / "rs_case_probe"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_case_probe"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod err;\n"
+                "pub mod cli;\n\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n"
+            ),
+            "src/err.rs": "pub fn e() -> u32 {\n    0\n}\n",
+            "src/cli.rs": (
+                "use crate::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    base = "rs_case_probe.src"
+
+    assert (f"{base}.cli.F", f"{base}.lib.Err") in implements, implements
+    assert (f"{base}.cli.F.code", f"{base}.lib.Err.code") in overrides, overrides
+
+
 def test_enum_variant_use_path_keeps_imports_edge(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
