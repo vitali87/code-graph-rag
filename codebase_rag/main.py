@@ -740,7 +740,7 @@ def _build_user_prompt(question: str) -> str | list[UserContent]:
             continue
         before, _, after = remaining.partition(match_token)
         if before.strip():
-            content.append(before.rstrip())
+            content.append(before.strip())
         try:
             content.append(
                 BinaryContent(
