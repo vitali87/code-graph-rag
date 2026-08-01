@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import pathlib
@@ -341,20 +342,45 @@ def _write_config_atomically(new_content: str) -> None:
         raise
 
 
+def _specs_assignment(node: ast.stmt) -> tuple[list[ast.expr], ast.expr | None]:
+    if isinstance(node, ast.Assign):
+        return node.targets, node.value
+    if isinstance(node, ast.AnnAssign):
+        return [node.target], node.value
+    return [], None
+
+
+def _find_specs_closing_brace(config_content: str) -> int:
+    try:
+        module = ast.parse(config_content)
+    except SyntaxError as exc:
+        raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND) from exc
+    for node in module.body:
+        targets, value = _specs_assignment(node)
+        is_specs = any(
+            isinstance(target, ast.Name) and target.id == cs.LANG_SPECS_NAME
+            for target in targets
+        )
+        if is_specs and isinstance(value, ast.Dict):
+            return _offset_of_closing_brace(config_content, value)
+    raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+
+
+def _offset_of_closing_brace(config_content: str, dict_node: ast.Dict) -> int:
+    end_lineno = dict_node.end_lineno
+    end_col_offset = dict_node.end_col_offset
+    if end_lineno is None or end_col_offset is None:
+        raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+    lines = config_content.splitlines(keepends=True)
+    prefix = sum(len(line) for line in lines[: end_lineno - 1])
+    line = lines[end_lineno - 1]
+    char_col = len(line.encode("utf-8")[: end_col_offset - 1].decode("utf-8"))
+    return prefix + char_col
+
+
 def _write_language_config(config_entry: str, language_name: str) -> bool:
     config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
-    specs_match = re.search(
-        cs.LANG_SPECS_ASSIGNMENT_PATTERN, config_content, re.MULTILINE
-    )
-    if specs_match is None:
-        raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
-
-    closing_newline_pos = config_content.find(
-        cs.LANG_SPECS_DICT_CLOSING, specs_match.end()
-    )
-    if closing_newline_pos == -1:
-        raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
-    closing_brace_pos = closing_newline_pos + 1
+    closing_brace_pos = _find_specs_closing_brace(config_content)
 
     new_content = (
         config_content[:closing_brace_pos]
