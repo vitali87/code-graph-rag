@@ -742,6 +742,42 @@ class TestRemoveLanguageCommand:
             assert config.read_text(encoding="utf-8") == original
             run.assert_not_called()
 
+    def test_failed_write_leaves_config_intact(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            original = 'LANGUAGE_SPECS = {\n    "foo": LanguageSpec(language="foo"),\n}\n'
+            config.write_text(original, encoding="utf-8")
+
+            real_open = open
+
+            def failing_write_open(file, mode="r", *args, **kwargs):
+                handle = real_open(file, mode, *args, **kwargs)
+                if "w" in mode:
+                    handle.close()
+                    raise OSError("disk full")
+                return handle
+
+            with (
+                patch(
+                    "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                ),
+                patch(
+                    "codebase_rag.tools.language.open",
+                    failing_write_open,
+                    create=True,
+                ),
+                patch("codebase_rag.tools.language.subprocess.run") as run,
+            ):
+                result = runner.invoke(remove_language, ["foo"])
+
+            assert result.exit_code == 0
+            assert "Error" in result.output
+            assert config.read_text(encoding="utf-8") == original
+            assert list(config.parent.iterdir()) == [config]
+            run.assert_not_called()
+
     def test_removes_enum_keyed_entry(self) -> None:
         runner = CliRunner()
         with runner.isolated_filesystem():
