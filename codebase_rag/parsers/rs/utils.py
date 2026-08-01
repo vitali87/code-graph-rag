@@ -251,13 +251,16 @@ def build_module_path(
     include_impl_targets: bool = False,
     include_classes: bool = False,
     class_node_types: Sequence[str] | None = None,
+    include_functions: bool = False,
 ) -> list[str]:
     path_parts: list[str] = []
     current = node.parent
 
     while current and current.type != cs.TS_RS_SOURCE_FILE:
         match current.type:
-            case cs.TS_RS_MOD_ITEM:
+            case cs.TS_RS_MOD_ITEM | cs.TS_RS_FUNCTION_ITEM if (
+                current.type == cs.TS_RS_MOD_ITEM or include_functions
+            ):
                 if name_node := current.child_by_field_name(cs.FIELD_NAME):
                     text = name_node.text
                     if text is not None:

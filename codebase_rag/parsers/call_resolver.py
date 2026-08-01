@@ -704,13 +704,17 @@ class CallResolver:
             and class_context in self.type_inference.dart_extends_type_args
         )
         # A Rust caller nested below the file module (an inline `mod` block)
-        # resolves caller-dependently: its scope's imports shadow file items,
-        # so the file-keyed cache would serve it another caller's answer.
+        # or holding function-body `use` declarations of its own resolves
+        # caller-dependently: its scope's imports shadow file items, so the
+        # file-keyed cache would serve it another caller's answer.
         if (
             language == cs.SupportedLanguage.RUST
             and caller_qn
             and caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
-            and cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
+            and (
+                cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
+                or caller_qn in self.import_processor.import_mapping
+            )
         ):
             use_cache = False
         if use_cache:
@@ -754,9 +758,12 @@ class CallResolver:
                 return scoped[0]
 
         # Rust name resolution prefers items defined in the module itself: a
-        # glob import NEVER shadows a local item, and a named use colliding
-        # with one is a compile error (E0255), so same-module always wins.
-        # Elsewhere imports shadow module-level definitions.
+        # glob import NEVER shadows a local item, and a MODULE-scoped named
+        # use colliding with one is a compile error (E0255). A use inside a
+        # function body DOES shadow module items, but it is stored under the
+        # function's qn and already answered by the scope walk above, so at
+        # this point same-module wins. Elsewhere imports shadow module-level
+        # definitions.
         if language == cs.SupportedLanguage.RUST and (
             result := self._try_resolve_same_module(call_name, module_qn)
         ):
@@ -1210,13 +1217,15 @@ class CallResolver:
     def _try_resolve_rust_inline_scope(
         self, call_name: str, module_qn: str, caller_qn: str
     ) -> tuple[tuple[str, str] | None] | None:
-        """Resolve a bare call through the caller's enclosing inline-mod scopes.
+        """Resolve a bare call through the caller's enclosing Rust scopes.
 
-        Walks innermost-out between the caller and the file module, checking
-        each inline module's own items and its import map (stored under the
-        inline qn by _parse_rust_use_declaration). Returns a 1-tuple so a
-        deliberate drop (the scope imports the name from OUTSIDE the indexed
-        first-party graph) is distinguishable from "no scope claims it".
+        Walks innermost-out from the caller itself (function-body `use`
+        declarations store under the function's qn) through enclosing inline
+        modules to the file module, checking each scope's own items and its
+        import map (stored under the scope qn by _parse_rust_use_declaration).
+        Returns a 1-tuple so a deliberate drop (the scope imports the name
+        from OUTSIDE the indexed first-party graph) is distinguishable from
+        "no scope claims it".
         """
         if (
             cs.SEPARATOR_DOT in call_name
@@ -1224,7 +1233,7 @@ class CallResolver:
             or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
         ):
             return None
-        scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        scope = caller_qn
         import_mapping = self.import_processor.import_mapping
         while len(scope) > len(module_qn):
             local_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
@@ -1232,7 +1241,19 @@ class CallResolver:
                 return ((local_type, local_qn),)
             target = import_mapping.get(scope, {}).get(call_name)
             if target is not None:
-                if (target_type := self.function_registry.get(target)) is not None:
+                # An entry-file `pub use` re-export maps the name to the
+                # re-exporting module's qn, not the defining one; hop through
+                # that module's own import map before concluding the target
+                # is outside the graph.
+                seen = {target}
+                while (target_type := self.function_registry.get(target)) is None:
+                    owner, _, item = target.rpartition(cs.SEPARATOR_DOT)
+                    hop = import_mapping.get(owner, {}).get(item)
+                    if hop is None or hop in seen:
+                        break
+                    seen.add(hop)
+                    target = hop
+                if target_type is not None:
                     return ((target_type, target),)
                 return (None,)
             scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]

@@ -1322,3 +1322,115 @@ def test_item_pattern_matches_static_mut_extern_fn_and_raw_idents() -> None:
     assert {"LOGGER", "handler", "type"} <= items, items
     mods = set(_RS_MOD_DECL_PATTERN.findall(top))
     assert "async" in mods, mods
+
+
+def test_inline_mod_use_of_entry_reexport_resolves_call(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # lib.rs owns `make` only through `pub use self::inner::make;`, so the
+    # inline test mod's `use crate::make` maps to src.lib.make, a qn absent
+    # from the registry. The re-exporting module's own import map holds the
+    # defining qn one hop away; dropping the edge instead severs the
+    # function's only reference and it reads as dead.
+    project = temp_repo / "rs_reexport_scope"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_reexport_scope"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod inner;\npub mod work;\npub use self::inner::make;\n"
+            ),
+            "src/inner.rs": "pub fn make() -> u32 {\n    1\n}\n",
+            "src/work.rs": (
+                "#[cfg(test)]\n"
+                "mod tests {\n"
+                "    use crate::make;\n\n"
+                "    #[test]\n"
+                "    fn t() {\n"
+                "        assert_eq!(make(), 1);\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_reexport_scope.src"
+    assert (f"{base}.work.tests.t", f"{base}.inner.make") in calls, calls
+
+
+def test_function_body_use_shadows_same_module_item(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `use` inside a function body legally shadows a same-named module
+    # item within that function (unlike a module-scoped named use, which
+    # would be E0255): go() returns 2, not 1, under cargo.
+    project = temp_repo / "rs_fn_body_use"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_fn_body_use"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod inner;\npub mod work;\n",
+            "src/inner.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/work.rs": (
+                "pub fn helper() -> u32 {\n"
+                "    1\n"
+                "}\n\n"
+                "pub fn go() -> u32 {\n"
+                "    use crate::inner::helper;\n"
+                "    helper()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_fn_body_use.src"
+    assert (f"{base}.work.go", f"{base}.inner.helper") in calls, calls
+    assert (f"{base}.work.go", f"{base}.work.helper") not in calls, calls
+
+
+def test_diverging_fn_body_is_not_macro_transparent() -> None:
+    # `fn abort() -> ! {` ends in `!` before the brace, but it opens an item
+    # body, not a macro body: a macro invocation's `!` follows the macro
+    # NAME. Declarations inside the diverging body must stay invisible.
+    from codebase_rag.parsers.import_processor import (
+        _RS_ITEM_DECL_PATTERN,
+        _RS_MOD_DECL_PATTERN,
+        _rs_strip_comments_and_strings,
+        _rs_top_level_only,
+    )
+
+    source = (
+        "fn abort() -> ! {\n"
+        "    mod sneaky;\n"
+        "    struct Hidden;\n"
+        "    loop {}\n"
+        "}\n"
+        "mod real;\n"
+    )
+    top = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    mods = set(_RS_MOD_DECL_PATTERN.findall(top))
+    assert mods == {"real"}, mods
+    items = set(_RS_ITEM_DECL_PATTERN.findall(top))
+    assert "sneaky" not in items and "Hidden" not in items, items
+
+
+def test_spaced_pub_visibility_declarations_count() -> None:
+    # `pub (crate) mod sub;` compiles: whitespace between `pub` and the
+    # visibility parens is legal and must not hide the declaration.
+    from codebase_rag.parsers.import_processor import (
+        _RS_ITEM_DECL_PATTERN,
+        _RS_MOD_DECL_PATTERN,
+        _rs_strip_comments_and_strings,
+        _rs_top_level_only,
+    )
+
+    source = "pub (crate) mod sub;\npub (crate) struct S;\n"
+    top = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    mods = set(_RS_MOD_DECL_PATTERN.findall(top))
+    assert mods == {"sub"}, mods
+    items = set(_RS_ITEM_DECL_PATTERN.findall(top))
+    assert {"S", "sub"} <= items, items

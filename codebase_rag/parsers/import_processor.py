@@ -52,7 +52,7 @@ _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
 # commented-out declaration nor one hidden behind a string literal containing
 # a comment marker can flip the crate attribution.
 _RS_MOD_DECL_PATTERN = re.compile(
-    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
+    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
     r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
     re.MULTILINE,
 )
@@ -63,18 +63,20 @@ _RS_MOD_DECL_PATTERN = re.compile(
 # declare a name in the entry module but pull no file into the crate (the
 # bodyless pattern above is what assigns files).
 _RS_ITEM_DECL_PATTERN = re.compile(
-    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
+    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
     r'(?:(?:unsafe|async|const|extern\s+"[^"]*")\s+)*'
     r"(?:trait|struct|enum|fn|type|const|static|union|mod)"
     r"\s+(?:mut\s+)?(?:r#)?([A-Za-z_][A-Za-z0-9_]*)",
     re.MULTILINE,
 )
 # A depth-0 `{` opens a macro body rather than an item body when the text
-# before it ends in `!` (an invocation: `cfg_if! {`) or names a macro_rules
-# definition. Macro bodies stay visible to the declaration scans: libc,
-# backtrace and getrandom declare their platform `mod` files inside cfg_if!.
+# before it ends in a macro NAME followed by `!` (an invocation: `cfg_if! {`)
+# or names a macro_rules definition. Macro bodies stay visible to the
+# declaration scans: libc, backtrace and getrandom declare their platform
+# `mod` files inside cfg_if!. A diverging `fn abort() -> ! {` also ends in
+# `!`, but with no name touching it: that brace opens an item body.
 _RS_MACRO_OPEN_RE = re.compile(
-    r"(?:!|\bmacro_rules!\s*(?:r#)?[A-Za-z_][A-Za-z0-9_]*)\s*$"
+    r"(?:[A-Za-z0-9_]!|\bmacro_rules!\s*(?:r#)?[A-Za-z_][A-Za-z0-9_]*)\s*$"
 )
 
 
@@ -1735,14 +1737,23 @@ class ImportProcessor:
         # an inline `mod tests` block resolves against the inline-mod chain.
         # Its entries also STORE under the inline module's key: at file scope
         # they would shadow the file's own same-named items and rebind every
-        # bare call in the file (Rust use declarations are module-scoped).
+        # bare call in the file. A use inside a FUNCTION body shadows module
+        # items only within that function, so it stores under the function's
+        # qn (the caller's scope walk reads it), while crate::/super::/self::
+        # still resolve against the module chain alone.
         mod_parts = rs_utils.build_module_path(use_node)
-        effective_qn = (
+        resolve_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *mod_parts]) if mod_parts else module_qn
+        )
+        scope_parts = rs_utils.build_module_path(use_node, include_functions=True)
+        effective_qn = (
+            cs.SEPARATOR_DOT.join([module_qn, *scope_parts])
+            if scope_parts
+            else module_qn
         )
         scope_map = self.import_mapping.setdefault(effective_qn, {})
         for imported_name, full_path in imports.items():
-            resolved = self._rewrite_rust_local_use_path(full_path, effective_qn)
+            resolved = self._rewrite_rust_local_use_path(full_path, resolve_qn)
             scope_map[imported_name] = resolved
             if effective_qn != module_qn:
                 self._rust_inline_scope_keys.setdefault(module_qn, set()).add(
