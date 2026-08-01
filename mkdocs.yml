@@ -100,11 +100,13 @@ nav:
     - Graph Schema: architecture/graph-schema.md
     - I/O and Data-Flow Edges: architecture/data-flow-edges.md
     - Language Support: architecture/language-support.md
+    - Security Model: architecture/security.md
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
     - Ignore Patterns: advanced/ignore-patterns.md
     - Building Binaries: advanced/building-binaries.md
     - Troubleshooting: advanced/troubleshooting.md
+  - Roadmap: roadmap.md
   - Contributing: contributing.md
 
 # Internal analysis artifacts kept in the repo but not published to the doc site nav.
