@@ -1916,6 +1916,13 @@ class ImportProcessor:
             self._rust_mod_scope_registry[writer_qn] = entries
         for keys in self._rust_inline_scope_keys.values():
             for key in keys:
+                if known_module_paths.get(key):
+                    # The key has since become an indexed file's own module
+                    # qn (a watch CREATE of the cfg twin's file form): the
+                    # map is that file's parse output now, not this
+                    # arbitration's to retract. The owner branch below
+                    # keeps no inline writers for it, so the claim lapses.
+                    continue
                 self.import_mapping.pop(key, None)
         self._rust_inline_scope_keys = {}
         by_key: dict[str, list[tuple[str, bool, dict[str, str]]]] = {}

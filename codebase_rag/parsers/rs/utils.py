@@ -259,14 +259,17 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
     scope). `pure` is False when the chain passes through a function or a
     const/static initializer: such a mod forges a qn namespace it does
     not own, so on a key collision the pure writer's map wins. Returns
-    (None, None, True) when the use sits in a class-body block with no
-    intervening mod or fn (an associated-const initializer): no qn scope
-    corresponds to such a block, and any key would serve a REAL scope's
-    readers.
+    (None, None, True) when the use sits inside a const/static
+    initializer block, wherever the item is declared (mod level, file
+    level, or a class body): the use is scoped to that block alone
+    (E0425 outside it), no qn scope corresponds to the block, and any
+    key would serve a REAL scope's readers.
     """
     nearest = None
     current = node.parent
     while current and current.type != cs.TS_RS_SOURCE_FILE:
+        if current.type in (cs.TS_RS_CONST_ITEM, cs.TS_RS_STATIC_ITEM):
+            return None, None, True
         if (
             current.type == cs.TS_RS_FUNCTION_ITEM
             or current.type in cs.FQN_RS_SCOPE_TYPES

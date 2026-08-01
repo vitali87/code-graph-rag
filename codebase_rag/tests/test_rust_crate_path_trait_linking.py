@@ -3185,12 +3185,67 @@ def test_initializer_block_use_does_not_hijack_mod_functions(
             ),
         },
     )
-    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
     calls = _calls(mock_ingestor)
     base = "rs_init_block_use.src"
     assert (f"{base}.foo.inner.q", f"{base}.foo.inner.helper") in calls, calls
     assert (f"{base}.foo.inner.q", f"{base}.gamma.helper") not in calls, calls
+    # The block-scoped use must not land in the mod's import map at all:
+    # sibling precedence alone masking it is not enough (drop the sibling
+    # and the map entry would resurface the phantom binding).
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.foo.inner")
+    assert not mapping or "helper" not in mapping, mapping
+
+
+def test_initializer_block_use_stores_no_mapping_anywhere(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # With no sibling item, a call next to an initializer block's use is
+    # E0425 (the use is scoped to the block alone), at mod level and at
+    # file level alike: neither scope's import map may hold the entry.
+    project = temp_repo / "rs_init_block_scope"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_init_block_scope"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod gamma;\npub mod foo;\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub mod inner {\n"
+                "    pub static K: u32 = {\n"
+                "        use crate::gamma::helper;\n"
+                "        helper()\n"
+                "    };\n\n"
+                "    pub fn q() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n\n"
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::helper;\n"
+                "    helper()\n"
+                "};\n\n"
+                "pub fn p() -> u32 {\n"
+                "    helper()\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    # Edges cannot be asserted: the generic simple-name fallback binds an
+    # otherwise-unresolvable bare call to the sole registered `helper`
+    # even with no `use` in the project at all (pre-existing machinery
+    # that only fires on rustc-invalid input like this fixture). The
+    # import maps are this scoping rule's own contract.
+    base = "rs_init_block_scope.src"
+    import_mapping = updater.factory.import_processor.import_mapping
+    inner_map = import_mapping.get(f"{base}.foo.inner")
+    assert not inner_map or "helper" not in inner_map, inner_map
+    file_map = import_mapping.get(f"{base}.foo")
+    assert not file_map or "helper" not in file_map, file_map
 
 
 def test_nested_fn_shadows_fn_local_mod_use(
@@ -3317,3 +3372,180 @@ def test_watch_touch_cannot_flip_mod_key_arbitration(
 
     mapping = updater.factory.import_processor.import_mapping.get(key)
     assert mapping == {"helper": f"{base}.beta.helper"}, mapping
+
+
+def test_watch_delete_of_mod_rs_drops_its_import_state(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A mod.rs file's module qn collapses to its directory; the watch
+    # delete must drop the writer under THAT qn or the deleted file keeps
+    # voting its inline-mod uses into every later arbitration.
+    from watchdog.events import FileDeletedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_modrs_delete"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_modrs_delete"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod a;\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/a/mod.rs": (
+                "pub mod c {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn go() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_modrs_delete.src"
+    assert (f"{base}.a.c.go", f"{base}.beta.helper") in calls, calls
+    key = f"{base}.a.c"
+    assert updater.factory.import_processor.import_mapping.get(key), "not committed"
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    mod_rs = project / "src" / "a" / "mod.rs"
+    mod_rs.unlink()
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileDeletedEvent(str(mod_rs)))
+
+    mapping = updater.factory.import_processor.import_mapping.get(key)
+    assert mapping is None, mapping
+
+
+def test_python_sibling_edit_keeps_rust_import_state(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # src/foo/__init__.py collapses to the same qn as src/foo.rs; a watch
+    # event on the Python file must not drop the Rust file's mod-scope
+    # writer state, or the arbitration loses its only writer and the
+    # committed key vanishes.
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_pysibling"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_pysibling"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod foo;\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/foo.rs": (
+                "pub mod inner {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn g() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/foo/__init__.py": "X = 1\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_pysibling.src"
+    key = f"{base}.foo.inner"
+    expected = {"helper": f"{base}.beta.helper"}
+    assert updater.factory.import_processor.import_mapping.get(key) == expected
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    # Edge-level assertions are unavailable here: the shared-prefix
+    # registration sweep (filed separately) deregisters foo.rs's inline-mod
+    # functions on this event, so pin the arbitration's own output.
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "foo" / "__init__.py")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(key)
+    assert mapping == expected, mapping
+
+
+def test_watch_create_of_owned_module_keeps_its_own_imports(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A key committed by a previous arbitration can become a REAL file's
+    # module qn (a watch CREATE of the cfg twin's file form). From then on
+    # the map is that file's parse output: the arbitration's retraction
+    # must not pop it, and no inline writer may recommit over it.
+    from watchdog.events import FileCreatedEvent, FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_create_owned"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_create_owned"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                '#[cfg(feature = "inline")]\n'
+                "pub mod inner {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn g() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n"
+                '#[cfg(not(feature = "inline"))]\n'
+                "pub mod inner;\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_create_owned.src"
+    key = f"{base}.foo.inner"
+    mapping = updater.factory.import_processor.import_mapping.get(key)
+    assert mapping == {"helper": f"{base}.beta.helper"}, mapping
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    inner_rs = project / "src" / "foo" / "inner.rs"
+    inner_rs.parent.mkdir(parents=True, exist_ok=True)
+    inner_rs.write_text(
+        "use crate::alpha::helper as ah;\n\npub fn h() -> u32 {\n    ah()\n}\n"
+    )
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileCreatedEvent(str(inner_rs)))
+
+    # Files created during watch get no CALLS edges (a pre-existing gap),
+    # so the import map IS the observable contract here.
+    mapping = updater.factory.import_processor.import_mapping.get(key)
+    assert mapping == {"ah": f"{base}.alpha.helper"}, mapping
+
+    # A later unrelated event re-arbitrates; the owned map must survive.
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "alpha.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(key)
+    assert mapping == {"ah": f"{base}.alpha.helper"}, mapping

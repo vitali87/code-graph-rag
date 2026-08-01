@@ -1319,8 +1319,20 @@ class GraphUpdater:
         )
         # A deleted file is no writer: its mod-scope registry entries must
         # not weigh in the next arbitration (a modified file re-drops this
-        # in its own re-parse, harmlessly twice).
-        self.factory.import_processor.drop_rust_module_import_state(module_qn_prefix)
+        # in its own re-parse, harmlessly twice). The drop keys on Rust's
+        # own qn scheme, where mod.rs collapses to its directory, and only
+        # for Rust files: a same-stem file of another language
+        # (src/foo/__init__.py beside src/foo.rs) shares the qn without
+        # owning the Rust state.
+        if file_path.suffix == cs.EXT_RS:
+            rust_parts = (
+                relative_path.parent.parts
+                if file_path.name == cs.MOD_RS
+                else relative_path.with_suffix("").parts
+            )
+            self.factory.import_processor.drop_rust_module_import_state(
+                cs.SEPARATOR_DOT.join([self.project_name, *rust_parts])
+            )
 
         qns_to_remove = set()
 
