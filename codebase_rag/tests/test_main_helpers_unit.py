@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from pydantic_ai import BinaryContent
 from rich.console import Console
+from rich.table import Table
 
 from codebase_rag import constants as cs
 from codebase_rag.config import ModelConfig
@@ -184,7 +185,7 @@ class TestPrintDiffHelpers:
     ) -> None:
         _print_unified_diff("old line\n", "new line\n", "a.py")
 
-        out = capsys.readouterr().out
+        out = _plain(capsys.readouterr().out)
         assert "a.py" in out
         assert "-old line" in out
         assert "+new line" in out
@@ -194,7 +195,7 @@ class TestPrintDiffHelpers:
     ) -> None:
         _print_new_file_content("b.py", "line1\nline2")
 
-        out = capsys.readouterr().out
+        out = _plain(capsys.readouterr().out)
         assert "b.py" in out
         assert "+ line1" in out
         assert "+ line2" in out
@@ -208,7 +209,7 @@ class TestDisplayToolCallDiff:
             TOOL_NAMES,
         )
 
-        out = capsys.readouterr().out
+        out = _plain(capsys.readouterr().out)
         assert "a.py" in out
         assert "-x" in out
         assert "+y" in out
@@ -222,7 +223,7 @@ class TestDisplayToolCallDiff:
             TOOL_NAMES,
         )
 
-        out = capsys.readouterr().out
+        out = _plain(capsys.readouterr().out)
         assert "b.py" in out
         assert "+ hello" in out
 
@@ -233,7 +234,7 @@ class TestDisplayToolCallDiff:
             TOOL_NAMES.shell_command, {"command": "rm -rf build"}, TOOL_NAMES
         )
 
-        assert "$ rm -rf build" in capsys.readouterr().out
+        assert "$ rm -rf build" in _plain(capsys.readouterr().out)
 
     def test_structural_replace_prints_pattern_and_rewrite(
         self, capsys: pytest.CaptureFixture[str]
@@ -263,7 +264,7 @@ def _model_config(
 
 
 class TestCreateConfigurationTable:
-    def _render(self, table: object) -> str:
+    def _render(self, table: Table) -> str:
         console = Console(record=True, width=200)
         console.print(table)
         return console.export_text()
@@ -336,6 +337,8 @@ class TestUpdateModelSettings:
             _update_single_model_setting(cs.ModelRole.CYPHER, "openai:gpt")
 
         fake_settings.set_cypher.assert_called_once()
+        provider, model = fake_settings.set_cypher.call_args.args
+        assert (provider, model) == ("openai", "gpt")
 
     def test_ollama_without_endpoint_gets_default(self) -> None:
         fake_settings = MagicMock()
@@ -355,6 +358,12 @@ class TestUpdateModelSettings:
             update_model_settings("anthropic:claude", "openai:gpt")
 
         assert single.call_count == 2
+        single.assert_has_calls(
+            [
+                call(cs.ModelRole.ORCHESTRATOR, "anthropic:claude"),
+                call(cs.ModelRole.CYPHER, "openai:gpt"),
+            ]
+        )
 
     def test_update_model_settings_skips_missing(self) -> None:
         with patch("codebase_rag.main._update_single_model_setting") as single:
@@ -379,7 +388,9 @@ class TestExportGraphToFile:
         assert export_graph_to_file(ingestor, str(output)) is True
         assert output.exists()
         assert cs.KEY_METADATA in output.read_text(encoding="utf-8")
-        assert "3" in capsys.readouterr().out
+        assert "Export contains 3 nodes and 2 relationships" in _plain(
+            capsys.readouterr().out
+        )
 
     def test_failure_returns_false(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -388,7 +399,7 @@ class TestExportGraphToFile:
         ingestor.export_graph_to_dict.side_effect = RuntimeError("boom")
 
         assert export_graph_to_file(ingestor, str(tmp_path / "graph.json")) is False
-        assert "boom" in capsys.readouterr().out
+        assert "boom" in _plain(capsys.readouterr().out)
 
 
 class TestSetupCommonInitialization:
