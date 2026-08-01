@@ -500,6 +500,20 @@ def _assert_valid_python(content: str) -> None:
     compile(content, "language_spec.py", "exec")
 
 
+def _top_level_specs_keys(content: str) -> list[str]:
+    specs = next(
+        node
+        for node in ast.parse(content).body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "LANGUAGE_SPECS"
+            for target in node.targets
+        )
+    )
+    assert isinstance(specs.value, ast.Dict)
+    return [key.value for key in specs.value.keys if isinstance(key, ast.Constant)]
+
+
 class TestUpdateConfigFile:
     def test_inserts_entry_before_closing_brace(self, tmp_path: Path) -> None:
         config = tmp_path / "language_spec.py"
@@ -567,18 +581,55 @@ class TestUpdateConfigFile:
 
         content = config.read_text(encoding="utf-8")
         _assert_valid_python(content)
-        specs = next(
-            node
-            for node in ast.parse(content).body
-            if isinstance(node, ast.Assign)
-            and any(
-                isinstance(target, ast.Name) and target.id == "LANGUAGE_SPECS"
-                for target in node.targets
-            )
+        assert _top_level_specs_keys(content) == ["tsx", "mylang"]
+
+    def test_form_feed_before_registry_does_not_shift_insertion(
+        self, tmp_path: Path
+    ) -> None:
+        config = tmp_path / "language_spec.py"
+        config.write_text(
+            'DOC = "\x0c"\nLANGUAGE_SPECS = {\n}\n',
+            encoding="utf-8",
         )
-        assert isinstance(specs.value, ast.Dict)
-        keys = [key.value for key in specs.value.keys if isinstance(key, ast.Constant)]
-        assert keys == ["tsx", "mylang"]
+
+        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
+            assert _update_config_file("mylang", _spec("mylang")) is True
+
+        content = config.read_text(encoding="utf-8")
+        _assert_valid_python(content)
+        assert _top_level_specs_keys(content) == ["mylang"]
+
+    def test_inline_dict_without_trailing_comma_gets_valid_insertion(
+        self, tmp_path: Path
+    ) -> None:
+        config = tmp_path / "language_spec.py"
+        config.write_text(
+            'LANGUAGE_SPECS = {"a": LanguageSpec()}\n',
+            encoding="utf-8",
+        )
+
+        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
+            assert _update_config_file("mylang", _spec("mylang")) is True
+
+        content = config.read_text(encoding="utf-8")
+        _assert_valid_python(content)
+        assert _top_level_specs_keys(content) == ["a", "mylang"]
+
+    def test_multiline_entry_without_trailing_comma_gets_valid_insertion(
+        self, tmp_path: Path
+    ) -> None:
+        config = tmp_path / "language_spec.py"
+        config.write_text(
+            'LANGUAGE_SPECS = {\n    "a": LanguageSpec()\n}\n',
+            encoding="utf-8",
+        )
+
+        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
+            assert _update_config_file("mylang", _spec("mylang")) is True
+
+        content = config.read_text(encoding="utf-8")
+        _assert_valid_python(content)
+        assert _top_level_specs_keys(content) == ["a", "mylang"]
 
     def test_missing_brace_returns_false(self, tmp_path: Path) -> None:
         config = tmp_path / "language_spec.py"
