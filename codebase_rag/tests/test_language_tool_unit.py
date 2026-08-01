@@ -733,12 +733,14 @@ class TestRemoveLanguageCommand:
                     "codebase_rag.constants.LANG_REMOVE_ENTRY_PATTERN",
                     truncating_pattern,
                 ),
+                patch("codebase_rag.tools.language.subprocess.run") as run,
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(remove_language, ["foo"])
 
             assert result.exit_code == 0
             assert "Error" in result.output
             assert config.read_text(encoding="utf-8") == original
+            run.assert_not_called()
 
     def test_removes_enum_keyed_entry(self) -> None:
         runner = CliRunner()
