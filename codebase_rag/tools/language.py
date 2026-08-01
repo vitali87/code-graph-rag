@@ -530,6 +530,24 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
         click.echo(f"List: {cs.LANG_MSG_AVAILABLE_LANGS.format(langs=available_langs)}")
         return
 
+    if not _remove_language_from_config(language_name):
+        return
+
+    if keep_submodule:
+        click.echo(f"Info: {cs.LANG_MSG_KEEPING_SUBMODULE}")
+    else:
+        submodule_path = (
+            f"{cs.LANG_GRAMMARS_DIR}/{cs.TREE_SITTER_PREFIX}{language_name}"
+        )
+        if os.path.exists(submodule_path):
+            _remove_language_submodule(submodule_path)
+        else:
+            click.echo(f"Info: {cs.LANG_MSG_NO_SUBMODULE.format(path=submodule_path)}")
+
+    click.echo(f"Done: {cs.LANG_MSG_LANG_REMOVED.format(name=language_name)}")
+
+
+def _remove_language_from_config(language_name: str) -> bool:
     try:
         original_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
         key_patterns = [
@@ -551,52 +569,44 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
             f.write(new_content)
 
         click.echo(f"OK {cs.LANG_MSG_REMOVED_FROM_CONFIG.format(name=language_name)}")
+        return True
 
     except Exception as e:
         logger.error(cs.LANG_ERR_REMOVE_CONFIG.format(error=e))
         click.echo(f"Error: {cs.LANG_ERR_REMOVE_CONFIG.format(error=e)}")
-        return
+        return False
 
-    if not keep_submodule:
-        submodule_path = (
-            f"{cs.LANG_GRAMMARS_DIR}/{cs.TREE_SITTER_PREFIX}{language_name}"
+
+def _remove_language_submodule(submodule_path: str) -> None:
+    try:
+        click.echo(
+            f"Removing: {cs.LANG_MSG_REMOVING_SUBMODULE.format(path=submodule_path)}"
         )
-        if os.path.exists(submodule_path):
-            try:
-                click.echo(
-                    f"Removing: {cs.LANG_MSG_REMOVING_SUBMODULE.format(path=submodule_path)}"
-                )
-                subprocess.run(
-                    ["git", "submodule", "deinit", "-f", submodule_path],
-                    check=True,
-                    capture_output=True,
-                )
-                subprocess.run(
-                    ["git", "rm", "-f", submodule_path], check=True, capture_output=True
-                )
+        subprocess.run(
+            ["git", "submodule", "deinit", "-f", submodule_path],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "rm", "-f", submodule_path], check=True, capture_output=True
+        )
 
-                modules_path = cs.LANG_GIT_MODULES_PATH.format(path=submodule_path)
-                if os.path.exists(modules_path):
-                    shutil.rmtree(modules_path)
-                    click.echo(
-                        f"Cleaned: {cs.LANG_MSG_CLEANED_MODULES.format(path=modules_path)}"
-                    )
+        modules_path = cs.LANG_GIT_MODULES_PATH.format(path=submodule_path)
+        if os.path.exists(modules_path):
+            shutil.rmtree(modules_path)
+            click.echo(
+                f"Cleaned: {cs.LANG_MSG_CLEANED_MODULES.format(path=modules_path)}"
+            )
 
-                click.echo(
-                    f"Deleted: {cs.LANG_MSG_SUBMODULE_REMOVED.format(path=submodule_path)}"
-                )
-            except subprocess.CalledProcessError as e:
-                logger.error(cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e))
-                click.echo(f"Error: {cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e)}")
-                click.echo(f"Hint: {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
-                click.echo(f"   git submodule deinit -f {submodule_path}")
-                click.echo(f"   git rm -f {submodule_path}")
-        else:
-            click.echo(f"Info: {cs.LANG_MSG_NO_SUBMODULE.format(path=submodule_path)}")
-    else:
-        click.echo(f"Info: {cs.LANG_MSG_KEEPING_SUBMODULE}")
-
-    click.echo(f"Done: {cs.LANG_MSG_LANG_REMOVED.format(name=language_name)}")
+        click.echo(
+            f"Deleted: {cs.LANG_MSG_SUBMODULE_REMOVED.format(path=submodule_path)}"
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error(cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e))
+        click.echo(f"Error: {cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e)}")
+        click.echo(f"Hint: {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
+        click.echo(f"   git submodule deinit -f {submodule_path}")
+        click.echo(f"   git rm -f {submodule_path}")
 
 
 @cli.command(help=ch.CMD_LANGUAGE_CLEANUP, short_help=ch.CMD_LANGUAGE_CLEANUP)
