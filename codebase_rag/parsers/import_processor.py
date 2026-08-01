@@ -46,10 +46,15 @@ from .utils import (
 
 _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
 # Bodyless `mod NAME;` declarations in a Rust crate entry file: the mod graph
-# is what assigns a file to the lib or the bin crate (issue #1007).
+# is what assigns a file to the lib or the bin crate (issue #1007). Attribute
+# prefixes on the same line (`#[cfg(unix)] mod unix;`) are idiomatic; comments
+# are stripped before scanning so a commented-out declaration cannot match.
 _RS_MOD_DECL_PATTERN = re.compile(
-    r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;", re.MULTILINE
+    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
+    r"mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;",
+    re.MULTILINE,
 )
+_RS_COMMENT_PATTERN = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
 _JSONC_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _JSONC_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
 _JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
@@ -805,18 +810,55 @@ class ImportProcessor:
             self._rust_dir_listing[key] = cached
         return cached
 
-    def _rust_crate_root_parts(self, module_qn: str) -> list[str] | None:
-        """Crate root directory parts for the file's crate.
+    def _rust_is_auto_target_dir(self, dir_parts: list[str], stem: str) -> bool:
+        # Cargo auto-target locations whose .rs files are their OWN crate
+        # roots: src/bin/*.rs, and examples/tests/benches/*.rs plus build.rs
+        # at a package root (Cargo.toml beside them).
+        if not dir_parts:
+            return stem == "build" and cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path
+            )
+        if len(dir_parts) >= 2 and dir_parts[-1] == "bin":
+            if dir_parts[-2] == cs.LANG_SRC_DIR:
+                return True
+        if dir_parts[-1] in ("examples", "tests", "benches"):
+            return cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*dir_parts[:-1])
+            )
+        return False
 
-        Walks the file's ancestor directories for lib.rs/main.rs; Cargo's
-        default layout puts the entry under src/, but path overrides may
-        place it anywhere (ripgrep: crates/core/main.rs, no src directory).
+    def _rust_crate_root(self, module_qn: str) -> tuple[str, list[str]] | None:
+        """The file's crate root: ("classic", dir parts) or ("file", qn parts).
+
+        Classic roots are lib.rs/main.rs entries found by walking the file's
+        ancestor directories (Cargo's default layout puts them under src/,
+        but path overrides may place them anywhere: ripgrep roots at
+        crates/core/main.rs). File roots are Cargo auto-targets
+        (src/bin/tool.rs) that root their own crate; both their items and
+        their submodules nest under the entry file's qn.
         """
-        dir_parts = module_qn.split(cs.SEPARATOR_DOT)[1:-1]
+        qn_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
+        if not qn_parts:
+            return None
+        dir_parts, stem = qn_parts[:-1], qn_parts[-1]
+        if (
+            stem not in ("lib", "main", "mod")
+            and f"{stem}{cs.EXT_RS}"
+            in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+            and self._rust_is_auto_target_dir(dir_parts, stem)
+        ):
+            return "file", qn_parts
         for i in range(len(dir_parts), -1, -1):
+            if i >= 1:
+                name = dir_parts[i - 1]
+                parent = dir_parts[: i - 1]
+                if f"{name}{cs.EXT_RS}" in self._rust_dir_entries(
+                    self.repo_path.joinpath(*parent)
+                ) and self._rust_is_auto_target_dir(parent, name):
+                    return "file", dir_parts[:i]
             entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts[:i]))
             if cs.LIB_RS in entries or cs.MAIN_RS in entries:
-                return dir_parts[:i]
+                return "classic", dir_parts[:i]
         return None
 
     def _rust_entry_stem(self, dir_parts: list[str], module_qn: str) -> str:
@@ -842,7 +884,8 @@ class ImportProcessor:
                     )
                 except OSError:
                     source = ""
-                decls[stem] = set(_RS_MOD_DECL_PATTERN.findall(source))
+                stripped = _RS_COMMENT_PATTERN.sub("", source)
+                decls[stem] = set(_RS_MOD_DECL_PATTERN.findall(stripped))
             self._rust_entry_mod_decls[key] = decls
         segments = module_qn.split(cs.SEPARATOR_DOT)[1 + len(dir_parts) :]
         top = segments[0] if segments else ""
@@ -908,7 +951,7 @@ class ImportProcessor:
         parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
         head = parts[0]
         if head == cs.RUST_CRATE_KEYWORD:
-            root = self._rust_crate_root_parts(module_qn)
+            root = self._rust_crate_root(module_qn)
             rest = parts[1:]
             if root is None:
                 return (
@@ -916,7 +959,14 @@ class ImportProcessor:
                     if rest
                     else self.project_name
                 )
-            return self._rust_attach(root, self._rust_entry_stem(root, module_qn), rest)
+            kind, root_parts = root
+            if kind == "file":
+                # An auto-target crate (src/bin/tool.rs): items and
+                # submodules both nest under the entry file's qn.
+                return cs.SEPARATOR_DOT.join([self.project_name, *root_parts, *rest])
+            return self._rust_attach(
+                root_parts, self._rust_entry_stem(root_parts, module_qn), rest
+            )
         if head == cs.KEYWORD_SELF:
             return self._rust_resolve_relative(module_qn, parts[1:], module_qn)
         if head == cs.KEYWORD_SUPER:

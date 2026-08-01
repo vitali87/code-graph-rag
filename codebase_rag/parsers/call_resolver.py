@@ -732,6 +732,17 @@ class CallResolver:
                 language,
             )
 
+        # Rust name resolution prefers items defined in the module itself: a
+        # glob import NEVER shadows a local item, and a named use colliding
+        # with one is a compile error (E0255), so same-module always wins.
+        # Elsewhere imports shadow module-level definitions.
+        if language == cs.SupportedLanguage.RUST and (
+            result := self._try_resolve_same_module(call_name, module_qn)
+        ):
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = result
+            return result
+
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language
         ):

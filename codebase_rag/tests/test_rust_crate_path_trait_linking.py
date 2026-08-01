@@ -486,6 +486,171 @@ def test_root_item_sharing_lowercase_module_name_stays_root_item(
     assert (f"{base}.cli.F.code", f"{base}.lib.Err.code") in overrides, overrides
 
 
+def test_src_bin_file_crate_resolves_its_own_root(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # src/bin/tool.rs is its OWN crate root: `use crate::Cmd` in its module
+    # tree (src/bin/tool/helper.rs) names the trait in tool.rs, not the lib
+    # crate's same-named trait in src/lib.rs.
+    project = temp_repo / "rs_bin_target"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_bin_target"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod util;\n\npub trait Cmd {\n    fn run(&self) -> u32;\n}\n"
+            ),
+            "src/util.rs": "pub fn u() -> u32 {\n    0\n}\n",
+            "src/bin/tool.rs": (
+                "mod helper;\n\n"
+                "pub trait Cmd {\n"
+                "    fn run(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/bin/tool/helper.rs": (
+                "use crate::Cmd;\n\n"
+                "pub struct H;\n\n"
+                "impl Cmd for H {\n"
+                "    fn run(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    base = "rs_bin_target.src"
+
+    assert (
+        f"{base}.bin.tool.helper.H",
+        f"{base}.bin.tool.Cmd",
+    ) in implements, implements
+    assert (
+        f"{base}.bin.tool.helper.H",
+        f"{base}.lib.Cmd",
+    ) not in implements, implements
+    assert (
+        f"{base}.bin.tool.helper.H.run",
+        f"{base}.bin.tool.Cmd.run",
+    ) in overrides, overrides
+
+
+def test_file_level_glob_import_does_not_shadow_local_items(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Rust glob imports NEVER shadow items defined in the importing module;
+    # a live wildcard target must not outrank same-module resolution.
+    project = temp_repo / "rs_glob_local"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_glob_local"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod util;\npub mod work;\npub mod foo;\n",
+            "src/util.rs": "pub fn render() -> u32 {\n    1\n}\n",
+            "src/work.rs": (
+                "use crate::util::*;\n\n"
+                "pub fn render() -> u32 {\n"
+                "    2\n"
+                "}\n\n"
+                "pub fn go() -> u32 {\n"
+                "    render()\n"
+                "}\n"
+            ),
+            "src/foo.rs": "pub mod bar;\n\npub fn helper() -> u32 {\n    1\n}\n",
+            "src/foo/bar.rs": (
+                "use super::*;\n\n"
+                "pub fn helper() -> u32 {\n"
+                "    2\n"
+                "}\n\n"
+                "pub fn run() -> u32 {\n"
+                "    helper()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_glob_local.src"
+    assert (f"{base}.work.go", f"{base}.work.render") in calls, calls
+    assert (f"{base}.work.go", f"{base}.util.render") not in calls, calls
+    assert (f"{base}.foo.bar.run", f"{base}.foo.bar.helper") in calls, calls
+    assert (f"{base}.foo.bar.run", f"{base}.foo.helper") not in calls, calls
+
+
+def test_attribute_prefixed_mod_declaration_counts_for_entry_choice(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `#[cfg(unix)] mod cli;` on ONE line is the idiomatic spelling; the
+    # entry-crate chooser must still see main.rs declaring cli.
+    project = temp_repo / "rs_attr_mod"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_attr_mod"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod shared;\n",
+            "src/shared.rs": "pub fn s() -> u32 {\n    0\n}\n",
+            "src/main.rs": (
+                "#[cfg(unix)] mod cli;\n\n"
+                "pub trait Err {\n"
+                "    fn code(&self) -> u32;\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/cli.rs": (
+                "use crate::Err;\n\n"
+                "pub struct F;\n\n"
+                "impl Err for F {\n"
+                "    fn code(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_attr_mod.src"
+    assert (f"{base}.cli.F", f"{base}.main.Err") in implements, implements
+
+
+def test_mapped_but_unregistered_target_falls_back_to_registry(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `use crate::Config` where the entry file does NOT declare Config: the
+    # rewritten qn (src.main.Config) is unregistered and must not be returned
+    # verbatim; registry-backed resolution finds the real declaration.
+    project = temp_repo / "rs_unregistered"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_unregistered"\nversion = "0.1.0"\n',
+            "src/main.rs": ("mod other;\nmod user;\n\nfn main() {}\n"),
+            "src/other.rs": (
+                "pub struct Config;\n\n"
+                "impl Config {\n"
+                "    pub fn apply(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/user.rs": (
+                "use crate::Config;\n\npub fn f(c: Config) -> u32 {\n    c.apply()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_unregistered.src"
+    assert (f"{base}.user.f", f"{base}.other.Config.apply") in calls, calls
+
+
 def test_enum_variant_use_path_keeps_imports_edge(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

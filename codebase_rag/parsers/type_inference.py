@@ -512,8 +512,20 @@ class TypeInferenceEngine:
                 return self._resolve_rust_import_path(target)
             # A crate::/super::/self:: use target arrives as an already
             # resolved project qn; use it when it names a registered type.
+            # Otherwise fall through with require_registered so the SAME
+            # unregistered map value cannot come back verbatim.
             if self.function_registry.get(target) is not None:
                 return target
+            return (
+                resolve_class_name(
+                    type_name,
+                    module_qn,
+                    self.import_processor,
+                    self.function_registry,
+                    require_registered=True,
+                )
+                or type_name
+            )
         return self._resolve_class_name(type_name, module_qn) or type_name
 
     def _rust_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
