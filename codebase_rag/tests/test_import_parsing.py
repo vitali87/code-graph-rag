@@ -288,7 +288,6 @@ class TestExternalModuleNodeCreation:
 
         module_path = processor._resolve_rust_import_path(
             import_path="std::collections::HashMap",
-            module_qn="test_project.src.main",
         )
 
         assert module_path == "std::collections"
@@ -311,7 +310,6 @@ class TestExternalModuleNodeCreation:
 
         module_path = processor._resolve_rust_import_path(
             import_path="std::collections::HashMap",
-            module_qn="test_project.src.main",
         )
 
         assert module_path == "std::collections"
@@ -326,6 +324,7 @@ class TestRustCrateResolution:
     ) -> None:
         (tmp_path / "src" / "subdir").mkdir(parents=True)
         (tmp_path / "src" / "lib.rs").touch()
+        (tmp_path / "src" / "utils.rs").touch()
         processor = ImportProcessor(
             repo_path=tmp_path,
             project_name="test_project",
