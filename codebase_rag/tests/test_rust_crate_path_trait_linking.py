@@ -2560,3 +2560,97 @@ def test_incidental_main_module_file_collision_still_drops(
         f"{base}.app.main.sub",
         {"helper": f"{base}.beta.helper"},
     )
+
+
+def test_bare_directory_is_not_a_module_so_inline_mod_keeps_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `#[path = "main/sub/unix.rs"] mod sub;` leaves src/main/sub/ a
+    # directory with NO mod.rs: under the qn scheme it owns no module qn,
+    # so the fn-local `mod sub` collides with nothing and must keep its
+    # map (rustc: f() returns beta's value).
+    project = temp_repo / "rs_pathattr_dir"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_pathattr_dir"\nversion = "0.1.0"\n',
+            "src/main.rs": (
+                "mod alpha;\n"
+                "mod beta;\n"
+                '#[path = "main/sub/unix.rs"]\n'
+                "mod sub;\n\n"
+                "fn f() -> u32 {\n"
+                "    mod sub {\n"
+                "        use crate::beta::helper;\n\n"
+                "        pub fn go2() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    sub::go2()\n"
+                "}\n\n"
+                "fn main() {\n"
+                '    println!("{} {}", f(), sub::plat());\n'
+                "}\n"
+            ),
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/main/sub/unix.rs": "pub fn plat() -> u32 {\n    7\n}\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_pathattr_dir.src"
+    assert (f"{base}.main.sub.go2", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.main.sub.go2", f"{base}.alpha.helper") not in calls, calls
+    module_map = updater.factory.import_processor.import_mapping.get(f"{base}.main.sub")
+    assert module_map == {"helper": f"{base}.beta.helper"}, module_map
+
+
+def test_directory_with_mod_rs_still_collides_and_drops(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The other arm: src/main/sub/mod.rs DOES own the module qn
+    # src.main.sub (mod.rs collapses onto its directory), so the fn-local
+    # `mod sub` collides and its mapping must drop, keeping mod.rs's own
+    # map intact across a re-parse of main.rs.
+    project = temp_repo / "rs_modrs_dir_clash"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_modrs_dir_clash"\nversion = "0.1.0"\n'
+            ),
+            "src/main.rs": (
+                "mod alpha;\n"
+                "mod beta;\n"
+                "mod sub;\n\n"
+                "fn f() -> u32 {\n"
+                "    mod sub {\n"
+                "        use crate::alpha::helper;\n\n"
+                "        pub fn go2() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    sub::go2()\n"
+                "}\n\n"
+                "fn main() {\n"
+                '    println!("{}", f());\n'
+                "}\n"
+            ),
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/main/sub/mod.rs": (
+                "use crate::beta::helper;\n\npub fn go() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_modrs_dir_clash.src"
+    _assert_submodule_map_survives(
+        updater,
+        f"{base}.main",
+        f"{base}.main.sub",
+        {"helper": f"{base}.beta.helper"},
+    )

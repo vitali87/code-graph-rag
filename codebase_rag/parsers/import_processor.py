@@ -1835,8 +1835,12 @@ class ImportProcessor:
         for prefix, name in twins:
             directory = base.joinpath(*prefix)
             entries = self._rust_dir_entries(directory)
+            # A bare directory owns no module qn; only mod.rs collapses
+            # onto it (a #[path]-attributed declaration may leave such a
+            # directory behind).
             if f"{name}{cs.EXT_RS}" in entries or (
-                name in entries and (directory / name).is_dir()
+                name in entries
+                and cs.MOD_RS in self._rust_dir_entries(directory / name)
             ):
                 return True
         return False
