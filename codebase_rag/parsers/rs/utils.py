@@ -246,23 +246,50 @@ def extract_use_imports(use_node: Node) -> dict[str, str]:
     return imports
 
 
-def rust_use_scope_function(node: Node) -> Node | None:
-    """The function whose body DIRECTLY encloses this `use` declaration.
+def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None]:
+    """Classify a `use` declaration's storage scope.
 
-    Returns None when a mod/impl/trait/struct/enum sits closer than any
-    function. A function-scoped use keys on its enclosing function's
-    REGISTERED qn (resolved by span after ingestion, never re-derived from
-    source names, which diverge on qn collisions); every other use keys on
-    its module chain.
+    Returns (fn_node, None) when the use sits directly in a function body:
+    it keys on that function's REGISTERED qn, resolved by span after
+    ingestion (never re-derived from source names, which diverge on qn
+    collisions). Returns (None, parts) when the nearest scope is a module
+    chain, with parts mirroring the registered-qn path of the items inside
+    it (mod names, impl targets, and class names, with functions
+    contributing nothing; [] is file scope). Returns (None, None) when the
+    use sits in a class-body block with no intervening mod or fn (an
+    associated-const initializer): no qn scope corresponds to such a
+    block, and any key would serve a REAL scope's readers.
     """
+    nearest = None
     current = node.parent
     while current and current.type != cs.TS_RS_SOURCE_FILE:
-        if current.type == cs.TS_RS_FUNCTION_ITEM:
-            return current
-        if current.type in cs.FQN_RS_SCOPE_TYPES:
-            return None
+        if (
+            current.type == cs.TS_RS_FUNCTION_ITEM
+            or current.type in cs.FQN_RS_SCOPE_TYPES
+        ):
+            nearest = current
+            break
         current = current.parent
-    return None
+    if nearest is None:
+        return None, []
+    if nearest.type == cs.TS_RS_FUNCTION_ITEM:
+        return nearest, None
+    if nearest.type != cs.TS_RS_MOD_ITEM:
+        return None, None
+    parts: list[str] = []
+    current = node.parent
+    while current and current.type != cs.TS_RS_SOURCE_FILE:
+        if current.type == cs.TS_IMPL_ITEM:
+            if target := extract_impl_target(current):
+                parts.append(target)
+        elif current.type in cs.FQN_RS_SCOPE_TYPES:
+            if name_node := current.child_by_field_name(cs.FIELD_NAME):
+                text = name_node.text
+                if text is not None:
+                    parts.append(text.decode(cs.RS_ENCODING_UTF8))
+        current = current.parent
+    parts.reverse()
+    return None, parts
 
 
 def build_module_path(

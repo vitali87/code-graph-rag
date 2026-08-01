@@ -1932,3 +1932,134 @@ def test_unextractable_impl_target_use_does_not_bind_free_fn(
     base = "rs_ref_impl_target.src"
     assert (f"{base}.foo.m", f"{base}.foo.helper") in calls, calls
     assert (f"{base}.foo.m", f"{base}.alpha.helper") not in calls, calls
+
+
+def test_assoc_const_block_use_does_not_pollute_file_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A use inside an associated-const initializer block scopes to that
+    # block alone. No qn scope corresponds to the block, so the mapping is
+    # dropped; it must not land in the FILE map, where it would overwrite
+    # the file's real import and rebind every bare call, nor lose the
+    # file's IMPORTS edges.
+    project = temp_repo / "rs_const_block_use"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_const_block_use"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "use crate::beta::helper;\n\n"
+                "pub struct S;\n\n"
+                "impl S {\n"
+                "    pub const C: u32 = { use crate::alpha::helper; helper() };\n"
+                "}\n\n"
+                "pub fn other() -> u32 {\n"
+                "    helper()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_const_block_use.src"
+    assert (f"{base}.foo.other", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.other", f"{base}.alpha.helper") not in calls, calls
+    imports = _pairs(mock_ingestor, RelationshipType.IMPORTS.value)
+    assert (f"{base}.foo", f"{base}.alpha") in imports, imports
+    assert (f"{base}.foo", f"{base}.beta") in imports, imports
+
+
+def test_method_local_mod_does_not_corrupt_same_named_file_mod(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `mod inner` declared inside an impl method registers its items at
+    # module.S.inner.* (the fqn walk keeps the impl segment and skips the
+    # function), so its use must key at module.S.inner, not at the
+    # file-level `mod inner`'s key, whose real import map it would replace.
+    project = temp_repo / "rs_method_local_mod"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_method_local_mod"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub struct S;\n\n"
+                "pub mod inner {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn g2() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n\n"
+                "impl S {\n"
+                "    pub fn m(&self) -> u32 {\n"
+                "        mod inner {\n"
+                "            use crate::alpha::helper;\n\n"
+                "            pub fn g() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        inner::g()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_method_local_mod.src"
+    assert (f"{base}.foo.inner.g2", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.inner.g2", f"{base}.alpha.helper") not in calls, calls
+    assert (f"{base}.foo.S.inner.g", f"{base}.alpha.helper") in calls, calls
+
+
+def test_method_local_mod_use_reaches_its_own_functions(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The no-competition variant: with no file-level `mod inner`, the
+    # method-local mod's use must still bind its own function's call
+    # instead of falling through to the file's same-named helper.
+    project = temp_repo / "rs_method_local_only"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_method_local_only"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/foo.rs": (
+                "pub fn helper() -> u32 {\n"
+                "    1\n"
+                "}\n\n"
+                "pub struct S;\n\n"
+                "impl S {\n"
+                "    pub fn m(&self) -> u32 {\n"
+                "        mod inner {\n"
+                "            use crate::alpha::helper;\n\n"
+                "            pub fn g() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        inner::g()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_method_local_only.src"
+    assert (f"{base}.foo.S.inner.g", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.S.inner.g", f"{base}.foo.helper") not in calls, calls

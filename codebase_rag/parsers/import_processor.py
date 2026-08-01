@@ -1764,16 +1764,26 @@ class ImportProcessor:
         # under the function's REGISTERED qn (the caller's scope walk reads
         # it), while crate::/super::/self:: still resolve against the module
         # chain alone.
+        # Resolution and storage follow different chains: crate::/super::/
+        # self:: resolve against the MODULE chain alone, while the storage
+        # key mirrors the registered-qn path (which keeps impl/trait/class
+        # segments and skips functions).
         mod_parts = rs_utils.build_module_path(use_node)
-        effective_qn = (
+        resolve_qn = (
             cs.SEPARATOR_DOT.join([module_qn, *mod_parts]) if mod_parts else module_qn
         )
-        fn_node = rs_utils.rust_use_scope_function(use_node)
+        fn_node, scope_parts = rs_utils.rust_use_scope(use_node)
+        effective_qn = (
+            cs.SEPARATOR_DOT.join([module_qn, *scope_parts])
+            if scope_parts
+            else module_qn
+        )
+        sub_scope = fn_node is not None or scope_parts != []
         resolved_imports: dict[str, str] = {}
         for imported_name, full_path in imports.items():
-            resolved = self._rewrite_rust_local_use_path(full_path, effective_qn)
+            resolved = self._rewrite_rust_local_use_path(full_path, resolve_qn)
             resolved_imports[imported_name] = resolved
-            if fn_node is not None or effective_qn != module_qn:
+            if sub_scope:
                 # The generic deferral loop only reads the file-level map;
                 # sub-scope imports still owe the file its IMPORTS edge.
                 self.defer_import_edge(module_qn, resolved, cs.SupportedLanguage.RUST)
@@ -1786,6 +1796,12 @@ class ImportProcessor:
                     resolved_imports,
                 )
             )
+            return
+        if scope_parts is None:
+            # A class-body block (an associated-const initializer): no qn
+            # scope corresponds to it, and any key would serve a real
+            # scope's readers (sibling methods or the whole file). Keep
+            # only the IMPORTS edges.
             return
         self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)
         if effective_qn != module_qn:
