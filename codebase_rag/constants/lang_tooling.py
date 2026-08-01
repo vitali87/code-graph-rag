@@ -154,4 +154,4 @@ LANG_GIT_SUFFIX = ".git"
 LANG_GITMODULES_FILE = ".gitmodules"
 LANG_CALL_KEYWORD_EXCLUDE = "call"
 
-LANG_GITMODULES_REGEX = r"path = (grammars/tree-sitter-[^\\n]+)"
+LANG_GITMODULES_REGEX = r"path = (grammars/tree-sitter-[^\n]+)"
