@@ -281,9 +281,17 @@ class CallResolver:
         # The watch pass deletes EVERY CALLS edge and recomputes them
         # against re-parsed state; answers cached from the previous pass
         # (and wildcard entries keyed by dict id, which recycles) must
-        # not survive into the recompute.
+        # not survive into the recompute. The derived-structure memos
+        # reset with them: a second trait implementer created mid-watch
+        # must retire the sole-implementer companion edge, exactly as a
+        # fresh full run would.
         self._simple_resolution_cache.clear()
         self._wildcard_cache.clear()
+        self._interface_impl_cache = None
+        self._protocol_impl_cache = None
+        self._subclass_map_cache = None
+        self._protocol_classes_cache = None
+        self._struct_impl_cache.clear()
 
     def resolve_function_call(
         self,

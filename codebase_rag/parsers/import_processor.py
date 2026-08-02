@@ -1261,6 +1261,14 @@ class ImportProcessor:
         for stem in ("lib", "main"):
             if stem in decls:
                 return stem, False
+        if decls:
+            # An explicit-only package: fall back to a stem that is
+            # ACTUALLY in the map, or _rust_attach's entry-declaration
+            # and item-tie-break branches (both keyed by the chosen
+            # stem) silently disable and only the filesystem probe
+            # survives, binding sibling decoy files.
+            ordered = sorted(decls)
+            return ordered[0], len(decls) == 1
         return "lib", False
 
     def _rust_entry_decls(

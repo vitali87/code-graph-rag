@@ -5261,3 +5261,117 @@ def test_watch_reparse_recomputes_edges_through_fresh_resolutions(
     calls = _calls(mock_ingestor)
     assert (f"{base}.q.ay", f"{base}.alt.helper") in calls, calls
     assert (f"{base}.q.ay", f"{base}.lib.helper") not in calls, calls
+
+
+def test_explicit_only_fallback_prefers_present_stems(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # In an explicit-only package a module reached only through #[path]
+    # has no declaring scan hit; the fallback must pick a stem that is
+    # ACTUALLY in the declaration map, so cli.rs's inline `mod flags`
+    # wins (cargo prints 111), never the out-of-crate decoy src/flags.rs.
+    project = temp_repo / "rs_decoy2"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_decoy2"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/cli.rs": (
+                '#[path = "q.rs"]\n'
+                "mod renamed;\n\n"
+                "mod flags {\n"
+                "    pub trait Flag {\n"
+                "        fn n(&self) -> u32 {\n"
+                "            111\n"
+                "        }\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/q.rs": (
+                "use crate::flags::Flag;\n\npub struct A;\n\nimpl Flag for A {}\n"
+            ),
+            "src/flags.rs": (
+                "pub trait Flag {\n    fn n(&self) -> u32 {\n        999\n    }\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_decoy2.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.q")
+    assert mapping == {"Flag": f"{base}.cli.flags.Flag"}, mapping
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.q.A", f"{base}.cli.flags.Flag") in implements, implements
+    assert (f"{base}.q.A", f"{base}.flags.Flag") not in implements, implements
+
+
+def test_watch_create_of_second_implementer_drops_sole_impl_edge(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The sole-implementer companion edge is deliberately absent once a
+    # second implementer exists; the interface-implementer memo must
+    # reset with the recompute or the watch keeps emitting the edge a
+    # fresh full run would not.
+    from watchdog.events import FileCreatedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_iface"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_iface"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod a;\npub mod caller;\n\n"
+                "pub trait Tr {\n"
+                "    fn m(&self) -> u32;\n"
+                "}\n"
+            ),
+            "src/a.rs": (
+                "use crate::Tr;\n\n"
+                "pub struct A;\n\n"
+                "impl Tr for A {\n"
+                "    fn m(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/caller.rs": (
+                "use crate::Tr;\n\npub fn go(t: &dyn Tr) -> u32 {\n    t.m()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_iface.src"
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.caller.go", f"{base}.a.A.m") in calls, calls
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    b_rs = project / "src" / "b.rs"
+    b_rs.write_text(
+        "use crate::Tr;\n\n"
+        "pub struct B;\n\n"
+        "impl Tr for B {\n"
+        "    fn m(&self) -> u32 {\n"
+        "        2\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileCreatedEvent(str(b_rs)))
+
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.caller.go", f"{base}.a.A.m") not in calls, calls
