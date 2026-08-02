@@ -675,6 +675,21 @@ class TestUpdateConfigFile:
         _assert_valid_python(content)
         assert _top_level_specs_keys(content) == ["mylang"]
 
+    def test_insertion_after_entry_with_trailing_comment(self, tmp_path: Path) -> None:
+        config = tmp_path / "language_spec.py"
+        config.write_text(
+            "LANGUAGE_SPECS = {\n    \"a\": LanguageSpec()  # base spec\n}\n",
+            encoding="utf-8",
+        )
+
+        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
+            assert _update_config_file("mylang", _spec("mylang")) is True
+
+        content = config.read_text(encoding="utf-8")
+        _assert_valid_python(content)
+        assert "# base spec" in content
+        assert _top_level_specs_keys(content) == ["a", "mylang"]
+
     def test_missing_brace_returns_false(self, tmp_path: Path) -> None:
         config = tmp_path / "language_spec.py"
         config.write_text("LANGUAGE_SPECS = broken\n", encoding="utf-8")
