@@ -12,6 +12,7 @@ from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.types_defs import ResultRow
 
 _FUNCTION = cs.NodeLabel.FUNCTION.value
+_MODULE = cs.NodeLabel.MODULE.value
 
 
 class FakeIngestor:
@@ -28,16 +29,35 @@ class FakeIngestor:
 
 
 def _function(
-    qn: str, name: str, path: str, decorators: list[str] | None = None
+    qn: str,
+    name: str,
+    path: str,
+    decorators: list[str] | None = None,
+    start_line: int = 1,
+    end_line: int = 2,
 ) -> ResultRow:
     return {
         "label": _FUNCTION,
         "qualified_name": qn,
         "name": name,
         "path": path,
-        "start_line": 1,
-        "end_line": 2,
+        "start_line": start_line,
+        "end_line": end_line,
         "decorators": decorators or [],
+        "is_exported": False,
+        "overrides_external": False,
+    }
+
+
+def _module(qn: str, path: str) -> ResultRow:
+    return {
+        "label": _MODULE,
+        "qualified_name": qn,
+        "name": qn.rsplit(".", 1)[-1],
+        "path": path,
+        "start_line": 1,
+        "end_line": 1,
+        "decorators": [],
         "is_exported": False,
         "overrides_external": False,
     }
@@ -117,9 +137,13 @@ def test_scoped_test_attributes_root() -> None:
 
 def test_tests_module_symbols_root_without_attributes() -> None:
     # The module rule on its own: a plain helper inside a `tests` module
-    # is test code even with no attribute anywhere.
+    # is test code even with no attribute anywhere. The Module node is
+    # what makes `tests` a MODULE segment rather than a type or leaf.
     dead = _collect(
-        [_function("proj.src.lib.tests.mk_input", "mk_input", "src/lib.rs")]
+        [
+            _module("proj.src.lib.tests", "src/lib.rs"),
+            _function("proj.src.lib.tests.mk_input", "mk_input", "src/lib.rs"),
+        ]
     )
     assert dead == set()
 
@@ -150,6 +174,7 @@ def test_exclude_tests_suppresses_inline_test_symbols() -> None:
     # candidates.
     dead = _collect(
         [
+            _module("proj.src.lib.tests", "src/lib.rs"),
             _function(
                 "proj.src.lib.test_add",
                 "test_add",
@@ -217,6 +242,7 @@ def test_singular_test_module_matches_plural() -> None:
     # the inline-module rule mirrors it, so `mod test` behaves exactly
     # like `mod tests` on both flag polarities.
     nodes = [
+        _module("proj.src.lib.test", "src/lib.rs"),
         _function(
             "proj.src.lib.test.t_basic",
             "t_basic",
@@ -228,3 +254,71 @@ def test_singular_test_module_matches_plural() -> None:
     rels = [_calls("proj.src.lib.test.t_basic", "proj.src.lib.test.mk_input")]
     assert _collect(nodes, rels) == set()
     assert _collect(nodes, rels, include_tests=False) == set()
+
+
+def test_symbols_nested_in_excluded_test_fns_are_excluded() -> None:
+    # Nested fns register FLAT under the module qn and closures as
+    # anonymous_<line>_<col>; neither carries the attribute or a tests
+    # segment, so the exclusion must also cover symbols whose span lies
+    # inside an excluded test fn's span in the same file.
+    dead = _collect(
+        [
+            _function(
+                "proj.src.lib.test_ctx",
+                "test_ctx",
+                "src/lib.rs",
+                decorators=["#[test]"],
+                start_line=10,
+                end_line=30,
+            ),
+            _function(
+                "proj.src.lib.nested_helper",
+                "nested_helper",
+                "src/lib.rs",
+                start_line=12,
+                end_line=14,
+            ),
+            _function(
+                "proj.src.lib.anonymous_16_8",
+                "anonymous_16_8",
+                "src/lib.rs",
+                start_line=16,
+                end_line=18,
+            ),
+        ],
+        include_tests=False,
+    )
+    assert dead == set()
+
+
+def test_type_named_tests_does_not_mark_test_code() -> None:
+    # A lowercase TYPE named `tests` shares the qn shape of a module but
+    # has no Module node: its methods stay reportable.
+    dead = _collect(
+        [
+            _module("proj.src.lib", "src/lib.rs"),
+            _function("proj.src.lib.tests.dead_method", "dead_method", "src/lib.rs"),
+            _function("proj.src.lib.helper", "helper", "src/lib.rs"),
+        ],
+        rels=[_calls("proj.src.lib.tests.dead_method", "proj.src.lib.helper")],
+    )
+    assert "proj.src.lib.tests.dead_method" in dead
+    assert "proj.src.lib.helper" in dead
+
+
+def test_dotted_project_prefix_does_not_mask_reporting() -> None:
+    # A project name may itself contain dots ending in `tests`; the
+    # module match keys on real Module qns, so the prefix segments never
+    # silence reporting.
+    rows = collect_dead_code(
+        FakeIngestor(
+            [
+                _module("my.tests.src.lib", "src/lib.rs"),
+                _function("my.tests.src.lib.orphan", "orphan", "src/lib.rs"),
+            ],
+            [],
+        ),
+        "my.tests",
+        default_dead_code_config(include_tests=True, include_classes=False),
+    )
+    assert {row["qualified_name"] for row in rows} == {"my.tests.src.lib.orphan"}
