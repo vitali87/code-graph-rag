@@ -1084,6 +1084,25 @@ class ImportProcessor:
             return relative in self._rust_explicit_target_paths(tuple(pkg_parts))
         return False
 
+    def _rust_explicit_entry_files(self, dir_parts: tuple[str, ...]) -> set[str]:
+        # File names of explicit manifest targets that sit DIRECTLY in
+        # this directory (their declarations join the entry-declaration
+        # map beside lib.rs/main.rs, keyed by stem). The package is the
+        # nearest ancestor holding a Cargo.toml.
+        for i in range(len(dir_parts), -1, -1):
+            pkg_parts = dir_parts[:i]
+            if cs.PKG_CARGO_TOML not in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                continue
+            names: set[str] = set()
+            for rel in self._rust_explicit_target_paths(tuple(pkg_parts)):
+                full = [*pkg_parts, *rel.split(cs.SEPARATOR_SLASH)]
+                if tuple(full[:-1]) == dir_parts and full[-1].endswith(cs.EXT_RS):
+                    names.add(full[-1])
+            return names
+        return set()
+
     def _rust_explicit_target_paths(self, pkg_parts: tuple[str, ...]) -> frozenset[str]:
         cached = self._rust_explicit_targets.get(pkg_parts)
         if cached is not None:
@@ -1211,7 +1230,15 @@ class ImportProcessor:
         key = tuple(dir_parts)
         decls = self._rust_entry_mod_decls.setdefault(key, {})
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-        for entry in (cs.LIB_RS, cs.MAIN_RS):
+        scan = [cs.LIB_RS, cs.MAIN_RS]
+        scan.extend(
+            sorted(
+                name
+                for name in self._rust_explicit_entry_files(key)
+                if name not in (cs.LIB_RS, cs.MAIN_RS)
+            )
+        )
+        for entry in scan:
             if entry not in entries:
                 continue
             stem = entry.rsplit(cs.SEPARATOR_DOT, 1)[0]
@@ -1918,13 +1945,31 @@ class ImportProcessor:
             dir_parts = directory.relative_to(self.repo_path).parts
         except ValueError:
             return
-        if file_path.name in (cs.LIB_RS, cs.MAIN_RS):
-            # File-scoped like the event itself: touching main.rs must not
-            # discard lib.rs's cached declarations (mid-storm the sibling
-            # would rebuild empty and flip crate attribution).
+        if file_path.name in (
+            cs.LIB_RS,
+            cs.MAIN_RS,
+        ) or file_path.name in self._rust_explicit_entry_files(tuple(dir_parts)):
+            # File-scoped like the event itself, and REPLACED only on a
+            # successful read: a storm can modify the entry and delete it
+            # before a sibling re-parses, and an absent stem would send
+            # _rust_entry_stem to its non-definitive fallback, letting the
+            # item tie-break flip a definitive crate attribution.
             stems = self._rust_entry_mod_decls.get(tuple(dir_parts))
             if stems is not None:
-                stems.pop(file_path.stem, None)
+                try:
+                    source = file_path.read_text(
+                        encoding=cs.RS_ENCODING_UTF8, errors="ignore"
+                    )
+                except OSError:
+                    pass
+                else:
+                    top_level = _rs_top_level_only(
+                        _rs_strip_comments_and_strings(source)
+                    )
+                    stems[file_path.stem] = (
+                        set(_RS_MOD_DECL_PATTERN.findall(top_level)),
+                        set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
+                    )
         if file_path.name == cs.PKG_CARGO_TOML:
             self._rust_explicit_targets.pop(tuple(dir_parts), None)
 

@@ -4874,3 +4874,100 @@ def test_self_paths_in_explicit_roots_match_crate_paths(
     assert mapping == {"g": f"{base}.sub.g"}, mapping
     calls = _calls(mock_ingestor)
     assert (f"{base}.cli.main", f"{base}.sub.g") in calls, calls
+
+
+def test_explicit_root_own_declarations_outrank_sibling_files(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The entry-declaration priority applies to explicit roots too: an
+    # inline `mod sys` in the explicit bin owns crate::sys and self::sys
+    # even when the LIB crate has a src/sys.rs beside it (cargo-verified:
+    # the bin prints its own 42, never the lib file's value), and the
+    # root's own item wins over a sibling file of the same name.
+    project = temp_repo / "rs_expl_decls"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_expl_decls"\nversion = "0.1.0"\n\n'
+                '[lib]\npath = "src/lib.rs"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/lib.rs": "pub mod sys;\npub mod helper;\n",
+            "src/sys.rs": "pub const fn f() -> u32 {\n    1\n}\n",
+            "src/helper.rs": "pub const fn helper() -> u32 {\n    1\n}\n",
+            "src/cli.rs": (
+                "mod sys {\n"
+                "    pub const fn f() -> u32 {\n"
+                "        42\n"
+                "    }\n"
+                "}\n\n"
+                "pub const fn helper() -> u32 {\n"
+                "    42\n"
+                "}\n\n"
+                "use self::sys::f as g2;\n"
+                "use crate::helper as h;\n\n"
+                "pub fn top() -> u32 {\n"
+                "    g2() + h()\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_expl_decls.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.cli")
+    assert mapping == {
+        "g2": f"{base}.cli.sys.f",
+        "h": f"{base}.cli.helper",
+    }, mapping
+
+
+def test_entry_modify_racing_its_own_deletion_keeps_declarations(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A storm can MODIFY the entry, then delete it, before a sibling
+    # re-parses: the refresh replaces declarations only on a successful
+    # read, so the entry's stem is never left absent for the item
+    # tie-break to flip a definitive crate attribution.
+    from watchdog.events import FileDeletedEvent, FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_decl_poison2"
+    _write(
+        project,
+        {
+            "Cargo.toml": ('[package]\nname = "rs_decl_poison2"\nversion = "0.1.0"\n'),
+            "src/lib.rs": "pub mod a;\n\npub struct Config;\n",
+            "src/main.rs": "mod b;\n\npub struct Config;\n\nfn main() {}\n",
+            "src/b.rs": "pub fn bee() {}\n",
+            "src/a.rs": "use crate::Config;\n\npub fn ay(_c: Config) {}\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_decl_poison2.src"
+    expected = {"Config": f"{base}.lib.Config"}
+    assert updater.factory.import_processor.import_mapping.get(f"{base}.a") == (
+        expected
+    )
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    lib_rs = project / "src" / "lib.rs"
+    handler.dispatch(FileModifiedEvent(str(lib_rs)))
+    lib_rs.unlink()
+    handler.dispatch(FileDeletedEvent(str(lib_rs)))
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "a.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
+    assert mapping == expected, mapping
