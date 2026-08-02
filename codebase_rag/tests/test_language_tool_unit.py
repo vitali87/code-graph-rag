@@ -870,8 +870,8 @@ class TestRemoveLanguageCommand:
                     "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
                 ),
                 patch(
-                    "codebase_rag.tools.language._specs_entry_span",
-                    return_value=truncating_span,
+                    "codebase_rag.tools.language._specs_entry_spans",
+                    return_value=[truncating_span],
                 ),
                 patch("codebase_rag.tools.language.subprocess.run") as run,
             ):

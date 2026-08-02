@@ -399,14 +399,30 @@ def _entry_key_matches(key: ast.expr, language_name: str) -> bool:
     ) == cs.LANG_ENUM_KEY_TEMPLATE.format(member=member)
 
 
-def _extend_past_separator(config_content: str, end: int) -> int:
+def _skip_spaces(config_content: str, pos: int, *, newlines: bool) -> int:
     length = len(config_content)
-    while end < length and config_content[end] in " \t":
-        end += 1
+    while pos < length and (
+        config_content[pos] in " \t" or (newlines and config_content[pos] == "\n")
+    ):
+        pos += 1
+    return pos
+
+
+def _extend_past_separator(config_content: str, end: int, *, own_line: bool) -> int:
+    length = len(config_content)
+
+    probe = _skip_spaces(config_content, end, newlines=True)
+    while probe < length and config_content[probe] == ")":
+        end = probe + 1
+        probe = _skip_spaces(config_content, end, newlines=True)
+
+    end = _skip_spaces(config_content, end, newlines=False)
     if end < length and config_content[end] == ",":
         end += 1
-    while end < length and config_content[end] in " \t":
-        end += 1
+    if not own_line:
+        return end
+
+    end = _skip_spaces(config_content, end, newlines=False)
     if end < length and config_content[end] == "#":
         while end < length and config_content[end] != "\n":
             end += 1
@@ -415,8 +431,11 @@ def _extend_past_separator(config_content: str, end: int) -> int:
     return end
 
 
-def _specs_entry_span(config_content: str, language_name: str) -> tuple[int, int]:
+def _specs_entry_spans(
+    config_content: str, language_name: str
+) -> list[tuple[int, int]]:
     dict_node = _specs_dict(config_content)
+    spans: list[tuple[int, int]] = []
     for key, value in zip(dict_node.keys, dict_node.values, strict=True):
         if key is None or not _entry_key_matches(key, language_name):
             continue
@@ -426,11 +445,16 @@ def _specs_entry_span(config_content: str, language_name: str) -> tuple[int, int
             raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
         start = _content_offset(config_content, key.lineno, key.col_offset)
         line_start = config_content.rfind("\n", 0, start) + 1
-        if not config_content[line_start:start].strip():
+        own_line = not config_content[line_start:start].strip()
+        if own_line:
             start = line_start
         end = _content_offset(config_content, end_lineno, end_col_offset)
-        return start, _extend_past_separator(config_content, end)
-    raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
+        spans.append(
+            (start, _extend_past_separator(config_content, end, own_line=own_line))
+        )
+    if not spans:
+        raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
+    return spans
 
 
 def _write_language_config(config_entry: str, language_name: str) -> bool:
@@ -643,8 +667,10 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
 def _remove_language_from_config(language_name: str) -> bool:
     try:
         original_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
-        entry_start, entry_end = _specs_entry_span(original_content, language_name)
-        new_content = original_content[:entry_start] + original_content[entry_end:]
+        spans = _specs_entry_spans(original_content, language_name)
+        new_content = original_content
+        for entry_start, entry_end in sorted(spans, reverse=True):
+            new_content = new_content[:entry_start] + new_content[entry_end:]
         compile(new_content, cs.LANG_CONFIG_FILE, "exec")
 
         _write_config_atomically(new_content)
