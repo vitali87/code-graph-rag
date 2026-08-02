@@ -348,19 +348,22 @@ def rust_block_scope_holes(
 
 
 def _rust_direct_fn_item_names(fn_node: Node) -> frozenset[str]:
+    # The fn's bare-name item scope holds exactly the function items
+    # declared DIRECTLY in its body block: methods inside an impl or
+    # trait body are not bare names, and an item inside an inner block
+    # or closure body is scoped to that block alone (rustc-verified),
+    # so descending into any of them would make the block use lose to
+    # names that are not in scope at all.
+    body = fn_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return frozenset()
     names: set[str] = set()
-    stack = list(fn_node.children)
-    while stack:
-        current = stack.pop()
-        if current.type == cs.TS_RS_FUNCTION_ITEM:
-            if (name_node := current.child_by_field_name(cs.FIELD_NAME)) and (
+    for child in body.children:
+        if child.type == cs.TS_RS_FUNCTION_ITEM:
+            if (name_node := child.child_by_field_name(cs.FIELD_NAME)) and (
                 text := name_node.text
             ) is not None:
                 names.add(text.decode(cs.RS_ENCODING_UTF8))
-            continue
-        if current.type == cs.TS_RS_MOD_ITEM:
-            continue
-        stack.extend(current.children)
     return frozenset(names)
 
 

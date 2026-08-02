@@ -4057,3 +4057,124 @@ def test_assoc_base_in_block_resolves_through_block_use(
     assert (f"{base}.a", f"{base}.beta.T.brun") in calls, calls
     assert (f"{base}.a.outside", f"{base}.gamma.T.assoc") in calls, calls
     assert (f"{base}.a.outside", f"{base}.gamma.T.grun") in calls, calls
+
+
+def test_impl_in_nested_fn_does_not_block_the_block_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An impl inside the nested fn declares METHODS, not bare-name items:
+    # `g()` in the fn still binds the block's use (rustc evaluates J to
+    # 3), never the impl's method or the file's own item.
+    project = temp_repo / "rs_block_impl_names"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_impl_names"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod gamma;\npub mod a;\n",
+            "src/gamma.rs": "pub const fn g() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub const fn g() -> u32 {\n"
+                "    5\n"
+                "}\n\n"
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::g;\n"
+                "    const fn f() -> u32 {\n"
+                "        struct S;\n"
+                "        impl S {\n"
+                "            fn g(&self) -> u32 {\n"
+                "                99\n"
+                "            }\n"
+                "        }\n"
+                "        g()\n"
+                "    }\n"
+                "    f()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_impl_names.src"
+    assert (f"{base}.a.f", f"{base}.gamma.g") in calls, calls
+    assert (f"{base}.a.f", f"{base}.a.g") not in calls, calls
+
+
+def test_method_names_in_nested_fn_do_not_steal_the_block_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # With no file twin at all, the over-collected method name must not
+    # fabricate an edge onto the inherent method: the bare call binds the
+    # block's use (rustc evaluates J to 3).
+    project = temp_repo / "rs_block_method_names"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_block_method_names"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod gamma;\npub mod a;\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::helper;\n"
+                "    const fn f() -> u32 {\n"
+                "        struct S;\n"
+                "        impl S {\n"
+                "            fn helper(&self) -> u32 {\n"
+                "                99\n"
+                "            }\n"
+                "        }\n"
+                "        helper()\n"
+                "    }\n"
+                "    f()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_method_names.src"
+    assert (f"{base}.a.f", f"{base}.gamma.helper") in calls, calls
+    assert (f"{base}.a.f", f"{base}.a.S.helper") not in calls, calls
+
+
+def test_inner_block_item_in_nested_fn_does_not_block_the_block_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An item declared in an INNER block of the nested fn is invisible at
+    # the fn's own level: the call after the inner block binds the block
+    # use (rustc evaluates J to 3), not the file's item.
+    project = temp_repo / "rs_block_inner_item"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_inner_item"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod gamma;\npub mod a;\n",
+            "src/gamma.rs": "pub const fn g() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub const fn g() -> u32 {\n"
+                "    5\n"
+                "}\n\n"
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::g;\n"
+                "    const fn f() -> u32 {\n"
+                "        let x = {\n"
+                "            const fn g() -> u32 {\n"
+                "                7\n"
+                "            }\n"
+                "            g()\n"
+                "        };\n"
+                "        x + g()\n"
+                "    }\n"
+                "    f()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_inner_item.src"
+    assert (f"{base}.a.f", f"{base}.gamma.g") in calls, calls
