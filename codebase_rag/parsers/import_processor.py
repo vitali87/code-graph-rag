@@ -2058,13 +2058,15 @@ class ImportProcessor:
         # converges on the file's return or the next full run, exactly
         # as before the watcher refreshed at all).
         directory = file_path.parent
-        if (
-            created
-            and (cached := self._rust_dir_listing.get(str(directory))) is not None
+        if (cached := self._rust_dir_listing.get(str(directory))) is not None and (
+            created or file_path.name not in cached
         ):
             # Apply the event's own delta rather than re-observing: during
             # a storm the filesystem may transiently lack files this event
-            # did not touch, and a re-listing would bake that absence.
+            # did not touch, and a re-listing would bake that absence. A
+            # MODIFY whose file the cached listing lacks is a CREATE the
+            # debounce layer coalesced away (dispatch keeps only the
+            # latest pending event per path), so it applies the same delta.
             self._rust_dir_listing[str(directory)] = cached | {file_path.name}
         try:
             dir_parts = directory.relative_to(self.repo_path).parts

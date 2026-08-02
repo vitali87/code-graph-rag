@@ -5966,3 +5966,91 @@ def test_build_true_means_auto_detection(
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     assert (f"{base}.helper.A", f"{base}.build.Cfg") in implements, implements
     assert (f"{base}.helper.A", f"{base}.cli.Cfg") not in implements, implements
+
+
+def test_watch_modify_standing_in_for_a_coalesced_create_updates_listing(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The debounce layer keeps only the LATEST pending event per path, so
+    # a new file written as CREATE then MODIFY within one window reaches
+    # processing as a bare MODIFY. A modified file absent from the cached
+    # directory listing therefore means the cache predates the file, and
+    # the refresh must apply the same event-local delta a CREATE applies,
+    # or a sibling's `crate::` rewrite keeps resolving against the
+    # pre-create listing.
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_watch_coalesced_create"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_watch_coalesced_create"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod beta;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/a.rs": (
+                "use crate::beta::helper;\n\npub fn top() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_watch_coalesced_create.src"
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    gamma2 = project / "src" / "gamma2.rs"
+    gamma2.write_text("pub const fn helper2() -> u32 {\n    3\n}\n", encoding="utf-8")
+    # MODIFY stands in for the coalesced CREATE.
+    handler.dispatch(FileModifiedEvent(str(gamma2)))
+
+    (project / "src" / "a.rs").write_text(
+        "use crate::gamma2::helper2;\n\npub fn top() -> u32 {\n    helper2()\n}\n",
+        encoding="utf-8",
+    )
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "a.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
+    assert mapping == {"helper2": f"{base}.gamma2.helper2"}, mapping
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.a.top", f"{base}.gamma2.helper2") in calls, calls
+
+
+def test_src_bin_main_crate_items_resolve_to_the_entry_file(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Cargo compiles src/bin/main.rs as a binary named `main` whose crate
+    # root is the file itself (cargo-verified): a `crate::` path to one of
+    # its own items must land on the entry file's qn. The classic-root
+    # walk plus the declaring scan already answer this; pinned so the
+    # entry-stem gate on the direct target probe never regresses it.
+    project = temp_repo / "rs_bin_main_selfref"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_bin_main_selfref"\nversion = "0.1.0"\n'
+            ),
+            "src/bin/main.rs": (
+                "use crate::helper;\n\n"
+                "pub const fn helper() -> u32 {\n    7\n}\n\n"
+                "fn main() {\n    let _ = helper();\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    mapping = updater.factory.import_processor.import_mapping.get(
+        "rs_bin_main_selfref.src.bin.main"
+    )
+    assert mapping == {"helper": "rs_bin_main_selfref.src.bin.main.helper"}, mapping
