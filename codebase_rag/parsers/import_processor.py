@@ -1261,14 +1261,20 @@ class ImportProcessor:
         for stem in ("lib", "main"):
             if stem in decls:
                 return stem, False
-        if decls:
-            # An explicit-only package: fall back to a stem that is
-            # ACTUALLY in the map, or _rust_attach's entry-declaration
-            # and item-tie-break branches (both keyed by the chosen
-            # stem) silently disable and only the filesystem probe
-            # survives, binding sibling decoy files.
-            ordered = sorted(decls)
-            return ordered[0], len(decls) == 1
+        if len(decls) == 1 and not any(
+            entry in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+            for entry in (cs.LIB_RS, cs.MAIN_RS)
+        ):
+            # A genuinely explicit-only package (no entry FILE is even
+            # listed, so this is not a read-failure hole) with a single
+            # target: fall back to the stem actually in the map, or
+            # _rust_attach's entry-declaration and item-tie-break
+            # branches silently disable and only the filesystem probe
+            # survives, binding sibling decoy files. With MULTIPLE
+            # explicit stems and no declarer the attribution is genuine
+            # ambiguity: the phantom fallback below stays (a dangling
+            # phantom revives nothing; a first-alphabetical edge would).
+            return next(iter(decls)), True
         return "lib", False
 
     def _rust_entry_decls(

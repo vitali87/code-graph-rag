@@ -5375,3 +5375,103 @@ def test_watch_create_of_second_implementer_drops_sole_impl_edge(
 
     calls = _calls(mock_ingestor)
     assert (f"{base}.caller.go", f"{base}.a.A.m") not in calls, calls
+
+
+def test_unreadable_entry_does_not_hand_the_crate_to_explicit_stems(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A listed but unreadable lib.rs leaves its stem unfilled; the
+    # present-stem fallback must not mistake that hole for an
+    # explicit-only package and definitively hand q.rs to the bin (whose
+    # private inline `mod flags` q.rs can never reach). The safe landing
+    # is the filesystem probe, which still finds the real src/flags.rs.
+    import os
+
+    project = temp_repo / "rs_unread"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_unread"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/lib.rs": "pub mod flags;\npub mod q;\n",
+            "src/flags.rs": (
+                "pub trait Flag {\n    fn n(&self) -> u32 {\n        999\n    }\n}\n"
+            ),
+            "src/q.rs": (
+                "use crate::flags::Flag;\n\npub struct A;\n\nimpl Flag for A {}\n"
+            ),
+            "src/cli.rs": (
+                "mod flags {\n"
+                "    pub trait Flag {\n"
+                "        fn n(&self) -> u32 {\n"
+                "            111\n"
+                "        }\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+        },
+    )
+    lib_rs = project / "src" / "lib.rs"
+    os.chmod(lib_rs, 0)
+    if os.access(lib_rs, os.R_OK):
+        os.chmod(lib_rs, 0o644)
+        pytest.skip("cannot make files unreadable in this environment")
+    try:
+        updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    finally:
+        os.chmod(lib_rs, 0o644)
+
+    base = "rs_unread.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.q")
+    assert mapping == {"Flag": f"{base}.flags.Flag"}, mapping
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.q.A", f"{base}.cli.flags.Flag") not in implements, implements
+
+
+def test_multi_explicit_stems_stay_ambiguous_not_first_alphabetical(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two explicit bins, a module neither declares: attribution is
+    # genuinely ambiguous, and a dangling phantom (no edge, dead code
+    # stays dead) beats a confident edge onto whichever bin sorts first.
+    project = temp_repo / "rs_twobins"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_twobins"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "aaa"\npath = "src/aaa.rs"\n\n'
+                '[[bin]]\nname = "zzz"\npath = "src/zzz.rs"\n'
+            ),
+            "src/aaa.rs": (
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        999\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/zzz.rs": (
+                "mod inner {\n"
+                "    pub mod x;\n"
+                "}\n\n"
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        111\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/inner/x.rs": (
+                "use crate::Cfg;\n\npub struct A;\n\nimpl Cfg for A {}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_twobins.src"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.inner.x.A", f"{base}.aaa.Cfg") not in implements, implements
