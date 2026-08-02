@@ -128,23 +128,35 @@ def _is_rust_test_symbol(
 def _rust_test_modules_from_nodes(
     nodes: dict[_NodeId, PropertyDict],
 ) -> set[str]:
-    # Module qns whose own name is a test-module spelling OR whose node
-    # carries a recorded `#[cfg(test)]` gate (a `mod testutil;` declared
-    # under the gate compiles for tests only, whatever its name, issue
-    # #1010), gated to Rust files (inline `mod tests` blocks carry
-    # synthesised inline paths).
+    # Test modules by three signals, all gated to Rust files (inline `mod
+    # tests` blocks carry synthesised inline paths): a test-module NAME
+    # spelling, an OWN `#[cfg(test)]` decorator (bodied inline mods), or a
+    # DECLARATION-recorded gate (`#[cfg(test)] mod testutil;` stores its
+    # target-qn candidates on the declaring module, issue #1010). Declared
+    # candidates count only when they name a real Rust module here: a
+    # spelling the qn scheme does not produce (a #[path] override) must
+    # stay inert instead of mismarking whatever shares the string.
     modules: set[str] = set()
+    rust_modules: set[str] = set()
+    declared: list[str] = []
     for (label, uid), props in nodes.items():
         if label != _MODULE:
             continue
+        declared_here = props.get(cs.KEY_RUST_CFG_TEST_MODS)
+        if isinstance(declared_here, list):
+            declared.extend(str(target) for target in declared_here)
+        path = str(props.get(cs.KEY_PATH, ""))
+        if not (
+            path.endswith(cs.EXT_RS) or path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+        ):
+            continue
         qn = str(uid)
+        rust_modules.add(qn)
         if qn.rsplit(cs.SEPARATOR_DOT, 1)[
             -1
-        ] not in cs.RUST_TEST_MODULE_SEGMENTS and not _has_rust_cfg_test_gate(props):
-            continue
-        path = str(props.get(cs.KEY_PATH, ""))
-        if path.endswith(cs.EXT_RS) or path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+        ] in cs.RUST_TEST_MODULE_SEGMENTS or _has_rust_cfg_test_gate(props):
             modules.add(qn)
+    modules.update(target for target in declared if target in rust_modules)
     return modules
 
 
@@ -759,6 +771,7 @@ def _node_props(row: ResultRow) -> PropertyDict:
         # non-int values coalesce to 0 so the containment checks skip them.
         cs.KEY_START_LINE: _as_line(row.get(cs.KEY_START_LINE)),
         cs.KEY_END_LINE: _as_line(row.get(cs.KEY_END_LINE)),
+        cs.KEY_RUST_CFG_TEST_MODS: _as_str_list(row.get(cs.KEY_RUST_CFG_TEST_MODS)),
     }
 
 

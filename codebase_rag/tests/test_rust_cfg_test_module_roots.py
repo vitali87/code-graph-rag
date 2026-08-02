@@ -2,9 +2,10 @@
 # as test code, whatever its name: ripgrep's `#[cfg(test)] mod testutil;`
 # compiles testutil.rs only for tests, yet its helpers were reported as
 # dead production code because only `tests`/`test` NAMES counted. The gate
-# is recorded on the Module node's decorators at parse time; dead-code
-# treats any symbol under a gated module as test code, exactly as it does
-# for name-matched modules. Issue #1010.
+# is recorded at parse time (target-qn candidates on the DECLARING module,
+# own decorators on bodied inline mods); dead-code treats any symbol under
+# a gated module as test code, exactly as it does for name-matched
+# modules. Issue #1010.
 from __future__ import annotations
 
 from codebase_rag import constants as cs
@@ -43,7 +44,12 @@ def _function(qn: str, name: str, path: str) -> ResultRow:
     }
 
 
-def _module(qn: str, path: str, decorators: list[str] | None = None) -> ResultRow:
+def _module(
+    qn: str,
+    path: str,
+    decorators: list[str] | None = None,
+    rust_cfg_test_mods: list[str] | None = None,
+) -> ResultRow:
     return {
         "label": _MODULE,
         "qualified_name": qn,
@@ -54,6 +60,7 @@ def _module(qn: str, path: str, decorators: list[str] | None = None) -> ResultRo
         "decorators": decorators or [],
         "is_exported": False,
         "overrides_external": False,
+        "rust_cfg_test_mods": rust_cfg_test_mods or [],
     }
 
 
@@ -67,10 +74,11 @@ def _collect(nodes: list[ResultRow], include_tests: bool) -> set[str]:
 
 
 def _gated_fixture() -> list[ResultRow]:
-    # `#[cfg(test)] mod testutil;` in lib.rs: the gate lands on the target
-    # Module node's decorators; the module name matches NO test spelling.
+    # `#[cfg(test)] mod testutil;` in lib.rs: the DECLARING module records
+    # the target qn; the target module's name matches NO test spelling.
     return [
-        _module("proj.src.testutil", "src/testutil.rs", ["#[cfg(test)]"]),
+        _module("proj.src.lib", "src/lib.rs", rust_cfg_test_mods=["proj.src.testutil"]),
+        _module("proj.src.testutil", "src/testutil.rs"),
         _function("proj.src.testutil.fixture", "fixture", "src/testutil.rs"),
         _function(
             "proj.src.testutil.Helper.unused_by_name",
@@ -80,13 +88,13 @@ def _gated_fixture() -> list[ResultRow]:
     ]
 
 
-def test_cfg_test_gated_module_symbols_root_with_tests_included() -> None:
+def test_declared_gate_roots_target_symbols_with_tests_included() -> None:
     dead = _collect(_gated_fixture(), include_tests=True)
     assert "proj.src.testutil.fixture" not in dead
     assert "proj.src.testutil.Helper.unused_by_name" not in dead
 
 
-def test_cfg_test_gated_module_symbols_excluded_without_tests() -> None:
+def test_declared_gate_excludes_target_symbols_without_tests() -> None:
     dead = _collect(_gated_fixture(), include_tests=False)
     assert "proj.src.testutil.fixture" not in dead
     assert "proj.src.testutil.Helper.unused_by_name" not in dead
@@ -96,6 +104,7 @@ def test_ungated_module_still_reports_dead_symbols() -> None:
     # The same shape without the gate stays reportable: the new branch
     # must not silence ordinary modules.
     nodes = [
+        _module("proj.src.lib", "src/lib.rs"),
         _module("proj.src.testutil", "src/testutil.rs"),
         _function("proj.src.testutil.fixture", "fixture", "src/testutil.rs"),
     ]
@@ -103,14 +112,26 @@ def test_ungated_module_still_reports_dead_symbols() -> None:
     assert "proj.src.testutil.fixture" in dead
 
 
-def test_cfg_test_attribute_matches_through_whitespace() -> None:
-    # Attributes are token streams: `#[cfg( test )]` names the same gate.
+def test_declared_candidate_naming_no_real_module_stays_inert() -> None:
+    # A candidate qn no Module node backs (a #[path] override moved the
+    # file elsewhere) must not suppress same-shaped symbols.
     nodes = [
-        _module("proj.src.testutil", "src/testutil.rs", ["#[cfg( test )]"]),
-        _function("proj.src.testutil.fixture", "fixture", "src/testutil.rs"),
+        _module("proj.src.lib", "src/lib.rs", rust_cfg_test_mods=["proj.src.ghost"]),
+        _function("proj.src.ghost.fixture", "fixture", "src/ghost.rs"),
     ]
     dead = _collect(nodes, include_tests=True)
-    assert "proj.src.testutil.fixture" not in dead
+    assert "proj.src.ghost.fixture" in dead
+
+
+def test_own_cfg_test_decorator_marks_inline_module() -> None:
+    # A bodied inline gated mod carries the gate on its own node; the
+    # whitespace-variant spelling names the same attribute.
+    nodes = [
+        _module("proj.src.lib.checks", "src/lib.rs", decorators=["#[cfg( test )]"]),
+        _function("proj.src.lib.checks.fixture", "fixture", "src/lib.rs"),
+    ]
+    dead = _collect(nodes, include_tests=True)
+    assert "proj.src.lib.checks.fixture" not in dead
 
 
 def test_cfg_feature_gate_does_not_mark_test_code() -> None:

@@ -312,6 +312,9 @@ NODE_PROJECT = NodeLabel.PROJECT
 
 KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
+# Target-module qn candidates of `#[cfg(test)] mod NAME;` declarations in a
+# Rust file, stored on the DECLARING module's node (issue #1010).
+KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
 KEY_MODIFIERS = "modifiers"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"

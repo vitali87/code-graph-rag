@@ -22,8 +22,17 @@ class RustHandler(BaseLanguageHandler):
     def extract_decorators(self, node: ASTNode) -> list[str]:
         outer_decorators: list[str] = []
         sibling = node.prev_named_sibling
-        while sibling and sibling.type == cs.TS_RS_ATTRIBUTE_ITEM:
-            if attr_text := safe_decode_text(sibling):
+        # Doc comments are named siblings that may sit BETWEEN an attribute
+        # and its item (`#[cfg(test)]` above `/// docs` above `mod m;` is
+        # legal and the attribute still applies), so the walk skips them
+        # rather than stopping.
+        while sibling and sibling.type in (
+            cs.TS_RS_ATTRIBUTE_ITEM,
+            *cs.RS_COMMENT_TYPES,
+        ):
+            if sibling.type == cs.TS_RS_ATTRIBUTE_ITEM and (
+                attr_text := safe_decode_text(sibling)
+            ):
                 outer_decorators.append(attr_text)
             sibling = sibling.prev_named_sibling
 

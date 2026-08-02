@@ -714,7 +714,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, end_line: int?, decorators: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,

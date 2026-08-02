@@ -2,10 +2,12 @@
 
 The attribute sits on the `mod NAME;` declaration in the declaring file,
 while the Module node is minted from the target file itself, so nothing
-recorded the gate (issue #1010). Parse time now merges the attribute onto
-the TARGET module's decorators: bodyless declarations resolve to the
-declared file module (siblings of an entry file, children elsewhere),
-bodied inline mods to their own inline node.
+recorded the gate (issue #1010). Parse time records the gate on the
+DECLARING file's own Module node as target-qn candidates (a property on
+the target's node would be erased whenever an incremental run re-parses
+the target file alone), resolved through the same relative-path machinery
+`self::` use paths take. Bodied inline mods carry their attributes on
+their own inline node.
 """
 
 from pathlib import Path
@@ -18,23 +20,30 @@ from codebase_rag.tests.test_rust_crate_path_trait_linking import (
 )
 
 
-def _module_decorators(mock_ingestor: MagicMock, qn: str) -> list[str]:
-    decorators: list[str] = []
+def _module_prop(mock_ingestor: MagicMock, qn: str, key: str) -> list[str]:
+    values: list[str] = []
     for call in mock_ingestor.ensure_node_batch.call_args_list:
         label, props = call.args
         if label != cs.NodeLabel.MODULE or props.get(cs.KEY_QUALIFIED_NAME) != qn:
             continue
-        value = props.get(cs.KEY_DECORATORS)
+        value = props.get(key)
         if isinstance(value, list):
-            decorators.extend(value)
-    return decorators
+            values.extend(value)
+    return values
 
 
-def test_gate_on_bodyless_declaration_marks_entry_sibling_module(
+def _declared_gates(mock_ingestor: MagicMock, declaring_qn: str) -> list[str]:
+    return _module_prop(mock_ingestor, declaring_qn, cs.KEY_RUST_CFG_TEST_MODS)
+
+
+def test_gate_on_bodyless_declaration_targets_entry_sibling_module(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # The issue's repro: lib.rs declares `#[cfg(test)] mod testutil;` and
-    # testutil.rs keys as the entry file's qn sibling.
+    # testutil.rs keys as the entry file's qn sibling. The record lives on
+    # the DECLARING module's node; the target's own node stays untouched
+    # (an incremental re-parse of testutil.rs re-mints it, so anything
+    # merged there would be silently erased).
     project = temp_repo / "rs_cfgtest_sibling"
     _write(
         project,
@@ -49,11 +58,17 @@ def test_gate_on_bodyless_declaration_marks_entry_sibling_module(
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
-    decorators = _module_decorators(mock_ingestor, "rs_cfgtest_sibling.src.testutil")
-    assert "#[cfg(test)]" in decorators, decorators
+    gates = _declared_gates(mock_ingestor, "rs_cfgtest_sibling.src.lib")
+    assert "rs_cfgtest_sibling.src.testutil" in gates, gates
+    assert (
+        _module_prop(
+            mock_ingestor, "rs_cfgtest_sibling.src.testutil", cs.KEY_DECORATORS
+        )
+        == []
+    )
 
 
-def test_gate_on_bodyless_declaration_marks_child_of_plain_file(
+def test_gate_on_bodyless_declaration_targets_child_of_plain_file(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # A non-entry file's submodules nest under its qn.
@@ -69,15 +84,142 @@ def test_gate_on_bodyless_declaration_marks_child_of_plain_file(
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
-    decorators = _module_decorators(mock_ingestor, "rs_cfgtest_child.src.util.helpers")
-    assert "#[cfg(test)]" in decorators, decorators
+    gates = _declared_gates(mock_ingestor, "rs_cfgtest_child.src.util")
+    assert "rs_cfgtest_child.src.util.helpers" in gates, gates
+
+
+def test_gate_in_non_root_main_file_stays_on_its_own_child(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A plain module file NAMED main.rs is not a crate root: its declared
+    # submodules nest under it. The gate must land on cli.main.inner and
+    # never on the unrelated production sibling cli.inner.
+    project = temp_repo / "rs_cfgtest_collide"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_cfgtest_collide"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod cli;\n",
+            "src/cli/mod.rs": "pub mod main;\npub mod inner;\n",
+            "src/cli/main.rs": "#[cfg(test)]\nmod inner;\n\npub fn run() -> i32 {\n    1\n}\n",
+            "src/cli/main/inner.rs": "pub(crate) fn fixture() -> i32 {\n    7\n}\n",
+            "src/cli/inner.rs": "pub fn production_helper() -> i32 {\n    3\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    gates = _declared_gates(mock_ingestor, "rs_cfgtest_collide.src.cli.main")
+    assert "rs_cfgtest_collide.src.cli.main.inner" in gates, gates
+    assert "rs_cfgtest_collide.src.cli.inner" not in gates, gates
+
+
+def test_gate_in_explicit_manifest_target_attaches_beside_it(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An explicit `[[bin]] path = "src/tool.rs"` target is a crate root:
+    # its declared submodules sit beside it, exactly as its crate:: paths
+    # attach.
+    project = temp_repo / "rs_cfgtest_bin"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_cfgtest_bin"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "tool"\npath = "src/tool.rs"\n'
+            ),
+            "src/tool.rs": (
+                "#[cfg(test)]\nmod support;\n\nfn main() {\n    let _ = 1;\n}\n"
+            ),
+            "src/support.rs": "pub(crate) fn fixture() -> i32 {\n    7\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    gates = _declared_gates(mock_ingestor, "rs_cfgtest_bin.src.tool")
+    assert "rs_cfgtest_bin.src.support" in gates, gates
+
+
+def test_gate_on_bodyless_declaration_inside_inline_mod(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A declaration nested in an inline mod records both spellings the qn
+    # scheme can produce (the file-derived child and the inline-nested
+    # chain); at most one names a real module (E0428), and dead-code keeps
+    # only candidates that do.
+    project = temp_repo / "rs_cfgtest_chain"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_cfgtest_chain"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "pub mod outer {\n    #[cfg(test)]\n    pub mod helpers;\n}\n"
+            ),
+            "src/outer/helpers.rs": "pub(crate) fn fixture() -> i32 {\n    7\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    gates = _declared_gates(mock_ingestor, "rs_cfgtest_chain.src.lib")
+    assert "rs_cfgtest_chain.src.outer.helpers" in gates, gates
+
+
+def test_gate_survives_interleaved_doc_comment(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A doc comment between the attribute and the declaration is legal and
+    # does not detach the gate.
+    project = temp_repo / "rs_cfgtest_doc"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_cfgtest_doc"\nversion = "0.1.0"\n',
+            "src/lib.rs": (
+                "#[cfg(test)]\n/// Test-only helpers.\nmod testutil;\n\n"
+                "pub fn add() -> i32 {\n    1\n}\n"
+            ),
+            "src/testutil.rs": "pub(crate) fn fixture() -> i32 {\n    7\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    gates = _declared_gates(mock_ingestor, "rs_cfgtest_doc.src.lib")
+    assert "rs_cfgtest_doc.src.testutil" in gates, gates
+
+
+def test_path_attribute_declaration_mints_no_orphan_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A #[path]-redirected target lands at a qn the scheme cannot predict:
+    # the recorded candidate names no real module and stays inert, and no
+    # node is minted for it (the fixture audit rejects orphans).
+    project = temp_repo / "rs_cfgtest_pathattr"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_cfgtest_pathattr"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": (
+                "#[cfg(test)]\n"
+                '#[path = "support/helpers.rs"]\n'
+                "mod helpers;\n\n"
+                "pub fn add() -> i32 {\n    1\n}\n"
+            ),
+            "src/support/helpers.rs": "pub(crate) fn fixture() -> i32 {\n    7\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    gates = _declared_gates(mock_ingestor, "rs_cfgtest_pathattr.src.lib")
+    assert "rs_cfgtest_pathattr.src.helpers" in gates, gates
 
 
 def test_gate_on_bodied_inline_module_marks_its_own_node(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # An inline gated mod under a NON-test name records the gate on its
-    # inline Module node (the `tests` spelling is already name-matched).
+    # An inline gated mod under a NON-test name records its FULL attribute
+    # list on its inline Module node (the `tests` spelling is already
+    # name-matched).
     project = temp_repo / "rs_cfgtest_inline"
     _write(
         project,
@@ -85,6 +227,7 @@ def test_gate_on_bodied_inline_module_marks_its_own_node(
             "Cargo.toml": '[package]\nname = "rs_cfgtest_inline"\nversion = "0.1.0"\n',
             "src/lib.rs": (
                 "#[cfg(test)]\n"
+                "#[allow(dead_code)]\n"
                 "mod checks {\n"
                 "    pub fn fixture() -> i32 {\n        7\n    }\n"
                 "}\n\n"
@@ -94,8 +237,11 @@ def test_gate_on_bodied_inline_module_marks_its_own_node(
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
-    decorators = _module_decorators(mock_ingestor, "rs_cfgtest_inline.src.lib.checks")
+    decorators = _module_prop(
+        mock_ingestor, "rs_cfgtest_inline.src.lib.checks", cs.KEY_DECORATORS
+    )
     assert "#[cfg(test)]" in decorators, decorators
+    assert "#[allow(dead_code)]" in decorators, decorators
 
 
 def test_ungated_declarations_carry_no_gate(
@@ -112,4 +258,7 @@ def test_ungated_declarations_carry_no_gate(
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
-    assert _module_decorators(mock_ingestor, "rs_cfgtest_none.src.util") == []
+    assert _declared_gates(mock_ingestor, "rs_cfgtest_none.src.lib") == []
+    assert (
+        _module_prop(mock_ingestor, "rs_cfgtest_none.src.util", cs.KEY_DECORATORS) == []
+    )
