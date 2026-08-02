@@ -173,6 +173,44 @@ def test_slice_param_types_closure_param(
     assert (f"{base}.sum.sum", f"{base}.types.Worker.run") in calls, calls
 
 
+def test_collected_struct_literals_type_the_collection(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # ripgrep's actual shape: `let workers: Vec<_> = ...map(|s| Worker
+    # { .. }).collect();` — the annotation is inferred, so the element
+    # comes from the collect chain's map closure returning a struct
+    # literal. The later adaptor over `workers` then types its parameter.
+    project = temp_repo / "rs_ic_collect"
+    _write(
+        project,
+        {
+            "Cargo.toml": _CARGO,
+            "src/lib.rs": "pub mod types;\npub mod pool;\n",
+            "src/types.rs": _WORKER,
+            "src/pool.rs": (
+                "use crate::types::Worker;\n\n"
+                "fn run_later<F: Fn() -> i32>(f: F) -> i32 {\n    f()\n}\n\n"
+                "pub fn drive(ids: Vec<i32>) -> Vec<i32> {\n"
+                "    let workers: Vec<_> = ids\n"
+                "        .into_iter()\n"
+                "        .map(|id| Worker { id })\n"
+                "        .collect();\n"
+                "    workers\n"
+                "        .into_iter()\n"
+                "        .map(|worker| run_later(|| worker.run()))\n"
+                "        .collect()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_ic_collect.src"
+    assert (f"{base}.pool.drive", f"{base}.types.Worker.run") in calls, calls
+    assert (f"{base}.pool.drive", f"{base}.types.Decoy.run") not in calls, calls
+
+
 def test_annotated_closure_param_uses_its_annotation(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
