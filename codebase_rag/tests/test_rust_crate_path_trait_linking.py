@@ -5625,3 +5625,239 @@ def test_build_script_declarations_anchor_its_modules(
     calls = _calls(mock_ingestor)
     assert (f"{base}.helper.read", f"{base}.build.real_fn") in calls, calls
     assert (f"{base}.helper.read", f"{base}.cli.real_fn") not in calls, calls
+
+
+def test_overridden_build_key_excludes_the_auto_build_file(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # With `[package] build = "gen.rs"` cargo never compiles build.rs at
+    # all (cargo-verified: a garbage build.rs still builds); only the
+    # override is the build script, so a module both declare anchors in
+    # gen's crate.
+    project = temp_repo / "rs_buildkey"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_buildkey"\nversion = "0.1.0"\n'
+                'build = "gen.rs"\n\n'
+                '[[bin]]\nname = "cli"\npath = "cli.rs"\n'
+            ),
+            "gen.rs": (
+                "mod helper;\n\n"
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        111\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn real_fn() -> u32 {\n"
+                "    111\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "build.rs": (
+                "mod helper;\n\n"
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        555\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn real_fn() -> u32 {\n"
+                "    555\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "helper.rs": (
+                "use crate::Cfg;\n"
+                "use crate::real_fn;\n\n"
+                "pub struct A;\n\n"
+                "impl Cfg for A {}\n\n"
+                "pub fn read() -> u32 {\n"
+                "    real_fn()\n"
+                "}\n"
+            ),
+            "cli.rs": "fn main() {}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_buildkey"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.helper.A", f"{base}.gen.Cfg") in implements, implements
+    assert (f"{base}.helper.A", f"{base}.build.Cfg") not in implements, implements
+
+
+def test_trivial_build_script_does_not_block_the_fallback(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A build.rs holding nothing but fn main() declares nothing and can
+    # claim nothing: its empty stem must not disable the explicit-only
+    # fallback (cargo-verified: the bin binds its own inline mod flags,
+    # never the root decoy).
+    project = temp_repo / "rs_wb"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_wb"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "cli.rs"\n'
+            ),
+            "build.rs": "fn main() {}\n",
+            "cli.rs": (
+                '#[path = "q.rs"]\n'
+                "mod renamed;\n\n"
+                "mod flags {\n"
+                "    pub trait Flag {\n"
+                "        fn n(&self) -> u32 {\n"
+                "            111\n"
+                "        }\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "q.rs": (
+                "use crate::flags::Flag;\n\npub struct A;\n\nimpl Flag for A {}\n"
+            ),
+            "flags.rs": (
+                "pub trait Flag {\n    fn n(&self) -> u32 {\n        999\n    }\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_wb"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.q.A", f"{base}.cli.flags.Flag") in implements, implements
+    assert (f"{base}.q.A", f"{base}.flags.Flag") not in implements, implements
+
+
+def test_watch_modify_of_build_script_refreshes_its_declarations(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # build.rs is a cached entry now, so a watch MODIFY must re-read its
+    # declarations like any other entry: moving `mod helper;` from
+    # build.rs to cli.rs moves helper's crate with it.
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_buildstale"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_buildstale"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "cli.rs"\n'
+            ),
+            "build.rs": (
+                "mod helper;\n\n"
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "cli.rs": (
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        2\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "helper.rs": ("use crate::Cfg;\n\npub struct A;\n\nimpl Cfg for A {}\n"),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_buildstale"
+    assert updater.factory.import_processor.import_mapping.get(f"{base}.helper") == {
+        "Cfg": f"{base}.build.Cfg"
+    }
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    (project / "build.rs").write_text(
+        "pub trait Cfg {\n"
+        "    fn v(&self) -> u32 {\n"
+        "        1\n"
+        "    }\n"
+        "}\n\n"
+        "fn main() {}\n",
+        encoding="utf-8",
+    )
+    (project / "cli.rs").write_text(
+        "mod helper;\n\n"
+        "pub trait Cfg {\n"
+        "    fn v(&self) -> u32 {\n"
+        "        2\n"
+        "    }\n"
+        "}\n\n"
+        "fn main() {}\n",
+        encoding="utf-8",
+    )
+    handler.dispatch(FileModifiedEvent(str(project / "build.rs")))
+    handler.dispatch(FileModifiedEvent(str(project / "cli.rs")))
+    handler.dispatch(FileModifiedEvent(str(project / "helper.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.helper")
+    assert mapping == {"Cfg": f"{base}.cli.Cfg"}, mapping
+
+
+def test_unreadable_build_script_keeps_the_phantom(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An unreadable build.rs is a hole like an unreadable lib.rs: the
+    # lone explicit target must not definitively claim a module only the
+    # build script declares.
+    import os
+
+    project = temp_repo / "rs_buildhole"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_buildhole"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "cli.rs"\n'
+            ),
+            "build.rs": (
+                "mod helper;\n\n"
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "cli.rs": (
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        2\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "helper.rs": ("use crate::Cfg;\n\npub struct A;\n\nimpl Cfg for A {}\n"),
+        },
+    )
+    build_rs = project / "build.rs"
+    os.chmod(build_rs, 0)
+    if os.access(build_rs, os.R_OK):
+        os.chmod(build_rs, 0o644)
+        pytest.skip("cannot make files unreadable in this environment")
+    try:
+        create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    finally:
+        os.chmod(build_rs, 0o644)
+
+    base = "rs_buildhole"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.helper.A", f"{base}.cli.Cfg") not in implements, implements

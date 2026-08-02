@@ -400,6 +400,7 @@ class ImportProcessor:
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
         "_rust_explicit_targets",
+        "_rust_auto_build_flags",
         "_rust_inline_scope_keys",
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
@@ -452,6 +453,11 @@ class ImportProcessor:
         # root their own crates wherever they sit, unlike auto-targets
         # found by location alone.
         self._rust_explicit_targets: dict[tuple[str, ...], frozenset[str]] = {}
+        # Whether each package auto-detects build.rs: cargo compiles it
+        # only when [package] build is UNSET (a string names the script
+        # explicitly, false disables it entirely). Filled alongside the
+        # explicit-target parse, cleared with it.
+        self._rust_auto_build_flags: dict[tuple[str, ...], bool] = {}
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
@@ -1107,6 +1113,10 @@ class ImportProcessor:
             return False
         return True
 
+    def _rust_has_auto_build(self, pkg_parts: tuple[str, ...]) -> bool:
+        self._rust_explicit_target_paths(pkg_parts)
+        return self._rust_auto_build_flags.get(pkg_parts, False)
+
     def _rust_explicit_entry_files(self, dir_parts: tuple[str, ...]) -> set[str]:
         # File names of explicit manifest targets that sit DIRECTLY in
         # this directory (their declarations join the entry-declaration
@@ -1157,6 +1167,10 @@ class ImportProcessor:
             build := package.get(cs.RS_MANIFEST_BUILD_KEY), str
         ):
             paths.add(_rust_norm_manifest_path(build))
+        build_value = (
+            package.get(cs.RS_MANIFEST_BUILD_KEY) if isinstance(package, dict) else None
+        )
+        self._rust_auto_build_flags[pkg_parts] = build_value is None
         result = frozenset(paths)
         self._rust_explicit_targets[pkg_parts] = result
         return result
@@ -1273,12 +1287,33 @@ class ImportProcessor:
             # stem can never prove itself the directory's only root
             # (tests/common/mod.rs belongs to whichever sibling declares
             # it; an undeclared module keeps the ambiguity phantom).
+            build_file = f"{cs.RS_BUILD_STEM}{cs.EXT_RS}"
+            build_hole = (
+                cs.PKG_CARGO_TOML in entries
+                and build_file in entries
+                and self._rust_has_auto_build(tuple(dir_parts))
+                and cs.RS_BUILD_STEM not in decls
+            )
             present = sorted(
                 name
                 for name in self._rust_explicit_entry_files(tuple(dir_parts))
                 if name in entries
             )
-            if len(present) == 1 and set(decls) == {present[0][: -len(cs.EXT_RS)]}:
+            # Stems that declare nothing beyond the universal `fn main`
+            # cannot claim any module (a trivial build script), so they
+            # do not block the lone target; an unreadable build.rs is a
+            # hole exactly like an unreadable lib.rs and does.
+            claiming = {
+                stem
+                for stem, (mods, items) in decls.items()
+                if mods or (items - {"main"})
+            }
+            if (
+                not build_hole
+                and len(present) == 1
+                and (stem := present[0][: -len(cs.EXT_RS)]) in decls
+                and claiming <= {stem}
+            ):
                 # A genuinely explicit-only package with a single target
                 # whose declarations actually loaded: fall back to that
                 # stem, or _rust_attach's entry-declaration and
@@ -1290,7 +1325,7 @@ class ImportProcessor:
                 # dangling phantom revives nothing; a definitive wrong
                 # stem suppresses the tie-break too). Multi-target
                 # no-declarer stays genuine ambiguity, likewise phantom.
-                return present[0][: -len(cs.EXT_RS)], True
+                return stem, True
         return "lib", False
 
     def _rust_entry_decls(
@@ -1301,11 +1336,13 @@ class ImportProcessor:
         decls = self._rust_entry_mod_decls.setdefault(key, {})
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
         scan = [cs.LIB_RS, cs.MAIN_RS]
-        if cs.PKG_CARGO_TOML in entries:
+        if cs.PKG_CARGO_TOML in entries and self._rust_has_auto_build(key):
             # build.rs beside the manifest is cargo's fifth auto crate
-            # root; its `mod` declarations anchor its modules in the
-            # build-script crate, and its stem in the map keeps the
-            # explicit-only fallback's lone-stem equality honest.
+            # root, but only while [package] build is UNSET (a string
+            # names the script explicitly and false disables it; either
+            # way cargo never compiles the auto file). Its declarations
+            # anchor its modules in the build-script crate, and its stem
+            # in the map keeps the explicit-only fallback honest.
             scan.append(f"{cs.RS_BUILD_STEM}{cs.EXT_RS}")
         scan.extend(
             sorted(
@@ -2000,6 +2037,7 @@ class ImportProcessor:
         self._rust_dir_listing.clear()
         self._rust_entry_mod_decls.clear()
         self._rust_explicit_targets.clear()
+        self._rust_auto_build_flags.clear()
 
     def refresh_rust_path_caches_for(self, file_path: Path, created: bool) -> None:
         # The realtime watcher re-parses through process_file without
@@ -2027,10 +2065,14 @@ class ImportProcessor:
             dir_parts = directory.relative_to(self.repo_path).parts
         except ValueError:
             return
-        if file_path.name in (
-            cs.LIB_RS,
-            cs.MAIN_RS,
-        ) or file_path.name in self._rust_explicit_entry_files(tuple(dir_parts)):
+        if (
+            file_path.name in (cs.LIB_RS, cs.MAIN_RS)
+            or file_path.name in self._rust_explicit_entry_files(tuple(dir_parts))
+            or (
+                file_path.name == f"{cs.RS_BUILD_STEM}{cs.EXT_RS}"
+                and self._rust_has_auto_build(tuple(dir_parts))
+            )
+        ):
             # File-scoped like the event itself, and REPLACED only on a
             # successful read: a storm can modify the entry and delete it
             # before a sibling re-parses, and an absent stem would send
@@ -2061,6 +2103,7 @@ class ImportProcessor:
             # manifests no longer back, keeping lib/main declarations (and
             # their storm protection) untouched.
             self._rust_explicit_targets.clear()
+            self._rust_auto_build_flags.clear()
             for key, stems in self._rust_entry_mod_decls.items():
                 allowed = {
                     name[: -len(cs.EXT_RS)]
