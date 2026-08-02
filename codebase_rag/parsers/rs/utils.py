@@ -279,6 +279,16 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
             current.type == cs.TS_RS_FUNCTION_ITEM
             or current.type in cs.FQN_RS_SCOPE_TYPES
         ):
+            body = current.child_by_field_name(cs.FIELD_BODY)
+            if (
+                current.type == cs.TS_RS_FUNCTION_ITEM
+                and block is not None
+                and (body is None or block.id != body.id)
+            ):
+                # A use in an INNER block of the fn body is in scope for
+                # that block alone (rustc-verified): store it span-gated
+                # like an initializer-block use, never fn-wide.
+                return block, None, True
             nearest = current
             break
         current = current.parent

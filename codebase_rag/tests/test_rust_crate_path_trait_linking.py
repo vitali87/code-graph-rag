@@ -4624,3 +4624,174 @@ def test_watch_storm_delete_and_restore_of_entry_keeps_sibling_maps(
 
     mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
     assert mapping == expected, mapping
+
+
+def test_watch_create_during_entry_absence_keeps_sibling_maps(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A checkout storm interleaves events: while the entry file is
+    # transiently absent, an unrelated CREATE must not re-observe the
+    # directory and bake the absence into a sibling's crate root. The
+    # CREATE applies its own known delta to the cached listing instead.
+    from watchdog.events import (
+        FileCreatedEvent,
+        FileDeletedEvent,
+        FileModifiedEvent,
+    )
+
+    import realtime_updater
+
+    project = temp_repo / "rs_storm_interleave"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_storm_interleave"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod beta;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/a.rs": (
+                "use crate::beta::helper;\n\npub fn top() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_storm_interleave.src"
+    expected = {"helper": f"{base}.beta.helper"}
+    assert updater.factory.import_processor.import_mapping.get(f"{base}.a") == (
+        expected
+    )
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    lib_rs = project / "src" / "lib.rs"
+    lib_rs.unlink()
+    handler.dispatch(FileDeletedEvent(str(lib_rs)))
+
+    other = project / "src" / "other.rs"
+    other.write_text("pub fn extra() {}\n", encoding="utf-8")
+    handler.dispatch(FileCreatedEvent(str(other)))
+
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "a.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
+    assert mapping == expected, mapping
+
+
+def test_explicit_target_submodules_resolve_beside_the_root(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A crate root resolves `mod sub;` in its CONTAINING directory (the
+    # tests/common.rs idiom; cargo-verified for an explicit
+    # `[[bin]] path = "src/cli.rs"`): crate::sub::f from the root means
+    # src/sub.rs, never a same-named file under src/cli/.
+    project = temp_repo / "rs_binroot_beside"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_binroot_beside"\nversion = "0.1.0"\n\n'
+                '[lib]\npath = "src/lib.rs"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/lib.rs": "pub mod flags;\n",
+            "src/flags.rs": "pub fn noop() {}\n",
+            "src/cli.rs": (
+                "mod sub;\n\nuse crate::sub::f;\n\nfn main() {\n    let _ = f();\n}\n"
+            ),
+            "src/sub.rs": "pub const fn f() -> u32 {\n    7\n}\n",
+            "src/cli/sub.rs": "pub const fn f() -> u32 {\n    9\n}\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_binroot_beside.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.cli")
+    assert mapping == {"f": f"{base}.sub.f"}, mapping
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.cli.main", f"{base}.sub.f") in calls, calls
+
+
+def test_inner_block_use_in_a_fn_scopes_to_its_block(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A use in an INNER block of a fn body is in scope for that block
+    # alone (rustc: x binds delta, y binds beta, J is 21): the call
+    # inside the block binds its use and the call after it binds the
+    # initializer block's, for the qualified and bare shapes alike.
+    project = temp_repo / "rs_inner_use_scope"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_inner_use_scope"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod beta;\npub mod delta;\npub mod a;\npub mod b;\n",
+            "src/beta.rs": (
+                "pub struct T;\n\n"
+                "impl T {\n"
+                "    pub const fn assoc() -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n\n"
+                "pub const fn helper() -> u32 {\n"
+                "    1\n"
+                "}\n"
+            ),
+            "src/delta.rs": (
+                "pub struct T;\n\n"
+                "impl T {\n"
+                "    pub const fn assoc() -> u32 {\n"
+                "        2\n"
+                "    }\n"
+                "}\n\n"
+                "pub const fn helper() -> u32 {\n"
+                "    2\n"
+                "}\n"
+            ),
+            "src/a.rs": (
+                "pub static J: u32 = {\n"
+                "    use crate::beta::T;\n"
+                "    const fn f() -> u32 {\n"
+                "        let x = {\n"
+                "            use crate::delta::T;\n"
+                "            T::assoc()\n"
+                "        };\n"
+                "        let y = T::assoc();\n"
+                "        x * 10 + y\n"
+                "    }\n"
+                "    f()\n"
+                "};\n"
+            ),
+            "src/b.rs": (
+                "pub static K: u32 = {\n"
+                "    use crate::beta::helper;\n"
+                "    const fn g() -> u32 {\n"
+                "        let x = {\n"
+                "            use crate::delta::helper;\n"
+                "            helper()\n"
+                "        };\n"
+                "        let y = helper();\n"
+                "        x * 10 + y\n"
+                "    }\n"
+                "    g()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_inner_use_scope.src"
+    assert (f"{base}.a.f", f"{base}.delta.T.assoc") in calls, calls
+    assert (f"{base}.a.f", f"{base}.beta.T.assoc") in calls, calls
+    assert (f"{base}.b.g", f"{base}.delta.helper") in calls, calls
+    assert (f"{base}.b.g", f"{base}.beta.helper") in calls, calls

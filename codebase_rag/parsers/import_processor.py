@@ -1137,12 +1137,16 @@ class ImportProcessor:
             stem not in cs.RS_ENTRY_STEMS
             and f"{stem}{cs.EXT_RS}"
             in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-            and (
-                self._rust_is_auto_target_dir(dir_parts, stem)
-                or self._rust_is_explicit_target(dir_parts, stem)
-            )
         ):
-            return "file", qn_parts
+            if self._rust_is_auto_target_dir(dir_parts, stem):
+                return "file", qn_parts
+            if self._rust_is_explicit_target(dir_parts, stem):
+                # An explicit manifest target is a crate root like any
+                # entry file: its `mod` declarations resolve in the
+                # CONTAINING directory (the tests/common.rs idiom,
+                # cargo-verified), so it attaches classically with
+                # itself as the definitive entry stem.
+                return "entry", qn_parts
         for i in range(len(dir_parts), -1, -1):
             if i >= 1:
                 name = dir_parts[i - 1]
@@ -1316,6 +1320,12 @@ class ImportProcessor:
                 # An auto-target crate (src/bin/tool.rs): items and
                 # submodules both nest under the entry file's qn.
                 return cs.SEPARATOR_DOT.join([self.project_name, *root_parts, *rest])
+            if kind == "entry":
+                # An explicit manifest target: the root file IS the entry,
+                # so submodule files sit beside it and items nest in it.
+                return self._rust_attach(
+                    root_parts[:-1], root_parts[-1], rest, definitive=True
+                )
             stem, definitive = self._rust_entry_stem(root_parts, module_qn)
             return self._rust_attach(root_parts, stem, rest, definitive)
         if head == cs.KEYWORD_SELF:
@@ -1881,13 +1891,19 @@ class ImportProcessor:
         # converges on the file's return or the next full run, exactly
         # as before the watcher refreshed at all).
         directory = file_path.parent
-        if created:
-            self._rust_dir_listing.pop(str(directory), None)
+        if (
+            created
+            and (cached := self._rust_dir_listing.get(str(directory))) is not None
+        ):
+            # Apply the event's own delta rather than re-observing: during
+            # a storm the filesystem may transiently lack files this event
+            # did not touch, and a re-listing would bake that absence.
+            self._rust_dir_listing[str(directory)] = cached | {file_path.name}
         try:
             dir_parts = directory.relative_to(self.repo_path).parts
         except ValueError:
             return
-        if created or file_path.name in (cs.LIB_RS, cs.MAIN_RS):
+        if file_path.name in (cs.LIB_RS, cs.MAIN_RS):
             self._rust_entry_mod_decls.pop(tuple(dir_parts), None)
         if file_path.name == cs.PKG_CARGO_TOML:
             self._rust_explicit_targets.pop(tuple(dir_parts), None)
