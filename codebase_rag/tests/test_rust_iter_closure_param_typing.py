@@ -11,11 +11,29 @@ so bindings overlay the caller's map span-gated, like match arms.
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+import tree_sitter
+import tree_sitter_rust
+
+from codebase_rag.parsers.rs.type_inference import RustTypeInferenceEngine
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _calls,
     _write,
     create_and_run_updater,
 )
+
+
+@pytest.fixture
+def rust_fn_parser():
+    lang = tree_sitter.Language(tree_sitter_rust.language())
+    parser = tree_sitter.Parser(lang)
+
+    def parse_fn(source: str):
+        tree = parser.parse(source.encode("utf8"))
+        return tree.root_node.children[0]
+
+    return parse_fn
+
 
 _CARGO = '[package]\nname = "rs_iterclosure"\nversion = "0.1.0"\n'
 
@@ -236,3 +254,246 @@ def test_annotated_closure_param_uses_its_annotation(
     calls = _calls(mock_ingestor)
     base = "rs_ic_annot.src"
     assert (f"{base}.gen.consume", f"{base}.types.Worker.run") in calls, calls
+
+
+def test_generic_param_collection_keeps_trie_edge(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `Vec<T>` with T a type parameter: "T" resolves to no registered
+    # class, and a binding to it would let the external-receiver guard
+    # DELETE the edge the trie fallback produces today. Unresolvable
+    # element types must leave the parameter untyped.
+    project = temp_repo / "rs_ic_generic"
+    _write(
+        project,
+        {
+            "Cargo.toml": _CARGO,
+            "src/lib.rs": "pub mod task;\npub mod runner;\n",
+            "src/task.rs": (
+                "pub trait Task {\n    fn execute(&self);\n}\n\n"
+                "pub struct Job;\n\n"
+                "impl Task for Job {\n    fn execute(&self) {}\n}\n"
+            ),
+            "src/runner.rs": (
+                "use crate::task::Task;\n\n"
+                "pub fn run_all<T: Task>(items: Vec<T>) {\n"
+                "    items.iter().for_each(|t| {\n        t.execute();\n    });\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_ic_generic.src"
+    assert (f"{base}.runner.run_all", f"{base}.task.Job.execute") in calls, calls
+
+
+def test_generic_field_collection_keeps_trie_edge(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The generic-element shape on a struct FIELD: `Pool<T> { items:
+    # Vec<T> }` must not bind `T` either.
+    project = temp_repo / "rs_ic_genfield"
+    _write(
+        project,
+        {
+            "Cargo.toml": _CARGO,
+            "src/lib.rs": "pub mod task;\npub mod pool;\n",
+            "src/task.rs": (
+                "pub trait Task {\n    fn execute(&self);\n}\n\n"
+                "pub struct Job;\n\n"
+                "impl Task for Job {\n    fn execute(&self) {}\n}\n"
+            ),
+            "src/pool.rs": (
+                "use crate::task::Task;\n\n"
+                "pub struct Pool<T: Task> {\n    pub items: Vec<T>,\n}\n\n"
+                "impl<T: Task> Pool<T> {\n"
+                "    pub fn drive(&self) {\n"
+                "        self.items.iter().for_each(|t| {\n"
+                "            t.execute();\n        });\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_ic_genfield.src"
+    assert (f"{base}.pool.Pool.drive", f"{base}.task.Job.execute") in calls, calls
+
+
+def test_unresolvable_element_keeps_trie_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `Vec<String>` with a first-party `impl Shout for String` in ANOTHER
+    # module: "String" is a real type but resolves to nothing from the
+    # calling module, so binding it would delete the trie's edges.
+    project = temp_repo / "rs_ic_stdtype"
+    _write(
+        project,
+        {
+            "Cargo.toml": _CARGO,
+            "src/lib.rs": "pub mod ext;\npub mod use_it;\n",
+            "src/ext.rs": (
+                "pub trait Shout {\n    fn shout(&self) -> String;\n}\n\n"
+                "impl Shout for String {\n"
+                "    fn shout(&self) -> String {\n        self.clone()\n    }\n"
+                "}\n"
+            ),
+            "src/use_it.rs": (
+                "use crate::ext::Shout;\n\n"
+                "pub fn all(names: Vec<String>) {\n"
+                "    names.iter().for_each(|n| {\n        n.shout();\n    });\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_ic_stdtype.src"
+    assert (f"{base}.use_it.all", f"{base}.ext.String.shout") in calls, calls
+
+
+def test_nested_fn_let_does_not_leak(temp_repo: Path, mock_ingestor: MagicMock) -> None:
+    # A `let` inside a nested `fn` item shares no scope with the outer
+    # body: its element must not rebind the outer closure's parameter.
+    project = temp_repo / "rs_ic_nestedfn"
+    _write(
+        project,
+        {
+            "Cargo.toml": _CARGO,
+            "src/lib.rs": "pub mod types;\npub mod f;\n",
+            "src/types.rs": _WORKER,
+            "src/f.rs": (
+                "use crate::types::{Decoy, Worker};\n\n"
+                "pub fn go(items: Vec<Decoy>) {\n"
+                "    fn helper() {\n"
+                "        let items: Vec<Worker> = Vec::new();\n"
+                "        let _ = items;\n    }\n"
+                "    helper();\n"
+                "    items.iter().for_each(|x| {\n        x.run();\n    });\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_ic_nestedfn.src"
+    assert (f"{base}.f.go", f"{base}.types.Decoy.run") in calls, calls
+    assert (f"{base}.f.go", f"{base}.types.Worker.run") not in calls, calls
+
+
+def test_later_block_let_does_not_rebind(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A block-scoped `let` written AFTER the adaptor call is not in scope
+    # for it (position and block span both exclude it).
+    project = temp_repo / "rs_ic_laterlet"
+    _write(
+        project,
+        {
+            "Cargo.toml": _CARGO,
+            "src/lib.rs": "pub mod types;\npub mod f;\n",
+            "src/types.rs": _WORKER,
+            "src/f.rs": (
+                "use crate::types::{Decoy, Worker};\n\n"
+                "pub fn go(items: Vec<Decoy>) {\n"
+                "    items.iter().for_each(|x| {\n        x.run();\n    });\n"
+                "    {\n"
+                "        let items: Vec<_> =\n"
+                "            (0..3).map(|n| Worker { id: n }).collect();\n"
+                "        let _ = items;\n    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_ic_laterlet.src"
+    assert (f"{base}.f.go", f"{base}.types.Decoy.run") in calls, calls
+    assert (f"{base}.f.go", f"{base}.types.Worker.run") not in calls, calls
+
+
+def test_filter_hop_preserves_element(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `filter` between the collection and the binding adaptor preserves
+    # the element.
+    project = temp_repo / "rs_ic_filterhop"
+    _write(
+        project,
+        {
+            "Cargo.toml": _CARGO,
+            "src/lib.rs": "pub mod types;\npub mod f;\n",
+            "src/types.rs": _WORKER,
+            "src/f.rs": (
+                "use crate::types::Worker;\n\n"
+                "pub fn go(items: Vec<Worker>) -> Vec<i32> {\n"
+                "    items\n"
+                "        .iter()\n"
+                "        .filter(|w| true)\n"
+                "        .map(|worker| worker.run())\n"
+                "        .collect()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_ic_filterhop.src"
+    assert (f"{base}.f.go", f"{base}.types.Worker.run") in calls, calls
+
+
+def test_result_annotation_blocks_collect_inference(rust_fn_parser) -> None:
+    # `let v: Result<Vec<Worker>, ()> = ...collect();` names a NON
+    # sequence: the value a later `v.map(|list| ...)` closure receives is
+    # the whole Vec, so the collect chain must not type v's element.
+    fn = rust_fn_parser(
+        "pub fn go(xs: Vec<i32>) {\n"
+        "    let v: Result<Vec<Worker>, ()> ="
+        " xs.iter().map(|x| Worker { id: 1 }).collect();\n"
+        "    let _ = v;\n"
+        "}\n"
+    )
+    entries = RustTypeInferenceEngine().collect_element_entries(fn)
+    assert not [e for e in entries if e[0] == "v"], entries
+
+
+def test_trailing_comment_keeps_struct_literal(rust_fn_parser) -> None:
+    # A trailing comment in the map closure's block must not hide the
+    # struct literal from the collect-chain inference.
+    fn = rust_fn_parser(
+        "pub fn go(xs: Vec<i32>) {\n"
+        "    let v: Vec<_> = xs\n"
+        "        .iter()\n"
+        "        .map(|x| {\n"
+        "            Worker { id: 1 } // build it\n"
+        "        })\n"
+        "        .collect();\n"
+        "    let _ = v;\n"
+        "}\n"
+    )
+    entries = RustTypeInferenceEngine().collect_element_entries(fn)
+    assert [e for e in entries if e[0] == "v" and e[1] == "Worker"], entries
+
+
+def test_turbofish_collect_types_element(rust_fn_parser) -> None:
+    # The turbofish spelling `collect::<Vec<_>>()` types the element from
+    # the mapped struct literal; a typed `collect::<Vec<Worker>>()` reads
+    # it straight from the turbofish.
+    fn = rust_fn_parser(
+        "pub fn go(xs: Vec<i32>) {\n"
+        "    let a = xs.iter().map(|x| Worker { id: 1 }).collect::<Vec<_>>();\n"
+        "    let b = xs.iter().map(make).collect::<Vec<Worker>>();\n"
+        "    let _ = (a, b);\n"
+        "}\n"
+    )
+    entries = RustTypeInferenceEngine().collect_element_entries(fn)
+    assert [e for e in entries if e[0] == "a" and e[1] == "Worker"], entries
+    assert [e for e in entries if e[0] == "b" and e[1] == "Worker"], entries
