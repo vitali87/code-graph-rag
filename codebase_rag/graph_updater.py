@@ -723,6 +723,17 @@ class GraphUpdater:
         if inherits:
             logger.info("Resolved {} deferred C++ inheritance bases", inherits)
 
+        # IMPORTS edges and the Rust sub-scope arbitration verify against
+        # every module qn this run produced (files, inline modules,
+        # rehydrated unchanged files); an internal target that resolves
+        # nowhere emits no edge.
+        known_module_paths = self.known_module_paths()
+
+        # Inline-mod import maps commit BEFORE the deferred inheritance
+        # pass below: it re-resolves module-anchored trait guesses through
+        # them.
+        self.factory.import_processor.finalise_rust_mod_scope_uses(known_module_paths)
+
         # Same reasoning for every other language: parents resolve against
         # the full registry (including rehydrated definitions), and an
         # unresolvable parent emits no edge instead of a phantom.
@@ -739,19 +750,6 @@ class GraphUpdater:
         if module_impls:
             logger.info("Resolved {} C++20 module implementation links", module_impls)
 
-        # IMPORTS edges verify against every module qn this run produced
-        # (files, inline modules, rehydrated unchanged files); an internal
-        # target that resolves nowhere emits no edge.
-        known_module_paths: dict[str, str] = {
-            str(qn): path.as_posix()
-            for qn, path in (
-                self.factory.definition_processor.module_qn_to_file_path.items()
-            )
-        }
-        for qn in self.factory.definition_processor.declared_module_qns:
-            known_module_paths.setdefault(qn, "")
-        for qn in self._rehydrated_module_qns:
-            known_module_paths.setdefault(qn, "")
         imports_emitted = self.factory.import_processor.flush_deferred_import_edges(
             known_module_paths
         )
@@ -1286,6 +1284,22 @@ class GraphUpdater:
         if restored:
             logger.info(ls.INCREMENTAL_REBUILD_INBOUND, count=restored)
 
+    def known_module_paths(self) -> dict[str, str]:
+        # Module qns this updater has produced, mapped to file paths;
+        # declared and rehydrated qns carry no path and never win the
+        # Rust sub-scope ownership arbitration.
+        known: dict[str, str] = {
+            str(qn): path.as_posix()
+            for qn, path in (
+                self.factory.definition_processor.module_qn_to_file_path.items()
+            )
+        }
+        for qn in self.factory.definition_processor.declared_module_qns:
+            known.setdefault(qn, "")
+        for qn in self._rehydrated_module_qns:
+            known.setdefault(qn, "")
+        return known
+
     def remove_file_from_state(self, file_path: Path) -> None:
         logger.debug(ls.REMOVING_STATE, path=file_path)
 
@@ -1303,6 +1317,22 @@ class GraphUpdater:
         self.factory.import_processor.commonjs_direct_exports.pop(
             module_qn_prefix, None
         )
+        # A deleted file is no writer: its mod-scope registry entries must
+        # not weigh in the next arbitration (a modified file re-drops this
+        # in its own re-parse, harmlessly twice). The drop keys on the qn
+        # the parse actually RECORDED, which can differ from any path-derived
+        # form twice over: mod.rs collapses to its directory, and
+        # _disambiguate_module_qn suffixes a qn whose bare form an
+        # earlier-parsed file already owns (src/a/mod.rs beside src/a.rs or
+        # src/a.py records as ...a.rs). Recomputing from the path would wipe
+        # the bare qn's real owner, which this event does not re-parse, while
+        # the deleted file's own writers kept voting forever. A Rust file
+        # with no recorded qn was never parsed and owns no import state.
+        if file_path.suffix == cs.EXT_RS:
+            qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+            for qn, path in qn_to_path.items():
+                if path == file_path:
+                    self.factory.import_processor.drop_rust_module_import_state(qn)
 
         qns_to_remove = set()
 
@@ -1622,6 +1652,7 @@ class GraphUpdater:
         return eligible
 
     def _process_files(self, force: bool = False) -> None:
+        self.factory.import_processor.reset_rust_path_caches()
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}

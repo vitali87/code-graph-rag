@@ -277,6 +277,22 @@ class CallResolver:
             return self.function_registry[method_qn], method_qn
         return self._resolve_inherited_method(class_qn, method_name)
 
+    def reset_resolution_caches(self) -> None:
+        # The watch pass deletes EVERY CALLS edge and recomputes them
+        # against re-parsed state; answers cached from the previous pass
+        # (and wildcard entries keyed by dict id, which recycles) must
+        # not survive into the recompute. The derived-structure memos
+        # reset with them: a second trait implementer created mid-watch
+        # must retire the sole-implementer companion edge, exactly as a
+        # fresh full run would.
+        self._simple_resolution_cache.clear()
+        self._wildcard_cache.clear()
+        self._interface_impl_cache = None
+        self._protocol_impl_cache = None
+        self._subclass_map_cache = None
+        self._protocol_classes_cache = None
+        self._struct_impl_cache.clear()
+
     def resolve_function_call(
         self,
         call_name: str,
@@ -285,6 +301,7 @@ class CallResolver:
         class_context: str | None = None,
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> tuple[str, str] | None:
         return self._redirect_protocol_method(
             self._resolve_function_call(
@@ -294,6 +311,7 @@ class CallResolver:
                 class_context,
                 caller_qn,
                 language,
+                call_point,
             )
         )
 
@@ -680,7 +698,47 @@ class CallResolver:
         class_context: str | None = None,
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> tuple[str, str] | None:
+        # A Rust call sited inside a const/static initializer block binds
+        # the block's own use before ANY other probe, including the
+        # enclosing-scope and same-module ones below: a use shadows outer
+        # items for the remainder of its block (rustc-verified), so even
+        # the file's own same-named item loses to it. A nested fn's own
+        # body use still outranks the block, and a containing block that
+        # declares the name itself opts out entirely (the probes below
+        # find its flat-registered item, except where the enclosing fn's
+        # own body use shadows it there, issue #1026). A `::`-qualified
+        # first segment
+        # bound by the block (`T::assoc()` under `use crate::beta::T`)
+        # resolves through a map holding just that binding.
+        if (
+            language == cs.SupportedLanguage.RUST
+            and caller_qn
+            and cs.SEPARATOR_DOT not in call_name
+        ):
+            first = call_name.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+            if block_hit := self._rust_block_import_at(module_qn, first, call_point):
+                block_target, defers = block_hit
+                # A nested fn's own body use outranks the block for BOTH
+                # shapes: the bare call and the `First::rest` path whose
+                # first segment it binds (`use crate::delta::T; T::assoc()`).
+                if defers and (
+                    strong := self.import_processor.rust_fn_scope_imports.get(
+                        caller_qn, {}
+                    ).get(first)
+                ):
+                    block_target = strong
+                if first != call_name:
+                    return self._try_resolve_qualified_call(
+                        call_name,
+                        {first: block_target},
+                        module_qn,
+                        local_var_types,
+                        language,
+                    )
+                return self._follow_rust_scope_target(block_target)
+
         # Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # before the module-keyed cache/trie, which would otherwise return a sibling
         # scope's same-named nested function.
@@ -703,6 +761,28 @@ class CallResolver:
             language == cs.SupportedLanguage.DART
             and class_context in self.type_inference.dart_extends_type_args
         )
+        # A Rust caller nested below the file module (an inline `mod` block)
+        # or holding function-body `use` declarations of its own resolves
+        # caller-dependently: its scope's imports shadow file items, so the
+        # file-keyed cache would serve it another caller's answer. A file
+        # holding initializer-block uses resolves SITE-dependently (the
+        # block's use answers only calls inside its span), so no caller in
+        # it may share cached answers either.
+        if (
+            language == cs.SupportedLanguage.RUST
+            and caller_qn
+            and (
+                module_qn in self.import_processor.rust_block_scope_imports
+                or (
+                    caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+                    and (
+                        cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
+                        or caller_qn in self.import_processor.rust_fn_scope_imports
+                    )
+                )
+            )
+        ):
+            use_cache = False
         if use_cache:
             cache_key = (call_name, module_qn)
             if cache_key in self._simple_resolution_cache:
@@ -730,7 +810,33 @@ class CallResolver:
                 class_context,
                 caller_qn,
                 language,
+                call_point,
             )
+
+        # A Rust caller INSIDE an inline `mod` block sees that module's own
+        # items and imports first (its `use` shadows the enclosing file's
+        # items for code within the block). Caller-dependent, so never
+        # cached under the file-scoped key.
+        if language == cs.SupportedLanguage.RUST and caller_qn:
+            scoped = self._try_resolve_rust_inline_scope(
+                call_name, module_qn, caller_qn
+            )
+            if scoped is not None:
+                return scoped[0]
+
+        # Rust name resolution prefers items defined in the module itself: a
+        # glob import NEVER shadows a local item, and a MODULE-scoped named
+        # use colliding with one is a compile error (E0255). A use inside a
+        # function body DOES shadow module items, but it is stored under the
+        # function's qn and already answered by the scope walk above, so at
+        # this point same-module wins. Elsewhere imports shadow module-level
+        # definitions.
+        if language == cs.SupportedLanguage.RUST and (
+            result := self._try_resolve_same_module(call_name, module_qn)
+        ):
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = result
+            return result
 
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language
@@ -1174,6 +1280,115 @@ class CallResolver:
                 logger.debug(ls.CALL_WILDCARD, call_name=call_name, qn=wildcard_qn)
                 return self.function_registry[wildcard_qn], wildcard_qn
         return None
+
+    def _try_resolve_rust_inline_scope(
+        self, call_name: str, module_qn: str, caller_qn: str
+    ) -> tuple[tuple[str, str] | None] | None:
+        """Resolve a bare call through the caller's enclosing Rust scopes.
+
+        Probes the caller's OWN body uses first (kept in a separate map:
+        `mod run` and `fn run` occupy different Rust namespaces but share
+        one qn string, so the module-keyed map must never answer for the
+        function itself), then walks the enclosing inline modules down to
+        the file module, checking each scope's own items, the caller's
+        weak entries (its enclosing mod's use fanned out per function, in
+        case the mod's shared key was arbitrated to a twin), and the
+        scope's import map. Initializer-block uses are served earlier, by
+        the site-gated probe in _resolve_function_call. Returns a 1-tuple
+        so a deliberate drop (the scope imports the name from OUTSIDE the
+        indexed first-party graph) is distinguishable from "no scope
+        claims it".
+        """
+        if (
+            cs.SEPARATOR_DOT in call_name
+            or cs.SEPARATOR_DOUBLE_COLON in call_name
+            or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+        ):
+            return None
+        import_mapping = self.import_processor.import_mapping
+        target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
+            call_name
+        )
+        if target is None:
+            weak = self.import_processor.rust_fn_scope_mod_imports.get(
+                caller_qn, {}
+            ).get(call_name)
+            scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            while len(scope) > len(module_qn):
+                local_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
+                if (local_type := self.function_registry.get(local_qn)) is not None:
+                    return ((local_type, local_qn),)
+                target = (
+                    weak
+                    if weak is not None
+                    else import_mapping.get(scope, {}).get(call_name)
+                )
+                if target is not None:
+                    break
+                scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        if target is None:
+            return None
+        return (self._follow_rust_scope_target(target),)
+
+    def _follow_rust_scope_target(self, target: str) -> tuple[str, str] | None:
+        # An entry-file `pub use` re-export maps the name to the
+        # re-exporting module's qn, not the defining one; hop through
+        # that module's own import map before concluding the target
+        # is outside the graph (None: a deliberate drop, never a
+        # fall-through to name-trie guessing).
+        import_mapping = self.import_processor.import_mapping
+        seen = {target}
+        while (target_type := self.function_registry.get(target)) is None:
+            owner, _, item = target.rpartition(cs.SEPARATOR_DOT)
+            hop = import_mapping.get(owner, {}).get(item)
+            if hop is None or hop in seen:
+                break
+            seen.add(hop)
+            target = hop
+        if target_type is not None:
+            return target_type, target
+        return None
+
+    def _rust_block_import_at(
+        self, module_qn: str, name: str, call_point: int | None
+    ) -> tuple[str, bool] | None:
+        """The innermost initializer-block use serving `name` at this site.
+
+        Returns (resolved target, defers_to_fn), or None when no block
+        serves it: the site lies outside every block span, a nested mod
+        boundary intervenes (its members never see the block's use), or
+        a containing nested block declares the name as its own direct
+        item (the local item wins; the ordinary scope probes find it
+        unless the enclosing fn's own body use shadows it there, issue
+        #1026).
+        defers_to_fn marks a site inside a nested fn, whose own body
+        uses outrank the block's while a use-less fn still inherits it
+        (rustc-verified).
+        """
+        if call_point is None:
+            return None
+        blocks = self.import_processor.rust_block_scope_imports.get(module_qn)
+        if not blocks:
+            return None
+        best_size: int | None = None
+        result: tuple[str, bool] | None = None
+        for start, end, imports, mod_holes, fn_holes, item_scopes in blocks:
+            if not (start <= call_point < end) or name not in imports:
+                continue
+            if any(s <= call_point < e for s, e in mod_holes):
+                continue
+            if any(
+                s <= call_point < e and name in names for s, e, names in item_scopes
+            ):
+                continue
+            size = end - start
+            if best_size is None or size < best_size:
+                best_size = size
+                result = (
+                    imports[name],
+                    any(s <= call_point < e for s, e in fn_holes),
+                )
+        return result
 
     def _try_resolve_same_module(
         self, call_name: str, module_qn: str
@@ -1821,6 +2036,7 @@ class CallResolver:
         class_context: str | None = None,
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> str | None:
         # Type of a chained receiver expression like `c.Root()` using the shared
         # method_return_types map: the base is a typed local (`c` -> Command), and
@@ -1841,9 +2057,15 @@ class CallResolver:
             # (`parser(ia, cb).parse()`, C++): type it from the factory's recorded
             # return type. Other paren bases stay unresolved.
             current_type = self._infer_rust_assoc_base_type(
-                base, module_qn
+                base, module_qn, call_point
             ) or self._infer_call_base_type(
-                base, module_qn, local_var_types, class_context, caller_qn, language
+                base,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+                call_point,
             )
         elif local_var_types:
             current_type = local_var_types.get(base)
@@ -1877,6 +2099,7 @@ class CallResolver:
         class_context: str | None,
         caller_qn: str | None,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> str | None:
         # `parser(ia, cb).parse()`: the receiver is a bare-identifier factory call.
         # Resolve the callee to its function/method qn and return its recorded
@@ -1900,7 +2123,13 @@ class CallResolver:
                 return None
             callee = callee.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
         resolved = self.resolve_function_call(
-            callee, module_qn, local_var_types, class_context, caller_qn, language
+            callee,
+            module_qn,
+            local_var_types,
+            class_context,
+            caller_qn,
+            language,
+            call_point,
         )
         if resolved is not None:
             return_type = self.type_inference.method_return_types.get(resolved[1])
@@ -1941,7 +2170,9 @@ class CallResolver:
         matches.sort(key=lambda qn: (len(qn), qn))
         return matches[0]
 
-    def _infer_rust_assoc_base_type(self, base: str, module_qn: str) -> str | None:
+    def _infer_rust_assoc_base_type(
+        self, base: str, module_qn: str, call_point: int | None = None
+    ) -> str | None:
         # `Ping::new(msg)` -> the return type recorded for `Ping::new` (Ping).
         # The callee is the text before the first paren; only a `::`-rooted
         # associated call (`Type::assoc`) is handled.
@@ -1955,10 +2186,37 @@ class CallResolver:
         # associated call resolves; only the trailing segment is the method.
         type_name = cs.SEPARATOR_DOUBLE_COLON.join(segments[:-1])
         method = segments[-1]
-        class_qn = self._chain_class_qn(type_name, module_qn)
-        return self.type_inference.method_return_types.get(
+        # A bare type name at a site inside an initializer block resolves
+        # through the block's own use, not the file's (the receiver must
+        # bind through the same scope its callee did).
+        if cs.SEPARATOR_DOUBLE_COLON not in type_name and (
+            block_hit := self._rust_block_import_at(module_qn, type_name, call_point)
+        ):
+            class_qn = (
+                self._resolve_class_qn_from_type(
+                    type_name, {type_name: block_hit[0]}, module_qn
+                )
+                or type_name
+            )
+        else:
+            class_qn = self._chain_class_qn(type_name, module_qn)
+        ret = self.type_inference.method_return_types.get(
             f"{class_qn}{cs.SEPARATOR_DOT}{method}"
         )
+        # The recorded return type is the bare source name; downstream
+        # hops remap it through the FILE's imports, so at a block-gated
+        # site qualify it through the block's binding here instead.
+        if (
+            ret is not None
+            and cs.SEPARATOR_DOT not in ret
+            and cs.SEPARATOR_DOUBLE_COLON not in ret
+            and (ret_hit := self._rust_block_import_at(module_qn, ret, call_point))
+        ):
+            return (
+                self._resolve_class_qn_from_type(ret, {ret: ret_hit[0]}, module_qn)
+                or ret
+            )
+        return ret
 
     def _is_method_chain(self, call_name: str) -> bool:
         if cs.CHAR_PAREN_OPEN not in call_name or cs.CHAR_PAREN_CLOSE not in call_name:
@@ -1977,6 +2235,7 @@ class CallResolver:
         class_context: str | None = None,
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> tuple[str, str] | None:
         match = _CHAINED_METHOD_PATTERN.search(call_name)
         if not match:
@@ -1997,6 +2256,7 @@ class CallResolver:
                 class_context,
                 caller_qn,
                 language,
+                call_point,
             )
         )
         if object_type:

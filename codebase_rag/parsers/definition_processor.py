@@ -381,6 +381,17 @@ class DefinitionProcessor(
                 queries,
                 combined_captures=combined_captures,
             )
+            if language == cs.SupportedLanguage.RUST:
+                # Function-body uses key on the REGISTERED qn of their
+                # enclosing function, knowable only now that dedup variants
+                # (`natural@<line>`) have been handed out.
+                self.import_processor.finalise_rust_function_scope_uses(
+                    module_qn, self.function_locations
+                )
+                # Inline-mod maps were visible to this file's own impl
+                # ingestion above; retract them until the flush-time
+                # arbitration decides key ownership across all files.
+                self.import_processor.retract_rust_mod_scope_uses(module_qn)
             if language in cs.JS_TS_LANGUAGES:
                 self._ingest_object_literal_methods(
                     root_node, module_qn, language, queries

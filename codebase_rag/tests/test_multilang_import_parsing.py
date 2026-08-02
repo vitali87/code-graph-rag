@@ -157,11 +157,13 @@ fn main() {
         )
         actual_imports = updater.factory.import_processor.import_mapping[test_module]
 
+        # Local (crate::) targets are rewritten to project qns at parse time
+        # (issue #1007); external targets keep their raw `::` path.
         expected = {
             "HashMap": "std::collections::HashMap",
             "fs": "std::fs",
             "io": "std::io",
-            "*crate::utils": "crate::utils",
+            "*crate::utils": f"{project_name}.utils",
             "Map": "std::collections::HashMap",
         }
 
@@ -224,19 +226,23 @@ fn main() {
         )
         actual_imports = updater.factory.import_processor.import_mapping[test_module]
 
+        # External targets keep their raw `::` path; crate::/super::/self::
+        # targets are rewritten to project qns at parse time (issue #1007).
+        # The file module is <project>.test, so one super:: reaches the
+        # project root and further supers floor there.
         expected = {
             "Read": "std::io::Read",
             "Write": "std::io::Write",
             "File": "std::fs::File",
             "Sio": "std::io",
             "ReadTrait": "std::io::Read",
-            "module": "super::super::module",
-            "module1": "crate::module1",
-            "submod1": "crate::module2::submod1",
-            "submod2": "crate::module2::submod2",
-            "local_module": "self::local_module",
-            "parent_module": "super::parent_module",
-            "self": "super",
+            "module": f"{project_name}.module",
+            "module1": f"{project_name}.module1",
+            "submod1": f"{project_name}.module2.submod1",
+            "submod2": f"{project_name}.module2.submod2",
+            "local_module": f"{project_name}.test.local_module",
+            "parent_module": f"{project_name}.parent_module",
+            "self": project_name,
         }
 
         for name, path in expected.items():

@@ -20,6 +20,8 @@ TS_RS_ENUM_ITEM = "enum_item"
 TS_RS_TRAIT_ITEM = "trait_item"
 TS_RS_TYPE_ITEM = "type_item"
 TS_RS_FUNCTION_ITEM = "function_item"
+TS_RS_CONST_ITEM = "const_item"
+TS_RS_STATIC_ITEM = "static_item"
 TS_RS_IMPL_ITEM = "impl_item"
 TS_RS_FUNCTION_SIGNATURE_ITEM = "function_signature_item"
 TS_RS_CLOSURE_EXPRESSION = "closure_expression"
@@ -170,3 +172,16 @@ RS_ENCODING_UTF8 = "utf8"
 RS_WILDCARD_PREFIX = "*"
 
 RS_FIELD_ARGUMENT = "argument"
+
+# Cargo target layout (issue #1007 crate-root discovery). Auto-target
+# directories root every .rs file directly inside them; explicit target
+# `path` overrides in the manifest sections below root the named file
+# wherever it sits. Entry stems never root themselves as file targets.
+RS_AUTO_TARGET_DIRS = frozenset({"examples", "tests", "benches"})
+RS_BIN_DIR = "bin"
+RS_BUILD_STEM = "build"
+RS_ENTRY_STEMS = frozenset({"lib", "main", "mod"})
+RS_MANIFEST_TARGET_SECTIONS = ("bin", "lib", "example", "test", "bench")
+RS_MANIFEST_PATH_KEY = "path"
+RS_MANIFEST_PACKAGE_KEY = "package"
+RS_MANIFEST_BUILD_KEY = "build"

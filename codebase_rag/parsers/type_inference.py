@@ -499,18 +499,33 @@ class TypeInferenceEngine:
         return segments[0] if len(segments) > 1 else None
 
     def _resolve_rust_type_qn(self, type_name: str, module_qn: str) -> str:
-        # Resolve a Rust type name to its class-node qn, honoring imports: a `use`
-        # target is a raw `::`-path (`crate::cmd::Command`), not a registry qn, so
-        # find the registered class node whose simple name matches. Falls back to
-        # same-module resolution for a locally-defined type. A fully-qualified inline
-        # base (`crate::cmd::Command`) carries its own path.
+        # Resolve a Rust type name to its class-node qn, honoring imports: an
+        # external `use` target is a raw `::`-path (`std::io::Read`) matched by
+        # simple name, a local one an already-resolved project qn. Falls back to
+        # same-module resolution for a locally-defined type. A fully-qualified
+        # inline base (`crate::cmd::Command`) carries its own path.
         if cs.SEPARATOR_DOUBLE_COLON in type_name:
             return self._resolve_rust_import_path(type_name)
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        if (target := import_map.get(type_name)) and (
-            cs.SEPARATOR_DOUBLE_COLON in target
-        ):
-            return self._resolve_rust_import_path(target)
+        if target := import_map.get(type_name):
+            if cs.SEPARATOR_DOUBLE_COLON in target:
+                return self._resolve_rust_import_path(target)
+            # A crate::/super::/self:: use target arrives as an already
+            # resolved project qn; use it when it names a registered type.
+            # Otherwise fall through with require_registered so the SAME
+            # unregistered map value cannot come back verbatim.
+            if self.function_registry.get(target) is not None:
+                return target
+            return (
+                resolve_class_name(
+                    type_name,
+                    module_qn,
+                    self.import_processor,
+                    self.function_registry,
+                    require_registered=True,
+                )
+                or type_name
+            )
         return self._resolve_class_name(type_name, module_qn) or type_name
 
     def _rust_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
@@ -524,11 +539,13 @@ class TypeInferenceEngine:
         ):
             return return_type
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        if (target := import_map.get(name)) and cs.SEPARATOR_DOUBLE_COLON in target:
-            fn_qn = self._resolve_rust_import_path(
-                target, node_types=(NodeType.FUNCTION,)
-            )
-            return self.method_return_types.get(fn_qn)
+        if target := import_map.get(name):
+            if cs.SEPARATOR_DOUBLE_COLON in target:
+                target = self._resolve_rust_import_path(
+                    target, node_types=(NodeType.FUNCTION,)
+                )
+            # A crate::/super::/self:: use target is already a project qn.
+            return self.method_return_types.get(target)
         return None
 
     def _resolve_rust_import_path(

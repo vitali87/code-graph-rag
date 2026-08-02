@@ -235,6 +235,18 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # Step 2: Clear in-memory state
         self.updater.remove_file_from_state(path)
 
+        # The Rust path caches (exact-case directory listings, entry-file
+        # mod declarations, explicit targets) were filled during the last
+        # run; a CREATE or MODIFY re-observes what this event can have
+        # changed before any re-parse resolves crate::/super::/self::
+        # against them. DELETEs keep the stale view so an atomic-save or
+        # checkout storm cannot bake a transient absence into a sibling's
+        # import map.
+        if event.event_type != EventType.DELETED:
+            self.updater.factory.import_processor.refresh_rust_path_caches_for(
+                path, created=event.event_type == EventType.CREATED
+            )
+
         # Step 3: Re-parse code files and create File nodes for ALL files
         if event.event_type in (EventType.MODIFIED, EventType.CREATED):
             lang_config = get_language_spec(path.suffix)
@@ -257,8 +269,18 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 path, path.name
             )
 
-        # Step 4
+        # Rust inline-mod import maps retract at the end of every parse
+        # and only re-commit through arbitration; run() is not on this
+        # path, so arbitrate here before calls recompute through the maps.
+        self.updater.factory.import_processor.finalise_rust_mod_scope_uses(
+            self.updater.known_module_paths()
+        )
+
+        # Step 4: every CALLS edge is deleted and recomputed, so the
+        # resolution caches reset with them; a re-parsed file's moved use
+        # must not serve last pass's cached answer.
         logger.info(logs.RECALC_CALLS)
+        self.updater.factory.call_processor.reset_resolution_caches()
         ingestor.execute_write(CYPHER_DELETE_CALLS)
         self.updater._process_function_calls()
 

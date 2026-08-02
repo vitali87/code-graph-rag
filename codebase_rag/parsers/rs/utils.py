@@ -246,6 +246,163 @@ def extract_use_imports(use_node: Node) -> dict[str, str]:
     return imports
 
 
+def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
+    """Classify a `use` declaration's storage scope.
+
+    Returns (fn_node, None, True) when the use sits directly in a
+    function body: it keys on that function's REGISTERED qn, resolved by
+    span after ingestion (never re-derived from source names, which
+    diverge on qn collisions). Returns (None, parts, pure) when the
+    nearest scope is a module chain, with parts mirroring the
+    registered-qn path of the items inside it (mod names, impl targets,
+    and class names, with functions contributing nothing; [] is file
+    scope). Returns (block_node, None, True) when the use sits inside a
+    const/static initializer block, wherever the item is declared (mod
+    level, file level, or a class body): the use is scoped to its
+    innermost enclosing block alone (E0425 outside it), no qn scope
+    corresponds to the block, and any key would serve a REAL scope's
+    readers, so it stores span-gated and answers only calls written
+    inside the block. `pure` is False when a mod chain passes through a
+    function or a const/static initializer: such a mod forges a qn
+    namespace it does not own, so on a key collision the pure writer's
+    map wins.
+    """
+    nearest = None
+    block = None
+    current = node.parent
+    while current and current.type != cs.TS_RS_SOURCE_FILE:
+        if block is None and current.type == cs.TS_RS_BLOCK:
+            block = current
+        if current.type in (cs.TS_RS_CONST_ITEM, cs.TS_RS_STATIC_ITEM):
+            return block, None, True
+        if (
+            current.type == cs.TS_RS_FUNCTION_ITEM
+            or current.type in cs.FQN_RS_SCOPE_TYPES
+        ):
+            body = current.child_by_field_name(cs.FIELD_BODY)
+            if (
+                current.type == cs.TS_RS_FUNCTION_ITEM
+                and block is not None
+                and (body is None or block.id != body.id)
+            ):
+                # A use in an INNER block of the fn body is in scope for
+                # that block alone (rustc-verified): store it span-gated
+                # like an initializer-block use, never fn-wide.
+                return block, None, True
+            nearest = current
+            break
+        current = current.parent
+    if nearest is None:
+        return None, [], True
+    if nearest.type == cs.TS_RS_FUNCTION_ITEM:
+        return nearest, None, True
+    if nearest.type != cs.TS_RS_MOD_ITEM:
+        return None, None, True
+    parts: list[str] = []
+    pure = True
+    current = node.parent
+    while current and current.type != cs.TS_RS_SOURCE_FILE:
+        if current.type in (
+            cs.TS_RS_FUNCTION_ITEM,
+            cs.TS_RS_CONST_ITEM,
+            cs.TS_RS_STATIC_ITEM,
+        ):
+            pure = False
+        elif current.type == cs.TS_IMPL_ITEM:
+            if target := extract_impl_target(current):
+                parts.append(target)
+        elif current.type in cs.FQN_RS_SCOPE_TYPES:
+            if name_node := current.child_by_field_name(cs.FIELD_NAME):
+                text = name_node.text
+                if text is not None:
+                    parts.append(text.decode(cs.RS_ENCODING_UTF8))
+        current = current.parent
+    parts.reverse()
+    return None, parts, pure
+
+
+def rust_block_scope_holes(
+    block: Node,
+) -> tuple[
+    list[tuple[int, int]],
+    list[tuple[int, int]],
+    list[tuple[int, int, frozenset[str]]],
+]:
+    """Byte spans of the scope-forming items nested inside a block.
+
+    A use declared in a const/static initializer block reaches code in
+    the block itself and in nested closures, but a nested `mod` is a
+    hard name-resolution boundary (its members never see the block's
+    use), and a nested `fn` is an inner scope whose OWN body uses win
+    before the block's (though it inherits the block's use when it has
+    none). Returns (mod spans, fn spans, item scopes): every PLAIN
+    block in the subtree is an item scope in Rust (a fn body, a let or
+    const initializer, an if/match/loop body alike), so each nested
+    block declaring function items as DIRECT children is recorded with
+    those names, and a call inside it naming one binds the local item,
+    never the initializer block's use (rustc-verified; items deeper
+    inside are invisible at that block's level, and methods in impl or
+    trait bodies are not bare names at all). The walk descends
+    everywhere since a mod nested inside a fn still needs its boundary
+    recorded.
+    """
+    mod_holes: list[tuple[int, int]] = []
+    fn_holes: list[tuple[int, int]] = []
+    item_scopes: list[tuple[int, int, frozenset[str]]] = []
+    stack = list(block.children)
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_RS_MOD_ITEM:
+            mod_holes.append((current.start_byte, current.end_byte))
+        elif current.type == cs.TS_RS_FUNCTION_ITEM:
+            fn_holes.append((current.start_byte, current.end_byte))
+        elif current.type == cs.TS_RS_BLOCK and (
+            names := _rust_direct_block_item_names(current)
+        ):
+            item_scopes.append((current.start_byte, current.end_byte, names))
+        stack.extend(current.children)
+    return mod_holes, fn_holes, item_scopes
+
+
+def _rust_direct_block_item_names(block_node: Node) -> frozenset[str]:
+    names: set[str] = set()
+    for child in block_node.children:
+        if (
+            child.type == cs.TS_RS_FUNCTION_ITEM
+            and (name_node := child.child_by_field_name(cs.FIELD_NAME))
+            and (text := name_node.text) is not None
+        ):
+            names.add(text.decode(cs.RS_ENCODING_UTF8))
+    return frozenset(names)
+
+
+def enclosing_mod_fn_spans(node: Node) -> list[tuple[int, int]]:
+    """Spans of every fn declared in the mod block this use sits DIRECTLY in.
+
+    A mod-level `use` applies mod-wide, so its imports must reach the
+    functions declared there (through impl/trait blocks and nested fns)
+    even when the mod's shared qn key is lost to a same-named twin. A use
+    nested any deeper (a const/static initializer block or a fn body
+    inside the mod) is scoped to that block by Rust and reaches no mod
+    function, and a nested mod is its own scope and does not inherit the
+    use, so descent stops at mod boundaries.
+    """
+    body = node.parent
+    mod_node = body.parent if body is not None else None
+    if body is None or mod_node is None or mod_node.type != cs.TS_RS_MOD_ITEM:
+        return []
+    spans: list[tuple[int, int]] = []
+    stack = list(body.children)
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_RS_MOD_ITEM:
+            continue
+        if current.type == cs.TS_RS_FUNCTION_ITEM:
+            spans.append((current.start_point[0] + 1, current.start_point[1]))
+        stack.extend(current.children)
+    return spans
+
+
 def build_module_path(
     node: Node,
     include_impl_targets: bool = False,

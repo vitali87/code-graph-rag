@@ -551,7 +551,8 @@ fn use_aliases() {
         assert imports["ReadTrait"] == "std::io::Read"
 
         assert "UserModel" in imports
-        assert imports["UserModel"] == "crate::models::User"
+        # crate:: targets are rewritten to project qns at parse time (#1007).
+        assert imports["UserModel"] == f"{project_name}.models.User"
 
 
 class TestExtractUseImportsEdgeCases:

@@ -2,6 +2,7 @@ import json
 import os
 import posixpath
 import re
+import tomllib
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
@@ -15,7 +16,9 @@ from ..language_spec import LANGUAGE_SPECS, LanguageSpec
 from ..services import IngestorProtocol
 from ..types_defs import (
     DeferredImportEdge,
+    FunctionLocation,
     FunctionRegistryTrieProtocol,
+    FunctionSpanKey,
     LanguageQueries,
 )
 from .cpp_frontend.qn import build_module_qn_map
@@ -45,6 +48,163 @@ from .utils import (
 )
 
 _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
+# Bodyless `mod NAME;` declarations in a Rust crate entry file: the mod graph
+# is what assigns a file to the lib or the bin crate (issue #1007). Attribute
+# prefixes on the same line (`#[cfg(unix)] mod unix;`) are idiomatic; the
+# source is lexed through _rs_strip_comments_and_strings first so neither a
+# commented-out declaration nor one hidden behind a string literal containing
+# a comment marker can flip the crate attribution.
+_RS_MOD_DECL_PATTERN = re.compile(
+    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
+    r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
+    re.MULTILINE,
+)
+# Top-level item declarations in an entry file: `crate::Item` attaches under
+# the entry module's qn when the entry declares Item, and the declaring entry
+# disambiguates the path when BOTH src/lib.rs and src/main.rs declare the
+# importing module. `mod` here catches INLINE `mod x { ... }` blocks, which
+# declare a name in the entry module but pull no file into the crate (the
+# bodyless pattern above is what assigns files).
+_RS_ITEM_DECL_PATTERN = re.compile(
+    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
+    r'(?:(?:unsafe|async|const|extern\s+"[^"]*")\s+)*'
+    r"(?:trait|struct|enum|fn|type|const|static|union|mod)"
+    r"\s+(?:mut\s+)?(?:r#)?([A-Za-z_][A-Za-z0-9_]*)",
+    re.MULTILINE,
+)
+# A depth-0 `{` opens a macro body rather than an item body when the text
+# before it ends in a macro NAME followed by `!` (an invocation: `cfg_if! {`)
+# or names a macro_rules definition. Macro bodies stay visible to the
+# declaration scans: libc, backtrace and getrandom declare their platform
+# `mod` files inside cfg_if!. A diverging `fn abort() -> ! {` also ends in
+# `!`, but with no name touching it: that brace opens an item body.
+_RS_MACRO_OPEN_RE = re.compile(r"(?:\w!|\bmacro_rules!\s*(?:r#)?[A-Za-z_]\w*)\s*$")
+
+
+def _rs_strip_comments_and_strings(source: str) -> str:
+    """Blank Rust comments and string/char contents, keeping line structure.
+
+    A regex cannot do this: block comments NEST, and string literals may
+    contain comment markers (`const P: &str = "/*";`) or newline-separated
+    text that would fake a `mod x;` line.
+    """
+    out: list[str] = []
+    i, n = 0, len(source)
+    while i < n:
+        c = source[i]
+        nxt = source[i + 1] if i + 1 < n else ""
+        if c == "/" and nxt == "/":
+            j = source.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if c == "/" and nxt == "*":
+            depth = 1
+            i += 2
+            while i < n and depth:
+                if source.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif source.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    if source[i] == "\n":
+                        out.append("\n")
+                    i += 1
+            continue
+        if c == "r" and nxt in ('"', "#"):
+            j = i + 1
+            hashes = 0
+            while j < n and source[j] == "#":
+                hashes += 1
+                j += 1
+            if j < n and source[j] == '"':
+                end_marker = '"' + "#" * hashes
+                k = source.find(end_marker, j + 1)
+                i = n if k == -1 else k + len(end_marker)
+                out.append('""')
+                continue
+        if c == '"':
+            i += 1
+            while i < n:
+                if source[i] == "\\":
+                    i += 2
+                    continue
+                if source[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            out.append('""')
+            continue
+        if c == "'":
+            # A char literal ('x', '\n', '\u{7f}'); a lifetime ('a) has no
+            # closing quote and passes through untouched. The escape must be
+            # honoured: pairing '\'' at its FIRST following quote leaves an
+            # orphan quote that swallows the rest of the file.
+            j = i + 1
+            if j < n and source[j] == "\\":
+                k = j + 1
+                if source.startswith("u{", k):
+                    brace = source.find("}", k + 2)
+                    k = k + 2 if brace == -1 else brace + 1
+                elif k < n and source[k] == "x":
+                    k += 3
+                else:
+                    k += 1
+                if k < n and source[k] == "'":
+                    out.append("''")
+                    i = k + 1
+                    continue
+            elif j + 1 < n and source[j] not in ("'", "\n") and source[j + 1] == "'":
+                out.append("''")
+                i = j + 2
+                continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _rs_top_level_only(stripped: str) -> str:
+    """Keep only brace-depth-zero text of a comment-stripped source.
+
+    A `mod unix;` nested in an inline `mod sys { ... }` block declares a
+    file in a DIFFERENT directory, and a method inside an `impl` block is
+    not a crate-root item; both would otherwise match the line-anchored
+    declaration patterns. Depth-0 MACRO bodies (`cfg_if! { ... }`,
+    `macro_rules! m { ... }`) are kept instead: the declarations they emit
+    are top-level, so their braces and semicolons become newlines to keep
+    each one line-anchored. A depth-0 `}` becomes a newline so a
+    declaration following it on the same line stays anchored.
+    """
+    out: list[str] = []
+    depth = 0
+    in_macro = False
+    for c in stripped:
+        if c == "{":
+            if depth == 0:
+                in_macro = bool(_RS_MACRO_OPEN_RE.search("".join(out[-80:])))
+                out.append(c)
+                if in_macro:
+                    out.append("\n")
+            elif in_macro:
+                out.append("\n")
+            depth += 1
+        elif c == "}":
+            depth = max(depth - 1, 0)
+            if depth == 0:
+                out.append("\n")
+                in_macro = False
+            elif in_macro:
+                out.append("\n")
+        elif depth == 0 or c == "\n":
+            out.append(c)
+        elif in_macro:
+            out.append(c)
+            if c == ";":
+                out.append("\n")
+    return "".join(out)
+
+
 _JSONC_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _JSONC_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
 _JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
@@ -208,6 +368,12 @@ def _is_conditional_import_node(import_node: Node) -> bool:
     return False
 
 
+def _rust_norm_manifest_path(path: str) -> str:
+    # Cargo normalises manifest paths (a ./ prefix, backslashes); the
+    # matcher compares against repo-relative posix form, so mirror it.
+    return posixpath.normpath(path.replace("\\", cs.SEPARATOR_SLASH))
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -231,6 +397,19 @@ class ImportProcessor:
         "_cpp_qn_to_rel",
         "_deferred_import_edges",
         "_cpp_declaration_mappings",
+        "_rust_dir_listing",
+        "_rust_entry_mod_decls",
+        "_rust_explicit_targets",
+        "_rust_auto_build_flags",
+        "_rust_inline_scope_keys",
+        "_rust_pending_fn_scope_uses",
+        "rust_fn_scope_imports",
+        "rust_fn_scope_mod_imports",
+        "rust_block_scope_imports",
+        "_rust_fn_scope_keys",
+        "_rust_pending_mod_scope_uses",
+        "_rust_mod_scope_registry",
+        "_rust_mod_scope_shadows",
     )
 
     def __init__(
@@ -262,6 +441,89 @@ class ImportProcessor:
         # IMPORTS edges held back until every file is parsed, so internal
         # targets verify against the full module registry (issue #652).
         self._deferred_import_edges: list[DeferredImportEdge] = []
+        # Exact-case directory listings and entry-file `mod` declarations for
+        # Rust path rewriting (issue #1007); cleared per run by
+        # reset_rust_path_caches so watch re-runs re-observe the filesystem.
+        self._rust_dir_listing: dict[str, frozenset[str]] = {}
+        self._rust_entry_mod_decls: dict[
+            tuple[str, ...], dict[str, tuple[set[str], set[str]]]
+        ] = {}
+        # Explicit Cargo target entry paths per package dir ([[bin]]/[lib]/
+        # [[example]]/[[test]]/[[bench]] `path` overrides): such entries
+        # root their own crates wherever they sit, unlike auto-targets
+        # found by location alone.
+        self._rust_explicit_targets: dict[tuple[str, ...], frozenset[str]] = {}
+        # Whether each package auto-detects build.rs: cargo compiles it
+        # only when [package] build is UNSET (a string names the script
+        # explicitly, false disables it entirely). Filled alongside the
+        # explicit-target parse, cleared with it.
+        self._rust_auto_build_flags: dict[tuple[str, ...], bool] = {}
+        # Inline-mod import scopes minted per file (file qn -> effective qns),
+        # so a watch-mode re-parse of the file drops its stale sub-scopes.
+        self._rust_inline_scope_keys: dict[str, set[str]] = {}
+        # Function-body uses parsed BEFORE the file's functions register:
+        # the enclosing function's REGISTERED qn (colliding naturals are
+        # deduplicated to `natural@<start_line>`) is only knowable after
+        # ingestion, so entries queue by the function node's span until
+        # finalise_rust_function_scope_uses resolves them.
+        # The bool marks WEAK entries: an impure inline mod's use fanned
+        # out to the functions declared in its block.
+        self._rust_pending_fn_scope_uses: dict[
+            str, list[tuple[int, int, dict[str, str], bool]]
+        ] = {}
+        # Function-body uses, keyed by the enclosing function's registered
+        # qn. Kept OUT of import_mapping: Rust puts `mod run` and `fn run`
+        # in different namespaces, so a function qn may equal a module qn
+        # and the module-keyed map must never answer for the function.
+        self.rust_fn_scope_imports: dict[str, dict[str, str]] = {}
+        # Weak counterpart: an impure mod's own use fanned out to the
+        # functions declared in its block. Mod-level precedence, so the
+        # resolver consults it only after local items, unlike the body-use
+        # map above which shadows everything.
+        self.rust_fn_scope_mod_imports: dict[str, dict[str, str]] = {}
+        # Uses inside const/static initializer blocks, keyed by file
+        # module qn: (block start byte, block end byte, imports, nested
+        # mod spans, nested fn spans, nested item scopes with their
+        # direct-child item names). No qn scope corresponds to such a
+        # block and the use is E0425 outside it, so the resolver serves
+        # these span-gated, only to calls whose site falls inside the
+        # block; a call inside a nested mod span never binds through the
+        # block (hard boundary), one inside a nested fn span binds
+        # through it only after the fn's own body uses miss, and one
+        # inside any nested block that declares the name as a direct
+        # function item binds that local item instead.
+        self.rust_block_scope_imports: dict[
+            str,
+            list[
+                tuple[
+                    int,
+                    int,
+                    dict[str, str],
+                    list[tuple[int, int]],
+                    list[tuple[int, int]],
+                    list[tuple[int, int, frozenset[str]]],
+                ]
+            ],
+        ] = {}
+        self._rust_fn_scope_keys: dict[str, set[str]] = {}
+        # Sub-scope (inline mod) maps held back until every file is
+        # parsed: whether the key collides with an indexer-registered
+        # module is only knowable then (finalise_rust_mod_scope_uses).
+        self._rust_pending_mod_scope_uses: dict[
+            str, list[tuple[str, bool, dict[str, str]]]
+        ] = {}
+        # Every file's live mod-scope uses, surviving finalisation: the
+        # watch path re-parses one file at a time, and arbitration must
+        # weigh ALL writers of a key, not just the touched file's.
+        self._rust_mod_scope_registry: dict[
+            str, list[tuple[str, bool, dict[str, str]]]
+        ] = {}
+        # Sub-scope entries also commit into import_mapping for the
+        # duration of their OWN file's parse (its impl ingestion resolves
+        # traits through them), recording each overwritten value here so
+        # retract_rust_mod_scope_uses can restore the pre-commit state
+        # exactly (None means the name was absent).
+        self._rust_mod_scope_shadows: dict[str, list[tuple[str, str, str | None]]] = {}
         # Import-map entries registered by C++20 module DECLARATIONS (`module X;`,
         # `export module X;`, `import :partition;`). They exist for name resolution
         # only; a declaration is not an import, so no IMPORTS edge is emitted.
@@ -491,6 +753,10 @@ class ImportProcessor:
         the wrong root) emits no edge, because the phantom endpoint is
         silently dropped by the database anyway.
         """
+        # Rust sub-scope maps normally commit earlier (run() finalises
+        # before the deferred inheritance pass reads them); flushing
+        # drains any pendings a direct caller queued without that pass.
+        self.finalise_rust_mod_scope_uses(known_module_paths)
         deferred = self._deferred_import_edges
         if not deferred or self.ingestor is None:
             return 0
@@ -516,9 +782,48 @@ class ImportProcessor:
                 )
                 emitted += 1
                 continue
-            module_path = self._resolve_module_path(
-                entry.full_name, entry.module_qn, entry.language
-            )
+            if entry.language == cs.SupportedLanguage.RUST and (
+                entry.full_name == self.project_name
+                or entry.full_name.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
+            ):
+                # A crate::/super::/self:: use path was rewritten to a project
+                # qn at parse time. The module target is the longest prefix
+                # that verifies: the full path for a module import, minus the
+                # item for item imports, further for enum variants and
+                # associated items (use crate::color::Color::Red). Never
+                # externalise a local path (the phantom ExternalModule would
+                # orphan; issue #1007).
+                candidate = entry.full_name
+                target = None
+                while True:
+                    target = self._verify_internal_import_target(
+                        candidate, known_module_paths, module_aliases, entry.language
+                    )
+                    if target is not None:
+                        break
+                    trimmed = candidate.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                    if trimmed in (candidate, self.project_name):
+                        break
+                    candidate = trimmed
+                if target == entry.module_qn:
+                    # `use super::*` in an inline mod resolves to the file's
+                    # own module; a self-import edge is meaningless.
+                    continue
+                if target is None:
+                    logger.debug(
+                        ls.IMP_DROPPED_PHANTOM_TARGET,
+                        from_module=entry.module_qn,
+                        to_module=entry.full_name,
+                    )
+                    continue
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, entry.module_qn),
+                    cs.RelationshipType.IMPORTS,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, target),
+                )
+                emitted += 1
+                continue
+            module_path = self._resolve_module_path(entry.full_name, entry.language)
             target_label = self._module_label(module_path)
             if target_label == cs.NodeLabel.EXTERNAL_MODULE:
                 # An external import target has no file pass to create its
@@ -734,8 +1039,472 @@ class ImportProcessor:
 
         return full_name
 
-    def _is_local_rust_import(self, import_path: str) -> bool:
-        return import_path.startswith(cs.RUST_CRATE_PREFIX)
+    def _rust_dir_entries(self, directory: Path) -> frozenset[str]:
+        # Exact-case listing: is_file() answers case-insensitively on
+        # macOS/Windows, so probing (dir / "Err.rs") would match err.rs and
+        # misclassify a root ITEM as a submodule.
+        key = str(directory)
+        cached = self._rust_dir_listing.get(key)
+        if cached is None:
+            try:
+                cached = frozenset(entry.name for entry in directory.iterdir())
+            except OSError:
+                cached = frozenset()
+            self._rust_dir_listing[key] = cached
+        return cached
+
+    def _rust_is_auto_target_dir(self, dir_parts: list[str], stem: str) -> bool:
+        # Cargo auto-target locations whose .rs files are their OWN crate
+        # roots: src/bin/*.rs, and examples/tests/benches/*.rs plus
+        # build.rs at a package root (Cargo.toml beside them). Explicit
+        # manifest `path` overrides are checked SEPARATELY and only for
+        # the file itself: a non-standard root's modules live in its
+        # CONTAINING directory (rustc E0583 on a same-named subdir), so
+        # the ancestor walk must never treat a directory as a file crate
+        # just because a sibling file is an explicit target.
+        if not dir_parts:
+            return stem == cs.RS_BUILD_STEM and (
+                cs.PKG_CARGO_TOML in self._rust_dir_entries(self.repo_path)
+            )
+        if len(dir_parts) >= 2 and dir_parts[-1] == cs.RS_BIN_DIR:
+            if dir_parts[-2] == cs.LANG_SRC_DIR:
+                return True
+        if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS:
+            return cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*dir_parts[:-1])
+            )
+        return False
+
+    def _rust_is_explicit_target(self, dir_parts: list[str], stem: str) -> bool:
+        # Whether <dir_parts>/<stem>.rs is an explicit target of its
+        # package's manifest (`[[bin]] path = "src/cli.rs"`, or the
+        # `[package] build` script override). The package is the NEAREST
+        # ancestor directory holding a Cargo.toml.
+        for i in range(len(dir_parts), -1, -1):
+            pkg_parts = dir_parts[:i]
+            if cs.PKG_CARGO_TOML not in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                continue
+            relative = cs.SEPARATOR_SLASH.join([*dir_parts[i:], f"{stem}{cs.EXT_RS}"])
+            return relative in self._rust_explicit_target_paths(tuple(pkg_parts))
+        return False
+
+    def _rust_importer_within_root_file(
+        self, base_parts: list[str], base_qn: str, importer_qn: str
+    ) -> bool:
+        # Whether the importer's module chain is rooted in base_qn's FILE
+        # itself: the file's own scope, or inline mods written inside it.
+        # The tell is the first segment below the base: an inline mod has
+        # no backing file, while a module-directory child is backed by
+        # <base dir>/<seg>.rs or <seg>/mod.rs (cargo resolves those into
+        # whichever crate DECLARES the module, not the root file).
+        if importer_qn == base_qn:
+            return True
+        if not importer_qn.startswith(f"{base_qn}{cs.SEPARATOR_DOT}"):
+            return False
+        first = importer_qn[len(base_qn) + 1 :].split(cs.SEPARATOR_DOT, 1)[0]
+        child_entries = self._rust_dir_entries(self.repo_path.joinpath(*base_parts))
+        if f"{first}{cs.EXT_RS}" in child_entries:
+            return False
+        if cs.MOD_RS in self._rust_dir_entries(
+            self.repo_path.joinpath(*base_parts, first)
+        ):
+            return False
+        return True
+
+    def _rust_has_auto_build(self, pkg_parts: tuple[str, ...]) -> bool:
+        self._rust_explicit_target_paths(pkg_parts)
+        return self._rust_auto_build_flags.get(pkg_parts, False)
+
+    def _rust_explicit_entry_files(self, dir_parts: tuple[str, ...]) -> set[str]:
+        # File names of explicit manifest targets that sit DIRECTLY in
+        # this directory (their declarations join the entry-declaration
+        # map beside lib.rs/main.rs, keyed by stem). The package is the
+        # nearest ancestor holding a Cargo.toml.
+        for i in range(len(dir_parts), -1, -1):
+            pkg_parts = dir_parts[:i]
+            if cs.PKG_CARGO_TOML not in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                continue
+            names: set[str] = set()
+            for rel in self._rust_explicit_target_paths(tuple(pkg_parts)):
+                full = [*pkg_parts, *rel.split(cs.SEPARATOR_SLASH)]
+                if tuple(full[:-1]) == dir_parts and full[-1].endswith(cs.EXT_RS):
+                    names.add(full[-1])
+            return names
+        return set()
+
+    def _rust_explicit_target_paths(self, pkg_parts: tuple[str, ...]) -> frozenset[str]:
+        cached = self._rust_explicit_targets.get(pkg_parts)
+        if cached is not None:
+            return cached
+        paths: set[str] = set()
+        try:
+            manifest = tomllib.loads(
+                self.repo_path.joinpath(*pkg_parts, cs.PKG_CARGO_TOML).read_text(
+                    encoding=cs.RS_ENCODING_UTF8, errors="ignore"
+                )
+            )
+        except (OSError, tomllib.TOMLDecodeError):
+            manifest = {}
+        for section in cs.RS_MANIFEST_TARGET_SECTIONS:
+            entries = manifest.get(section)
+            if isinstance(entries, dict):
+                entries = [entries]
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if isinstance(entry, dict) and isinstance(
+                    path := entry.get(cs.RS_MANIFEST_PATH_KEY), str
+                ):
+                    paths.add(_rust_norm_manifest_path(path))
+        # `[package] build = "..."` overrides the build script location;
+        # the named file is a crate root like any explicit target.
+        package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+        if isinstance(package, dict) and isinstance(
+            build := package.get(cs.RS_MANIFEST_BUILD_KEY), str
+        ):
+            paths.add(_rust_norm_manifest_path(build))
+        build_value = (
+            package.get(cs.RS_MANIFEST_BUILD_KEY) if isinstance(package, dict) else None
+        )
+        # Unset AND `build = true` both mean auto-detection
+        # (cargo-verified: `build = true` compiles build.rs exactly like
+        # unset); a string names the script explicitly, false disables.
+        self._rust_auto_build_flags[pkg_parts] = (
+            build_value is None or build_value is True
+        )
+        result = frozenset(paths)
+        self._rust_explicit_targets[pkg_parts] = result
+        return result
+
+    def _rust_crate_root(self, module_qn: str) -> tuple[str, list[str]] | None:
+        """The file's crate root: ("classic", dir parts) or ("file", qn parts).
+
+        Classic roots are lib.rs/main.rs entries found by walking the file's
+        ancestor directories (Cargo's default layout puts them under src/,
+        but path overrides may place them anywhere: ripgrep roots at
+        crates/core/main.rs). File roots are Cargo auto-targets
+        (src/bin/tool.rs) that root their own crate; both their items and
+        their submodules nest under the entry file's qn.
+        """
+        qn_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
+        if not qn_parts:
+            return None
+        dir_parts, stem = qn_parts[:-1], qn_parts[-1]
+        if (
+            stem not in cs.RS_ENTRY_STEMS
+            and f"{stem}{cs.EXT_RS}"
+            in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+        ):
+            if self._rust_is_auto_target_dir(dir_parts, stem):
+                return "file", qn_parts
+            if self._rust_is_explicit_target(dir_parts, stem):
+                # An explicit manifest target is a crate root like any
+                # entry file: its `mod` declarations resolve in the
+                # CONTAINING directory (the tests/common.rs idiom,
+                # cargo-verified), so it attaches classically with
+                # itself as the definitive entry stem.
+                return "entry", qn_parts
+        for i in range(len(dir_parts), -1, -1):
+            if i >= 1:
+                name = dir_parts[i - 1]
+                parent = dir_parts[: i - 1]
+                if f"{name}{cs.EXT_RS}" in self._rust_dir_entries(
+                    self.repo_path.joinpath(*parent)
+                ) and self._rust_is_auto_target_dir(parent, name):
+                    return "file", dir_parts[:i]
+            if self._rust_is_crate_root_dir(dir_parts[:i]):
+                return "classic", dir_parts[:i]
+        return None
+
+    def _rust_is_crate_root_dir(self, dir_parts: list[str]) -> bool:
+        # A directory is a crate root only when it holds an entry file AND is
+        # not itself a MODULE directory of an enclosing tree: src/app/ with
+        # an incidental module file main.rs is app.rs's module dir (the
+        # sibling app.rs is the tell), not a crate (verified against rustc:
+        # self::foo inside app::main is app::main::foo).
+        entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+        if (
+            cs.LIB_RS not in entries
+            and cs.MAIN_RS not in entries
+            and not any(
+                name in entries
+                for name in self._rust_explicit_entry_files(tuple(dir_parts))
+            )
+        ):
+            # An explicit manifest target is an entry too: a package whose
+            # ONLY entry is `[[bin]] path = "src/cli.rs"` still roots its
+            # declared submodules here (cargo-verified), with the entry
+            # stem chosen by the declaring scan over the explicit stems.
+            return False
+        if cs.MOD_RS in entries:
+            # The mod.rs spelling of a module directory.
+            return False
+        if dir_parts and f"{dir_parts[-1]}{cs.EXT_RS}" in self._rust_dir_entries(
+            self.repo_path.joinpath(*dir_parts[:-1])
+        ):
+            return False
+        return True
+
+    def _rust_entry_stem(
+        self, dir_parts: list[str], module_qn: str
+    ) -> tuple[str, bool]:
+        """Entry-file stem (lib/main) of the crate that contains module_qn.
+
+        src/lib.rs + src/main.rs in one package is a standard layout and the
+        two are DIFFERENT crates: the file's crate is the entry whose `mod`
+        declarations reach the file's top-level module segment. An entry file
+        is its own crate; ties prefer lib.rs. The second element is True when
+        the choice is definitive (the importer IS an entry, or exactly one
+        entry declares it): a definitive crate must never be overridden by
+        the item tie-break in _rust_attach, because `crate::` in a module the
+        other entry does not declare can never reach that other crate.
+        """
+        decls = self._rust_entry_decls(dir_parts)
+        segments = module_qn.split(cs.SEPARATOR_DOT)[1 + len(dir_parts) :]
+        top = segments[0] if segments else ""
+        if top in decls and top in ("lib", "main"):
+            # Only a real entry stem short-circuits: an explicit target's
+            # stem in the map (its declarations feed _rust_attach and the
+            # declaring scan below) must not claim the MODULE directory
+            # sharing its name, whose files belong to whichever crate
+            # declares that module (cargo-verified: src/cli/sub.rs builds
+            # into the lib when lib.rs declares `mod cli;`).
+            return top, True
+        declaring = [stem for stem, (mods, _items) in decls.items() if top in mods]
+        if declaring:
+            return declaring[0], len(declaring) == 1
+        for stem in ("lib", "main"):
+            if stem in decls:
+                return stem, False
+        entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+        if (
+            cs.LIB_RS not in entries
+            and cs.MAIN_RS not in entries
+            and not self._rust_is_auto_target_dir(list(dir_parts), "")
+        ):
+            # Never in an auto-target location: every .rs sibling there
+            # is its own crate root by LOCATION, invisible to both the
+            # manifest walk and the declaration map, so a lone explicit
+            # stem can never prove itself the directory's only root
+            # (tests/common/mod.rs belongs to whichever sibling declares
+            # it; an undeclared module keeps the ambiguity phantom).
+            build_file = f"{cs.RS_BUILD_STEM}{cs.EXT_RS}"
+            build_hole = (
+                cs.PKG_CARGO_TOML in entries
+                and build_file in entries
+                and self._rust_has_auto_build(tuple(dir_parts))
+                and cs.RS_BUILD_STEM not in decls
+            )
+            present = sorted(
+                name
+                for name in self._rust_explicit_entry_files(tuple(dir_parts))
+                if name in entries
+            )
+            # Stems that declare nothing beyond the universal `fn main`
+            # cannot claim any module (a trivial build script), so they
+            # do not block the lone target; an unreadable build.rs is a
+            # hole exactly like an unreadable lib.rs and does.
+            claiming = {
+                stem
+                for stem, (mods, items) in decls.items()
+                if mods or (items - {"main"})
+            }
+            if (
+                not build_hole
+                and len(present) == 1
+                and (stem := present[0][: -len(cs.EXT_RS)]) in decls
+                and claiming <= {stem}
+            ):
+                # A genuinely explicit-only package with a single target
+                # whose declarations actually loaded: fall back to that
+                # stem, or _rust_attach's entry-declaration and
+                # item-tie-break branches silently disable and only the
+                # filesystem probe survives, binding sibling decoy
+                # files. Every hole keeps the phantom fallback instead:
+                # an unreadable lib.rs OR an unreadable second target
+                # must not let the survivor claim the package (a
+                # dangling phantom revives nothing; a definitive wrong
+                # stem suppresses the tie-break too). Multi-target
+                # no-declarer stays genuine ambiguity, likewise phantom.
+                return stem, True
+        return "lib", False
+
+    def _rust_entry_decls(
+        self, dir_parts: list[str]
+    ) -> dict[str, tuple[set[str], set[str]]]:
+        """Per entry stem: (mod declarations, top-level item names)."""
+        key = tuple(dir_parts)
+        decls = self._rust_entry_mod_decls.setdefault(key, {})
+        entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+        scan = [cs.LIB_RS, cs.MAIN_RS]
+        if cs.PKG_CARGO_TOML in entries and self._rust_has_auto_build(key):
+            # build.rs beside the manifest is cargo's fifth auto crate
+            # root, but only while [package] build is UNSET (a string
+            # names the script explicitly and false disables it; either
+            # way cargo never compiles the auto file). Its declarations
+            # anchor its modules in the build-script crate, and its stem
+            # in the map keeps the explicit-only fallback honest.
+            scan.append(f"{cs.RS_BUILD_STEM}{cs.EXT_RS}")
+        scan.extend(
+            sorted(
+                name
+                for name in self._rust_explicit_entry_files(key)
+                if name not in scan
+            )
+        )
+        for entry in scan:
+            if entry not in entries:
+                continue
+            stem = entry.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if stem in decls:
+                continue
+            try:
+                source = self.repo_path.joinpath(*dir_parts, entry).read_text(
+                    encoding=cs.RS_ENCODING_UTF8, errors="ignore"
+                )
+            except OSError:
+                # The listing says the entry exists but the read failed: a
+                # storm's transient absence. Leave the stem unfilled so the
+                # next access retries; caching EMPTY declarations here
+                # flips definitive crate attributions to the item
+                # tie-break's real but wrong answer.
+                continue
+            top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+            decls[stem] = (
+                set(_RS_MOD_DECL_PATTERN.findall(top_level)),
+                set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
+            )
+        return decls
+
+    def _rust_attach(
+        self, dir_parts: list[str], stem: str, rest: list[str], definitive: bool
+    ) -> str:
+        # A crate-root-relative path: the first segment names either a
+        # submodule FILE/directory beside the entry point (crate::flags ->
+        # src.flags) or an item/inline mod declared IN the entry file
+        # (crate::Config -> src.main.Config). The entry's OWN declarations
+        # outrank the filesystem probe: a sibling file the entry never
+        # declares belongs to the other crate, and an inline `mod sys` in
+        # lib.rs owns crate::sys even when a bin-crate src/sys.rs exists.
+        directory = self.repo_path.joinpath(*dir_parts)
+        entries = self._rust_dir_entries(directory)
+        chosen = self._rust_entry_decls(dir_parts).get(stem)
+        if rest and chosen is not None:
+            file_mods, items = chosen
+            if rest[0] in file_mods:
+                return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
+            if rest[0] in items:
+                return cs.SEPARATOR_DOT.join(
+                    [self.project_name, *dir_parts, stem, *rest]
+                )
+        if rest and (
+            f"{rest[0]}{cs.EXT_RS}" in entries
+            or (rest[0] in entries and (directory / rest[0]).is_dir())
+        ):
+            return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
+        if rest and not definitive and chosen is not None:
+            # When a file compiles into BOTH crates (lib.rs and main.rs each
+            # declare its module), the path can only mean the entry that
+            # DECLARES the item; the chosen entry declaring it returned above.
+            for other, (_mods, items) in self._rust_entry_decls(dir_parts).items():
+                if other != stem and rest[0] in items:
+                    stem = other
+                    break
+        return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, stem, *rest])
+
+    def _rust_resolve_relative(
+        self, base_qn: str, rest: list[str], importer_qn: str
+    ) -> str:
+        """Attach path segments to a super::/self:: base module.
+
+        The base may be an ordinary file module (children append: src/foo.rs
+        -> src.foo.bar), a mod.rs directory (same), the crate root DIRECTORY
+        (a super:: chain popped every file segment), or the entry module
+        itself (self:: in lib.rs) -- for the last two, children are FILES
+        beside the entry point, so route through _rust_attach.
+        """
+        parts = base_qn.split(cs.SEPARATOR_DOT)[1:]
+        if self._rust_is_crate_root_dir(parts):
+            stem, definitive = self._rust_entry_stem(parts, importer_qn)
+            return self._rust_attach(parts, stem, rest, definitive)
+        if (
+            parts
+            and self._rust_importer_within_root_file(parts, base_qn, importer_qn)
+            and parts[-1] not in cs.RS_ENTRY_STEMS
+            and f"{parts[-1]}{cs.EXT_RS}"
+            in self._rust_dir_entries(self.repo_path.joinpath(*parts[:-1]))
+            and self._rust_is_explicit_target(parts[:-1], parts[-1])
+        ):
+            # In a crate root module `self::` IS `crate::`: an explicit
+            # target attaches beside itself, exactly as its crate:: paths
+            # do, but only when the asker lives IN the root file (the root
+            # itself or an inline mod written inside it, which has no
+            # backing file). A file-backed submodule walking super:: up
+            # onto this qn means the MODULE of the same name, whose
+            # children live in its directory (both cargo-verified).
+            # Auto-targets keep their entry-qn nesting.
+            return self._rust_attach(parts[:-1], parts[-1], rest, definitive=True)
+        if (
+            parts
+            and parts[-1] in ("lib", "main")
+            and f"{parts[-1]}{cs.EXT_RS}"
+            in self._rust_dir_entries(self.repo_path.joinpath(*parts[:-1]))
+            and self._rust_is_crate_root_dir(parts[:-1])
+        ):
+            # The base IS a crate entry module (self:: in lib.rs); a module
+            # merely NAMED main/lib deeper in the tree attaches normally.
+            return self._rust_attach(parts[:-1], parts[-1], rest, definitive=True)
+        return cs.SEPARATOR_DOT.join([base_qn, *rest]) if rest else base_qn
+
+    def _rewrite_rust_local_use_path(self, full_path: str, module_qn: str) -> str:
+        """Rewrite a crate::/super::/self:: use path to a project qn.
+
+        Stored raw, these paths resolve nowhere: class resolution hands them
+        to the deferred-inherit pass, which externalises them into phantom
+        ExternalModule nodes (crate.flags.Flag) and the override pass never
+        links impl methods to their trait (issue #1007). module_qn must be
+        the EFFECTIVE module of the use declaration, including inline `mod`
+        blocks. External paths (std::fmt) pass through unchanged.
+        """
+        parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
+        head = parts[0]
+        if head == cs.RUST_CRATE_KEYWORD:
+            root = self._rust_crate_root(module_qn)
+            rest = parts[1:]
+            if root is None:
+                return (
+                    cs.SEPARATOR_DOT.join([self.project_name, *rest])
+                    if rest
+                    else self.project_name
+                )
+            kind, root_parts = root
+            if kind == "file":
+                # An auto-target crate (src/bin/tool.rs): items and
+                # submodules both nest under the entry file's qn.
+                return cs.SEPARATOR_DOT.join([self.project_name, *root_parts, *rest])
+            if kind == "entry":
+                # An explicit manifest target: the root file IS the entry,
+                # so submodule files sit beside it and items nest in it.
+                return self._rust_attach(
+                    root_parts[:-1], root_parts[-1], rest, definitive=True
+                )
+            stem, definitive = self._rust_entry_stem(root_parts, module_qn)
+            return self._rust_attach(root_parts, stem, rest, definitive)
+        if head == cs.KEYWORD_SELF:
+            return self._rust_resolve_relative(module_qn, parts[1:], module_qn)
+        if head == cs.KEYWORD_SUPER:
+            base_parts = module_qn.split(cs.SEPARATOR_DOT)
+            depth = 0
+            while depth < len(parts) and parts[depth] == cs.KEYWORD_SUPER:
+                depth += 1
+            keep = max(len(base_parts) - depth, 1)
+            base = cs.SEPARATOR_DOT.join(base_parts[:keep])
+            return self._rust_resolve_relative(base, parts[depth:], module_qn)
+        return full_path
 
     def _module_label(self, module_path: str) -> cs.NodeLabel:
         # #498: import targets outside the project prefix live under the
@@ -768,20 +1537,10 @@ class ImportProcessor:
             },
         )
 
-    def _resolve_rust_import_path(self, import_path: str, module_qn: str) -> str:
-        # crate:: is always relative to the crate root, not the current module; find
-        # the src directory in the qualified name to identify the crate root.
-        if self._is_local_rust_import(import_path):
-            path_without_crate = import_path[len(cs.RUST_CRATE_PREFIX) :]
-            module_parts = module_qn.split(cs.SEPARATOR_DOT)
-            try:
-                src_index = module_parts.index(cs.LANG_SRC_DIR)
-                crate_root_qn = cs.SEPARATOR_DOT.join(module_parts[: src_index + 1])
-            except ValueError:
-                crate_root_qn = self.project_name
-            module_part = path_without_crate.split(cs.SEPARATOR_DOUBLE_COLON)[0]
-            return f"{crate_root_qn}{cs.SEPARATOR_DOT}{module_part}"
-
+    def _resolve_rust_import_path(self, import_path: str) -> str:
+        # Local (crate::/super::/self::) paths never reach this point: they
+        # are rewritten to project qns at parse time and short-circuited in
+        # flush_deferred_import_edges. Only external paths (std::fmt) remain.
         parts = import_path.split(cs.SEPARATOR_DOUBLE_COLON)
         module_path = (
             cs.SEPARATOR_DOUBLE_COLON.join(parts[:-1]) if len(parts) > 1 else parts[0]
@@ -793,7 +1552,6 @@ class ImportProcessor:
     def _resolve_module_path(
         self,
         full_name: str,
-        module_qn: str,
         language: cs.SupportedLanguage,
     ) -> str:
         project_prefix = self.project_name + cs.SEPARATOR_DOT
@@ -814,7 +1572,7 @@ class ImportProcessor:
                 if self._is_local_js_import(full_name):
                     return self._resolve_js_internal_module(full_name)
             case cs.SupportedLanguage.RUST:
-                return self._resolve_rust_import_path(full_name, module_qn)
+                return self._resolve_rust_import_path(full_name)
 
         module_path = self.stdlib_extractor.extract_module_path(full_name, language)
         if not module_path.startswith(project_prefix):
@@ -1278,7 +2036,113 @@ class ImportProcessor:
             self.import_mapping[module_qn][local_name] = imported_path
             logger.debug(ls.IMP_CSHARP, name=local_name, path=imported_path)
 
+    def reset_rust_path_caches(self) -> None:
+        # The filesystem may have gained or lost files since the caches
+        # were filled; called per run by GraphUpdater._process_files.
+        self._rust_dir_listing.clear()
+        self._rust_entry_mod_decls.clear()
+        self._rust_explicit_targets.clear()
+        self._rust_auto_build_flags.clear()
+
+    def refresh_rust_path_caches_for(self, file_path: Path, created: bool) -> None:
+        # The realtime watcher re-parses through process_file without
+        # entering _process_files, so each event re-observes exactly what
+        # it can have changed: only a CREATE changes the file set (the
+        # directory listing), a MODIFY changes at most the touched file's
+        # own contents (entry declarations when it is an entry file, the
+        # package's explicit targets when it is the manifest). A DELETE
+        # deliberately refreshes nothing: an editor's atomic save or a
+        # checkout storm deletes and recreates entry files within one
+        # debounce window, and a sibling re-parsed mid-storm must not
+        # bake the transient absence into its import map (the stale view
+        # converges on the file's return or the next full run, exactly
+        # as before the watcher refreshed at all).
+        directory = file_path.parent
+        if (cached := self._rust_dir_listing.get(str(directory))) is not None and (
+            created or (file_path.name not in cached and file_path.is_file())
+        ):
+            # Apply the event's own delta rather than re-observing: during
+            # a storm the filesystem may transiently lack files this event
+            # did not touch, and a re-listing would bake that absence. A
+            # MODIFY whose file the cached listing lacks is a CREATE the
+            # debounce layer coalesced away (dispatch keeps only the
+            # latest pending event per path), so it applies the same delta,
+            # event-locally like the entry-declaration refresh below: only
+            # while the file is observably present, so a MODIFY processed
+            # after the file's deletion never bakes in a dead name.
+            self._rust_dir_listing[str(directory)] = cached | {file_path.name}
+        try:
+            dir_parts = directory.relative_to(self.repo_path).parts
+        except ValueError:
+            return
+        if (
+            file_path.name in (cs.LIB_RS, cs.MAIN_RS)
+            or file_path.name in self._rust_explicit_entry_files(tuple(dir_parts))
+            or (
+                file_path.name == f"{cs.RS_BUILD_STEM}{cs.EXT_RS}"
+                and cs.PKG_CARGO_TOML in self._rust_dir_entries(directory)
+                and self._rust_has_auto_build(tuple(dir_parts))
+            )
+        ):
+            # File-scoped like the event itself, and REPLACED only on a
+            # successful read: a storm can modify the entry and delete it
+            # before a sibling re-parses, and an absent stem would send
+            # _rust_entry_stem to its non-definitive fallback, letting the
+            # item tie-break flip a definitive crate attribution.
+            stems = self._rust_entry_mod_decls.get(tuple(dir_parts))
+            if stems is not None:
+                try:
+                    source = file_path.read_text(
+                        encoding=cs.RS_ENCODING_UTF8, errors="ignore"
+                    )
+                except OSError:
+                    pass
+                else:
+                    top_level = _rs_top_level_only(
+                        _rs_strip_comments_and_strings(source)
+                    )
+                    stems[file_path.stem] = (
+                        set(_RS_MOD_DECL_PATTERN.findall(top_level)),
+                        set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
+                    )
+        if file_path.name == cs.PKG_CARGO_TOML:
+            # A manifest edit can add, remove, or repoint explicit targets
+            # anywhere in its package, and a CREATED manifest moves the
+            # package boundary for every file below it, so the whole
+            # target cache rebuilds. The entry-declaration map is DERIVED
+            # from the target set: evict exactly the stems the fresh
+            # manifests no longer back, keeping lib/main declarations (and
+            # their storm protection) untouched.
+            self._rust_explicit_targets.clear()
+            self._rust_auto_build_flags.clear()
+            for key, stems in self._rust_entry_mod_decls.items():
+                allowed = {
+                    name[: -len(cs.EXT_RS)]
+                    for name in self._rust_explicit_entry_files(key)
+                }
+                for stem in list(stems):
+                    if stem not in ("lib", "main") and stem not in allowed:
+                        stems.pop(stem, None)
+
+    def drop_rust_module_import_state(self, module_qn: str) -> None:
+        # Everything a file's parse contributed to the Rust import maps,
+        # dropped so a re-parse rebuilds it or a deletion leaves nothing:
+        # shadows (linger only when a parse aborted before its retraction
+        # ran), pendings, the file's mod-scope registry entries, and the
+        # committed fn-scope and inline-scope keys.
+        self.retract_rust_mod_scope_uses(module_qn)
+        self._rust_pending_fn_scope_uses.pop(module_qn, None)
+        self._rust_pending_mod_scope_uses.pop(module_qn, None)
+        self._rust_mod_scope_registry.pop(module_qn, None)
+        self.rust_block_scope_imports.pop(module_qn, None)
+        for key in self._rust_fn_scope_keys.pop(module_qn, ()):
+            self.rust_fn_scope_imports.pop(key, None)
+            self.rust_fn_scope_mod_imports.pop(key, None)
+        for key in self._rust_inline_scope_keys.pop(module_qn, ()):
+            self.import_mapping.pop(key, None)
+
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
+        self.drop_rust_module_import_state(module_qn)
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_USE_DECLARATION:
                 self._parse_rust_use_declaration(import_node, module_qn)
@@ -1286,9 +2150,200 @@ class ImportProcessor:
     def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:
         imports = rs_utils.extract_use_imports(use_node)
 
+        # super::/self:: are relative to the DECLARING module: a use inside
+        # an inline `mod tests` block resolves against the inline-mod chain.
+        # Its entries also STORE under the inline module's key: at file scope
+        # they would shadow the file's own same-named items and rebind every
+        # bare call in the file. A use inside a FUNCTION body shadows module
+        # items only within that function, so it stores in the fn-scope map
+        # under the function's REGISTERED qn (the caller's scope walk reads
+        # it), while crate::/super::/self:: still resolve against the module
+        # chain alone.
+        # Resolution and storage follow different chains: crate::/super::/
+        # self:: resolve against the MODULE chain alone, while the storage
+        # key mirrors the registered-qn path (which keeps impl/trait/class
+        # segments and skips functions).
+        mod_parts = rs_utils.build_module_path(use_node)
+        resolve_qn = (
+            cs.SEPARATOR_DOT.join([module_qn, *mod_parts]) if mod_parts else module_qn
+        )
+        scope_node, scope_parts, pure_chain = rs_utils.rust_use_scope(use_node)
+        effective_qn = (
+            cs.SEPARATOR_DOT.join([module_qn, *scope_parts])
+            if scope_parts
+            else module_qn
+        )
+        sub_scope = scope_node is not None or scope_parts != []
+        resolved_imports: dict[str, str] = {}
         for imported_name, full_path in imports.items():
-            self.import_mapping[module_qn][imported_name] = full_path
-            logger.debug(ls.IMP_RUST, name=imported_name, path=full_path)
+            resolved = self._rewrite_rust_local_use_path(full_path, resolve_qn)
+            resolved_imports[imported_name] = resolved
+            if sub_scope:
+                # The generic deferral loop only reads the file-level map;
+                # sub-scope imports still owe the file its IMPORTS edge.
+                self.defer_import_edge(module_qn, resolved, cs.SupportedLanguage.RUST)
+            logger.debug(ls.IMP_RUST, name=imported_name, path=resolved)
+        if scope_node is not None:
+            if scope_node.type == cs.TS_RS_FUNCTION_ITEM:
+                self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
+                    (
+                        scope_node.start_point[0] + 1,
+                        scope_node.start_point[1],
+                        resolved_imports,
+                        False,
+                    )
+                )
+            else:
+                # A const/static initializer block: no qn scope, so the
+                # entry is span-gated and answers only calls written
+                # inside the block, with nested mod/fn/item-scope spans
+                # recorded so inner scopes' own bindings keep precedence.
+                mod_holes, fn_holes, item_scopes = rs_utils.rust_block_scope_holes(
+                    scope_node
+                )
+                self.rust_block_scope_imports.setdefault(module_qn, []).append(
+                    (
+                        scope_node.start_byte,
+                        scope_node.end_byte,
+                        resolved_imports,
+                        mod_holes,
+                        fn_holes,
+                        item_scopes,
+                    )
+                )
+            return
+        if scope_parts is None:
+            # No enclosing block could be attributed (defensive): no qn
+            # scope corresponds to the use, and any key would serve a
+            # real scope's readers. Keep only the IMPORTS edges.
+            return
+        if not scope_parts:
+            self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)
+            return
+        # A sub-scope key may collide with a module the INDEXER registered
+        # (a fn-local or cfg-twin Rust module file, or a same-named module
+        # of another language, since the qn scheme is language-agnostic):
+        # ownership is only knowable once every file is parsed, so the
+        # permanent commit defers to finalise_rust_mod_scope_uses. The
+        # entries still commit for THIS file's parse window (its own impl
+        # ingestion resolves traits through them), shadow-recorded so
+        # retract_rust_mod_scope_uses restores the pre-commit state.
+        shadows = self._rust_mod_scope_shadows.setdefault(module_qn, [])
+        target = self.import_mapping.setdefault(effective_qn, {})
+        for name, resolved in resolved_imports.items():
+            shadows.append((effective_qn, name, target.get(name)))
+            target[name] = resolved
+        self._rust_pending_mod_scope_uses.setdefault(module_qn, []).append(
+            (effective_qn, pure_chain, resolved_imports)
+        )
+        if not pure_chain:
+            # A fn-local mod can lose the shared-key arbitration to a pure
+            # twin (issue #1017: one qn, two modules), yet its own functions
+            # still see this use: fan it out to their spans so the weak
+            # fn-scope map answers for them instead of whatever the key
+            # ends up holding.
+            for line, col in rs_utils.enclosing_mod_fn_spans(use_node):
+                self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
+                    (line, col, resolved_imports, True)
+                )
+
+    def retract_rust_mod_scope_uses(self, module_qn: str) -> None:
+        # Reverse replay so a key shadowing another file's entries (the
+        # collision finalise arbitrates later) gets them back exactly.
+        for key, name, old in reversed(self._rust_mod_scope_shadows.pop(module_qn, [])):
+            target = self.import_mapping.get(key)
+            if target is None:
+                continue
+            if old is None:
+                target.pop(name, None)
+                if not target:
+                    del self.import_mapping[key]
+            else:
+                target[name] = old
+
+    def finalise_rust_mod_scope_uses(
+        self, known_module_paths: Mapping[str, str]
+    ) -> None:
+        # Arbitrates every deferred sub-scope map with the indexer's own
+        # answer (a file on disk that was ignored, excluded, or written in
+        # an unindexed language owns nothing). A key whose module qn is a
+        # DIFFERENT file's keeps no writers from this side. On an unowned
+        # key, PURE module chains oust fn-local or block-local forgeries
+        # whatever file either lives in (issue #1017: no key can serve
+        # both), and same-purity entries surviving from multiple files are
+        # ambiguous cfg or macro twins, dropped rather than guessed.
+        # Arbitration runs over the persistent registry of EVERY file's
+        # mod-scope uses, not just the pending ones: the watch path parses
+        # one file at a time, and a contest decided from the touched
+        # file's entries alone would be won by whoever was touched last.
+        # Previous commits retract first so a changed outcome cannot leave
+        # a stale key standing.
+        pending = self._rust_pending_mod_scope_uses
+        self._rust_pending_mod_scope_uses = {}
+        for writer_qn, entries in pending.items():
+            self._rust_mod_scope_registry[writer_qn] = entries
+        for keys in self._rust_inline_scope_keys.values():
+            for key in keys:
+                if known_module_paths.get(key):
+                    # The key has since become an indexed file's own module
+                    # qn (a watch CREATE of the cfg twin's file form): the
+                    # map is that file's parse output now, not this
+                    # arbitration's to retract. The owner branch below
+                    # keeps no inline writers for it, so the claim lapses.
+                    continue
+                self.import_mapping.pop(key, None)
+        self._rust_inline_scope_keys = {}
+        by_key: dict[str, list[tuple[str, bool, dict[str, str]]]] = {}
+        for writer_qn, entries in self._rust_mod_scope_registry.items():
+            for key, pure, imports in entries:
+                by_key.setdefault(key, []).append((writer_qn, pure, imports))
+        for key, writers in by_key.items():
+            owner_path = known_module_paths.get(key)
+            kept = writers
+            if owner_path:
+                kept = [
+                    w for w in writers if known_module_paths.get(w[0]) == owner_path
+                ]
+            else:
+                if any(w[1] for w in writers) and not all(w[1] for w in writers):
+                    kept = [w for w in writers if w[1]]
+                if len({w[0] for w in kept}) > 1:
+                    kept = []
+            for writer_qn, _pure, imports in kept:
+                self.import_mapping.setdefault(key, {}).update(imports)
+                self._rust_inline_scope_keys.setdefault(writer_qn, set()).add(key)
+
+    def finalise_rust_function_scope_uses(
+        self,
+        module_qn: str,
+        function_locations: Mapping[FunctionSpanKey, FunctionLocation],
+    ) -> None:
+        # Runs after the file's functions and methods register: the span
+        # lookup hands back the exact qn the registry assigned (natural or
+        # `natural@<start_line>`), which no source-name derivation can
+        # reproduce on collisions. A span with no record means the function
+        # was never registered (e.g. an impl whose target has no extractable
+        # name): no caller exists to read the key, and a name-derived
+        # fallback could collide with a real function's qn, so drop it.
+        for (
+            start_line,
+            start_col,
+            imports,
+            weak,
+        ) in self._rust_pending_fn_scope_uses.pop(module_qn, []):
+            location = function_locations.get((module_qn, start_line, start_col))
+            if location is None:
+                continue
+            key = location.qualified_name
+            if weak:
+                # Fanned out from an enclosing impure mod's use: mod-level
+                # precedence, so it lives in the weak map the resolver
+                # consults only after the function's own body uses and the
+                # scope's local items.
+                self.rust_fn_scope_mod_imports.setdefault(key, {}).update(imports)
+            else:
+                self.rust_fn_scope_imports.setdefault(key, {}).update(imports)
+            self._rust_fn_scope_keys.setdefault(module_qn, set()).add(key)
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):

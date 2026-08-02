@@ -1392,6 +1392,9 @@ class CallProcessor:
                 names.append(name)
         return tuple(names)
 
+    def reset_resolution_caches(self) -> None:
+        self._resolver.reset_resolution_caches()
+
     def process_calls_in_file(
         self,
         file_path: Path,
@@ -3310,6 +3313,7 @@ class CallProcessor:
                     class_context,
                     caller_qn,
                     language,
+                    call_point=call_node.start_byte,
                 )
             if callee_info and language == cs.SupportedLanguage.RUST:
                 # Rust macros and functions live in SEPARATE namespaces:
