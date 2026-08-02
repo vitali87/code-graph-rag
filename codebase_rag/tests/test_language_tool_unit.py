@@ -678,7 +678,7 @@ class TestUpdateConfigFile:
     def test_insertion_after_entry_with_trailing_comment(self, tmp_path: Path) -> None:
         config = tmp_path / "language_spec.py"
         config.write_text(
-            "LANGUAGE_SPECS = {\n    \"a\": LanguageSpec()  # base spec\n}\n",
+            'LANGUAGE_SPECS = {\n    "a": LanguageSpec()  # base spec\n}\n',
             encoding="utf-8",
         )
 

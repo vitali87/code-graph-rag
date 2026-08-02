@@ -536,12 +536,35 @@ def _write_language_config(config_entry: str, language_name: str) -> bool:
     config_content, newline = _read_config_text()
     closing_brace_pos = _specs_dict_span(config_content)[1]
 
-    head = config_content[:closing_brace_pos]
-    tail = config_content[closing_brace_pos:]
-    trimmed_head = head.rstrip()
-    if not trimmed_head.endswith(("{", ",")):
-        head = trimmed_head + ",\n"
-    new_content = head + config_entry + "\n" + tail
+    scanner = _TokenScanner(config_content)
+    last = None
+    for token in scanner.tokens:
+        if token.type in (
+            tokenize.COMMENT,
+            tokenize.NL,
+            tokenize.NEWLINE,
+            tokenize.INDENT,
+            tokenize.DEDENT,
+            tokenize.ENCODING,
+            tokenize.ENDMARKER,
+        ):
+            continue
+        if scanner.offset(token.start) >= closing_brace_pos:
+            break
+        last = token
+    if last is not None and not (
+        last.type == tokenize.OP and last.string in ("{", ",")
+    ):
+        comma_pos = scanner.offset(last.end)
+        config_content = config_content[:comma_pos] + "," + config_content[comma_pos:]
+        closing_brace_pos += 1
+
+    new_content = (
+        config_content[:closing_brace_pos]
+        + config_entry
+        + "\n"
+        + config_content[closing_brace_pos:]
+    )
 
     compile(new_content, cs.LANG_CONFIG_FILE, "exec")
 
