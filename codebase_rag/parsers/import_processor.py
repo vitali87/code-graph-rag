@@ -1213,7 +1213,13 @@ class ImportProcessor:
         decls = self._rust_entry_decls(dir_parts)
         segments = module_qn.split(cs.SEPARATOR_DOT)[1 + len(dir_parts) :]
         top = segments[0] if segments else ""
-        if top in decls:
+        if top in decls and top in ("lib", "main"):
+            # Only a real entry stem short-circuits: an explicit target's
+            # stem in the map (its declarations feed _rust_attach and the
+            # declaring scan below) must not claim the MODULE directory
+            # sharing its name, whose files belong to whichever crate
+            # declares that module (cargo-verified: src/cli/sub.rs builds
+            # into the lib when lib.rs declares `mod cli;`).
             return top, True
         declaring = [stem for stem, (mods, _items) in decls.items() if top in mods]
         if declaring:
@@ -1315,6 +1321,7 @@ class ImportProcessor:
             return self._rust_attach(parts, stem, rest, definitive)
         if (
             parts
+            and base_qn == importer_qn
             and parts[-1] not in cs.RS_ENTRY_STEMS
             and f"{parts[-1]}{cs.EXT_RS}"
             in self._rust_dir_entries(self.repo_path.joinpath(*parts[:-1]))
@@ -1322,7 +1329,10 @@ class ImportProcessor:
         ):
             # In a crate root module `self::` IS `crate::`: an explicit
             # target attaches beside itself, exactly as its crate:: paths
-            # do. Auto-targets keep their entry-qn nesting.
+            # do, but only when the ROOT ITSELF is asking. A deeper module
+            # walking super:: up onto this qn means the MODULE of the same
+            # name, whose children live in its directory (cargo-verified).
+            # Auto-targets keep their entry-qn nesting.
             return self._rust_attach(parts[:-1], parts[-1], rest, definitive=True)
         if (
             parts

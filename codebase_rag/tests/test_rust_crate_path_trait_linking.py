@@ -4971,3 +4971,81 @@ def test_entry_modify_racing_its_own_deletion_keeps_declarations(
 
     mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
     assert mapping == expected, mapping
+
+
+def test_explicit_stem_does_not_hijack_module_dir_attribution(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An explicit target's stem in the declaration map must not satisfy
+    # the top-segment shortcut: src/cli/sub.rs is the LIB crate's module
+    # (cargo-verified build), so its crate:: paths resolve through lib.rs
+    # and the trait link plus OVERRIDES survive.
+    project = temp_repo / "rs_stem_hijack"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_stem_hijack"\nversion = "0.1.0"\n\n'
+                '[lib]\npath = "src/lib.rs"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/lib.rs": (
+                "pub mod cli;\n\npub trait Flag {\n    fn n(&self) -> u32;\n}\n"
+            ),
+            "src/cli.rs": "pub mod sub;\n\nfn main() {}\n",
+            "src/sub.rs": "pub fn bin_side() {}\n",
+            "src/cli/sub.rs": (
+                "use crate::Flag;\n\n"
+                "pub struct A;\n\n"
+                "impl Flag for A {\n"
+                "    fn n(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_stem_hijack.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.cli.sub")
+    assert mapping == {"Flag": f"{base}.lib.Flag"}, mapping
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.cli.sub.A", f"{base}.lib.Flag") in implements, implements
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    assert (f"{base}.cli.sub.A.n", f"{base}.lib.Flag.n") in overrides, overrides
+
+
+def test_super_onto_explicit_root_keeps_the_module_reading(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The explicit-root attachment applies only when the root itself is
+    # asking: `super::other::f` from src/cli/sub.rs (a LIB-crate module)
+    # lands on the MODULE cli, whose children live in src/cli/
+    # (cargo-verified: the in-crate test binds src/cli/other.rs).
+    project = temp_repo / "rs_super_module"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_super_module"\nversion = "0.1.0"\n\n'
+                '[lib]\npath = "src/lib.rs"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/lib.rs": "pub mod cli;\n",
+            "src/cli.rs": "pub mod other;\npub mod sub;\n\nfn main() {}\n",
+            "src/other.rs": "pub const fn f() -> u32 {\n    1\n}\n",
+            "src/sub.rs": "pub fn s() {}\n",
+            "src/cli/other.rs": "pub const fn f() -> u32 {\n    42\n}\n",
+            "src/cli/sub.rs": (
+                "use super::other::f;\n\npub fn call() -> u32 {\n    f()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_super_module.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.cli.sub")
+    assert mapping == {"f": f"{base}.cli.other.f"}, mapping
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.cli.sub.call", f"{base}.cli.other.f") in calls, calls
