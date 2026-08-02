@@ -1,6 +1,6 @@
 # Contributing to Code Graph RAG
 
-Thank you for your interest in contributing to Code Graph RAG! We welcome contributions from the community.
+Thank you for your interest in contributing to Code Graph RAG! We welcome contributions from the community. How the project is run, who decides what, and how to become a maintainer are described in [GOVERNANCE.md](GOVERNANCE.md).
 
 ## Getting Started
 
@@ -55,7 +55,7 @@ Labels are automatically synced from [`.github/labels.yml`](.github/labels.yml).
 
 3. **Make Your Changes**:
    - Follow the existing code style and patterns
-   - Add tests for new functionality
+   - Add tests: this is project policy, not a suggestion. New functionality must come with tests that exercise it, and bug fixes must include a regression test that fails without the fix
    - Update documentation if needed
    - Do not add inline comments (see Comment Policy below)
 
@@ -74,7 +74,7 @@ Labels are automatically synced from [`.github/labels.yml`](.github/labels.yml).
 
 - Keep PRs focused on a single issue or feature
 - Write clear, descriptive commit messages
-- Include tests for new functionality
+- Tests are required for new functionality and for bug fixes; PRs adding major functionality without tests will not be merged
 - Update documentation when necessary
 - Be responsive to feedback during code review
 
@@ -806,6 +806,10 @@ The scope (in parentheses) is optional and can contain alphanumeric characters, 
 ### Comment Policy
 
 Write comments that explain **why** and **how**, not **what**. A comment that only restates the adjacent code adds no value; one that captures a non-obvious reason, a tricky invariant, or a concrete edge case earns its place.
+
+## Licensing of Contributions
+
+This project is licensed under the [MIT licence](LICENSE). By submitting a contribution, you agree that it is your own work (or that you have the right to submit it) and that it is licensed to the project and its users under the same MIT licence. You retain copyright in your contribution; no copyright assignment is required.
 
 ## Questions?
 

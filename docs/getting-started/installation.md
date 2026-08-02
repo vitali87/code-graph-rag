@@ -89,6 +89,28 @@ make dev
 
 This installs all dependencies and sets up pre-commit hooks automatically.
 
+## Verify Release Artifacts
+
+Each [GitHub release](https://github.com/vitali87/code-graph-rag/releases) ships prebuilt binaries together with Sigstore signatures (`*.sigstore.json`); releases from v0.0.484 onwards also carry a SLSA build provenance attestation (`multiple.intoto.jsonl`). Both are produced by the `build-binaries.yml` GitHub Actions workflow using keyless signing, so there is no maintainer-held key to obtain: verification checks that the artifact was built by this repository's release workflow.
+
+To verify provenance with the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify code-graph-rag-linux-amd64 --repo vitali87/code-graph-rag
+```
+
+To verify a signature with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/):
+
+```bash
+cosign verify-blob \
+  --bundle code-graph-rag-linux-amd64.sigstore.json \
+  --certificate-identity-regexp 'https://github\.com/vitali87/code-graph-rag/\.github/workflows/build-binaries\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  code-graph-rag-linux-amd64
+```
+
+Substitute the binary name for your platform. Packages installed from PyPI are protected separately by PyPI's own integrity checks through `pip` and `uv`.
+
 ## Start Memgraph
 
 ```bash

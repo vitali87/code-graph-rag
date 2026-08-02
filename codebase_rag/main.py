@@ -709,9 +709,9 @@ def _find_multimodal_paths(question: str) -> list[Path]:
 
 def _path_variants(path_str: str) -> tuple[str, ...]:
     return (
-        path_str.replace(" ", r"\ "),
         f"'{path_str}'",
         f'"{path_str}"',
+        path_str.replace(" ", r"\ "),
         path_str,
     )
 
@@ -740,7 +740,7 @@ def _build_user_prompt(question: str) -> str | list[UserContent]:
             continue
         before, _, after = remaining.partition(match_token)
         if before.strip():
-            content.append(before.rstrip())
+            content.append(before.strip())
         try:
             content.append(
                 BinaryContent(
