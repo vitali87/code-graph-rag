@@ -1308,20 +1308,28 @@ class ImportProcessor:
             tables.extend(t for t in target.values() if isinstance(t, dict))
         deps: dict[str, tuple[str, ...] | None] = {}
         for table in tables:
-            for section in cs.RS_MANIFEST_DEP_SECTIONS:
-                entries = table.get(section)
-                if not isinstance(entries, dict):
-                    continue
-                for key, value in entries.items():
-                    name = key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
-                    resolved = self._rust_dep_target_dir(pkg_parts, key, value)
-                    # A path target from any section wins over a
-                    # registry spelling elsewhere (version + path in one
-                    # entry is the common published-workspace shape).
-                    if resolved is not None or name not in deps:
-                        deps[name] = resolved
+            self._rust_collect_dep_table(pkg_parts, table, deps)
         self._rust_pkg_deps[pkg_parts] = deps
         return deps
+
+    def _rust_collect_dep_table(
+        self,
+        pkg_parts: tuple[str, ...],
+        table: dict,
+        deps: dict[str, tuple[str, ...] | None],
+    ) -> None:
+        for section in cs.RS_MANIFEST_DEP_SECTIONS:
+            entries = table.get(section)
+            if not isinstance(entries, dict):
+                continue
+            for key, value in entries.items():
+                name = key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
+                resolved = self._rust_dep_target_dir(pkg_parts, key, value)
+                # A path target from any section wins over a registry
+                # spelling elsewhere (version + path in one entry is the
+                # common published-workspace shape).
+                if resolved is not None or name not in deps:
+                    deps[name] = resolved
 
     def _rust_dep_target_dir(
         self, pkg_parts: tuple[str, ...], key: str, value: str | dict[str, object]
@@ -1687,27 +1695,7 @@ class ImportProcessor:
         parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
         head = parts[0]
         if head == cs.RUST_CRATE_KEYWORD:
-            root = self._rust_crate_root(module_qn)
-            rest = parts[1:]
-            if root is None:
-                return (
-                    cs.SEPARATOR_DOT.join([self.project_name, *rest])
-                    if rest
-                    else self.project_name
-                )
-            kind, root_parts = root
-            if kind == "file":
-                # An auto-target crate (src/bin/tool.rs): items and
-                # submodules both nest under the entry file's qn.
-                return cs.SEPARATOR_DOT.join([self.project_name, *root_parts, *rest])
-            if kind == "entry":
-                # An explicit manifest target: the root file IS the entry,
-                # so submodule files sit beside it and items nest in it.
-                return self._rust_attach(
-                    root_parts[:-1], root_parts[-1], rest, definitive=True
-                )
-            stem, definitive = self._rust_entry_stem(root_parts, module_qn)
-            return self._rust_attach(root_parts, stem, rest, definitive)
+            return self._rust_rewrite_crate_path(parts[1:], module_qn)
         if head == cs.KEYWORD_SELF:
             return self._rust_resolve_relative(module_qn, parts[1:], module_qn)
         if head == cs.KEYWORD_SUPER:
@@ -1726,6 +1714,28 @@ class ImportProcessor:
             _pkg, dir_parts, stem = root
             return self._rust_attach(list(dir_parts), stem, parts[1:], definitive=True)
         return full_path
+
+    def _rust_rewrite_crate_path(self, rest: list[str], module_qn: str) -> str:
+        root = self._rust_crate_root(module_qn)
+        if root is None:
+            return (
+                cs.SEPARATOR_DOT.join([self.project_name, *rest])
+                if rest
+                else self.project_name
+            )
+        kind, root_parts = root
+        if kind == "file":
+            # An auto-target crate (src/bin/tool.rs): items and
+            # submodules both nest under the entry file's qn.
+            return cs.SEPARATOR_DOT.join([self.project_name, *root_parts, *rest])
+        if kind == "entry":
+            # An explicit manifest target: the root file IS the entry,
+            # so submodule files sit beside it and items nest in it.
+            return self._rust_attach(
+                root_parts[:-1], root_parts[-1], rest, definitive=True
+            )
+        stem, definitive = self._rust_entry_stem(root_parts, module_qn)
+        return self._rust_attach(root_parts, stem, rest, definitive)
 
     def _module_label(self, module_path: str) -> cs.NodeLabel:
         # #498: import targets outside the project prefix live under the
