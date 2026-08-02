@@ -748,6 +748,7 @@ class CallResolver:
                 class_context,
                 caller_qn,
                 language,
+                call_point,
             )
 
         # A Rust caller INSIDE an inline `mod` block sees that module's own
@@ -1224,9 +1225,12 @@ class CallResolver:
         """Resolve a bare call through the caller's enclosing Rust scopes.
 
         A call whose site falls inside a const/static initializer block
-        binds that block's own use first (the innermost containing block
-        wins): the block is the most local scope there is, shadowing even
-        the enclosing function's body uses. Otherwise probes the caller's
+        binds that block's own use (the innermost containing block wins),
+        shadowing the ENCLOSING function's body uses; but a nested `mod`
+        inside the block is a hard name-resolution boundary its members
+        never see through, and a fn declared INSIDE the block is an inner
+        scope whose own body use wins first, inheriting the block's only
+        on a miss (both rustc-verified). Otherwise probes the caller's
         OWN body uses (kept in a separate map: `mod run` and `fn run`
         occupy different Rust namespaces but share one qn string, so the
         module-keyed map must never answer for the function itself), then
@@ -1241,23 +1245,36 @@ class CallResolver:
         if cs.SEPARATOR_DOT in call_name or cs.SEPARATOR_DOUBLE_COLON in call_name:
             return None
         import_mapping = self.import_processor.import_mapping
-        target = None
+        block_target = None
+        block_defers_to_fn = False
         if call_point is not None and (
             blocks := self.import_processor.rust_block_scope_imports.get(module_qn)
         ):
             best_size: int | None = None
-            for start, end, imports in blocks:
-                if start <= call_point < end and call_name in imports:
-                    size = end - start
-                    if best_size is None or size < best_size:
-                        best_size = size
-                        target = imports[call_name]
+            for start, end, imports, mod_holes, fn_holes in blocks:
+                if not (start <= call_point < end) or call_name not in imports:
+                    continue
+                if any(s <= call_point < e for s, e in mod_holes):
+                    continue
+                size = end - start
+                if best_size is None or size < best_size:
+                    best_size = size
+                    block_target = imports[call_name]
+                    block_defers_to_fn = any(s <= call_point < e for s, e in fn_holes)
+        target = None
+        if block_target is not None and not block_defers_to_fn:
+            target = block_target
         if target is None:
             if not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
-                return None
-            target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
-                call_name
-            )
+                target = block_target
+                if target is None:
+                    return None
+            else:
+                target = self.import_processor.rust_fn_scope_imports.get(
+                    caller_qn, {}
+                ).get(call_name)
+                if target is None:
+                    target = block_target
         if target is None:
             weak = self.import_processor.rust_fn_scope_mod_imports.get(
                 caller_qn, {}
@@ -1939,6 +1956,7 @@ class CallResolver:
         class_context: str | None = None,
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> str | None:
         # Type of a chained receiver expression like `c.Root()` using the shared
         # method_return_types map: the base is a typed local (`c` -> Command), and
@@ -1961,7 +1979,13 @@ class CallResolver:
             current_type = self._infer_rust_assoc_base_type(
                 base, module_qn
             ) or self._infer_call_base_type(
-                base, module_qn, local_var_types, class_context, caller_qn, language
+                base,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+                call_point,
             )
         elif local_var_types:
             current_type = local_var_types.get(base)
@@ -1995,6 +2019,7 @@ class CallResolver:
         class_context: str | None,
         caller_qn: str | None,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> str | None:
         # `parser(ia, cb).parse()`: the receiver is a bare-identifier factory call.
         # Resolve the callee to its function/method qn and return its recorded
@@ -2018,7 +2043,13 @@ class CallResolver:
                 return None
             callee = callee.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
         resolved = self.resolve_function_call(
-            callee, module_qn, local_var_types, class_context, caller_qn, language
+            callee,
+            module_qn,
+            local_var_types,
+            class_context,
+            caller_qn,
+            language,
+            call_point,
         )
         if resolved is not None:
             return_type = self.type_inference.method_return_types.get(resolved[1])
@@ -2095,6 +2126,7 @@ class CallResolver:
         class_context: str | None = None,
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> tuple[str, str] | None:
         match = _CHAINED_METHOD_PATTERN.search(call_name)
         if not match:
@@ -2115,6 +2147,7 @@ class CallResolver:
                 class_context,
                 caller_qn,
                 language,
+                call_point,
             )
         )
         if object_type:

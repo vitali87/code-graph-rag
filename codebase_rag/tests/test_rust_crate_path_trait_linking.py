@@ -3772,3 +3772,159 @@ def test_initializer_block_use_binds_the_blocks_own_call_at_mod_level(
     assert any(dst == f"{base}.gamma.helper" for _src, dst in calls), calls
     mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a.inner")
     assert not mapping or "helper" not in mapping, mapping
+
+
+def test_nested_fn_own_use_beats_enclosing_block_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A fn declared INSIDE an initializer block is an inner scope: its own
+    # body use is more local than the block's, so its call binds beta
+    # (rustc evaluates J to 5). The block's own call still binds gamma.
+    project = temp_repo / "rs_block_nested_fn"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_nested_fn"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::helper;\n"
+                "    const fn f() -> u32 {\n"
+                "        use crate::beta::helper;\n"
+                "        helper()\n"
+                "    }\n"
+                "    f() + helper()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_nested_fn.src"
+    assert (f"{base}.a.f", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.a", f"{base}.gamma.helper") in calls, calls
+
+
+def test_nested_fn_without_own_use_inherits_block_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The asymmetry: a fn nested in the block with NO binding of its own
+    # DOES inherit the block's use (rustc evaluates J to 6). The nested-fn
+    # exclusion must therefore yield to the block, not drop the call.
+    project = temp_repo / "rs_block_inherit_fn"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_inherit_fn"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::helper;\n"
+                "    const fn f() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "    f() + helper()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_inherit_fn.src"
+    assert (f"{base}.a.f", f"{base}.gamma.helper") in calls, calls
+
+
+def test_nested_mod_own_use_beats_enclosing_block_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A mod declared inside the block is a hard name-resolution boundary:
+    # its members resolve through ITS import map, never the block's use
+    # (rustc evaluates K to 5).
+    project = temp_repo / "rs_block_nested_mod"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_nested_mod"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub static K: u32 = {\n"
+                "    use crate::gamma::helper;\n"
+                "    mod m {\n"
+                "        use crate::beta::helper;\n\n"
+                "        pub const fn f() -> u32 {\n"
+                "            helper()\n"
+                "        }\n"
+                "    }\n"
+                "    m::f() + helper()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_nested_mod.src"
+    assert (f"{base}.a.m.f", f"{base}.beta.helper") in calls, calls
+
+
+def test_chained_call_in_block_types_receiver_through_block_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A chained call inside the block must type its receiver through the
+    # block's use as well: `make().run()` under `use crate::gamma::make`
+    # runs G's method (rustc: V is 2), while the file-level use keeps
+    # `top`'s identical expression on B's (top() is 3).
+    project = temp_repo / "rs_block_chain"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_chain"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": (
+                "pub struct B;\n\n"
+                "impl B {\n"
+                "    pub const fn run(&self) -> u32 {\n"
+                "        3\n"
+                "    }\n"
+                "}\n\n"
+                "pub const fn make() -> B {\n"
+                "    B\n"
+                "}\n"
+            ),
+            "src/gamma.rs": (
+                "pub struct G;\n\n"
+                "impl G {\n"
+                "    pub const fn run(&self) -> u32 {\n"
+                "        2\n"
+                "    }\n"
+                "}\n\n"
+                "pub const fn make() -> G {\n"
+                "    G\n"
+                "}\n"
+            ),
+            "src/a.rs": (
+                "use crate::beta::make;\n\n"
+                "pub static V: u32 = {\n"
+                "    use crate::gamma::make;\n"
+                "    make().run()\n"
+                "};\n\n"
+                "pub const fn top() -> u32 {\n"
+                "    make().run()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_chain.src"
+    assert (f"{base}.a", f"{base}.gamma.G.run") in calls, calls
+    assert (f"{base}.a.top", f"{base}.beta.B.run") in calls, calls

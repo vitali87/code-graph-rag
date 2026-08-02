@@ -465,12 +465,24 @@ class ImportProcessor:
         # map above which shadows everything.
         self.rust_fn_scope_mod_imports: dict[str, dict[str, str]] = {}
         # Uses inside const/static initializer blocks, keyed by file
-        # module qn: (block start byte, block end byte, imports). No qn
-        # scope corresponds to such a block and the use is E0425 outside
-        # it, so the resolver serves these span-gated, only to calls
-        # whose site falls inside the block.
+        # module qn: (block start byte, block end byte, imports, nested
+        # mod spans, nested fn spans). No qn scope corresponds to such a
+        # block and the use is E0425 outside it, so the resolver serves
+        # these span-gated, only to calls whose site falls inside the
+        # block; a call inside a nested mod span never binds through the
+        # block (hard boundary), and one inside a nested fn span binds
+        # through it only after the fn's own body uses miss.
         self.rust_block_scope_imports: dict[
-            str, list[tuple[int, int, dict[str, str]]]
+            str,
+            list[
+                tuple[
+                    int,
+                    int,
+                    dict[str, str],
+                    list[tuple[int, int]],
+                    list[tuple[int, int]],
+                ]
+            ],
         ] = {}
         self._rust_fn_scope_keys: dict[str, set[str]] = {}
         # Sub-scope (inline mod) maps held back until every file is
@@ -1856,9 +1868,17 @@ class ImportProcessor:
             else:
                 # A const/static initializer block: no qn scope, so the
                 # entry is span-gated and answers only calls written
-                # inside the block.
+                # inside the block, with nested mod/fn spans recorded so
+                # inner scopes' own bindings keep precedence.
+                mod_holes, fn_holes = rs_utils.rust_block_scope_holes(scope_node)
                 self.rust_block_scope_imports.setdefault(module_qn, []).append(
-                    (scope_node.start_byte, scope_node.end_byte, resolved_imports)
+                    (
+                        scope_node.start_byte,
+                        scope_node.end_byte,
+                        resolved_imports,
+                        mod_holes,
+                        fn_holes,
+                    )
                 )
             return
         if scope_parts is None:

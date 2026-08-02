@@ -311,6 +311,33 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
     return None, parts, pure
 
 
+def rust_block_scope_holes(
+    block: Node,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Byte spans of the scope-forming items nested inside a block.
+
+    A use declared in a const/static initializer block reaches code in
+    the block itself and in nested closures, but a nested `mod` is a
+    hard name-resolution boundary (its members never see the block's
+    use), and a nested `fn` is an inner scope whose OWN binding wins
+    before the block's (though it inherits the block's use when it has
+    none). Returns (mod spans, fn spans) so the resolver can gate the
+    block entry accordingly; the walk descends everywhere since a mod
+    nested inside a fn still needs its boundary recorded.
+    """
+    mod_holes: list[tuple[int, int]] = []
+    fn_holes: list[tuple[int, int]] = []
+    stack = list(block.children)
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_RS_MOD_ITEM:
+            mod_holes.append((current.start_byte, current.end_byte))
+        elif current.type == cs.TS_RS_FUNCTION_ITEM:
+            fn_holes.append((current.start_byte, current.end_byte))
+        stack.extend(current.children)
+    return mod_holes, fn_holes
+
+
 def enclosing_mod_fn_spans(node: Node) -> list[tuple[int, int]]:
     """Spans of every fn declared in the mod block this use sits DIRECTLY in.
 
