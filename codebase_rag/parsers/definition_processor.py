@@ -161,6 +161,10 @@ class DefinitionProcessor(
         # the WRAPPER; this inner is applied only when a receiver chain reaches a
         # lock/read/borrow guard accessor (guards do not deref-coerce).
         self.class_field_guard_inner: dict[str, dict[str, str]] = {}
+        # {class_qn: {field_name: element_type}} for Rust sequence fields
+        # (`workers: Vec<Worker>` -> {"workers": "Worker"}), applied only when
+        # an iterator adaptor's closure parameter binds the element (#1045).
+        self.class_field_element_types: dict[str, dict[str, str]] = {}
         # {alias_name: underlying_bare_type} for C++ typedef/using aliases, so a
         # receiver declared with an alias resolves to the aliased class. Collected
         # across all files (an alias in a header is used in a .cc), read by the

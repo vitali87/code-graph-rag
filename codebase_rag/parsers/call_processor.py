@@ -2239,27 +2239,27 @@ class CallProcessor:
                     func_node_starts=func_node_starts,
                 )
 
-    def _overlay_match_arm_binding(
+    def _overlay_span_binding(
         self,
         call_name: str,
         call_node: Node,
         local_var_types: dict[str, str] | None,
-        match_arm_bindings: list[tuple[int, int, str, str]],
+        span_bindings: list[tuple[int, int, str, str]],
     ) -> dict[str, str] | None:
-        # If the call's receiver base is a match-arm binding whose arm range
-        # contains this call, overlay that arm's variant type (shadowing the flat
-        # map's last-arm value) so `cmd.apply()` dispatches to the arm's variant.
-        # The innermost (smallest) containing arm wins for nested matches.
+        # If the call's receiver base is a span-scoped binding (match-arm
+        # variant, adaptor-closure parameter) whose range contains this call,
+        # overlay that binding's type, shadowing the flat map's value. The
+        # innermost (smallest) containing span wins for nested scopes.
         if local_var_types is None or cs.SEPARATOR_DOT not in call_name:
             return local_var_types
         base = call_name.split(cs.SEPARATOR_DOT, 1)[0]
         pos = call_node.start_byte
         best: tuple[int, str] | None = None
-        for start, end, name, variant_type in match_arm_bindings:
+        for start, end, name, bound_type in span_bindings:
             if name == base and start <= pos < end:
                 span = end - start
                 if best is None or span < best[0]:
-                    best = (span, variant_type)
+                    best = (span, bound_type)
         if best is None or local_var_types.get(base) == best[1]:
             return local_var_types
         return {**local_var_types, base: best[1]}
@@ -2821,13 +2821,14 @@ class CallProcessor:
         else:
             local_var_types = None
 
-        # Rust match arms often reuse one binding name (`cmd`) for different variant
-        # types; the flat map keeps only the last arm's type. These per-arm scoped
-        # bindings let each call inside an arm resolve against ITS arm's type.
-        match_arm_bindings: list[tuple[int, int, str, str]] = []
+        # Rust match arms and iterator-adaptor closures both reuse one binding
+        # name for different types at different byte ranges (`cmd` per arm;
+        # `|x|` per collection); the flat map keeps only one. These span-scoped
+        # bindings let each call resolve against the binding containing it.
+        span_bindings: list[tuple[int, int, str, str]] = []
         if language == cs.SupportedLanguage.RUST and local_var_types is not None:
-            match_arm_bindings = self._resolver.type_inference.rust_type_inference.collect_match_arm_bindings(
-                caller_node
+            span_bindings = self._resolver.type_inference.collect_rust_span_bindings(
+                caller_node, class_context
             )
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
@@ -3207,9 +3208,9 @@ class CallProcessor:
                 continue
 
             call_var_types = local_var_types
-            if match_arm_bindings:
-                call_var_types = self._overlay_match_arm_binding(
-                    call_name, call_node, local_var_types, match_arm_bindings
+            if span_bindings:
+                call_var_types = self._overlay_span_binding(
+                    call_name, call_node, local_var_types, span_bindings
                 )
 
             if is_cpp:

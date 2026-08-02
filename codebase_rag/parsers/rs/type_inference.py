@@ -69,6 +69,141 @@ class RustTypeInferenceEngine:
                 inners[name] = inner
         return inners
 
+    def build_field_element_map(self, class_node: Node) -> dict[str, str]:
+        # For struct fields holding a sequence (`workers: Vec<Worker>`),
+        # record field -> element type (`workers` -> Worker). The field map
+        # keeps the container (`Vec`); the element applies only when an
+        # iterator adaptor's closure parameter binds it (issue #1045).
+        elements: dict[str, str] = {}
+        field_list = class_node.child_by_field_name(cs.FIELD_BODY)
+        if field_list is None or field_list.type != cs.TS_RS_FIELD_DECLARATION_LIST:
+            return elements
+        for decl in field_list.children:
+            if decl.type != cs.TS_RS_FIELD_DECLARATION:
+                continue
+            name_node = decl.child_by_field_name(cs.FIELD_NAME)
+            type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+            if name_node is None or type_node is None:
+                continue
+            name = safe_decode_text(name_node)
+            if name and (elem := _rust_element_type_name(type_node)):
+                elements[name] = elem
+        return elements
+
+    def collect_element_types(self, caller_node: Node) -> dict[str, str]:
+        # Collection-typed parameters and annotated lets -> element type
+        # (`workers: Vec<Worker>` / `&[Worker]` -> Worker), feeding the
+        # iterator-adaptor closure-parameter bindings.
+        elements: dict[str, str] = {}
+        params = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
+        if params is not None:
+            for param in params.children:
+                if param.type != cs.TS_RS_PARAMETER:
+                    continue
+                pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
+                type_node = param.child_by_field_name(cs.FIELD_TYPE)
+                if (
+                    pattern is None
+                    or pattern.type != cs.TS_IDENTIFIER
+                    or type_node is None
+                ):
+                    continue
+                if (name := safe_decode_text(pattern)) and (
+                    elem := _rust_element_type_name(type_node)
+                ):
+                    elements[name] = elem
+        if body := caller_node.child_by_field_name(cs.FIELD_BODY):
+            self._collect_element_lets(body, elements)
+        return elements
+
+    def _collect_element_lets(self, node: Node, elements: dict[str, str]) -> None:
+        if node.type == cs.TS_RS_LET_DECLARATION:
+            pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
+            annotation = node.child_by_field_name(cs.FIELD_TYPE)
+            if (
+                pattern is not None
+                and pattern.type == cs.TS_IDENTIFIER
+                and annotation is not None
+                and (name := safe_decode_text(pattern))
+                and (elem := _rust_element_type_name(annotation))
+            ):
+                elements[name] = elem
+        for child in node.children:
+            self._collect_element_lets(child, elements)
+
+    def collect_closure_param_bindings(
+        self, caller_node: Node, element_types: dict[str, str]
+    ) -> list[tuple[int, int, str, str]]:
+        # Span-scoped closure-parameter types: (closure_start_byte,
+        # closure_end_byte, name, type), overlaid at call sites like match
+        # arms. An explicit `|w: Worker|` annotation binds directly; a bare
+        # parameter binds when the closure is the argument of an iterator
+        # adaptor whose receiver chain reaches a collection of known
+        # element type through element-preserving hops (issue #1045).
+        # Calls inside closures attribute to the enclosing fn, so the
+        # enclosing map is exactly where these bindings belong.
+        bindings: list[tuple[int, int, str, str]] = []
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return bindings
+        for closure in self._descendants_of_type(body, cs.TS_RS_CLOSURE_EXPRESSION):
+            params = closure.child_by_field_name(cs.FIELD_PARAMETERS)
+            if params is None:
+                continue
+            annotated = [c for c in params.children if c.type == cs.TS_RS_PARAMETER]
+            bare = [c for c in params.children if c.type == cs.TS_IDENTIFIER]
+            for param in annotated:
+                pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
+                type_node = param.child_by_field_name(cs.FIELD_TYPE)
+                if (
+                    pattern is not None
+                    and pattern.type == cs.TS_IDENTIFIER
+                    and type_node is not None
+                    and (name := safe_decode_text(pattern))
+                    and (type_name := self._bare_type_name(type_node))
+                ):
+                    bindings.append(
+                        (closure.start_byte, closure.end_byte, name, type_name)
+                    )
+            if len(bare) == 1 and not annotated:
+                elem = self._adaptor_element_type(closure, element_types)
+                if elem and (name := safe_decode_text(bare[0])):
+                    bindings.append((closure.start_byte, closure.end_byte, name, elem))
+        return bindings
+
+    def _adaptor_element_type(
+        self, closure: Node, element_types: dict[str, str]
+    ) -> str | None:
+        parent = closure.parent
+        if parent is None or parent.type != cs.TS_ARGUMENTS:
+            return None
+        call = parent.parent
+        if call is None or call.type != cs.TS_RS_CALL_EXPRESSION:
+            return None
+        func = call.child_by_field_name(cs.FIELD_FUNCTION)
+        if func is None or func.type != cs.TS_RS_FIELD_EXPRESSION:
+            return None
+        field = func.child_by_field_name(cs.FIELD_FIELD)
+        if not field or safe_decode_text(field) not in cs.RS_ITER_ADAPTORS:
+            return None
+        receiver = func.child_by_field_name(cs.FIELD_VALUE)
+        if receiver is None:
+            return None
+        segments = self._callee_chain_segments(receiver)
+        if not segments:
+            return None
+        # Longest known prefix names the collection (locals are one
+        # segment, `self.field` two); everything after it must preserve
+        # the element or the closure sees a different type.
+        for k in range(len(segments), 0, -1):
+            key = cs.SEPARATOR_DOT.join(segments[:k])
+            if (elem := element_types.get(key)) is not None:
+                hops = segments[k:]
+                if all(hop in cs.RS_ITER_NEUTRAL_HOPS for hop in hops):
+                    return elem
+                return None
+        return None
+
     def _guard_inner_type(self, type_node: Node) -> str | None:
         # `Mutex<State>` / `Arc<Mutex<State>>` -> State; None for a non-guard type.
         # A guard wrapped in a deref pointer (`Arc<Mutex<T>>`) still unwraps to its
@@ -303,6 +438,52 @@ def _rust_bare_generic_name(type_node: Node) -> str | None:
         None,
     )
     return _rust_bare_type_name(inner) if inner else outer_name
+
+
+def _rust_element_type_name(type_node: Node) -> str | None:
+    # Element type of a sequence-shaped type, or None: `Vec<Worker>` /
+    # `&[Worker]` / `[Worker; 4]` -> Worker, recursing through references
+    # and transparent deref pointers (`Arc<Vec<Worker>>`, `Box<[Worker]>`).
+    match type_node.type:
+        case cs.TS_RS_REFERENCE_TYPE:
+            for child in type_node.children:
+                if (
+                    child.type in cs.RS_RETURN_TYPE_NODE_TYPES
+                    or child.type == cs.TS_RS_ARRAY_TYPE
+                ):
+                    return _rust_element_type_name(child)
+            return None
+        case cs.TS_RS_ARRAY_TYPE:
+            element = type_node.child_by_field_name(cs.RS_FIELD_ELEMENT)
+            return _rust_bare_type_name(element) if element else None
+        case cs.TS_GENERIC_TYPE:
+            outer = type_node.child_by_field_name(cs.FIELD_TYPE)
+            outer_name = safe_decode_text(outer) if outer else None
+            args = type_node.child_by_field_name(cs.TS_RS_TYPE_ARGUMENTS)
+            inner = (
+                next(
+                    (
+                        c
+                        for c in args.children
+                        if c.type in cs.RS_RETURN_TYPE_NODE_TYPES
+                        or c.type == cs.TS_RS_ARRAY_TYPE
+                    ),
+                    None,
+                )
+                if args is not None
+                else None
+            )
+            if inner is None:
+                return None
+            if outer_name in cs.RS_ELEMENT_CONTAINERS:
+                if inner.type == cs.TS_RS_ARRAY_TYPE:
+                    return _rust_element_type_name(inner)
+                return _rust_bare_type_name(inner)
+            if outer_name in cs.RS_DEREF_WRAPPERS:
+                return _rust_element_type_name(inner)
+            return None
+        case _:
+            return None
 
 
 def _rust_bare_type_name(type_node: Node) -> str | None:

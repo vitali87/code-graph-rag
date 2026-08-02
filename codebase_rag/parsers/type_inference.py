@@ -41,6 +41,7 @@ class TypeInferenceEngine:
         "simple_name_lookup",
         "class_field_types",
         "class_field_guard_inner",
+        "class_field_element_types",
         "method_return_types",
         "go_function_return_types",
         "csharp_partial_groups",
@@ -79,6 +80,7 @@ class TypeInferenceEngine:
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]] | None = None,
         class_field_guard_inner: dict[str, dict[str, str]] | None = None,
+        class_field_element_types: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
         go_function_return_types: dict[str, str] | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
@@ -114,6 +116,13 @@ class TypeInferenceEngine:
         # guard-accessor hop so a direct wrapper call isn't mis-resolved to it.
         self.class_field_guard_inner = (
             class_field_guard_inner if class_field_guard_inner is not None else {}
+        )
+        # Shared reference (as with class_field_types): Rust sequence-field
+        # element types (`Pool.workers` -> Worker for a `Vec<Worker>` field),
+        # applied only when an iterator adaptor's closure parameter binds the
+        # element (issue #1045).
+        self.class_field_element_types = (
+            class_field_element_types if class_field_element_types is not None else {}
         )
         # Shared reference (as with class_field_types): DefinitionProcessor's
         # func_qn -> return-type map, populated during ingestion and read by the
@@ -323,6 +332,33 @@ class TypeInferenceEngine:
         elif language == cs.SupportedLanguage.DART:
             self._enrich_dart_call_locals(caller_node, local)
         return local
+
+    def collect_rust_span_bindings(
+        self, caller_node: ASTNode, class_context: str | None
+    ) -> list[tuple[int, int, str, str]]:
+        """Span-scoped Rust bindings overlaid at each call's position.
+
+        Match-arm variant bindings plus iterator-adaptor closure-parameter
+        bindings (issue #1045): both rebind one name to different types at
+        different byte ranges, which the flat map cannot express. Element
+        types come from the caller's own collection-typed params/lets plus
+        its class's sequence fields, keyed `self.<field>` exactly as the
+        flat map spells field receivers.
+        """
+        engine = self.rust_type_inference
+        bindings = engine.collect_match_arm_bindings(caller_node)
+        element_types = engine.collect_element_types(caller_node)
+        if class_context:
+            for field, elem in self.class_field_element_types.get(
+                class_context, {}
+            ).items():
+                element_types.setdefault(
+                    f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOT}{field}", elem
+                )
+        bindings.extend(
+            engine.collect_closure_param_bindings(caller_node, element_types)
+        )
+        return bindings
 
     def _enrich_dart_call_locals(
         self, caller_node: ASTNode, var_types: dict[str, str]
