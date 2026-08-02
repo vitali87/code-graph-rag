@@ -850,6 +850,26 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = result
             return result
 
+        # A Rust `module::item` call names its function through the module
+        # path, so it binds inside that module: a direct item, or the
+        # module's own `use` re-export (ripgrep's flags::parse() through
+        # flags/mod.rs). Runs after the import probes, so an aliased or
+        # imported first segment keeps its precise resolution, and DECIDES
+        # whenever the path names a real first-party module: an item the
+        # module does not hold is a drop, never a bare-name trie guess at
+        # an unrelated same-named function (issue #1009).
+        if (
+            language == cs.SupportedLanguage.RUST
+            and cs.SEPARATOR_DOUBLE_COLON in call_name
+        ):
+            result, decided = self._try_resolve_rust_module_qualified(
+                call_name, module_qn
+            )
+            if decided:
+                if use_cache:
+                    self._simple_resolution_cache[cache_key] = result
+                return result
+
         if class_context and (
             result := self._resolve_self_sibling_method(call_name, class_context)
         ):
@@ -1329,6 +1349,51 @@ class CallResolver:
         if target is None:
             return None
         return (self._follow_rust_scope_target(target),)
+
+    def _try_resolve_rust_module_qualified(
+        self, call_name: str, module_qn: str
+    ) -> tuple[tuple[str, str] | None, bool]:
+        """Bind `module::item` inside the named module, or drop.
+
+        Returns (result, decided). Undecided (False) means the path names
+        no first-party module here and the ordinary fallbacks apply: a
+        registered type's associated call, or an external path such as
+        std::mem::replace. Decided with None means the module is real but
+        holds no such item, so the edge is dropped rather than rebound by
+        bare name.
+        """
+        parts = call_name.split(cs.SEPARATOR_DOUBLE_COLON)
+        object_path, item = parts[:-1], parts[-1]
+        if not item or not all(object_path):
+            return None, False
+        # A registered type as the first segment is an associated-function
+        # call, owned by the class-resolution paths.
+        if self._resolve_class_name(object_path[0], module_qn):
+            return None, False
+        modules = self.type_inference.module_qn_to_file_path
+        import_mapping = self.import_processor.import_mapping
+        # At most one of these legally binds the first segment in the
+        # caller's scope (a use alias colliding with a mod declaration is
+        # E0255, two mod declarations E0428): a module-mapped import, the
+        # caller file's own child module (inline mods key as qn children
+        # everywhere; file submodules of non-entry files too), then the
+        # qn-sibling spelling entry-file submodules get (src/flags.rs
+        # beside src/main.rs keys src.flags).
+        bases = []
+        if mapped := import_mapping.get(module_qn, {}).get(object_path[0]):
+            bases.append(cs.SEPARATOR_DOT.join([mapped, *object_path[1:]]))
+        parent = module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        for anchor in (module_qn, parent):
+            if anchor:
+                bases.append(cs.SEPARATOR_DOT.join([anchor, *object_path]))
+        for base in bases:
+            if base not in modules and base not in import_mapping:
+                continue
+            return (
+                self._follow_rust_scope_target(f"{base}{cs.SEPARATOR_DOT}{item}"),
+                True,
+            )
+        return None, False
 
     def _follow_rust_scope_target(self, target: str) -> tuple[str, str] | None:
         # An entry-file `pub use` re-export maps the name to the
