@@ -361,35 +361,42 @@ class CallResolver:
             return None
         scope = caller_qn
         while True:
-            candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
-            if candidate in self.function_registry and self._bare_call_allowed(
-                language, candidate
-            ):
-                return self.function_registry[candidate], candidate
-            # A duplicate-variant caller (click's real `command` registers as
-            # `command@168` behind its @t.overload stubs) owns nested defs the
-            # def pass registers under the NATURAL qn (`command.decorator`);
-            # probe the variant-stripped scope too, or the call falls to the
-            # module trie and mis-binds to a sibling's same-named nested.
-            last = scope.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-            if cs.DUP_QN_MARKER in last:
-                natural_scope = (
-                    scope[: len(scope) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
-                )
-                natural_candidate = f"{natural_scope}{cs.SEPARATOR_DOT}{call_name}"
-                if natural_candidate in self.function_registry and (
-                    self._bare_call_allowed(language, natural_candidate)
-                ):
-                    return (
-                        self.function_registry[natural_candidate],
-                        natural_candidate,
-                    )
+            if hit := self._scope_candidate(scope, call_name, language):
+                return hit
+            if hit := self._dup_variant_scope_candidate(scope, call_name, language):
+                return hit
             if cs.SEPARATOR_DOT not in scope:
                 return None
             parent = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
             if parent == module_qn or parent not in self.function_registry:
                 return None
             scope = parent
+
+    def _scope_candidate(
+        self, scope: str, call_name: str, language: cs.SupportedLanguage | None
+    ) -> tuple[str, str] | None:
+        candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
+        if candidate in self.function_registry and self._bare_call_allowed(
+            language, candidate
+        ):
+            return self.function_registry[candidate], candidate
+        return None
+
+    def _dup_variant_scope_candidate(
+        self, scope: str, call_name: str, language: cs.SupportedLanguage | None
+    ) -> tuple[str, str] | None:
+        # A duplicate-variant caller (click's real `command` registers as
+        # `command@168` behind its @t.overload stubs) owns nested defs the
+        # def pass registers under the NATURAL qn (`command.decorator`);
+        # probe the variant-stripped scope too, or the call falls to the
+        # module trie and mis-binds to a sibling's same-named nested.
+        last = scope.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if cs.DUP_QN_MARKER not in last:
+            return None
+        natural_scope = (
+            scope[: len(scope) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
+        )
+        return self._scope_candidate(natural_scope, call_name, language)
 
     def _bare_call_allowed(
         self, language: cs.SupportedLanguage | None, qn: str
@@ -1357,13 +1364,12 @@ class CallResolver:
             ).get(call_name)
             scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
             while len(scope) > len(module_qn):
-                local_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
                 # The scope segment may be an impl target whose method a
                 # bare path can never name (issue #1011).
-                if local_qn in self.function_registry and self._bare_call_allowed(
-                    cs.SupportedLanguage.RUST, local_qn
+                if local := self._scope_candidate(
+                    scope, call_name, cs.SupportedLanguage.RUST
                 ):
-                    return ((self.function_registry[local_qn], local_qn),)
+                    return (local,)
                 target = (
                     weak
                     if weak is not None
