@@ -54,6 +54,7 @@ ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"
 
 PROTOBUF_INDEX_FILE = "index.bin"
+PROTOBUF_PAYLOAD_ONEOF = "payload"
 PROTOBUF_NODES_FILE = "nodes.bin"
 PROTOBUF_RELS_FILE = "relationships.bin"
 

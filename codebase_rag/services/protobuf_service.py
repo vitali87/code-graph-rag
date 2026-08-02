@@ -74,8 +74,14 @@ class ProtobufFileIngestor:
         # `MERGE ... SET n += props`: a later batch may carry properties
         # the first did not (the Rust cfg(test) declaration record lands
         # after the module's own node, issue #1010). Each provided key
-        # replaces the stored value wholesale, lists included.
+        # replaces the stored value wholesale, lists included. SAME label
+        # only: qn strings collide across labels (Rust `mod run` and
+        # `fn run`), and writing through the other oneof field would
+        # switch the payload and clear the stored node, so a cross-label
+        # ensure keeps the first writer, as before the merge existed.
         if (existing := self._nodes.get(node_id)) is not None:
+            if existing.WhichOneof(cs.PROTOBUF_PAYLOAD_ONEOF) != payload_field_name:
+                return
             payload_message = getattr(existing, payload_field_name)
         else:
             if label in _MSG_CLASS_CACHE:
