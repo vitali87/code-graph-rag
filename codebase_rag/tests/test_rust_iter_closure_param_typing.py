@@ -497,3 +497,24 @@ def test_turbofish_collect_types_element(rust_fn_parser) -> None:
     entries = RustTypeInferenceEngine().collect_element_entries(fn)
     assert [e for e in entries if e[0] == "a" and e[1] == "Worker"], entries
     assert [e for e in entries if e[0] == "b" and e[1] == "Worker"], entries
+
+
+def test_enclosing_closure_param_shadows_collection(rust_fn_parser) -> None:
+    # An enclosing closure parameter shadowing a collection name hides
+    # the function-level entry: the inner adaptor's receiver is the
+    # closure's binding, whose element the engine does not know, so the
+    # inner parameter must stay unbound rather than type from the
+    # shadowed outer collection.
+    fn = rust_fn_parser(
+        "pub fn drive(items: Vec<Worker>, groups: Vec<Group>) {\n"
+        "    groups.into_iter().for_each(|items| {\n"
+        "        items.iter().for_each(|x| {\n"
+        "            x.run();\n"
+        "        });\n"
+        "    });\n"
+        "}\n"
+    )
+    engine = RustTypeInferenceEngine()
+    entries = engine.collect_element_entries(fn)
+    bindings = engine.collect_closure_param_bindings(fn, entries)
+    assert not [b for b in bindings if b[2] == "x"], bindings
