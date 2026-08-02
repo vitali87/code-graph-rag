@@ -165,6 +165,7 @@ class ClassIngestMixin:
     csharp_base_kinds: dict[tuple[str, int], dict[str, str]]
     csharp_type_locations: dict[tuple[str, int], str]
     class_field_guard_inner: dict[str, dict[str, str]]
+    class_field_element_types: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
     function_locations: dict[FunctionSpanKey, FunctionLocation]
@@ -958,6 +959,8 @@ class ClassIngestMixin:
                 self.class_field_types[class_qn] = field_types
             if guard_inner := rust_engine.build_field_guard_inner_map(class_node):
                 self.class_field_guard_inner[class_qn] = guard_inner
+            if elements := rust_engine.build_field_element_map(class_node):
+                self.class_field_element_types[class_qn] = elements
         elif language == cs.SupportedLanguage.DART:
             # Record Dart field types (`Greeter buddy;`) so a field-typed
             # receiver (`buddy.greet()`, `this.buddy.hail()`) resolves

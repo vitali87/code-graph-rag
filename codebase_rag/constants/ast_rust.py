@@ -200,3 +200,35 @@ RS_MANIFEST_TARGET_TABLE_KEY = "target"
 # Crates shipped with the toolchain: external by construction, no
 # manifest needed to know a use head naming one is outside the project.
 RS_STDLIB_CRATES = frozenset({"std", "core", "alloc", "proc_macro"})
+
+# Iterator-adaptor closure typing (issue #1045): a closure argument of one
+# of these adaptors receives the sequence's element (by value or
+# reference, indistinguishable for method binding), so its parameter can
+# type from the iterated collection's element type.
+RS_ITER_ADAPTORS = frozenset(
+    {
+        "map",
+        "filter",
+        "for_each",
+        "inspect",
+        "take_while",
+        "skip_while",
+        "filter_map",
+        "find",
+        "position",
+        "any",
+        "all",
+    }
+)
+# Chain hops between the collection and the adaptor that preserve the
+# element type. Element-changing adaptors (enumerate, zip, flat_map) are
+# deliberately absent: crossing one loses the element.
+RS_ITER_NEUTRAL_HOPS = frozenset(
+    {"iter", "into_iter", "iter_mut", "by_ref", "rev", "cloned", "copied", "filter"}
+)
+# Sequence containers whose FIRST generic argument is the element type.
+RS_ELEMENT_CONTAINERS = frozenset({"Vec", "VecDeque"})
+RS_ITER_MAP = "map"
+RS_ITER_COLLECT = "collect"
+TS_RS_ARRAY_TYPE = "array_type"
+RS_FIELD_ELEMENT = "element"
