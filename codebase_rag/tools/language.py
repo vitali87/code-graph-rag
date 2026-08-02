@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import ast
+import io
 import json
 import os
 import pathlib
 import re
 import shutil
 import subprocess
+import tokenize
 from dataclasses import dataclass
 from typing import NamedTuple
 
 import click
-import diff_match_patch as dmp
 from loguru import logger
 from rich.console import Console
 from rich.table import Table
@@ -331,12 +333,231 @@ def _update_config_file(language_name: str, spec: LanguageSpec) -> bool:
         return False
 
 
-def _write_language_config(config_entry: str, language_name: str) -> bool:
-    config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
-    closing_brace_pos = config_content.rfind("}")
+def _read_config_text() -> tuple[str, str]:
+    raw = pathlib.Path(cs.LANG_CONFIG_FILE).read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    content = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    return content, newline
 
-    if closing_brace_pos == -1:
+
+def _write_config_atomically(new_content: str, newline: str) -> None:
+    temp_path = f"{cs.LANG_CONFIG_FILE}{cs.LANG_CONFIG_TMP_SUFFIX}"
+    try:
+        with open(temp_path, "w", encoding="utf-8", newline=newline) as f:
+            f.write(new_content)
+        os.replace(temp_path, cs.LANG_CONFIG_FILE)
+    except Exception:
+        pathlib.Path(temp_path).unlink(missing_ok=True)
+        raise
+
+
+def _specs_assignment(node: ast.stmt) -> tuple[list[ast.expr], ast.expr | None]:
+    if isinstance(node, ast.Assign):
+        return node.targets, node.value
+    if isinstance(node, ast.AnnAssign):
+        return [node.target], node.value
+    return [], None
+
+
+def _specs_dict(config_content: str) -> ast.Dict:
+    try:
+        module = ast.parse(config_content)
+    except SyntaxError as exc:
+        raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND) from exc
+    found: ast.Dict | None = None
+    for node in module.body:
+        targets, value = _specs_assignment(node)
+        is_specs = any(
+            isinstance(target, ast.Name) and target.id == cs.LANG_SPECS_NAME
+            for target in targets
+        )
+        if is_specs and isinstance(value, ast.Dict):
+            found = value
+    if found is None:
         raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+    return found
+
+
+def _content_offset(config_content: str, lineno: int, byte_col: int) -> int:
+    lines = config_content.split("\n")
+    prefix = sum(len(line) + 1 for line in lines[: lineno - 1])
+    line = lines[lineno - 1]
+    return prefix + len(line.encode("utf-8")[:byte_col].decode("utf-8"))
+
+
+def _specs_dict_span(config_content: str) -> tuple[int, int]:
+    dict_node = _specs_dict(config_content)
+    end_lineno = dict_node.end_lineno
+    end_col_offset = dict_node.end_col_offset
+    if end_lineno is None or end_col_offset is None:
+        raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+    start = _content_offset(config_content, dict_node.lineno, dict_node.col_offset)
+    end = _content_offset(config_content, end_lineno, end_col_offset - 1)
+    return start, end
+
+
+def _entry_key_matches(key: ast.expr, language_name: str) -> bool:
+    if isinstance(key, ast.Constant) and key.value == language_name:
+        return True
+    try:
+        member = cs.SupportedLanguage(language_name).name
+    except ValueError:
+        return False
+    return isinstance(key, ast.Attribute) and ast.unparse(
+        key
+    ) == cs.LANG_ENUM_KEY_TEMPLATE.format(member=member)
+
+
+class _TokenScanner:
+    def __init__(self, config_content: str) -> None:
+        self.content = config_content
+        self.tokens = list(
+            tokenize.generate_tokens(io.StringIO(config_content).readline)
+        )
+        offsets = [0]
+        for line in config_content.split("\n"):
+            offsets.append(offsets[-1] + len(line) + 1)
+        self._line_offsets = offsets
+
+    def offset(self, position: tuple[int, int]) -> int:
+        row, col = position
+        return self._line_offsets[row - 1] + col
+
+    def index_at_or_after(self, offset: int) -> int:
+        for i, token in enumerate(self.tokens):
+            if self.offset(token.start) >= offset:
+                return i
+        return len(self.tokens)
+
+    def _seek_op(self, i: int) -> int:
+        while i < len(self.tokens) and self.tokens[i].type in (
+            tokenize.NL,
+            tokenize.COMMENT,
+            tokenize.INDENT,
+            tokenize.DEDENT,
+        ):
+            i += 1
+        return i
+
+    def extend_start(self, start: int, key_end: int) -> int:
+        wrap = 0
+        i = self.index_at_or_after(key_end)
+        while i < len(self.tokens):
+            token = self.tokens[i]
+            if token.type == tokenize.OP and token.string == ":":
+                break
+            if token.type == tokenize.OP and token.string == ")":
+                wrap += 1
+            i += 1
+        i = self.index_at_or_after(start) - 1
+        while wrap and i >= 0:
+            token = self.tokens[i]
+            if token.type in (
+                tokenize.NL,
+                tokenize.COMMENT,
+                tokenize.INDENT,
+                tokenize.DEDENT,
+            ):
+                i -= 1
+            elif token.type == tokenize.OP and token.string == "(":
+                start = self.offset(token.start)
+                wrap -= 1
+                i -= 1
+            else:
+                break
+        return start
+
+    def extend_end(self, end: int, *, own_line: bool) -> int:
+        i = self.index_at_or_after(end)
+        probe = self._seek_op(i)
+        while (
+            probe < len(self.tokens)
+            and self.tokens[probe].type == tokenize.OP
+            and self.tokens[probe].string == ")"
+        ):
+            end = self.offset(self.tokens[probe].end)
+            i = probe + 1
+            probe = self._seek_op(i)
+        if (
+            probe < len(self.tokens)
+            and self.tokens[probe].type == tokenize.OP
+            and self.tokens[probe].string == ","
+        ):
+            end = self.offset(self.tokens[probe].end)
+            i = probe + 1
+        if not own_line:
+            return end
+        if i < len(self.tokens) and self.tokens[i].type == tokenize.COMMENT:
+            end = self.offset(self.tokens[i].end)
+            i += 1
+        if i < len(self.tokens) and self.tokens[i].type in (
+            tokenize.NL,
+            tokenize.NEWLINE,
+        ):
+            end = self.offset(self.tokens[i].end)
+        return end
+
+
+def _specs_entry_spans(
+    config_content: str, language_name: str
+) -> list[tuple[int, int]]:
+    dict_node = _specs_dict(config_content)
+    scanner = _TokenScanner(config_content)
+    spans: list[tuple[int, int]] = []
+    for key, value in zip(dict_node.keys, dict_node.values, strict=True):
+        if key is None or not _entry_key_matches(key, language_name):
+            continue
+        end_lineno = value.end_lineno
+        end_col_offset = value.end_col_offset
+        key_end_lineno = key.end_lineno
+        key_end_col_offset = key.end_col_offset
+        if (
+            end_lineno is None
+            or end_col_offset is None
+            or key_end_lineno is None
+            or key_end_col_offset is None
+        ):
+            raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
+        start = _content_offset(config_content, key.lineno, key.col_offset)
+        key_end = _content_offset(config_content, key_end_lineno, key_end_col_offset)
+        start = scanner.extend_start(start, key_end)
+        line_start = config_content.rfind("\n", 0, start) + 1
+        own_line = not config_content[line_start:start].strip()
+        if own_line:
+            start = line_start
+        end = _content_offset(config_content, end_lineno, end_col_offset)
+        spans.append((start, scanner.extend_end(end, own_line=own_line)))
+    if not spans:
+        raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
+    return spans
+
+
+def _write_language_config(config_entry: str, language_name: str) -> bool:
+    config_content, newline = _read_config_text()
+    closing_brace_pos = _specs_dict_span(config_content)[1]
+
+    scanner = _TokenScanner(config_content)
+    last = None
+    for token in scanner.tokens:
+        if token.type in (
+            tokenize.COMMENT,
+            tokenize.NL,
+            tokenize.NEWLINE,
+            tokenize.INDENT,
+            tokenize.DEDENT,
+            tokenize.ENCODING,
+            tokenize.ENDMARKER,
+        ):
+            continue
+        if scanner.offset(token.start) >= closing_brace_pos:
+            break
+        last = token
+    if last is not None and not (
+        last.type == tokenize.OP and last.string in ("{", ",")
+    ):
+        comma_pos = scanner.offset(last.end)
+        config_content = config_content[:comma_pos] + "," + config_content[comma_pos:]
+        closing_brace_pos += 1
 
     new_content = (
         config_content[:closing_brace_pos]
@@ -345,8 +566,9 @@ def _write_language_config(config_entry: str, language_name: str) -> bool:
         + config_content[closing_brace_pos:]
     )
 
-    with open(cs.LANG_CONFIG_FILE, "w", encoding="utf-8") as f:
-        f.write(new_content)
+    compile(new_content, cs.LANG_CONFIG_FILE, "exec")
+
+    _write_config_atomically(new_content, newline)
 
     click.echo(f"OK {cs.LANG_MSG_LANG_ADDED.format(name=language_name)}")
     click.echo(f"Note: {cs.LANG_MSG_UPDATED_CONFIG.format(path=cs.LANG_CONFIG_FILE)}")
@@ -523,65 +745,73 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
         click.echo(f"List: {cs.LANG_MSG_AVAILABLE_LANGS.format(langs=available_langs)}")
         return
 
-    try:
-        original_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
-        pattern = rf'    "{language_name}": LanguageSpec\([\s\S]*?\),\n'
-        new_content = re.sub(pattern, "", original_content)
-
-        dmp_obj = dmp.diff_match_patch()
-        patches = dmp_obj.patch_make(original_content, new_content)
-        result, _ = dmp_obj.patch_apply(patches, original_content)
-
-        with open(cs.LANG_CONFIG_FILE, "w", encoding="utf-8") as f:
-            f.write(result)
-
-        click.echo(f"OK {cs.LANG_MSG_REMOVED_FROM_CONFIG.format(name=language_name)}")
-
-    except Exception as e:
-        logger.error(cs.LANG_ERR_REMOVE_CONFIG.format(error=e))
-        click.echo(f"Error: {cs.LANG_ERR_REMOVE_CONFIG.format(error=e)}")
+    if not _remove_language_from_config(language_name):
         return
 
-    if not keep_submodule:
+    if keep_submodule:
+        click.echo(f"Info: {cs.LANG_MSG_KEEPING_SUBMODULE}")
+    else:
         submodule_path = (
             f"{cs.LANG_GRAMMARS_DIR}/{cs.TREE_SITTER_PREFIX}{language_name}"
         )
         if os.path.exists(submodule_path):
-            try:
-                click.echo(
-                    f"Removing: {cs.LANG_MSG_REMOVING_SUBMODULE.format(path=submodule_path)}"
-                )
-                subprocess.run(
-                    ["git", "submodule", "deinit", "-f", submodule_path],
-                    check=True,
-                    capture_output=True,
-                )
-                subprocess.run(
-                    ["git", "rm", "-f", submodule_path], check=True, capture_output=True
-                )
-
-                modules_path = cs.LANG_GIT_MODULES_PATH.format(path=submodule_path)
-                if os.path.exists(modules_path):
-                    shutil.rmtree(modules_path)
-                    click.echo(
-                        f"Cleaned: {cs.LANG_MSG_CLEANED_MODULES.format(path=modules_path)}"
-                    )
-
-                click.echo(
-                    f"Deleted: {cs.LANG_MSG_SUBMODULE_REMOVED.format(path=submodule_path)}"
-                )
-            except subprocess.CalledProcessError as e:
-                logger.error(cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e))
-                click.echo(f"Error: {cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e)}")
-                click.echo(f"Hint: {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
-                click.echo(f"   git submodule deinit -f {submodule_path}")
-                click.echo(f"   git rm -f {submodule_path}")
+            _remove_language_submodule(submodule_path)
         else:
             click.echo(f"Info: {cs.LANG_MSG_NO_SUBMODULE.format(path=submodule_path)}")
-    else:
-        click.echo(f"Info: {cs.LANG_MSG_KEEPING_SUBMODULE}")
 
     click.echo(f"Done: {cs.LANG_MSG_LANG_REMOVED.format(name=language_name)}")
+
+
+def _remove_language_from_config(language_name: str) -> bool:
+    try:
+        original_content, newline = _read_config_text()
+        spans = _specs_entry_spans(original_content, language_name)
+        new_content = original_content
+        for entry_start, entry_end in sorted(spans, reverse=True):
+            new_content = new_content[:entry_start] + new_content[entry_end:]
+        compile(new_content, cs.LANG_CONFIG_FILE, "exec")
+
+        _write_config_atomically(new_content, newline)
+
+        click.echo(f"OK {cs.LANG_MSG_REMOVED_FROM_CONFIG.format(name=language_name)}")
+        return True
+
+    except Exception as e:
+        logger.error(cs.LANG_ERR_REMOVE_CONFIG.format(error=e))
+        click.echo(f"Error: {cs.LANG_ERR_REMOVE_CONFIG.format(error=e)}")
+        return False
+
+
+def _remove_language_submodule(submodule_path: str) -> None:
+    try:
+        click.echo(
+            f"Removing: {cs.LANG_MSG_REMOVING_SUBMODULE.format(path=submodule_path)}"
+        )
+        subprocess.run(
+            ["git", "submodule", "deinit", "-f", submodule_path],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "rm", "-f", submodule_path], check=True, capture_output=True
+        )
+
+        modules_path = cs.LANG_GIT_MODULES_PATH.format(path=submodule_path)
+        if os.path.exists(modules_path):
+            shutil.rmtree(modules_path)
+            click.echo(
+                f"Cleaned: {cs.LANG_MSG_CLEANED_MODULES.format(path=modules_path)}"
+            )
+
+        click.echo(
+            f"Deleted: {cs.LANG_MSG_SUBMODULE_REMOVED.format(path=submodule_path)}"
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error(cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e))
+        click.echo(f"Error: {cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e)}")
+        click.echo(f"Hint: {cs.LANG_ERR_MANUAL_REMOVE_HINT}")
+        click.echo(f"   git submodule deinit -f {submodule_path}")
+        click.echo(f"   git rm -f {submodule_path}")
 
 
 @cli.command(help=ch.CMD_LANGUAGE_CLEANUP, short_help=ch.CMD_LANGUAGE_CLEANUP)
