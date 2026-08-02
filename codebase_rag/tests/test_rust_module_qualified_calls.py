@@ -202,6 +202,53 @@ def test_inline_mod_qualified_call_binds_inner_module(
     assert (f"{base}.main.inner.call", f"{base}.util.go") not in calls, calls
 
 
+def test_inline_mod_child_reexports_shadow_enclosing_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An inline mod's child holding the item only via re-exports (named
+    # AND glob) still shadows the enclosing same-named module: the edges
+    # bind through inner.api's namespace, never to main's own api.
+    project = temp_repo / "rs_modqual_shadow"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_modqual_shadow"\nversion = "0.1.0"\n',
+            "src/main.rs": (
+                "mod api {\n"
+                "    pub fn named() -> i32 {\n        10\n    }\n"
+                "    pub fn globbed() -> i32 {\n        20\n    }\n"
+                "}\n\n"
+                "mod backing {\n"
+                "    pub fn named() -> i32 {\n        1\n    }\n"
+                "}\n\n"
+                "mod globsrc {\n"
+                "    pub fn globbed() -> i32 {\n        2\n    }\n"
+                "}\n\n"
+                "mod inner {\n"
+                "    pub mod api {\n"
+                "        pub use crate::backing::named;\n"
+                "        pub use crate::globsrc::*;\n"
+                "    }\n"
+                "    pub fn call() -> i32 {\n        api::named() + api::globbed()\n    }\n"
+                "}\n\n"
+                "fn main() {\n"
+                "    let _ = inner::call() + api::named() + api::globbed();\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_modqual_shadow.src.main"
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.inner.call", f"{base}.backing.named") in calls, calls
+    assert (f"{base}.inner.call", f"{base}.globsrc.globbed") in calls, calls
+    assert (f"{base}.inner.call", f"{base}.api.named") not in calls, calls
+    assert (f"{base}.inner.call", f"{base}.api.globbed") not in calls, calls
+    assert (f"{base}.main", f"{base}.api.named") in calls, calls
+    assert (f"{base}.main", f"{base}.api.globbed") in calls, calls
+
+
 def test_crate_prefixed_qualified_call_follows_reexport(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

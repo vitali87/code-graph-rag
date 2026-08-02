@@ -1391,6 +1391,11 @@ class CallResolver:
             target = f"{base}{cs.SEPARATOR_DOT}{item}"
             if (hit := self.function_registry.get(target)) is not None:
                 return (hit, target), True
+            if base in import_mapping:
+                # The scope's own child module holds the item only via
+                # re-exports; it still shadows every outer same-named
+                # module, so the decision is made HERE.
+                return self._decide_rust_base(base, item)
             if mapped := import_mapping.get(scope, {}).get(head):
                 return self._decide_rust_module_item(
                     mapped, object_path[1:], item, scope
@@ -1524,23 +1529,32 @@ class CallResolver:
                 seen.add(resolved)
                 target = resolved
                 continue
-            unknown = False
-            for key, value in owner_map.items():
-                if not key.startswith(cs.RS_WILDCARD_PREFIX):
-                    continue
-                resolved = self._rust_local_qn(value, owner)
-                if resolved is None:
-                    unknown = True
-                    continue
-                candidate = f"{resolved}{cs.SEPARATOR_DOT}{item}"
-                if candidate in seen:
-                    continue
-                seen.add(candidate)
-                result, sub_unknown = self._follow_rust_scope_item(candidate, seen)
-                if result is not None:
-                    return result, False
-                unknown = unknown or sub_unknown
-            return None, unknown
+            return self._expand_rust_glob_hops(owner_map, owner, item, seen)
+
+    def _expand_rust_glob_hops(
+        self,
+        owner_map: dict[str, str],
+        owner: str,
+        item: str,
+        seen: set[str],
+    ) -> tuple[tuple[str, str] | None, bool]:
+        unknown = False
+        for key, value in owner_map.items():
+            if not key.startswith(cs.RS_WILDCARD_PREFIX):
+                continue
+            resolved = self._rust_local_qn(value, owner)
+            if resolved is None:
+                unknown = True
+                continue
+            candidate = f"{resolved}{cs.SEPARATOR_DOT}{item}"
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            result, sub_unknown = self._follow_rust_scope_item(candidate, seen)
+            if result is not None:
+                return result, False
+            unknown = unknown or sub_unknown
+        return None, unknown
 
     def _rust_block_import_at(
         self, module_qn: str, name: str, call_point: int | None
