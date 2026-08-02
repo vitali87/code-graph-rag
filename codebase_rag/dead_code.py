@@ -91,7 +91,11 @@ def _has_rust_test_attribute(props: PropertyDict) -> bool:
     if not isinstance(decorators, list):
         return False
     for decorator in decorators:
-        name = str(decorator).strip("#[] ").split(cs.CHAR_PAREN_OPEN)[0]
+        head = str(decorator).strip("#[] ").split(cs.CHAR_PAREN_OPEN)[0]
+        # Attribute paths are token streams: `#[tokio :: test]` names the
+        # same attribute as `#[tokio::test]`, so drop internal whitespace
+        # before matching.
+        name = "".join(head.split())
         if name in cs.RUST_TEST_ATTRIBUTE_NAMES or name.endswith(
             cs.RUST_TEST_ATTRIBUTE_SUFFIX
         ):

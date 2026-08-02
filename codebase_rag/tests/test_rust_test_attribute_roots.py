@@ -116,6 +116,8 @@ def test_test_attribute_roots_function_and_its_callees() -> None:
 
 
 def test_scoped_test_attributes_root() -> None:
+    # Attribute paths are token streams: `#[tokio :: test]` is the same
+    # attribute as `#[tokio::test]`, so matching normalises whitespace.
     dead = _collect(
         [
             _function(
@@ -123,6 +125,12 @@ def test_scoped_test_attributes_root() -> None:
                 "test_async",
                 "src/lib.rs",
                 decorators=['#[tokio::test(flavor = "multi_thread")]'],
+            ),
+            _function(
+                "proj.src.lib.test_spaced",
+                "test_spaced",
+                "src/lib.rs",
+                decorators=["#[tokio :: test]"],
             ),
             _function(
                 "proj.src.lib.bench_add",
