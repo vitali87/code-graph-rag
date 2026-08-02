@@ -863,7 +863,7 @@ class CallResolver:
             and cs.SEPARATOR_DOUBLE_COLON in call_name
         ):
             result, decided = self._try_resolve_rust_module_qualified(
-                call_name, module_qn
+                call_name, module_qn, caller_qn
             )
             if decided:
                 if use_cache:
@@ -1351,7 +1351,7 @@ class CallResolver:
         return (self._follow_rust_scope_target(target),)
 
     def _try_resolve_rust_module_qualified(
-        self, call_name: str, module_qn: str
+        self, call_name: str, module_qn: str, caller_qn: str | None
     ) -> tuple[tuple[str, str] | None, bool]:
         """Bind `module::item` inside the named module, or drop.
 
@@ -1361,58 +1361,186 @@ class CallResolver:
         std::mem::replace. Decided with None means the module is real but
         holds no such item, so the edge is dropped rather than rebound by
         bare name.
+
+        The first segment binds where Rust binds it: the caller's inner
+        scopes first (an inline mod's own child module or use shadows the
+        file's), then the file module's use (at most one binding per
+        scope is legal, E0255/E0428), then the file's own submodule tree
+        via the same relative-path machinery its use declarations resolve
+        through (entry files attach submodules beside themselves via the
+        declaring scan; other files nest them). A use binding the segment
+        to a path outside the indexed project stops the probe undecided:
+        the name is spoken for, so the module tree must not claim it.
         """
         parts = call_name.split(cs.SEPARATOR_DOUBLE_COLON)
         object_path, item = parts[:-1], parts[-1]
         if not item or not all(object_path):
             return None, False
+        head = object_path[0]
+        if head in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER):
+            return self._resolve_rust_prefixed_path(
+                object_path, item, module_qn, caller_qn
+            )
         # A registered type as the first segment is an associated-function
         # call, owned by the class-resolution paths.
-        if self._resolve_class_name(object_path[0], module_qn):
+        if self._resolve_class_name(head, module_qn):
             return None, False
-        modules = self.type_inference.module_qn_to_file_path
         import_mapping = self.import_processor.import_mapping
-        # At most one of these legally binds the first segment in the
-        # caller's scope (a use alias colliding with a mod declaration is
-        # E0255, two mod declarations E0428): a module-mapped import, the
-        # caller file's own child module (inline mods key as qn children
-        # everywhere; file submodules of non-entry files too), then the
-        # qn-sibling spelling entry-file submodules get (src/flags.rs
-        # beside src/main.rs keys src.flags).
-        bases = []
-        if mapped := import_mapping.get(module_qn, {}).get(object_path[0]):
-            bases.append(cs.SEPARATOR_DOT.join([mapped, *object_path[1:]]))
-        parent = module_qn.rpartition(cs.SEPARATOR_DOT)[0]
-        for anchor in (module_qn, parent):
-            if anchor:
-                bases.append(cs.SEPARATOR_DOT.join([anchor, *object_path]))
-        for base in bases:
-            if base not in modules and base not in import_mapping:
-                continue
-            return (
-                self._follow_rust_scope_target(f"{base}{cs.SEPARATOR_DOT}{item}"),
-                True,
+        for scope in self._rust_enclosing_scopes(module_qn, caller_qn):
+            base = cs.SEPARATOR_DOT.join([scope, *object_path])
+            target = f"{base}{cs.SEPARATOR_DOT}{item}"
+            if (hit := self.function_registry.get(target)) is not None:
+                return (hit, target), True
+            if mapped := import_mapping.get(scope, {}).get(head):
+                return self._decide_rust_module_item(
+                    mapped, object_path[1:], item, scope
+                )
+        if mapped := import_mapping.get(module_qn, {}).get(head):
+            return self._decide_rust_module_item(
+                mapped, object_path[1:], item, module_qn
             )
+        base = self.import_processor._rust_resolve_relative(
+            module_qn, list(object_path), module_qn
+        )
+        return self._decide_rust_base(base, item)
+
+    def _resolve_rust_prefixed_path(
+        self,
+        object_path: list[str],
+        item: str,
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> tuple[tuple[str, str] | None, bool]:
+        # crate:: is chain-independent; self::/super:: resolve against the
+        # caller's innermost enclosing MOD chain, which a caller nested
+        # below the file module (an inline mod or an impl block,
+        # indistinguishable in qn space) does not expose, so those stay
+        # with the ordinary fallbacks.
+        if object_path[0] != cs.RUST_CRATE_KEYWORD and self._rust_enclosing_scopes(
+            module_qn, caller_qn
+        ):
+            return None, False
+        base = self.import_processor._rewrite_rust_local_use_path(
+            cs.SEPARATOR_DOUBLE_COLON.join(object_path), module_qn
+        )
+        if cs.SEPARATOR_DOUBLE_COLON in base:
+            return None, False
+        return self._decide_rust_base(base, item)
+
+    def _rust_enclosing_scopes(
+        self, module_qn: str, caller_qn: str | None
+    ) -> list[str]:
+        # The caller's qn scopes strictly between it and the file module,
+        # innermost first (inline mod chains; impl targets appear too,
+        # harmlessly, since mod-level use storage keys mirror them).
+        if not caller_qn or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
+            return []
+        scopes = []
+        scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        while len(scope) > len(module_qn):
+            scopes.append(scope)
+            scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return scopes
+
+    def _decide_rust_module_item(
+        self, mapped: str, rest: list[str], item: str, owner: str
+    ) -> tuple[tuple[str, str] | None, bool]:
+        resolved = self._rust_local_qn(mapped, owner)
+        if resolved is None:
+            # The use binds the head outside the indexed project (std, or
+            # a workspace crate by name, unresolved today): the head is
+            # spoken for, but no first-party module backs it here.
+            return None, False
+        return self._decide_rust_base(cs.SEPARATOR_DOT.join([resolved, *rest]), item)
+
+    def _decide_rust_base(
+        self, base: str, item: str
+    ) -> tuple[tuple[str, str] | None, bool]:
+        target = f"{base}{cs.SEPARATOR_DOT}{item}"
+        result, unknown = self._follow_rust_scope_item(target, {target})
+        if result is not None:
+            return result, True
+        if unknown:
+            # A glob re-export whose base we cannot index may supply the
+            # item; never a decided drop.
+            return None, False
+        if (
+            base in self.type_inference.module_qn_to_file_path
+            or base in self.import_processor.import_mapping
+        ):
+            return None, True
         return None, False
 
-    def _follow_rust_scope_target(self, target: str) -> tuple[str, str] | None:
-        # An entry-file `pub use` re-export maps the name to the
-        # re-exporting module's qn, not the defining one; hop through
-        # that module's own import map before concluding the target
-        # is outside the graph (None: a deliberate drop, never a
-        # fall-through to name-trie guessing).
-        import_mapping = self.import_processor.import_mapping
-        seen = {target}
-        while (target_type := self.function_registry.get(target)) is None:
-            owner, _, item = target.rpartition(cs.SEPARATOR_DOT)
-            hop = import_mapping.get(owner, {}).get(item)
-            if hop is None or hop in seen:
-                break
-            seen.add(hop)
-            target = hop
-        if target_type is not None:
-            return target_type, target
+    def _rust_local_qn(self, value: str, owner: str) -> str | None:
+        """A use-mapping value as a project qn, or None when external.
+
+        crate::/super::/self:: values were rewritten to dotted qns at
+        parse time, so a value still holding :: (or a single bare name)
+        is a Rust 2018 uniform path: it binds locally when its head
+        names a module in the owning scope (`use pool::connect;` beside
+        `mod pool;`), else it names an external crate.
+        """
+        if cs.SEPARATOR_DOUBLE_COLON not in value and cs.SEPARATOR_DOT in value:
+            return value
+        segments = value.split(cs.SEPARATOR_DOUBLE_COLON)
+        head_qn = self.import_processor._rust_resolve_relative(
+            owner, segments[:1], owner
+        )
+        if (
+            head_qn in self.type_inference.module_qn_to_file_path
+            or head_qn in self.import_processor.import_mapping
+        ):
+            return self.import_processor._rust_resolve_relative(owner, segments, owner)
         return None
+
+    def _follow_rust_scope_target(self, target: str) -> tuple[str, str] | None:
+        return self._follow_rust_scope_item(target, {target})[0]
+
+    def _follow_rust_scope_item(
+        self, target: str, seen: set[str]
+    ) -> tuple[tuple[str, str] | None, bool]:
+        """Chase a candidate qn through re-export hops to a registered fn.
+
+        A module's `pub use` maps the name to the re-exporting module's
+        qn, not the defining one; hop through that module's own import
+        map before concluding the target is outside the graph. Named
+        hops win; failing those, each glob re-export (`pub use m::*;`)
+        is expanded when its base is indexable. The second element is
+        True when an unindexable glob base was met: the item may live
+        behind it, so the caller must not turn the miss into a decided
+        drop.
+        """
+        while True:
+            if (target_type := self.function_registry.get(target)) is not None:
+                return (target_type, target), False
+            owner, _, item = target.rpartition(cs.SEPARATOR_DOT)
+            owner_map = self.import_processor.import_mapping.get(owner)
+            if not owner_map:
+                return None, False
+            if (hop := owner_map.get(item)) is not None:
+                resolved = self._rust_local_qn(hop, owner)
+                if resolved is None or resolved in seen:
+                    return None, False
+                seen.add(resolved)
+                target = resolved
+                continue
+            unknown = False
+            for key, value in owner_map.items():
+                if not key.startswith(cs.RS_WILDCARD_PREFIX):
+                    continue
+                resolved = self._rust_local_qn(value, owner)
+                if resolved is None:
+                    unknown = True
+                    continue
+                candidate = f"{resolved}{cs.SEPARATOR_DOT}{item}"
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                result, sub_unknown = self._follow_rust_scope_item(candidate, seen)
+                if result is not None:
+                    return result, False
+                unknown = unknown or sub_unknown
+            return None, unknown
 
     def _rust_block_import_at(
         self, module_qn: str, name: str, call_point: int | None
