@@ -472,12 +472,12 @@ class _TokenScanner:
             i = probe + 1
             probe = self._seek_op(i)
         if (
-            i < len(self.tokens)
-            and self.tokens[i].type == tokenize.OP
-            and self.tokens[i].string == ","
+            probe < len(self.tokens)
+            and self.tokens[probe].type == tokenize.OP
+            and self.tokens[probe].string == ","
         ):
-            end = self.offset(self.tokens[i].end)
-            i += 1
+            end = self.offset(self.tokens[probe].end)
+            i = probe + 1
         if not own_line:
             return end
         if i < len(self.tokens) and self.tokens[i].type == tokenize.COMMENT:
