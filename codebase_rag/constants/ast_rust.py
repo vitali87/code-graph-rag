@@ -195,6 +195,8 @@ RS_MANIFEST_WORKSPACE_KEY = "workspace"
 RS_MANIFEST_MEMBERS_KEY = "members"
 RS_MANIFEST_NAME_KEY = "name"
 RS_MANIFEST_LIB_SECTION = "lib"
+RS_MANIFEST_DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
+RS_MANIFEST_TARGET_TABLE_KEY = "target"
 # Crates shipped with the toolchain: external by construction, no
 # manifest needed to know a use head naming one is outside the project.
 RS_STDLIB_CRATES = frozenset({"std", "core", "alloc", "proc_macro"})

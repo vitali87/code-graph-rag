@@ -402,6 +402,7 @@ class ImportProcessor:
         "_rust_explicit_targets",
         "_rust_auto_build_flags",
         "_rust_workspace_crates",
+        "_rust_pkg_deps",
         "_rust_inline_scope_keys",
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
@@ -459,14 +460,21 @@ class ImportProcessor:
         # explicitly, false disables it entirely). Filled alongside the
         # explicit-target parse, cleared with it.
         self._rust_auto_build_flags: dict[tuple[str, ...], bool] = {}
-        # Workspace member crate names (underscore-spelled) -> lib-root
-        # (dir parts, entry stem), so `use grep_searcher::sinks;` rewrites
+        # Workspace crate names (underscore-spelled) -> (package dir, lib
+        # root dir, entry stem), so `use grep_searcher::sinks;` rewrites
         # to a project qn at parse time like crate:: paths do (issue
         # #1033). Built lazily from the root manifest's members plus the
         # root package; None until first use, re-None'd on manifest edits.
-        self._rust_workspace_crates: dict[str, tuple[tuple[str, ...], str]] | None = (
-            None
-        )
+        self._rust_workspace_crates: (
+            dict[str, tuple[tuple[str, ...], tuple[str, ...], str]] | None
+        ) = None
+        # Per-package dependency targets: dep name (underscore-spelled) ->
+        # repo-relative dir of the path/workspace dependency it resolves
+        # to, or None for registry and renamed entries. Gates the member
+        # rewrite to dependencies cargo actually binds to the member.
+        self._rust_pkg_deps: dict[
+            tuple[str, ...], dict[str, tuple[str, ...] | None]
+        ] = {}
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
@@ -1192,19 +1200,23 @@ class ImportProcessor:
         except (OSError, tomllib.TOMLDecodeError):
             return {}
 
-    def _rust_workspace_crate_roots(self) -> dict[str, tuple[tuple[str, ...], str]]:
-        """Workspace member crate names -> (lib-root dir parts, entry stem).
+    def _rust_workspace_crate_roots(
+        self,
+    ) -> dict[str, tuple[tuple[str, ...], tuple[str, ...], str]]:
+        """Workspace crate names -> (package dir, lib-root dir, entry stem).
 
         Cargo resolves a `use` head naming another crate through the
         [dependencies] graph; indexing has no lockfile, so the root
         manifest's workspace members (plus the root package itself, an
         implicit member that integration tests import by name) stand in:
-        every member with a lib target is importable by its [package]
-        name, hyphens spelled as underscores in code (issue #1033).
+        every member with a lib target is importable by its lib name
+        ([package] name unless [lib] name overrides), hyphens spelled as
+        underscores in code (issue #1033). The package dir feeds the
+        per-importer dependency gate.
         """
         if self._rust_workspace_crates is not None:
             return self._rust_workspace_crates
-        mapping: dict[str, tuple[tuple[str, ...], str]] = {}
+        mapping: dict[str, tuple[tuple[str, ...], tuple[str, ...], str]] = {}
         for member in self._rust_workspace_member_dirs():
             manifest = self._rust_read_manifest(member)
             package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
@@ -1220,8 +1232,13 @@ class ImportProcessor:
                 name = lib_name
             if not isinstance(name, str) or not name:
                 continue
+            try:
+                pkg = member.relative_to(self.repo_path).parts
+            except ValueError:
+                continue
             if (root := self._rust_member_lib_root(member, manifest)) is not None:
-                mapping[name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)] = root
+                key = name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
+                mapping[key] = (pkg, *root)
         self._rust_workspace_crates = mapping
         return mapping
 
@@ -1266,6 +1283,108 @@ class ImportProcessor:
         if cs.LIB_RS in self._rust_dir_entries(member / cs.LANG_SRC_DIR):
             return (*rel, cs.LANG_SRC_DIR), "lib"
         return None
+
+    def _rust_enclosing_package(self, module_qn: str) -> tuple[str, ...] | None:
+        # The nearest ancestor directory holding a Cargo.toml, from the
+        # module's own directory upward (inline-mod qn segments probe
+        # nonexistent dirs harmlessly on the way).
+        parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
+        for i in range(len(parts), -1, -1):
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*parts[:i])
+            ):
+                return tuple(parts[:i])
+        return None
+
+    def _rust_package_deps(
+        self, pkg_parts: tuple[str, ...]
+    ) -> dict[str, tuple[str, ...] | None]:
+        if (cached := self._rust_pkg_deps.get(pkg_parts)) is not None:
+            return cached
+        manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg_parts))
+        tables = [manifest]
+        target = manifest.get(cs.RS_MANIFEST_TARGET_TABLE_KEY)
+        if isinstance(target, dict):
+            tables.extend(t for t in target.values() if isinstance(t, dict))
+        deps: dict[str, tuple[str, ...] | None] = {}
+        for table in tables:
+            for section in cs.RS_MANIFEST_DEP_SECTIONS:
+                entries = table.get(section)
+                if not isinstance(entries, dict):
+                    continue
+                for key, value in entries.items():
+                    name = key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
+                    resolved = self._rust_dep_target_dir(pkg_parts, key, value)
+                    # A path target from any section wins over a
+                    # registry spelling elsewhere (version + path in one
+                    # entry is the common published-workspace shape).
+                    if resolved is not None or name not in deps:
+                        deps[name] = resolved
+        self._rust_pkg_deps[pkg_parts] = deps
+        return deps
+
+    def _rust_dep_target_dir(
+        self, pkg_parts: tuple[str, ...], key: str, value: str | dict[str, object]
+    ) -> tuple[str, ...] | None:
+        # Repo-relative dir of the package this dependency entry binds
+        # to, or None when it resolves outside the repo (registry
+        # version, git, renamed `package =` entries stay out of scope).
+        if not isinstance(value, dict):
+            return None
+        if cs.RS_MANIFEST_PACKAGE_KEY in value:
+            return None
+        base = self.repo_path.joinpath(*pkg_parts)
+        if value.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True:
+            workspace = self._rust_read_manifest(self.repo_path).get(
+                cs.RS_MANIFEST_WORKSPACE_KEY
+            )
+            entry = (
+                workspace.get(cs.RS_MANIFEST_DEP_SECTIONS[0], {}).get(key)
+                if isinstance(workspace, dict)
+                else None
+            )
+            if not isinstance(entry, dict):
+                return None
+            value = entry
+            base = self.repo_path
+        path = value.get(cs.RS_MANIFEST_PATH_KEY)
+        if not isinstance(path, str):
+            return None
+        try:
+            return (
+                (base / _rust_norm_manifest_path(path))
+                .resolve()
+                .relative_to(self.repo_path.resolve())
+                .parts
+            )
+        except (OSError, ValueError):
+            return None
+
+    def _rust_member_rewrite_allowed(
+        self, member_pkg: tuple[str, ...], module_qn: str
+    ) -> bool:
+        # Cargo binds a crate-name head only to a dependency the
+        # importing package declares, or to the package's OWN lib (its
+        # integration tests, benches, and bins import it by name): a
+        # same-named registry dependency keeps the head external.
+        importer_pkg = self._rust_enclosing_package(module_qn)
+        if importer_pkg is None or importer_pkg == member_pkg:
+            return True
+        return member_pkg in self._rust_package_deps(importer_pkg).values()
+
+    def rust_head_is_external_dep(self, head: str, module_qn: str) -> bool:
+        """Whether the importer's manifest proves this head external.
+
+        A dependency entry that resolves to no repo directory (registry
+        version, git, renamed package) speaks for the name, so the call
+        resolver can decide a drop instead of leaving the trie to guess
+        (issue #1033).
+        """
+        pkg = self._rust_enclosing_package(module_qn)
+        if pkg is None:
+            return False
+        deps = self._rust_package_deps(pkg)
+        return head in deps and deps[head] is None
 
     def _rust_crate_root(self, module_qn: str) -> tuple[str, list[str]] | None:
         """The file's crate root: ("classic", dir parts) or ("file", qn parts).
@@ -1599,10 +1718,12 @@ class ImportProcessor:
             keep = max(len(base_parts) - depth, 1)
             base = cs.SEPARATOR_DOT.join(base_parts[:keep])
             return self._rust_resolve_relative(base, parts[depth:], module_qn)
-        if head not in local_mods and (
-            (root := self._rust_workspace_crate_roots().get(head)) is not None
+        if (
+            head not in local_mods
+            and (root := self._rust_workspace_crate_roots().get(head)) is not None
+            and self._rust_member_rewrite_allowed(root[0], module_qn)
         ):
-            dir_parts, stem = root
+            _pkg, dir_parts, stem = root
             return self._rust_attach(list(dir_parts), stem, parts[1:], definitive=True)
         return full_path
 
@@ -2144,6 +2265,7 @@ class ImportProcessor:
         self._rust_explicit_targets.clear()
         self._rust_auto_build_flags.clear()
         self._rust_workspace_crates = None
+        self._rust_pkg_deps.clear()
 
     def refresh_rust_path_caches_for(self, file_path: Path, created: bool) -> None:
         # The realtime watcher re-parses through process_file without
@@ -2217,6 +2339,7 @@ class ImportProcessor:
             self._rust_explicit_targets.clear()
             self._rust_auto_build_flags.clear()
             self._rust_workspace_crates = None
+            self._rust_pkg_deps.clear()
             for key, stems in self._rust_entry_mod_decls.items():
                 allowed = {
                     name[: -len(cs.EXT_RS)]

@@ -1486,11 +1486,15 @@ class CallResolver:
     ) -> tuple[tuple[str, str] | None, bool]:
         resolved = self._rust_local_qn(mapped, owner)
         if resolved is None:
-            if mapped.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0] in cs.RS_STDLIB_CRATES:
-                # A standard-library head is external by construction:
-                # the name is spoken for, so neither the module tree nor
-                # the trie may claim it for a same-named first-party
-                # sibling (issue #1033).
+            head = mapped.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+            if head in cs.RS_STDLIB_CRATES or (
+                self.import_processor.rust_head_is_external_dep(head, owner)
+            ):
+                # A standard-library head, or one the importer's own
+                # manifest binds outside the repo (a registry version),
+                # is external by construction: the name is spoken for,
+                # so neither the module tree nor the trie may claim it
+                # for a same-named first-party sibling (issue #1033).
                 return None, True
             # Any other unresolved head may still be first-party in a
             # layout the import half does not cover (a nested workspace

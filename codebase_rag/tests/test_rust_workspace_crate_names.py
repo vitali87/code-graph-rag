@@ -34,7 +34,10 @@ def test_glob_member_module_qualified_call_binds_cross_crate(
             ),
             "crates/searcher/src/lib.rs": "pub mod sinks;\n",
             "crates/searcher/src/sinks.rs": "pub fn utf8() -> i32 {\n    1\n}\n",
-            "crates/core/Cargo.toml": '[package]\nname = "core"\nversion = "0.1.0"\n',
+            "crates/core/Cargo.toml": (
+                '[package]\nname = "core"\nversion = "0.1.0"\n\n'
+                '[dependencies]\ngrep-searcher = { path = "../searcher" }\n'
+            ),
             "crates/core/src/main.rs": (
                 "mod decoy;\n\n"
                 "use grep_searcher::sinks;\n\n"
@@ -63,7 +66,10 @@ def test_listed_member_direct_item_import_binds(
             "Cargo.toml": '[workspace]\nmembers = ["app", "util"]\n',
             "util/Cargo.toml": '[package]\nname = "util"\nversion = "0.1.0"\n',
             "util/src/lib.rs": "pub fn helper() -> i32 {\n    1\n}\n",
-            "app/Cargo.toml": '[package]\nname = "app"\nversion = "0.1.0"\n',
+            "app/Cargo.toml": (
+                '[package]\nname = "app"\nversion = "0.1.0"\n\n'
+                '[dependencies]\nutil = { path = "../util" }\n'
+            ),
             "app/src/main.rs": (
                 "mod decoy;\n\n"
                 "use util::helper;\n\n"
@@ -127,7 +133,10 @@ def test_lib_path_override_roots_member_crate(
             ),
             "engine/src/custom.rs": "pub mod gear;\n",
             "engine/src/gear.rs": "pub fn spin() -> i32 {\n    1\n}\n",
-            "app/Cargo.toml": '[package]\nname = "app"\nversion = "0.1.0"\n',
+            "app/Cargo.toml": (
+                '[package]\nname = "app"\nversion = "0.1.0"\n\n'
+                '[dependencies]\nengine = { path = "../engine" }\n'
+            ),
             "app/src/main.rs": (
                 "mod decoy;\n\n"
                 "use engine::gear;\n\n"
@@ -160,7 +169,10 @@ def test_lib_name_override_binds_by_target_name(
             ),
             "searcher/src/lib.rs": "pub mod sinks;\n",
             "searcher/src/sinks.rs": "pub fn utf8() -> i32 {\n    1\n}\n",
-            "app/Cargo.toml": '[package]\nname = "app"\nversion = "0.1.0"\n',
+            "app/Cargo.toml": (
+                '[package]\nname = "app"\nversion = "0.1.0"\n\n'
+                '[dependencies]\ngrep-searcher = { path = "../searcher" }\n'
+            ),
             "app/src/main.rs": (
                 "mod decoy;\n\n"
                 "use searcher::sinks;\n\n"
@@ -273,6 +285,76 @@ def test_inline_module_head_beats_member_crate_name(
     caller = "rs_ws_inlinewins.app.src.main.main"
     assert (caller, "rs_ws_inlinewins.app.src.main.util.helper") in calls, calls
     assert (caller, "rs_ws_inlinewins.util.src.lib.helper") not in calls, calls
+
+
+def test_use_inside_same_named_mod_binds_the_crate(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Inside `mod util { use util::sinks; }` the mod's own name is NOT in
+    # scope, so rustc binds the head to the dependency crate: the scan of
+    # local modules must stop at the module boundary and never collect
+    # the enclosing mod itself.
+    project = temp_repo / "rs_ws_selfmod"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[workspace]\nmembers = ["app", "util"]\n',
+            "util/Cargo.toml": '[package]\nname = "util"\nversion = "0.1.0"\n',
+            "util/src/lib.rs": "pub mod sinks;\n",
+            "util/src/sinks.rs": "pub fn utf8() -> i32 {\n    1\n}\n",
+            "app/Cargo.toml": (
+                '[package]\nname = "app"\nversion = "0.1.0"\n\n'
+                '[dependencies]\nutil = { path = "../util" }\n'
+            ),
+            "app/src/main.rs": (
+                "mod decoy;\n\n"
+                "mod util {\n"
+                "    use util::sinks;\n\n"
+                "    pub fn run() -> i32 {\n        sinks::utf8()\n    }\n"
+                "}\n\n"
+                "fn main() {\n    let _ = util::run();\n}\n"
+            ),
+            "app/src/decoy.rs": "pub fn utf8() -> i32 {\n    2\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    caller = "rs_ws_selfmod.app.src.main.util.run"
+    assert (caller, "rs_ws_selfmod.util.src.sinks.utf8") in calls, calls
+    assert (caller, "rs_ws_selfmod.app.src.decoy.utf8") not in calls, calls
+
+
+def test_registry_dependency_shadows_same_named_member(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The importing package depends on a REGISTRY crate named foo
+    # (version only, no path); an unrelated workspace member of the same
+    # name must not capture the import, and the manifest-proven external
+    # head is a decided drop.
+    project = temp_repo / "rs_ws_registry"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[workspace]\nmembers = ["app", "foo"]\n',
+            "foo/Cargo.toml": '[package]\nname = "foo"\nversion = "0.1.0"\n',
+            "foo/src/lib.rs": "pub fn answer() -> i32 {\n    1\n}\n",
+            "app/Cargo.toml": (
+                '[package]\nname = "app"\nversion = "0.1.0"\n\n'
+                '[dependencies]\nfoo = "1.0"\n'
+            ),
+            "app/src/main.rs": (
+                "use foo;\n\nfn main() {\n    let _ = foo::answer();\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    assert (
+        "rs_ws_registry.app.src.main.main",
+        "rs_ws_registry.foo.src.lib.answer",
+    ) not in calls, calls
 
 
 def test_path_dependency_without_workspace_keeps_trie_edge(
