@@ -3928,3 +3928,132 @@ def test_chained_call_in_block_types_receiver_through_block_use(
     base = "rs_block_chain.src"
     assert (f"{base}.a", f"{base}.gamma.G.run") in calls, calls
     assert (f"{base}.a.top", f"{base}.beta.B.run") in calls, calls
+
+
+def test_local_item_in_nested_fn_beats_block_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A fn declared inside the block that declares the name ITSELF binds
+    # its own item, not the block's use (rustc evaluates J to 10). The
+    # nested fn registers flat under the module qn, so the edge lands on
+    # the module-level qn the registry assigned it.
+    project = temp_repo / "rs_block_local_item"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_local_item"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::helper;\n"
+                "    const fn f() -> u32 {\n"
+                "        const fn helper() -> u32 {\n"
+                "            7\n"
+                "        }\n"
+                "        helper()\n"
+                "    }\n"
+                "    f() + helper()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_local_item.src"
+    assert (f"{base}.a.f", f"{base}.a.helper") in calls, calls
+    assert (f"{base}.a", f"{base}.gamma.helper") in calls, calls
+
+
+def test_block_use_shadows_the_files_own_item(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The most common real-world shape: the file defines a helper AND the
+    # block imports a same-named one. The block's own call binds the use
+    # (rustc evaluates J to 3), not the file's item, because a use
+    # shadows outer items for the remainder of its block.
+    project = temp_repo / "rs_block_vs_file_item"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_block_vs_file_item"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod gamma;\npub mod a;\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub const fn helper() -> u32 {\n"
+                "    5\n"
+                "}\n\n"
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::helper;\n"
+                "    helper()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_vs_file_item.src"
+    assert (f"{base}.a", f"{base}.gamma.helper") in calls, calls
+    assert (f"{base}.a", f"{base}.a.helper") not in calls, calls
+
+
+def test_assoc_base_in_block_resolves_through_block_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `T::assoc().brun()` inside the block must bind BOTH halves through
+    # the block's `use crate::beta::T`: the assoc callee and the
+    # receiver's method (rustc: the block evaluates through beta's T,
+    # `outside` through gamma's).
+    project = temp_repo / "rs_block_assoc"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_block_assoc"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": (
+                "pub struct T;\n\n"
+                "impl T {\n"
+                "    pub const fn assoc() -> T {\n"
+                "        T\n"
+                "    }\n\n"
+                "    pub const fn brun(&self) -> u32 {\n"
+                "        2\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/gamma.rs": (
+                "pub struct T;\n\n"
+                "impl T {\n"
+                "    pub const fn assoc() -> T {\n"
+                "        T\n"
+                "    }\n\n"
+                "    pub const fn grun(&self) -> u32 {\n"
+                "        3\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/a.rs": (
+                "use crate::gamma::T;\n\n"
+                "pub static J: u32 = {\n"
+                "    use crate::beta::T;\n"
+                "    T::assoc().brun()\n"
+                "};\n\n"
+                "pub fn outside() -> u32 {\n"
+                "    T::assoc().grun()\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_assoc.src"
+    assert (f"{base}.a", f"{base}.beta.T.assoc") in calls, calls
+    assert (f"{base}.a", f"{base}.beta.T.brun") in calls, calls
+    assert (f"{base}.a.outside", f"{base}.gamma.T.assoc") in calls, calls
+    assert (f"{base}.a.outside", f"{base}.gamma.T.grun") in calls, calls

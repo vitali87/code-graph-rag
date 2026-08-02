@@ -313,29 +313,55 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
 
 def rust_block_scope_holes(
     block: Node,
-) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+) -> tuple[list[tuple[int, int]], list[tuple[int, int, frozenset[str]]]]:
     """Byte spans of the scope-forming items nested inside a block.
 
     A use declared in a const/static initializer block reaches code in
     the block itself and in nested closures, but a nested `mod` is a
     hard name-resolution boundary (its members never see the block's
-    use), and a nested `fn` is an inner scope whose OWN binding wins
+    use), and a nested `fn` is an inner scope whose OWN bindings win
     before the block's (though it inherits the block's use when it has
-    none). Returns (mod spans, fn spans) so the resolver can gate the
-    block entry accordingly; the walk descends everywhere since a mod
-    nested inside a fn still needs its boundary recorded.
+    none). Returns (mod spans, fn spans), each fn span carrying the
+    names of the function items declared in that fn's DIRECT scope
+    chain (excluding deeper fn/mod subtrees, whose items are invisible
+    outside them): a call inside the fn naming one of them binds the
+    local item, never the block's use. The walk descends everywhere
+    since a mod nested inside a fn still needs its boundary recorded.
     """
     mod_holes: list[tuple[int, int]] = []
-    fn_holes: list[tuple[int, int]] = []
+    fn_holes: list[tuple[int, int, frozenset[str]]] = []
     stack = list(block.children)
     while stack:
         current = stack.pop()
         if current.type == cs.TS_RS_MOD_ITEM:
             mod_holes.append((current.start_byte, current.end_byte))
         elif current.type == cs.TS_RS_FUNCTION_ITEM:
-            fn_holes.append((current.start_byte, current.end_byte))
+            fn_holes.append(
+                (
+                    current.start_byte,
+                    current.end_byte,
+                    _rust_direct_fn_item_names(current),
+                )
+            )
         stack.extend(current.children)
     return mod_holes, fn_holes
+
+
+def _rust_direct_fn_item_names(fn_node: Node) -> frozenset[str]:
+    names: set[str] = set()
+    stack = list(fn_node.children)
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_RS_FUNCTION_ITEM:
+            if (name_node := current.child_by_field_name(cs.FIELD_NAME)) and (
+                text := name_node.text
+            ) is not None:
+                names.add(text.decode(cs.RS_ENCODING_UTF8))
+            continue
+        if current.type == cs.TS_RS_MOD_ITEM:
+            continue
+        stack.extend(current.children)
+    return frozenset(names)
 
 
 def enclosing_mod_fn_spans(node: Node) -> list[tuple[int, int]]:

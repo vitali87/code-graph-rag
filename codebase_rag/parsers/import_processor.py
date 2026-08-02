@@ -466,12 +466,14 @@ class ImportProcessor:
         self.rust_fn_scope_mod_imports: dict[str, dict[str, str]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
-        # mod spans, nested fn spans). No qn scope corresponds to such a
-        # block and the use is E0425 outside it, so the resolver serves
-        # these span-gated, only to calls whose site falls inside the
-        # block; a call inside a nested mod span never binds through the
-        # block (hard boundary), and one inside a nested fn span binds
-        # through it only after the fn's own body uses miss.
+        # mod spans, nested fn spans with their direct-scope item names).
+        # No qn scope corresponds to such a block and the use is E0425
+        # outside it, so the resolver serves these span-gated, only to
+        # calls whose site falls inside the block; a call inside a
+        # nested mod span never binds through the block (hard boundary),
+        # one inside a nested fn span binds through it only after the
+        # fn's own body uses miss, and one naming an item the containing
+        # fn declares itself binds that local item instead.
         self.rust_block_scope_imports: dict[
             str,
             list[
@@ -480,7 +482,7 @@ class ImportProcessor:
                     int,
                     dict[str, str],
                     list[tuple[int, int]],
-                    list[tuple[int, int]],
+                    list[tuple[int, int, frozenset[str]]],
                 ]
             ],
         ] = {}
