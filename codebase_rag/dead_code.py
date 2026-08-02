@@ -164,6 +164,24 @@ def _rust_test_fn_spans(
     return spans
 
 
+def _is_test_symbol(
+    props: PropertyDict,
+    qn: str,
+    path: str,
+    test_patterns: tuple[str, ...],
+    rust_test_modules: set[str],
+    rust_test_spans: dict[str, list[tuple[int, int]]],
+) -> bool:
+    # One definition for BOTH polarities: a symbol excluded as test code
+    # when tests are off must be the same symbol rooted when they are on,
+    # or the two modes silently diverge.
+    return (
+        matches_test_path(path, test_patterns)
+        or _is_rust_test_symbol(props, qn, path, rust_test_modules)
+        or _within_rust_test_span(props, rust_test_spans)
+    )
+
+
 def _within_rust_test_span(
     props: PropertyDict, spans: dict[str, list[tuple[int, int]]]
 ) -> bool:
@@ -438,17 +456,13 @@ def dead_code_from_graph(
             # infrastructure, not dead production code). Rust test code lives
             # INSIDE source files, so it is matched by attribute/module, not
             # path (issue #1008).
-            if not config.include_tests and (
-                matches_test_path(
-                    str(props.get(cs.KEY_PATH) or ""), config.test_patterns
-                )
-                or _is_rust_test_symbol(
-                    props,
-                    str(uid),
-                    str(props.get(cs.KEY_PATH) or ""),
-                    rust_test_modules,
-                )
-                or _within_rust_test_span(props, rust_test_spans)
+            if not config.include_tests and _is_test_symbol(
+                props,
+                str(uid),
+                str(props.get(cs.KEY_PATH) or ""),
+                config.test_patterns,
+                rust_test_modules,
+                rust_test_spans,
             ):
                 continue
             candidates.add(str(uid))
@@ -596,10 +610,13 @@ def dead_code_from_graph(
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)
-        elif config.include_tests and (
-            matches_test_path(path, config.test_patterns)
-            or _is_rust_test_symbol(props, qn, path, rust_test_modules)
-            or _within_rust_test_span(props, rust_test_spans)
+        elif config.include_tests and _is_test_symbol(
+            props,
+            qn,
+            path,
+            config.test_patterns,
+            rust_test_modules,
+            rust_test_spans,
         ):
             roots.add(qn)
 
