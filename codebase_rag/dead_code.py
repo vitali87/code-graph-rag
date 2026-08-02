@@ -170,7 +170,10 @@ def _within_rust_test_span(
     end = props.get(cs.KEY_END_LINE)
     if not isinstance(start, int) or not isinstance(end, int) or start <= 0:
         return False
-    return any(s <= start and end <= e for s, e in path_spans)
+    # Strict on both ends: spans carry no columns, so a production fn
+    # packed onto the test fn's first or last physical line must not be
+    # swallowed; every rustfmt-shaped nested symbol sits strictly inside.
+    return any(s < start and end < e for s, e in path_spans)
 
 
 def _is_c_cpp_entry_root(
@@ -407,7 +410,11 @@ def dead_code_from_graph(
     method_qns: set[str] = set()
     module_path: dict[str, str] = {}
     rust_test_modules = _rust_test_modules_from_nodes(nodes)
-    rust_test_spans = _rust_test_fn_spans(nodes) if not config.include_tests else {}
+    # Both polarities need the spans: excluded test fns take their nested
+    # symbols with them, and INCLUDED ones must root those same symbols (a
+    # fn passed as a value, `filter(is_even)`, has no CALLS edge to revive
+    # it).
+    rust_test_spans = _rust_test_fn_spans(nodes)
     # Normalized decorators per CLASS qn (collected for every class, not just
     # class candidates), so a method root rule can consult its class's
     # @Injectable/@Controller/@Module marker (NestJS DI roots, issue #973).
@@ -588,6 +595,7 @@ def dead_code_from_graph(
         elif config.include_tests and (
             matches_test_path(path, config.test_patterns)
             or _is_rust_test_symbol(props, qn, path, rust_test_modules)
+            or _within_rust_test_span(props, rust_test_spans)
         ):
             roots.add(qn)
 

@@ -180,11 +180,15 @@ def test_exclude_tests_suppresses_inline_test_symbols() -> None:
                 "test_add",
                 "src/lib.rs",
                 decorators=["#[test]"],
+                start_line=10,
+                end_line=12,
             ),
             _function(
                 "proj.src.lib.tests.mk_input",
                 "mk_input",
                 "src/lib.rs",
+                start_line=20,
+                end_line=22,
             ),
         ],
         include_tests=False,
@@ -240,7 +244,9 @@ def test_project_named_tests_still_reports() -> None:
 def test_singular_test_module_matches_plural() -> None:
     # cs.TEST_PATH_PATTERNS covers both /tests/ and /test/ directories;
     # the inline-module rule mirrors it, so `mod test` behaves exactly
-    # like `mod tests` on both flag polarities.
+    # like `mod tests` on both flag polarities. Distinct spans and NO
+    # call edge: only the module rule itself can suppress mk_input, so
+    # this test genuinely pins the singular spelling.
     nodes = [
         _module("proj.src.lib.test", "src/lib.rs"),
         _function(
@@ -248,12 +254,71 @@ def test_singular_test_module_matches_plural() -> None:
             "t_basic",
             "src/lib.rs",
             decorators=["#[test]"],
+            start_line=10,
+            end_line=12,
         ),
-        _function("proj.src.lib.test.mk_input", "mk_input", "src/lib.rs"),
+        _function(
+            "proj.src.lib.test.mk_input",
+            "mk_input",
+            "src/lib.rs",
+            start_line=20,
+            end_line=22,
+        ),
     ]
-    rels = [_calls("proj.src.lib.test.t_basic", "proj.src.lib.test.mk_input")]
-    assert _collect(nodes, rels) == set()
-    assert _collect(nodes, rels, include_tests=False) == set()
+    assert _collect(nodes) == set()
+    assert _collect(nodes, include_tests=False) == set()
+
+
+def test_symbols_nested_in_test_fns_are_rooted_when_tests_included() -> None:
+    # A fn defined inside a `#[test]` fn and consumed as a value
+    # (`filter(is_even)`) has no CALLS edge; the span rule must root it
+    # on the include side too, or the default report flags it dead.
+    dead = _collect(
+        [
+            _function(
+                "proj.src.lib.t",
+                "t",
+                "src/lib.rs",
+                decorators=["#[test]"],
+                start_line=10,
+                end_line=20,
+            ),
+            _function(
+                "proj.src.lib.is_even",
+                "is_even",
+                "src/lib.rs",
+                start_line=12,
+                end_line=13,
+            ),
+        ]
+    )
+    assert dead == set()
+
+
+def test_symbols_sharing_a_test_fns_line_stay_reportable() -> None:
+    # Line spans have no columns: a production fn packed onto the test
+    # fn's first or last physical line is NOT lexically inside it, so
+    # containment is strict on both ends and such symbols stay in the
+    # report on both polarities.
+    nodes = [
+        _function(
+            "proj.src.lib.t",
+            "t",
+            "src/lib.rs",
+            decorators=["#[test]"],
+            start_line=3,
+            end_line=5,
+        ),
+        _function(
+            "proj.src.lib.produce",
+            "produce",
+            "src/lib.rs",
+            start_line=5,
+            end_line=5,
+        ),
+    ]
+    assert "proj.src.lib.produce" in _collect(nodes)
+    assert "proj.src.lib.produce" in _collect(nodes, include_tests=False)
 
 
 def test_symbols_nested_in_excluded_test_fns_are_excluded() -> None:
