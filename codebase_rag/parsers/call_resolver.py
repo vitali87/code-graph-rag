@@ -1401,8 +1401,10 @@ class CallResolver:
         via the same relative-path machinery its use declarations resolve
         through (entry files attach submodules beside themselves via the
         declaring scan; other files nest them). A use binding the segment
-        to a path outside the indexed project stops the probe undecided:
-        the name is spoken for, so the module tree must not claim it.
+        to a path outside the indexed project decides a drop when the
+        path's head is a standard-library crate (external by
+        construction) and stops the probe undecided otherwise: the name
+        is spoken for either way, so the module tree must not claim it.
         """
         parts = call_name.split(cs.SEPARATOR_DOUBLE_COLON)
         object_path, item = parts[:-1], parts[-1]
@@ -1484,9 +1486,21 @@ class CallResolver:
     ) -> tuple[tuple[str, str] | None, bool]:
         resolved = self._rust_local_qn(mapped, owner)
         if resolved is None:
-            # The use binds the head outside the indexed project (std, or
-            # a workspace crate by name, unresolved today): the head is
-            # spoken for, but no first-party module backs it here.
+            head = mapped.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+            if head in cs.RS_STDLIB_CRATES or (
+                self.import_processor.rust_head_is_external_dep(head, owner)
+            ):
+                # A standard-library head, or one the importer's own
+                # manifest binds outside the repo (a registry version),
+                # is external by construction: the name is spoken for,
+                # so neither the module tree nor the trie may claim it
+                # for a same-named first-party sibling (issue #1033).
+                return None, True
+            # Any other unresolved head may still be first-party in a
+            # layout the import half does not cover (a nested workspace
+            # root, a path dependency without a workspace, a #[path]
+            # module): stay undecided so the ordinary fallbacks keep
+            # their edges.
             return None, False
         return self._decide_rust_base(cs.SEPARATOR_DOT.join([resolved, *rest]), item)
 

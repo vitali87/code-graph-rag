@@ -331,6 +331,35 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
     return None, parts, pure
 
 
+def enclosing_mod_names(node: Node) -> frozenset[str]:
+    """Names of `mod` items in scope at the node's own module level.
+
+    A uniform-path use head binds any `mod` in scope before an extern
+    crate, whether file-backed (`mod pool;`) or inline (`mod pool { }`),
+    so callers gate crate-name rewriting on this set (issue #1033). The
+    walk stops at the first module boundary: a parent module's items,
+    including the enclosing mod's OWN name, are not in scope inside it
+    (rustc binds `use util::x;` within `mod util { }` to the crate).
+    """
+    names: set[str] = set()
+    current = node.parent
+    while current is not None:
+        for sibling in current.named_children:
+            if (
+                sibling.type == cs.TS_RS_MOD_ITEM
+                and (name_node := sibling.child_by_field_name(cs.FIELD_NAME))
+                is not None
+                and (text := name_node.text) is not None
+            ):
+                names.add(text.decode(cs.RS_ENCODING_UTF8))
+        if current.type == cs.TS_RS_SOURCE_FILE or (
+            current.parent is not None and current.parent.type == cs.TS_RS_MOD_ITEM
+        ):
+            break
+        current = current.parent
+    return frozenset(names)
+
+
 def rust_block_scope_holes(
     block: Node,
 ) -> tuple[
