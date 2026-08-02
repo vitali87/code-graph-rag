@@ -401,6 +401,7 @@ class ImportProcessor:
         "_rust_entry_mod_decls",
         "_rust_explicit_targets",
         "_rust_auto_build_flags",
+        "_rust_workspace_crates",
         "_rust_inline_scope_keys",
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
@@ -458,6 +459,14 @@ class ImportProcessor:
         # explicitly, false disables it entirely). Filled alongside the
         # explicit-target parse, cleared with it.
         self._rust_auto_build_flags: dict[tuple[str, ...], bool] = {}
+        # Workspace member crate names (underscore-spelled) -> lib-root
+        # (dir parts, entry stem), so `use grep_searcher::sinks;` rewrites
+        # to a project qn at parse time like crate:: paths do (issue
+        # #1033). Built lazily from the root manifest's members plus the
+        # root package; None until first use, re-None'd on manifest edits.
+        self._rust_workspace_crates: dict[str, tuple[tuple[str, ...], str]] | None = (
+            None
+        )
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
@@ -1141,14 +1150,7 @@ class ImportProcessor:
         if cached is not None:
             return cached
         paths: set[str] = set()
-        try:
-            manifest = tomllib.loads(
-                self.repo_path.joinpath(*pkg_parts, cs.PKG_CARGO_TOML).read_text(
-                    encoding=cs.RS_ENCODING_UTF8, errors="ignore"
-                )
-            )
-        except (OSError, tomllib.TOMLDecodeError):
-            manifest = {}
+        manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg_parts))
         for section in cs.RS_MANIFEST_TARGET_SECTIONS:
             entries = manifest.get(section)
             if isinstance(entries, dict):
@@ -1179,6 +1181,98 @@ class ImportProcessor:
         result = frozenset(paths)
         self._rust_explicit_targets[pkg_parts] = result
         return result
+
+    def _rust_read_manifest(self, directory: Path) -> dict:
+        try:
+            return tomllib.loads(
+                (directory / cs.PKG_CARGO_TOML).read_text(
+                    encoding=cs.RS_ENCODING_UTF8, errors="ignore"
+                )
+            )
+        except (OSError, tomllib.TOMLDecodeError):
+            return {}
+
+    def _rust_workspace_crate_roots(self) -> dict[str, tuple[tuple[str, ...], str]]:
+        """Workspace member crate names -> (lib-root dir parts, entry stem).
+
+        Cargo resolves a `use` head naming another crate through the
+        [dependencies] graph; indexing has no lockfile, so the root
+        manifest's workspace members (plus the root package itself, an
+        implicit member that integration tests import by name) stand in:
+        every member with a lib target is importable by its [package]
+        name, hyphens spelled as underscores in code (issue #1033).
+        """
+        if self._rust_workspace_crates is not None:
+            return self._rust_workspace_crates
+        mapping: dict[str, tuple[tuple[str, ...], str]] = {}
+        for member in self._rust_workspace_member_dirs():
+            manifest = self._rust_read_manifest(member)
+            package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+            if not isinstance(package, dict):
+                continue
+            name = package.get(cs.RS_MANIFEST_NAME_KEY)
+            if not isinstance(name, str) or not name:
+                continue
+            if (root := self._rust_member_lib_root(member, manifest)) is not None:
+                mapping[name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)] = root
+        self._rust_workspace_crates = mapping
+        return mapping
+
+    def _rust_workspace_member_dirs(self) -> list[Path]:
+        dirs = [self.repo_path]
+        workspace = self._rust_read_manifest(self.repo_path).get(
+            cs.RS_MANIFEST_WORKSPACE_KEY
+        )
+        members = (
+            workspace.get(cs.RS_MANIFEST_MEMBERS_KEY)
+            if isinstance(workspace, dict)
+            else None
+        )
+        if not isinstance(members, list):
+            return dirs
+        for pattern in members:
+            if not isinstance(pattern, str):
+                continue
+            try:
+                matches = sorted(self.repo_path.glob(pattern))
+            except (ValueError, NotImplementedError):
+                continue
+            dirs.extend(match for match in matches if match.is_dir())
+        return dirs
+
+    def _rust_member_lib_root(
+        self, member: Path, manifest: dict
+    ) -> tuple[tuple[str, ...], str] | None:
+        # Only a lib target is importable by crate name; a bin-only member
+        # cannot appear as a use head in compiling code.
+        try:
+            rel = member.relative_to(self.repo_path).parts
+        except ValueError:
+            return None
+        lib = manifest.get(cs.RS_MANIFEST_LIB_SECTION)
+        if isinstance(lib, dict) and isinstance(
+            path := lib.get(cs.RS_MANIFEST_PATH_KEY), str
+        ):
+            parts = _rust_norm_manifest_path(path).split(cs.SEPARATOR_SLASH)
+            if parts[-1].endswith(cs.EXT_RS):
+                return (*rel, *parts[:-1]), parts[-1][: -len(cs.EXT_RS)]
+        if cs.LIB_RS in self._rust_dir_entries(member / cs.LANG_SRC_DIR):
+            return (*rel, cs.LANG_SRC_DIR), "lib"
+        return None
+
+    def _rust_uniform_head_is_local(self, head: str, module_qn: str) -> bool:
+        # A uniform-path head binds a sibling module before an extern
+        # crate (`use pool::connect;` beside `mod pool;`, mirroring the
+        # resolver's _rust_local_qn), so a workspace crate name only
+        # claims heads no file-backed local module answers for.
+        head_qn = self._rust_resolve_relative(module_qn, [head], module_qn)
+        parts = head_qn.split(cs.SEPARATOR_DOT)[1:]
+        if not parts:
+            return False
+        directory = self.repo_path.joinpath(*parts[:-1])
+        if f"{parts[-1]}{cs.EXT_RS}" in self._rust_dir_entries(directory):
+            return True
+        return cs.MOD_RS in self._rust_dir_entries(directory / parts[-1])
 
     def _rust_crate_root(self, module_qn: str) -> tuple[str, list[str]] | None:
         """The file's crate root: ("classic", dir parts) or ("file", qn parts).
@@ -1504,6 +1598,11 @@ class ImportProcessor:
             keep = max(len(base_parts) - depth, 1)
             base = cs.SEPARATOR_DOT.join(base_parts[:keep])
             return self._rust_resolve_relative(base, parts[depth:], module_qn)
+        if (root := self._rust_workspace_crate_roots().get(head)) is not None and (
+            not self._rust_uniform_head_is_local(head, module_qn)
+        ):
+            dir_parts, stem = root
+            return self._rust_attach(list(dir_parts), stem, parts[1:], definitive=True)
         return full_path
 
     def _module_label(self, module_path: str) -> cs.NodeLabel:
@@ -2043,6 +2142,7 @@ class ImportProcessor:
         self._rust_entry_mod_decls.clear()
         self._rust_explicit_targets.clear()
         self._rust_auto_build_flags.clear()
+        self._rust_workspace_crates = None
 
     def refresh_rust_path_caches_for(self, file_path: Path, created: bool) -> None:
         # The realtime watcher re-parses through process_file without
@@ -2115,6 +2215,7 @@ class ImportProcessor:
             # their storm protection) untouched.
             self._rust_explicit_targets.clear()
             self._rust_auto_build_flags.clear()
+            self._rust_workspace_crates = None
             for key, stems in self._rust_entry_mod_decls.items():
                 allowed = {
                     name[: -len(cs.EXT_RS)]

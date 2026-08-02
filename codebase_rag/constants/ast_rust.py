@@ -191,3 +191,7 @@ RS_MANIFEST_TARGET_SECTIONS = ("bin", "lib", "example", "test", "bench")
 RS_MANIFEST_PATH_KEY = "path"
 RS_MANIFEST_PACKAGE_KEY = "package"
 RS_MANIFEST_BUILD_KEY = "build"
+RS_MANIFEST_WORKSPACE_KEY = "workspace"
+RS_MANIFEST_MEMBERS_KEY = "members"
+RS_MANIFEST_NAME_KEY = "name"
+RS_MANIFEST_LIB_SECTION = "lib"

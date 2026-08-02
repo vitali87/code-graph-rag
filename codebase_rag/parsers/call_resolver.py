@@ -1484,10 +1484,12 @@ class CallResolver:
     ) -> tuple[tuple[str, str] | None, bool]:
         resolved = self._rust_local_qn(mapped, owner)
         if resolved is None:
-            # The use binds the head outside the indexed project (std, or
-            # a workspace crate by name, unresolved today): the head is
-            # spoken for, but no first-party module backs it here.
-            return None, False
+            # The use binds the head outside the indexed project: with
+            # workspace crate names rewritten to project qns at parse
+            # time (issue #1033), a still-unresolved head is genuinely
+            # external, so the name is spoken for and neither the module
+            # tree nor the trie may claim it.
+            return None, True
         return self._decide_rust_base(cs.SEPARATOR_DOT.join([resolved, *rest]), item)
 
     def _decide_rust_base(
