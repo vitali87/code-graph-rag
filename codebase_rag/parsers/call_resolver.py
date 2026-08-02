@@ -689,9 +689,11 @@ class CallResolver:
         # enclosing-scope and same-module ones below: a use shadows outer
         # items for the remainder of its block (rustc-verified), so even
         # the file's own same-named item loses to it. A nested fn's own
-        # body use still outranks the block, and a containing fn that
+        # body use still outranks the block, and a containing block that
         # declares the name itself opts out entirely (the probes below
-        # find its flat-registered item). A `::`-qualified first segment
+        # find its flat-registered item, except where the enclosing fn's
+        # own body use shadows it there, issue #1026). A `::`-qualified
+        # first segment
         # bound by the block (`T::assoc()` under `use crate::beta::T`)
         # resolves through a map holding just that binding.
         if (
@@ -1330,7 +1332,9 @@ class CallResolver:
         serves it: the site lies outside every block span, a nested mod
         boundary intervenes (its members never see the block's use), or
         a containing nested block declares the name as its own direct
-        item (the local item wins, found by the ordinary scope probes).
+        item (the local item wins; the ordinary scope probes find it
+        unless the enclosing fn's own body use shadows it there, issue
+        #1026).
         defers_to_fn marks a site inside a nested fn, whose own body
         uses outrank the block's while a use-less fn still inherits it
         (rustc-verified).
