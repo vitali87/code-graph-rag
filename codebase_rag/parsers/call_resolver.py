@@ -277,6 +277,14 @@ class CallResolver:
             return self.function_registry[method_qn], method_qn
         return self._resolve_inherited_method(class_qn, method_name)
 
+    def reset_resolution_caches(self) -> None:
+        # The watch pass deletes EVERY CALLS edge and recomputes them
+        # against re-parsed state; answers cached from the previous pass
+        # (and wildcard entries keyed by dict id, which recycles) must
+        # not survive into the recompute.
+        self._simple_resolution_cache.clear()
+        self._wildcard_cache.clear()
+
     def resolve_function_call(
         self,
         call_name: str,

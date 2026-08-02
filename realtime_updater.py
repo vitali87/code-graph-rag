@@ -276,8 +276,11 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self.updater.known_module_paths()
         )
 
-        # Step 4
+        # Step 4: every CALLS edge is deleted and recomputed, so the
+        # resolution caches reset with them; a re-parsed file's moved use
+        # must not serve last pass's cached answer.
         logger.info(logs.RECALC_CALLS)
+        self.updater.factory.call_processor.reset_resolution_caches()
         ingestor.execute_write(CYPHER_DELETE_CALLS)
         self.updater._process_function_calls()
 

@@ -5145,3 +5145,119 @@ def test_manifest_repoint_evicts_the_dead_explicit_stem(
 
     mapping = updater.factory.import_processor.import_mapping.get(f"{base}.q")
     assert mapping == {"Config": f"{base}.tool.Config"}, mapping
+
+
+def test_explicit_only_package_roots_its_submodules(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A package whose ONLY entry is an explicit target still has a crate
+    # root: the target's declared submodules resolve their crate:: paths
+    # through it (cargo-verified), never through the phantom project
+    # root.
+    project = temp_repo / "rs_only_expl"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_only_expl"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/cli.rs": (
+                "mod q;\n\npub struct Config;\n\nfn main() {\n    q::ay(Config);\n}\n"
+            ),
+            "src/q.rs": "use crate::Config;\n\npub fn ay(_c: Config) {}\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_only_expl.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.q")
+    assert mapping == {"Config": f"{base}.cli.Config"}, mapping
+
+
+def test_explicit_only_package_keeps_trait_links_off_decoys(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The same gap at graph level: with a repo-root decoy flags.rs, the
+    # phantom root sent IMPLEMENTS/OVERRIDES to the decoy; the explicit
+    # root's crate anchors them on the real trait.
+    project = temp_repo / "rs_decoyroot"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_decoyroot"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "flags.rs": "pub trait Flag {\n    fn n(&self) -> u32;\n}\n",
+            "src/cli.rs": "mod flags;\nmod q;\n\nfn main() {}\n",
+            "src/flags.rs": "pub trait Flag {\n    fn n(&self) -> u32;\n}\n",
+            "src/q.rs": (
+                "use crate::flags::Flag;\n\n"
+                "pub struct A;\n\n"
+                "impl Flag for A {\n"
+                "    fn n(&self) -> u32 {\n"
+                "        1\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_decoyroot"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.src.q.A", f"{base}.src.flags.Flag") in implements, implements
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    assert (
+        f"{base}.src.q.A.n",
+        f"{base}.src.flags.Flag.n",
+    ) in overrides, overrides
+
+
+def test_watch_reparse_recomputes_edges_through_fresh_resolutions(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The watch pass deletes EVERY CALLS edge and recomputes them, so the
+    # simple-resolution cache must reset with them: a re-parsed file whose
+    # use moved to a different target must emit the new edge, not the
+    # cached one.
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_fresh_edges"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_fresh_edges"\nversion = "0.1.0"\n',
+            "src/lib.rs": ("pub mod q;\npub mod alt;\n\npub fn helper() {}\n"),
+            "src/alt.rs": "pub fn helper() {}\n",
+            "src/q.rs": ("use crate::helper;\n\npub fn ay() {\n    helper()\n}\n"),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_fresh_edges.src"
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.q.ay", f"{base}.lib.helper") in calls, calls
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    (project / "src" / "q.rs").write_text(
+        "use crate::alt::helper;\n\npub fn ay() {\n    helper()\n}\n",
+        encoding="utf-8",
+    )
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "q.rs")))
+
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.q.ay", f"{base}.alt.helper") in calls, calls
+    assert (f"{base}.q.ay", f"{base}.lib.helper") not in calls, calls

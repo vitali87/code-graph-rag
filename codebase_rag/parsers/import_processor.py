@@ -1208,7 +1208,18 @@ class ImportProcessor:
         # sibling app.rs is the tell), not a crate (verified against rustc:
         # self::foo inside app::main is app::main::foo).
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-        if cs.LIB_RS not in entries and cs.MAIN_RS not in entries:
+        if (
+            cs.LIB_RS not in entries
+            and cs.MAIN_RS not in entries
+            and not any(
+                name in entries
+                for name in self._rust_explicit_entry_files(tuple(dir_parts))
+            )
+        ):
+            # An explicit manifest target is an entry too: a package whose
+            # ONLY entry is `[[bin]] path = "src/cli.rs"` still roots its
+            # declared submodules here (cargo-verified), with the entry
+            # stem chosen by the declaring scan over the explicit stems.
             return False
         if cs.MOD_RS in entries:
             # The mod.rs spelling of a module directory.
