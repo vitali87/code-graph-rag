@@ -1084,6 +1084,29 @@ class ImportProcessor:
             return relative in self._rust_explicit_target_paths(tuple(pkg_parts))
         return False
 
+    def _rust_importer_within_root_file(
+        self, base_parts: list[str], base_qn: str, importer_qn: str
+    ) -> bool:
+        # Whether the importer's module chain is rooted in base_qn's FILE
+        # itself: the file's own scope, or inline mods written inside it.
+        # The tell is the first segment below the base: an inline mod has
+        # no backing file, while a module-directory child is backed by
+        # <base dir>/<seg>.rs or <seg>/mod.rs (cargo resolves those into
+        # whichever crate DECLARES the module, not the root file).
+        if importer_qn == base_qn:
+            return True
+        if not importer_qn.startswith(f"{base_qn}{cs.SEPARATOR_DOT}"):
+            return False
+        first = importer_qn[len(base_qn) + 1 :].split(cs.SEPARATOR_DOT, 1)[0]
+        child_entries = self._rust_dir_entries(self.repo_path.joinpath(*base_parts))
+        if f"{first}{cs.EXT_RS}" in child_entries:
+            return False
+        if cs.MOD_RS in self._rust_dir_entries(
+            self.repo_path.joinpath(*base_parts, first)
+        ):
+            return False
+        return True
+
     def _rust_explicit_entry_files(self, dir_parts: tuple[str, ...]) -> set[str]:
         # File names of explicit manifest targets that sit DIRECTLY in
         # this directory (their declarations join the entry-declaration
@@ -1321,7 +1344,7 @@ class ImportProcessor:
             return self._rust_attach(parts, stem, rest, definitive)
         if (
             parts
-            and base_qn == importer_qn
+            and self._rust_importer_within_root_file(parts, base_qn, importer_qn)
             and parts[-1] not in cs.RS_ENTRY_STEMS
             and f"{parts[-1]}{cs.EXT_RS}"
             in self._rust_dir_entries(self.repo_path.joinpath(*parts[:-1]))
@@ -1329,9 +1352,11 @@ class ImportProcessor:
         ):
             # In a crate root module `self::` IS `crate::`: an explicit
             # target attaches beside itself, exactly as its crate:: paths
-            # do, but only when the ROOT ITSELF is asking. A deeper module
-            # walking super:: up onto this qn means the MODULE of the same
-            # name, whose children live in its directory (cargo-verified).
+            # do, but only when the asker lives IN the root file (the root
+            # itself or an inline mod written inside it, which has no
+            # backing file). A file-backed submodule walking super:: up
+            # onto this qn means the MODULE of the same name, whose
+            # children live in its directory (both cargo-verified).
             # Auto-targets keep their entry-qn nesting.
             return self._rust_attach(parts[:-1], parts[-1], rest, definitive=True)
         if (

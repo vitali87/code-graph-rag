@@ -5049,3 +5049,43 @@ def test_super_onto_explicit_root_keeps_the_module_reading(
     assert mapping == {"f": f"{base}.cli.other.f"}, mapping
     calls = _calls(mock_ingestor)
     assert (f"{base}.cli.sub.call", f"{base}.cli.other.f") in calls, calls
+
+
+def test_super_from_inline_mod_of_explicit_root_attaches_beside(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An inline `mod inner` written in the explicit root has no backing
+    # file, so `super::` inside it IS the crate root (cargo-verified: it
+    # binds src/sub.rs, printing 7, never the decoy src/cli/sub.rs): the
+    # beside-attachment applies exactly as for the root's own paths.
+    project = temp_repo / "rs_inline_super"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_inline_super"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/cli.rs": (
+                "mod sub;\n\n"
+                "mod inner {\n"
+                "    use super::sub::f;\n\n"
+                "    pub const fn c() -> u32 {\n"
+                "        f()\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {\n"
+                "    let _ = inner::c();\n"
+                "}\n"
+            ),
+            "src/sub.rs": "pub const fn f() -> u32 {\n    7\n}\n",
+            "src/cli/sub.rs": "pub const fn f() -> u32 {\n    99\n}\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_inline_super.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.cli.inner")
+    assert mapping == {"f": f"{base}.sub.f"}, mapping
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.cli.inner.c", f"{base}.sub.f") in calls, calls
