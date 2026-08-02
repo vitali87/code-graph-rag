@@ -344,7 +344,11 @@ class CallResolver:
         return None
 
     def _resolve_enclosing_scope(
-        self, call_name: str, caller_qn: str | None, module_qn: str
+        self,
+        call_name: str,
+        caller_qn: str | None,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         # Python LEGB: a bare name defined in the caller's own body or an enclosing
         # FUNCTION scope (a nested def) shadows module-level and same-named nested
@@ -359,7 +363,15 @@ class CallResolver:
         while True:
             candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
             if candidate in self.function_registry:
-                return self.function_registry[candidate], candidate
+                # A scope segment may be a Rust impl target, and a bare
+                # Rust path NEVER names a method: inherent methods are
+                # reachable only via self./Self::/Type:: (rustc-verified;
+                # the bare spelling calls the module item, issue #1011).
+                if (
+                    language != cs.SupportedLanguage.RUST
+                    or self.function_registry[candidate] != cs.NodeLabel.METHOD.value
+                ):
+                    return self.function_registry[candidate], candidate
             # A duplicate-variant caller (click's real `command` registers as
             # `command@168` behind its @t.overload stubs) owns nested defs the
             # def pass registers under the NATURAL qn (`command.decorator`);
@@ -742,7 +754,9 @@ class CallResolver:
         # Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # before the module-keyed cache/trie, which would otherwise return a sibling
         # scope's same-named nested function.
-        if result := self._resolve_enclosing_scope(call_name, caller_qn, module_qn):
+        if result := self._resolve_enclosing_scope(
+            call_name, caller_qn, module_qn, language
+        ):
             return result
 
         # `this.m()` inside a prototype-assigned function dispatches to a sibling
@@ -1336,7 +1350,13 @@ class CallResolver:
             scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
             while len(scope) > len(module_qn):
                 local_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
-                if (local_type := self.function_registry.get(local_qn)) is not None:
+                # A scope segment may be an impl target, and a bare Rust
+                # path NEVER names a method: inherent methods are reachable
+                # only via self./Self::/Type:: (rustc-verified; the bare
+                # spelling calls the module item instead, issue #1011).
+                if (
+                    local_type := self.function_registry.get(local_qn)
+                ) is not None and local_type != cs.NodeLabel.METHOD.value:
                     return ((local_type, local_qn),)
                 target = (
                     weak
