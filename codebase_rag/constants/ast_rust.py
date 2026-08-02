@@ -172,3 +172,14 @@ RS_ENCODING_UTF8 = "utf8"
 RS_WILDCARD_PREFIX = "*"
 
 RS_FIELD_ARGUMENT = "argument"
+
+# Cargo target layout (issue #1007 crate-root discovery). Auto-target
+# directories root every .rs file directly inside them; explicit target
+# `path` overrides in the manifest sections below root the named file
+# wherever it sits. Entry stems never root themselves as file targets.
+RS_AUTO_TARGET_DIRS = frozenset({"examples", "tests", "benches"})
+RS_BIN_DIR = "bin"
+RS_BUILD_STEM = "build"
+RS_ENTRY_STEMS = frozenset({"lib", "main", "mod"})
+RS_MANIFEST_TARGET_SECTIONS = ("bin", "lib", "example", "test", "bench")
+RS_MANIFEST_PATH_KEY = "path"

@@ -2,6 +2,7 @@ import json
 import os
 import posixpath
 import re
+import tomllib
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
@@ -394,6 +395,7 @@ class ImportProcessor:
         "_cpp_declaration_mappings",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
+        "_rust_explicit_targets",
         "_rust_inline_scope_keys",
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
@@ -441,6 +443,11 @@ class ImportProcessor:
         self._rust_entry_mod_decls: dict[
             tuple[str, ...], dict[str, tuple[set[str], set[str]]]
         ] = {}
+        # Explicit Cargo target entry paths per package dir ([[bin]]/[lib]/
+        # [[example]]/[[test]]/[[bench]] `path` overrides): such entries
+        # root their own crates wherever they sit, unlike auto-targets
+        # found by location alone.
+        self._rust_explicit_targets: dict[tuple[str, ...], frozenset[str]] = {}
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
@@ -1039,21 +1046,67 @@ class ImportProcessor:
         return cached
 
     def _rust_is_auto_target_dir(self, dir_parts: list[str], stem: str) -> bool:
-        # Cargo auto-target locations whose .rs files are their OWN crate
-        # roots: src/bin/*.rs, and examples/tests/benches/*.rs plus build.rs
-        # at a package root (Cargo.toml beside them).
+        # Cargo target locations whose .rs files are their OWN crate
+        # roots: src/bin/*.rs, examples/tests/benches/*.rs plus build.rs
+        # at a package root (Cargo.toml beside them), and any file a
+        # manifest names as an explicit target `path` override.
         if not dir_parts:
-            return stem == "build" and cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path
-            )
-        if len(dir_parts) >= 2 and dir_parts[-1] == "bin":
+            if stem == cs.RS_BUILD_STEM and cs.PKG_CARGO_TOML in (
+                self._rust_dir_entries(self.repo_path)
+            ):
+                return True
+            return self._rust_is_explicit_target(dir_parts, stem)
+        if len(dir_parts) >= 2 and dir_parts[-1] == cs.RS_BIN_DIR:
             if dir_parts[-2] == cs.LANG_SRC_DIR:
                 return True
-        if dir_parts[-1] in ("examples", "tests", "benches"):
-            return cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*dir_parts[:-1])
-            )
+        if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS and (
+            cs.PKG_CARGO_TOML
+            in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts[:-1]))
+        ):
+            return True
+        return self._rust_is_explicit_target(dir_parts, stem)
+
+    def _rust_is_explicit_target(self, dir_parts: list[str], stem: str) -> bool:
+        # Whether <dir_parts>/<stem>.rs is an explicit target of its
+        # package's manifest (`[[bin]] path = "src/cli.rs"`). The package
+        # is the NEAREST ancestor directory holding a Cargo.toml.
+        for i in range(len(dir_parts), -1, -1):
+            pkg_parts = dir_parts[:i]
+            if cs.PKG_CARGO_TOML not in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                continue
+            relative = cs.SEPARATOR_SLASH.join([*dir_parts[i:], f"{stem}{cs.EXT_RS}"])
+            return relative in self._rust_explicit_target_paths(tuple(pkg_parts))
         return False
+
+    def _rust_explicit_target_paths(self, pkg_parts: tuple[str, ...]) -> frozenset[str]:
+        cached = self._rust_explicit_targets.get(pkg_parts)
+        if cached is not None:
+            return cached
+        paths: set[str] = set()
+        try:
+            manifest = tomllib.loads(
+                self.repo_path.joinpath(*pkg_parts, cs.PKG_CARGO_TOML).read_text(
+                    encoding=cs.RS_ENCODING_UTF8, errors="ignore"
+                )
+            )
+        except (OSError, tomllib.TOMLDecodeError):
+            manifest = {}
+        for section in cs.RS_MANIFEST_TARGET_SECTIONS:
+            entries = manifest.get(section)
+            if isinstance(entries, dict):
+                entries = [entries]
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if isinstance(entry, dict) and isinstance(
+                    path := entry.get(cs.RS_MANIFEST_PATH_KEY), str
+                ):
+                    paths.add(path.replace("\\", cs.SEPARATOR_SLASH))
+        result = frozenset(paths)
+        self._rust_explicit_targets[pkg_parts] = result
+        return result
 
     def _rust_crate_root(self, module_qn: str) -> tuple[str, list[str]] | None:
         """The file's crate root: ("classic", dir parts) or ("file", qn parts).
@@ -1070,7 +1123,7 @@ class ImportProcessor:
             return None
         dir_parts, stem = qn_parts[:-1], qn_parts[-1]
         if (
-            stem not in ("lib", "main", "mod")
+            stem not in cs.RS_ENTRY_STEMS
             and f"{stem}{cs.EXT_RS}"
             in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
             and self._rust_is_auto_target_dir(dir_parts, stem)
@@ -1795,10 +1848,13 @@ class ImportProcessor:
             logger.debug(ls.IMP_CSHARP, name=local_name, path=imported_path)
 
     def reset_rust_path_caches(self) -> None:
-        # Watch-mode re-runs reuse this processor; the filesystem may have
-        # gained or lost files since the caches were filled.
+        # The filesystem may have gained or lost files since the caches
+        # were filled. Called per run by GraphUpdater._process_files and
+        # per event by the realtime watcher, which re-parses through
+        # process_file without entering _process_files.
         self._rust_dir_listing.clear()
         self._rust_entry_mod_decls.clear()
+        self._rust_explicit_targets.clear()
 
     def drop_rust_module_import_state(self, module_qn: str) -> None:
         # Everything a file's parse contributed to the Rust import maps,

@@ -3356,7 +3356,7 @@ def test_watch_touch_cannot_flip_mod_key_arbitration(
     # The pure writer's own callers cannot be re-asserted through edges
     # here: the watch delete sweeps every registration under the touched
     # file's qn prefix, taking a.rs's inline-mod functions with it (a
-    # pre-existing watch defect, filed separately). The arbitration's own
+    # pre-existing watch defect, issue #1025). The arbitration's own
     # output contract is the committed key, so pin that, plus the touched
     # file's re-registered caller whose edge recomputes cleanly.
     key = f"{base}.a.b.c"
@@ -3473,7 +3473,7 @@ def test_python_sibling_edit_keeps_rust_import_state(
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     # Edge-level assertions are unavailable here: the shared-prefix
-    # registration sweep (filed separately) deregisters foo.rs's inline-mod
+    # registration sweep (issue #1025) deregisters foo.rs's inline-mod
     # functions on this event, so pin the arbitration's own output.
     mock_ingestor.reset_mock()
     handler.dispatch(FileModifiedEvent(str(project / "src" / "foo" / "__init__.py")))
@@ -3533,13 +3533,14 @@ def test_watch_create_of_owned_module_keeps_its_own_imports(
     inner_rs = project / "src" / "foo" / "inner.rs"
     inner_rs.parent.mkdir(parents=True, exist_ok=True)
     inner_rs.write_text(
-        "use crate::alpha::helper as ah;\n\npub fn h() -> u32 {\n    ah()\n}\n"
+        "use crate::alpha::helper as ah;\n\npub fn h() -> u32 {\n    ah()\n}\n",
+        encoding="utf-8",
     )
     mock_ingestor.reset_mock()
     handler.dispatch(FileCreatedEvent(str(inner_rs)))
 
-    # Files created during watch get no CALLS edges (a pre-existing gap),
-    # so the import map IS the observable contract here.
+    # Files created during watch get no CALLS edges (issue #1028), so
+    # the import map IS the observable contract here.
     mapping = updater.factory.import_processor.import_mapping.get(key)
     assert mapping == {"ah": f"{base}.alpha.helper"}, mapping
 
@@ -4306,3 +4307,147 @@ def test_inner_const_initializer_item_beats_block_use_in_nested_fn(
     base = "rs_inner_block_item_c.src"
     assert not any(dst == f"{base}.gamma.g" for _src, dst in calls), calls
     assert any(dst.startswith(f"{base}.a.g@") for _src, dst in calls), calls
+
+
+def test_nested_fn_own_type_use_beats_block_use_for_assoc_calls(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A nested fn's own `use crate::delta::T` shadows the block's
+    # `use crate::beta::T` for `T::assoc()` written in the fn body, the
+    # same precedence bare calls already honour (rustc-verified).
+    project = temp_repo / "rs_block_qual_defers"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_block_qual_defers"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod beta;\npub mod delta;\npub mod a;\n",
+            "src/beta.rs": (
+                "pub struct T;\n\n"
+                "impl T {\n"
+                "    pub const fn assoc() -> T {\n"
+                "        T\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/delta.rs": (
+                "pub struct T;\n\n"
+                "impl T {\n"
+                "    pub const fn assoc() -> T {\n"
+                "        T\n"
+                "    }\n"
+                "}\n"
+            ),
+            "src/a.rs": (
+                "pub static J: u32 = {\n"
+                "    use crate::beta::T;\n"
+                "    const fn f() -> u32 {\n"
+                "        use crate::delta::T;\n"
+                "        let _t = T::assoc();\n"
+                "        0\n"
+                "    }\n"
+                "    f()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_block_qual_defers.src"
+    assert (f"{base}.a.f", f"{base}.delta.T.assoc") in calls, calls
+    assert (f"{base}.a.f", f"{base}.beta.T.assoc") not in calls, calls
+
+
+def test_watch_create_refreshes_rust_path_caches(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The watcher re-parses through process_file without passing through
+    # _process_files, so the exact-case directory listings and entry-file
+    # declaration caches must be reset per event: a sibling re-parsed
+    # after a CREATE must classify `crate::gamma2` against the filesystem
+    # that now holds gamma2.rs, not the full run's snapshot.
+    from watchdog.events import FileCreatedEvent, FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_watch_cachereset"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_watch_cachereset"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod beta;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/a.rs": (
+                "use crate::beta::helper;\n\npub fn top() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_watch_cachereset.src"
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.a.top", f"{base}.beta.helper") in calls, calls
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    gamma2 = project / "src" / "gamma2.rs"
+    gamma2.write_text("pub const fn helper2() -> u32 {\n    3\n}\n", encoding="utf-8")
+    handler.dispatch(FileCreatedEvent(str(gamma2)))
+
+    (project / "src" / "a.rs").write_text(
+        "use crate::gamma2::helper2;\n\npub fn top() -> u32 {\n    helper2()\n}\n",
+        encoding="utf-8",
+    )
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "a.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
+    assert mapping == {"helper2": f"{base}.gamma2.helper2"}, mapping
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.a.top", f"{base}.gamma2.helper2") in calls, calls
+
+
+def test_explicit_cargo_bin_target_is_its_own_crate_root(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Cargo permits `[[bin]] path = "src/cli.rs"`: such an entry roots its
+    # own crate even though it sits in no auto-target location, so its
+    # `crate::` paths resolve to the entry file's qn, not the phantom
+    # project root.
+    project = temp_repo / "rs_explicit_bin"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_explicit_bin"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/cli.rs": (
+                "pub const fn helper() -> u32 {\n"
+                "    2\n"
+                "}\n\n"
+                "use crate::helper as h;\n\n"
+                "pub fn top() -> u32 {\n"
+                "    h()\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_explicit_bin.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.cli")
+    assert mapping == {"h": f"{base}.cli.helper"}, mapping
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.cli.top", f"{base}.cli.helper") in calls, calls

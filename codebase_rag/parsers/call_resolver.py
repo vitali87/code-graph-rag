@@ -704,6 +704,15 @@ class CallResolver:
             first = call_name.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
             if block_hit := self._rust_block_import_at(module_qn, first, call_point):
                 block_target, defers = block_hit
+                # A nested fn's own body use outranks the block for BOTH
+                # shapes: the bare call and the `First::rest` path whose
+                # first segment it binds (`use crate::delta::T; T::assoc()`).
+                if defers and (
+                    strong := self.import_processor.rust_fn_scope_imports.get(
+                        caller_qn, {}
+                    ).get(first)
+                ):
+                    block_target = strong
                 if first != call_name:
                     return self._try_resolve_qualified_call(
                         call_name,
@@ -712,12 +721,6 @@ class CallResolver:
                         local_var_types,
                         language,
                     )
-                if defers and (
-                    strong := self.import_processor.rust_fn_scope_imports.get(
-                        caller_qn, {}
-                    ).get(call_name)
-                ):
-                    block_target = strong
                 return self._follow_rust_scope_target(block_target)
 
         # Enclosing-scope (nested def) lookup is caller-specific, so it must run

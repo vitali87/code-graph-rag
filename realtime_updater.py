@@ -235,6 +235,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # Step 2: Clear in-memory state
         self.updater.remove_file_from_state(path)
 
+        # The Rust path caches (exact-case directory listings, entry-file
+        # mod declarations) were filled during the last run; this event may
+        # have created, deleted, or rewritten the very files they answer
+        # for, so re-observe the filesystem before any re-parse resolves
+        # crate::/super::/self:: against them.
+        self.updater.factory.import_processor.reset_rust_path_caches()
+
         # Step 3: Re-parse code files and create File nodes for ALL files
         if event.event_type in (EventType.MODIFIED, EventType.CREATED):
             lang_config = get_language_spec(path.suffix)
