@@ -228,5 +228,7 @@ RS_ITER_NEUTRAL_HOPS = frozenset(
 )
 # Sequence containers whose FIRST generic argument is the element type.
 RS_ELEMENT_CONTAINERS = frozenset({"Vec", "VecDeque"})
+RS_ITER_MAP = "map"
+RS_ITER_COLLECT = "collect"
 TS_RS_ARRAY_TYPE = "array_type"
 RS_FIELD_ELEMENT = "element"

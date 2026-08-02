@@ -119,17 +119,75 @@ class RustTypeInferenceEngine:
     def _collect_element_lets(self, node: Node, elements: dict[str, str]) -> None:
         if node.type == cs.TS_RS_LET_DECLARATION:
             pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
-            annotation = node.child_by_field_name(cs.FIELD_TYPE)
             if (
                 pattern is not None
                 and pattern.type == cs.TS_IDENTIFIER
-                and annotation is not None
                 and (name := safe_decode_text(pattern))
-                and (elem := _rust_element_type_name(annotation))
             ):
-                elements[name] = elem
+                annotation = node.child_by_field_name(cs.FIELD_TYPE)
+                elem = (
+                    _rust_element_type_name(annotation)
+                    if annotation is not None
+                    else None
+                )
+                if elem is None:
+                    # `let workers: Vec<_> = ...map(|s| Worker { .. })
+                    # .collect();` leaves the annotation inferred: the
+                    # element is the collect chain's mapped struct literal.
+                    elem = self._collected_element_type(
+                        node.child_by_field_name(cs.FIELD_VALUE)
+                    )
+                if elem:
+                    elements[name] = elem
         for child in node.children:
             self._collect_element_lets(child, elements)
+
+    def _collected_element_type(self, value: Node | None) -> str | None:
+        # Element type of a `<chain>.map(|..| Type { .. })....collect()`
+        # value: descend receiver hops from `collect` through
+        # element-preserving adaptors to the nearest `map` whose closure
+        # returns a struct literal. Any other hop changes or hides the
+        # element, so the walk stops undecided.
+        if value is None:
+            return None
+        node = self._unwrap_try(value)
+        seen_collect = False
+        while node is not None and node.type in cs.RS_CALL_OR_GENERIC_FN:
+            func = node.child_by_field_name(cs.FIELD_FUNCTION)
+            if func is None or func.type != cs.TS_RS_FIELD_EXPRESSION:
+                return None
+            field = func.child_by_field_name(cs.FIELD_FIELD)
+            field_name = safe_decode_text(field) if field else None
+            if field_name == cs.RS_ITER_COLLECT and not seen_collect:
+                seen_collect = True
+            elif seen_collect and field_name == cs.RS_ITER_MAP:
+                args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
+                return self._closure_struct_literal_type(args)
+            elif not (seen_collect and field_name in cs.RS_ITER_NEUTRAL_HOPS):
+                return None
+            node = func.child_by_field_name(cs.FIELD_VALUE)
+        return None
+
+    def _closure_struct_literal_type(self, args: Node | None) -> str | None:
+        closure = (
+            next(
+                (c for c in args.children if c.type == cs.TS_RS_CLOSURE_EXPRESSION),
+                None,
+            )
+            if args is not None
+            else None
+        )
+        body = (
+            closure.child_by_field_name(cs.FIELD_BODY) if closure is not None else None
+        )
+        if body is not None and body.type == cs.TS_RS_BLOCK:
+            named = [c for c in body.named_children]
+            body = named[-1] if named else None
+        if body is not None and body.type == cs.TS_RS_STRUCT_EXPRESSION:
+            struct_name = body.child_by_field_name(cs.FIELD_NAME)
+            if struct_name is not None:
+                return self._bare_type_name(struct_name)
+        return None
 
     def collect_closure_param_bindings(
         self, caller_node: Node, element_types: dict[str, str]
@@ -478,7 +536,10 @@ def _rust_element_type_name(type_node: Node) -> str | None:
             if outer_name in cs.RS_ELEMENT_CONTAINERS:
                 if inner.type == cs.TS_RS_ARRAY_TYPE:
                     return _rust_element_type_name(inner)
-                return _rust_bare_type_name(inner)
+                name = _rust_bare_type_name(inner)
+                # `Vec<_>` leaves the element inferred: no type, so the
+                # caller may derive it from the value expression instead.
+                return None if name == cs.CHAR_UNDERSCORE else name
             if outer_name in cs.RS_DEREF_WRAPPERS:
                 return _rust_element_type_name(inner)
             return None
