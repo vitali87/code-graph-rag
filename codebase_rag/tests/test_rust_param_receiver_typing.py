@@ -1,9 +1,13 @@
-"""Rust method receivers typed by parameter annotations (issue #1039).
+"""Rust brace-list use paths keep their base; receivers stay typed.
 
-A parameter `s: &S` binds `s` to `S` inside the function exactly as a
-`let` annotation does, so `s.go()` must emit a CALLS edge to `S.go`.
-ripgrep's whole `HiArgs` surface (`fn search(args: &HiArgs)` calling
-`args.matcher()`) reported dead because these edges were missing.
+Issue #1039 presented as missing parameter-receiver typing (ripgrep's
+`fn search(args: &HiArgs)` calling `args.matcher()` emitted no edges),
+but the root cause was a scoped identifier inside a brace-list use
+(`use crate::flags::{hiargs::HiArgs}`) dropping the list's base path,
+which severed every consumer of the re-export. The use-list test here
+pins the fix; the receiver-shaped tests pin the already-working
+parameter typing the issue was filed against, so a regression in either
+half now fails loudly.
 """
 
 from pathlib import Path

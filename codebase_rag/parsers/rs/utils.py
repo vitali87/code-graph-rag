@@ -111,6 +111,11 @@ def _process_use_wildcard(node: Node, base_path: str, imports: dict[str, str]) -
         ),
         "",
     ):
+        # Same base-path rule as scoped identifiers: inside a brace list
+        # the glob's path is relative (`use crate::flags::{hiargs::*}`
+        # globs crate::flags::hiargs), so the list's base joins it.
+        if base_path:
+            wildcard_base = f"{base_path}{cs.SEPARATOR_DOUBLE_COLON}{wildcard_base}"
         wildcard_key = f"{cs.RS_WILDCARD_PREFIX}{wildcard_base}"
         imports[wildcard_key] = wildcard_base
     elif base_path:
