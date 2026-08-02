@@ -657,9 +657,7 @@ class TestUpdateConfigFile:
             and isinstance(node.value, ast.Dict)
         ]
         last_keys = [
-            key.value
-            for key in specs_dicts[-1].keys
-            if isinstance(key, ast.Constant)
+            key.value for key in specs_dicts[-1].keys if isinstance(key, ast.Constant)
         ]
         assert last_keys == ["a", "mylang"]
 
@@ -920,6 +918,61 @@ class TestRemoveLanguageCommand:
             assert "Error" in result.output
             assert config.read_text(encoding="utf-8") == original
             assert list(config.parent.iterdir()) == [config]
+            run.assert_not_called()
+
+    def test_removal_spares_matching_entry_after_registry(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                "LANGUAGE_SPECS = {\n"
+                '    "foo": LanguageSpec(language="foo"),\n'
+                "}\n"
+                "LANGUAGE_FQN_SPECS = {\n"
+                '    "foo": LanguageSpec(language="foo"),\n'
+                "}\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+            ):
+                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+
+            assert result.exit_code == 0
+            assert "Error" not in result.output
+            content = config.read_text(encoding="utf-8")
+            _assert_valid_python(content)
+            assert 'LANGUAGE_FQN_SPECS = {\n    "foo": LanguageSpec(' in content
+            assert _top_level_specs_keys(content) == []
+
+    def test_removal_refuses_when_entry_only_in_sibling_mapping(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            original = (
+                "LANGUAGE_FQN_SPECS = {\n"
+                '    "foo": LanguageSpec(language="foo"),\n'
+                "}\n"
+                "LANGUAGE_SPECS = {\n"
+                '    "bar": LanguageSpec(language="bar"),\n'
+                "}\n"
+            )
+            config.write_text(original, encoding="utf-8")
+
+            with (
+                patch(
+                    "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+                ),
+                patch("codebase_rag.tools.language.subprocess.run") as run,
+            ):
+                result = runner.invoke(remove_language, ["foo"])
+
+            assert result.exit_code == 0
+            assert "Error" in result.output
+            assert config.read_text(encoding="utf-8") == original
             run.assert_not_called()
 
     def test_removal_with_trailing_comment_spares_neighbour_entries(self) -> None:

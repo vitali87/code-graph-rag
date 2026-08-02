@@ -394,10 +394,9 @@ def _entry_key_matches(key: ast.expr, language_name: str) -> bool:
         member = cs.SupportedLanguage(language_name).name
     except ValueError:
         return False
-    return (
-        isinstance(key, ast.Attribute)
-        and ast.unparse(key) == cs.LANG_ENUM_KEY_TEMPLATE.format(member=member)
-    )
+    return isinstance(key, ast.Attribute) and ast.unparse(
+        key
+    ) == cs.LANG_ENUM_KEY_TEMPLATE.format(member=member)
 
 
 def _extend_past_separator(config_content: str, end: int) -> int:
