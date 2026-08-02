@@ -73,12 +73,16 @@ RUST_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"main"})
 RUST_TEST_ATTRIBUTE_NAMES: frozenset[str] = frozenset({"test", "bench"})
 RUST_TEST_ATTRIBUTE_SUFFIX = "::test"
 
-# The `#[cfg(test)] mod tests` convention: a MODULE segment named `tests`
-# or `test` in a .rs file marks inline test code (issue #1008). Both
-# spellings, mirroring TEST_PATH_PATTERNS' /tests/ and /test/ directories.
-# Module segments only: the project prefix and the symbol's own name are
-# not modules, so a project directory or a method named `tests` stays
-# production code.
+# The `#[cfg(test)] mod tests` convention: a real MODULE node named
+# `tests` or `test` in a .rs file marks inline test code (issue #1008).
+# This is deliberately WIDER than TEST_PATH_PATTERNS (whose /tests/ and
+# /test/ entries match directory segments only, never a src/test.rs file
+# or an inline mod): the name is a proxy for the `#[cfg(test)]` gate the
+# graph does not yet record. Measured across a 972-crate corpus, 4155
+# such modules are cfg-gated test code and 41 are ungated, of which two
+# ship as production API (aws-lc-rs `pub mod test`, alacritty's terminal
+# test helpers), both test-support by nature; that residual silencing is
+# accepted until issue #1010 replaces the name proxy with cfg awareness.
 RUST_TEST_MODULE_SEGMENTS: frozenset[str] = frozenset({"tests", "test"})
 
 # Rust trait-impl methods the language/std dispatches implicitly (Display::fmt
