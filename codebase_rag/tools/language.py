@@ -401,11 +401,38 @@ def _entry_key_matches(key: ast.expr, language_name: str) -> bool:
 
 def _skip_spaces(config_content: str, pos: int, *, newlines: bool) -> int:
     length = len(config_content)
-    while pos < length and (
-        config_content[pos] in " \t" or (newlines and config_content[pos] == "\n")
-    ):
-        pos += 1
+    while pos < length:
+        char = config_content[pos]
+        if char in " \t":
+            pos += 1
+        elif newlines and char == "\n":
+            pos += 1
+        elif newlines and char == "#":
+            while pos < length and config_content[pos] != "\n":
+                pos += 1
+        else:
+            break
     return pos
+
+
+def _consume_key_wrapping_parens(config_content: str, start: int, key_end: int) -> int:
+    length = len(config_content)
+    wrap = 0
+    i = key_end
+    while i < length and config_content[i] != ":":
+        if config_content[i] == ")":
+            wrap += 1
+        i += 1
+    while wrap and start > 0:
+        probe = start - 1
+        while probe >= 0 and config_content[probe] in " \t\n":
+            probe -= 1
+        if probe >= 0 and config_content[probe] == "(":
+            start = probe
+            wrap -= 1
+        else:
+            break
+    return start
 
 
 def _extend_past_separator(config_content: str, end: int, *, own_line: bool) -> int:
@@ -441,9 +468,18 @@ def _specs_entry_spans(
             continue
         end_lineno = value.end_lineno
         end_col_offset = value.end_col_offset
-        if end_lineno is None or end_col_offset is None:
+        key_end_lineno = key.end_lineno
+        key_end_col_offset = key.end_col_offset
+        if (
+            end_lineno is None
+            or end_col_offset is None
+            or key_end_lineno is None
+            or key_end_col_offset is None
+        ):
             raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
         start = _content_offset(config_content, key.lineno, key.col_offset)
+        key_end = _content_offset(config_content, key_end_lineno, key_end_col_offset)
+        start = _consume_key_wrapping_parens(config_content, start, key_end)
         line_start = config_content.rfind("\n", 0, start) + 1
         own_line = not config_content[line_start:start].strip()
         if own_line:
