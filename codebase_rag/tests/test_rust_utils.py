@@ -195,7 +195,10 @@ class TestExtractUseImports:
         assert "File" in result
         assert result["Read"] == "std::io::Read"
         assert result["Write"] == "std::io::Write"
-        assert result["File"] == "fs::File"
+        # A scoped identifier inside the brace list keeps the list's
+        # base: `fs::File` here names std::fs::File (issue #1039; the
+        # old expectation pinned the dropped base path).
+        assert result["File"] == "std::fs::File"
 
     def test_self_alias_in_group(self) -> None:
         code = "use std::io::{self as Sio, Read};"
@@ -598,3 +601,16 @@ class TestExtractUseImportsEdgeCases:
         assert result["self"] == "std::fs"
         assert result["File"] == "std::fs::File"
         assert result["read_to_string"] == "std::fs::read_to_string"
+
+
+class TestBraceListGlobBase:
+    def test_glob_inside_brace_list_keeps_base_path(self) -> None:
+        # `use crate::flags::{hiargs::*};` globs crate::flags::hiargs;
+        # dropped bases left an unfollowable relative glob (issue #1039).
+        code = "use crate::flags::{hiargs::*};"
+        root = parse_rust_code(code)
+        use_node = find_node_by_type(root, "use_declaration")
+        assert use_node is not None
+
+        result = extract_use_imports(use_node)
+        assert result["*crate::flags::hiargs"] == "crate::flags::hiargs"
