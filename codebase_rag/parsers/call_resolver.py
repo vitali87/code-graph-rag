@@ -344,7 +344,11 @@ class CallResolver:
         return None
 
     def _resolve_enclosing_scope(
-        self, call_name: str, caller_qn: str | None, module_qn: str
+        self,
+        call_name: str,
+        caller_qn: str | None,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         # Python LEGB: a bare name defined in the caller's own body or an enclosing
         # FUNCTION scope (a nested def) shadows module-level and same-named nested
@@ -357,31 +361,54 @@ class CallResolver:
             return None
         scope = caller_qn
         while True:
-            candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
-            if candidate in self.function_registry:
-                return self.function_registry[candidate], candidate
-            # A duplicate-variant caller (click's real `command` registers as
-            # `command@168` behind its @t.overload stubs) owns nested defs the
-            # def pass registers under the NATURAL qn (`command.decorator`);
-            # probe the variant-stripped scope too, or the call falls to the
-            # module trie and mis-binds to a sibling's same-named nested.
-            last = scope.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-            if cs.DUP_QN_MARKER in last:
-                natural_scope = (
-                    scope[: len(scope) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
-                )
-                natural_candidate = f"{natural_scope}{cs.SEPARATOR_DOT}{call_name}"
-                if natural_candidate in self.function_registry:
-                    return (
-                        self.function_registry[natural_candidate],
-                        natural_candidate,
-                    )
+            if hit := self._scope_candidate(scope, call_name, language):
+                return hit
+            if hit := self._dup_variant_scope_candidate(scope, call_name, language):
+                return hit
             if cs.SEPARATOR_DOT not in scope:
                 return None
             parent = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
             if parent == module_qn or parent not in self.function_registry:
                 return None
             scope = parent
+
+    def _scope_candidate(
+        self, scope: str, call_name: str, language: cs.SupportedLanguage | None
+    ) -> tuple[str, str] | None:
+        candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
+        if candidate in self.function_registry and self._bare_call_allowed(
+            language, candidate
+        ):
+            return self.function_registry[candidate], candidate
+        return None
+
+    def _dup_variant_scope_candidate(
+        self, scope: str, call_name: str, language: cs.SupportedLanguage | None
+    ) -> tuple[str, str] | None:
+        # A duplicate-variant caller (click's real `command` registers as
+        # `command@168` behind its @t.overload stubs) owns nested defs the
+        # def pass registers under the NATURAL qn (`command.decorator`);
+        # probe the variant-stripped scope too, or the call falls to the
+        # module trie and mis-binds to a sibling's same-named nested.
+        last = scope.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if cs.DUP_QN_MARKER not in last:
+            return None
+        natural_scope = (
+            scope[: len(scope) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
+        )
+        return self._scope_candidate(natural_scope, call_name, language)
+
+    def _bare_call_allowed(
+        self, language: cs.SupportedLanguage | None, qn: str
+    ) -> bool:
+        # A bare Rust path NEVER names a method: inherent methods are
+        # reachable only via self./Self::/Type:: (rustc-verified; the bare
+        # spelling calls the module item, issue #1011). Other languages
+        # keep their scope-chain semantics.
+        return (
+            language != cs.SupportedLanguage.RUST
+            or self.function_registry[qn] != cs.NodeLabel.METHOD.value
+        )
 
     def _protocol_impl_map(self) -> dict[str, str]:
         # A Protocol stub never runs; the concrete implementer does. Map each
@@ -742,7 +769,9 @@ class CallResolver:
         # Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # before the module-keyed cache/trie, which would otherwise return a sibling
         # scope's same-named nested function.
-        if result := self._resolve_enclosing_scope(call_name, caller_qn, module_qn):
+        if result := self._resolve_enclosing_scope(
+            call_name, caller_qn, module_qn, language
+        ):
             return result
 
         # `this.m()` inside a prototype-assigned function dispatches to a sibling
@@ -932,7 +961,7 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = result
             return result
 
-        result = self._try_resolve_via_trie(call_name, module_qn)
+        result = self._try_resolve_via_trie(call_name, module_qn, language)
         if use_cache:
             self._simple_resolution_cache[cache_key] = result
         return result
@@ -1335,9 +1364,12 @@ class CallResolver:
             ).get(call_name)
             scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
             while len(scope) > len(module_qn):
-                local_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
-                if (local_type := self.function_registry.get(local_qn)) is not None:
-                    return ((local_type, local_qn),)
+                # The scope segment may be an impl target whose method a
+                # bare path can never name (issue #1011).
+                if local := self._scope_candidate(
+                    scope, call_name, cs.SupportedLanguage.RUST
+                ):
+                    return (local,)
                 target = (
                     weak
                     if weak is not None
@@ -1676,7 +1708,10 @@ class CallResolver:
         return language
 
     def _try_resolve_via_trie(
-        self, call_name: str, module_qn: str
+        self,
+        call_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         search_name = _SEARCH_NAME_CACHE.get(call_name)
         if search_name is None:
@@ -1685,6 +1720,16 @@ class CallResolver:
         possible_matches = self._nameable_candidates(
             self.function_registry.find_ending_with(search_name), module_qn
         )
+        if language == cs.SupportedLanguage.RUST and search_name == call_name:
+            # A bare Rust path NEVER names a method (inherent methods need
+            # self./Self::/Type::), so a same-named method must not soak
+            # up the edge when the real target is external, prelude, or a
+            # shadowing closure the graph cannot see (issue #1011).
+            possible_matches = [
+                qn
+                for qn in possible_matches
+                if self.function_registry[qn] != cs.NodeLabel.METHOD.value
+            ]
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
