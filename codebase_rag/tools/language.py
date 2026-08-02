@@ -333,10 +333,17 @@ def _update_config_file(language_name: str, spec: LanguageSpec) -> bool:
         return False
 
 
-def _write_config_atomically(new_content: str) -> None:
+def _read_config_text() -> tuple[str, str]:
+    raw = pathlib.Path(cs.LANG_CONFIG_FILE).read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    content = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    return content, newline
+
+
+def _write_config_atomically(new_content: str, newline: str) -> None:
     temp_path = f"{cs.LANG_CONFIG_FILE}{cs.LANG_CONFIG_TMP_SUFFIX}"
     try:
-        with open(temp_path, "w", encoding="utf-8") as f:
+        with open(temp_path, "w", encoding="utf-8", newline=newline) as f:
             f.write(new_content)
         os.replace(temp_path, cs.LANG_CONFIG_FILE)
     except Exception:
@@ -526,7 +533,7 @@ def _specs_entry_spans(
 
 
 def _write_language_config(config_entry: str, language_name: str) -> bool:
-    config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
+    config_content, newline = _read_config_text()
     closing_brace_pos = _specs_dict_span(config_content)[1]
 
     head = config_content[:closing_brace_pos]
@@ -538,7 +545,7 @@ def _write_language_config(config_entry: str, language_name: str) -> bool:
 
     compile(new_content, cs.LANG_CONFIG_FILE, "exec")
 
-    _write_config_atomically(new_content)
+    _write_config_atomically(new_content, newline)
 
     click.echo(f"OK {cs.LANG_MSG_LANG_ADDED.format(name=language_name)}")
     click.echo(f"Note: {cs.LANG_MSG_UPDATED_CONFIG.format(path=cs.LANG_CONFIG_FILE)}")
@@ -734,14 +741,14 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
 
 def _remove_language_from_config(language_name: str) -> bool:
     try:
-        original_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
+        original_content, newline = _read_config_text()
         spans = _specs_entry_spans(original_content, language_name)
         new_content = original_content
         for entry_start, entry_end in sorted(spans, reverse=True):
             new_content = new_content[:entry_start] + new_content[entry_end:]
         compile(new_content, cs.LANG_CONFIG_FILE, "exec")
 
-        _write_config_atomically(new_content)
+        _write_config_atomically(new_content, newline)
 
         click.echo(f"OK {cs.LANG_MSG_REMOVED_FROM_CONFIG.format(name=language_name)}")
         return True
