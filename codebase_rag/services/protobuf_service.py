@@ -62,19 +62,33 @@ class ProtobufFileIngestor:
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         node_label = cs.NodeLabel(label)
         node_id = self._get_node_id(node_label, properties)
-        if not node_id or node_id in self._nodes:
+        if not node_id:
             return
 
-        if label in _MSG_CLASS_CACHE:
-            payload_message_class = _MSG_CLASS_CACHE[label]
+        payload_field_name = LABEL_TO_ONEOF_FIELD.get(node_label)
+        if not payload_field_name:
+            logger.warning(ls.PROTOBUF_NO_ONEOF_MAPPING.format(label=label))
+            return
+
+        # Repeated ensures of one node MERGE, mirroring the graph sink's
+        # `MERGE ... SET n += props`: a later batch may carry properties
+        # the first did not (the Rust cfg(test) declaration record lands
+        # after the module's own node, issue #1010). Each provided key
+        # replaces the stored value wholesale, lists included.
+        if (existing := self._nodes.get(node_id)) is not None:
+            payload_message = getattr(existing, payload_field_name)
         else:
-            payload_message_class = getattr(pb, label, None)
-            _MSG_CLASS_CACHE[label] = payload_message_class
-        if not payload_message_class:
-            logger.warning(ls.PROTOBUF_NO_MESSAGE_CLASS.format(label=label))
-            return
-
-        payload_message = payload_message_class()
+            if label in _MSG_CLASS_CACHE:
+                payload_message_class = _MSG_CLASS_CACHE[label]
+            else:
+                payload_message_class = getattr(pb, label, None)
+                _MSG_CLASS_CACHE[label] = payload_message_class
+            if not payload_message_class:
+                logger.warning(ls.PROTOBUF_NO_MESSAGE_CLASS.format(label=label))
+                return
+            node = pb.Node()
+            payload_message = getattr(node, payload_field_name)
+            self._nodes[node_id] = node
 
         for key, value in properties.items():
             if hasattr(payload_message, key):
@@ -82,20 +96,10 @@ class ProtobufFileIngestor:
                     continue
                 destination_attribute = getattr(payload_message, key)
                 if hasattr(destination_attribute, "extend") and isinstance(value, list):
+                    del destination_attribute[:]
                     destination_attribute.extend(value)
                 else:
                     setattr(payload_message, key, value)
-
-        node = pb.Node()
-
-        payload_field_name = LABEL_TO_ONEOF_FIELD.get(node_label)
-        if not payload_field_name:
-            logger.warning(ls.PROTOBUF_NO_ONEOF_MAPPING.format(label=label))
-            return
-
-        getattr(node, payload_field_name).CopyFrom(payload_message)
-
-        self._nodes[node_id] = node
 
     def ensure_relationship_batch(
         self,

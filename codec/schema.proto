@@ -182,6 +182,14 @@ message GraphCodeIndex {
 
     string name = 2;
     string path = 3;
+    // Rust: the module's own attributes (a bodied inline mod's
+    // `#[cfg(test)]` marks its subtree as test code, issue #1010).
+    repeated string decorators = 4;
+    // Rust: target-qn candidates of `#[cfg(test)] mod NAME;` declarations
+    // made IN this module, and the ungated counterparts that let a
+    // production target's declaration of the same file module win.
+    repeated string rust_cfg_test_mods = 5;
+    repeated string rust_ungated_mods = 6;
   }
 
   message ExternalModule {

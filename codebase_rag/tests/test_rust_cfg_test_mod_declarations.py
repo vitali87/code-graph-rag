@@ -244,6 +244,32 @@ def test_gate_on_bodied_inline_module_marks_its_own_node(
     assert "#[allow(dead_code)]" in decorators, decorators
 
 
+def test_cross_target_ungated_declaration_is_recorded(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A gated lib declaration and an ungated bin declaration of the SAME
+    # file module: each declarer records its own polarity, so dead-code
+    # can let the production declaration win.
+    project = temp_repo / "rs_cfgtest_xtarget"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_cfgtest_xtarget"\nversion = "0.1.0"\n',
+            "src/lib.rs": "#[cfg(test)]\nmod util;\n\npub fn add() -> i32 {\n    1\n}\n",
+            "src/main.rs": "mod util;\n\nfn main() {\n    let _ = util::helper();\n}\n",
+            "src/util.rs": "pub(crate) fn helper() -> i32 {\n    7\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    gated = _declared_gates(mock_ingestor, "rs_cfgtest_xtarget.src.lib")
+    assert "rs_cfgtest_xtarget.src.util" in gated, gated
+    ungated = _module_prop(
+        mock_ingestor, "rs_cfgtest_xtarget.src.main", cs.KEY_RUST_UNGATED_MODS
+    )
+    assert "rs_cfgtest_xtarget.src.util" in ungated, ungated
+
+
 def test_ungated_declarations_carry_no_gate(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

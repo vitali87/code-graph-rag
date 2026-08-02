@@ -293,3 +293,57 @@ def test_ensure_relationship_batch_none_values(tmp_path: Path) -> None:
     ingestor.ensure_relationship_batch(from_spec, "DEFINES_METHOD", to_spec)
 
     assert len(ingestor._relationships) == 0
+
+
+def test_module_merge_preserves_rust_cfg_test_metadata(tmp_path: Path) -> None:
+    # A Module is ensured twice during a parse: the full node first, the
+    # Rust cfg(test) declaration record second (issue #1010). The protobuf
+    # sink must MERGE the later properties (mirroring the graph's
+    # SET += semantics) and the Module message must carry the fields, or
+    # protobuf output cannot reproduce the live graph's dead-code
+    # classification.
+    output_dir = tmp_path / "out_merge"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ingestor = ProtobufFileIngestor(str(output_dir), split_index=False)
+
+    ingestor.ensure_node_batch(
+        "Module",
+        {
+            "qualified_name": "proj.src.lib",
+            "name": "lib.rs",
+            "path": "src/lib.rs",
+        },
+    )
+    ingestor.ensure_node_batch(
+        "Module",
+        {
+            "qualified_name": "proj.src.lib",
+            "rust_cfg_test_mods": ["proj.src.testutil"],
+            "rust_ungated_mods": ["proj.src.util"],
+        },
+    )
+    ingestor.ensure_node_batch(
+        "Module",
+        {
+            "qualified_name": "proj.src.lib.checks",
+            "name": "checks",
+            "path": "src/lib.rs",
+            "decorators": ["#[cfg(test)]"],
+        },
+    )
+    ingestor.flush_all()
+
+    deserialized_index = pb.GraphCodeIndex()
+    deserialized_index.ParseFromString((output_dir / "index.bin").read_bytes())
+
+    modules = {
+        getattr(node, node.WhichOneof("payload")).qualified_name: getattr(
+            node, node.WhichOneof("payload")
+        )
+        for node in deserialized_index.nodes
+    }
+    declaring = modules["proj.src.lib"]
+    assert declaring.path == "src/lib.rs"
+    assert list(declaring.rust_cfg_test_mods) == ["proj.src.testutil"]
+    assert list(declaring.rust_ungated_mods) == ["proj.src.util"]
+    assert list(modules["proj.src.lib.checks"].decorators) == ["#[cfg(test)]"]

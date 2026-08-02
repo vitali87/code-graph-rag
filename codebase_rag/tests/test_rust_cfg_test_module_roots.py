@@ -49,6 +49,7 @@ def _module(
     path: str,
     decorators: list[str] | None = None,
     rust_cfg_test_mods: list[str] | None = None,
+    rust_ungated_mods: list[str] | None = None,
 ) -> ResultRow:
     return {
         "label": _MODULE,
@@ -61,6 +62,7 @@ def _module(
         "is_exported": False,
         "overrides_external": False,
         "rust_cfg_test_mods": rust_cfg_test_mods or [],
+        "rust_ungated_mods": rust_ungated_mods or [],
     }
 
 
@@ -121,6 +123,22 @@ def test_declared_candidate_naming_no_real_module_stays_inert() -> None:
     ]
     dead = _collect(nodes, include_tests=True)
     assert "proj.src.ghost.fixture" in dead
+
+
+def test_ungated_declaration_from_another_target_wins() -> None:
+    # src/lib.rs gates `mod util;` for tests while src/main.rs declares the
+    # SAME file module ungated: the bin target compiles it as production
+    # code, so the gate must not hide its symbols in either mode.
+    nodes = [
+        _module("proj.src.lib", "src/lib.rs", rust_cfg_test_mods=["proj.src.util"]),
+        _module("proj.src.main", "src/main.rs", rust_ungated_mods=["proj.src.util"]),
+        _module("proj.src.util", "src/util.rs"),
+        _function("proj.src.util.helper", "helper", "src/util.rs"),
+    ]
+    dead = _collect(nodes, include_tests=True)
+    assert "proj.src.util.helper" in dead
+    dead = _collect(nodes, include_tests=False)
+    assert "proj.src.util.helper" in dead
 
 
 def test_own_cfg_test_decorator_marks_inline_module() -> None:

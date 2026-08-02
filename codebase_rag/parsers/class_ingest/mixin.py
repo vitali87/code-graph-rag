@@ -1394,6 +1394,7 @@ class ClassIngestMixin:
         lang_config: LanguageSpec,
     ) -> None:
         gated_targets: set[str] = set()
+        ungated_targets: set[str] = set()
         for module_node in module_nodes:
             if not isinstance(module_node, Node):
                 continue
@@ -1419,14 +1420,16 @@ class ClassIngestMixin:
             # while the declaring node lives exactly as long as the
             # declaration does (issue #1010).
             if module_node.child_by_field_name(cs.FIELD_BODY) is None:
-                if gated:
-                    gated_targets.update(
-                        self._rust_cfg_test_candidates(
-                            module_node,
-                            module_qn,
-                            safe_decode_text(module_name_node) or "",
-                        )
-                    )
+                # Ungated declarations record too: another Cargo target
+                # (src/main.rs) declaring the SAME file module without the
+                # gate compiles it as production code, and that must win
+                # over a gated sibling declaration.
+                candidates = self._rust_cfg_test_candidates(
+                    module_node,
+                    module_qn,
+                    safe_decode_text(module_name_node) or "",
+                )
+                (gated_targets if gated else ungated_targets).update(candidates)
                 continue
 
             module_name = safe_decode_text(module_name_node)
@@ -1472,14 +1475,13 @@ class ClassIngestMixin:
                     cs.RelationshipType.DEFINES,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, inline_module_qn),
                 )
-        if gated_targets:
-            self.ingestor.ensure_node_batch(
-                cs.NodeLabel.MODULE,
-                {
-                    cs.KEY_QUALIFIED_NAME: module_qn,
-                    cs.KEY_RUST_CFG_TEST_MODS: sorted(gated_targets),
-                },
-            )
+        if gated_targets or ungated_targets:
+            decl_props: PropertyDict = {cs.KEY_QUALIFIED_NAME: module_qn}
+            if gated_targets:
+                decl_props[cs.KEY_RUST_CFG_TEST_MODS] = sorted(gated_targets)
+            if ungated_targets:
+                decl_props[cs.KEY_RUST_UNGATED_MODS] = sorted(ungated_targets)
+            self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, decl_props)
 
     def _rust_cfg_test_candidates(
         self, module_node: Node, module_qn: str, module_name: str

@@ -313,8 +313,12 @@ NODE_PROJECT = NodeLabel.PROJECT
 KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
 # Target-module qn candidates of `#[cfg(test)] mod NAME;` declarations in a
-# Rust file, stored on the DECLARING module's node (issue #1010).
+# Rust file, stored on the DECLARING module's node (issue #1010). The
+# ungated counterpart lets a production target's declaration of the SAME
+# file module win over another target's gate (src/lib.rs gating what
+# src/main.rs compiles for real).
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
+KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"
