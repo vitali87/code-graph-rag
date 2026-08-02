@@ -661,6 +661,20 @@ class TestUpdateConfigFile:
         ]
         assert last_keys == ["a", "mylang"]
 
+    def test_insertion_preserves_crlf_newlines(self, tmp_path: Path) -> None:
+        config = tmp_path / "language_spec.py"
+        config.write_bytes(b"LANGUAGE_SPECS = {\r\n}\r\n")
+
+        with patch("codebase_rag.constants.LANG_CONFIG_FILE", str(config)):
+            assert _update_config_file("mylang", _spec("mylang")) is True
+
+        raw = config.read_bytes()
+        assert b"\r\n" in raw
+        assert b"\n" not in raw.replace(b"\r\n", b"")
+        content = config.read_text(encoding="utf-8")
+        _assert_valid_python(content)
+        assert _top_level_specs_keys(content) == ["mylang"]
+
     def test_missing_brace_returns_false(self, tmp_path: Path) -> None:
         config = tmp_path / "language_spec.py"
         config.write_text("LANGUAGE_SPECS = broken\n", encoding="utf-8")
@@ -1211,6 +1225,32 @@ class TestRemoveLanguageCommand:
             content = config.read_text(encoding="utf-8")
             _assert_valid_python(content)
             assert _top_level_specs_keys(content) == ["a", "b"]
+
+    def test_removal_preserves_crlf_newlines(self) -> None:
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config = Path("codebase_rag/language_spec.py")
+            config.parent.mkdir(parents=True)
+            config.write_bytes(
+                b"LANGUAGE_SPECS = {\r\n"
+                b'    "foo": LanguageSpec(language="foo"),\r\n'
+                b'    "b": LanguageSpec(),\r\n'
+                b"}\r\n"
+            )
+
+            with patch(
+                "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
+            ):
+                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+
+            assert result.exit_code == 0
+            assert "Error" not in result.output
+            raw = config.read_bytes()
+            assert b"\r\n" in raw
+            assert b"\n" not in raw.replace(b"\r\n", b"")
+            content = config.read_text(encoding="utf-8")
+            _assert_valid_python(content)
+            assert _top_level_specs_keys(content) == ["b"]
 
     def test_removal_with_trailing_comment_spares_neighbour_entries(self) -> None:
         runner = CliRunner()
