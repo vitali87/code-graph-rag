@@ -195,7 +195,10 @@ class TestExtractUseImports:
         assert "File" in result
         assert result["Read"] == "std::io::Read"
         assert result["Write"] == "std::io::Write"
-        assert result["File"] == "fs::File"
+        # A scoped identifier inside the brace list keeps the list's
+        # base: `fs::File` here names std::fs::File (issue #1039; the
+        # old expectation pinned the dropped base path).
+        assert result["File"] == "std::fs::File"
 
     def test_self_alias_in_group(self) -> None:
         code = "use std::io::{self as Sio, Read};"

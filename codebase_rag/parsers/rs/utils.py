@@ -46,11 +46,16 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
                 imports[name] = full_path
 
         case cs.TS_SCOPED_IDENTIFIER | cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
-            if (full_path := _extract_path_from_node(node)) and (
-                parts := full_path.split(cs.SEPARATOR_DOUBLE_COLON)
-            ):
-                imported_name = parts[-1]
-                imports[imported_name] = full_path
+            # Inside a brace list the scoped path is RELATIVE to the
+            # list's base (`use crate::flags::{hiargs::HiArgs}` names
+            # crate::flags::hiargs::HiArgs); stored bare it can never be
+            # followed, and every consumer of the re-export silently
+            # loses resolution (ripgrep's HiArgs surface, issue #1039).
+            if full_path := _extract_path_from_node(node):
+                if base_path:
+                    full_path = f"{base_path}{cs.SEPARATOR_DOUBLE_COLON}{full_path}"
+                parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
+                imports[parts[-1]] = full_path
 
         case cs.TS_RS_USE_AS_CLAUSE:
             _process_use_as_clause(node, base_path, imports)
