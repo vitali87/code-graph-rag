@@ -67,6 +67,16 @@ GO_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"init", "main"})
 # call site -- a reachability root (gated by .rs).
 RUST_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"main"})
 
+# Rust test attributes: the harness invokes these functions with no call site.
+# Bare names match exactly; scoped runner variants (#[tokio::test],
+# #[async_std::test]) match by the ::test suffix. Gated by .rs (issue #1008).
+RUST_TEST_ATTRIBUTE_NAMES: frozenset[str] = frozenset({"test", "bench"})
+RUST_TEST_ATTRIBUTE_SUFFIX = "::test"
+
+# The `#[cfg(test)] mod tests` convention: any qn segment `tests` in a .rs
+# file marks inline test code (issue #1008).
+RUST_TESTS_MODULE_SEGMENT = "tests"
+
 # Rust trait-impl methods the language/std dispatches implicitly (Display::fmt
 # via format!, PartialEq::eq via ==, Iterator::next via for, operator traits,
 # Drop::drop, serde, ...), never through an explicit call the graph can see.

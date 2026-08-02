@@ -86,6 +86,28 @@ def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
     return is_method and name in cs.RUST_TRAIT_METHOD_NAMES
 
 
+def _is_rust_test_symbol(props: PropertyDict, qn: str, path: str) -> bool:
+    # Rust unit tests live INSIDE source files (`#[cfg(test)] mod tests`), so
+    # path-based test detection never sees them (issue #1008). Test code is a
+    # function carrying a `#[test]` family attribute (#[test], #[tokio::test],
+    # #[bench]) or any symbol inside a `tests` module (the #[cfg(test)]
+    # convention), including the plain helpers such modules define.
+    if not path.endswith(cs.EXT_RS):
+        return False
+    if cs.RUST_TESTS_MODULE_SEGMENT in qn.split(cs.SEPARATOR_DOT):
+        return True
+    decorators = props.get(cs.KEY_DECORATORS)
+    if not isinstance(decorators, list):
+        return False
+    for decorator in decorators:
+        name = str(decorator).strip("#[] ").split(cs.CHAR_PAREN_OPEN)[0]
+        if name in cs.RUST_TEST_ATTRIBUTE_NAMES or name.endswith(
+            cs.RUST_TEST_ATTRIBUTE_SUFFIX
+        ):
+            return True
+    return False
+
+
 def _is_c_cpp_entry_root(
     name: str, is_method: bool, path: str, qn: str, project_prefix: str
 ) -> bool:
@@ -333,11 +355,18 @@ def dead_code_from_graph(
                     _norm_decorator(str(d)) for d in decorators
                 )
         if label in labels and str(uid).startswith(project_prefix):
-            # With tests excluded, a test-file symbol's only callers are
-            # excluded as roots, so reporting it is noise (test helpers and
-            # mocks are infrastructure, not dead production code).
-            if not config.include_tests and matches_test_path(
-                str(props.get(cs.KEY_PATH) or ""), config.test_patterns
+            # With tests excluded, a test symbol's only callers are excluded
+            # as roots, so reporting it is noise (test helpers and mocks are
+            # infrastructure, not dead production code). Rust test code lives
+            # INSIDE source files, so it is matched by attribute/module, not
+            # path (issue #1008).
+            if not config.include_tests and (
+                matches_test_path(
+                    str(props.get(cs.KEY_PATH) or ""), config.test_patterns
+                )
+                or _is_rust_test_symbol(
+                    props, str(uid), str(props.get(cs.KEY_PATH) or "")
+                )
             ):
                 continue
             candidates.add(str(uid))
@@ -485,7 +514,10 @@ def dead_code_from_graph(
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)
-        elif config.include_tests and matches_test_path(path, config.test_patterns):
+        elif config.include_tests and (
+            matches_test_path(path, config.test_patterns)
+            or _is_rust_test_symbol(props, qn, path)
+        ):
             roots.add(qn)
 
     adjacency: dict[str, set[str]] = defaultdict(set)
