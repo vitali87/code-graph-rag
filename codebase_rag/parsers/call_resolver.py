@@ -362,16 +362,10 @@ class CallResolver:
         scope = caller_qn
         while True:
             candidate = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
-            if candidate in self.function_registry:
-                # A scope segment may be a Rust impl target, and a bare
-                # Rust path NEVER names a method: inherent methods are
-                # reachable only via self./Self::/Type:: (rustc-verified;
-                # the bare spelling calls the module item, issue #1011).
-                if (
-                    language != cs.SupportedLanguage.RUST
-                    or self.function_registry[candidate] != cs.NodeLabel.METHOD.value
-                ):
-                    return self.function_registry[candidate], candidate
+            if candidate in self.function_registry and self._bare_call_allowed(
+                language, candidate
+            ):
+                return self.function_registry[candidate], candidate
             # A duplicate-variant caller (click's real `command` registers as
             # `command@168` behind its @t.overload stubs) owns nested defs the
             # def pass registers under the NATURAL qn (`command.decorator`);
@@ -384,9 +378,7 @@ class CallResolver:
                 )
                 natural_candidate = f"{natural_scope}{cs.SEPARATOR_DOT}{call_name}"
                 if natural_candidate in self.function_registry and (
-                    language != cs.SupportedLanguage.RUST
-                    or self.function_registry[natural_candidate]
-                    != cs.NodeLabel.METHOD.value
+                    self._bare_call_allowed(language, natural_candidate)
                 ):
                     return (
                         self.function_registry[natural_candidate],
@@ -398,6 +390,18 @@ class CallResolver:
             if parent == module_qn or parent not in self.function_registry:
                 return None
             scope = parent
+
+    def _bare_call_allowed(
+        self, language: cs.SupportedLanguage | None, qn: str
+    ) -> bool:
+        # A bare Rust path NEVER names a method: inherent methods are
+        # reachable only via self./Self::/Type:: (rustc-verified; the bare
+        # spelling calls the module item, issue #1011). Other languages
+        # keep their scope-chain semantics.
+        return (
+            language != cs.SupportedLanguage.RUST
+            or self.function_registry[qn] != cs.NodeLabel.METHOD.value
+        )
 
     def _protocol_impl_map(self) -> dict[str, str]:
         # A Protocol stub never runs; the concrete implementer does. Map each
@@ -1354,14 +1358,12 @@ class CallResolver:
             scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
             while len(scope) > len(module_qn):
                 local_qn = f"{scope}{cs.SEPARATOR_DOT}{call_name}"
-                # A scope segment may be an impl target, and a bare Rust
-                # path NEVER names a method: inherent methods are reachable
-                # only via self./Self::/Type:: (rustc-verified; the bare
-                # spelling calls the module item instead, issue #1011).
-                if (
-                    local_type := self.function_registry.get(local_qn)
-                ) is not None and local_type != cs.NodeLabel.METHOD.value:
-                    return ((local_type, local_qn),)
+                # The scope segment may be an impl target whose method a
+                # bare path can never name (issue #1011).
+                if local_qn in self.function_registry and self._bare_call_allowed(
+                    cs.SupportedLanguage.RUST, local_qn
+                ):
+                    return ((self.function_registry[local_qn], local_qn),)
                 target = (
                     weak
                     if weak is not None
