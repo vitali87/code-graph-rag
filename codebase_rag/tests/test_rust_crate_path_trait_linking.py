@@ -4795,3 +4795,82 @@ def test_inner_block_use_in_a_fn_scopes_to_its_block(
     assert (f"{base}.a.f", f"{base}.beta.T.assoc") in calls, calls
     assert (f"{base}.b.g", f"{base}.delta.helper") in calls, calls
     assert (f"{base}.b.g", f"{base}.beta.helper") in calls, calls
+
+
+def test_touching_one_entry_keeps_the_siblings_declarations(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The entry-declaration cache holds BOTH stems per directory; the
+    # event is file-scoped, so touching main.rs must not discard lib.rs's
+    # declarations. Mid-storm (lib.rs transiently absent) the discarded
+    # entry would rebuild EMPTY and flip a definitive crate attribution
+    # to the item tie-break's real-but-wrong answer.
+    from watchdog.events import FileDeletedEvent, FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_decl_poison"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_decl_poison"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod a;\n\npub struct Config;\n",
+            "src/main.rs": "mod b;\n\npub struct Config;\n\nfn main() {}\n",
+            "src/b.rs": "pub fn bee() {}\n",
+            "src/a.rs": "use crate::Config;\n\npub fn ay(_c: Config) {}\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_decl_poison.src"
+    expected = {"Config": f"{base}.lib.Config"}
+    assert updater.factory.import_processor.import_mapping.get(f"{base}.a") == (
+        expected
+    )
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    lib_rs = project / "src" / "lib.rs"
+    lib_rs.unlink()
+    handler.dispatch(FileDeletedEvent(str(lib_rs)))
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "main.rs")))
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "a.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
+    assert mapping == expected, mapping
+
+
+def test_self_paths_in_explicit_roots_match_crate_paths(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # In a crate root module `self::` IS `crate::`: an explicit target's
+    # `self::sub::g` must resolve to the file beside the root exactly as
+    # `crate::sub::f` does.
+    project = temp_repo / "rs_self_explicit"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_self_explicit"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/cli.rs": (
+                "mod sub;\n\nuse self::sub::g;\n\nfn main() {\n    let _ = g();\n}\n"
+            ),
+            "src/sub.rs": "pub const fn g() -> u32 {\n    7\n}\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_self_explicit.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.cli")
+    assert mapping == {"g": f"{base}.sub.g"}, mapping
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.cli.main", f"{base}.sub.g") in calls, calls

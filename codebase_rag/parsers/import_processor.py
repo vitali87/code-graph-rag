@@ -1209,26 +1209,30 @@ class ImportProcessor:
     ) -> dict[str, tuple[set[str], set[str]]]:
         """Per entry stem: (mod declarations, top-level item names)."""
         key = tuple(dir_parts)
-        decls = self._rust_entry_mod_decls.get(key)
-        if decls is None:
-            decls = {}
-            entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-            for entry in (cs.LIB_RS, cs.MAIN_RS):
-                if entry not in entries:
-                    continue
-                stem = entry.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                try:
-                    source = self.repo_path.joinpath(*dir_parts, entry).read_text(
-                        encoding=cs.RS_ENCODING_UTF8, errors="ignore"
-                    )
-                except OSError:
-                    source = ""
-                top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
-                decls[stem] = (
-                    set(_RS_MOD_DECL_PATTERN.findall(top_level)),
-                    set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
+        decls = self._rust_entry_mod_decls.setdefault(key, {})
+        entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+        for entry in (cs.LIB_RS, cs.MAIN_RS):
+            if entry not in entries:
+                continue
+            stem = entry.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if stem in decls:
+                continue
+            try:
+                source = self.repo_path.joinpath(*dir_parts, entry).read_text(
+                    encoding=cs.RS_ENCODING_UTF8, errors="ignore"
                 )
-            self._rust_entry_mod_decls[key] = decls
+            except OSError:
+                # The listing says the entry exists but the read failed: a
+                # storm's transient absence. Leave the stem unfilled so the
+                # next access retries; caching EMPTY declarations here
+                # flips definitive crate attributions to the item
+                # tie-break's real but wrong answer.
+                continue
+            top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+            decls[stem] = (
+                set(_RS_MOD_DECL_PATTERN.findall(top_level)),
+                set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
+            )
         return decls
 
     def _rust_attach(
@@ -1282,6 +1286,17 @@ class ImportProcessor:
         if self._rust_is_crate_root_dir(parts):
             stem, definitive = self._rust_entry_stem(parts, importer_qn)
             return self._rust_attach(parts, stem, rest, definitive)
+        if (
+            parts
+            and parts[-1] not in cs.RS_ENTRY_STEMS
+            and f"{parts[-1]}{cs.EXT_RS}"
+            in self._rust_dir_entries(self.repo_path.joinpath(*parts[:-1]))
+            and self._rust_is_explicit_target(parts[:-1], parts[-1])
+        ):
+            # In a crate root module `self::` IS `crate::`: an explicit
+            # target attaches beside itself, exactly as its crate:: paths
+            # do. Auto-targets keep their entry-qn nesting.
+            return self._rust_attach(parts[:-1], parts[-1], rest, definitive=True)
         if (
             parts
             and parts[-1] in ("lib", "main")
@@ -1904,7 +1919,12 @@ class ImportProcessor:
         except ValueError:
             return
         if file_path.name in (cs.LIB_RS, cs.MAIN_RS):
-            self._rust_entry_mod_decls.pop(tuple(dir_parts), None)
+            # File-scoped like the event itself: touching main.rs must not
+            # discard lib.rs's cached declarations (mid-storm the sibling
+            # would rebuild empty and flip crate attribution).
+            stems = self._rust_entry_mod_decls.get(tuple(dir_parts))
+            if stems is not None:
+                stems.pop(file_path.stem, None)
         if file_path.name == cs.PKG_CARGO_TOML:
             self._rust_explicit_targets.pop(tuple(dir_parts), None)
 
