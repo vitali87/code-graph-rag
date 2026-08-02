@@ -5089,3 +5089,59 @@ def test_super_from_inline_mod_of_explicit_root_attaches_beside(
     assert mapping == {"f": f"{base}.sub.f"}, mapping
     calls = _calls(mock_ingestor)
     assert (f"{base}.cli.inner.c", f"{base}.sub.f") in calls, calls
+
+
+def test_manifest_repoint_evicts_the_dead_explicit_stem(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The entry-declaration map is DERIVED from the manifest's target
+    # set: repointing the bin from cli.rs to tool.rs must evict the dead
+    # `cli` stem, or it keeps voting in the declaring scan and crate
+    # attribution resolves out of the dead root (cargo-verified: the
+    # post-swap tree binds tool.rs's Config).
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_repoint"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_repoint"\nversion = "0.1.0"\n\n'
+                '[lib]\npath = "src/lib.rs"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/lib.rs": "pub fn lib_item() {}\n",
+            "src/cli.rs": "mod q;\n\npub struct Config;\n\nfn main() {}\n",
+            "src/tool.rs": "mod q;\n\npub struct Config;\n\nfn main() {}\n",
+            "src/q.rs": "use crate::Config;\n\npub fn ay(_c: Config) {}\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_repoint.src"
+    assert updater.factory.import_processor.import_mapping.get(f"{base}.q") == {
+        "Config": f"{base}.cli.Config"
+    }
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    (project / "Cargo.toml").write_text(
+        '[package]\nname = "rs_repoint"\nversion = "0.1.0"\n\n'
+        '[lib]\npath = "src/lib.rs"\n\n'
+        '[[bin]]\nname = "cli"\npath = "src/tool.rs"\n',
+        encoding="utf-8",
+    )
+    handler.dispatch(FileModifiedEvent(str(project / "Cargo.toml")))
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "q.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.q")
+    assert mapping == {"Config": f"{base}.tool.Config"}, mapping

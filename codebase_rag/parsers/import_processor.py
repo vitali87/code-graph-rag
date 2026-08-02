@@ -2006,7 +2006,22 @@ class ImportProcessor:
                         set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
                     )
         if file_path.name == cs.PKG_CARGO_TOML:
-            self._rust_explicit_targets.pop(tuple(dir_parts), None)
+            # A manifest edit can add, remove, or repoint explicit targets
+            # anywhere in its package, and a CREATED manifest moves the
+            # package boundary for every file below it, so the whole
+            # target cache rebuilds. The entry-declaration map is DERIVED
+            # from the target set: evict exactly the stems the fresh
+            # manifests no longer back, keeping lib/main declarations (and
+            # their storm protection) untouched.
+            self._rust_explicit_targets.clear()
+            for key, stems in self._rust_entry_mod_decls.items():
+                allowed = {
+                    name[: -len(cs.EXT_RS)]
+                    for name in self._rust_explicit_entry_files(key)
+                }
+                for stem in list(stems):
+                    if stem not in ("lib", "main") and stem not in allowed:
+                        stems.pop(stem, None)
 
     def drop_rust_module_import_state(self, module_qn: str) -> None:
         # Everything a file's parse contributed to the Rust import maps,
