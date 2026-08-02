@@ -6031,10 +6031,11 @@ def test_src_bin_main_crate_items_resolve_to_the_entry_file(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # Cargo compiles src/bin/main.rs as a binary named `main` whose crate
-    # root is the file itself (cargo-verified): a `crate::` path to one of
-    # its own items must land on the entry file's qn. The classic-root
-    # walk plus the declaring scan already answer this; pinned so the
-    # entry-stem gate on the direct target probe never regresses it.
+    # root is the file itself (cargo-verified with this exact fixture; the
+    # unaliased `use crate::helper;` spelling is E0255 in the defining
+    # module, so the alias form is the legal self-reference): a `crate::`
+    # path to one of the file's own items must land on the entry file's
+    # qn, whichever probe of _rust_crate_root answers for the file.
     project = temp_repo / "rs_bin_main_selfref"
     _write(
         project,
@@ -6043,9 +6044,9 @@ def test_src_bin_main_crate_items_resolve_to_the_entry_file(
                 '[package]\nname = "rs_bin_main_selfref"\nversion = "0.1.0"\n'
             ),
             "src/bin/main.rs": (
-                "use crate::helper;\n\n"
+                "use crate::helper as h;\n\n"
                 "pub const fn helper() -> u32 {\n    7\n}\n\n"
-                "fn main() {\n    let _ = helper();\n}\n"
+                "fn main() {\n    let _ = h();\n}\n"
             ),
         },
     )
@@ -6053,4 +6054,53 @@ def test_src_bin_main_crate_items_resolve_to_the_entry_file(
     mapping = updater.factory.import_processor.import_mapping.get(
         "rs_bin_main_selfref.src.bin.main"
     )
-    assert mapping == {"helper": "rs_bin_main_selfref.src.bin.main.helper"}, mapping
+    assert mapping == {"h": "rs_bin_main_selfref.src.bin.main.helper"}, mapping
+
+
+def test_watch_modify_of_an_already_deleted_file_leaves_the_listing_alone(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A MODIFY queued before a delete can reach processing after the file
+    # is gone. The coalesced-create stand-in must not bake the dead name
+    # into the cached listing: like the entry-declaration refresh, which
+    # replaces declarations only on a successful read, the listing delta
+    # is event-local and applies only while the file is observably there.
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_watch_modify_after_delete"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_watch_modify_after_delete"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod beta;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/a.rs": (
+                "use crate::beta::helper;\n\npub fn top() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    gamma2 = project / "src" / "gamma2.rs"
+    gamma2.write_text("pub const fn helper2() -> u32 {\n    3\n}\n", encoding="utf-8")
+    gamma2.unlink()
+    handler.dispatch(FileModifiedEvent(str(gamma2)))
+
+    listing = updater.factory.import_processor._rust_dir_listing.get(
+        str(project / "src")
+    )
+    assert listing is not None, "the full run should have cached the src listing"
+    assert "gamma2.rs" not in listing, sorted(listing)
