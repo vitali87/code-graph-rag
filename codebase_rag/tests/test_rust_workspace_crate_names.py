@@ -85,33 +85,37 @@ def test_root_package_name_binds_integration_test_import(
 ) -> None:
     # No [workspace] at all: an integration test (tests/*.rs is its own
     # crate) imports the root package's lib BY NAME, the only way Rust
-    # allows it to.
+    # allows it to. Module-qualified with a same-named decoy, so trie
+    # luck cannot make this pass.
     project = temp_repo / "rs_ws_root"
     _write(
         project,
         {
             "Cargo.toml": '[package]\nname = "my-lib"\nversion = "0.1.0"\n',
-            "src/lib.rs": "pub fn engine_run() -> i32 {\n    1\n}\n",
+            "src/lib.rs": "pub mod api;\npub mod decoy;\n",
+            "src/api.rs": "pub fn engine_run() -> i32 {\n    1\n}\n",
+            "src/decoy.rs": "pub fn engine_run() -> i32 {\n    2\n}\n",
             "tests/integration.rs": (
-                "use my_lib::engine_run;\n\n"
-                "#[test]\nfn t() {\n    let _ = engine_run();\n}\n"
+                "use my_lib::api;\n\n"
+                "#[test]\nfn t() {\n    let _ = api::engine_run();\n}\n"
             ),
         },
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
     calls = _calls(mock_ingestor)
-    assert (
-        "rs_ws_root.tests.integration.t",
-        "rs_ws_root.src.lib.engine_run",
-    ) in calls, calls
+    caller = "rs_ws_root.tests.integration.t"
+    assert (caller, "rs_ws_root.src.api.engine_run") in calls, calls
+    assert (caller, "rs_ws_root.src.decoy.engine_run") not in calls, calls
 
 
 def test_lib_path_override_roots_member_crate(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # A member whose lib target is repointed by `[lib] path`: the crate
-    # name maps to the named file, not to a src/lib.rs that is absent.
+    # name maps to the named file's crate, whose submodules sit beside
+    # it. Module-qualified with a decoy, so a wrong root cannot pass by
+    # trie luck.
     project = temp_repo / "rs_ws_libpath"
     _write(
         project,
@@ -121,20 +125,56 @@ def test_lib_path_override_roots_member_crate(
                 '[package]\nname = "engine"\nversion = "0.1.0"\n\n'
                 '[lib]\npath = "src/custom.rs"\n'
             ),
-            "engine/src/custom.rs": "pub fn spin() -> i32 {\n    1\n}\n",
+            "engine/src/custom.rs": "pub mod gear;\n",
+            "engine/src/gear.rs": "pub fn spin() -> i32 {\n    1\n}\n",
             "app/Cargo.toml": '[package]\nname = "app"\nversion = "0.1.0"\n',
             "app/src/main.rs": (
-                "use engine::spin;\n\nfn main() {\n    let _ = spin();\n}\n"
+                "mod decoy;\n\n"
+                "use engine::gear;\n\n"
+                "fn main() {\n    let _ = gear::spin();\n}\n"
             ),
+            "app/src/decoy.rs": "pub fn spin() -> i32 {\n    2\n}\n",
         },
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
     calls = _calls(mock_ingestor)
-    assert (
-        "rs_ws_libpath.app.src.main.main",
-        "rs_ws_libpath.engine.src.custom.spin",
-    ) in calls, calls
+    caller = "rs_ws_libpath.app.src.main.main"
+    assert (caller, "rs_ws_libpath.engine.src.gear.spin") in calls, calls
+    assert (caller, "rs_ws_libpath.app.src.decoy.spin") not in calls, calls
+
+
+def test_lib_name_override_binds_by_target_name(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `[lib] name` overrides the import spelling: dependents must write
+    # the lib target's name, not the package name, so the map keys on it.
+    project = temp_repo / "rs_ws_libname"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[workspace]\nmembers = ["searcher", "app"]\n',
+            "searcher/Cargo.toml": (
+                '[package]\nname = "grep-searcher"\nversion = "0.1.0"\n\n'
+                '[lib]\nname = "searcher"\n'
+            ),
+            "searcher/src/lib.rs": "pub mod sinks;\n",
+            "searcher/src/sinks.rs": "pub fn utf8() -> i32 {\n    1\n}\n",
+            "app/Cargo.toml": '[package]\nname = "app"\nversion = "0.1.0"\n',
+            "app/src/main.rs": (
+                "mod decoy;\n\n"
+                "use searcher::sinks;\n\n"
+                "fn main() {\n    let _ = sinks::utf8();\n}\n"
+            ),
+            "app/src/decoy.rs": "pub fn utf8() -> i32 {\n    2\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    caller = "rs_ws_libname.app.src.main.main"
+    assert (caller, "rs_ws_libname.searcher.src.sinks.utf8") in calls, calls
+    assert (caller, "rs_ws_libname.app.src.decoy.utf8") not in calls, calls
 
 
 def test_external_import_shadowing_sibling_is_dropped(
@@ -205,3 +245,65 @@ def test_local_module_head_beats_member_crate_name(
     caller = "rs_ws_localwins.app.src.main.main"
     assert (caller, "rs_ws_localwins.app.src.util.helper") in calls, calls
     assert (caller, "rs_ws_localwins.util.src.lib.helper") not in calls, calls
+
+
+def test_inline_module_head_beats_member_crate_name(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The local module rustc binds may be INLINE, with no backing file:
+    # the member crate name must not hijack the head.
+    project = temp_repo / "rs_ws_inlinewins"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[workspace]\nmembers = ["app", "util"]\n',
+            "util/Cargo.toml": '[package]\nname = "util"\nversion = "0.1.0"\n',
+            "util/src/lib.rs": "pub fn helper() -> i32 {\n    1\n}\n",
+            "app/Cargo.toml": '[package]\nname = "app"\nversion = "0.1.0"\n',
+            "app/src/main.rs": (
+                "mod util {\n    pub fn helper() -> i32 {\n        2\n    }\n}\n\n"
+                "use util::helper;\n\n"
+                "fn main() {\n    let _ = helper();\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    caller = "rs_ws_inlinewins.app.src.main.main"
+    assert (caller, "rs_ws_inlinewins.app.src.main.util.helper") in calls, calls
+    assert (caller, "rs_ws_inlinewins.util.src.lib.helper") not in calls, calls
+
+
+def test_path_dependency_without_workspace_keeps_trie_edge(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A path dependency with no [workspace] table is invisible to the
+    # member map, so its head stays unresolved: the probe must stay
+    # UNDECIDED there (the ordinary fallbacks keep the edge), deciding a
+    # drop only for standard-library heads.
+    project = temp_repo / "rs_ws_pathdep"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "consumer"\nversion = "0.1.0"\n\n'
+                '[dependencies]\nhelperlib = { path = "helperlib" }\n'
+            ),
+            "src/main.rs": (
+                "use helperlib::util;\n\nfn main() {\n    let _ = util::work();\n}\n"
+            ),
+            "helperlib/Cargo.toml": (
+                '[package]\nname = "helperlib"\nversion = "0.1.0"\n'
+            ),
+            "helperlib/src/lib.rs": "pub mod util;\n",
+            "helperlib/src/util.rs": "pub fn work() -> i32 {\n    1\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    assert (
+        "rs_ws_pathdep.src.main.main",
+        "rs_ws_pathdep.helperlib.src.util.work",
+    ) in calls, calls

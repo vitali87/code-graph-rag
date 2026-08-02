@@ -1401,8 +1401,10 @@ class CallResolver:
         via the same relative-path machinery its use declarations resolve
         through (entry files attach submodules beside themselves via the
         declaring scan; other files nest them). A use binding the segment
-        to a path outside the indexed project stops the probe undecided:
-        the name is spoken for, so the module tree must not claim it.
+        to a path outside the indexed project decides a drop when the
+        path's head is a standard-library crate (external by
+        construction) and stops the probe undecided otherwise: the name
+        is spoken for either way, so the module tree must not claim it.
         """
         parts = call_name.split(cs.SEPARATOR_DOUBLE_COLON)
         object_path, item = parts[:-1], parts[-1]
@@ -1484,12 +1486,18 @@ class CallResolver:
     ) -> tuple[tuple[str, str] | None, bool]:
         resolved = self._rust_local_qn(mapped, owner)
         if resolved is None:
-            # The use binds the head outside the indexed project: with
-            # workspace crate names rewritten to project qns at parse
-            # time (issue #1033), a still-unresolved head is genuinely
-            # external, so the name is spoken for and neither the module
-            # tree nor the trie may claim it.
-            return None, True
+            if mapped.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0] in cs.RS_STDLIB_CRATES:
+                # A standard-library head is external by construction:
+                # the name is spoken for, so neither the module tree nor
+                # the trie may claim it for a same-named first-party
+                # sibling (issue #1033).
+                return None, True
+            # Any other unresolved head may still be first-party in a
+            # layout the import half does not cover (a nested workspace
+            # root, a path dependency without a workspace, a #[path]
+            # module): stay undecided so the ordinary fallbacks keep
+            # their edges.
+            return None, False
         return self._decide_rust_base(cs.SEPARATOR_DOT.join([resolved, *rest]), item)
 
     def _decide_rust_base(

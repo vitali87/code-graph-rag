@@ -1211,6 +1211,13 @@ class ImportProcessor:
             if not isinstance(package, dict):
                 continue
             name = package.get(cs.RS_MANIFEST_NAME_KEY)
+            # `[lib] name` overrides the import spelling: dependents must
+            # write the lib target's name, not the package's.
+            lib = manifest.get(cs.RS_MANIFEST_LIB_SECTION)
+            if isinstance(lib, dict) and isinstance(
+                lib_name := lib.get(cs.RS_MANIFEST_NAME_KEY), str
+            ):
+                name = lib_name
             if not isinstance(name, str) or not name:
                 continue
             if (root := self._rust_member_lib_root(member, manifest)) is not None:
@@ -1259,20 +1266,6 @@ class ImportProcessor:
         if cs.LIB_RS in self._rust_dir_entries(member / cs.LANG_SRC_DIR):
             return (*rel, cs.LANG_SRC_DIR), "lib"
         return None
-
-    def _rust_uniform_head_is_local(self, head: str, module_qn: str) -> bool:
-        # A uniform-path head binds a sibling module before an extern
-        # crate (`use pool::connect;` beside `mod pool;`, mirroring the
-        # resolver's _rust_local_qn), so a workspace crate name only
-        # claims heads no file-backed local module answers for.
-        head_qn = self._rust_resolve_relative(module_qn, [head], module_qn)
-        parts = head_qn.split(cs.SEPARATOR_DOT)[1:]
-        if not parts:
-            return False
-        directory = self.repo_path.joinpath(*parts[:-1])
-        if f"{parts[-1]}{cs.EXT_RS}" in self._rust_dir_entries(directory):
-            return True
-        return cs.MOD_RS in self._rust_dir_entries(directory / parts[-1])
 
     def _rust_crate_root(self, module_qn: str) -> tuple[str, list[str]] | None:
         """The file's crate root: ("classic", dir parts) or ("file", qn parts).
@@ -1554,7 +1547,12 @@ class ImportProcessor:
             return self._rust_attach(parts[:-1], parts[-1], rest, definitive=True)
         return cs.SEPARATOR_DOT.join([base_qn, *rest]) if rest else base_qn
 
-    def _rewrite_rust_local_use_path(self, full_path: str, module_qn: str) -> str:
+    def _rewrite_rust_local_use_path(
+        self,
+        full_path: str,
+        module_qn: str,
+        local_mods: frozenset[str] = frozenset(),
+    ) -> str:
         """Rewrite a crate::/super::/self:: use path to a project qn.
 
         Stored raw, these paths resolve nowhere: class resolution hands them
@@ -1562,7 +1560,10 @@ class ImportProcessor:
         ExternalModule nodes (crate.flags.Flag) and the override pass never
         links impl methods to their trait (issue #1007). module_qn must be
         the EFFECTIVE module of the use declaration, including inline `mod`
-        blocks. External paths (std::fmt) pass through unchanged.
+        blocks. A head naming a workspace member crate rewrites the same
+        way, unless a `mod` in the declaring scope (local_mods) claims it:
+        rustc binds the local module first (issue #1033). External paths
+        (std::fmt) pass through unchanged.
         """
         parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
         head = parts[0]
@@ -1598,8 +1599,8 @@ class ImportProcessor:
             keep = max(len(base_parts) - depth, 1)
             base = cs.SEPARATOR_DOT.join(base_parts[:keep])
             return self._rust_resolve_relative(base, parts[depth:], module_qn)
-        if (root := self._rust_workspace_crate_roots().get(head)) is not None and (
-            not self._rust_uniform_head_is_local(head, module_qn)
+        if head not in local_mods and (
+            (root := self._rust_workspace_crate_roots().get(head)) is not None
         ):
             dir_parts, stem = root
             return self._rust_attach(list(dir_parts), stem, parts[1:], definitive=True)
@@ -2275,9 +2276,12 @@ class ImportProcessor:
             else module_qn
         )
         sub_scope = scope_node is not None or scope_parts != []
+        local_mods = rs_utils.enclosing_mod_names(use_node)
         resolved_imports: dict[str, str] = {}
         for imported_name, full_path in imports.items():
-            resolved = self._rewrite_rust_local_use_path(full_path, resolve_qn)
+            resolved = self._rewrite_rust_local_use_path(
+                full_path, resolve_qn, local_mods
+            )
             resolved_imports[imported_name] = resolved
             if sub_scope:
                 # The generic deferral loop only reads the file-level map;
