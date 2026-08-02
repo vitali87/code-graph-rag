@@ -5861,3 +5861,108 @@ def test_unreadable_build_script_keeps_the_phantom(
     base = "rs_buildhole"
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     assert (f"{base}.helper.A", f"{base}.cli.Cfg") not in implements, implements
+
+
+def test_watch_modify_of_a_module_named_build_stays_a_module(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # cargo only auto-detects build.rs BESIDE Cargo.toml: src/build.rs is
+    # an ordinary lib module, and a watch MODIFY of it must not inject a
+    # phantom `build` entry stem that flips q.rs's attribution through
+    # the item tie-break.
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "rs_modbuild"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_modbuild"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod q;\npub mod build;\n",
+            "src/build.rs": "pub mod q;\n\npub struct Config;\n",
+            "src/build/q.rs": "pub fn inner() {}\n",
+            "src/q.rs": "use crate::Config;\n\npub fn ay(_c: Config) {}\n",
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_modbuild.src"
+    expected = {"Config": f"{base}.lib.Config"}
+    # lib.rs does not define Config itself: the phantom stem's item
+    # tie-break is exactly what would steal the attribution.
+    assert updater.factory.import_processor.import_mapping.get(f"{base}.q") == (
+        expected
+    )
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "build.rs")))
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "q.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.q")
+    assert mapping == expected, mapping
+
+
+def test_build_true_means_auto_detection(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `[package] build = true` compiles build.rs exactly like unset
+    # (cargo-verified: a garbage build.rs fails the build), so its
+    # declarations still anchor helper.rs in the build-script crate.
+    project = temp_repo / "rs_btrue"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_btrue"\nversion = "0.1.0"\n'
+                "build = true\n\n"
+                '[[bin]]\nname = "cli"\npath = "cli.rs"\n'
+            ),
+            "build.rs": (
+                "mod helper;\n\n"
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        111\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn real_fn() -> u32 {\n"
+                "    111\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "helper.rs": (
+                "use crate::Cfg;\n"
+                "use crate::real_fn;\n\n"
+                "pub struct A;\n\n"
+                "impl Cfg for A {}\n\n"
+                "pub fn read() -> u32 {\n"
+                "    real_fn()\n"
+                "}\n"
+            ),
+            "cli.rs": (
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        999\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn real_fn() -> u32 {\n"
+                "    999\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_btrue"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.helper.A", f"{base}.build.Cfg") in implements, implements
+    assert (f"{base}.helper.A", f"{base}.cli.Cfg") not in implements, implements

@@ -1170,7 +1170,12 @@ class ImportProcessor:
         build_value = (
             package.get(cs.RS_MANIFEST_BUILD_KEY) if isinstance(package, dict) else None
         )
-        self._rust_auto_build_flags[pkg_parts] = build_value is None
+        # Unset AND `build = true` both mean auto-detection
+        # (cargo-verified: `build = true` compiles build.rs exactly like
+        # unset); a string names the script explicitly, false disables.
+        self._rust_auto_build_flags[pkg_parts] = (
+            build_value is None or build_value is True
+        )
         result = frozenset(paths)
         self._rust_explicit_targets[pkg_parts] = result
         return result
@@ -2070,6 +2075,7 @@ class ImportProcessor:
             or file_path.name in self._rust_explicit_entry_files(tuple(dir_parts))
             or (
                 file_path.name == f"{cs.RS_BUILD_STEM}{cs.EXT_RS}"
+                and cs.PKG_CARGO_TOML in self._rust_dir_entries(directory)
                 and self._rust_has_auto_build(tuple(dir_parts))
             )
         ):
