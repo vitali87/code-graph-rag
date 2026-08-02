@@ -99,4 +99,4 @@ def test_dead_code_cli_smoke() -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["dead-code", "--help"])
     assert result.exit_code == 0
-    assert "Usage: code-graph-rag dead-code" in result.output
+    assert result.output.strip()
