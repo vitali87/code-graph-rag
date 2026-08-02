@@ -1261,20 +1261,26 @@ class ImportProcessor:
         for stem in ("lib", "main"):
             if stem in decls:
                 return stem, False
-        if len(decls) == 1 and not any(
-            entry in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-            for entry in (cs.LIB_RS, cs.MAIN_RS)
-        ):
-            # A genuinely explicit-only package (no entry FILE is even
-            # listed, so this is not a read-failure hole) with a single
-            # target: fall back to the stem actually in the map, or
-            # _rust_attach's entry-declaration and item-tie-break
-            # branches silently disable and only the filesystem probe
-            # survives, binding sibling decoy files. With MULTIPLE
-            # explicit stems and no declarer the attribution is genuine
-            # ambiguity: the phantom fallback below stays (a dangling
-            # phantom revives nothing; a first-alphabetical edge would).
-            return next(iter(decls)), True
+        entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+        if cs.LIB_RS not in entries and cs.MAIN_RS not in entries:
+            present = sorted(
+                name
+                for name in self._rust_explicit_entry_files(tuple(dir_parts))
+                if name in entries
+            )
+            if len(present) == 1 and set(decls) == {present[0][: -len(cs.EXT_RS)]}:
+                # A genuinely explicit-only package with a single target
+                # whose declarations actually loaded: fall back to that
+                # stem, or _rust_attach's entry-declaration and
+                # item-tie-break branches silently disable and only the
+                # filesystem probe survives, binding sibling decoy
+                # files. Every hole keeps the phantom fallback instead:
+                # an unreadable lib.rs OR an unreadable second target
+                # must not let the survivor claim the package (a
+                # dangling phantom revives nothing; a definitive wrong
+                # stem suppresses the tie-break too). Multi-target
+                # no-declarer stays genuine ambiguity, likewise phantom.
+                return present[0][: -len(cs.EXT_RS)], True
         return "lib", False
 
     def _rust_entry_decls(

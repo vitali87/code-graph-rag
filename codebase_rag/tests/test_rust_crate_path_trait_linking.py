@@ -5475,3 +5475,44 @@ def test_multi_explicit_stems_stay_ambiguous_not_first_alphabetical(
     base = "rs_twobins.src"
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     assert (f"{base}.inner.x.A", f"{base}.aaa.Cfg") not in implements, implements
+
+
+def test_unreadable_explicit_target_keeps_the_ambiguity_phantom(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The read-failure guard covers explicit targets too: with two bins
+    # listed and one unreadable (here a DIRECTORY named zzz.rs), the
+    # surviving stem must not claim the package definitively; the
+    # undeclared module keeps its ambiguity phantom, emitting no
+    # IMPLEMENTS edge onto the alphabetically-first bin.
+    project = temp_repo / "rs_amb_hole"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_amb_hole"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "aaa"\npath = "src/aaa.rs"\n\n'
+                '[[bin]]\nname = "zzz"\npath = "src/zzz.rs"\n'
+            ),
+            "src/aaa.rs": (
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        999\n"
+                "    }\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "src/other.rs": (
+                "pub trait Cfg {\n    fn v(&self) -> u32 {\n        5\n    }\n}\n"
+            ),
+            "src/zzz.rs/placeholder.txt": "not rust\n",
+            "src/inner/x.rs": (
+                "use crate::Cfg;\n\npub struct A;\n\nimpl Cfg for A {}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_amb_hole.src"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.inner.x.A", f"{base}.aaa.Cfg") not in implements, implements
