@@ -1301,11 +1301,17 @@ class ImportProcessor:
         decls = self._rust_entry_mod_decls.setdefault(key, {})
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
         scan = [cs.LIB_RS, cs.MAIN_RS]
+        if cs.PKG_CARGO_TOML in entries:
+            # build.rs beside the manifest is cargo's fifth auto crate
+            # root; its `mod` declarations anchor its modules in the
+            # build-script crate, and its stem in the map keeps the
+            # explicit-only fallback's lone-stem equality honest.
+            scan.append(f"{cs.RS_BUILD_STEM}{cs.EXT_RS}")
         scan.extend(
             sorted(
                 name
                 for name in self._rust_explicit_entry_files(key)
-                if name not in (cs.LIB_RS, cs.MAIN_RS)
+                if name not in scan
             )
         )
         for entry in scan:

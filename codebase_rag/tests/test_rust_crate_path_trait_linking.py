@@ -5564,3 +5564,64 @@ def test_lone_explicit_target_does_not_claim_an_auto_target_dir(
         f"{base}.tests.common.A",
         f"{base}.tests.aaa.Cfg",
     ) not in implements, implements
+
+
+def test_build_script_declarations_anchor_its_modules(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # build.rs beside the manifest is cargo's fifth auto crate root: a
+    # module it declares belongs to the build-script crate
+    # (cargo-verified: the bin prints its own 111 untouched), so the
+    # declaring scan must see build.rs's declarations and the lone
+    # explicit bin must not claim helper.rs.
+    project = temp_repo / "rs_buildedge"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_buildedge"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "cli.rs"\n'
+            ),
+            "build.rs": (
+                "mod helper;\n\n"
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        111\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn real_fn() -> u32 {\n"
+                "    111\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+            "helper.rs": (
+                "use crate::Cfg;\n"
+                "use crate::real_fn;\n\n"
+                "pub struct A;\n\n"
+                "impl Cfg for A {}\n\n"
+                "pub fn read() -> u32 {\n"
+                "    real_fn()\n"
+                "}\n"
+            ),
+            "cli.rs": (
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        999\n"
+                "    }\n"
+                "}\n\n"
+                "pub fn real_fn() -> u32 {\n"
+                "    999\n"
+                "}\n\n"
+                "fn main() {}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_buildedge"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.helper.A", f"{base}.build.Cfg") in implements, implements
+    assert (f"{base}.helper.A", f"{base}.cli.Cfg") not in implements, implements
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.helper.read", f"{base}.build.real_fn") in calls, calls
+    assert (f"{base}.helper.read", f"{base}.cli.real_fn") not in calls, calls
