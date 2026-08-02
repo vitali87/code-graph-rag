@@ -5516,3 +5516,51 @@ def test_unreadable_explicit_target_keeps_the_ambiguity_phantom(
     base = "rs_amb_hole.src"
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     assert (f"{base}.inner.x.A", f"{base}.aaa.Cfg") not in implements, implements
+
+
+def test_lone_explicit_target_does_not_claim_an_auto_target_dir(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Auto-target directories hold arbitrarily many crate roots the
+    # manifest never lists: tests/bbb.rs is its own crate by location,
+    # and tests/common/mod.rs (the Rust Book's shared-helper idiom) is
+    # compiled ONLY into the crates that declare it (cargo-verified:
+    # bbb's Cfg). The lone explicit target must not claim the directory.
+    project = temp_repo / "rs_auto_sibling"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_auto_sibling"\nversion = "0.1.0"\n\n'
+                '[lib]\npath = "src/lib.rs"\n\n'
+                '[[test]]\nname = "aaa"\npath = "tests/aaa.rs"\n'
+            ),
+            "src/lib.rs": "pub fn lib_item() {}\n",
+            "tests/aaa.rs": (
+                "pub trait Cfg {\n    fn v(&self) -> u32 {\n        111\n    }\n}\n"
+            ),
+            "tests/bbb.rs": (
+                "mod common;\n\n"
+                "pub trait Cfg {\n"
+                "    fn v(&self) -> u32 {\n"
+                "        222\n"
+                "    }\n"
+                "}\n"
+            ),
+            "tests/common/mod.rs": (
+                "use crate::Cfg;\n\npub struct A;\n\nimpl Cfg for A {}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_auto_sibling"
+    mapping = updater.factory.import_processor.import_mapping.get(
+        f"{base}.tests.common"
+    )
+    assert mapping != {"Cfg": f"{base}.tests.aaa.Cfg"}, mapping
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (
+        f"{base}.tests.common.A",
+        f"{base}.tests.aaa.Cfg",
+    ) not in implements, implements

@@ -1262,7 +1262,17 @@ class ImportProcessor:
             if stem in decls:
                 return stem, False
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-        if cs.LIB_RS not in entries and cs.MAIN_RS not in entries:
+        if (
+            cs.LIB_RS not in entries
+            and cs.MAIN_RS not in entries
+            and not self._rust_is_auto_target_dir(list(dir_parts), "")
+        ):
+            # Never in an auto-target location: every .rs sibling there
+            # is its own crate root by LOCATION, invisible to both the
+            # manifest walk and the declaration map, so a lone explicit
+            # stem can never prove itself the directory's only root
+            # (tests/common/mod.rs belongs to whichever sibling declares
+            # it; an undeclared module keeps the ambiguity phantom).
             present = sorted(
                 name
                 for name in self._rust_explicit_entry_files(tuple(dir_parts))
