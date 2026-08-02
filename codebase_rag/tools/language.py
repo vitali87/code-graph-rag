@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 import pathlib
 import re
 import shutil
 import subprocess
+import tokenize
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -399,69 +401,101 @@ def _entry_key_matches(key: ast.expr, language_name: str) -> bool:
     ) == cs.LANG_ENUM_KEY_TEMPLATE.format(member=member)
 
 
-def _skip_spaces(config_content: str, pos: int, *, newlines: bool) -> int:
-    length = len(config_content)
-    while pos < length:
-        char = config_content[pos]
-        if char in " \t":
-            pos += 1
-        elif newlines and char == "\n":
-            pos += 1
-        elif newlines and char == "#":
-            while pos < length and config_content[pos] != "\n":
-                pos += 1
-        else:
-            break
-    return pos
+class _TokenScanner:
+    def __init__(self, config_content: str) -> None:
+        self.content = config_content
+        self.tokens = list(
+            tokenize.generate_tokens(io.StringIO(config_content).readline)
+        )
+        offsets = [0]
+        for line in config_content.split("\n"):
+            offsets.append(offsets[-1] + len(line) + 1)
+        self._line_offsets = offsets
 
+    def offset(self, position: tuple[int, int]) -> int:
+        row, col = position
+        return self._line_offsets[row - 1] + col
 
-def _consume_key_wrapping_parens(config_content: str, start: int, key_end: int) -> int:
-    length = len(config_content)
-    wrap = 0
-    i = key_end
-    while i < length and config_content[i] != ":":
-        if config_content[i] == ")":
-            wrap += 1
-        i += 1
-    while wrap and start > 0:
-        probe = start - 1
-        while probe >= 0 and config_content[probe] in " \t\n":
-            probe -= 1
-        if probe >= 0 and config_content[probe] == "(":
-            start = probe
-            wrap -= 1
-        else:
-            break
-    return start
+    def index_at_or_after(self, offset: int) -> int:
+        for i, token in enumerate(self.tokens):
+            if self.offset(token.start) >= offset:
+                return i
+        return len(self.tokens)
 
+    def _seek_op(self, i: int) -> int:
+        while i < len(self.tokens) and self.tokens[i].type in (
+            tokenize.NL,
+            tokenize.COMMENT,
+            tokenize.INDENT,
+            tokenize.DEDENT,
+        ):
+            i += 1
+        return i
 
-def _extend_past_separator(config_content: str, end: int, *, own_line: bool) -> int:
-    length = len(config_content)
+    def extend_start(self, start: int, key_end: int) -> int:
+        wrap = 0
+        i = self.index_at_or_after(key_end)
+        while i < len(self.tokens):
+            token = self.tokens[i]
+            if token.type == tokenize.OP and token.string == ":":
+                break
+            if token.type == tokenize.OP and token.string == ")":
+                wrap += 1
+            i += 1
+        i = self.index_at_or_after(start) - 1
+        while wrap and i >= 0:
+            token = self.tokens[i]
+            if token.type in (
+                tokenize.NL,
+                tokenize.COMMENT,
+                tokenize.INDENT,
+                tokenize.DEDENT,
+            ):
+                i -= 1
+            elif token.type == tokenize.OP and token.string == "(":
+                start = self.offset(token.start)
+                wrap -= 1
+                i -= 1
+            else:
+                break
+        return start
 
-    probe = _skip_spaces(config_content, end, newlines=True)
-    while probe < length and config_content[probe] == ")":
-        end = probe + 1
-        probe = _skip_spaces(config_content, end, newlines=True)
-
-    end = _skip_spaces(config_content, end, newlines=False)
-    if end < length and config_content[end] == ",":
-        end += 1
-    if not own_line:
+    def extend_end(self, end: int, *, own_line: bool) -> int:
+        i = self.index_at_or_after(end)
+        probe = self._seek_op(i)
+        while (
+            probe < len(self.tokens)
+            and self.tokens[probe].type == tokenize.OP
+            and self.tokens[probe].string == ")"
+        ):
+            end = self.offset(self.tokens[probe].end)
+            i = probe + 1
+            probe = self._seek_op(i)
+        if (
+            i < len(self.tokens)
+            and self.tokens[i].type == tokenize.OP
+            and self.tokens[i].string == ","
+        ):
+            end = self.offset(self.tokens[i].end)
+            i += 1
+        if not own_line:
+            return end
+        if i < len(self.tokens) and self.tokens[i].type == tokenize.COMMENT:
+            end = self.offset(self.tokens[i].end)
+            i += 1
+        if i < len(self.tokens) and self.tokens[i].type in (
+            tokenize.NL,
+            tokenize.NEWLINE,
+        ):
+            end = self.offset(self.tokens[i].end)
         return end
-
-    end = _skip_spaces(config_content, end, newlines=False)
-    if end < length and config_content[end] == "#":
-        while end < length and config_content[end] != "\n":
-            end += 1
-    if end < length and config_content[end] == "\n":
-        end += 1
-    return end
 
 
 def _specs_entry_spans(
     config_content: str, language_name: str
 ) -> list[tuple[int, int]]:
     dict_node = _specs_dict(config_content)
+    scanner = _TokenScanner(config_content)
     spans: list[tuple[int, int]] = []
     for key, value in zip(dict_node.keys, dict_node.values, strict=True):
         if key is None or not _entry_key_matches(key, language_name):
@@ -479,15 +513,13 @@ def _specs_entry_spans(
             raise ValueError(cs.LANG_ERR_CONFIG_NOT_FOUND)
         start = _content_offset(config_content, key.lineno, key.col_offset)
         key_end = _content_offset(config_content, key_end_lineno, key_end_col_offset)
-        start = _consume_key_wrapping_parens(config_content, start, key_end)
+        start = scanner.extend_start(start, key_end)
         line_start = config_content.rfind("\n", 0, start) + 1
         own_line = not config_content[line_start:start].strip()
         if own_line:
             start = line_start
         end = _content_offset(config_content, end_lineno, end_col_offset)
-        spans.append(
-            (start, _extend_past_separator(config_content, end, own_line=own_line))
-        )
+        spans.append((start, scanner.extend_end(end, own_line=own_line)))
     if not spans:
         raise ValueError(cs.LANG_ERR_ENTRY_NOT_IN_CONFIG.format(name=language_name))
     return spans
