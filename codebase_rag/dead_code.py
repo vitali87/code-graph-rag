@@ -94,7 +94,14 @@ def _is_rust_test_symbol(props: PropertyDict, qn: str, path: str) -> bool:
     # convention), including the plain helpers such modules define.
     if not path.endswith(cs.EXT_RS):
         return False
-    if cs.RUST_TESTS_MODULE_SEGMENT in qn.split(cs.SEPARATOR_DOT):
+    # Module segments only: qn[0] is the project prefix and qn[-1] the
+    # symbol's own name; neither is a module, so a project directory or a
+    # method named `tests` must not mark test code (and root away its
+    # whole callee closure).
+    if any(
+        segment in cs.RUST_TEST_MODULE_SEGMENTS
+        for segment in qn.split(cs.SEPARATOR_DOT)[1:-1]
+    ):
         return True
     decorators = props.get(cs.KEY_DECORATORS)
     if not isinstance(decorators, list):

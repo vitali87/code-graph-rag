@@ -73,9 +73,13 @@ RUST_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"main"})
 RUST_TEST_ATTRIBUTE_NAMES: frozenset[str] = frozenset({"test", "bench"})
 RUST_TEST_ATTRIBUTE_SUFFIX = "::test"
 
-# The `#[cfg(test)] mod tests` convention: any qn segment `tests` in a .rs
-# file marks inline test code (issue #1008).
-RUST_TESTS_MODULE_SEGMENT = "tests"
+# The `#[cfg(test)] mod tests` convention: a MODULE segment named `tests`
+# or `test` in a .rs file marks inline test code (issue #1008). Both
+# spellings, mirroring TEST_PATH_PATTERNS' /tests/ and /test/ directories.
+# Module segments only: the project prefix and the symbol's own name are
+# not modules, so a project directory or a method named `tests` stays
+# production code.
+RUST_TEST_MODULE_SEGMENTS: frozenset[str] = frozenset({"tests", "test"})
 
 # Rust trait-impl methods the language/std dispatches implicitly (Display::fmt
 # via format!, PartialEq::eq via ==, Iterator::next via for, operator traits,

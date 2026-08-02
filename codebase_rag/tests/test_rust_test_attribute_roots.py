@@ -67,10 +67,13 @@ def _collect(
 
 
 def test_test_attribute_roots_function_and_its_callees() -> None:
+    # The qns carry NO `tests` module segment, so the ATTRIBUTE alone must
+    # decide (a `tests` segment in the fixtures would satisfy the module
+    # rule first and leave the decorator branch untested).
     dead = _collect(
         [
             _function(
-                "proj.src.lib.tests.test_add",
+                "proj.src.lib.test_add",
                 "test_add",
                 "src/lib.rs",
                 decorators=["#[test]"],
@@ -83,12 +86,12 @@ def test_test_attribute_roots_function_and_its_callees() -> None:
         ],
         rels=[
             _calls(
-                "proj.src.lib.tests.test_add",
+                "proj.src.lib.test_add",
                 "proj.src.lib.helper_only_used_by_tests",
             )
         ],
     )
-    assert "proj.src.lib.tests.test_add" not in dead
+    assert "proj.src.lib.test_add" not in dead
     assert "proj.src.lib.helper_only_used_by_tests" not in dead
 
 
@@ -96,18 +99,27 @@ def test_scoped_test_attributes_root() -> None:
     dead = _collect(
         [
             _function(
-                "proj.src.lib.tests.test_async",
+                "proj.src.lib.test_async",
                 "test_async",
                 "src/lib.rs",
-                decorators=["#[tokio::test]"],
+                decorators=['#[tokio::test(flavor = "multi_thread")]'],
             ),
             _function(
-                "proj.src.lib.tests.bench_add",
+                "proj.src.lib.bench_add",
                 "bench_add",
                 "src/lib.rs",
                 decorators=["#[bench]"],
             ),
         ]
+    )
+    assert dead == set()
+
+
+def test_tests_module_symbols_root_without_attributes() -> None:
+    # The module rule on its own: a plain helper inside a `tests` module
+    # is test code even with no attribute anywhere.
+    dead = _collect(
+        [_function("proj.src.lib.tests.mk_input", "mk_input", "src/lib.rs")]
     )
     assert dead == set()
 
@@ -132,13 +144,14 @@ def test_non_test_attribute_does_not_root() -> None:
 
 
 def test_exclude_tests_suppresses_inline_test_symbols() -> None:
-    # With tests excluded, an inline #[test] function (and anything in a
-    # `mod tests`) is infrastructure, not dead production code: not a root,
-    # not a candidate.
+    # With tests excluded, an inline #[test] function (decorator-decided,
+    # no `tests` segment) and a helper in a `mod tests` (module-decided)
+    # are infrastructure, not dead production code: not roots, not
+    # candidates.
     dead = _collect(
         [
             _function(
-                "proj.src.lib.tests.test_add",
+                "proj.src.lib.test_add",
                 "test_add",
                 "src/lib.rs",
                 decorators=["#[test]"],
@@ -166,3 +179,52 @@ def test_test_attribute_on_non_rust_path_does_not_root() -> None:
         ]
     )
     assert "proj.app.orphan" in dead
+
+
+def test_symbol_named_tests_is_not_test_code() -> None:
+    # `tests` must match MODULE segments only: a production method named
+    # `tests` is ordinary Rust, and rooting it would hide its whole
+    # callee closure from the report.
+    dead = _collect(
+        [
+            _function("proj.src.lib.Suite.tests", "tests", "src/lib.rs"),
+            _function("proj.src.lib.Suite.normalise", "normalise", "src/lib.rs"),
+            _function("proj.src.lib.Suite.tally", "tally", "src/lib.rs"),
+        ],
+        rels=[
+            _calls("proj.src.lib.Suite.tests", "proj.src.lib.Suite.normalise"),
+            _calls("proj.src.lib.Suite.tests", "proj.src.lib.Suite.tally"),
+        ],
+    )
+    assert "proj.src.lib.Suite.tests" in dead
+    assert "proj.src.lib.Suite.normalise" in dead
+    assert "proj.src.lib.Suite.tally" in dead
+
+
+def test_project_named_tests_still_reports() -> None:
+    # The project prefix is not a module segment: a project directory
+    # named `tests` must not silence Rust dead-code reporting wholesale.
+    rows = collect_dead_code(
+        FakeIngestor([_function("tests.src.lib.orphan", "orphan", "src/lib.rs")], []),
+        "tests",
+        default_dead_code_config(include_tests=True, include_classes=False),
+    )
+    assert {row["qualified_name"] for row in rows} == {"tests.src.lib.orphan"}
+
+
+def test_singular_test_module_matches_plural() -> None:
+    # cs.TEST_PATH_PATTERNS covers both /tests/ and /test/ directories;
+    # the inline-module rule mirrors it, so `mod test` behaves exactly
+    # like `mod tests` on both flag polarities.
+    nodes = [
+        _function(
+            "proj.src.lib.test.t_basic",
+            "t_basic",
+            "src/lib.rs",
+            decorators=["#[test]"],
+        ),
+        _function("proj.src.lib.test.mk_input", "mk_input", "src/lib.rs"),
+    ]
+    rels = [_calls("proj.src.lib.test.t_basic", "proj.src.lib.test.mk_input")]
+    assert _collect(nodes, rels) == set()
+    assert _collect(nodes, rels, include_tests=False) == set()
