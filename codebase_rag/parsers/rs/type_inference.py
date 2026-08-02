@@ -90,13 +90,21 @@ class RustTypeInferenceEngine:
                 elements[name] = elem
         return elements
 
-    def collect_element_types(self, caller_node: Node) -> dict[str, str]:
+    def collect_element_entries(
+        self, caller_node: Node
+    ) -> list[tuple[str, str, int, int, int]]:
         # Collection-typed parameters and annotated lets -> element type
         # (`workers: Vec<Worker>` / `&[Worker]` -> Worker), feeding the
-        # iterator-adaptor closure-parameter bindings.
-        elements: dict[str, str] = {}
+        # iterator-adaptor closure-parameter bindings. Entries are
+        # (name, element, scope_start, scope_end, decl_end): a let is in
+        # scope only within its enclosing block and only AFTER its own
+        # declaration (Rust shadowing is positional), while parameters
+        # span the whole body from position zero.
+        entries: list[tuple[str, str, int, int, int]] = []
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        body_span = (body.start_byte, body.end_byte) if body is not None else (0, 0)
         params = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
-        if params is not None:
+        if params is not None and body is not None:
             for param in params.children:
                 if param.type != cs.TS_RS_PARAMETER:
                     continue
@@ -111,12 +119,22 @@ class RustTypeInferenceEngine:
                 if (name := safe_decode_text(pattern)) and (
                     elem := _rust_element_type_name(type_node)
                 ):
-                    elements[name] = elem
-        if body := caller_node.child_by_field_name(cs.FIELD_BODY):
-            self._collect_element_lets(body, elements)
-        return elements
+                    entries.append((name, elem, *body_span, 0))
+        if body is not None:
+            self._collect_element_lets(body, body_span, entries)
+        return entries
 
-    def _collect_element_lets(self, node: Node, elements: dict[str, str]) -> None:
+    def _collect_element_lets(
+        self,
+        node: Node,
+        scope: tuple[int, int],
+        entries: list[tuple[str, str, int, int, int]],
+    ) -> None:
+        if node.type == cs.TS_RS_FUNCTION_ITEM:
+            # A nested fn item shares no scope with the enclosing body:
+            # its lets must not leak out (closures DO share attribution
+            # scope and keep descending, span-gated by their block).
+            return
         if node.type == cs.TS_RS_LET_DECLARATION:
             pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
             if (
@@ -130,21 +148,42 @@ class RustTypeInferenceEngine:
                     if annotation is not None
                     else None
                 )
-                if elem is None:
+                if elem is None and (
+                    annotation is None or self._inferred_container(annotation)
+                ):
                     # `let workers: Vec<_> = ...map(|s| Worker { .. })
-                    # .collect();` leaves the annotation inferred: the
-                    # element is the collect chain's mapped struct literal.
+                    # .collect();` leaves the element inferred: the
+                    # collect chain's mapped struct literal supplies it.
+                    # A NON-sequence annotation (`Result<Vec<T>, E>`)
+                    # stands: the bound value is not a sequence of the
+                    # mapped type.
                     elem = self._collected_element_type(
                         node.child_by_field_name(cs.FIELD_VALUE)
                     )
                 if elem:
-                    elements[name] = elem
+                    entries.append((name, elem, *scope, node.end_byte))
+        child_scope = (
+            (node.start_byte, node.end_byte) if node.type == cs.TS_RS_BLOCK else scope
+        )
         for child in node.children:
-            self._collect_element_lets(child, elements)
+            self._collect_element_lets(child, child_scope, entries)
+
+    def _inferred_container(self, annotation: Node) -> bool:
+        # `Vec<_>` / `VecDeque<_>`: a sequence annotation whose element is
+        # left for inference.
+        if annotation.type != cs.TS_GENERIC_TYPE:
+            return False
+        outer = annotation.child_by_field_name(cs.FIELD_TYPE)
+        outer_name = safe_decode_text(outer) if outer else None
+        return (
+            outer_name in cs.RS_ELEMENT_CONTAINERS
+            and _rust_element_type_name(annotation) is None
+        )
 
     def _collected_element_type(self, value: Node | None) -> str | None:
         # Element type of a `<chain>.map(|..| Type { .. })....collect()`
-        # value: descend receiver hops from `collect` through
+        # value: descend receiver hops from `collect` (plain or turbofish;
+        # a typed `collect::<Vec<Worker>>()` answers directly) through
         # element-preserving adaptors to the nearest `map` whose closure
         # returns a struct literal. Any other hop changes or hides the
         # element, so the walk stops undecided.
@@ -154,12 +193,20 @@ class RustTypeInferenceEngine:
         seen_collect = False
         while node is not None and node.type in cs.RS_CALL_OR_GENERIC_FN:
             func = node.child_by_field_name(cs.FIELD_FUNCTION)
+            turbofish = None
+            if func is not None and func.type == cs.TS_GENERIC_FUNCTION:
+                turbofish = func.child_by_field_name(cs.TS_RS_TYPE_ARGUMENTS)
+                func = func.child_by_field_name(cs.FIELD_FUNCTION)
             if func is None or func.type != cs.TS_RS_FIELD_EXPRESSION:
                 return None
             field = func.child_by_field_name(cs.FIELD_FIELD)
             field_name = safe_decode_text(field) if field else None
             if field_name == cs.RS_ITER_COLLECT and not seen_collect:
                 seen_collect = True
+                if turbofish is not None and (
+                    elem := self._turbofish_element_type(turbofish)
+                ):
+                    return elem
             elif seen_collect and field_name == cs.RS_ITER_MAP:
                 args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
                 return self._closure_struct_literal_type(args)
@@ -167,6 +214,17 @@ class RustTypeInferenceEngine:
                 return None
             node = func.child_by_field_name(cs.FIELD_VALUE)
         return None
+
+    def _turbofish_element_type(self, type_arguments: Node) -> str | None:
+        target = next(
+            (
+                c
+                for c in type_arguments.children
+                if c.type in cs.RS_RETURN_TYPE_NODE_TYPES
+            ),
+            None,
+        )
+        return _rust_element_type_name(target) if target is not None else None
 
     def _closure_struct_literal_type(self, args: Node | None) -> str | None:
         closure = (
@@ -181,7 +239,11 @@ class RustTypeInferenceEngine:
             closure.child_by_field_name(cs.FIELD_BODY) if closure is not None else None
         )
         if body is not None and body.type == cs.TS_RS_BLOCK:
-            named = [c for c in body.named_children]
+            # The block's VALUE is its last expression; trailing comments
+            # are named nodes and must not hide it.
+            named = [
+                c for c in body.named_children if c.type not in cs.RS_COMMENT_TYPES
+            ]
             body = named[-1] if named else None
         if body is not None and body.type == cs.TS_RS_STRUCT_EXPRESSION:
             struct_name = body.child_by_field_name(cs.FIELD_NAME)
@@ -190,7 +252,7 @@ class RustTypeInferenceEngine:
         return None
 
     def collect_closure_param_bindings(
-        self, caller_node: Node, element_types: dict[str, str]
+        self, caller_node: Node, element_entries: list[tuple[str, str, int, int, int]]
     ) -> list[tuple[int, int, str, str]]:
         # Span-scoped closure-parameter types: (closure_start_byte,
         # closure_end_byte, name, type), overlaid at call sites like match
@@ -224,13 +286,13 @@ class RustTypeInferenceEngine:
                         (closure.start_byte, closure.end_byte, name, type_name)
                     )
             if len(bare) == 1 and not annotated:
-                elem = self._adaptor_element_type(closure, element_types)
+                elem = self._adaptor_element_type(closure, element_entries)
                 if elem and (name := safe_decode_text(bare[0])):
                     bindings.append((closure.start_byte, closure.end_byte, name, elem))
         return bindings
 
     def _adaptor_element_type(
-        self, closure: Node, element_types: dict[str, str]
+        self, closure: Node, element_entries: list[tuple[str, str, int, int, int]]
     ) -> str | None:
         parent = closure.parent
         if parent is None or parent.type != cs.TS_ARGUMENTS:
@@ -253,14 +315,34 @@ class RustTypeInferenceEngine:
         # Longest known prefix names the collection (locals are one
         # segment, `self.field` two); everything after it must preserve
         # the element or the closure sees a different type.
+        pos = call.start_byte
         for k in range(len(segments), 0, -1):
             key = cs.SEPARATOR_DOT.join(segments[:k])
-            if (elem := element_types.get(key)) is not None:
+            if (elem := self._element_at(key, pos, element_entries)) is not None:
                 hops = segments[k:]
                 if all(hop in cs.RS_ITER_NEUTRAL_HOPS for hop in hops):
                     return elem
                 return None
         return None
+
+    def _element_at(
+        self,
+        key: str,
+        pos: int,
+        element_entries: list[tuple[str, str, int, int, int]],
+    ) -> str | None:
+        # The binding visible for `key` at byte position `pos`: entries
+        # whose scope contains the position and whose declaration precedes
+        # it; the innermost scope wins, later declarations shadow earlier
+        # ones within it.
+        best: tuple[int, int, str] | None = None
+        for name, elem, start, end, decl_end in element_entries:
+            if name != key or not (start <= pos < end) or pos < decl_end:
+                continue
+            rank = (end - start, -decl_end)
+            if best is None or rank < (best[0], best[1]):
+                best = (end - start, -decl_end, elem)
+        return best[2] if best is not None else None
 
     def _guard_inner_type(self, type_node: Node) -> str | None:
         # `Mutex<State>` / `Arc<Mutex<State>>` -> State; None for a non-guard type.

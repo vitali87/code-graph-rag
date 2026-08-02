@@ -2828,7 +2828,7 @@ class CallProcessor:
         span_bindings: list[tuple[int, int, str, str]] = []
         if language == cs.SupportedLanguage.RUST and local_var_types is not None:
             span_bindings = self._resolver.type_inference.collect_rust_span_bindings(
-                caller_node, class_context
+                caller_node, module_qn, class_context
             )
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)

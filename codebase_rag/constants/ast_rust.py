@@ -224,7 +224,7 @@ RS_ITER_ADAPTORS = frozenset(
 # element type. Element-changing adaptors (enumerate, zip, flat_map) are
 # deliberately absent: crossing one loses the element.
 RS_ITER_NEUTRAL_HOPS = frozenset(
-    {"iter", "into_iter", "iter_mut", "by_ref", "rev", "cloned", "copied"}
+    {"iter", "into_iter", "iter_mut", "by_ref", "rev", "cloned", "copied", "filter"}
 )
 # Sequence containers whose FIRST generic argument is the element type.
 RS_ELEMENT_CONTAINERS = frozenset({"Vec", "VecDeque"})

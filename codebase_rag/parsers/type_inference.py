@@ -334,7 +334,7 @@ class TypeInferenceEngine:
         return local
 
     def collect_rust_span_bindings(
-        self, caller_node: ASTNode, class_context: str | None
+        self, caller_node: ASTNode, module_qn: str, class_context: str | None
     ) -> list[tuple[int, int, str, str]]:
         """Span-scoped Rust bindings overlaid at each call's position.
 
@@ -343,22 +343,35 @@ class TypeInferenceEngine:
         different byte ranges, which the flat map cannot express. Element
         types come from the caller's own collection-typed params/lets plus
         its class's sequence fields, keyed `self.<field>` exactly as the
-        flat map spells field receivers.
+        flat map spells field receivers. Closure bindings whose type does
+        NOT resolve to a registered class from this module are dropped: a
+        type parameter (`Vec<T>`) or a name invisible here would let the
+        external-receiver guard delete the edge the trie fallback still
+        finds, so an unresolvable binding is strictly worse than none.
         """
         engine = self.rust_type_inference
         bindings = engine.collect_match_arm_bindings(caller_node)
-        element_types = engine.collect_element_types(caller_node)
+        element_entries = engine.collect_element_entries(caller_node)
         if class_context:
+            span = (caller_node.start_byte, caller_node.end_byte)
             for field, elem in self.class_field_element_types.get(
                 class_context, {}
             ).items():
-                element_types.setdefault(
-                    f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOT}{field}", elem
+                element_entries.append(
+                    (f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOT}{field}", elem, *span, 0)
                 )
         bindings.extend(
-            engine.collect_closure_param_bindings(caller_node, element_types)
+            binding
+            for binding in engine.collect_closure_param_bindings(
+                caller_node, element_entries
+            )
+            if self._rust_binding_type_resolves(binding[3], module_qn)
         )
         return bindings
+
+    def _rust_binding_type_resolves(self, type_name: str, module_qn: str) -> bool:
+        qn = self._resolve_rust_type_qn(type_name, module_qn)
+        return self.function_registry.get(qn) is not None
 
     def _enrich_dart_call_locals(
         self, caller_node: ASTNode, var_types: dict[str, str]
