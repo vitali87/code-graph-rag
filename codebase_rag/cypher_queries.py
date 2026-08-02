@@ -216,7 +216,9 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.name AS name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line,
        n.decorators AS decorators, n.is_exported AS is_exported,
-       n.overrides_external AS overrides_external"""
+       n.overrides_external AS overrides_external,
+       n.rust_cfg_test_mods AS rust_cfg_test_mods,
+       n.rust_ungated_mods AS rust_ungated_mods"""
 
 CYPHER_DEAD_CODE_RELS = f"""MATCH (a:{_DEAD_CODE_NODE_LABELS})-[r:{_DEAD_CODE_REL_TYPES}]->(b)
 WHERE a.qualified_name STARTS WITH $project_prefix

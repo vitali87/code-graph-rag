@@ -1393,6 +1393,8 @@ class ClassIngestMixin:
         module_qn: str,
         lang_config: LanguageSpec,
     ) -> None:
+        gated_targets: set[str] = set()
+        ungated_targets: set[str] = set()
         for module_node in module_nodes:
             if not isinstance(module_node, Node):
                 continue
@@ -1401,11 +1403,33 @@ class ClassIngestMixin:
             if not module_name_node.text:
                 continue
 
+            decorators = self._extract_decorators(module_node)
+            gated = any(
+                "".join(str(decorator).split()) == cs.RS_CFG_TEST_ATTRIBUTE
+                for decorator in decorators
+            )
             # A bodyless `mod foo;` only declares that the file module foo.rs
             # belongs here; foo.rs already yields its own real-path Module node
             # with the same qn. Emitting a second synthetic-path node collides
-            # on that qn and clobbers the file's real path, so skip it.
+            # on that qn and clobbers the file's real path, so skip it -- but
+            # a `#[cfg(test)]` gate on the declaration is the ONLY record that
+            # the target compiles for tests alone. The gate is recorded on
+            # THIS file's own Module node (as target-qn candidates), never on
+            # the target's: an incremental re-parse of the target deletes and
+            # re-mints its node, which would silently erase a merged property,
+            # while the declaring node lives exactly as long as the
+            # declaration does (issue #1010).
             if module_node.child_by_field_name(cs.FIELD_BODY) is None:
+                # Ungated declarations record too: another Cargo target
+                # (src/main.rs) declaring the SAME file module without the
+                # gate compiles it as production code, and that must win
+                # over a gated sibling declaration.
+                candidates = self._rust_cfg_test_candidates(
+                    module_node,
+                    module_qn,
+                    safe_decode_text(module_name_node) or "",
+                )
+                (gated_targets if gated else ungated_targets).update(candidates)
                 continue
 
             module_name = safe_decode_text(module_name_node)
@@ -1421,6 +1445,8 @@ class ClassIngestMixin:
                 cs.KEY_START_LINE: module_node.start_point[0] + 1,
                 cs.KEY_END_LINE: module_node.end_point[0] + 1,
             }
+            if decorators:
+                module_props[cs.KEY_DECORATORS] = decorators
             # A bodied inline module is physically located in this file; give
             # it the real path so it joins containment on (file, line).
             file_path = self.module_qn_to_file_path.get(module_qn)
@@ -1449,6 +1475,55 @@ class ClassIngestMixin:
                     cs.RelationshipType.DEFINES,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, inline_module_qn),
                 )
+        if gated_targets or ungated_targets:
+            decl_props: PropertyDict = {cs.KEY_QUALIFIED_NAME: module_qn}
+            if gated_targets:
+                decl_props[cs.KEY_RUST_CFG_TEST_MODS] = sorted(gated_targets)
+            if ungated_targets:
+                decl_props[cs.KEY_RUST_UNGATED_MODS] = sorted(ungated_targets)
+            self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, decl_props)
+
+    def _rust_cfg_test_candidates(
+        self, module_node: Node, module_qn: str, module_name: str
+    ) -> set[str]:
+        """Qualified-name candidates for a bodyless declaration's target.
+
+        Resolved through the same relative-path machinery `self::` use
+        paths take (entry files and explicit manifest targets attach
+        declared submodules beside themselves via the declaring scan;
+        mod.rs directories and plain files nest them). A declaration
+        inside an inline mod adds the inline-nested spelling too, since
+        the two cannot coexist (E0428). Dead-code keeps only candidates
+        that name a REAL module node, so a spelling the qn scheme does
+        not produce (a `#[path]` override, a tests/ crate sibling) is
+        inert rather than a mismark.
+        """
+        if not module_name:
+            return set()
+        chain = rs_utils.build_module_path(module_node)
+        candidates = {
+            self.import_processor._rust_resolve_relative(
+                module_qn, [*chain, module_name], module_qn
+            )
+        }
+        if chain:
+            # A chain declaration's target FILE lives under the declaring
+            # file's directory tree regardless of the inline qn nesting
+            # (`mod outer { mod helpers; }` in src/lib.rs backs
+            # src/outer/helpers.rs, qn src.outer.helpers), so the
+            # path-derived spelling joins the candidates alongside the
+            # inline-nested one; the relative machinery resolves crate
+            # PATHS (which nest inline), not file placement.
+            candidates.add(cs.SEPARATOR_DOT.join([module_qn, *chain, module_name]))
+            file_path = self.module_qn_to_file_path.get(module_qn)
+            if file_path is not None:
+                dir_parts = cached_relative_path(file_path, self.repo_path).parts[:-1]
+                candidates.add(
+                    cs.SEPARATOR_DOT.join(
+                        [self.project_name, *dir_parts, *chain, module_name]
+                    )
+                )
+        return candidates
 
     def process_all_method_overrides(self) -> None:
         mo.process_all_method_overrides(

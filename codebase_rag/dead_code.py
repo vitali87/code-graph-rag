@@ -128,19 +128,56 @@ def _is_rust_test_symbol(
 def _rust_test_modules_from_nodes(
     nodes: dict[_NodeId, PropertyDict],
 ) -> set[str]:
-    # Module qns whose own name is a test-module spelling, gated to Rust
-    # files (inline `mod tests` blocks carry synthesised inline paths).
+    # Test modules by three signals, all gated to Rust files (inline `mod
+    # tests` blocks carry synthesised inline paths): a test-module NAME
+    # spelling, an OWN `#[cfg(test)]` decorator (bodied inline mods), or a
+    # DECLARATION-recorded gate (`#[cfg(test)] mod testutil;` stores its
+    # target-qn candidates on the declaring module, issue #1010). Declared
+    # candidates count only when they name a real Rust module here: a
+    # spelling the qn scheme does not produce (a #[path] override) must
+    # stay inert instead of mismarking whatever shares the string.
     modules: set[str] = set()
+    rust_modules: set[str] = set()
+    declared: list[str] = []
+    ungated: set[str] = set()
     for (label, uid), props in nodes.items():
         if label != _MODULE:
             continue
-        qn = str(uid)
-        if qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] not in cs.RUST_TEST_MODULE_SEGMENTS:
-            continue
+        declared_here = props.get(cs.KEY_RUST_CFG_TEST_MODS)
+        if isinstance(declared_here, list):
+            declared.extend(str(target) for target in declared_here)
+        ungated_here = props.get(cs.KEY_RUST_UNGATED_MODS)
+        if isinstance(ungated_here, list):
+            ungated.update(str(target) for target in ungated_here)
         path = str(props.get(cs.KEY_PATH, ""))
-        if path.endswith(cs.EXT_RS) or path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+        if not (
+            path.endswith(cs.EXT_RS) or path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+        ):
+            continue
+        qn = str(uid)
+        rust_modules.add(qn)
+        if qn.rsplit(cs.SEPARATOR_DOT, 1)[
+            -1
+        ] in cs.RUST_TEST_MODULE_SEGMENTS or _has_rust_cfg_test_gate(props):
             modules.add(qn)
+    # An ungated declaration from ANY target (src/main.rs compiling the
+    # module for production) outweighs a gated sibling declaration.
+    modules.update(
+        target
+        for target in declared
+        if target in rust_modules and target not in ungated
+    )
     return modules
+
+
+def _has_rust_cfg_test_gate(props: PropertyDict) -> bool:
+    decorators = props.get(cs.KEY_DECORATORS)
+    if not isinstance(decorators, list):
+        return False
+    return any(
+        "".join(str(decorator).split()) == cs.RS_CFG_TEST_ATTRIBUTE
+        for decorator in decorators
+    )
 
 
 def _rust_test_fn_spans(
@@ -744,6 +781,8 @@ def _node_props(row: ResultRow) -> PropertyDict:
         # non-int values coalesce to 0 so the containment checks skip them.
         cs.KEY_START_LINE: _as_line(row.get(cs.KEY_START_LINE)),
         cs.KEY_END_LINE: _as_line(row.get(cs.KEY_END_LINE)),
+        cs.KEY_RUST_CFG_TEST_MODS: _as_str_list(row.get(cs.KEY_RUST_CFG_TEST_MODS)),
+        cs.KEY_RUST_UNGATED_MODS: _as_str_list(row.get(cs.KEY_RUST_UNGATED_MODS)),
     }
 
 
