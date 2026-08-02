@@ -1401,11 +1401,22 @@ class ClassIngestMixin:
             if not module_name_node.text:
                 continue
 
+            gate = self._rust_cfg_test_gate(module_node)
             # A bodyless `mod foo;` only declares that the file module foo.rs
             # belongs here; foo.rs already yields its own real-path Module node
             # with the same qn. Emitting a second synthetic-path node collides
-            # on that qn and clobbers the file's real path, so skip it.
+            # on that qn and clobbers the file's real path, so skip it -- but
+            # a `#[cfg(test)]` gate on the declaration is the ONLY record that
+            # the target compiles for tests alone, so merge it onto the
+            # target's node first (issue #1010).
             if module_node.child_by_field_name(cs.FIELD_BODY) is None:
+                if gate:
+                    self._mark_rust_cfg_test_target(
+                        module_node,
+                        module_qn,
+                        safe_decode_text(module_name_node) or "",
+                        gate,
+                    )
                 continue
 
             module_name = safe_decode_text(module_name_node)
@@ -1421,6 +1432,8 @@ class ClassIngestMixin:
                 cs.KEY_START_LINE: module_node.start_point[0] + 1,
                 cs.KEY_END_LINE: module_node.end_point[0] + 1,
             }
+            if gate:
+                module_props[cs.KEY_DECORATORS] = [gate]
             # A bodied inline module is physically located in this file; give
             # it the real path so it joins containment on (file, line).
             file_path = self.module_qn_to_file_path.get(module_qn)
@@ -1449,6 +1462,35 @@ class ClassIngestMixin:
                     cs.RelationshipType.DEFINES,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, inline_module_qn),
                 )
+
+    def _rust_cfg_test_gate(self, module_node: Node) -> str | None:
+        for decorator in self._extract_decorators(module_node):
+            if "".join(str(decorator).split()) == cs.RS_CFG_TEST_ATTRIBUTE:
+                return decorator
+        return None
+
+    def _mark_rust_cfg_test_target(
+        self, module_node: Node, module_qn: str, module_name: str, gate: str
+    ) -> None:
+        # The declared module's qn: inline mod chains nest as qn children;
+        # at file level an entry file (lib.rs/main.rs) attaches declared
+        # submodules beside itself, everything else (mod.rs directories
+        # included: their qn IS the directory) nests them.
+        if not module_name:
+            return
+        chain = rs_utils.build_module_path(module_node)
+        base = cs.SEPARATOR_DOT.join([module_qn, *chain]) if chain else module_qn
+        if not chain:
+            file_path = self.module_qn_to_file_path.get(module_qn)
+            if file_path is not None and file_path.name in (cs.LIB_RS, cs.MAIN_RS):
+                base = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        self.ingestor.ensure_node_batch(
+            cs.NodeLabel.MODULE,
+            {
+                cs.KEY_QUALIFIED_NAME: f"{base}{cs.SEPARATOR_DOT}{module_name}",
+                cs.KEY_DECORATORS: [gate],
+            },
+        )
 
     def process_all_method_overrides(self) -> None:
         mo.process_all_method_overrides(

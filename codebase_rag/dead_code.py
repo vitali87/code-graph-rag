@@ -128,19 +128,34 @@ def _is_rust_test_symbol(
 def _rust_test_modules_from_nodes(
     nodes: dict[_NodeId, PropertyDict],
 ) -> set[str]:
-    # Module qns whose own name is a test-module spelling, gated to Rust
-    # files (inline `mod tests` blocks carry synthesised inline paths).
+    # Module qns whose own name is a test-module spelling OR whose node
+    # carries a recorded `#[cfg(test)]` gate (a `mod testutil;` declared
+    # under the gate compiles for tests only, whatever its name, issue
+    # #1010), gated to Rust files (inline `mod tests` blocks carry
+    # synthesised inline paths).
     modules: set[str] = set()
     for (label, uid), props in nodes.items():
         if label != _MODULE:
             continue
         qn = str(uid)
-        if qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] not in cs.RUST_TEST_MODULE_SEGMENTS:
+        if qn.rsplit(cs.SEPARATOR_DOT, 1)[
+            -1
+        ] not in cs.RUST_TEST_MODULE_SEGMENTS and not _has_rust_cfg_test_gate(props):
             continue
         path = str(props.get(cs.KEY_PATH, ""))
         if path.endswith(cs.EXT_RS) or path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
             modules.add(qn)
     return modules
+
+
+def _has_rust_cfg_test_gate(props: PropertyDict) -> bool:
+    decorators = props.get(cs.KEY_DECORATORS)
+    if not isinstance(decorators, list):
+        return False
+    return any(
+        "".join(str(decorator).split()) == cs.RS_CFG_TEST_ATTRIBUTE
+        for decorator in decorators
+    )
 
 
 def _rust_test_fn_spans(

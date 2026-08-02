@@ -37,6 +37,12 @@ TS_RS_BLOCK_COMMENT = "block_comment"
 RS_COMMENT_TYPES = (TS_RS_LINE_COMMENT, TS_RS_BLOCK_COMMENT)
 TS_RS_ATTRIBUTE_ITEM = "attribute_item"
 TS_RS_INNER_ATTRIBUTE_ITEM = "inner_attribute_item"
+# The `#[cfg(test)]` gate in whitespace-normalised form: attributes are
+# token streams, so extracted text is compared after dropping ALL
+# whitespace (`#[cfg( test )]` names the same gate). Recorded on a mod
+# declaration's TARGET module and read by dead-code test detection
+# (issue #1010).
+RS_CFG_TEST_ATTRIBUTE = "#[cfg(test)]"
 
 # Rust I/O direct-sink walk node types (issue #714). call_expression keeps a
 # `function` field (a scoped_identifier like `std::fs::write`), so call_name works
