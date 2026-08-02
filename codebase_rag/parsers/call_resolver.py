@@ -383,7 +383,11 @@ class CallResolver:
                     scope[: len(scope) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
                 )
                 natural_candidate = f"{natural_scope}{cs.SEPARATOR_DOT}{call_name}"
-                if natural_candidate in self.function_registry:
+                if natural_candidate in self.function_registry and (
+                    language != cs.SupportedLanguage.RUST
+                    or self.function_registry[natural_candidate]
+                    != cs.NodeLabel.METHOD.value
+                ):
                     return (
                         self.function_registry[natural_candidate],
                         natural_candidate,
@@ -946,7 +950,7 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = result
             return result
 
-        result = self._try_resolve_via_trie(call_name, module_qn)
+        result = self._try_resolve_via_trie(call_name, module_qn, language)
         if use_cache:
             self._simple_resolution_cache[cache_key] = result
         return result
@@ -1696,7 +1700,10 @@ class CallResolver:
         return language
 
     def _try_resolve_via_trie(
-        self, call_name: str, module_qn: str
+        self,
+        call_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         search_name = _SEARCH_NAME_CACHE.get(call_name)
         if search_name is None:
@@ -1705,6 +1712,16 @@ class CallResolver:
         possible_matches = self._nameable_candidates(
             self.function_registry.find_ending_with(search_name), module_qn
         )
+        if language == cs.SupportedLanguage.RUST and search_name == call_name:
+            # A bare Rust path NEVER names a method (inherent methods need
+            # self./Self::/Type::), so a same-named method must not soak
+            # up the edge when the real target is external, prelude, or a
+            # shadowing closure the graph cannot see (issue #1011).
+            possible_matches = [
+                qn
+                for qn in possible_matches
+                if self.function_registry[qn] != cs.NodeLabel.METHOD.value
+            ]
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
