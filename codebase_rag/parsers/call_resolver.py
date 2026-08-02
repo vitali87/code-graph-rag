@@ -1329,10 +1329,11 @@ class CallResolver:
         Returns (resolved target, defers_to_fn), or None when no block
         serves it: the site lies outside every block span, a nested mod
         boundary intervenes (its members never see the block's use), or
-        a containing fn declares the name as its own item (the local
-        item wins, found by the ordinary scope probes). defers_to_fn
-        marks a site inside a nested fn, whose own body uses outrank the
-        block's while a use-less fn still inherits it (rustc-verified).
+        a containing nested block declares the name as its own direct
+        item (the local item wins, found by the ordinary scope probes).
+        defers_to_fn marks a site inside a nested fn, whose own body
+        uses outrank the block's while a use-less fn still inherits it
+        (rustc-verified).
         """
         if call_point is None:
             return None
@@ -1341,19 +1342,21 @@ class CallResolver:
             return None
         best_size: int | None = None
         result: tuple[str, bool] | None = None
-        for start, end, imports, mod_holes, fn_holes in blocks:
+        for start, end, imports, mod_holes, fn_holes, item_scopes in blocks:
             if not (start <= call_point < end) or name not in imports:
                 continue
             if any(s <= call_point < e for s, e in mod_holes):
                 continue
-            if any(s <= call_point < e and name in names for s, e, names in fn_holes):
+            if any(
+                s <= call_point < e and name in names for s, e, names in item_scopes
+            ):
                 continue
             size = end - start
             if best_size is None or size < best_size:
                 best_size = size
                 result = (
                     imports[name],
-                    any(s <= call_point < e for s, e, _names in fn_holes),
+                    any(s <= call_point < e for s, e in fn_holes),
                 )
         return result
 

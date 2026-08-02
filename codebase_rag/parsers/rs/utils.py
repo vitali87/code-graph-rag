@@ -313,52 +313,50 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
 
 def rust_block_scope_holes(
     block: Node,
-) -> tuple[list[tuple[int, int]], list[tuple[int, int, frozenset[str]]]]:
+) -> tuple[
+    list[tuple[int, int]],
+    list[tuple[int, int]],
+    list[tuple[int, int, frozenset[str]]],
+]:
     """Byte spans of the scope-forming items nested inside a block.
 
     A use declared in a const/static initializer block reaches code in
     the block itself and in nested closures, but a nested `mod` is a
     hard name-resolution boundary (its members never see the block's
-    use), and a nested `fn` is an inner scope whose OWN bindings win
+    use), and a nested `fn` is an inner scope whose OWN body uses win
     before the block's (though it inherits the block's use when it has
-    none). Returns (mod spans, fn spans), each fn span carrying the
-    names of the function items declared in that fn's DIRECT scope
-    chain (excluding deeper fn/mod subtrees, whose items are invisible
-    outside them): a call inside the fn naming one of them binds the
-    local item, never the block's use. The walk descends everywhere
-    since a mod nested inside a fn still needs its boundary recorded.
+    none). Returns (mod spans, fn spans, item scopes): every PLAIN
+    block in the subtree is an item scope in Rust (a fn body, a let or
+    const initializer, an if/match/loop body alike), so each nested
+    block declaring function items as DIRECT children is recorded with
+    those names, and a call inside it naming one binds the local item,
+    never the initializer block's use (rustc-verified; items deeper
+    inside are invisible at that block's level, and methods in impl or
+    trait bodies are not bare names at all). The walk descends
+    everywhere since a mod nested inside a fn still needs its boundary
+    recorded.
     """
     mod_holes: list[tuple[int, int]] = []
-    fn_holes: list[tuple[int, int, frozenset[str]]] = []
+    fn_holes: list[tuple[int, int]] = []
+    item_scopes: list[tuple[int, int, frozenset[str]]] = []
     stack = list(block.children)
     while stack:
         current = stack.pop()
         if current.type == cs.TS_RS_MOD_ITEM:
             mod_holes.append((current.start_byte, current.end_byte))
         elif current.type == cs.TS_RS_FUNCTION_ITEM:
-            fn_holes.append(
-                (
-                    current.start_byte,
-                    current.end_byte,
-                    _rust_direct_fn_item_names(current),
-                )
-            )
+            fn_holes.append((current.start_byte, current.end_byte))
+        elif current.type == cs.TS_RS_BLOCK and (
+            names := _rust_direct_block_item_names(current)
+        ):
+            item_scopes.append((current.start_byte, current.end_byte, names))
         stack.extend(current.children)
-    return mod_holes, fn_holes
+    return mod_holes, fn_holes, item_scopes
 
 
-def _rust_direct_fn_item_names(fn_node: Node) -> frozenset[str]:
-    # The fn's bare-name item scope holds exactly the function items
-    # declared DIRECTLY in its body block: methods inside an impl or
-    # trait body are not bare names, and an item inside an inner block
-    # or closure body is scoped to that block alone (rustc-verified),
-    # so descending into any of them would make the block use lose to
-    # names that are not in scope at all.
-    body = fn_node.child_by_field_name(cs.FIELD_BODY)
-    if body is None:
-        return frozenset()
+def _rust_direct_block_item_names(block_node: Node) -> frozenset[str]:
     names: set[str] = set()
-    for child in body.children:
+    for child in block_node.children:
         if child.type == cs.TS_RS_FUNCTION_ITEM:
             if (name_node := child.child_by_field_name(cs.FIELD_NAME)) and (
                 text := name_node.text

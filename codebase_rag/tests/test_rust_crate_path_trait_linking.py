@@ -4178,3 +4178,131 @@ def test_inner_block_item_in_nested_fn_does_not_block_the_block_use(
     calls = _calls(mock_ingestor)
     base = "rs_block_inner_item.src"
     assert (f"{base}.a.f", f"{base}.gamma.g") in calls, calls
+    # The call INSIDE the inner block binds that block's own item (the
+    # registry deduplicates it against the file twin to a @line qn).
+    assert any(dst.startswith(f"{base}.a.g@") for _src, dst in calls), calls
+
+
+def test_inner_block_own_item_beats_block_use_at_block_level(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A plain block is an item scope too: an item declared in a `let`
+    # block inside the initializer shadows the initializer's use for the
+    # call written in that inner block (rustc evaluates J to 7).
+    project = temp_repo / "rs_inner_block_item_a"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_inner_block_item_a"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod gamma;\npub mod a;\n",
+            "src/gamma.rs": "pub const fn g() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub const fn g() -> u32 {\n"
+                "    5\n"
+                "}\n\n"
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::g;\n"
+                "    let x = {\n"
+                "        const fn g() -> u32 {\n"
+                "            7\n"
+                "        }\n"
+                "        g()\n"
+                "    };\n"
+                "    x\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_inner_block_item_a.src"
+    assert not any(dst == f"{base}.gamma.g" for _src, dst in calls), calls
+    assert any(dst.startswith(f"{base}.a.g@") for _src, dst in calls), calls
+
+
+def test_inner_let_block_item_beats_block_use_in_nested_fn(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The same rule one level down: the inner `let` block of a fn nested
+    # in the initializer declares its own item; the call inside it binds
+    # that item (rustc evaluates J to 7), never the initializer's use.
+    project = temp_repo / "rs_inner_block_item_b"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_inner_block_item_b"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod gamma;\npub mod a;\n",
+            "src/gamma.rs": "pub const fn g() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub const fn g() -> u32 {\n"
+                "    5\n"
+                "}\n\n"
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::g;\n"
+                "    const fn f() -> u32 {\n"
+                "        let x = {\n"
+                "            const fn g() -> u32 {\n"
+                "                7\n"
+                "            }\n"
+                "            g()\n"
+                "        };\n"
+                "        x\n"
+                "    }\n"
+                "    f()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_inner_block_item_b.src"
+    assert not any(dst == f"{base}.gamma.g" for _src, dst in calls), calls
+    assert any(dst.startswith(f"{base}.a.g@") for _src, dst in calls), calls
+
+
+def test_inner_const_initializer_item_beats_block_use_in_nested_fn(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # And with the inner block being itself a const initializer: the
+    # call inside it binds ITS local item (rustc evaluates J to 7).
+    project = temp_repo / "rs_inner_block_item_c"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_inner_block_item_c"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod gamma;\npub mod a;\n",
+            "src/gamma.rs": "pub const fn g() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "pub const fn g() -> u32 {\n"
+                "    5\n"
+                "}\n\n"
+                "pub static J: u32 = {\n"
+                "    use crate::gamma::g;\n"
+                "    const fn f() -> u32 {\n"
+                "        const K: u32 = {\n"
+                "            const fn g() -> u32 {\n"
+                "                7\n"
+                "            }\n"
+                "            g()\n"
+                "        };\n"
+                "        K\n"
+                "    }\n"
+                "    f()\n"
+                "};\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_inner_block_item_c.src"
+    assert not any(dst == f"{base}.gamma.g" for _src, dst in calls), calls
+    assert any(dst.startswith(f"{base}.a.g@") for _src, dst in calls), calls
