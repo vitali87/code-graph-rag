@@ -262,7 +262,6 @@ class TestExternalModuleNodeCreation:
 
         module_path = processor._resolve_module_path(
             full_name="java.util.List",
-            module_qn="test_project.main.Main",
             language=cs.SupportedLanguage.JAVA,
         )
 
@@ -434,7 +433,6 @@ class TestProjectPrefixMatching:
 
         result = processor._resolve_module_path(
             full_name="myapp_v2.utils.Helper",
-            module_qn="myapp.main.Main",
             language=cs.SupportedLanguage.JAVA,
         )
 
@@ -455,7 +453,6 @@ class TestProjectPrefixMatching:
 
         result = processor._resolve_module_path(
             full_name="myapp.utils.Helper",
-            module_qn="myapp.main.Main",
             language=cs.SupportedLanguage.JAVA,
         )
 

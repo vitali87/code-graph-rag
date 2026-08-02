@@ -78,9 +78,7 @@ _RS_ITEM_DECL_PATTERN = re.compile(
 # declaration scans: libc, backtrace and getrandom declare their platform
 # `mod` files inside cfg_if!. A diverging `fn abort() -> ! {` also ends in
 # `!`, but with no name touching it: that brace opens an item body.
-_RS_MACRO_OPEN_RE = re.compile(
-    r"(?:[A-Za-z0-9_]!|\bmacro_rules!\s*(?:r#)?[A-Za-z_][A-Za-z0-9_]*)\s*$"
-)
+_RS_MACRO_OPEN_RE = re.compile(r"(?:\w!|\bmacro_rules!\s*(?:r#)?[A-Za-z_]\w*)\s*$")
 
 
 def _rs_strip_comments_and_strings(source: str) -> str:
@@ -368,6 +366,12 @@ def _is_conditional_import_node(import_node: Node) -> bool:
             return True
         current = current.parent
     return False
+
+
+def _rust_norm_manifest_path(path: str) -> str:
+    # Cargo normalises manifest paths (a ./ prefix, backslashes); the
+    # matcher compares against repo-relative posix form, so mirror it.
+    return posixpath.normpath(path.replace("\\", cs.SEPARATOR_SLASH))
 
 
 class ImportProcessor:
@@ -813,9 +817,7 @@ class ImportProcessor:
                 )
                 emitted += 1
                 continue
-            module_path = self._resolve_module_path(
-                entry.full_name, entry.module_qn, entry.language
-            )
+            module_path = self._resolve_module_path(entry.full_name, entry.language)
             target_label = self._module_label(module_path)
             if target_label == cs.NodeLabel.EXTERNAL_MODULE:
                 # An external import target has no file pass to create its
@@ -1046,30 +1048,32 @@ class ImportProcessor:
         return cached
 
     def _rust_is_auto_target_dir(self, dir_parts: list[str], stem: str) -> bool:
-        # Cargo target locations whose .rs files are their OWN crate
-        # roots: src/bin/*.rs, examples/tests/benches/*.rs plus build.rs
-        # at a package root (Cargo.toml beside them), and any file a
-        # manifest names as an explicit target `path` override.
+        # Cargo auto-target locations whose .rs files are their OWN crate
+        # roots: src/bin/*.rs, and examples/tests/benches/*.rs plus
+        # build.rs at a package root (Cargo.toml beside them). Explicit
+        # manifest `path` overrides are checked SEPARATELY and only for
+        # the file itself: a non-standard root's modules live in its
+        # CONTAINING directory (rustc E0583 on a same-named subdir), so
+        # the ancestor walk must never treat a directory as a file crate
+        # just because a sibling file is an explicit target.
         if not dir_parts:
-            if stem == cs.RS_BUILD_STEM and cs.PKG_CARGO_TOML in (
-                self._rust_dir_entries(self.repo_path)
-            ):
-                return True
-            return self._rust_is_explicit_target(dir_parts, stem)
+            return stem == cs.RS_BUILD_STEM and (
+                cs.PKG_CARGO_TOML in self._rust_dir_entries(self.repo_path)
+            )
         if len(dir_parts) >= 2 and dir_parts[-1] == cs.RS_BIN_DIR:
             if dir_parts[-2] == cs.LANG_SRC_DIR:
                 return True
-        if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS and (
-            cs.PKG_CARGO_TOML
-            in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts[:-1]))
-        ):
-            return True
-        return self._rust_is_explicit_target(dir_parts, stem)
+        if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS:
+            return cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*dir_parts[:-1])
+            )
+        return False
 
     def _rust_is_explicit_target(self, dir_parts: list[str], stem: str) -> bool:
         # Whether <dir_parts>/<stem>.rs is an explicit target of its
-        # package's manifest (`[[bin]] path = "src/cli.rs"`). The package
-        # is the NEAREST ancestor directory holding a Cargo.toml.
+        # package's manifest (`[[bin]] path = "src/cli.rs"`, or the
+        # `[package] build` script override). The package is the NEAREST
+        # ancestor directory holding a Cargo.toml.
         for i in range(len(dir_parts), -1, -1):
             pkg_parts = dir_parts[:i]
             if cs.PKG_CARGO_TOML not in self._rust_dir_entries(
@@ -1103,7 +1107,14 @@ class ImportProcessor:
                 if isinstance(entry, dict) and isinstance(
                     path := entry.get(cs.RS_MANIFEST_PATH_KEY), str
                 ):
-                    paths.add(path.replace("\\", cs.SEPARATOR_SLASH))
+                    paths.add(_rust_norm_manifest_path(path))
+        # `[package] build = "..."` overrides the build script location;
+        # the named file is a crate root like any explicit target.
+        package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+        if isinstance(package, dict) and isinstance(
+            build := package.get(cs.RS_MANIFEST_BUILD_KEY), str
+        ):
+            paths.add(_rust_norm_manifest_path(build))
         result = frozenset(paths)
         self._rust_explicit_targets[pkg_parts] = result
         return result
@@ -1126,7 +1137,10 @@ class ImportProcessor:
             stem not in cs.RS_ENTRY_STEMS
             and f"{stem}{cs.EXT_RS}"
             in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-            and self._rust_is_auto_target_dir(dir_parts, stem)
+            and (
+                self._rust_is_auto_target_dir(dir_parts, stem)
+                or self._rust_is_explicit_target(dir_parts, stem)
+            )
         ):
             return "file", qn_parts
         for i in range(len(dir_parts), -1, -1):
@@ -1362,7 +1376,6 @@ class ImportProcessor:
     def _resolve_module_path(
         self,
         full_name: str,
-        module_qn: str,
         language: cs.SupportedLanguage,
     ) -> str:
         project_prefix = self.project_name + cs.SEPARATOR_DOT
@@ -1849,12 +1862,35 @@ class ImportProcessor:
 
     def reset_rust_path_caches(self) -> None:
         # The filesystem may have gained or lost files since the caches
-        # were filled. Called per run by GraphUpdater._process_files and
-        # per event by the realtime watcher, which re-parses through
-        # process_file without entering _process_files.
+        # were filled; called per run by GraphUpdater._process_files.
         self._rust_dir_listing.clear()
         self._rust_entry_mod_decls.clear()
         self._rust_explicit_targets.clear()
+
+    def refresh_rust_path_caches_for(self, file_path: Path, created: bool) -> None:
+        # The realtime watcher re-parses through process_file without
+        # entering _process_files, so each event re-observes exactly what
+        # it can have changed: only a CREATE changes the file set (the
+        # directory listing), a MODIFY changes at most the touched file's
+        # own contents (entry declarations when it is an entry file, the
+        # package's explicit targets when it is the manifest). A DELETE
+        # deliberately refreshes nothing: an editor's atomic save or a
+        # checkout storm deletes and recreates entry files within one
+        # debounce window, and a sibling re-parsed mid-storm must not
+        # bake the transient absence into its import map (the stale view
+        # converges on the file's return or the next full run, exactly
+        # as before the watcher refreshed at all).
+        directory = file_path.parent
+        if created:
+            self._rust_dir_listing.pop(str(directory), None)
+        try:
+            dir_parts = directory.relative_to(self.repo_path).parts
+        except ValueError:
+            return
+        if created or file_path.name in (cs.LIB_RS, cs.MAIN_RS):
+            self._rust_entry_mod_decls.pop(tuple(dir_parts), None)
+        if file_path.name == cs.PKG_CARGO_TOML:
+            self._rust_explicit_targets.pop(tuple(dir_parts), None)
 
     def drop_rust_module_import_state(self, module_qn: str) -> None:
         # Everything a file's parse contributed to the Rust import maps,

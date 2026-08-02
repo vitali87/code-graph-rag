@@ -357,11 +357,12 @@ def rust_block_scope_holes(
 def _rust_direct_block_item_names(block_node: Node) -> frozenset[str]:
     names: set[str] = set()
     for child in block_node.children:
-        if child.type == cs.TS_RS_FUNCTION_ITEM:
-            if (name_node := child.child_by_field_name(cs.FIELD_NAME)) and (
-                text := name_node.text
-            ) is not None:
-                names.add(text.decode(cs.RS_ENCODING_UTF8))
+        if (
+            child.type == cs.TS_RS_FUNCTION_ITEM
+            and (name_node := child.child_by_field_name(cs.FIELD_NAME))
+            and (text := name_node.text) is not None
+        ):
+            names.add(text.decode(cs.RS_ENCODING_UTF8))
     return frozenset(names)
 
 

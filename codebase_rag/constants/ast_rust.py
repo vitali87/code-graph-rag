@@ -183,3 +183,5 @@ RS_BUILD_STEM = "build"
 RS_ENTRY_STEMS = frozenset({"lib", "main", "mod"})
 RS_MANIFEST_TARGET_SECTIONS = ("bin", "lib", "example", "test", "bench")
 RS_MANIFEST_PATH_KEY = "path"
+RS_MANIFEST_PACKAGE_KEY = "package"
+RS_MANIFEST_BUILD_KEY = "build"

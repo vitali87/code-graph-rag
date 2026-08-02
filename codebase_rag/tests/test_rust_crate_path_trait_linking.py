@@ -1418,7 +1418,8 @@ def test_diverging_fn_body_is_not_macro_transparent() -> None:
     mods = set(_RS_MOD_DECL_PATTERN.findall(top))
     assert mods == {"real"}, mods
     items = set(_RS_ITEM_DECL_PATTERN.findall(top))
-    assert "sneaky" not in items and "Hidden" not in items, items
+    assert "sneaky" not in items, items
+    assert "Hidden" not in items, items
 
 
 def test_spaced_pub_visibility_declarations_count() -> None:
@@ -4451,3 +4452,175 @@ def test_explicit_cargo_bin_target_is_its_own_crate_root(
     assert mapping == {"h": f"{base}.cli.helper"}, mapping
     calls = _calls(mock_ingestor)
     assert (f"{base}.cli.top", f"{base}.cli.helper") in calls, calls
+
+
+def test_directory_named_like_explicit_target_stays_in_its_crate(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An explicit `[[bin]] path = "src/cli.rs"` roots ONLY that file:
+    # rustc searches a non-standard root's modules in its CONTAINING
+    # directory, so src/cli/ is the LIB crate's `cli` module directory
+    # (cargo-verified: `mod sub;` in the bin refuses src/cli/sub.rs with
+    # E0583). The lib-side impl must keep its trait link and OVERRIDES.
+    project = temp_repo / "rs_dual_target"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_dual_target"\nversion = "0.1.0"\n\n'
+                '[lib]\npath = "src/lib.rs"\n\n'
+                '[[bin]]\nname = "cli"\npath = "src/cli.rs"\n'
+            ),
+            "src/lib.rs": "pub mod cli;\npub mod flags;\n",
+            "src/flags.rs": (
+                "pub trait Flag {\n    fn name_long(&self) -> &'static str;\n}\n"
+            ),
+            "src/cli.rs": "pub mod sub;\n\nfn main() {}\n",
+            "src/sub.rs": "pub fn unused_bin_side() {}\n",
+            "src/cli/sub.rs": (
+                "use crate::flags::Flag;\n\n"
+                "pub struct A;\n\n"
+                "impl Flag for A {\n"
+                "    fn name_long(&self) -> &'static str {\n"
+                '        "a"\n'
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_dual_target.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.cli.sub")
+    assert mapping == {"Flag": f"{base}.flags.Flag"}, mapping
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.cli.sub.A", f"{base}.flags.Flag") in implements, implements
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    assert (
+        f"{base}.cli.sub.A.name_long",
+        f"{base}.flags.Flag.name_long",
+    ) in overrides, overrides
+
+
+def test_explicit_target_path_with_dot_prefix_matches(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Cargo normalises `path = "./src/cli.rs"`; the matcher must too.
+    project = temp_repo / "rs_dot_target"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_dot_target"\nversion = "0.1.0"\n\n'
+                '[[bin]]\nname = "cli"\npath = "./src/cli.rs"\n'
+            ),
+            "src/cli.rs": (
+                "pub const fn helper() -> u32 {\n"
+                "    2\n"
+                "}\n\n"
+                "use crate::helper as h;\n\n"
+                "pub fn top() -> u32 {\n"
+                "    h()\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_dot_target.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.cli")
+    assert mapping == {"h": f"{base}.cli.helper"}, mapping
+
+
+def test_package_build_key_roots_its_script(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `[package] build = "src/gen.rs"` is an explicit target override too:
+    # the build script is its own crate, never a module of the lib.
+    project = temp_repo / "rs_build_key"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_build_key"\nversion = "0.1.0"\n'
+                'build = "src/gen.rs"\n'
+            ),
+            "src/lib.rs": "pub fn lib_item() {}\n",
+            "src/gen.rs": (
+                "pub const fn helper() -> u32 {\n"
+                "    2\n"
+                "}\n\n"
+                "use crate::helper as h;\n\n"
+                "pub fn top() -> u32 {\n"
+                "    h()\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_build_key.src"
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.gen")
+    assert mapping == {"h": f"{base}.gen.helper"}, mapping
+
+
+def test_watch_storm_delete_and_restore_of_entry_keeps_sibling_maps(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An editor's atomic save or a checkout deletes and recreates the
+    # entry file within one debounce window. A sibling re-parsed
+    # mid-storm must not bake the transient absence into its import map:
+    # deletes keep the stale directory view on purpose, and only a
+    # CREATE re-observes the file set.
+    from watchdog.events import (
+        FileCreatedEvent,
+        FileDeletedEvent,
+        FileModifiedEvent,
+    )
+
+    import realtime_updater
+
+    project = temp_repo / "rs_heal"
+    lib_content = "pub mod beta;\npub mod a;\n"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_heal"\nversion = "0.1.0"\n',
+            "src/lib.rs": lib_content,
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/a.rs": (
+                "use crate::beta::helper;\n\npub fn top() -> u32 {\n    helper()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    base = "rs_heal.src"
+    expected = {"helper": f"{base}.beta.helper"}
+    assert updater.factory.import_processor.import_mapping.get(f"{base}.a") == (
+        expected
+    )
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    lib_rs = project / "src" / "lib.rs"
+    lib_rs.unlink()
+    handler.dispatch(FileDeletedEvent(str(lib_rs)))
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "a.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
+    assert mapping == expected, mapping
+
+    lib_rs.write_text(lib_content, encoding="utf-8")
+    handler.dispatch(FileCreatedEvent(str(lib_rs)))
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "a.rs")))
+
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
+    assert mapping == expected, mapping

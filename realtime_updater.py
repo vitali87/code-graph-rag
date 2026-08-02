@@ -236,11 +236,16 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self.updater.remove_file_from_state(path)
 
         # The Rust path caches (exact-case directory listings, entry-file
-        # mod declarations) were filled during the last run; this event may
-        # have created, deleted, or rewritten the very files they answer
-        # for, so re-observe the filesystem before any re-parse resolves
-        # crate::/super::/self:: against them.
-        self.updater.factory.import_processor.reset_rust_path_caches()
+        # mod declarations, explicit targets) were filled during the last
+        # run; a CREATE or MODIFY re-observes what this event can have
+        # changed before any re-parse resolves crate::/super::/self::
+        # against them. DELETEs keep the stale view so an atomic-save or
+        # checkout storm cannot bake a transient absence into a sibling's
+        # import map.
+        if event.event_type != EventType.DELETED:
+            self.updater.factory.import_processor.refresh_rust_path_caches_for(
+                path, created=event.event_type == EventType.CREATED
+            )
 
         # Step 3: Re-parse code files and create File nodes for ALL files
         if event.event_type in (EventType.MODIFIED, EventType.CREATED):

@@ -752,14 +752,21 @@ class CallResolver:
         # holding initializer-block uses resolves SITE-dependently (the
         # block's use answers only calls inside its span), so no caller in
         # it may share cached answers either.
-        if language == cs.SupportedLanguage.RUST and caller_qn:
-            if module_qn in self.import_processor.rust_block_scope_imports:
-                use_cache = False
-            elif caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}") and (
-                cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
-                or caller_qn in self.import_processor.rust_fn_scope_imports
-            ):
-                use_cache = False
+        if (
+            language == cs.SupportedLanguage.RUST
+            and caller_qn
+            and (
+                module_qn in self.import_processor.rust_block_scope_imports
+                or (
+                    caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+                    and (
+                        cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
+                        or caller_qn in self.import_processor.rust_fn_scope_imports
+                    )
+                )
+            )
+        ):
+            use_cache = False
         if use_cache:
             cache_key = (call_name, module_qn)
             if cache_key in self._simple_resolution_cache:
