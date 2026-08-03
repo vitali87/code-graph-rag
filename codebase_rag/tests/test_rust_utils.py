@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.rs.utils import (
     build_module_path,
@@ -595,10 +596,16 @@ class TestExtractUseImportsEdgeCases:
         assert use_node is not None
 
         result = extract_use_imports(use_node)
-        assert "self" in result
+        # `{self}` binds the base path under the name it is in scope as, `fs`,
+        # marked weak because the name comes from the path rather than the
+        # source. Keyed on the keyword instead, the entry was unreachable and
+        # every `fs::...` spelling in the file resolved to nothing (#1054).
+        weak_fs = f"{cs.RS_SELF_MODULE_PREFIX}fs"
+        assert weak_fs in result
+        assert "self" not in result
         assert "File" in result
         assert "read_to_string" in result
-        assert result["self"] == "std::fs"
+        assert result[weak_fs] == "std::fs"
         assert result["File"] == "std::fs::File"
         assert result["read_to_string"] == "std::fs::read_to_string"
 

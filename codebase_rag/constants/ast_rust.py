@@ -183,6 +183,12 @@ RS_USE_LIST_DELIMITERS = frozenset({"{", "}", ","})
 RS_ENCODING_UTF8 = "utf8"
 
 RS_WILDCARD_PREFIX = "*"
+# Marks a `use path::{self}` entry, whose name the base path supplies rather
+# than the source. Rust keeps types and values in separate namespaces while
+# the import map holds one slot per name, so such a binding is WEAK: it never
+# displaces a name another `use` in the same scope already claimed (#1054).
+# No Rust identifier can contain the marker character.
+RS_SELF_MODULE_PREFIX = "@"
 
 RS_FIELD_ARGUMENT = "argument"
 

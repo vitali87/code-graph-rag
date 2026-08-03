@@ -1415,6 +1415,13 @@ class CallResolver:
             return self._resolve_rust_prefixed_path(
                 object_path, item, module_qn, caller_qn
             )
+        # A module the caller bound with `use path::{self}` is a module, full
+        # stop: decide through it before the type probe below, whose
+        # name-based resolution would otherwise answer with a same-named
+        # value and abandon the path (issue #1054).
+        if binding := self._rust_self_module_head(head, module_qn, caller_qn):
+            mapped, scope = binding
+            return self._decide_rust_module_item(mapped, object_path[1:], item, scope)
         # A registered type as the first segment is an associated-function
         # call, owned by the class-resolution paths.
         if self._resolve_class_name(head, module_qn):
@@ -1442,6 +1449,20 @@ class CallResolver:
             module_qn, list(object_path), module_qn
         )
         return self._decide_rust_base(base, item)
+
+    def _rust_self_module_head(
+        self, head: str, module_qn: str, caller_qn: str | None
+    ) -> tuple[str, str] | None:
+        # A `use path::{self}` binding names a MODULE outright, so it answers
+        # a qualified `head::item` even when the shared import map's one slot
+        # went to a value of the same name, which Rust's separate namespaces
+        # allow (issue #1054). Innermost scope first, like every other Rust
+        # name lookup here.
+        self_modules = self.import_processor.rust_self_module_imports
+        for scope in (*self._rust_enclosing_scopes(module_qn, caller_qn), module_qn):
+            if mapped := self_modules.get(scope, {}).get(head):
+                return mapped, scope
+        return None
 
     def _resolve_rust_prefixed_path(
         self,

@@ -72,7 +72,22 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
             _process_scoped_use_list(node, base_path, imports)
 
         case cs.KEYWORD_SELF:
-            imports[cs.KEYWORD_SELF] = base_path or cs.KEYWORD_SELF
+            # `use std::io::{self, Write}` imports the base path ITSELF, in
+            # scope under its own last segment (`io`), which is the name every
+            # later `io::...` spelling in the file is written against. Keyed on
+            # the keyword the binding is unreachable, the real name is absent,
+            # and those spellings resolve by trie luck instead (issue #1054).
+            if base_path:
+                name = base_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, maxsplit=1)[-1]
+                # A relative base (`use super::{self, x}`) leaves a keyword
+                # where the name would be, and rustc rejects that spelling
+                # outright ("imports need to be explicitly named"), so there is
+                # no binding to record.
+                if name not in cs.RS_PATH_KEYWORDS:
+                    # Marked weak: the name comes from the path rather than the
+                    # source, and it must not evict a name another `use` bound
+                    # in the other namespace (see the constant).
+                    imports[f"{cs.RS_SELF_MODULE_PREFIX}{name}"] = base_path
 
         case _:
             for child in node.children:

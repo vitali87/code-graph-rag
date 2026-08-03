@@ -242,8 +242,11 @@ fn main() {
             "submod2": f"{project_name}.module2.submod2",
             "local_module": f"{project_name}.test.local_module",
             "parent_module": f"{project_name}.parent_module",
-            "self": project_name,
         }
+        # `use super::{self, parent_module}` binds the parent module under a
+        # name only its resolved path knows, so the `self` part contributes no
+        # entry; keyed on the keyword it was unreachable anyway (issue #1054).
+        assert "self" not in actual_imports
 
         for name, path in expected.items():
             assert name in actual_imports, f"Missing import: {name}"
