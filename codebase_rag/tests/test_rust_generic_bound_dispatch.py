@@ -66,6 +66,24 @@ pub fn use_decoy(d: Decoy) -> bool {
 pub fn drain<W: std::io::Write>(w: W) -> bool {
     w.poll()
 }
+
+pub struct Maker;
+
+impl Maker {
+    pub fn make<M>() -> M {
+        unimplemented!()
+    }
+}
+
+pub fn capture_guard<M: Matcher>(_m: M) -> bool {
+    let x: M = Maker::make();
+    x.find("k")
+}
+
+pub fn no_capture<M: Matcher>(_m: M) -> bool {
+    let x = Maker::make();
+    x.find("k")
+}
 """
 
 
@@ -133,6 +151,27 @@ def test_direct_inherent_call_still_resolves(
     base = _build(temp_repo, mock_ingestor, "rs_bound_decoy")
     calls = _calls(mock_ingestor)
     assert (f"{base}.use_decoy", f"{base}.Decoy.is_match") in calls, calls
+
+
+def test_annotated_local_substitutes_caller_scope_bound(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `let x: M = ...` spells the CALLER's generic parameter, so the bound
+    # substitution applies to the local exactly as to a parameter.
+    base = _build(temp_repo, mock_ingestor, "rs_bound_let")
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.capture_guard", f"{base}.Matcher.find") in calls, calls
+
+
+def test_callee_return_generic_is_not_captured_by_caller_bounds(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `let x = Maker::make()` types x from the callee's declared return `M`,
+    # which is MAKER's generic parameter; the caller's own `M: Matcher` bound
+    # must not capture it and fabricate a Matcher edge.
+    base = _build(temp_repo, mock_ingestor, "rs_bound_capture")
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.no_capture", f"{base}.Matcher.find") not in calls, calls
 
 
 def test_external_bound_does_not_fabricate_inherent_edge(

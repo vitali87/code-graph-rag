@@ -465,6 +465,90 @@ class RustTypeInferenceEngine:
             self._collect_call_bindings(body, bindings)
         return bindings
 
+    def collect_generic_bounds(self, caller_node: Node) -> dict[str, list[str]]:
+        # Trait bounds for every generic type parameter in scope at this
+        # caller: the fn's own generics and where clause, then each
+        # enclosing impl/trait block's (a method's field receiver takes its
+        # bound from the impl header). Innermost declaration wins outright:
+        # a fn-level `M` shadows an impl-level `M` entirely, so the outer
+        # list is not merged in. Scoped bound spellings keep their path
+        # (`crate::x::Matcher`); bare names stay bare.
+        bounds: dict[str, list[str]] = {}
+        node: Node | None = caller_node
+        while node is not None:
+            if node.type in cs.RS_GENERIC_SCOPE_ITEMS:
+                for name, spellings in self._item_generic_bounds(node).items():
+                    bounds.setdefault(name, spellings)
+            node = node.parent
+        return bounds
+
+    def _item_generic_bounds(self, item: Node) -> dict[str, list[str]]:
+        # One item's parameter-list bounds (`<M: Matcher + Clone>`) merged
+        # with its where-clause bounds (`where M: Matcher`); a parameter
+        # bounded in both places gets both lists.
+        merged: dict[str, list[str]] = {}
+        if params := item.child_by_field_name(cs.TS_RS_TYPE_PARAMETERS):
+            for param in params.children:
+                if param.type != cs.TS_RS_TYPE_PARAMETER:
+                    continue
+                self._merge_bound_entry(
+                    merged,
+                    param.child_by_field_name(cs.FIELD_NAME),
+                    param.child_by_field_name(cs.FIELD_BOUNDS),
+                )
+        for child in item.children:
+            if child.type != cs.TS_RS_WHERE_CLAUSE:
+                continue
+            for pred in child.children:
+                if pred.type != cs.TS_RS_WHERE_PREDICATE:
+                    continue
+                self._merge_bound_entry(
+                    merged,
+                    pred.child_by_field_name(cs.FIELD_LEFT),
+                    pred.child_by_field_name(cs.FIELD_BOUNDS),
+                )
+        return merged
+
+    def _merge_bound_entry(
+        self,
+        merged: dict[str, list[str]],
+        name_node: Node | None,
+        bounds_node: Node | None,
+    ) -> None:
+        # Only a plain identifier binds a substitutable parameter name: a
+        # where-clause left side like `Self::Item` or `Vec<M>` constrains a
+        # projection, not a bare parameter.
+        if (
+            name_node is None
+            or name_node.type != cs.TS_TYPE_IDENTIFIER
+            or bounds_node is None
+        ):
+            return
+        name = safe_decode_text(name_node)
+        if not name:
+            return
+        spellings = [
+            spelling
+            for child in bounds_node.children
+            if (spelling := self._bound_spelling(child))
+        ]
+        if spellings:
+            merged.setdefault(name, []).extend(spellings)
+
+    def _bound_spelling(self, node: Node) -> str | None:
+        # A bound's usable spelling: a bare trait name as-is, a scoped path
+        # whole (the consumer gates on its head), a generic bound
+        # (`From<NoError>`) by its base path. Lifetimes, `?Sized` markers,
+        # and fn-trait bounds yield nothing.
+        if node.type == cs.TS_TYPE_IDENTIFIER:
+            return safe_decode_text(node)
+        if node.type == cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
+            return safe_decode_text(node)
+        if node.type == cs.TS_GENERIC_TYPE:
+            inner = node.child_by_field_name(cs.FIELD_TYPE)
+            return self._bound_spelling(inner) if inner is not None else None
+        return None
+
     def _collect_parameters(self, caller_node: Node, var_types: dict[str, str]) -> None:
         params = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
         if params is None:

@@ -328,6 +328,12 @@ class TypeInferenceEngine:
                     local.setdefault(
                         f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOT}{field}", ftype
                     )
+            # Substitute BEFORE enrichment only: params, lets, and fields
+            # spell generic names from the caller's own scope chain, but an
+            # enriched call-return type (`let x = Maker::make()` with
+            # `fn make() -> M`) spells the CALLEE's generic parameter, which
+            # the caller's bounds must not capture.
+            self._substitute_rust_generic_bounds(caller_node, module_qn, local)
             self._enrich_rust_call_locals(caller_node, module_qn, local)
         elif language == cs.SupportedLanguage.DART:
             self._enrich_dart_call_locals(caller_node, local)
@@ -368,6 +374,36 @@ class TypeInferenceEngine:
             if self._rust_binding_type_resolves(binding[3], module_qn)
         )
         return bindings
+
+    def _substitute_rust_generic_bounds(
+        self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
+    ) -> None:
+        # A receiver typed as a bare generic parameter (`m: M`, a field `M` of
+        # an `impl<M: Matcher>` block) dispatches through the parameter's trait
+        # bound, so rewrite the recorded type to the first bound that resolves
+        # to a registered first-party trait (issue #1047). A parameter whose
+        # bounds resolve to nothing keeps the generic name: the known-external
+        # receiver guard then suppresses the name-based fallback instead of
+        # letting it fabricate an edge onto an unrelated same-named method.
+        bounds = self.rust_type_inference.collect_generic_bounds(caller_node)
+        if not bounds:
+            return
+        for name, type_name in var_types.items():
+            for spelling in bounds.get(type_name, ()):
+                if trait := self._rust_bound_trait(spelling, module_qn):
+                    var_types[name] = trait
+                    break
+
+    def _rust_bound_trait(self, spelling: str, module_qn: str) -> str | None:
+        # Only a bare bound spelling substitutes: a scoped path with an
+        # external head (`std::io::Write`) must never reach the simple-name
+        # fallback in _resolve_rust_import_path, which would bind it to an
+        # arbitrary first-party type sharing the leaf name.
+        if cs.SEPARATOR_DOUBLE_COLON in spelling:
+            return None
+        if self._rust_binding_type_resolves(spelling, module_qn):
+            return spelling
+        return None
 
     def _rust_binding_type_resolves(self, type_name: str, module_qn: str) -> bool:
         qn = self._resolve_rust_type_qn(type_name, module_qn)
