@@ -1359,7 +1359,7 @@ class CallResolver:
             or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
         ):
             return None
-        if item_qn := self._rust_block_item_at(caller_qn, call_name, call_point):
+        if item_qn := self._rust_block_item_at(module_qn, call_name, call_point):
             return ((self.function_registry[item_qn], item_qn),)
         target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
             call_name
@@ -1406,18 +1406,20 @@ class CallResolver:
         return None, None
 
     def _rust_block_item_at(
-        self, caller_qn: str, name: str, call_point: int | None
+        self, module_qn: str, name: str, call_point: int | None
     ) -> str | None:
         """The item `name` binds to in the innermost block holding this site.
 
         Innermost wins: nested blocks may each declare the name, and only
-        the tightest one is in scope where the call is written.
+        the tightest one is in scope where the call is written. Keyed by
+        FILE, not by caller: a fn declared inside the block is inside the
+        block, so its own body binds the block's items too.
         """
         if call_point is None:
             return None
         best: tuple[int, str] | None = None
-        for start, end, items in self.import_processor.rust_fn_scope_item_holes.get(
-            caller_qn, ()
+        for start, end, items in self.import_processor.rust_block_items.get(
+            module_qn, ()
         ):
             item_qn = items.get(name)
             if item_qn is None or not (start <= call_point < end):
@@ -1714,6 +1716,12 @@ class CallResolver:
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         same_module_func_qn = f"{module_qn}.{call_name}"
+        if same_module_func_qn in self.import_processor.rust_block_item_qns:
+            # A Rust block-local item registered flat under the module's
+            # own name. It is in scope for its block alone, and a call
+            # written there was served by _rust_block_item_at long before
+            # this probe (issue #1061).
+            return None
         if same_module_func_qn in self.function_registry:
             logger.debug(
                 ls.CALL_SAME_MODULE, call_name=call_name, qn=same_module_func_qn
@@ -1729,10 +1737,15 @@ class CallResolver:
         # so drop it; a candidate whose language cannot be determined is kept,
         # so the fallback still answers wherever this evidence is missing.
         caller_language = self._module_language(module_qn)
+        block_items = self.import_processor.rust_block_item_qns
         reachable = [
             qn
             for qn in candidates
             if self._languages_can_call(caller_language, self._module_language(qn))
+            # A Rust block-local item is nameable inside its own block
+            # alone, and the site-gated probe answered there already
+            # (issue #1061); by simple name it is never a candidate.
+            and qn not in block_items
         ]
         # A definition scoped inside another function's body is named from
         # elsewhere only when it escapes (a factory returns it, CommonJS
