@@ -22,6 +22,7 @@ from ...types_defs import (
     FunctionSpanKey,
     NodeType,
     PropertyDict,
+    RustTraitImpl,
 )
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
@@ -174,6 +175,7 @@ class ClassIngestMixin:
     _deferred_parent_links: list[DeferredParentLink]
     _deferred_cpp_inherits: list[DeferredCppInherit]
     _deferred_inherits: list[DeferredInherit]
+    _rust_trait_impls: list[RustTraitImpl]
     cpp_module_interfaces: set[str]
     _deferred_cpp_module_impls: list[tuple[str, str]]
     declared_module_qns: set[str]
@@ -489,7 +491,77 @@ class ClassIngestMixin:
                 )
             emitted += 1
         self._flag_dart_external_overrides(dart_implements)
+        self._flag_rust_external_trait_overrides()
         return emitted
+
+    def _flag_rust_external_trait_overrides(self) -> None:
+        # A method in an `impl <ExternalTrait> for Type` block is only ever
+        # invoked through that trait's dispatch, by code the graph does not
+        # hold: the stdlib calls io::Read::read, serde calls its Visitor
+        # methods, the log facade calls Log::log. No first-party edge can
+        # prove it live, so it roots the dead-code walk (issue #1048).
+        impls = self._rust_trait_impls
+        self._rust_trait_impls = []
+        for impl in impls:
+            if not self._rust_trait_is_external(impl):
+                continue
+            for method_qn in impl.method_qns:
+                self.ingestor.ensure_node_batch(
+                    cs.NodeLabel.METHOD,
+                    {
+                        cs.KEY_QUALIFIED_NAME: method_qn,
+                        cs.KEY_OVERRIDES_EXTERNAL: True,
+                    },
+                )
+
+    def _rust_trait_is_external(self, impl: RustTraitImpl) -> bool:
+        # Only POSITIVE evidence roots: the crate the trait is written under
+        # must be the toolchain or a manifest-proven external dependency. An
+        # unresolved head alone means nothing (a workspace sibling reached by
+        # its crate name, `use grep_searcher::Sink`, resolves through a layout
+        # the import half may not cover), and rooting on it would hide a
+        # genuinely dead first-party trait impl for good.
+        module_qn = impl.entry.module_qn
+        resolved = self._resolve_deferred_parent_qn(impl.entry)
+        if (
+            resolved is not None
+            and not resolved[1]
+            and self.function_registry.get(resolved[0]) == NodeType.INTERFACE
+        ):
+            # A registered first-party TRAIT dispatches through OVERRIDES
+            # liveness, which already covers its impls. The node kind has to
+            # be checked: parent resolution ends in a project-wide simple-name
+            # sweep, so a struct the project happens to call `Default` answers
+            # for the prelude trait and would silence every `impl Default`.
+            return False
+        head, scoped = self._rust_trait_head(impl.spelling, module_qn)
+        if self.import_processor.rust_head_is_repo_crate(head):
+            # The crate is indexed here whatever the manifest says about
+            # fetching it, so its traits are first-party.
+            return False
+        if (
+            head in cs.RS_STDLIB_CRATES
+            or self.import_processor.rust_head_is_external_dep(head, module_qn)
+        ):
+            return True
+        # A bare name with no import and no first-party declaration is in
+        # scope only because the prelude put it there.
+        return not scoped and head in cs.RS_PRELUDE_TRAITS
+
+    def _rust_trait_head(self, spelling: str, module_qn: str) -> tuple[str, bool]:
+        """The crate the written trait path speaks for, and whether it is scoped.
+
+        The written head is itself an imported name whenever the module said
+        so: `use std::io;` then `impl io::Read` (Rust's usual spelling for a
+        stdlib trait) writes the head `io`, which speaks for `std`. Only a
+        head no `use` mentions stands for itself, and a bare one of those is
+        unscoped: nothing but the prelude can have put it in scope.
+        """
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        head = spelling.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+        if (target := import_map.get(head)) is not None:
+            return target.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0], True
+        return head, cs.SEPARATOR_DOUBLE_COLON in spelling
 
     def _flag_dart_external_overrides(
         self,
@@ -1062,20 +1134,33 @@ class ClassIngestMixin:
         # `impl Trait for Type` means Type IMPLEMENTS Trait. The target type's
         # node label may be Class/Enum/Type, so match the relationship source
         # to its registered label (else the IMPLEMENTS edge never resolves).
+        trait_impl_method_qns: list[str] | None = None
         if trait_name := rs_utils.extract_impl_trait(class_node):
             trait_qn = self._resolve_to_qn(trait_name, owner_module_qn)
             # The trait (or the impl target) may live in a file not yet
             # parsed; hold the IMPLEMENTS edge back for
             # resolve_deferred_inherits so an unresolvable trait
             # (std::fmt::Display) emits no phantom edge.
-            self._deferred_inherits.append(
-                DeferredInherit(
-                    rel_type=cs.RelationshipType.IMPLEMENTS,
-                    child_qn=class_qn,
-                    parent_qn=trait_qn,
-                    module_qn=owner_module_qn,
-                    base_index=0,
-                    language=cs.SupportedLanguage.RUST,
+            trait_entry = DeferredInherit(
+                rel_type=cs.RelationshipType.IMPLEMENTS,
+                child_qn=class_qn,
+                parent_qn=trait_qn,
+                module_qn=owner_module_qn,
+                base_index=0,
+                language=cs.SupportedLanguage.RUST,
+            )
+            self._deferred_inherits.append(trait_entry)
+            # Collect this block's methods against the trait AS WRITTEN: if the
+            # trait belongs to another crate, its dispatch is the only caller
+            # they can ever have (issue #1048). The decision waits for
+            # resolve_deferred_inherits, when every first-party trait is
+            # registered.
+            trait_impl_method_qns = []
+            self._rust_trait_impls.append(
+                RustTraitImpl(
+                    entry=trait_entry,
+                    spelling=rs_utils.extract_impl_trait_path(class_node) or trait_name,
+                    method_qns=trait_impl_method_qns,
                 )
             )
             # Record the implementer so a Rust trait call to the sole concrete
@@ -1136,6 +1221,8 @@ class ClassIngestMixin:
             # its own qn, and overwriting the record would re-attribute
             # its calls to this pass's twin.
             if ingested_qn is not None:
+                if trait_impl_method_qns is not None:
+                    trait_impl_method_qns.append(ingested_qn)
                 span = function_span_key(module_qn, method_node)
                 if span not in self.function_locations:
                     self.function_locations[span] = FunctionLocation(

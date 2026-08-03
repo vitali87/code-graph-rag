@@ -258,6 +258,25 @@ def extract_impl_trait(impl_node: Node) -> str | None:
     return _impl_field_type_name(impl_node, cs.FIELD_TRAIT)
 
 
+def extract_impl_trait_path(impl_node: Node) -> str | None:
+    # The trait AS WRITTEN (`std::io::Read`, `serde::de::Visitor`), which the
+    # simple name discards. Only the written head says which crate speaks for
+    # the trait, and that decides whether its dispatch is external (#1048).
+    if impl_node.type != cs.TS_IMPL_ITEM:
+        return None
+    for i in range(impl_node.child_count):
+        if impl_node.field_name_for_child(i) != cs.FIELD_TRAIT:
+            continue
+        if (trait_node := impl_node.child(i)) is None:
+            continue
+        if (text := safe_decode_text(trait_node)) is None:
+            continue
+        # Type arguments (`FromIterator<u8>`) belong to the instantiation,
+        # not the path.
+        return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip()
+    return None
+
+
 def extract_use_imports(use_node: Node) -> dict[str, str]:
     if use_node.type != cs.TS_USE_DECLARATION:
         return {}

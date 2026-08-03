@@ -18,6 +18,7 @@ from ..types_defs import (
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
+    RustTraitImpl,
     SimpleNameLookup,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
@@ -214,6 +215,11 @@ class DefinitionProcessor(
         # Non-C++ INHERITS/IMPLEMENTS held back until every class is
         # registered; resolve_deferred_inherits re-resolves the guesses.
         self._deferred_inherits: list[DeferredInherit] = []
+        # Rust `impl Trait for Type` blocks paired with the method qns they
+        # ingested. Whether the trait is external is only knowable once every
+        # trait is registered, so resolve_deferred_inherits judges it and
+        # flags the methods of the external ones (issue #1048).
+        self._rust_trait_impls: list[RustTraitImpl] = []
         # C++20 module interfaces declared this run (export module X), and
         # implementation units whose IMPLEMENTS edge waits for its
         # interface to be known.

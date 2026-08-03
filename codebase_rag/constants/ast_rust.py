@@ -214,6 +214,38 @@ RS_MANIFEST_TARGET_TABLE_KEY = "target"
 # manifest needed to know a use head naming one is outside the project.
 RS_STDLIB_CRATES = frozenset({"std", "core", "alloc", "proc_macro"})
 
+# Traits the Rust prelude puts in scope with no `use`: an impl naming one
+# without importing it and without a same-named first-party declaration
+# implements the standard trait, whose dispatch lives outside the graph
+# (issue #1048). Marker traits with no methods are omitted as pointless.
+RS_PRELUDE_TRAITS = frozenset(
+    {
+        "AsMut",
+        "AsRef",
+        "Clone",
+        "Default",
+        "DoubleEndedIterator",
+        "Drop",
+        "ExactSizeIterator",
+        "Extend",
+        "Fn",
+        "FnMut",
+        "FnOnce",
+        "From",
+        "FromIterator",
+        "Into",
+        "IntoIterator",
+        "Iterator",
+        "Ord",
+        "PartialEq",
+        "PartialOrd",
+        "ToOwned",
+        "ToString",
+        "TryFrom",
+        "TryInto",
+    }
+)
+
 # Iterator-adaptor closure typing (issue #1045): a closure argument of one
 # of these adaptors receives the sequence's element (by value or
 # reference, indistinguishable for method binding), so its parameter can

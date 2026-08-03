@@ -1336,10 +1336,10 @@ class ImportProcessor:
     ) -> tuple[str, ...] | None:
         # Repo-relative dir of the package this dependency entry binds
         # to, or None when it resolves outside the repo (registry
-        # version, git, renamed `package =` entries stay out of scope).
+        # version, git). A `package =` rename changes the name the entry
+        # is spoken by, not where it lives: an entry carrying a path
+        # still binds that directory.
         if not isinstance(value, dict):
-            return None
-        if cs.RS_MANIFEST_PACKAGE_KEY in value:
             return None
         base = self.repo_path.joinpath(*pkg_parts)
         if value.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True:
@@ -1393,6 +1393,17 @@ class ImportProcessor:
             return False
         deps = self._rust_package_deps(pkg)
         return head in deps and deps[head] is None
+
+    def rust_head_is_repo_crate(self, head: str) -> bool:
+        """Whether this use head names a lib crate the repo itself holds.
+
+        A manifest says how a crate is FETCHED, which is a different
+        question from whether the repo indexes it: a workspace sibling may
+        be declared by version alone (the published-workspace shape), and
+        the entry then resolves to no repo directory even though the
+        crate's own sources sit right here (issue #1048).
+        """
+        return head in self._rust_workspace_crate_roots()
 
     def _rust_crate_root(self, module_qn: str) -> tuple[str, list[str]] | None:
         """The file's crate root: ("classic", dir parts) or ("file", qn parts).
