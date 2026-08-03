@@ -149,6 +149,15 @@ This process ensures that human reviewers focus on high-level design and logic r
 
 - **PydanticAI Only**: This project uses PydanticAI as the official agentic framework. Do not introduce other frameworks like LangChain, CrewAI, or AutoGen.
 
+### External Service Integrations
+
+Integrations with external services (search APIs, model hosts, data providers) are welcome, on these terms:
+
+- **Free tier only**: The open-source tree carries capability that works without payment. Do not add configuration that selects a vendor's paid plan, and do not document a route to one. Paid capability belongs in [Enterprise Services](https://code-graph-rag.com/enterprise), not in an environment variable here.
+- **No single-vendor lock**: A generic capability resolves its backend from configuration, the way model and embedding providers already do in `codebase_rag/config.py`. A capability that works only for holders of one vendor's key is not a capability this project has.
+- **Keyless default**: Where a provider needs no account, it is the default, so the feature works on a fresh checkout.
+- **Disclose affiliation**: If you work for, or are compensated by, the service you are integrating, say so in the pull request description.
+
 ### Code Standards
 
 - **Heavy Pydantic Usage**: Use Pydantic models extensively for data validation, serialisation, and configuration
