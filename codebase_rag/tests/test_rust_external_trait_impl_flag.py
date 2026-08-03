@@ -37,7 +37,11 @@ def _build(root: Path, mock_ingestor: MagicMock, files: dict[str, str]) -> dict:
 
 
 def _prop(props: dict[str, dict], suffix: str) -> dict:
-    return next(v for k, v in props.items() if k.endswith(suffix))
+    # Exactly one match, or the assertion the caller makes is about a node it
+    # did not mean: the decoy fixtures turn on selecting the right one.
+    matches = [(k, v) for k, v in props.items() if k.endswith(suffix)]
+    assert len(matches) == 1, f"{suffix} matched {[k for k, _ in matches]}"
+    return matches[0][1]
 
 
 def _write_workspace(project: Path, files: dict[str, str]) -> None:
