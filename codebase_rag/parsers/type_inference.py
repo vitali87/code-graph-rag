@@ -387,6 +387,10 @@ class TypeInferenceEngine:
         # resolve to nothing keeps the generic name: the known-external
         # receiver guard then suppresses the name-based fallback instead of
         # letting it fabricate an edge onto an unrelated same-named method.
+        if not var_types:
+            # Nothing recorded to rewrite, so the ancestor walk that collects
+            # the bounds is pure waste.
+            return
         bounds = self.rust_type_inference.collect_generic_bounds(caller_node)
         if not bounds:
             return
