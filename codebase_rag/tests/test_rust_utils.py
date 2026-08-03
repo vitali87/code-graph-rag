@@ -595,10 +595,14 @@ class TestExtractUseImportsEdgeCases:
         assert use_node is not None
 
         result = extract_use_imports(use_node)
-        assert "self" in result
+        # `{self}` binds the base path under the name it is in scope as, `fs`.
+        # Keyed on the keyword instead, the entry was unreachable and every
+        # `fs::...` spelling in the file resolved to nothing (issue #1054).
+        assert "fs" in result
+        assert "self" not in result
         assert "File" in result
         assert "read_to_string" in result
-        assert result["self"] == "std::fs"
+        assert result["fs"] == "std::fs"
         assert result["File"] == "std::fs::File"
         assert result["read_to_string"] == "std::fs::read_to_string"
 
