@@ -78,7 +78,7 @@ This project uses automated code review bots (**Greptile** and **Gemini Code Ass
 ## Technical Requirements
 
 - **PydanticAI for now**: The current framework choice, open to a well-argued change. Do not add a second one (LangChain, CrewAI, AutoGen) in a feature PR; open an issue first
-- **External services**: Integrations use free tiers only, resolve their backend from configuration rather than hard-coding one vendor, and default to a keyless provider where one exists. Paid capability belongs in [Enterprise Services](https://code-graph-rag.com/enterprise)
+- **External services**: Integrations use free tiers only, resolve their backend from configuration rather than hard-coding one vendor, and default to a keyless provider where one exists. Paid capability belongs in [Enterprise Services](https://code-graph-rag.com/enterprise). Contributors integrating a service they are compensated by disclose that in the PR description. See [`CONTRIBUTING.md`](https://github.com/vitali87/code-graph-rag/blob/main/CONTRIBUTING.md) for the full terms
 - **Heavy Pydantic Usage**: Use Pydantic models for data validation, serialisation, and configuration
 - **Package Management**: Use `uv` for all dependency management
 - **Code Quality**: Use `ruff` for linting and formatting
