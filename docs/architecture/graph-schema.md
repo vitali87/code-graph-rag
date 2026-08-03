@@ -78,7 +78,7 @@ The `io` capture group (opt-in; excluded from the default capture set) adds thre
 
 - **resource → resource** (`kind = resource`): a value read from one resource reaches a write to another within a function body, e.g. `x = os.getenv("K"); print(x)` yields `Resource(ENV::K) -FLOWS_TO-> Resource(STDOUT)`.
 - **caller → callee** (`kind = arg`): a tainted local value is passed as an argument to a first-party callee. A `via` edge property names the conduit as `arg:<index>` or `kw:<name>`.
-- **callee → caller** (`kind = return`, `via = return`): a callee whose return value is tainted flows that value back to the assignment in its caller.
+- **callee → caller** (`kind = return`, `via = return`): a callee whose return value is tainted flows that value back to its caller. The edge terminates at the calling function, not at the assignment that received the value.
 
 Taint is propagated through plain `x = y` assignments. `FLOWS_TO` is intentionally conservative in this phase: flow inside a body is tracked by an intra-procedural walk, return taint composes transitively across functions and files, and argument hand-off is one level.
 

@@ -361,10 +361,10 @@ module is re-exported under its own name. A project that does
   summaries are resolved by a worklist fixpoint once every file has been walked, so
   a callee defined after (or in a different file from) its caller is still known to
   return a tainted value at the caller's site.
-- Argument hand-off is one level: an `ARG` edge records that a tainted value reached
-  a call, but the taint does not enter the callee's body. There are no `Parameter`
-  nodes and no SSA-level precision, and sources and sinks are direct I/O calls from
-  the registry.
+- Argument hand-off is one level: a `FLOWS_TO` edge with `kind = arg` records that a
+  tainted value reached a call, but the taint does not enter the callee's body. There
+  are no `Parameter` nodes and no SSA-level precision, and sources and sinks are
+  direct I/O calls from the registry.
 - The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
   Go, Java, Rust, C, C++, and C#; a language not in the registry emits no I/O or
   flow edges until its table is added.
