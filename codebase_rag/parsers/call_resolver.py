@@ -1342,10 +1342,11 @@ class CallResolver:
         the file module, checking each scope's own items, the caller's
         weak entries (its enclosing mod's use fanned out per function, in
         case the mod's shared key was arbitrated to a twin), and the
-        scope's import map. A body use loses to an item the call's own
-        enclosing block declares, whose flat-registered node the later
-        probes find (issue #1026); the walk below needs no such gate,
-        since it consults each scope's own items first already.
+        scope's import map. An item declared by a block the call sits
+        inside outranks the body use and every one of those scopes, and
+        binds by SPAN: the block item and a same-named item at module
+        level both register flat in one module, so a name lookup would
+        answer with whichever of them took the natural qn (issue #1026).
         Initializer-block uses are served earlier, by
         the site-gated probe in _resolve_function_call. Returns a 1-tuple
         so a deliberate drop (the scope imports the name from OUTSIDE the
@@ -1359,13 +1360,11 @@ class CallResolver:
         ):
             return None
         import_mapping = self.import_processor.import_mapping
+        if item_qn := self._rust_block_item_at(caller_qn, call_name, call_point):
+            return ((self.function_registry[item_qn], item_qn),)
         target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
             call_name
         )
-        if target is not None and self._rust_block_item_shadows(
-            caller_qn, call_name, call_point
-        ):
-            target = None
         if target is None:
             weak = self.import_processor.rust_fn_scope_mod_imports.get(
                 caller_qn, {}
@@ -1390,18 +1389,28 @@ class CallResolver:
             return None
         return (self._follow_rust_scope_target(target),)
 
-    def _rust_block_item_shadows(
+    def _rust_block_item_at(
         self, caller_qn: str, name: str, call_point: int | None
-    ) -> bool:
-        """Does a block enclosing this site declare `name` as its own item?"""
+    ) -> str | None:
+        """The item `name` binds to in the innermost block holding this site.
+
+        Innermost wins: nested blocks may each declare the name, and only
+        the tightest one is in scope where the call is written.
+        """
         if call_point is None:
-            return False
-        return any(
-            start <= call_point < end and name in names
-            for start, end, names in self.import_processor.rust_fn_scope_item_holes.get(
-                caller_qn, ()
-            )
-        )
+            return None
+        best: tuple[int, str] | None = None
+        for start, end, items in self.import_processor.rust_fn_scope_item_holes.get(
+            caller_qn, ()
+        ):
+            item_qn = items.get(name)
+            if item_qn is None or not (start <= call_point < end):
+                continue
+            if (best is None or end - start < best[0]) and (
+                item_qn in self.function_registry
+            ):
+                best = (end - start, item_qn)
+        return best[1] if best else None
 
     def _try_resolve_rust_module_qualified(
         self, call_name: str, module_qn: str, caller_qn: str | None
@@ -1673,7 +1682,7 @@ class CallResolver:
             if any(s <= call_point < e for s, e in mod_holes):
                 continue
             if any(
-                s <= call_point < e and name in names for s, e, names in item_scopes
+                s <= call_point < e and name in items for s, e, items in item_scopes
             ):
                 continue
             size = end - start

@@ -495,7 +495,7 @@ class ImportProcessor:
                     int,
                     dict[str, str],
                     bool,
-                    list[tuple[int, int, frozenset[str]]],
+                    list[tuple[int, int, dict[str, tuple[int, int]]]],
                 ]
             ],
         ] = {}
@@ -510,12 +510,13 @@ class ImportProcessor:
         # map above which shadows everything.
         self.rust_fn_scope_mod_imports: dict[str, dict[str, str]] = {}
         # Spans of the nested blocks inside a function body that declare
-        # function items directly, with those names, keyed by the same qn
-        # as the body-use map above. Every plain block is an item scope in
-        # Rust, so a call written inside one binds the block's own item and
-        # never the body use the map holds (issue #1026).
+        # function items directly, each mapped to the REGISTERED qn of the
+        # item it declares, keyed by the same qn as the body-use map above.
+        # Every plain block is an item scope in Rust, so a call written
+        # inside one binds that block's own item, never the body use the
+        # map holds nor whatever else answers to the name (issue #1026).
         self.rust_fn_scope_item_holes: dict[
-            str, list[tuple[int, int, frozenset[str]]]
+            str, list[tuple[int, int, dict[str, str]]]
         ] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
@@ -537,7 +538,7 @@ class ImportProcessor:
                     dict[str, str],
                     list[tuple[int, int]],
                     list[tuple[int, int]],
-                    list[tuple[int, int, frozenset[str]]],
+                    list[tuple[int, int, dict[str, tuple[int, int]]]],
                 ]
             ],
         ] = {}
@@ -2633,7 +2634,17 @@ class ImportProcessor:
                 self.rust_fn_scope_mod_imports.setdefault(key, {}).update(imports)
             else:
                 self.rust_fn_scope_imports.setdefault(key, {}).update(imports)
-                self.rust_fn_scope_item_holes[key] = item_holes
+                self.rust_fn_scope_item_holes[key] = [
+                    (start, end, resolved)
+                    for start, end, items in item_holes
+                    if (
+                        resolved := {
+                            name: item.qualified_name
+                            for name, span in items.items()
+                            if (item := function_locations.get((module_qn, *span)))
+                        }
+                    )
+                ]
             self._rust_fn_scope_keys.setdefault(module_qn, set()).add(key)
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
