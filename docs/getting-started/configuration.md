@@ -12,11 +12,11 @@ Configuration is managed through environment variables in the `.env` file. The p
 
 ```bash
 ORCHESTRATOR_PROVIDER=ollama
-ORCHESTRATOR_MODEL=llama3.2
+ORCHESTRATOR_MODEL=llama4
 ORCHESTRATOR_ENDPOINT=http://localhost:11434/v1
 
 CYPHER_PROVIDER=ollama
-CYPHER_MODEL=codellama
+CYPHER_MODEL=qwen2.5-coder
 CYPHER_ENDPOINT=http://localhost:11434/v1
 ```
 
@@ -24,11 +24,11 @@ CYPHER_ENDPOINT=http://localhost:11434/v1
 
 ```bash
 ORCHESTRATOR_PROVIDER=openai
-ORCHESTRATOR_MODEL=gpt-4o
+ORCHESTRATOR_MODEL=gpt-5.6-terra
 ORCHESTRATOR_API_KEY=sk-your-openai-key
 
 CYPHER_PROVIDER=openai
-CYPHER_MODEL=gpt-4o-mini
+CYPHER_MODEL=gpt-5.6-luna
 CYPHER_API_KEY=sk-your-openai-key
 ```
 
@@ -36,11 +36,11 @@ CYPHER_API_KEY=sk-your-openai-key
 
 ```bash
 ORCHESTRATOR_PROVIDER=google
-ORCHESTRATOR_MODEL=gemini-2.5-pro
+ORCHESTRATOR_MODEL=gemini-3.1-pro
 ORCHESTRATOR_API_KEY=your-google-api-key
 
 CYPHER_PROVIDER=google
-CYPHER_MODEL=gemini-2.5-flash
+CYPHER_MODEL=gemini-3.6-flash
 CYPHER_API_KEY=your-google-api-key
 ```
 
@@ -50,11 +50,11 @@ Get your Google API key from [Google AI Studio](https://aistudio.google.com/app/
 
 ```bash
 ORCHESTRATOR_PROVIDER=google
-ORCHESTRATOR_MODEL=gemini-2.5-pro
+ORCHESTRATOR_MODEL=gemini-3.1-pro
 ORCHESTRATOR_API_KEY=your-google-api-key
 
 CYPHER_PROVIDER=ollama
-CYPHER_MODEL=codellama
+CYPHER_MODEL=qwen2.5-coder
 CYPHER_ENDPOINT=http://localhost:11434/v1
 ```
 
@@ -82,7 +82,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | Variable | Description |
 |----------|-------------|
 | `ORCHESTRATOR_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
-| `ORCHESTRATOR_MODEL` | Model ID (e.g., `gemini-2.5-pro`, `gpt-4o`, `llama3.2`) |
+| `ORCHESTRATOR_MODEL` | Model ID (e.g., `gemini-3.1-pro`, `gpt-5.6-terra`, `llama4`, `claude-sonnet-5`) |
 | `ORCHESTRATOR_API_KEY` | API key for the provider (if required) |
 | `ORCHESTRATOR_ENDPOINT` | Custom endpoint URL (if required) |
 | `ORCHESTRATOR_PROJECT_ID` | Google Cloud project ID (for Vertex AI) |
@@ -96,7 +96,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | Variable | Description |
 |----------|-------------|
 | `CYPHER_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
-| `CYPHER_MODEL` | Model ID (e.g., `gemini-2.5-flash`, `gpt-4o-mini`, `codellama`) |
+| `CYPHER_MODEL` | Model ID (e.g., `gemini-3.6-flash`, `gpt-5.6-luna`, `qwen2.5-coder`) |
 | `CYPHER_API_KEY` | API key for the provider (if required) |
 | `CYPHER_ENDPOINT` | Custom endpoint URL (if required) |
 | `CYPHER_PROJECT_ID` | Google Cloud project ID (for Vertex AI) |
@@ -123,17 +123,16 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 ```bash
 curl -fsSL https://ollama.ai/install.sh | sh
 
-ollama pull llama3.2
+ollama pull qwen2.5-coder
 # Or try other models:
-# ollama pull llama3
-# ollama pull mistral
-# ollama pull codellama
+# ollama pull llama4
+# ollama pull deepseek-r1
 ```
 
 Ollama automatically starts serving on `localhost:11434`.
 
 !!! note
-    Local models provide privacy and no API costs, but may have lower accuracy compared to cloud models like Gemini or GPT-4o.
+    Local models provide privacy and no API costs, but may have lower accuracy compared to cloud models like Gemini or GPT-5.6.
 
 ## Programmatic Configuration
 
