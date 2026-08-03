@@ -147,7 +147,7 @@ This process ensures that human reviewers focus on high-level design and logic r
 
 ### Agentic Framework
 
-- **PydanticAI Only**: This project uses PydanticAI as the official agentic framework. Do not introduce other frameworks like LangChain, CrewAI, or AutoGen.
+- **PydanticAI for now**: PydanticAI is the agentic framework the project runs on today. That is a current choice, not a permanent commitment, and a well-argued case for moving is welcome. What it does rule out is arriving at a second framework by accident, so do not introduce one (LangChain, CrewAI, AutoGen) as part of a feature pull request. Open an issue first, as `GOVERNANCE.md` asks for architectural decisions.
 
 ### External Service Integrations
 
