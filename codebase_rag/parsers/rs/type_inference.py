@@ -537,9 +537,9 @@ class RustTypeInferenceEngine:
 
     def _bound_spelling(self, node: Node) -> str | None:
         # A bound's usable spelling: a bare trait name as-is, a scoped path
-        # whole (the consumer gates on its head), a generic bound
-        # (`From<NoError>`) by its base path. Lifetimes, `?Sized` markers,
-        # and fn-trait bounds yield nothing.
+        # whole (the consumer resolves it strictly by module path), a generic
+        # bound (`From<NoError>`) by its base path. Lifetimes, `?Sized`
+        # markers, and fn-trait bounds yield nothing.
         if node.type == cs.TS_TYPE_IDENTIFIER:
             return safe_decode_text(node)
         if node.type == cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
