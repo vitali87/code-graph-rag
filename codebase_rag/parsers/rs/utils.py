@@ -79,12 +79,15 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
             # and those spellings resolve by trie luck instead (issue #1054).
             if base_path:
                 name = base_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, maxsplit=1)[-1]
-                # A relative base (`use super::{self, x}`) ends in a keyword,
-                # which is no name at all: the module is in scope under a name
-                # only the resolved path knows, so bind nothing rather than
-                # something wrong.
+                # A relative base (`use super::{self, x}`) leaves a keyword
+                # where the name would be, and rustc rejects that spelling
+                # outright ("imports need to be explicitly named"), so there is
+                # no binding to record.
                 if name not in cs.RS_PATH_KEYWORDS:
-                    imports[name] = base_path
+                    # Marked weak: the name comes from the path rather than the
+                    # source, and it must not evict a name another `use` bound
+                    # in the other namespace (see the constant).
+                    imports[f"{cs.RS_SELF_MODULE_PREFIX}{name}"] = base_path
 
         case _:
             for child in node.children:

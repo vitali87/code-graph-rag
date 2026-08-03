@@ -2415,6 +2415,13 @@ class ImportProcessor:
             resolved = self._rewrite_rust_local_use_path(
                 full_path, resolve_qn, local_mods
             )
+            if imported_name.startswith(cs.RS_SELF_MODULE_PREFIX):
+                imported_name = imported_name[len(cs.RS_SELF_MODULE_PREFIX) :]
+                if imported_name in self.import_mapping.get(effective_qn, {}):
+                    # A `{self}` module binding is weak: types and values are
+                    # separate namespaces in Rust but one slot here, so it
+                    # yields to whatever a previous `use` bound (issue #1054).
+                    continue
             resolved_imports[imported_name] = resolved
             if sub_scope:
                 # The generic deferral loop only reads the file-level map;
