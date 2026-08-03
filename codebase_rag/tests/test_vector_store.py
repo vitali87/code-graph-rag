@@ -512,9 +512,13 @@ def test_process_exit_closes_local_client_cleanly(temp_qdrant_path: Path) -> Non
         capture_output=True,
         text=True,
         env={
-            # An inherited QDRANT_URL would open a remote client and skip
-            # the local-path shutdown this test exists to exercise.
-            **{k: v for k, v in os.environ.items() if k != "QDRANT_URL"},
+            **os.environ,
+            # A QDRANT_URL would open a remote client and skip the local-path
+            # shutdown this test exists to exercise. Dropping the key is not
+            # enough: settings load with env_file=".env", so a checkout whose
+            # .env sets QDRANT_URL still resolves it. Only an explicit empty
+            # value overrides the file, and it is falsy, so the local path wins.
+            "QDRANT_URL": "",
             "QDRANT_DB_PATH": str(temp_qdrant_path),
         },
         timeout=120,
