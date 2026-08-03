@@ -676,6 +676,20 @@ class DeferredInherit(NamedTuple):
     language: SupportedLanguage
 
 
+class RustTraitImpl(NamedTuple):
+    """A Rust `impl Trait for Type` block and the methods it ingested.
+
+    Whether the trait belongs to another crate decides whether those methods
+    are dead-code roots (nothing first-party can call them), and that is only
+    knowable once every first-party trait is registered, so the block is held
+    back for resolve_deferred_inherits to judge (issue #1048).
+    """
+
+    entry: DeferredInherit
+    spelling: str
+    method_qns: list[str]
+
+
 class DeferredImportEdge(NamedTuple):
     """IMPORTS edge held back until every file is parsed.
 
