@@ -21,7 +21,7 @@ class Provider(StrEnum):
 DEFAULT_MODEL_ROLE = "model"
 
 DEFAULT_REGION = "us-central1"
-DEFAULT_MODEL = "llama3.2"
+DEFAULT_MODEL = "qwen2.5-coder"
 DEFAULT_API_KEY = "ollama"
 
 ENV_OPENAI_API_KEY = "OPENAI_API_KEY"

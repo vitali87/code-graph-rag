@@ -124,7 +124,7 @@ HELP_MEMGRAPH_HOST = "Memgraph host."
 HELP_MEMGRAPH_PORT = "Memgraph port."
 HELP_ORCHESTRATOR = (
     "Model for the planning assistant, in provider:model form "
-    "(for example openai:gpt-4 or ollama:llama3.2)."
+    "(for example openai:gpt-5.6-sol or ollama:qwen2.5-coder)."
 )
 HELP_CYPHER_MODEL = "Model used to generate Cypher, in provider:model form."
 HELP_NO_CONFIRM = "Skip edit confirmation prompts."
