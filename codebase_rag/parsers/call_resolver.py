@@ -848,7 +848,7 @@ class CallResolver:
         # cached under the file-scoped key.
         if language == cs.SupportedLanguage.RUST and caller_qn:
             scoped = self._try_resolve_rust_inline_scope(
-                call_name, module_qn, caller_qn
+                call_name, module_qn, caller_qn, call_point
             )
             if scoped is not None:
                 return scoped[0]
@@ -1331,7 +1331,7 @@ class CallResolver:
         return None
 
     def _try_resolve_rust_inline_scope(
-        self, call_name: str, module_qn: str, caller_qn: str
+        self, call_name: str, module_qn: str, caller_qn: str, call_point: int | None
     ) -> tuple[tuple[str, str] | None] | None:
         """Resolve a bare call through the caller's enclosing Rust scopes.
 
@@ -1342,7 +1342,11 @@ class CallResolver:
         the file module, checking each scope's own items, the caller's
         weak entries (its enclosing mod's use fanned out per function, in
         case the mod's shared key was arbitrated to a twin), and the
-        scope's import map. Initializer-block uses are served earlier, by
+        scope's import map. A body use loses to an item the call's own
+        enclosing block declares, whose flat-registered node the later
+        probes find (issue #1026); the walk below needs no such gate,
+        since it consults each scope's own items first already.
+        Initializer-block uses are served earlier, by
         the site-gated probe in _resolve_function_call. Returns a 1-tuple
         so a deliberate drop (the scope imports the name from OUTSIDE the
         indexed first-party graph) is distinguishable from "no scope
@@ -1358,6 +1362,10 @@ class CallResolver:
         target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
             call_name
         )
+        if target is not None and self._rust_block_item_shadows(
+            caller_qn, call_name, call_point
+        ):
+            target = None
         if target is None:
             weak = self.import_processor.rust_fn_scope_mod_imports.get(
                 caller_qn, {}
@@ -1381,6 +1389,19 @@ class CallResolver:
         if target is None:
             return None
         return (self._follow_rust_scope_target(target),)
+
+    def _rust_block_item_shadows(
+        self, caller_qn: str, name: str, call_point: int | None
+    ) -> bool:
+        """Does a block enclosing this site declare `name` as its own item?"""
+        if call_point is None:
+            return False
+        return any(
+            start <= call_point < end and name in names
+            for start, end, names in self.import_processor.rust_fn_scope_item_holes.get(
+                caller_qn, ()
+            )
+        )
 
     def _try_resolve_rust_module_qualified(
         self, call_name: str, module_qn: str, caller_qn: str | None

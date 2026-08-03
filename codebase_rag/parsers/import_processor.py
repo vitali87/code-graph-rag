@@ -407,6 +407,7 @@ class ImportProcessor:
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
         "rust_fn_scope_mod_imports",
+        "rust_fn_scope_item_holes",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "_rust_fn_scope_keys",
@@ -487,7 +488,16 @@ class ImportProcessor:
         # The bool marks WEAK entries: an impure inline mod's use fanned
         # out to the functions declared in its block.
         self._rust_pending_fn_scope_uses: dict[
-            str, list[tuple[int, int, dict[str, str], bool]]
+            str,
+            list[
+                tuple[
+                    int,
+                    int,
+                    dict[str, str],
+                    bool,
+                    list[tuple[int, int, frozenset[str]]],
+                ]
+            ],
         ] = {}
         # Function-body uses, keyed by the enclosing function's registered
         # qn. Kept OUT of import_mapping: Rust puts `mod run` and `fn run`
@@ -499,6 +509,14 @@ class ImportProcessor:
         # resolver consults it only after local items, unlike the body-use
         # map above which shadows everything.
         self.rust_fn_scope_mod_imports: dict[str, dict[str, str]] = {}
+        # Spans of the nested blocks inside a function body that declare
+        # function items directly, with those names, keyed by the same qn
+        # as the body-use map above. Every plain block is an item scope in
+        # Rust, so a call written inside one binds the block's own item and
+        # never the body use the map holds (issue #1026).
+        self.rust_fn_scope_item_holes: dict[
+            str, list[tuple[int, int, frozenset[str]]]
+        ] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -2391,6 +2409,7 @@ class ImportProcessor:
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
             self.rust_fn_scope_imports.pop(key, None)
             self.rust_fn_scope_mod_imports.pop(key, None)
+            self.rust_fn_scope_item_holes.pop(key, None)
         for key in self._rust_inline_scope_keys.pop(module_qn, ()):
             self.import_mapping.pop(key, None)
 
@@ -2460,6 +2479,7 @@ class ImportProcessor:
                         scope_node.start_point[1],
                         resolved_imports,
                         False,
+                        rs_utils.rust_block_scope_holes(scope_node)[2],
                     )
                 )
             else:
@@ -2513,7 +2533,7 @@ class ImportProcessor:
             # ends up holding.
             for line, col in rs_utils.enclosing_mod_fn_spans(use_node):
                 self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
-                    (line, col, resolved_imports, True)
+                    (line, col, resolved_imports, True, [])
                 )
 
     def retract_rust_mod_scope_uses(self, module_qn: str) -> None:
@@ -2599,6 +2619,7 @@ class ImportProcessor:
             start_col,
             imports,
             weak,
+            item_holes,
         ) in self._rust_pending_fn_scope_uses.pop(module_qn, []):
             location = function_locations.get((module_qn, start_line, start_col))
             if location is None:
@@ -2612,6 +2633,7 @@ class ImportProcessor:
                 self.rust_fn_scope_mod_imports.setdefault(key, {}).update(imports)
             else:
                 self.rust_fn_scope_imports.setdefault(key, {}).update(imports)
+                self.rust_fn_scope_item_holes[key] = item_holes
             self._rust_fn_scope_keys.setdefault(module_qn, set()).add(key)
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
