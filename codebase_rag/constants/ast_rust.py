@@ -26,6 +26,13 @@ TS_RS_IMPL_ITEM = "impl_item"
 TS_RS_FUNCTION_SIGNATURE_ITEM = "function_signature_item"
 TS_RS_CLOSURE_EXPRESSION = "closure_expression"
 TS_RS_UNION_ITEM = "union_item"
+TS_RS_TYPE_PARAMETERS = "type_parameters"
+TS_RS_TYPE_PARAMETER = "type_parameter"
+TS_RS_WHERE_CLAUSE = "where_clause"
+TS_RS_WHERE_PREDICATE = "where_predicate"
+# Items whose generic parameter lists and where clauses put trait bounds in
+# scope for the calls beneath them.
+RS_GENERIC_SCOPE_ITEMS = (TS_RS_FUNCTION_ITEM, TS_RS_IMPL_ITEM, TS_RS_TRAIT_ITEM)
 TS_RS_USE_DECLARATION = "use_declaration"
 TS_RS_EXTERN_CRATE_DECLARATION = "extern_crate_declaration"
 TS_RS_CALL_EXPRESSION = "call_expression"

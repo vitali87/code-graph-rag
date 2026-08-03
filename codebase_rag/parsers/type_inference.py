@@ -328,6 +328,14 @@ class TypeInferenceEngine:
                     local.setdefault(
                         f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOT}{field}", ftype
                     )
+            # Substitute BEFORE enrichment: params, lets, and fields spell
+            # generic names from the caller's own scope chain, but an
+            # enriched call-return type (`let x = Maker::make()` with
+            # `fn make() -> M`) spells the CALLEE's generic parameter, which
+            # the caller's bounds must not capture. Sole exception: a
+            # `self.<method>()` return spells the caller's own impl-header
+            # generics, handled inside enrichment.
+            self._substitute_rust_generic_bounds(caller_node, module_qn, local)
             self._enrich_rust_call_locals(caller_node, module_qn, local)
         elif language == cs.SupportedLanguage.DART:
             self._enrich_dart_call_locals(caller_node, local)
@@ -368,6 +376,75 @@ class TypeInferenceEngine:
             if self._rust_binding_type_resolves(binding[3], module_qn)
         )
         return bindings
+
+    def _substitute_rust_generic_bounds(
+        self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
+    ) -> None:
+        # A receiver typed as a bare generic parameter (`m: M`, a field `M` of
+        # an `impl<M: Matcher>` block) dispatches through the parameter's trait
+        # bound, so rewrite the recorded type to the qn of the first bound that
+        # resolves strictly first-party (issue #1047). A parameter whose bounds
+        # resolve to nothing keeps the generic name: the known-external
+        # receiver guard then suppresses the name-based fallback instead of
+        # letting it fabricate an edge onto an unrelated same-named method.
+        if not var_types:
+            # Nothing recorded to rewrite, so the ancestor walk that collects
+            # the bounds is pure waste.
+            return
+        bounds = self.rust_type_inference.collect_generic_bounds(caller_node)
+        if not bounds:
+            return
+        for name in var_types:
+            self._apply_rust_generic_bound(bounds, module_qn, var_types, name)
+
+    def _apply_rust_generic_bound(
+        self,
+        bounds: dict[str, list[str]],
+        module_qn: str,
+        var_types: dict[str, str],
+        name: str,
+    ) -> None:
+        for spelling in bounds.get(var_types[name], ()):
+            if trait_qn := self._rust_bound_trait_qn(spelling, module_qn):
+                var_types[name] = trait_qn
+                break
+
+    def _rust_bound_trait_qn(self, spelling: str, module_qn: str) -> str | None:
+        # Resolve a bound spelling STRICTLY to a registered first-party qn;
+        # anything looser fabricates edges: the simple-name fallbacks would
+        # bind `use std::io::Write` + `W: Write` (or a bare prelude `Clone`)
+        # to an arbitrary first-party type sharing the leaf name. The qn goes
+        # into the map directly, so the consumer cannot re-resolve it fuzzily.
+        if cs.SEPARATOR_DOUBLE_COLON in spelling:
+            # A scoped bound substitutes only on an exact module-path match.
+            parts = [
+                p
+                for p in spelling.split(cs.SEPARATOR_DOUBLE_COLON)
+                if p not in cs.RS_PATH_KEYWORDS
+            ]
+            qn = self._resolve_rust_import_path(
+                spelling, node_types=(NodeType.INTERFACE,)
+            )
+            suffix = cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+            if qn.endswith(suffix) and self._rust_registered_trait(qn):
+                return qn
+            return None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if (target := import_map.get(spelling)) is not None:
+            # An external `use` target is a raw `::` path; a first-party one
+            # arrives as an already-resolved project qn.
+            if cs.SEPARATOR_DOUBLE_COLON in target:
+                return None
+            return target if self._rust_registered_trait(target) else None
+        # No import in scope: a bare name is only visible when defined in
+        # this module (a prelude trait lands here and resolves to None).
+        local_qn = f"{module_qn}{cs.SEPARATOR_DOT}{spelling}"
+        return local_qn if self._rust_registered_trait(local_qn) else None
+
+    def _rust_registered_trait(self, qn: str) -> bool:
+        # A Rust bound always names a trait, which registers as INTERFACE;
+        # a same-named struct/enum must never satisfy it.
+        return self.function_registry.get(qn) == NodeType.INTERFACE
 
     def _rust_binding_type_resolves(self, type_name: str, module_qn: str) -> bool:
         qn = self._resolve_rust_type_qn(type_name, module_qn)
@@ -480,6 +557,7 @@ class TypeInferenceEngine:
         # (`let cmd = Command::from_frame(f)?`) with the call's return type, so a
         # later `cmd.apply()` resolves to the real type, not the ambiguous name-only
         # trie fallback. Only fills names not already typed.
+        bounds: dict[str, list[str]] | None = None
         for name, segments in self.rust_type_inference.collect_call_var_bindings(
             caller_node
         ):
@@ -489,6 +567,17 @@ class TypeInferenceEngine:
                 segments, module_qn, var_types
             ):
                 var_types[name] = return_type
+                if len(segments) == 2 and segments[0] == cs.KEYWORD_SELF:
+                    # A `let m = self.get()` callee lives in the caller's own
+                    # impl, whose header generics a method cannot shadow
+                    # (E0403): a generic return spells the CALLER's own
+                    # parameter, so its bound applies. Any other callee's
+                    # generic return stays uncaptured (issue #1047).
+                    if bounds is None:
+                        bounds = self.rust_type_inference.collect_generic_bounds(
+                            caller_node
+                        )
+                    self._apply_rust_generic_bound(bounds, module_qn, var_types, name)
 
     def _infer_rust_call_return_type(
         self, segments: list[str], module_qn: str, var_types: dict[str, str]
