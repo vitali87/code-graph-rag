@@ -100,7 +100,9 @@ def test_self_import_does_not_displace_a_same_named_value_import(
             ),
             "src/io.rs": "pub fn open() -> i32 {\n    1\n}\n",
             "src/helpers.rs": "pub fn io() -> i32 {\n    5\n}\n",
-            "src/aaa.rs": "pub fn io() -> i32 {\n    9\n}\n",
+            "src/aaa.rs": (
+                "pub fn io() -> i32 {\n    9\n}\n\npub fn open() -> i32 {\n    7\n}\n"
+            ),
             "src/app.rs": (
                 "use crate::helpers::io;\n"
                 "use crate::io::{self};\n"
@@ -116,6 +118,10 @@ def test_self_import_does_not_displace_a_same_named_value_import(
     caller = "rs_self_collide.src.app.run"
     assert (caller, "rs_self_collide.src.helpers.io") in calls, calls
     assert (caller, "rs_self_collide.src.aaa.io") not in calls, calls
+    # The module-qualified call still belongs to the module namespace, so it
+    # must reach io.rs and not the decoy the suffix trie would otherwise find.
+    assert (caller, "rs_self_collide.src.io.open") in calls, calls
+    assert (caller, "rs_self_collide.src.aaa.open") not in calls, calls
 
 
 def test_self_alias_import_still_binds_under_the_alias(

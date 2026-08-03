@@ -408,6 +408,7 @@ class ImportProcessor:
         "rust_fn_scope_imports",
         "rust_fn_scope_mod_imports",
         "rust_block_scope_imports",
+        "rust_self_module_imports",
         "_rust_fn_scope_keys",
         "_rust_pending_mod_scope_uses",
         "_rust_mod_scope_registry",
@@ -523,6 +524,11 @@ class ImportProcessor:
             ],
         ] = {}
         self._rust_fn_scope_keys: dict[str, set[str]] = {}
+        # Modules bound by a `use path::{self}` brace item, per scope qn.
+        # A module name lives in Rust's TYPE namespace while import_mapping
+        # holds one slot for both namespaces, so a qualified `name::item`
+        # reads here and a bare call reads there (issue #1054).
+        self.rust_self_module_imports: dict[str, dict[str, str]] = {}
         # Sub-scope (inline mod) maps held back until every file is
         # parsed: whether the key collides with an indexer-registered
         # module is only knowable then (finalise_rust_mod_scope_uses).
@@ -2381,6 +2387,7 @@ class ImportProcessor:
         self._rust_pending_mod_scope_uses.pop(module_qn, None)
         self._rust_mod_scope_registry.pop(module_qn, None)
         self.rust_block_scope_imports.pop(module_qn, None)
+        self.rust_self_module_imports.pop(module_qn, None)
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
             self.rust_fn_scope_imports.pop(key, None)
             self.rust_fn_scope_mod_imports.pop(key, None)
@@ -2428,10 +2435,16 @@ class ImportProcessor:
             )
             if imported_name.startswith(cs.RS_SELF_MODULE_PREFIX):
                 imported_name = imported_name[len(cs.RS_SELF_MODULE_PREFIX) :]
+                # A `{self}` item binds a MODULE, which lives in Rust's type
+                # namespace, so it is recorded where qualified `name::item`
+                # resolution can find it whatever else claims the name.
+                self.rust_self_module_imports.setdefault(effective_qn, {})[
+                    imported_name
+                ] = resolved
                 if imported_name in self.import_mapping.get(effective_qn, {}):
-                    # A `{self}` module binding is weak: types and values are
-                    # separate namespaces in Rust but one slot here, so it
-                    # yields to whatever a previous `use` bound (issue #1054).
+                    # The one slot the shared map has is already taken by a
+                    # binding from the other namespace, and evicting it would
+                    # send that name's bare calls to the trie (issue #1054).
                     continue
             resolved_imports[imported_name] = resolved
             if sub_scope:
