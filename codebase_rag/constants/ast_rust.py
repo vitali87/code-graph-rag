@@ -227,7 +227,6 @@ RS_PRELUDE_TRAITS = frozenset(
         "FnOnce",
         "From",
         "FromIterator",
-        "Hash",
         "Into",
         "IntoIterator",
         "Iterator",

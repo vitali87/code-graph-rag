@@ -40,6 +40,41 @@ def _prop(props: dict[str, dict], suffix: str) -> dict:
     return next(v for k, v in props.items() if k.endswith(suffix))
 
 
+def _write_workspace(project: Path, files: dict[str, str]) -> None:
+    project.mkdir(parents=True)
+    for name, text in files.items():
+        target = project / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
+
+def _workspace_files(printer_dep: str, use_head: str) -> dict[str, str]:
+    return {
+        "Cargo.toml": '[workspace]\nmembers = ["searcher", "printer"]\n',
+        "searcher/Cargo.toml": '[package]\nname = "grep-searcher"\nversion = "0.1.0"\n',
+        # Declared in a submodule and re-exported from the crate root, so the
+        # importing crate's spelling reaches it through the re-export:
+        # exactly ripgrep's grep_searcher::Sink.
+        "searcher/src/lib.rs": "pub mod sink;\npub use crate::sink::Sink;\n",
+        "searcher/src/sink.rs": "pub trait Sink {\n    fn matched(&mut self) -> u8;\n}\n",
+        "printer/Cargo.toml": (
+            '[package]\nname = "printer"\nversion = "0.1.0"\n\n'
+            f"[dependencies]\n{printer_dep}\n"
+        ),
+        "printer/src/lib.rs": (
+            f"use {use_head}::Sink;\n"
+            "\n"
+            "pub struct JSON;\n"
+            "\n"
+            "impl Sink for JSON {\n"
+            "    fn matched(&mut self) -> u8 {\n"
+            "        1\n"
+            "    }\n"
+            "}\n"
+        ),
+    }
+
+
 def test_scoped_stdlib_trait_impl_is_flagged(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -190,42 +225,77 @@ def test_workspace_sibling_crate_trait_impl_is_not_flagged(
     # on unresolvedness alone would permanently hide the impls of every
     # cross-crate trait in a workspace: ripgrep's whole Sink surface.
     project = temp_repo / "rs_ws_trait"
-    project.mkdir(parents=True)
-    files = {
-        "Cargo.toml": '[workspace]\nmembers = ["searcher", "printer"]\n',
-        "searcher/Cargo.toml": (
-            '[package]\nname = "grep-searcher"\nversion = "0.1.0"\n'
-        ),
-        # The trait is declared in a submodule and re-exported from the crate
-        # root, so the importing crate's spelling reaches it through the
-        # re-export: exactly ripgrep's grep_searcher::Sink.
-        "searcher/src/lib.rs": "pub mod sink;\npub use crate::sink::Sink;\n",
-        "searcher/src/sink.rs": (
-            "pub trait Sink {\n    fn matched(&mut self) -> u8;\n}\n"
-        ),
-        "printer/Cargo.toml": (
-            '[package]\nname = "printer"\nversion = "0.1.0"\n\n'
-            '[dependencies]\ngrep-searcher = { path = "../searcher" }\n'
-        ),
-        "printer/src/lib.rs": (
-            "use grep_searcher::Sink;\n"
-            "\n"
-            "pub struct JSON;\n"
-            "\n"
-            "impl Sink for JSON {\n"
-            "    fn matched(&mut self) -> u8 {\n"
-            "        1\n"
-            "    }\n"
-            "}\n"
-        ),
-    }
-    for name, text in files.items():
-        target = project / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
+    _write_workspace(
+        project,
+        _workspace_files('grep-searcher = { path = "../searcher" }', "grep_searcher"),
+    )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     matched = _prop(_method_props(mock_ingestor), "JSON.matched")
     assert not matched.get(cs.KEY_OVERRIDES_EXTERNAL), matched
+
+
+def test_versioned_workspace_sibling_trait_impl_is_not_flagged(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A published workspace declares its siblings by VERSION, with no path.
+    # The manifest then proves nothing about where the crate lives, but the
+    # repo holds it: a manifest says how a crate is fetched, not whether it
+    # is indexed here.
+    project = temp_repo / "rs_ws_versioned"
+    _write_workspace(
+        project, _workspace_files('grep-searcher = "0.1"', "grep_searcher")
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    matched = _prop(_method_props(mock_ingestor), "JSON.matched")
+    assert not matched.get(cs.KEY_OVERRIDES_EXTERNAL), matched
+
+
+def test_renamed_path_dependency_trait_impl_is_not_flagged(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `searcher = { path = "../searcher", package = "grep-searcher" }` speaks
+    # the sibling under another name. The rename changes what the crate is
+    # CALLED, not where it lives, so the path still binds a repo directory.
+    project = temp_repo / "rs_ws_renamed"
+    _write_workspace(
+        project,
+        _workspace_files(
+            'searcher = { path = "../searcher", package = "grep-searcher" }',
+            "searcher",
+        ),
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    matched = _prop(_method_props(mock_ingestor), "JSON.matched")
+    assert not matched.get(cs.KEY_OVERRIDES_EXTERNAL), matched
+
+
+def test_same_named_first_party_struct_does_not_silence_prelude_trait(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `impl Default for T` names the prelude trait; a struct the project
+    # happens to call `Default` in an unrelated, unimported module is not it.
+    # Parent resolution ends in a project-wide simple-name sweep, so without
+    # a node-kind check that struct answers for the trait and silences the
+    # flag (and the same sweep has T "implement" a struct).
+    props = _build(
+        temp_repo / "rsdecoytype",
+        mock_ingestor,
+        {
+            "lib.rs": "pub mod other;\npub mod thing;\n",
+            "other.rs": "pub struct Default {\n    pub x: u8,\n}\n",
+            "thing.rs": (
+                "pub struct T;\n"
+                "\n"
+                "impl Default for T {\n"
+                "    fn default() -> T {\n"
+                "        T\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    default = _prop(props, "T.default")
+    assert default.get(cs.KEY_OVERRIDES_EXTERNAL) is True, default
 
 
 def test_manifest_dependency_trait_impl_is_flagged(

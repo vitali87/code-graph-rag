@@ -523,11 +523,22 @@ class ClassIngestMixin:
         # genuinely dead first-party trait impl for good.
         module_qn = impl.entry.module_qn
         resolved = self._resolve_deferred_parent_qn(impl.entry)
-        if resolved is not None and not resolved[1]:
-            # A registered first-party trait dispatches through OVERRIDES
-            # liveness, which already covers its impls.
+        if (
+            resolved is not None
+            and not resolved[1]
+            and self.function_registry.get(resolved[0]) == NodeType.INTERFACE
+        ):
+            # A registered first-party TRAIT dispatches through OVERRIDES
+            # liveness, which already covers its impls. The node kind has to
+            # be checked: parent resolution ends in a project-wide simple-name
+            # sweep, so a struct the project happens to call `Default` answers
+            # for the prelude trait and would silence every `impl Default`.
             return False
         head, scoped = self._rust_trait_head(impl.spelling, module_qn)
+        if self.import_processor.rust_head_is_repo_crate(head):
+            # The crate is indexed here whatever the manifest says about
+            # fetching it, so its traits are first-party.
+            return False
         if (
             head in cs.RS_STDLIB_CRATES
             or self.import_processor.rust_head_is_external_dep(head, module_qn)
