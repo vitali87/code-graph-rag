@@ -34,6 +34,15 @@ impl<M: Matcher> Core<M> {
     pub fn run(&self) -> bool {
         self.matcher.is_match("y")
     }
+
+    pub fn get(self) -> M {
+        self.matcher
+    }
+
+    pub fn run_via_get(self) -> bool {
+        let m = self.get();
+        m.is_match("g")
+    }
 }
 
 pub fn search_where<M>(m: M) -> bool
@@ -85,6 +94,67 @@ pub fn no_capture<M: Matcher>(_m: M) -> bool {
     x.find("k")
 }
 """
+
+
+# Multi-module crate: a bound's spelling must resolve STRICTLY (import map,
+# exact module path, or same-module definition); a bare spelling naming an
+# external trait (`use std::io::Write` then `W: Write`, prelude `Clone`) must
+# not fuzzy-bind to an unrelated first-party type sharing the leaf name.
+_MOD_FILES = {
+    "src/lib.rs": "pub mod dom;\npub mod fmtx;\npub mod m;\npub mod sink;\n"
+    "pub mod u;\npub mod u2;\npub mod util;\n",
+    "src/fmtx.rs": """\
+pub struct Write;
+
+impl Write {
+    pub fn flush(&self) -> bool {
+        true
+    }
+}
+""",
+    "src/sink.rs": """\
+use std::io::Write;
+
+pub fn drain<W: Write>(w: W) -> bool {
+    w.flush()
+}
+""",
+    "src/dom.rs": """\
+pub struct Clone;
+
+impl Clone {
+    pub fn poll(&self) -> bool {
+        true
+    }
+}
+""",
+    "src/util.rs": """\
+pub fn dup<T: Clone>(t: T) -> bool {
+    t.poll()
+}
+""",
+    "src/m.rs": """\
+pub trait Matcher {
+    fn find(&self, hay: &str) -> bool;
+
+    fn is_match(&self, hay: &str) -> bool {
+        self.find(hay)
+    }
+}
+""",
+    "src/u.rs": """\
+pub fn go<M: crate::m::Matcher>(m: M) -> bool {
+    m.is_match("q")
+}
+""",
+    "src/u2.rs": """\
+use crate::m::Matcher;
+
+pub fn go2<M: Matcher>(m: M) -> bool {
+    m.is_match("r")
+}
+""",
+}
 
 
 def _write(project: Path, files: dict[str, str]) -> None:
@@ -172,6 +242,65 @@ def test_callee_return_generic_is_not_captured_by_caller_bounds(
     base = _build(temp_repo, mock_ingestor, "rs_bound_capture")
     calls = _calls(mock_ingestor)
     assert (f"{base}.no_capture", f"{base}.Matcher.find") not in calls, calls
+
+
+def _build_modules(temp_repo: Path, mock_ingestor: MagicMock, name: str) -> str:
+    project = temp_repo / name
+    files = {"Cargo.toml": f'[package]\nname = "{name}"\nversion = "0.1.0"\n'}
+    files.update(_MOD_FILES)
+    _write(project, files)
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    return f"{name}.src"
+
+
+def test_bare_imported_external_bound_does_not_substitute(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `use std::io::Write` then `W: Write`: the bound names the EXTERNAL
+    # trait, so the unrelated first-party fmtx::Write must not gain an edge.
+    base = _build_modules(temp_repo, mock_ingestor, "rs_bound_use_ext")
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.sink.drain", f"{base}.fmtx.Write.flush") not in calls, calls
+
+
+def test_prelude_bound_does_not_substitute(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `T: Clone` with no import names the prelude trait; the first-party
+    # dom::Clone struct sharing the leaf name must not gain an edge.
+    base = _build_modules(temp_repo, mock_ingestor, "rs_bound_prelude")
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.util.dup", f"{base}.dom.Clone.poll") not in calls, calls
+
+
+def test_scoped_first_party_bound_dispatches(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `M: crate::m::Matcher` resolves by exact module path, so the scoped
+    # spelling dispatches exactly as the bare one.
+    base = _build_modules(temp_repo, mock_ingestor, "rs_bound_scoped")
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.u.go", f"{base}.m.Matcher.is_match") in calls, calls
+
+
+def test_cross_module_imported_bound_dispatches(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `use crate::m::Matcher` then `M: Matcher`: the import map carries the
+    # already-resolved project qn, which substitutes directly.
+    base = _build_modules(temp_repo, mock_ingestor, "rs_bound_use_fp")
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.u2.go2", f"{base}.m.Matcher.is_match") in calls, calls
+
+
+def test_same_impl_accessor_generic_return_substitutes(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `let m = self.get()` returns the caller's OWN impl-header generic
+    # (a method cannot shadow it, E0403), so the bound applies to the local.
+    base = _build(temp_repo, mock_ingestor, "rs_bound_self_get")
+    calls = _calls(mock_ingestor)
+    assert (f"{base}.Core.run_via_get", f"{base}.Matcher.is_match") in calls, calls
 
 
 def test_external_bound_does_not_fabricate_inherent_edge(
