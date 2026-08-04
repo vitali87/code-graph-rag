@@ -191,6 +191,7 @@ class DefinitionProcessor(
         # Unnamed JS/TS function expressions held back until the named
         # JS passes have claimed their spans (one node per source function).
         self._deferred_js_anonymous: list = []
+        self._deferred_rust_body_local: list = []
         # Macro-invocation-shaped C++ nodes held until every class (incl.
         # rehydrated ones) is known; resolve_deferred_cpp_artifacts decides
         # orphaned-ctor vs macro.
@@ -392,6 +393,9 @@ class DefinitionProcessor(
                 combined_captures=combined_captures,
             )
             if language == cs.SupportedLanguage.RUST:
+                # The methods above have claimed their names; a body-local item
+                # may now take what is left of the one it shares.
+                self._flush_deferred_rust_body_local()
                 # Function-body uses key on the REGISTERED qn of their
                 # enclosing function, knowable only now that dedup variants
                 # (`natural@<line>`) have been handed out.

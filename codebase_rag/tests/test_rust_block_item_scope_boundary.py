@@ -91,25 +91,25 @@ def test_a_sibling_function_does_not_bind_another_block_item(
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     calls = _calls(mock_ingestor)
-    # The block item registered first and took the natural qn, so the
-    # module's own item is the one carrying a span suffix here.
-    assert (
-        "rs_boundary_sibling.src.a.f1",
-        "rs_boundary_sibling.src.a.g@15",
-    ) in calls, calls
+    # The module's own item keeps the natural qn: it is the one a path from
+    # anywhere can name, so the block item takes the span suffix (issue #1037).
     assert (
         "rs_boundary_sibling.src.a.f1",
         "rs_boundary_sibling.src.a.g",
+    ) in calls, calls
+    assert (
+        "rs_boundary_sibling.src.a.f1",
+        "rs_boundary_sibling.src.a.g@3",
     ) not in calls, calls
     # The call inside the block still reaches the block's own item, and
     # only it: the natural qn carries a dedup bucket holding the module
     # item too, which must not be fanned out onto.
-    assert ("rs_boundary_sibling.src.a.f0", "rs_boundary_sibling.src.a.g") in calls, (
+    assert ("rs_boundary_sibling.src.a.f0", "rs_boundary_sibling.src.a.g@3") in calls, (
         calls
     )
     assert (
         "rs_boundary_sibling.src.a.f0",
-        "rs_boundary_sibling.src.a.g@15",
+        "rs_boundary_sibling.src.a.g",
     ) not in calls, calls
 
 
@@ -188,24 +188,24 @@ def test_block_item_survives_the_module_keyed_resolution_cache(
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     calls = _calls(mock_ingestor)
-    assert ("rs_boundary_cache.src.a.f0", "rs_boundary_cache.src.a.g") in calls, calls
     assert (
-        "rs_boundary_cache.src.a.f1",
-        "rs_boundary_cache.src.a.g@15",
+        "rs_boundary_cache.src.a.f0",
+        "rs_boundary_cache.src.a.g@7",
     ) in calls, calls
+    assert ("rs_boundary_cache.src.a.f1", "rs_boundary_cache.src.a.g") in calls, calls
     assert (
         "rs_boundary_cache.src.a.f1",
-        "rs_boundary_cache.src.a.g",
+        "rs_boundary_cache.src.a.g@7",
     ) not in calls, calls
 
 
 def test_block_item_declared_after_the_module_item_keeps_the_boundary(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Which of the two same-named items holds the natural qn follows
-    # registration order, so the boundary has to hold with the module item
-    # first as well: the dedup bucket the natural qn carries must not fan a
-    # resolved call out onto the other scope's item.
+    # The module item holds the natural qn wherever it is written, so this
+    # reads the same as its sibling above; what it adds is the source order
+    # that used to decide the question. The dedup bucket the natural qn
+    # carries must not fan a resolved call out onto the other scope's item.
     project = temp_repo / "rs_boundary_order"
     _write(
         project,

@@ -115,6 +115,13 @@ def _method_belongs_directly(
 def _skip_method(
     method_node: Node, class_node: Node, class_body: Node, lang_config: LanguageSpec
 ) -> bool:
+    # Both walks below stop at a bodied function but cross a Rust const/static
+    # initializer without noticing, so an item written in one inside an impl
+    # was ingested as a method of that type and took its name (issue #1037).
+    if lang_config.language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(
+        method_node
+    ):
+        return True
     if settings.CAPTURE_FUNCTION_LOCAL_DEFINITIONS:
         return not _method_belongs_directly(method_node, class_node, lang_config)
     return _is_nested_inside_function(method_node, class_body, lang_config)

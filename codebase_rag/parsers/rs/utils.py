@@ -416,6 +416,25 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
     return None, parts, pure
 
 
+def is_body_local(node: Node) -> bool:
+    """True when *node* sits directly in a function body or an initializer.
+
+    Such an item is in scope for that body alone: no path from another module
+    names it, so it owns none of the qn its enclosing module or impl target
+    hands out (issue #1037). A type declared in the body is a different
+    matter, and the walk stops there: an `impl` written in a method body is
+    still the owner of the methods inside it, whatever encloses the impl.
+    """
+    current = node.parent
+    while current is not None and current.type != cs.TS_RS_SOURCE_FILE:
+        if current.type in cs.SPEC_RS_CLASS_TYPES:
+            return False
+        if current.type in cs.RS_BODY_LOCAL_CONTAINERS:
+            return True
+        current = current.parent
+    return False
+
+
 def enclosing_mod_names(node: Node) -> frozenset[str]:
     """Names of `mod` items in scope at the node's own module level.
 
