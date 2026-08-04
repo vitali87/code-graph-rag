@@ -33,11 +33,19 @@ def path_attribute_qn_parts(
     repository root names a file the qn scheme never keys, so nothing is
     claimed rather than a spelling guessed at.
     """
-    if not redirect.endswith(cs.EXT_RS) or ntpath.isabs(redirect) or "\\" in redirect:
-        # Only a `.rs` file backs a module, and an absolute path names one
-        # the qn scheme never keys. `ntpath` is what recognises BOTH forms
-        # of absolute (a leading slash and a `C:` drive) whatever platform
-        # the indexer itself runs on.
+    if (
+        not redirect.endswith(cs.EXT_RS)
+        or redirect.startswith("/")
+        or ntpath.splitdrive(redirect)[0]
+        or "\\" in redirect
+    ):
+        # Only a `.rs` file backs a module, and a rooted path names one the
+        # qn scheme never keys. Both rooted forms are spelled out here: a
+        # leading slash, and a `C:` drive that `ntpath` is what recognises
+        # whatever platform the indexer itself runs on. `ntpath.isabs` is
+        # not the check, since 3.13 changed it to call a single leading
+        # slash relative (to the current drive), which is true of Windows
+        # but says nothing about whether the repository holds the file.
         return None
     parts = posixpath.normpath(posixpath.join(*dir_parts, redirect)).split("/")
     stem = parts.pop()[: -len(cs.EXT_RS)]
