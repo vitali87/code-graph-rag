@@ -35,10 +35,6 @@ def process_all_method_overrides(
             parts = method_qn.rsplit(cs.SEPARATOR_DOT, 1)
             if len(parts) == 2:
                 class_qn, method_name = parts
-                # The dedup variant's name carries the line that made it
-                # unique; no base method is spelled that way, so a derived
-                # lookup keeping the suffix always misses (issue #1076).
-                method_name = method_name.split(cs.DUP_QN_MARKER, 1)[0]
                 if _emit_recorded_impl_override(
                     method_qn,
                     method_name,
@@ -179,6 +175,12 @@ def _emit_recorded_impl_override(
     trait_qn = (impl_method_traits or {}).get(method_qn)
     if trait_qn is None:
         return False
+    # Only now, with an impl block vouching for this method, is the dedup
+    # suffix safe to drop. Stripping it for every method instead would hand
+    # the ancestry walk a name it could not match before, inventing an
+    # override for an INHERENT method that merely shares a trait method's
+    # name, and would empty out a C# verbatim identifier like `@event`.
+    method_name = method_name.split(cs.DUP_QN_MARKER, 1)[0]
     parent_method_qn = f"{trait_qn}{cs.SEPARATOR_DOT}{method_name}"
     if function_registry.get(parent_method_qn) != NodeType.METHOD:
         # An inherent method, or one the trait declares nowhere: the walk has

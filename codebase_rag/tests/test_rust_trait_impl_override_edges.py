@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from codebase_rag.constants import DUP_QN_MARKER
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _pairs,
     _write,
@@ -87,6 +88,36 @@ def test_each_trait_impl_method_overrides_its_own_trait(
     assert (f"{base}.S.run@13", f"{base}.Beta.run") in overrides, overrides
     assert (f"{base}.S.run@13", f"{base}.Alpha.run") not in overrides, overrides
     assert (f"{base}.S.run", f"{base}.Beta.run") not in overrides, overrides
+
+
+def test_inherent_method_sharing_a_trait_method_name_overrides_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `impl S` is inherent: it implements no trait, so its `run` overrides
+    # nothing even though the trait impl above declares that name. Dropping the
+    # dedup suffix for EVERY method, rather than only where an impl block
+    # vouches for it, hands the ancestry walk a name it could not match before
+    # and invents this edge. An OVERRIDES edge expands dead-code liveness, so
+    # the invented one revives an unused inherent method.
+    base = _run(
+        temp_repo,
+        mock_ingestor,
+        "rs_impl_inherent",
+        _TRAITS.replace("pub trait Beta { fn run(&self) -> u32; }\n", "")
+        + (
+            "impl Alpha for S {\n"
+            "    fn run(&self) -> u32 { 1 }\n"
+            "}\n\n"
+            "impl S {\n"
+            "    pub fn run(&self) -> u32 { 2 }\n"
+            "}\n"
+        ),
+    )
+    overrides = _overrides(mock_ingestor)
+    assert (f"{base}.S.run", f"{base}.Alpha.run") in overrides, overrides
+    assert not [
+        pair for pair in overrides if pair[0].startswith(f"{base}.S.run{DUP_QN_MARKER}")
+    ], overrides
 
 
 def test_block_order_not_trait_name_decides_the_override_target(
