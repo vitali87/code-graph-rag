@@ -6,6 +6,7 @@ import tomllib
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
+from typing import NamedTuple
 
 from loguru import logger
 from tree_sitter import Node
@@ -65,6 +66,17 @@ _RS_MOD_DECL_PATTERN = re.compile(
 # importing module. `mod` here catches INLINE `mod x { ... }` blocks, which
 # declare a name in the entry module but pull no file into the crate (the
 # bodyless pattern above is what assigns files).
+# A `#[path = "..."]` attribute among a bodyless declaration's attributes
+# names the file backing it, which is where the qn scheme keys the module.
+# Only the plain string form is read: a cfg_attr wrapper is conditional and
+# no single target speaks for it (issue #1035).
+_RS_MOD_REDIRECT_PATTERN = re.compile(
+    r"^[ \t]*((?:#\[[^\]\n]*\][ \t]*\n?)*)"
+    r"(?:pub[ \t]*(?:\([^)]*\))?[ \t]+)?"
+    r"mod[ \t]+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*;",
+    re.MULTILINE,
+)
+_RS_PATH_ATTRIBUTE_PATTERN = re.compile(r'#\[[ \t]*path[ \t]*=[ \t]*"([^"]+)"[ \t]*\]')
 _RS_ITEM_DECL_PATTERN = re.compile(
     r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
     r'(?:(?:unsafe|async|const|extern\s+"[^"]*")\s+)*'
@@ -162,6 +174,50 @@ def _rs_strip_comments_and_strings(source: str) -> str:
         out.append(c)
         i += 1
     return "".join(out)
+
+
+class RustEntryDecls(NamedTuple):
+    """What an entry file's top level declares, for crate attribution."""
+
+    mods: set[str]
+    items: set[str]
+    # Declared name -> the file path its `#[path]` attribute names, kept
+    # separate because the qn scheme keys the module by that FILE while
+    # every crate path names it by the declared name (issue #1035).
+    redirects: dict[str, str]
+
+
+def _rs_entry_decls_of(top_level: str, source: str) -> RustEntryDecls:
+    # The blanked text is what decides which declarations are real, since
+    # a string literal cannot fake a `mod x;` there. It also empties every
+    # string, so the `#[path]` VALUE survives only in the raw source: read
+    # it there and keep it only for a name the blanked scan confirmed.
+    mods = set(_RS_MOD_DECL_PATTERN.findall(top_level))
+    redirects: dict[str, str] = {}
+    for attributes, name in _RS_MOD_REDIRECT_PATTERN.findall(source):
+        if name in mods and (match := _RS_PATH_ATTRIBUTE_PATTERN.search(attributes)):
+            redirects[name] = match.group(1)
+    return RustEntryDecls(
+        mods,
+        set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
+        redirects,
+    )
+
+
+def _rs_redirect_parts(dir_parts: list[str], redirect: str) -> list[str] | None:
+    """Repo-relative qn segments for a `#[path]` target, or None if it escapes.
+
+    The path counts from the directory holding the declaring entry file,
+    and a `mod.rs` target names that directory rather than a file beside
+    it.
+    """
+    parts = posixpath.normpath(posixpath.join(*dir_parts, redirect)).split("/")
+    if parts and parts[-1].endswith(cs.EXT_RS):
+        stem = parts.pop()[: -len(cs.EXT_RS)]
+        if stem != cs.INDEX_MOD:
+            parts.append(stem)
+    cleaned = [part for part in parts if part not in ("", ".")]
+    return None if not cleaned or ".." in cleaned else cleaned
 
 
 def _rs_top_level_only(stripped: str) -> str:
@@ -450,7 +506,7 @@ class ImportProcessor:
         # reset_rust_path_caches so watch re-runs re-observe the filesystem.
         self._rust_dir_listing: dict[str, frozenset[str]] = {}
         self._rust_entry_mod_decls: dict[
-            tuple[str, ...], dict[str, tuple[set[str], set[str]]]
+            tuple[str, ...], dict[str, RustEntryDecls]
         ] = {}
         # Explicit Cargo target entry paths per package dir ([[bin]]/[lib]/
         # [[example]]/[[test]]/[[bench]] `path` overrides): such entries
@@ -1524,7 +1580,7 @@ class ImportProcessor:
             # declares that module (cargo-verified: src/cli/sub.rs builds
             # into the lib when lib.rs declares `mod cli;`).
             return top, True
-        declaring = [stem for stem, (mods, _items) in decls.items() if top in mods]
+        declaring = [stem for stem, entry in decls.items() if top in entry.mods]
         if declaring:
             return declaring[0], len(declaring) == 1
         for stem in ("lib", "main"):
@@ -1560,8 +1616,8 @@ class ImportProcessor:
             # hole exactly like an unreadable lib.rs and does.
             claiming = {
                 stem
-                for stem, (mods, items) in decls.items()
-                if mods or (items - {"main"})
+                for stem, entry in decls.items()
+                if entry.mods or (entry.items - {"main"})
             }
             if (
                 not build_hole
@@ -1583,10 +1639,8 @@ class ImportProcessor:
                 return stem, True
         return "lib", False
 
-    def _rust_entry_decls(
-        self, dir_parts: list[str]
-    ) -> dict[str, tuple[set[str], set[str]]]:
-        """Per entry stem: (mod declarations, top-level item names)."""
+    def _rust_entry_decls(self, dir_parts: list[str]) -> dict[str, RustEntryDecls]:
+        """Per entry stem: mod declarations, item names, `#[path]` targets."""
         key = tuple(dir_parts)
         decls = self._rust_entry_mod_decls.setdefault(key, {})
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
@@ -1624,10 +1678,7 @@ class ImportProcessor:
                 # tie-break's real but wrong answer.
                 continue
             top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
-            decls[stem] = (
-                set(_RS_MOD_DECL_PATTERN.findall(top_level)),
-                set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
-            )
+            decls[stem] = _rs_entry_decls_of(top_level, source)
         return decls
 
     def _rust_attach(
@@ -1644,7 +1695,15 @@ class ImportProcessor:
         entries = self._rust_dir_entries(directory)
         chosen = self._rust_entry_decls(dir_parts).get(stem)
         if rest and chosen is not None:
-            file_mods, items = chosen
+            file_mods, items = chosen.mods, chosen.items
+            if redirect := chosen.redirects.get(rest[0]):
+                # The declaration names its backing file outright, and the
+                # module keys under that file, so the declared name never
+                # appears in the qn at all (issue #1035).
+                if target := _rs_redirect_parts(dir_parts, redirect):
+                    return cs.SEPARATOR_DOT.join(
+                        [self.project_name, *target, *rest[1:]]
+                    )
             if rest[0] in file_mods:
                 return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
             if rest[0] in items:
@@ -1660,8 +1719,8 @@ class ImportProcessor:
             # When a file compiles into BOTH crates (lib.rs and main.rs each
             # declare its module), the path can only mean the entry that
             # DECLARES the item; the chosen entry declaring it returned above.
-            for other, (_mods, items) in self._rust_entry_decls(dir_parts).items():
-                if other != stem and rest[0] in items:
+            for other, other_decls in self._rust_entry_decls(dir_parts).items():
+                if other != stem and rest[0] in other_decls.items:
                     stem = other
                     break
         return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, stem, *rest])
@@ -2370,10 +2429,7 @@ class ImportProcessor:
                     top_level = _rs_top_level_only(
                         _rs_strip_comments_and_strings(source)
                     )
-                    stems[file_path.stem] = (
-                        set(_RS_MOD_DECL_PATTERN.findall(top_level)),
-                        set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
-                    )
+                    stems[file_path.stem] = _rs_entry_decls_of(top_level, source)
         if file_path.name == cs.PKG_CARGO_TOML:
             # A manifest edit can add, remove, or repoint explicit targets
             # anywhere in its package, and a CREATED manifest moves the

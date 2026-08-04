@@ -1,9 +1,23 @@
-from collections.abc import Sequence
+import re
+from collections.abc import Iterable, Sequence
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+
+# `#[path = "support/helpers.rs"]` redirects the mod declaration it sits on
+# to an arbitrary file. Only the plain string form is read: a cfg_attr
+# wrapper is conditional and no single target speaks for it.
+_RS_PATH_ATTRIBUTE = re.compile(r'^#\[\s*path\s*=\s*"([^"]+)"\s*\]$')
+
+
+def path_attribute_target(decorators: Iterable[object]) -> str | None:
+    """The file a `#[path = "..."]` attribute points the declaration at."""
+    for decorator in decorators:
+        if match := _RS_PATH_ATTRIBUTE.match(str(decorator).strip()):
+            return match.group(1)
+    return None
 
 
 def _collect_path_parts(node: Node, parts: list[str]) -> None:

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import posixpath
 from abc import abstractmethod
 from bisect import bisect_left, bisect_right
-from collections.abc import Mapping
-from pathlib import Path
+from collections.abc import Mapping, Sequence
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
@@ -1518,6 +1519,7 @@ class ClassIngestMixin:
                     module_node,
                     module_qn,
                     safe_decode_text(module_name_node) or "",
+                    decorators,
                 )
                 (gated_targets if gated else ungated_targets).update(candidates)
                 continue
@@ -1574,7 +1576,11 @@ class ClassIngestMixin:
             self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, decl_props)
 
     def _rust_cfg_test_candidates(
-        self, module_node: Node, module_qn: str, module_name: str
+        self,
+        module_node: Node,
+        module_qn: str,
+        module_name: str,
+        decorators: Sequence[object] = (),
     ) -> set[str]:
         """Qualified-name candidates for a bodyless declaration's target.
 
@@ -1591,6 +1597,13 @@ class ClassIngestMixin:
         if not module_name:
             return set()
         chain = rs_utils.build_module_path(module_node)
+        if not chain and (
+            redirect := self._rust_path_attribute_qn(module_qn, decorators)
+        ):
+            # `#[path]` names the backing file outright, and the file is
+            # where the qn scheme keys the module, so the name-derived
+            # spellings below back nothing at all here (issue #1035).
+            return {redirect}
         candidates = {
             self.import_processor._rust_resolve_relative(
                 module_qn, [*chain, module_name], module_qn
@@ -1614,6 +1627,34 @@ class ClassIngestMixin:
                     )
                 )
         return candidates
+
+    def _rust_path_attribute_qn(
+        self, module_qn: str, decorators: Sequence[object]
+    ) -> str | None:
+        """The qn of the file a `#[path]` declaration redirects to.
+
+        The path is relative to the directory holding the declaring file.
+        A `mod.rs` target names the directory itself, which is the qn the
+        indexer gives that directory's module.
+        """
+        redirect = rs_utils.path_attribute_target(decorators)
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if redirect is None or file_path is None:
+            return None
+        declaring = cached_relative_path(file_path, self.repo_path)
+        target = PurePosixPath(
+            posixpath.normpath(declaring.parent.as_posix() + "/" + redirect)
+        )
+        if target.suffix == cs.EXT_RS:
+            target = (
+                target.parent if target.stem == cs.INDEX_MOD else target.with_suffix("")
+            )
+        parts = [part for part in target.parts if part not in ("", ".")]
+        if not parts or any(part == ".." for part in parts):
+            # The redirect climbs out of the repository: no indexed module
+            # answers to it, so nothing is claimed.
+            return None
+        return cs.SEPARATOR_DOT.join([self.project_name, *parts])
 
     def process_all_method_overrides(self) -> None:
         mo.process_all_method_overrides(
