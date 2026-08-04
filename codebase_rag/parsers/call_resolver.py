@@ -1359,35 +1359,51 @@ class CallResolver:
             or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
         ):
             return None
-        import_mapping = self.import_processor.import_mapping
         if item_qn := self._rust_block_item_at(caller_qn, call_name, call_point):
             return ((self.function_registry[item_qn], item_qn),)
         target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
             call_name
         )
         if target is None:
-            weak = self.import_processor.rust_fn_scope_mod_imports.get(
-                caller_qn, {}
-            ).get(call_name)
-            scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            while len(scope) > len(module_qn):
-                # The scope segment may be an impl target whose method a
-                # bare path can never name (issue #1011).
-                if local := self._scope_candidate(
-                    scope, call_name, cs.SupportedLanguage.RUST
-                ):
-                    return (local,)
-                target = (
-                    weak
-                    if weak is not None
-                    else import_mapping.get(scope, {}).get(call_name)
-                )
-                if target is not None:
-                    break
-                scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            local, target = self._rust_walk_enclosing_scopes(
+                call_name, module_qn, caller_qn
+            )
+            if local is not None:
+                return (local,)
         if target is None:
             return None
         return (self._follow_rust_scope_target(target),)
+
+    def _rust_walk_enclosing_scopes(
+        self, call_name: str, module_qn: str, caller_qn: str
+    ) -> tuple[tuple[str, str] | None, str | None]:
+        """Walk the caller's inline mods outwards for an item or an import.
+
+        Returns (resolved item, import target): the first scope owning the
+        name as its own item answers outright, otherwise the innermost
+        binding found on the way out is handed back for following.
+        """
+        import_mapping = self.import_processor.import_mapping
+        weak = self.import_processor.rust_fn_scope_mod_imports.get(caller_qn, {}).get(
+            call_name
+        )
+        scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        while len(scope) > len(module_qn):
+            # The scope segment may be an impl target whose method a
+            # bare path can never name (issue #1011).
+            if local := self._scope_candidate(
+                scope, call_name, cs.SupportedLanguage.RUST
+            ):
+                return local, None
+            target = (
+                weak
+                if weak is not None
+                else import_mapping.get(scope, {}).get(call_name)
+            )
+            if target is not None:
+                return None, target
+            scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return None, None
 
     def _rust_block_item_at(
         self, caller_qn: str, name: str, call_point: int | None
