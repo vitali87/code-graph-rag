@@ -11,6 +11,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
+from codebase_rag.parsers.import_processor import (
+    _rs_entry_decls_of,
+    _rs_strip_comments_and_strings,
+    _rs_top_level_only,
+)
 from codebase_rag.tests.test_rust_cfg_test_mod_declarations import _declared_gates
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _calls,
@@ -260,3 +265,107 @@ def test_an_absolute_redirect_claims_nothing(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     gates = _declared_gates(mock_ingestor, "rs_path_attr_abs.src.lib")
     assert not any("nowhere" in gate for gate in gates), gates
+
+
+def test_two_cfg_variants_of_one_name_claim_no_single_target() -> None:
+    # Platform modules are declared once per cfg under a single name, each
+    # redirected somewhere else. Exactly one compiles and nothing in a
+    # static scan knows which, so the name keeps no redirect rather than
+    # the one that happens to be written last.
+    source = (
+        "#[cfg(unix)]\n"
+        '#[path = "sys/unix.rs"]\n'
+        "mod platform;\n"
+        "#[cfg(windows)]\n"
+        '#[path = "sys/windows.rs"]\n'
+        "mod platform;\n"
+    )
+    decls = _rs_entry_decls_of(
+        _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    )
+    assert "platform" in decls.mods, decls
+    assert decls.redirects == {}, decls.redirects
+
+
+def test_two_cfg_variants_gate_both_of_their_targets(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The gate side sees each declaration on its own, and both really are
+    # gated, so both targets are recorded whichever one compiles.
+    project = temp_repo / "rs_path_attr_cfg_gate"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_cfg_gate"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": (
+                "#[cfg(test)]\n"
+                '#[path = "sys/unix.rs"]\n'
+                "mod platform;\n"
+                "#[cfg(test)]\n"
+                '#[path = "sys/windows.rs"]\n'
+                "mod other;\n"
+            ),
+            "src/sys/unix.rs": "pub fn boot() -> i32 {\n    1\n}\n",
+            "src/sys/windows.rs": "pub fn boot() -> i32 {\n    2\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    gates = _declared_gates(mock_ingestor, "rs_path_attr_cfg_gate.src.lib")
+    assert "rs_path_attr_cfg_gate.src.sys.unix" in gates, gates
+    assert "rs_path_attr_cfg_gate.src.sys.windows" in gates, gates
+
+
+def test_a_drive_qualified_redirect_claims_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `C:/...` is absolute on Windows and carries no separator this check
+    # would otherwise notice.
+    project = temp_repo / "rs_path_attr_drive"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_drive"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": (
+                "#[cfg(test)]\n"
+                '#[path = "C:/outside/helpers.rs"]\n'
+                "mod helpers;\n"
+                "\n"
+                "pub fn add() -> i32 {\n    1\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    gates = _declared_gates(mock_ingestor, "rs_path_attr_drive.src.lib")
+    assert not any("outside" in gate or "C:" in gate for gate in gates), gates
+
+
+def test_redirect_inside_an_inline_module_gates_the_file_it_names(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Inside an inline block the path counts from the declaring file's
+    # directory plus the inline chain, so the gate still has to name the
+    # file the indexer keyed the module by.
+    project = temp_repo / "rs_path_attr_inline"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_inline"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": (
+                "pub mod outer {\n"
+                "    #[cfg(test)]\n"
+                '    #[path = "redirected.rs"]\n'
+                "    mod child;\n"
+                "}\n"
+            ),
+            "src/outer/redirected.rs": ("pub(crate) fn fixture() -> i32 {\n    7\n}\n"),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    gates = _declared_gates(mock_ingestor, "rs_path_attr_inline.src.lib")
+    assert "rs_path_attr_inline.src.outer.redirected" in gates, gates

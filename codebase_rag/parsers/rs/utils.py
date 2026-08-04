@@ -1,3 +1,4 @@
+import ntpath
 import posixpath
 import re
 from collections.abc import Iterable, Sequence
@@ -26,15 +27,17 @@ def path_attribute_qn_parts(
 ) -> list[str] | None:
     """Qn segments for a `#[path]` target, or None when none can be named.
 
-    The path counts from the directory holding the declaring file, and a
-    `mod.rs` target names that directory rather than a file beside it. An
-    absolute path, a Windows separator, or a climb above the repository
-    root names a file the qn scheme never keys, so nothing is claimed
-    rather than a spelling guessed at.
+    `dir_parts` is the directory the path counts from, and a `mod.rs`
+    target names that directory rather than a file beside it. An absolute
+    path, a Windows separator, a non-`.rs` target, or a climb above the
+    repository root names a file the qn scheme never keys, so nothing is
+    claimed rather than a spelling guessed at.
     """
-    if not redirect.endswith(cs.EXT_RS) or redirect.startswith("/") or "\\" in redirect:
-        # Only a `.rs` file backs a module, and an absolute or
-        # backslash-separated path names one the qn scheme never keys.
+    if not redirect.endswith(cs.EXT_RS) or ntpath.isabs(redirect) or "\\" in redirect:
+        # Only a `.rs` file backs a module, and an absolute path names one
+        # the qn scheme never keys. `ntpath` is what recognises BOTH forms
+        # of absolute (a leading slash and a `C:` drive) whatever platform
+        # the indexer itself runs on.
         return None
     parts = posixpath.normpath(posixpath.join(*dir_parts, redirect)).split("/")
     stem = parts.pop()[: -len(cs.EXT_RS)]

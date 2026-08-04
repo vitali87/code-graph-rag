@@ -201,10 +201,21 @@ class RustEntryDecls(NamedTuple):
 
 
 def _rs_entry_decls_of(top_level: str) -> RustEntryDecls:
+    # One name may be declared once per cfg (`#[cfg(unix)] mod platform;`
+    # beside its windows twin), each redirected somewhere else. Exactly one
+    # of them compiles and nothing here knows which, so disagreeing targets
+    # are ambiguous and the name keeps no redirect at all.
     redirects: dict[str, str] = {}
+    ambiguous: set[str] = set()
     for attributes, name in _RS_MOD_REDIRECT_PATTERN.findall(top_level):
-        if match := _RS_PATH_ATTRIBUTE_PATTERN.search(attributes):
-            redirects[name] = match.group(1)
+        match = _RS_PATH_ATTRIBUTE_PATTERN.search(attributes)
+        target = match.group(1) if match else None
+        if name in redirects and redirects[name] != target:
+            ambiguous.add(name)
+        elif target is not None:
+            redirects[name] = target
+    for name in ambiguous:
+        redirects.pop(name, None)
     return RustEntryDecls(
         set(_RS_MOD_DECL_PATTERN.findall(top_level)),
         set(_RS_ITEM_DECL_PATTERN.findall(top_level)),

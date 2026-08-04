@@ -1596,9 +1596,7 @@ class ClassIngestMixin:
         if not module_name:
             return set()
         chain = rs_utils.build_module_path(module_node)
-        if not chain and (
-            redirect := self._rust_path_attribute_qn(module_qn, decorators)
-        ):
+        if redirect := self._rust_path_attribute_qn(module_qn, chain, decorators):
             # `#[path]` names the backing file outright, and the file is
             # where the qn scheme keys the module, so the name-derived
             # spellings below back nothing at all here (issue #1035).
@@ -1628,19 +1626,27 @@ class ClassIngestMixin:
         return candidates
 
     def _rust_path_attribute_qn(
-        self, module_qn: str, decorators: Sequence[object]
+        self, module_qn: str, chain: list[str], decorators: Sequence[object]
     ) -> str | None:
         """The qn of the file a `#[path]` declaration redirects to.
 
-        The path is relative to the directory holding the declaring file.
-        A `mod.rs` target names the directory itself, which is the qn the
-        indexer gives that directory's module.
+        The path counts from the directory holding the declaring file, and
+        a `mod.rs` target names the directory itself, which is the qn the
+        indexer gives that directory's module. Inside inline `mod` blocks
+        the chain joins that directory, and a file that is not itself a
+        module root (anything but lib.rs, main.rs or mod.rs) contributes
+        its own stem as a directory first, exactly as rustc counts it.
         """
         redirect = rs_utils.path_attribute_target(decorators)
         file_path = self.module_qn_to_file_path.get(module_qn)
         if redirect is None or file_path is None:
             return None
-        dir_parts = cached_relative_path(file_path, self.repo_path).parts[:-1]
+        declaring = cached_relative_path(file_path, self.repo_path)
+        dir_parts = list(declaring.parts[:-1])
+        if chain:
+            if declaring.stem not in cs.RS_ENTRY_STEMS:
+                dir_parts.append(declaring.stem)
+            dir_parts.extend(chain)
         parts = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
         return (
             None
