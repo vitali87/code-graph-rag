@@ -566,7 +566,7 @@ wheels = [
 
 [[package]]
 name = "code-graph-rag"
-version = "0.0.550"
+version = "0.0.551"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
