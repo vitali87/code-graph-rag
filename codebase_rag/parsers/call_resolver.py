@@ -732,10 +732,11 @@ class CallResolver:
         # enclosing-scope and same-module ones below: a use shadows outer
         # items for the remainder of its block (rustc-verified), so even
         # the file's own same-named item loses to it. A nested fn's own
-        # body use still outranks the block, and a containing block that
-        # declares the name itself opts out entirely (the probes below
-        # find its flat-registered item, except where the enclosing fn's
-        # own body use shadows it there, issue #1026). A `::`-qualified
+        # body use still outranks the block. Ahead of all of it stands an
+        # item the call's own block declares, which every use loses to;
+        # that probe belongs HERE rather than with the scope walk, since
+        # a module-level initializer's caller qn is the module itself and
+        # never reaches the walk (issues #1026 and #1061). A `::`-qualified
         # first segment
         # bound by the block (`T::assoc()` under `use crate::beta::T`)
         # resolves through a map holding just that binding.
@@ -744,6 +745,10 @@ class CallResolver:
             and caller_qn
             and cs.SEPARATOR_DOT not in call_name
         ):
+            if cs.SEPARATOR_DOUBLE_COLON not in call_name and (
+                item_qn := self._rust_block_item_at(module_qn, call_name, call_point)
+            ):
+                return self.function_registry[item_qn], item_qn
             first = call_name.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
             if block_hit := self._rust_block_import_at(module_qn, first, call_point):
                 block_target, defers = block_hit
@@ -1360,8 +1365,6 @@ class CallResolver:
             or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
         ):
             return None
-        if item_qn := self._rust_block_item_at(module_qn, call_name, call_point):
-            return ((self.function_registry[item_qn], item_qn),)
         target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
             call_name
         )

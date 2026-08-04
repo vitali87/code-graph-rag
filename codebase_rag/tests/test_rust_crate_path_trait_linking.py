@@ -4223,6 +4223,9 @@ def test_inner_block_own_item_beats_block_use_at_block_level(
     base = "rs_inner_block_item_a.src"
     assert not any(dst == f"{base}.gamma.g" for _src, dst in calls), calls
     assert any(dst.startswith(f"{base}.a.g@") for _src, dst in calls), calls
+    # And ONLY the block's item: the module's own `g` is a different
+    # function that happens to share the natural qn (issue #1061).
+    assert not any(dst == f"{base}.a.g" for _src, dst in calls), calls
 
 
 def test_inner_let_block_item_beats_block_use_in_nested_fn(
