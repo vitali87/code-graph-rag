@@ -23,6 +23,7 @@ def process_all_method_overrides(
     csharp_methods: set[str] | None = None,
     csharp_override_methods: set[str] | None = None,
     impl_method_traits: dict[str, str] | None = None,
+    inherent_impl_methods: set[str] | None = None,
 ) -> None:
     logger.info(logs.CLASS_PASS_4)
 
@@ -35,6 +36,12 @@ def process_all_method_overrides(
             parts = method_qn.rsplit(cs.SEPARATOR_DOT, 1)
             if len(parts) == 2:
                 class_qn, method_name = parts
+                if inherent_impl_methods and method_qn in inherent_impl_methods:
+                    # Written in an inherent `impl Type` block, so it implements
+                    # nothing. Rust has no inheritance, and the walk below would
+                    # otherwise hand it the first trait the type implements that
+                    # happens to declare this name.
+                    continue
                 if _emit_recorded_impl_override(
                     method_qn,
                     method_name,

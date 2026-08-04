@@ -120,6 +120,38 @@ def test_inherent_method_sharing_a_trait_method_name_overrides_nothing(
     ], overrides
 
 
+def test_inherent_impl_written_first_still_overrides_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Same two blocks, inherent one FIRST, so the inherent method takes the
+    # natural qn and the trait method takes the variant. The trait binding is
+    # recorded only for the variant, and absence from that map used to send the
+    # inherent method to the ancestry walk, which found the one trait `S`
+    # implements and linked it. Rust has no inheritance: a method outside an
+    # `impl Trait for` block overrides nothing, whatever it is named (#1078).
+    base = _run(
+        temp_repo,
+        mock_ingestor,
+        "rs_impl_inherent_first",
+        _TRAITS.replace("pub trait Beta { fn run(&self) -> u32; }\n", "")
+        + (
+            "impl S {\n"
+            "    pub fn run(&self) -> u32 { 2 }\n"
+            "}\n\n"
+            "impl Alpha for S {\n"
+            "    fn run(&self) -> u32 { 1 }\n"
+            "}\n"
+        ),
+    )
+    overrides = _overrides(mock_ingestor)
+    # The trait method's `fn` sits on line 10, so it holds the variant here.
+    assert (
+        f"{base}.S.run{DUP_QN_MARKER}10",
+        f"{base}.Alpha.run",
+    ) in overrides, overrides
+    assert (f"{base}.S.run", f"{base}.Alpha.run") not in overrides, overrides
+
+
 def test_block_order_not_trait_name_decides_the_override_target(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

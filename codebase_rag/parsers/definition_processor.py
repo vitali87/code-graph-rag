@@ -225,6 +225,10 @@ class DefinitionProcessor(
         # override pass cannot re-derive this: two traits declaring one method
         # name leave the method qns indistinguishable (issue #1076).
         self.rust_impl_method_traits: dict[str, str] = {}
+        # Methods of an inherent `impl Type` block. Rust has no
+        # inheritance, so these override nothing and must never reach the
+        # ancestry walk (issue #1078).
+        self.rust_inherent_impl_methods: set[str] = set()
         # C++20 module interfaces declared this run (export module X), and
         # implementation units whose IMPLEMENTS edge waits for its
         # interface to be known.

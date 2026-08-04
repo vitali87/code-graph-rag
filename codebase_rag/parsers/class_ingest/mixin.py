@@ -184,6 +184,7 @@ class ClassIngestMixin:
     _deferred_inherits: list[DeferredInherit]
     _rust_trait_impls: list[RustTraitImpl]
     rust_impl_method_traits: dict[str, str]
+    rust_inherent_impl_methods: set[str]
     cpp_module_interfaces: set[str]
     _deferred_cpp_module_impls: list[tuple[str, str]]
     declared_module_qns: set[str]
@@ -1164,6 +1165,10 @@ class ClassIngestMixin:
         # `impl Trait for Type` means Type IMPLEMENTS Trait. The target type's
         # node label may be Class/Enum/Type, so match the relationship source
         # to its registered label (else the IMPLEMENTS edge never resolves).
+        # Collected either way: an inherent block's methods implement nothing,
+        # which the override pass has to be TOLD, or it reads their absence
+        # from the trait map as no information and guesses (issue #1078).
+        impl_method_qns: list[str] = []
         trait_impl_method_qns: list[str] | None = None
         if trait_name := rs_utils.extract_impl_trait(class_node):
             trait_qn = self._resolve_to_qn(trait_name, owner_module_qn)
@@ -1185,7 +1190,7 @@ class ClassIngestMixin:
             # they can ever have (issue #1048). The decision waits for
             # resolve_deferred_inherits, when every first-party trait is
             # registered.
-            trait_impl_method_qns = []
+            trait_impl_method_qns = impl_method_qns
             self._rust_trait_impls.append(
                 RustTraitImpl(
                     entry=trait_entry,
@@ -1251,8 +1256,7 @@ class ClassIngestMixin:
             # its own qn, and overwriting the record would re-attribute
             # its calls to this pass's twin.
             if ingested_qn is not None:
-                if trait_impl_method_qns is not None:
-                    trait_impl_method_qns.append(ingested_qn)
+                impl_method_qns.append(ingested_qn)
                 span = function_span_key(module_qn, method_node)
                 if span not in self.function_locations:
                     self.function_locations[span] = FunctionLocation(
@@ -1273,6 +1277,9 @@ class ClassIngestMixin:
                 self.method_return_types[
                     f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
                 ] = return_type
+
+        if trait_impl_method_qns is None:
+            self.rust_inherent_impl_methods.update(impl_method_qns)
 
     def _ingest_class_methods(
         self,
@@ -1693,6 +1700,7 @@ class ClassIngestMixin:
             self.csharp_methods,
             self.csharp_override_methods,
             self.rust_impl_method_traits,
+            self.rust_inherent_impl_methods,
         )
         self._resolve_java_anon_overrides()
 
