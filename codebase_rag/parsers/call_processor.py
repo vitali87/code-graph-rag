@@ -3695,7 +3695,20 @@ class CallProcessor:
                 callee_type = cs.NodeLabel.METHOD
                 callee_qn = init_qn
 
-            for target_qn in resolver.function_registry.variants(callee_qn):
+            targets = resolver.function_registry.variants(callee_qn)
+            if len(
+                targets
+            ) > 1 and not resolver.import_processor.rust_block_item_qns.isdisjoint(
+                targets
+            ):
+                # The dedup bucket holds a Rust block-local item beside an
+                # item of another scope. Those are different functions
+                # sharing a natural name, not spellings of one callee, and
+                # the span-gated probe already chose between them, so the
+                # hedge that fans an ambiguous callee onto its twins would
+                # cross the block boundary here (issue #1061).
+                targets = [callee_qn]
+            for target_qn in targets:
                 # A duplicate-suffixed variant may be a DIFFERENT kind of
                 # node (a TS namespace merged onto a function registers as
                 # a class); only callable variants take a CALLS edge, and

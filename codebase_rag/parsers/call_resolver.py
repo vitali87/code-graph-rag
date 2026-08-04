@@ -802,6 +802,7 @@ class CallResolver:
             and caller_qn
             and (
                 module_qn in self.import_processor.rust_block_scope_imports
+                or module_qn in self.import_processor.rust_block_items
                 or (
                     caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
                     and (
@@ -861,7 +862,7 @@ class CallResolver:
         # this point same-module wins. Elsewhere imports shadow module-level
         # definitions.
         if language == cs.SupportedLanguage.RUST and (
-            result := self._try_resolve_same_module(call_name, module_qn)
+            result := self._try_resolve_same_module(call_name, module_qn, call_point)
         ):
             if use_cache:
                 self._simple_resolution_cache[cache_key] = result
@@ -874,7 +875,7 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = result
             return result
 
-        if result := self._try_resolve_same_module(call_name, module_qn):
+        if result := self._try_resolve_same_module(call_name, module_qn, call_point):
             if use_cache:
                 self._simple_resolution_cache[cache_key] = result
             return result
@@ -961,7 +962,7 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = result
             return result
 
-        result = self._try_resolve_via_trie(call_name, module_qn, language)
+        result = self._try_resolve_via_trie(call_name, module_qn, language, call_point)
         if use_cache:
             self._simple_resolution_cache[cache_key] = result
         return result
@@ -1366,7 +1367,7 @@ class CallResolver:
         )
         if target is None:
             local, target = self._rust_walk_enclosing_scopes(
-                call_name, module_qn, caller_qn
+                call_name, module_qn, caller_qn, call_point
             )
             if local is not None:
                 return (local,)
@@ -1375,7 +1376,7 @@ class CallResolver:
         return (self._follow_rust_scope_target(target),)
 
     def _rust_walk_enclosing_scopes(
-        self, call_name: str, module_qn: str, caller_qn: str
+        self, call_name: str, module_qn: str, caller_qn: str, call_point: int | None
     ) -> tuple[tuple[str, str] | None, str | None]:
         """Walk the caller's inline mods outwards for an item or an import.
 
@@ -1390,10 +1391,14 @@ class CallResolver:
         scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
         while len(scope) > len(module_qn):
             # The scope segment may be an impl target whose method a
-            # bare path can never name (issue #1011).
-            if local := self._scope_candidate(
-                scope, call_name, cs.SupportedLanguage.RUST
-            ):
+            # bare path can never name (issue #1011). A block-local item
+            # that took the scope's flat qn answers to that name too, and
+            # is out of scope wherever its block is not (issue #1061).
+            if (
+                local := self._scope_candidate(
+                    scope, call_name, cs.SupportedLanguage.RUST
+                )
+            ) and not self._rust_block_item_hidden(local[1], module_qn, call_point):
                 return local, None
             target = (
                 weak
@@ -1404,6 +1409,25 @@ class CallResolver:
                 return None, target
             scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return None, None
+
+    def _rust_block_item_hidden(
+        self, qn: str, module_qn: str, call_point: int | None
+    ) -> bool:
+        """Is `qn` a Rust block-local item this call site sits outside of?
+
+        A site with no recorded position cannot be placed against the
+        block's span. Flow and taint passes resolve that way, so an
+        unplaceable site keeps the item reachable rather than losing the
+        edge outright.
+        """
+        if call_point is None or qn not in self.import_processor.rust_block_item_qns:
+            return False
+        return not any(
+            start <= call_point < end and qn in items.values()
+            for start, end, items in self.import_processor.rust_block_items.get(
+                module_qn, ()
+            )
+        )
 
     def _rust_block_item_at(
         self, module_qn: str, name: str, call_point: int | None
@@ -1713,14 +1737,12 @@ class CallResolver:
         return result
 
     def _try_resolve_same_module(
-        self, call_name: str, module_qn: str
+        self, call_name: str, module_qn: str, call_point: int | None = None
     ) -> tuple[str, str] | None:
         same_module_func_qn = f"{module_qn}.{call_name}"
-        if same_module_func_qn in self.import_processor.rust_block_item_qns:
-            # A Rust block-local item registered flat under the module's
-            # own name. It is in scope for its block alone, and a call
-            # written there was served by _rust_block_item_at long before
-            # this probe (issue #1061).
+        if self._rust_block_item_hidden(same_module_func_qn, module_qn, call_point):
+            # A Rust block-local item that took the module's own flat qn.
+            # It is in scope for its block alone (issue #1061).
             return None
         if same_module_func_qn in self.function_registry:
             logger.debug(
@@ -1729,7 +1751,9 @@ class CallResolver:
             return self.function_registry[same_module_func_qn], same_module_func_qn
         return None
 
-    def _nameable_candidates(self, candidates: list[str], module_qn: str) -> list[str]:
+    def _nameable_candidates(
+        self, candidates: list[str], module_qn: str, call_point: int | None = None
+    ) -> list[str]:
         # The simple-name fallback matches on the last name segment alone, so
         # it can offer a definition written in a language the caller's cannot
         # call into (a Python `asyncio.sleep` binding to a `sleep` closure in
@@ -1737,7 +1761,6 @@ class CallResolver:
         # so drop it; a candidate whose language cannot be determined is kept,
         # so the fallback still answers wherever this evidence is missing.
         caller_language = self._module_language(module_qn)
-        block_items = self.import_processor.rust_block_item_qns
         reachable = [
             qn
             for qn in candidates
@@ -1745,7 +1768,7 @@ class CallResolver:
             # A Rust block-local item is nameable inside its own block
             # alone, and the site-gated probe answered there already
             # (issue #1061); by simple name it is never a candidate.
-            and qn not in block_items
+            and not self._rust_block_item_hidden(qn, module_qn, call_point)
         ]
         # A definition scoped inside another function's body is named from
         # elsewhere only when it escapes (a factory returns it, CommonJS
@@ -1806,13 +1829,14 @@ class CallResolver:
         call_name: str,
         module_qn: str,
         language: cs.SupportedLanguage | None = None,
+        call_point: int | None = None,
     ) -> tuple[str, str] | None:
         search_name = _SEARCH_NAME_CACHE.get(call_name)
         if search_name is None:
             search_name = _SEPARATOR_PATTERN.split(call_name)[-1]
             _SEARCH_NAME_CACHE[call_name] = search_name
         possible_matches = self._nameable_candidates(
-            self.function_registry.find_ending_with(search_name), module_qn
+            self.function_registry.find_ending_with(search_name), module_qn, call_point
         )
         if language == cs.SupportedLanguage.RUST and search_name == call_name:
             # A bare Rust path NEVER names a method (inherent methods need
