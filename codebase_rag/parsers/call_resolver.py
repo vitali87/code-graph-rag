@@ -848,7 +848,7 @@ class CallResolver:
         # cached under the file-scoped key.
         if language == cs.SupportedLanguage.RUST and caller_qn:
             scoped = self._try_resolve_rust_inline_scope(
-                call_name, module_qn, caller_qn
+                call_name, module_qn, caller_qn, call_point
             )
             if scoped is not None:
                 return scoped[0]
@@ -1331,7 +1331,7 @@ class CallResolver:
         return None
 
     def _try_resolve_rust_inline_scope(
-        self, call_name: str, module_qn: str, caller_qn: str
+        self, call_name: str, module_qn: str, caller_qn: str, call_point: int | None
     ) -> tuple[tuple[str, str] | None] | None:
         """Resolve a bare call through the caller's enclosing Rust scopes.
 
@@ -1342,7 +1342,12 @@ class CallResolver:
         the file module, checking each scope's own items, the caller's
         weak entries (its enclosing mod's use fanned out per function, in
         case the mod's shared key was arbitrated to a twin), and the
-        scope's import map. Initializer-block uses are served earlier, by
+        scope's import map. An item declared by a block the call sits
+        inside outranks the body use and every one of those scopes, and
+        binds by SPAN: the block item and a same-named item at module
+        level both register flat in one module, so a name lookup would
+        answer with whichever of them took the natural qn (issue #1026).
+        Initializer-block uses are served earlier, by
         the site-gated probe in _resolve_function_call. Returns a 1-tuple
         so a deliberate drop (the scope imports the name from OUTSIDE the
         indexed first-party graph) is distinguishable from "no scope
@@ -1354,33 +1359,74 @@ class CallResolver:
             or not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
         ):
             return None
-        import_mapping = self.import_processor.import_mapping
+        if item_qn := self._rust_block_item_at(caller_qn, call_name, call_point):
+            return ((self.function_registry[item_qn], item_qn),)
         target = self.import_processor.rust_fn_scope_imports.get(caller_qn, {}).get(
             call_name
         )
         if target is None:
-            weak = self.import_processor.rust_fn_scope_mod_imports.get(
-                caller_qn, {}
-            ).get(call_name)
-            scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            while len(scope) > len(module_qn):
-                # The scope segment may be an impl target whose method a
-                # bare path can never name (issue #1011).
-                if local := self._scope_candidate(
-                    scope, call_name, cs.SupportedLanguage.RUST
-                ):
-                    return (local,)
-                target = (
-                    weak
-                    if weak is not None
-                    else import_mapping.get(scope, {}).get(call_name)
-                )
-                if target is not None:
-                    break
-                scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            local, target = self._rust_walk_enclosing_scopes(
+                call_name, module_qn, caller_qn
+            )
+            if local is not None:
+                return (local,)
         if target is None:
             return None
         return (self._follow_rust_scope_target(target),)
+
+    def _rust_walk_enclosing_scopes(
+        self, call_name: str, module_qn: str, caller_qn: str
+    ) -> tuple[tuple[str, str] | None, str | None]:
+        """Walk the caller's inline mods outwards for an item or an import.
+
+        Returns (resolved item, import target): the first scope owning the
+        name as its own item answers outright, otherwise the innermost
+        binding found on the way out is handed back for following.
+        """
+        import_mapping = self.import_processor.import_mapping
+        weak = self.import_processor.rust_fn_scope_mod_imports.get(caller_qn, {}).get(
+            call_name
+        )
+        scope = caller_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        while len(scope) > len(module_qn):
+            # The scope segment may be an impl target whose method a
+            # bare path can never name (issue #1011).
+            if local := self._scope_candidate(
+                scope, call_name, cs.SupportedLanguage.RUST
+            ):
+                return local, None
+            target = (
+                weak
+                if weak is not None
+                else import_mapping.get(scope, {}).get(call_name)
+            )
+            if target is not None:
+                return None, target
+            scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return None, None
+
+    def _rust_block_item_at(
+        self, caller_qn: str, name: str, call_point: int | None
+    ) -> str | None:
+        """The item `name` binds to in the innermost block holding this site.
+
+        Innermost wins: nested blocks may each declare the name, and only
+        the tightest one is in scope where the call is written.
+        """
+        if call_point is None:
+            return None
+        best: tuple[int, str] | None = None
+        for start, end, items in self.import_processor.rust_fn_scope_item_holes.get(
+            caller_qn, ()
+        ):
+            item_qn = items.get(name)
+            if item_qn is None or not (start <= call_point < end):
+                continue
+            if (best is None or end - start < best[0]) and (
+                item_qn in self.function_registry
+            ):
+                best = (end - start, item_qn)
+        return best[1] if best else None
 
     def _try_resolve_rust_module_qualified(
         self, call_name: str, module_qn: str, caller_qn: str | None
@@ -1652,7 +1698,7 @@ class CallResolver:
             if any(s <= call_point < e for s, e in mod_holes):
                 continue
             if any(
-                s <= call_point < e and name in names for s, e, names in item_scopes
+                s <= call_point < e and name in items for s, e, items in item_scopes
             ):
                 continue
             size = end - start

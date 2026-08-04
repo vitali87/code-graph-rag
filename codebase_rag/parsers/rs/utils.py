@@ -399,7 +399,7 @@ def rust_block_scope_holes(
 ) -> tuple[
     list[tuple[int, int]],
     list[tuple[int, int]],
-    list[tuple[int, int, frozenset[str]]],
+    list[tuple[int, int, dict[str, tuple[int, int]]]],
 ]:
     """Byte spans of the scope-forming items nested inside a block.
 
@@ -412,7 +412,8 @@ def rust_block_scope_holes(
     block in the subtree is an item scope in Rust (a fn body, a let or
     const initializer, an if/match/loop body alike), so each nested
     block declaring function items as DIRECT children is recorded with
-    those names, and a call inside it naming one binds the local item,
+    those items by name and span, and a call inside it naming one binds
+    that local item,
     never the initializer block's use (rustc-verified; items deeper
     inside are invisible at that block's level, and methods in impl or
     trait bodies are not bare names at all). The walk descends
@@ -421,7 +422,7 @@ def rust_block_scope_holes(
     """
     mod_holes: list[tuple[int, int]] = []
     fn_holes: list[tuple[int, int]] = []
-    item_scopes: list[tuple[int, int, frozenset[str]]] = []
+    item_scopes: list[tuple[int, int, dict[str, tuple[int, int]]]] = []
     stack = list(block.children)
     while stack:
         current = stack.pop()
@@ -430,23 +431,32 @@ def rust_block_scope_holes(
         elif current.type == cs.TS_RS_FUNCTION_ITEM:
             fn_holes.append((current.start_byte, current.end_byte))
         elif current.type == cs.TS_RS_BLOCK and (
-            names := _rust_direct_block_item_names(current)
+            items := _rust_direct_block_items(current)
         ):
-            item_scopes.append((current.start_byte, current.end_byte, names))
+            item_scopes.append((current.start_byte, current.end_byte, items))
         stack.extend(current.children)
     return mod_holes, fn_holes, item_scopes
 
 
-def _rust_direct_block_item_names(block_node: Node) -> frozenset[str]:
-    names: set[str] = set()
+def _rust_direct_block_items(block_node: Node) -> dict[str, tuple[int, int]]:
+    """Function items declared directly in a block, by name and span key.
+
+    The span (1-based line, column) is the item's identity: a block item
+    and a same-named item at module level register flat in one module, so
+    only the span tells a caller which of them a call in the block binds.
+    """
+    items: dict[str, tuple[int, int]] = {}
     for child in block_node.children:
         if (
             child.type == cs.TS_RS_FUNCTION_ITEM
             and (name_node := child.child_by_field_name(cs.FIELD_NAME))
             and (text := name_node.text) is not None
         ):
-            names.add(text.decode(cs.RS_ENCODING_UTF8))
-    return frozenset(names)
+            items[text.decode(cs.RS_ENCODING_UTF8)] = (
+                child.start_point[0] + 1,
+                child.start_point[1],
+            )
+    return items
 
 
 def enclosing_mod_fn_spans(node: Node) -> list[tuple[int, int]]:
