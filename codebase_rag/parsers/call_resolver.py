@@ -13,6 +13,7 @@ from ..language_spec import get_language_for_extension
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from .import_processor import ImportProcessor
 from .py import resolve_class_name
+from .rs import utils as rs_utils
 from .type_inference import TypeInferenceEngine
 from .utils import follow_reexports
 
@@ -1442,20 +1443,12 @@ class CallResolver:
         FILE, not by caller: a fn declared inside the block is inside the
         block, so its own body binds the block's items too.
         """
-        if call_point is None:
-            return None
-        best: tuple[int, str] | None = None
-        for start, end, items in self.import_processor.rust_block_items.get(
-            module_qn, ()
-        ):
-            item_qn = items.get(name)
-            if item_qn is None or not (start <= call_point < end):
-                continue
-            if (best is None or end - start < best[0]) and (
-                item_qn in self.function_registry
-            ):
-                best = (end - start, item_qn)
-        return best[1] if best else None
+        return rs_utils.block_item_at(
+            self.import_processor.rust_block_items.get(module_qn, ()),
+            self.function_registry,
+            name,
+            call_point,
+        )
 
     def _try_resolve_rust_module_qualified(
         self, call_name: str, module_qn: str, caller_qn: str | None
