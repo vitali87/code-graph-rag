@@ -454,13 +454,13 @@ class RustTypeInferenceEngine:
 
     def collect_call_var_bindings(
         self, caller_node: Node
-    ) -> list[tuple[str, list[str]]]:
+    ) -> list[tuple[str, list[str], int]]:
         # `let x = Type::assoc(...)` / `let x = Type::assoc(...).unwrap()`: pair the
         # bound name with the callee chain segments (base type first, then method
         # hops: `['Command', 'from_frame']`). The unified engine walks the segments
         # through the return-type map to type `x`. Only type-rooted associated-call
         # chains are collected.
-        bindings: list[tuple[str, list[str]]] = []
+        bindings: list[tuple[str, list[str], int]] = []
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):
             self._collect_call_bindings(body, bindings)
         return bindings
@@ -639,7 +639,7 @@ class RustTypeInferenceEngine:
         return bindings
 
     def _collect_call_bindings(
-        self, node: Node, bindings: list[tuple[str, list[str]]]
+        self, node: Node, bindings: list[tuple[str, list[str], int]]
     ) -> None:
         if node.type == cs.TS_RS_LET_DECLARATION:
             self._collect_call_binding(node, bindings)
@@ -647,7 +647,7 @@ class RustTypeInferenceEngine:
             self._collect_call_bindings(child, bindings)
 
     def _collect_call_binding(
-        self, node: Node, bindings: list[tuple[str, list[str]]]
+        self, node: Node, bindings: list[tuple[str, list[str], int]]
     ) -> None:
         pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
         value = node.child_by_field_name(cs.FIELD_VALUE)
@@ -663,7 +663,11 @@ class RustTypeInferenceEngine:
             # its return type. Only an invoked base counts.
             if len(segments) == 1 and value_expr.type not in cs.RS_CALL_OR_GENERIC_FN:
                 return
-            bindings.append((name, segments))
+            # The offset of the CALL, not of the `let`: it is the call whose
+            # name a block item shadows, and the two differ when the call sits
+            # in a block nested inside the initializer. Every other block-scope
+            # probe is handed the call node's own start (issue #1069).
+            bindings.append((name, segments, value_expr.start_byte))
 
     def _callee_chain_segments(self, node: Node) -> list[str] | None:
         # Flatten a Rust value expression into ordered chain segments, base first:

@@ -6,6 +6,7 @@ from collections.abc import Iterable, Sequence
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...types_defs import FunctionRegistryTrieProtocol
 from ..utils import safe_decode_text
 
 # `#[path = "support/helpers.rs"]` redirects the mod declaration it sits on
@@ -414,6 +415,31 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
         current = current.parent
     parts.reverse()
     return None, parts, pure
+
+
+def block_item_at(
+    block_items: Iterable[tuple[int, int, dict[str, str]]],
+    registry: FunctionRegistryTrieProtocol,
+    name: str,
+    call_point: int | None,
+) -> str | None:
+    """The item `name` binds to in the innermost block holding this site.
+
+    Innermost wins: nested blocks may each declare the name, and only the
+    tightest one is in scope where the site is written. Keyed by FILE, not by
+    caller: a fn declared inside the block is inside the block, so its own
+    body binds the block's items too.
+    """
+    if call_point is None:
+        return None
+    best: tuple[int, str] | None = None
+    for start, end, items in block_items:
+        item_qn = items.get(name)
+        if item_qn is None or not (start <= call_point < end):
+            continue
+        if (best is None or end - start < best[0]) and item_qn in registry:
+            best = (end - start, item_qn)
+    return best[1] if best else None
 
 
 def is_body_local(node: Node) -> bool:
