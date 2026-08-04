@@ -1555,7 +1555,7 @@ def test_nested_fn_body_use_applies_to_nested_fn(
     assert (f"{base}.foo.inner", f"{base}.foo.helper") not in calls, calls
 
 
-def test_duplicate_method_qn_does_not_steal_body_use(
+def test_duplicate_method_qn_owns_its_body_use_and_its_calls(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # Two traits implemented for the SAME type both name their method `run`,
@@ -1594,9 +1594,13 @@ def test_duplicate_method_qn_does_not_steal_body_use(
     base = "rs_dup_method_use.src"
     assert (f"{base}.foo.S.run", f"{base}.foo.other") in calls, calls
     assert (f"{base}.foo.S.run", f"{base}.alpha.other") not in calls, calls
-    # Beta::run's use is keyed on its dedup variant, ready for the caller
-    # side: the method call pass still attributes Beta::run's calls to the
-    # natural qn (issue #1014), so no @13 caller edge exists yet.
+    # And the caller side keys on the variant too (issue #1014): before this
+    # worked, BOTH methods' calls were attributed to the natural qn, so the
+    # variant had no outgoing edge and alpha::other lost its only reference
+    # and read as dead. Each direction is pinned, since an attribution that
+    # merged the two the other way round would satisfy either one alone.
+    assert (f"{base}.foo.S.run@13", f"{base}.alpha.other") in calls, calls
+    assert (f"{base}.foo.S.run@13", f"{base}.foo.other") not in calls, calls
     scope_uses = updater.factory.import_processor.rust_fn_scope_imports.get(
         f"{base}.foo.S.run@13"
     )
