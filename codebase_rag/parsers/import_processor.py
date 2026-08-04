@@ -2633,11 +2633,14 @@ class ImportProcessor:
         root_node: Node,
         function_locations: Mapping[FunctionSpanKey, FunctionLocation],
     ) -> None:
-        # Runs beside finalise_rust_function_scope_uses, once the registry
-        # has handed out the qns (natural or `natural@<start_line>`) these
-        # spans have to be spoken of by. An item span with no record was
-        # never registered, so no call can bind it and the name stays with
-        # whatever else answers to it.
+        """Record this file's block-local function items by span and by qn.
+
+        Runs beside finalise_rust_function_scope_uses, once the registry
+        has handed out the qns (natural or `natural@<start_line>`) these
+        spans have to be spoken of by. An item span with no record was
+        never registered, so no call can bind it and the name stays with
+        whatever else answers to it.
+        """
         scopes: list[tuple[int, int, dict[str, str]]] = []
         for start, end, items in rs_utils.rust_block_item_scopes(root_node):
             resolved = {
