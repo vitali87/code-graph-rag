@@ -1581,10 +1581,11 @@ def test_duplicate_method_qn_owns_its_body_use_and_its_calls(
                 "impl Beta for S {\n"
                 "    fn run(&self) -> u32 {\n"
                 "        use crate::alpha::other;\n"
-                "        other()\n"
+                "        other() + beta_only()\n"
                 "    }\n"
                 "}\n\n"
                 "pub fn other() -> u32 { 1 }\n"
+                "pub fn beta_only() -> u32 { 3 }\n"
             ),
         },
     )
@@ -1594,12 +1595,16 @@ def test_duplicate_method_qn_owns_its_body_use_and_its_calls(
     base = "rs_dup_method_use.src"
     assert (f"{base}.foo.S.run", f"{base}.foo.other") in calls, calls
     assert (f"{base}.foo.S.run", f"{base}.alpha.other") not in calls, calls
-    # And the caller side keys on the variant too (issue #1014): before this
-    # worked, BOTH methods' calls were attributed to the natural qn, so the
-    # variant had no outgoing edge and alpha::other lost its only reference
-    # and read as dead. Each direction is pinned, since an attribution that
-    # merged the two the other way round would satisfy either one alone.
+    # And the caller side keys on the variant too (issue #1014): both methods'
+    # calls used to be attributed to the natural qn, leaving the variant with
+    # no outgoing edge at all. `beta_only` is called with no `use` in sight, so
+    # it pins caller attribution itself rather than the scope-import lookup
+    # that `other` alone would resolve through.
     assert (f"{base}.foo.S.run@13", f"{base}.alpha.other") in calls, calls
+    assert (f"{base}.foo.S.run@13", f"{base}.foo.beta_only") in calls, calls
+    assert (f"{base}.foo.S.run", f"{base}.foo.beta_only") not in calls, calls
+    # Attribution moves calls, it does not copy them: a variant that collected
+    # BOTH methods' calls would satisfy every assertion above.
     assert (f"{base}.foo.S.run@13", f"{base}.foo.other") not in calls, calls
     scope_uses = updater.factory.import_processor.rust_fn_scope_imports.get(
         f"{base}.foo.S.run@13"
