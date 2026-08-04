@@ -134,6 +134,11 @@ class FunctionRegistryTrie:
 
         del self._entries[qualified_name]
         self._duplicates.pop(qualified_name, None)
+        # The line this variant claimed is free again, so the next definition
+        # written there takes the plain `@line` rather than inheriting a column
+        # from something the graph no longer holds. Without this the name a
+        # definition gets depends on what was indexed before it.
+        self._variant_columns.pop(qualified_name, None)
         for natural, bucket in list(self._duplicates.items()):
             if qualified_name in bucket:
                 bucket.remove(qualified_name)

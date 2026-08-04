@@ -158,3 +158,17 @@ def test_same_line_class_and_method_twins_stay_distinct(
     assert len(classes) == len(set(classes)), classes
     assert len(methods) == 3, methods
     assert len(methods) == len(set(methods)), methods
+
+
+def test_deleting_a_variant_frees_the_line_it_claimed() -> None:
+    # An incremental re-index deletes a file's qns and registers them again.
+    # A claim that outlives its definition makes the name a definition gets
+    # depend on what was indexed before it, so the same source would come out
+    # with different qualified names on a re-run.
+    registry = FunctionRegistryTrie()
+    natural = "p.m.f"
+    registry.insert(natural, NodeType.FUNCTION)
+    first = registry.register_unique_qn(natural, 9, 4)
+    registry.insert(first, NodeType.FUNCTION)
+    del registry[first]
+    assert registry.register_unique_qn(natural, 9, 44) == first, first
