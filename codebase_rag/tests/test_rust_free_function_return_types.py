@@ -186,8 +186,10 @@ def test_generic_returning_shadow_does_not_fall_through_to_the_module_item(
     # item's own return.
     source = (
         "pub struct Aaa;\n"
+        "pub struct Zed;\n"
         "impl Aaa { pub fn run(&self) -> u32 { 1 } }\n"
-        "pub fn make() -> Aaa { Aaa }\n"
+        "impl Zed { pub fn run(&self) -> u32 { 2 } }\n"
+        "pub fn make() -> Zed { Zed }\n"
         "pub fn outer() -> u32 {\n"
         "    fn make<X: Default>() -> X { X::default() }\n"
         "    let t = make::<Aaa>();\n"
@@ -196,4 +198,9 @@ def test_generic_returning_shadow_does_not_fall_through_to_the_module_item(
     )
     calls = _run_calls(temp_repo, mock_ingestor, {"m.rs": source})
     base = f"{temp_repo.name}.m"
+    # Naming Zed after Aaa separates the two ways this can go wrong: falling
+    # through to the module item types the local Zed, while recording the
+    # unresolvable parameter deletes the edge outright. Neither is the
+    # untyped local the trie then answers for.
     assert (f"{base}.outer", f"{base}.Aaa.run") in calls, calls
+    assert (f"{base}.outer", f"{base}.Zed.run") not in calls, calls
