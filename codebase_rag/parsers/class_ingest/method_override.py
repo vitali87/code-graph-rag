@@ -22,6 +22,7 @@ def process_all_method_overrides(
     interface_implementers: dict[str, set[str]] | None = None,
     csharp_methods: set[str] | None = None,
     csharp_override_methods: set[str] | None = None,
+    impl_method_traits: dict[str, str] | None = None,
 ) -> None:
     logger.info(logs.CLASS_PASS_4)
 
@@ -34,6 +35,14 @@ def process_all_method_overrides(
             parts = method_qn.rsplit(cs.SEPARATOR_DOT, 1)
             if len(parts) == 2:
                 class_qn, method_name = parts
+                if _emit_recorded_impl_override(
+                    method_qn,
+                    method_name,
+                    function_registry,
+                    ingestor,
+                    impl_method_traits,
+                ):
+                    continue
                 check_method_overrides(
                     method_qn,
                     method_name,
@@ -147,6 +156,47 @@ def _direct_method_names(
             continue
         names.append(leaf)
     return names
+
+
+def _emit_recorded_impl_override(
+    method_qn: str,
+    method_name: str,
+    function_registry: FunctionRegistryTrieProtocol,
+    ingestor: IngestorProtocol,
+    impl_method_traits: dict[str, str] | None,
+) -> bool:
+    """Link a method to the trait its own impl block named, if one was recorded.
+
+    The ancestry walk below takes the first implemented trait declaring this
+    name, in sorted order. Two traits declaring one name make that a coin toss
+    decided by spelling: reversing the impl blocks in the source keeps the same
+    edge, now pointing at the trait the method does not implement.
+    """
+    trait_qn = (impl_method_traits or {}).get(method_qn)
+    if trait_qn is None:
+        return False
+    # Only now, with an impl block vouching for this method, is the dedup
+    # suffix safe to drop. Stripping it for every method instead would hand
+    # the ancestry walk a name it could not match before, inventing an
+    # override for an INHERENT method that merely shares a trait method's
+    # name, and would empty out a C# verbatim identifier like `@event`.
+    method_name = method_name.split(cs.DUP_QN_MARKER, 1)[0]
+    parent_method_qn = f"{trait_qn}{cs.SEPARATOR_DOT}{method_name}"
+    if function_registry.get(parent_method_qn) != NodeType.METHOD:
+        # An inherent method, or one the trait declares nowhere: the walk has
+        # nothing to be wrong about, so let it run.
+        return False
+    ingestor.ensure_relationship_batch(
+        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+        cs.RelationshipType.OVERRIDES,
+        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, parent_method_qn),
+    )
+    logger.debug(
+        logs.CLASS_METHOD_OVERRIDE,
+        method_qn=method_qn,
+        parent_method_qn=parent_method_qn,
+    )
+    return True
 
 
 def _invert_implementers(

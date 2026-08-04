@@ -221,6 +221,10 @@ class DefinitionProcessor(
         # trait is registered, so resolve_deferred_inherits judges it and
         # flags the methods of the external ones (issue #1048).
         self._rust_trait_impls: list[RustTraitImpl] = []
+        # method qn -> the first-party trait qn its own impl block names. The
+        # override pass cannot re-derive this: two traits declaring one method
+        # name leave the method qns indistinguishable (issue #1076).
+        self.rust_impl_method_traits: dict[str, str] = {}
         # C++20 module interfaces declared this run (export module X), and
         # implementation units whose IMPLEMENTS edge waits for its
         # interface to be known.

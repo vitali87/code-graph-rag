@@ -82,3 +82,22 @@ public class Derived : Base { public new void Hidden() {} }
     assert not _has(_pairs(mock_ingestor), "N.Derived.Hidden", "N.Base.Hidden"), _pairs(
         mock_ingestor
     )
+
+
+def test_verbatim_identifier_method_keeps_its_override(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `@event` escapes a keyword; the `@` is part of the method name, not the
+    # duplicate-qn marker. Treating it as the marker empties the name, and the
+    # parent lookup then asks for a method called nothing at all.
+    (csharp_project / "Verbatim.cs").write_text(
+        """
+namespace N;
+public class Base { public virtual int @event(int a) { return 1; } }
+public class Derived : Base { public override int @event(int a) { return 2; } }
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+    pairs = _pairs(mock_ingestor)
+    assert _has(pairs, "Derived.@event(int)", "Base.@event(int)"), pairs
