@@ -1921,7 +1921,7 @@ class GraphUpdater:
         try:
             file_bytes = file_path.read_bytes()
         except OSError as e:
-            logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
+            logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
             return None
         root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
         self.factory._func_class_captures_cache.pop(file_path, None)
