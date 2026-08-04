@@ -199,6 +199,41 @@ def test_a_relative_path_resolves_a_redirect_declared_beside_it(
     assert (caller, "rs_path_attr_super.src.engine.rig.build") not in calls, calls
 
 
+def test_a_redirect_onto_a_mod_rs_is_not_read_off_its_sibling_shadow(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A redirect naming `platform/mod.rs` backs the DIRECTORY, and the qn
+    # scheme drops the `mod` segment, so `src.platform` looks exactly like a
+    # plain file module. Continuing the walk from the sibling `src/platform.rs`
+    # reads an undeclared shadow, whose own redirect then sends `inner` to a
+    # third file rustc never compiles into this path.
+    project = temp_repo / "rs_path_attr_modrs"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_modrs"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\npub mod a;\n",
+            "src/engine.rs": '#[path = "platform/mod.rs"]\npub mod platform;\n',
+            "src/platform/mod.rs": "pub mod inner;\n",
+            "src/platform/inner.rs": "pub fn go() -> i32 {\n    1\n}\n",
+            "src/platform.rs": '#[path = "elsewhere/inner.rs"]\npub mod inner;\n',
+            "src/elsewhere/inner.rs": "pub fn other() -> i32 {\n    9\n}\n",
+            "src/a.rs": (
+                "pub fn run() -> i32 {\n    crate::engine::platform::inner::go()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_modrs.src.a.run"
+    assert (caller, "rs_path_attr_modrs.src.platform.inner.go") in calls, calls
+    assert not [
+        pair for pair in calls if pair[0] == caller and "elsewhere" in pair[1]
+    ], calls
+
+
 def test_a_commented_out_redirect_does_not_hijack_a_live_declaration(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
