@@ -149,7 +149,48 @@ def test_inherent_impl_written_first_still_overrides_nothing(
         f"{base}.S.run{DUP_QN_MARKER}10",
         f"{base}.Alpha.run",
     ) in overrides, overrides
-    assert (f"{base}.S.run", f"{base}.Alpha.run") not in overrides, overrides
+    # Nothing at all from the natural qn, not merely no edge to Alpha: a gate
+    # that silenced some other trait too would satisfy the narrower check.
+    assert not [pair for pair in overrides if pair[0] == f"{base}.S.run"], overrides
+
+
+def test_a_scoped_generic_trait_impl_is_not_mistaken_for_inherent(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `impl b::Base<u32> for S` is a trait impl, but the trait NAME extractor
+    # reads nothing off a generic wrapped around a scoped path and returns
+    # None, exactly as it does for a genuinely inherent block. Classifying by
+    # that would bar a real trait impl's methods from ever overriding, and this
+    # spelling is ordinary: std::ops::Add, serde::de::Visitor.
+    # `Alpha` names `Base` as a supertrait, which is what puts `Base` in S's
+    # ancestry: the scoped-generic block alone records no implementer, a
+    # separate pre-existing gap this test does not speak to.
+    project = temp_repo / "rs_scoped_generic_impl"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_scoped_generic_impl"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod b;\npub mod foo;\n",
+            "src/b.rs": "pub trait Base<T> { fn run(&self) -> T; }\n",
+            "src/foo.rs": (
+                "pub trait Alpha: crate::b::Base<u32> { fn go(&self); }\n\n"
+                "pub struct S;\n\n"
+                "impl crate::b::Base<u32> for S {\n"
+                "    fn run(&self) -> u32 { 1 }\n"
+                "}\n\n"
+                "impl Alpha for S {\n"
+                "    fn go(&self) {}\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    overrides = _overrides(mock_ingestor)
+    base = "rs_scoped_generic_impl.src"
+    assert (f"{base}.foo.S.run", f"{base}.b.Base.run") in overrides, overrides
+    assert (f"{base}.foo.S.go", f"{base}.foo.Alpha.go") in overrides, overrides
 
 
 def test_block_order_not_trait_name_decides_the_override_target(

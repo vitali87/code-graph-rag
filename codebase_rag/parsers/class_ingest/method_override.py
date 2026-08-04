@@ -36,12 +36,9 @@ def process_all_method_overrides(
             parts = method_qn.rsplit(cs.SEPARATOR_DOT, 1)
             if len(parts) == 2:
                 class_qn, method_name = parts
-                if inherent_impl_methods and method_qn in inherent_impl_methods:
-                    # Written in an inherent `impl Type` block, so it implements
-                    # nothing. Rust has no inheritance, and the walk below would
-                    # otherwise hand it the first trait the type implements that
-                    # happens to declare this name.
-                    continue
+                # Positive evidence first: a recorded trait binding names the
+                # parent outright, so it outranks a classification drawn from
+                # absence, whichever way the two ever disagree.
                 if _emit_recorded_impl_override(
                     method_qn,
                     method_name,
@@ -49,6 +46,12 @@ def process_all_method_overrides(
                     ingestor,
                     impl_method_traits,
                 ):
+                    continue
+                if inherent_impl_methods and method_qn in inherent_impl_methods:
+                    # Written in an inherent `impl Type` block, so it implements
+                    # nothing. Rust has no inheritance, and the walk below would
+                    # otherwise hand it the first trait the type implements that
+                    # happens to declare this name.
                     continue
                 check_method_overrides(
                     method_qn,

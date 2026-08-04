@@ -1278,7 +1278,10 @@ class ClassIngestMixin:
                     f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
                 ] = return_type
 
-        if trait_impl_method_qns is None:
+        # The PATH decides, not the name: `extract_impl_trait` reads no name
+        # off `impl std::ops::Add<u32> for S`, and calling that inherent would
+        # bar a real trait impl's methods from ever overriding.
+        if rs_utils.extract_impl_trait_path(class_node) is None:
             self.rust_inherent_impl_methods.update(impl_method_qns)
 
     def _ingest_class_methods(
