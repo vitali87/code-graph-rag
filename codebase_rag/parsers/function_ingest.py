@@ -498,6 +498,7 @@ class FunctionIngestMixin:
             )
 
     def _flush_deferred_rust_body_local(self) -> None:
+        """Register the file's held-back Rust body-local items (issue #1037)."""
         deferred = self._deferred_rust_body_local
         self._deferred_rust_body_local = []
         for entry in deferred:
@@ -509,6 +510,19 @@ class FunctionIngestMixin:
                 entry.lang_config,
                 entry.lang_queries,
             )
+            # A call-bound local (`let s = make()`) types from this map, so the
+            # return type has to be recorded here too. Under the qn the
+            # registry HANDED OUT, which for a body-local item contesting a
+            # module item of that name is the `@<line>` variant: recording
+            # under the proposed qn would overwrite the module item's own
+            # return type and mistype every caller of it.
+            location = self.function_locations.get(
+                function_span_key(entry.module_qn, entry.func_node)
+            )
+            if location is not None and (
+                return_type := rs_utils.extract_return_type_name(entry.func_node, None)
+            ):
+                self.method_return_types[location.qualified_name] = return_type
 
     def _flush_deferred_js_anonymous(self) -> None:
         deferred = self._deferred_js_anonymous
