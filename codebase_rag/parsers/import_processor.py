@@ -458,6 +458,7 @@ class ImportProcessor:
         "_cpp_declaration_mappings",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
+        "_rust_module_mod_decls",
         "_rust_explicit_targets",
         "_rust_auto_build_flags",
         "_rust_workspace_crates",
@@ -511,6 +512,12 @@ class ImportProcessor:
         self._rust_dir_listing: dict[str, frozenset[str]] = {}
         self._rust_entry_mod_decls: dict[
             tuple[str, ...], dict[str, RustEntryDecls]
+        ] = {}
+        # Same, for an ORDINARY module file: its own declarations, plus the
+        # directory its `#[path]` targets count from. Kept apart from the
+        # entry map, whose every stem is a crate root candidate (issue #1065).
+        self._rust_module_mod_decls: dict[
+            tuple[str, ...], tuple[RustEntryDecls, list[str]] | None
         ] = {}
         # Explicit Cargo target entry paths per package dir ([[bin]]/[lib]/
         # [[example]]/[[test]]/[[bench]] `path` overrides): such entries
@@ -1676,6 +1683,78 @@ class ImportProcessor:
             decls[stem] = _rs_entry_decls_of(top_level)
         return decls
 
+    def _rust_module_decls(
+        self, module_parts: list[str]
+    ) -> tuple[RustEntryDecls, list[str]] | None:
+        """Declarations of the file backing a module, and its `#[path]` base.
+
+        `src/engine.rs` and `src/engine/mod.rs` both back `src.engine`, and a
+        redirect written in either counts from the directory the file sits in.
+        None when no file backs the module: an inline `mod`, or a segment that
+        was never a module at all.
+        """
+        key = tuple(module_parts)
+        if key in self._rust_module_mod_decls:
+            return self._rust_module_mod_decls[key]
+        if not module_parts:
+            return None
+        parent = module_parts[:-1]
+        if f"{module_parts[-1]}{cs.EXT_RS}" in self._rust_dir_entries(
+            self.repo_path.joinpath(*parent)
+        ):
+            path, base = (
+                self.repo_path.joinpath(*parent, f"{module_parts[-1]}{cs.EXT_RS}"),
+                parent,
+            )
+        elif cs.MOD_RS in self._rust_dir_entries(
+            self.repo_path.joinpath(*module_parts)
+        ):
+            path, base = (
+                self.repo_path.joinpath(*module_parts, cs.MOD_RS),
+                module_parts,
+            )
+        else:
+            self._rust_module_mod_decls[key] = None
+            return None
+        try:
+            source = path.read_text(encoding=cs.RS_ENCODING_UTF8, errors="ignore")
+        except OSError:
+            # Uncached, so the next access retries: a storm's transient
+            # absence must not bake in "this module declares nothing".
+            return None
+        found = (
+            _rs_entry_decls_of(
+                _rs_top_level_only(_rs_strip_comments_and_strings(source))
+            ),
+            list(base),
+        )
+        self._rust_module_mod_decls[key] = found
+        return found
+
+    def _rust_join_mods(self, parts: list[str], rest: list[str]) -> str:
+        """Join a resolved module prefix to a path tail, honouring `#[path]`.
+
+        Only the crate ENTRY's redirects are read above, and the tail used to
+        attach by name straight past a redirect declared in any other file,
+        landing on a qn no module owns or on an undeclared shadow file that
+        happens to sit where the declared name points (issue #1065).
+        """
+        out = list(parts)
+        for index, segment in enumerate(rest):
+            found = self._rust_module_decls(out)
+            if found is None:
+                # Past the module tree and into items, whose names back no
+                # file and so can declare nothing.
+                out.extend(rest[index:])
+                break
+            decls, base = found
+            redirect = decls.redirects.get(segment)
+            target = (
+                rs_utils.path_attribute_qn_parts(base, redirect) if redirect else None
+            )
+            out = target if target is not None else [*out, segment]
+        return cs.SEPARATOR_DOT.join([self.project_name, *out])
+
     def _rust_attach(
         self, dir_parts: list[str], stem: str, rest: list[str], definitive: bool
     ) -> str:
@@ -1696,11 +1775,9 @@ class ImportProcessor:
                 # module keys under that file, so the declared name never
                 # appears in the qn at all (issue #1035).
                 if target := rs_utils.path_attribute_qn_parts(dir_parts, redirect):
-                    return cs.SEPARATOR_DOT.join(
-                        [self.project_name, *target, *rest[1:]]
-                    )
+                    return self._rust_join_mods(target, rest[1:])
             if rest[0] in file_mods:
-                return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
+                return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
             if rest[0] in items:
                 return cs.SEPARATOR_DOT.join(
                     [self.project_name, *dir_parts, stem, *rest]
@@ -1709,7 +1786,7 @@ class ImportProcessor:
             f"{rest[0]}{cs.EXT_RS}" in entries
             or (rest[0] in entries and (directory / rest[0]).is_dir())
         ):
-            return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
+            return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
         if rest and not definitive and chosen is not None:
             # When a file compiles into BOTH crates (lib.rs and main.rs each
             # declare its module), the path can only mean the entry that
@@ -1762,7 +1839,7 @@ class ImportProcessor:
             # The base IS a crate entry module (self:: in lib.rs); a module
             # merely NAMED main/lib deeper in the tree attaches normally.
             return self._rust_attach(parts[:-1], parts[-1], rest, definitive=True)
-        return cs.SEPARATOR_DOT.join([base_qn, *rest]) if rest else base_qn
+        return self._rust_join_mods(parts, rest) if rest else base_qn
 
     def _rewrite_rust_local_use_path(
         self,
@@ -1817,7 +1894,7 @@ class ImportProcessor:
         if kind == "file":
             # An auto-target crate (src/bin/tool.rs): items and
             # submodules both nest under the entry file's qn.
-            return cs.SEPARATOR_DOT.join([self.project_name, *root_parts, *rest])
+            return self._rust_join_mods(root_parts, rest)
         if kind == "entry":
             # An explicit manifest target: the root file IS the entry,
             # so submodule files sit beside it and items nest in it.
@@ -2362,6 +2439,7 @@ class ImportProcessor:
         # were filled; called per run by GraphUpdater._process_files.
         self._rust_dir_listing.clear()
         self._rust_entry_mod_decls.clear()
+        self._rust_module_mod_decls.clear()
         self._rust_explicit_targets.clear()
         self._rust_auto_build_flags.clear()
         self._rust_workspace_crates = None
@@ -2398,6 +2476,16 @@ class ImportProcessor:
             dir_parts = directory.relative_to(self.repo_path).parts
         except ValueError:
             return
+        if file_path.suffix == cs.EXT_RS:
+            # Any .rs file may back a module and declare a redirect, so its
+            # own entry is evicted rather than replaced: an unreadable file
+            # then re-reads on the next access instead of caching a hole.
+            module = (
+                dir_parts
+                if file_path.stem == cs.INDEX_MOD
+                else (*dir_parts, file_path.stem)
+            )
+            self._rust_module_mod_decls.pop(module, None)
         if (
             file_path.name in (cs.LIB_RS, cs.MAIN_RS)
             or file_path.name in self._rust_explicit_entry_files(tuple(dir_parts))
