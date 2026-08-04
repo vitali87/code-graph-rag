@@ -398,6 +398,11 @@ class DefinitionProcessor(
                 self.import_processor.finalise_rust_function_scope_uses(
                     module_qn, self.function_locations
                 )
+                # Block-local items key on their own registered qn, which
+                # the same pass has just handed out.
+                self.import_processor.record_rust_block_items(
+                    module_qn, root_node, self.function_locations
+                )
                 # Inline-mod maps were visible to this file's own impl
                 # ingestion above; retract them until the flush-time
                 # arbitration decides key ownership across all files.

@@ -407,7 +407,8 @@ class ImportProcessor:
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
         "rust_fn_scope_mod_imports",
-        "rust_fn_scope_item_holes",
+        "rust_block_items",
+        "rust_block_item_qns",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "_rust_fn_scope_keys",
@@ -488,16 +489,7 @@ class ImportProcessor:
         # The bool marks WEAK entries: an impure inline mod's use fanned
         # out to the functions declared in its block.
         self._rust_pending_fn_scope_uses: dict[
-            str,
-            list[
-                tuple[
-                    int,
-                    int,
-                    dict[str, str],
-                    bool,
-                    list[tuple[int, int, dict[str, tuple[int, int]]]],
-                ]
-            ],
+            str, list[tuple[int, int, dict[str, str], bool]]
         ] = {}
         # Function-body uses, keyed by the enclosing function's registered
         # qn. Kept OUT of import_mapping: Rust puts `mod run` and `fn run`
@@ -509,15 +501,15 @@ class ImportProcessor:
         # resolver consults it only after local items, unlike the body-use
         # map above which shadows everything.
         self.rust_fn_scope_mod_imports: dict[str, dict[str, str]] = {}
-        # Spans of the nested blocks inside a function body that declare
-        # function items directly, each mapped to the REGISTERED qn of the
-        # item it declares, keyed by the same qn as the body-use map above.
-        # Every plain block is an item scope in Rust, so a call written
-        # inside one binds that block's own item, never the body use the
-        # map holds nor whatever else answers to the name (issue #1026).
-        self.rust_fn_scope_item_holes: dict[
-            str, list[tuple[int, int, dict[str, str]]]
-        ] = {}
+        # Every plain block in a file that declares function items directly,
+        # by span, each name mapped to the REGISTERED qn of the item it
+        # declares. Blocks nest inside functions and never overlap, so the
+        # innermost block holding a call site is the scope that binds these
+        # names, whatever else in the module answers to them (issue #1026),
+        # and the companion set of those qns is what keeps a name lookup
+        # from reaching them from outside their block (issue #1061).
+        self.rust_block_items: dict[str, list[tuple[int, int, dict[str, str]]]] = {}
+        self.rust_block_item_qns: set[str] = set()
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -2406,11 +2398,12 @@ class ImportProcessor:
         self._rust_pending_mod_scope_uses.pop(module_qn, None)
         self._rust_mod_scope_registry.pop(module_qn, None)
         self.rust_block_scope_imports.pop(module_qn, None)
+        for _start, _end, items in self.rust_block_items.pop(module_qn, ()):
+            self.rust_block_item_qns.difference_update(items.values())
         self.rust_self_module_imports.pop(module_qn, None)
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
             self.rust_fn_scope_imports.pop(key, None)
             self.rust_fn_scope_mod_imports.pop(key, None)
-            self.rust_fn_scope_item_holes.pop(key, None)
         for key in self._rust_inline_scope_keys.pop(module_qn, ()):
             self.import_mapping.pop(key, None)
 
@@ -2480,7 +2473,6 @@ class ImportProcessor:
                         scope_node.start_point[1],
                         resolved_imports,
                         False,
-                        rs_utils.rust_block_scope_holes(scope_node)[2],
                     )
                 )
             else:
@@ -2534,7 +2526,7 @@ class ImportProcessor:
             # ends up holding.
             for line, col in rs_utils.enclosing_mod_fn_spans(use_node):
                 self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
-                    (line, col, resolved_imports, True, [])
+                    (line, col, resolved_imports, True)
                 )
 
     def retract_rust_mod_scope_uses(self, module_qn: str) -> None:
@@ -2620,7 +2612,6 @@ class ImportProcessor:
             start_col,
             imports,
             weak,
-            item_holes,
         ) in self._rust_pending_fn_scope_uses.pop(module_qn, []):
             location = function_locations.get((module_qn, start_line, start_col))
             if location is None:
@@ -2634,18 +2625,35 @@ class ImportProcessor:
                 self.rust_fn_scope_mod_imports.setdefault(key, {}).update(imports)
             else:
                 self.rust_fn_scope_imports.setdefault(key, {}).update(imports)
-                self.rust_fn_scope_item_holes[key] = [
-                    (start, end, resolved)
-                    for start, end, items in item_holes
-                    if (
-                        resolved := {
-                            name: item.qualified_name
-                            for name, span in items.items()
-                            if (item := function_locations.get((module_qn, *span)))
-                        }
-                    )
-                ]
             self._rust_fn_scope_keys.setdefault(module_qn, set()).add(key)
+
+    def record_rust_block_items(
+        self,
+        module_qn: str,
+        root_node: Node,
+        function_locations: Mapping[FunctionSpanKey, FunctionLocation],
+    ) -> None:
+        """Record this file's block-local function items by span and by qn.
+
+        Runs beside finalise_rust_function_scope_uses, once the registry
+        has handed out the qns (natural or `natural@<start_line>`) these
+        spans have to be spoken of by. An item span with no record was
+        never registered, so no call can bind it and the name stays with
+        whatever else answers to it.
+        """
+        scopes: list[tuple[int, int, dict[str, str]]] = []
+        for start, end, items in rs_utils.rust_block_item_scopes(root_node):
+            resolved = {
+                name: location.qualified_name
+                for name, span in items.items()
+                if (location := function_locations.get((module_qn, *span)))
+            }
+            if not resolved:
+                continue
+            scopes.append((start, end, resolved))
+            self.rust_block_item_qns.update(resolved.values())
+        if scopes:
+            self.rust_block_items[module_qn] = scopes
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):

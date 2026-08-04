@@ -438,6 +438,27 @@ def rust_block_scope_holes(
     return mod_holes, fn_holes, item_scopes
 
 
+def rust_block_item_scopes(
+    root: Node,
+) -> list[tuple[int, int, dict[str, tuple[int, int]]]]:
+    """Every plain block in the file that declares function items directly.
+
+    A block item is in scope for the block alone, yet it registers flat in
+    the enclosing module beside the module's own items, so the span is the
+    only thing that says which calls may reach it (issue #1061).
+    """
+    scopes: list[tuple[int, int, dict[str, tuple[int, int]]]] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_RS_BLOCK and (
+            items := _rust_direct_block_items(current)
+        ):
+            scopes.append((current.start_byte, current.end_byte, items))
+        stack.extend(current.children)
+    return scopes
+
+
 def _rust_direct_block_items(block_node: Node) -> dict[str, tuple[int, int]]:
     """Function items declared directly in a block, by name and span key.
 
