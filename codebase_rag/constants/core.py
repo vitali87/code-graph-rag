@@ -21,6 +21,10 @@ SEPARATOR_SLASH = "/"
 # Disambiguates definitions that share one qualified name (if/else import
 # fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
 DUP_QN_MARKER = "@"
+# Joined after the line when a same-named definition already holds that line,
+# so same-line twins stay distinct (issue #1071). Every consumer splits on
+# DUP_QN_MARKER and keeps the base, so nothing reads the suffix back.
+DUP_QN_COLUMN_MARKER = "_"
 
 PATH_CURRENT_DIR = "."
 PATH_PARENT_DIR = ".."
