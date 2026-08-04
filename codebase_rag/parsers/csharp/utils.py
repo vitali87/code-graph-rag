@@ -18,6 +18,22 @@ def _first_attribute_list(node: Node) -> Node | None:
     return None
 
 
+def definition_start_point(node: Node) -> tuple[int, int]:
+    """The 1-based line and 0-based column a declaration truly starts at.
+
+    The line alone is not enough for a caller that pairs the two: taking the
+    line from a nested attribute and the column from the outer node names a
+    point that is nowhere in the source (issue #1071).
+    """
+    for child in node.children:
+        if child.type == cs.TS_CSHARP_PREPROC_IF_IN_ATTR_LIST:
+            if (attr_list := _first_attribute_list(child)) is not None:
+                return attr_list.start_point[0] + 1, attr_list.start_point[1]
+            continue
+        return child.start_point[0] + 1, child.start_point[1]
+    return node.start_point[0] + 1, node.start_point[1]
+
+
 def definition_start_line(node: Node) -> int:
     # The 1-based line a declaration truly starts on. When its attributes are
     # wrapped in a conditional-compilation block (`#if SYMBOL [Attr] #endif`),

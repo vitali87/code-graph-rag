@@ -920,10 +920,15 @@ class ClassIngestMixin:
             # the conditional attribute, not the `#if` line (matches Roslyn).
             from ..csharp import utils as csharp_utils
 
-            class_start_line = csharp_utils.definition_start_line(class_node)
+            class_start_line, class_start_col = csharp_utils.definition_start_point(
+                class_node
+            )
         else:
             class_start_line = class_node.start_point[0] + 1
-        class_qn = self.function_registry.register_unique_qn(class_qn, class_start_line)
+            class_start_col = class_node.start_point[1]
+        class_qn = self.function_registry.register_unique_qn(
+            class_qn, class_start_line, class_start_col
+        )
         node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
 
         modifiers, decorators = extract_modifiers_and_decorators(

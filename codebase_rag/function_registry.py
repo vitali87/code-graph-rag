@@ -22,6 +22,7 @@ class FunctionRegistryTrie:
         "_simple_name_lookup",
         "_ending_with_cache",
         "_duplicates",
+        "_variant_columns",
         "_properties",
         "_property_names",
         "_abstracts",
@@ -34,6 +35,7 @@ class FunctionRegistryTrie:
         self._simple_name_lookup = simple_name_lookup
         self._ending_with_cache: dict[str, list[QualifiedName]] = {}
         self._duplicates: dict[QualifiedName, list[QualifiedName]] = {}
+        self._variant_columns: dict[QualifiedName, int] = {}
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
         self._abstracts: set[QualifiedName] = set()
@@ -65,11 +67,23 @@ class FunctionRegistryTrie:
         return qualified_name in self._abstracts
 
     def register_unique_qn(
-        self, natural_qn: QualifiedName, start_line: int
+        self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
     ) -> QualifiedName:
+        """A name for this definition that no other definition holds.
+
+        The line alone named two same-line twins identically, so they became
+        one node and one of them left the graph (issue #1071). The column
+        joins only for a definition at a DIFFERENT column on a line already
+        claimed, which keeps every variant that was already unique spelled the
+        way it always was, and keeps the call idempotent: two passes
+        registering one definition must agree on its name, not mint a second.
+        """
         if natural_qn not in self._entries:
             return natural_qn
         variant = f"{natural_qn}{cs.DUP_QN_MARKER}{start_line}"
+        claimed_col = self._variant_columns.setdefault(variant, start_col)
+        if claimed_col != start_col:
+            variant = f"{variant}{cs.DUP_QN_COLUMN_MARKER}{start_col}"
         bucket = self._duplicates.setdefault(natural_qn, [natural_qn])
         if variant not in bucket:
             bucket.append(variant)

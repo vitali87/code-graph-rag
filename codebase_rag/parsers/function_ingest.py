@@ -1220,7 +1220,9 @@ class FunctionIngestMixin:
         lang_queries: LanguageQueries,
     ) -> None:
         unique_qn = self.function_registry.register_unique_qn(
-            resolution.qualified_name, func_node.start_point[0] + 1
+            resolution.qualified_name,
+            func_node.start_point[0] + 1,
+            func_node.start_point[1],
         )
         if unique_qn != resolution.qualified_name:
             resolution = resolution._replace(qualified_name=unique_qn)
