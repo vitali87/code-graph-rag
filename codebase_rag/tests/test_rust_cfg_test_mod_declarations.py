@@ -186,12 +186,13 @@ def test_gate_survives_interleaved_doc_comment(
     assert "rs_cfgtest_doc.src.testutil" in gates, gates
 
 
-def test_path_attribute_declaration_mints_no_orphan_module(
+def test_path_attribute_declaration_gates_the_file_it_names(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # A #[path]-redirected target lands at a qn the scheme cannot predict:
-    # the recorded candidate names no real module and stays inert, and no
-    # node is minted for it (the fixture audit rejects orphans).
+    # A #[path]-redirected target keys under the FILE the attribute names,
+    # so that is the qn the gate records (issue #1035). The name-derived
+    # spelling backs nothing and must not be recorded, and no node is
+    # minted for either (the fixture audit rejects orphans).
     project = temp_repo / "rs_cfgtest_pathattr"
     _write(
         project,
@@ -211,7 +212,8 @@ def test_path_attribute_declaration_mints_no_orphan_module(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
     gates = _declared_gates(mock_ingestor, "rs_cfgtest_pathattr.src.lib")
-    assert "rs_cfgtest_pathattr.src.helpers" in gates, gates
+    assert "rs_cfgtest_pathattr.src.support.helpers" in gates, gates
+    assert "rs_cfgtest_pathattr.src.helpers" not in gates, gates
 
 
 def test_gate_on_bodied_inline_module_marks_its_own_node(

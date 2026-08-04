@@ -1,9 +1,60 @@
-from collections.abc import Sequence
+import ntpath
+import posixpath
+import re
+from collections.abc import Iterable, Sequence
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+
+# `#[path = "support/helpers.rs"]` redirects the mod declaration it sits on
+# to an arbitrary file. Only the plain string form is read: a cfg_attr
+# wrapper is conditional and no single target speaks for it.
+_RS_PATH_ATTRIBUTE = re.compile(r'^#\[\s*path\s*=\s*"([^"]+)"\s*\]$')
+
+
+def path_attribute_target(decorators: Iterable[object]) -> str | None:
+    """The file a `#[path = "..."]` attribute points the declaration at."""
+    for decorator in decorators:
+        if match := _RS_PATH_ATTRIBUTE.match(str(decorator).strip()):
+            return match.group(1)
+    return None
+
+
+def path_attribute_qn_parts(
+    dir_parts: Sequence[str], redirect: str
+) -> list[str] | None:
+    """Qn segments for a `#[path]` target, or None when none can be named.
+
+    `dir_parts` is the directory the path counts from, and a `mod.rs`
+    target names that directory rather than a file beside it. An absolute
+    path, a Windows separator, a non-`.rs` target, or a climb above the
+    repository root names a file the qn scheme never keys, so nothing is
+    claimed rather than a spelling guessed at.
+    """
+    if (
+        not redirect.endswith(cs.EXT_RS)
+        or redirect.startswith("/")
+        or ntpath.splitdrive(redirect)[0]
+        or "\\" in redirect
+    ):
+        # Only a `.rs` file backs a module, and a rooted path names one the
+        # qn scheme never keys. Both rooted forms are spelled out here: a
+        # leading slash, and a `C:` drive that `ntpath` is what recognises
+        # whatever platform the indexer itself runs on. `ntpath.isabs` is
+        # not the check, since 3.13 changed it to call a single leading
+        # slash relative (to the current drive), which is true of Windows
+        # but says nothing about whether the repository holds the file.
+        return None
+    parts = posixpath.normpath(posixpath.join(*dir_parts, redirect)).split("/")
+    stem = parts.pop()[: -len(cs.EXT_RS)]
+    if not stem:
+        return None
+    if stem != cs.INDEX_MOD:
+        parts.append(stem)
+    cleaned = [part for part in parts if part not in ("", ".")]
+    return None if not cleaned or ".." in cleaned else cleaned
 
 
 def _collect_path_parts(node: Node, parts: list[str]) -> None:

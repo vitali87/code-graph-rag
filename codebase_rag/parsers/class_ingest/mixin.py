@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from bisect import bisect_left, bisect_right
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -1518,6 +1518,7 @@ class ClassIngestMixin:
                     module_node,
                     module_qn,
                     safe_decode_text(module_name_node) or "",
+                    decorators,
                 )
                 (gated_targets if gated else ungated_targets).update(candidates)
                 continue
@@ -1574,7 +1575,11 @@ class ClassIngestMixin:
             self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, decl_props)
 
     def _rust_cfg_test_candidates(
-        self, module_node: Node, module_qn: str, module_name: str
+        self,
+        module_node: Node,
+        module_qn: str,
+        module_name: str,
+        decorators: Sequence[object] = (),
     ) -> set[str]:
         """Qualified-name candidates for a bodyless declaration's target.
 
@@ -1591,6 +1596,11 @@ class ClassIngestMixin:
         if not module_name:
             return set()
         chain = rs_utils.build_module_path(module_node)
+        if redirect := self._rust_path_attribute_qn(module_qn, chain, decorators):
+            # `#[path]` names the backing file outright, and the file is
+            # where the qn scheme keys the module, so the name-derived
+            # spellings below back nothing at all here (issue #1035).
+            return {redirect}
         candidates = {
             self.import_processor._rust_resolve_relative(
                 module_qn, [*chain, module_name], module_qn
@@ -1614,6 +1624,35 @@ class ClassIngestMixin:
                     )
                 )
         return candidates
+
+    def _rust_path_attribute_qn(
+        self, module_qn: str, chain: list[str], decorators: Sequence[object]
+    ) -> str | None:
+        """The qn of the file a `#[path]` declaration redirects to.
+
+        The path counts from the directory holding the declaring file, and
+        a `mod.rs` target names the directory itself, which is the qn the
+        indexer gives that directory's module. Inside inline `mod` blocks
+        the chain joins that directory, and a file that is not itself a
+        module root (anything but lib.rs, main.rs or mod.rs) contributes
+        its own stem as a directory first, exactly as rustc counts it.
+        """
+        redirect = rs_utils.path_attribute_target(decorators)
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if redirect is None or file_path is None:
+            return None
+        declaring = cached_relative_path(file_path, self.repo_path)
+        dir_parts = list(declaring.parts[:-1])
+        if chain:
+            if declaring.stem not in cs.RS_ENTRY_STEMS:
+                dir_parts.append(declaring.stem)
+            dir_parts.extend(chain)
+        parts = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
+        return (
+            None
+            if parts is None
+            else cs.SEPARATOR_DOT.join([self.project_name, *parts])
+        )
 
     def process_all_method_overrides(self) -> None:
         mo.process_all_method_overrides(
