@@ -183,6 +183,7 @@ class ClassIngestMixin:
     _deferred_cpp_inherits: list[DeferredCppInherit]
     _deferred_inherits: list[DeferredInherit]
     _rust_trait_impls: list[RustTraitImpl]
+    rust_impl_method_traits: dict[str, str]
     cpp_module_interfaces: set[str]
     _deferred_cpp_module_impls: list[tuple[str, str]]
     declared_module_qns: set[str]
@@ -511,6 +512,10 @@ class ClassIngestMixin:
         self._rust_trait_impls = []
         for impl in impls:
             if not self._rust_trait_is_external(impl):
+                # First-party instead: bind its methods to the trait THIS block
+                # names, so the override pass stops deriving the parent from the
+                # method's qualified name (issue #1076).
+                self._record_rust_impl_method_traits(impl)
                 continue
             for method_qn in impl.method_qns:
                 self.ingestor.ensure_node_batch(
@@ -520,6 +525,19 @@ class ClassIngestMixin:
                         cs.KEY_OVERRIDES_EXTERNAL: True,
                     },
                 )
+
+    def _record_rust_impl_method_traits(self, impl: RustTraitImpl) -> None:
+        # Only a REGISTERED trait: the override edge needs a real endpoint, and
+        # a spelling that resolves nowhere leaves the generic ancestry walk as
+        # the better guess.
+        resolved = self._resolve_deferred_parent_qn(impl.entry)
+        if resolved is None or resolved[1]:
+            return
+        trait_qn = resolved[0]
+        if self.function_registry.get(trait_qn) != NodeType.INTERFACE:
+            return
+        for method_qn in impl.method_qns:
+            self.rust_impl_method_traits[method_qn] = trait_qn
 
     def _rust_trait_is_external(self, impl: RustTraitImpl) -> bool:
         # Only POSITIVE evidence roots: the crate the trait is written under
@@ -1674,6 +1692,7 @@ class ClassIngestMixin:
             self.interface_implementers,
             self.csharp_methods,
             self.csharp_override_methods,
+            self.rust_impl_method_traits,
         )
         self._resolve_java_anon_overrides()
 
