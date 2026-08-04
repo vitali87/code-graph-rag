@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import posixpath
 from abc import abstractmethod
 from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
@@ -1641,20 +1640,13 @@ class ClassIngestMixin:
         file_path = self.module_qn_to_file_path.get(module_qn)
         if redirect is None or file_path is None:
             return None
-        declaring = cached_relative_path(file_path, self.repo_path)
-        target = PurePosixPath(
-            posixpath.normpath(declaring.parent.as_posix() + "/" + redirect)
+        dir_parts = cached_relative_path(file_path, self.repo_path).parts[:-1]
+        parts = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
+        return (
+            None
+            if parts is None
+            else cs.SEPARATOR_DOT.join([self.project_name, *parts])
         )
-        if target.suffix == cs.EXT_RS:
-            target = (
-                target.parent if target.stem == cs.INDEX_MOD else target.with_suffix("")
-            )
-        parts = [part for part in target.parts if part not in ("", ".")]
-        if not parts or any(part == ".." for part in parts):
-            # The redirect climbs out of the repository: no indexed module
-            # answers to it, so nothing is claimed.
-            return None
-        return cs.SEPARATOR_DOT.join([self.project_name, *parts])
 
     def process_all_method_overrides(self) -> None:
         mo.process_all_method_overrides(

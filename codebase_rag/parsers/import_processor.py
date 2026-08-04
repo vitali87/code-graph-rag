@@ -71,12 +71,15 @@ _RS_MOD_DECL_PATTERN = re.compile(
 # Only the plain string form is read: a cfg_attr wrapper is conditional and
 # no single target speaks for it (issue #1035).
 _RS_MOD_REDIRECT_PATTERN = re.compile(
-    r"^[ \t]*((?:#\[[^\]\n]*\][ \t]*\n?)*)"
-    r"(?:pub[ \t]*(?:\([^)]*\))?[ \t]+)?"
-    r"mod[ \t]+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*;",
+    r"^\s*((?:#\[[^\]\n]*\]\s*)*)"
+    r"(?:pub\s*(?:\([^)]*\))?\s+)?"
+    r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
     re.MULTILINE,
 )
-_RS_PATH_ATTRIBUTE_PATTERN = re.compile(r'#\[[ \t]*path[ \t]*=[ \t]*"([^"]+)"[ \t]*\]')
+_RS_PATH_ATTRIBUTE_PATTERN = re.compile(r'#\[\s*path\s*=\s*"([^"\n]+)"\s*\]')
+# The opening of a path attribute, matched against the code the lexer has
+# already emitted, so the literal that follows can be kept verbatim.
+_RS_PATH_ATTRIBUTE_OPEN = re.compile(r"#\[\s*path\s*=\s*$")
 _RS_ITEM_DECL_PATTERN = re.compile(
     r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
     r'(?:(?:unsafe|async|const|extern\s+"[^"]*")\s+)*'
@@ -99,6 +102,13 @@ def _rs_strip_comments_and_strings(source: str) -> str:
     A regex cannot do this: block comments NEST, and string literals may
     contain comment markers (`const P: &str = "/*";`) or newline-separated
     text that would fake a `mod x;` line.
+
+    The one literal kept is a `#[path = "..."]` value, which names the file
+    backing a mod declaration and so has to survive for the declaration
+    scan to read it (issue #1035). Keeping it is safe precisely because
+    this lexer decides it: the opening `#[path =` is matched in code the
+    lexer has already walked, so no comment or outer string can present
+    one.
     """
     out: list[str] = []
     i, n = 0, len(source)
@@ -137,6 +147,7 @@ def _rs_strip_comments_and_strings(source: str) -> str:
                 out.append('""')
                 continue
         if c == '"':
+            start = i
             i += 1
             while i < n:
                 if source[i] == "\\":
@@ -146,7 +157,9 @@ def _rs_strip_comments_and_strings(source: str) -> str:
                     i += 1
                     break
                 i += 1
-            out.append('""')
+            literal = source[start:i]
+            keep = _RS_PATH_ATTRIBUTE_OPEN.search("".join(out[-80:])) is not None
+            out.append(literal if keep and "\n" not in literal else '""')
             continue
         if c == "'":
             # A char literal ('x', '\n', '\u{7f}'); a lifetime ('a) has no
@@ -187,37 +200,16 @@ class RustEntryDecls(NamedTuple):
     redirects: dict[str, str]
 
 
-def _rs_entry_decls_of(top_level: str, source: str) -> RustEntryDecls:
-    # The blanked text is what decides which declarations are real, since
-    # a string literal cannot fake a `mod x;` there. It also empties every
-    # string, so the `#[path]` VALUE survives only in the raw source: read
-    # it there and keep it only for a name the blanked scan confirmed.
-    mods = set(_RS_MOD_DECL_PATTERN.findall(top_level))
+def _rs_entry_decls_of(top_level: str) -> RustEntryDecls:
     redirects: dict[str, str] = {}
-    for attributes, name in _RS_MOD_REDIRECT_PATTERN.findall(source):
-        if name in mods and (match := _RS_PATH_ATTRIBUTE_PATTERN.search(attributes)):
+    for attributes, name in _RS_MOD_REDIRECT_PATTERN.findall(top_level):
+        if match := _RS_PATH_ATTRIBUTE_PATTERN.search(attributes):
             redirects[name] = match.group(1)
     return RustEntryDecls(
-        mods,
+        set(_RS_MOD_DECL_PATTERN.findall(top_level)),
         set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
         redirects,
     )
-
-
-def _rs_redirect_parts(dir_parts: list[str], redirect: str) -> list[str] | None:
-    """Repo-relative qn segments for a `#[path]` target, or None if it escapes.
-
-    The path counts from the directory holding the declaring entry file,
-    and a `mod.rs` target names that directory rather than a file beside
-    it.
-    """
-    parts = posixpath.normpath(posixpath.join(*dir_parts, redirect)).split("/")
-    if parts and parts[-1].endswith(cs.EXT_RS):
-        stem = parts.pop()[: -len(cs.EXT_RS)]
-        if stem != cs.INDEX_MOD:
-            parts.append(stem)
-    cleaned = [part for part in parts if part not in ("", ".")]
-    return None if not cleaned or ".." in cleaned else cleaned
 
 
 def _rs_top_level_only(stripped: str) -> str:
@@ -1678,7 +1670,7 @@ class ImportProcessor:
                 # tie-break's real but wrong answer.
                 continue
             top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
-            decls[stem] = _rs_entry_decls_of(top_level, source)
+            decls[stem] = _rs_entry_decls_of(top_level)
         return decls
 
     def _rust_attach(
@@ -1700,7 +1692,7 @@ class ImportProcessor:
                 # The declaration names its backing file outright, and the
                 # module keys under that file, so the declared name never
                 # appears in the qn at all (issue #1035).
-                if target := _rs_redirect_parts(dir_parts, redirect):
+                if target := rs_utils.path_attribute_qn_parts(dir_parts, redirect):
                     return cs.SEPARATOR_DOT.join(
                         [self.project_name, *target, *rest[1:]]
                     )
@@ -2429,7 +2421,7 @@ class ImportProcessor:
                     top_level = _rs_top_level_only(
                         _rs_strip_comments_and_strings(source)
                     )
-                    stems[file_path.stem] = _rs_entry_decls_of(top_level, source)
+                    stems[file_path.stem] = _rs_entry_decls_of(top_level)
         if file_path.name == cs.PKG_CARGO_TOML:
             # A manifest edit can add, remove, or repoint explicit targets
             # anywhere in its package, and a CREATED manifest moves the

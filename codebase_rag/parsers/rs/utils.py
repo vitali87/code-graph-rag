@@ -1,3 +1,4 @@
+import posixpath
 import re
 from collections.abc import Iterable, Sequence
 
@@ -18,6 +19,31 @@ def path_attribute_target(decorators: Iterable[object]) -> str | None:
         if match := _RS_PATH_ATTRIBUTE.match(str(decorator).strip()):
             return match.group(1)
     return None
+
+
+def path_attribute_qn_parts(
+    dir_parts: Sequence[str], redirect: str
+) -> list[str] | None:
+    """Qn segments for a `#[path]` target, or None when none can be named.
+
+    The path counts from the directory holding the declaring file, and a
+    `mod.rs` target names that directory rather than a file beside it. An
+    absolute path, a Windows separator, or a climb above the repository
+    root names a file the qn scheme never keys, so nothing is claimed
+    rather than a spelling guessed at.
+    """
+    if not redirect.endswith(cs.EXT_RS) or redirect.startswith("/") or "\\" in redirect:
+        # Only a `.rs` file backs a module, and an absolute or
+        # backslash-separated path names one the qn scheme never keys.
+        return None
+    parts = posixpath.normpath(posixpath.join(*dir_parts, redirect)).split("/")
+    stem = parts.pop()[: -len(cs.EXT_RS)]
+    if not stem:
+        return None
+    if stem != cs.INDEX_MOD:
+        parts.append(stem)
+    cleaned = [part for part in parts if part not in ("", ".")]
+    return None if not cleaned or ".." in cleaned else cleaned
 
 
 def _collect_path_parts(node: Node, parts: list[str]) -> None:
