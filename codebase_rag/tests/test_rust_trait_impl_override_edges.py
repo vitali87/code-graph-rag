@@ -335,6 +335,44 @@ def test_a_re_exported_trait_resolves_through_the_binding_not_a_sweep(
     assert (f"{base}.foo.S.run", f"{base}.a.Base.run") not in overrides, overrides
 
 
+def test_a_re_export_of_a_re_export_still_reaches_the_declaring_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A facade module that itself re-exports is the usual reason a crate root
+    # can say `pub use facade::Base`. Following one binding and stopping at an
+    # unregistered qn hands the rest of the chain back to the sweep.
+    project = temp_repo / "rs_reexport_chain_trait"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_reexport_chain_trait"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": (
+                "pub mod a;\npub mod facade;\npub mod inner;\npub mod foo;\n"
+                "pub use facade::Base;\n"
+            ),
+            "src/a.rs": "pub trait Base { fn run(&self) -> u32; }\n",
+            "src/facade.rs": "pub use crate::inner::Base;\n",
+            "src/inner.rs": "pub trait Base { fn run(&self) -> u32; }\n",
+            "src/foo.rs": (
+                "pub struct S;\n\n"
+                "impl crate::Base for S {\n"
+                "    fn run(&self) -> u32 { 1 }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_reexport_chain_trait.src"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _overrides(mock_ingestor)
+    assert (f"{base}.foo.S", f"{base}.inner.Base") in implements, implements
+    assert (f"{base}.foo.S", f"{base}.a.Base") not in implements, implements
+    assert (f"{base}.foo.S.run", f"{base}.inner.Base.run") in overrides, overrides
+    assert (f"{base}.foo.S.run", f"{base}.a.Base.run") not in overrides, overrides
+
+
 def test_a_locally_bound_module_head_names_the_trait_it_was_bound_to(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
