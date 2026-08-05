@@ -7,11 +7,13 @@ attribute, so a `#[cfg(test)]` gate reaches the file it names and a crate
 path through the declared name lands on that file too (issue #1035).
 """
 
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import (
+    RustEntryDecls,
     _rs_entry_decls_of,
     _rs_strip_comments_and_strings,
     _rs_top_level_only,
@@ -609,6 +611,55 @@ def test_an_absolute_redirect_claims_nothing(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     gates = _declared_gates(mock_ingestor, "rs_path_attr_abs.src.lib")
     assert not any("nowhere" in gate for gate in gates), gates
+
+
+def _scan_cost_per_char(source: str) -> tuple[float, RustEntryDecls]:
+    """Best-of-three seconds per scanned character, and what was found."""
+    top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    best = None
+    for _ in range(3):
+        start = time.perf_counter()
+        decls = _rs_entry_decls_of(top_level)
+        elapsed = time.perf_counter() - start
+        best = elapsed if best is None else min(best, elapsed)
+    assert best is not None
+    return best / len(top_level), decls
+
+
+def test_the_declaration_scan_stays_linear_in_blank_source() -> None:
+    # Every declaration pattern opened `^\s*`, and `\s` matches newlines, so
+    # under MULTILINE each line start rescanned the whole run of whitespace
+    # after it. Comment blanking turns a licence header or a doc block into
+    # exactly that run, and every crate entry file is scanned in full with no
+    # prescan in front of it (issue #1087).
+    #
+    # The comparison is against DENSE source through the same code path, so
+    # the machine's speed cancels and what is left is the property itself:
+    # whether blanked text costs more per character than real code. It did,
+    # by about 59000x; it now costs about 4x, and no absolute wall-clock
+    # budget has to be guessed for the slowest CI worker.
+    blank = "pub mod a;\n" + "// a line of an ordinary doc block\n" * 20000
+    dense = "pub mod a;\n" + "pub fn f(a: i32) -> i32 { a + 1 }\n" * 20000
+    blank_cost, decls = _scan_cost_per_char(blank)
+    dense_cost, _ = _scan_cost_per_char(dense)
+    assert "a" in decls.mods, decls
+    assert blank_cost < dense_cost * 50, (
+        f"blank {blank_cost * 1e9:.1f}ns/char vs dense {dense_cost * 1e9:.1f}ns/char"
+    )
+
+
+def test_an_attribute_on_its_own_line_still_reaches_its_declaration() -> None:
+    # The leading whitespace is what crosses lines wrongly; the whitespace
+    # BETWEEN an attribute and the declaration it decorates has to keep
+    # crossing them, since that spelling is the idiomatic one.
+    source = (
+        '#[cfg(unix)]\n\n    \n#[path = "sys/unix.rs"]\n    pub(crate) mod platform;\n'
+    )
+    decls = _rs_entry_decls_of(
+        _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    )
+    assert "platform" in decls.mods, decls
+    assert decls.redirects == {"platform": "sys/unix.rs"}, decls.redirects
 
 
 def test_two_cfg_variants_of_one_name_claim_no_single_target() -> None:

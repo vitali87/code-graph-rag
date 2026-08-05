@@ -57,7 +57,7 @@ _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
 # commented-out declaration nor one hidden behind a string literal containing
 # a comment marker can flip the crate attribution.
 _RS_MOD_DECL_PATTERN = re.compile(
-    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
+    r"^[^\S\n]*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
     r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
     re.MULTILINE,
 )
@@ -72,7 +72,7 @@ _RS_MOD_DECL_PATTERN = re.compile(
 # Only the plain string form is read: a cfg_attr wrapper is conditional and
 # no single target speaks for it (issue #1035).
 _RS_MOD_REDIRECT_PATTERN = re.compile(
-    r"^\s*((?:#\[[^\]\n]*\]\s*)*)"
+    r"^[^\S\n]*((?:#\[[^\]\n]*\]\s*)*)"
     r"(?:pub\s*(?:\([^)]*\))?\s+)?"
     r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
     re.MULTILINE,
@@ -82,7 +82,7 @@ _RS_PATH_ATTRIBUTE_PATTERN = re.compile(r'#\[\s*path\s*=\s*"([^"\n]+)"\s*\]')
 # already emitted, so the literal that follows can be kept verbatim.
 _RS_PATH_ATTRIBUTE_OPEN = re.compile(r"#\[\s*path\s*=\s*$")
 _RS_ITEM_DECL_PATTERN = re.compile(
-    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
+    r"^[^\S\n]*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
     r'(?:(?:unsafe|async|const|extern\s+"[^"]*")\s+)*'
     r"(?:trait|struct|enum|fn|type|const|static|union|mod)"
     r"\s+(?:mut\s+)?(?:r#)?([A-Za-z_][A-Za-z0-9_]*)",
