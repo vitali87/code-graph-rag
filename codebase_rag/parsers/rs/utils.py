@@ -307,7 +307,15 @@ def extract_impl_trait(impl_node: Node) -> str | None:
     # simple name (a trait impl means Type IMPLEMENTS Trait).
     if impl_node.type != cs.TS_IMPL_ITEM:
         return None
-    return _impl_field_type_name(impl_node, cs.FIELD_TRAIT)
+    if name := _impl_field_type_name(impl_node, cs.FIELD_TRAIT):
+        return name
+    # A generic wrapping a SCOPED path (`std::ops::Add<u32>`) is the one
+    # trait spelling the field walk reads no name off, and the whole block
+    # then read as no trait impl at all: no IMPLEMENTS edge, no implementer,
+    # no override for its methods. The written path's last segment is the
+    # simple name (issue #1080).
+    path = extract_impl_trait_path(impl_node)
+    return path.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1] if path else None
 
 
 def extract_impl_trait_path(impl_node: Node) -> str | None:

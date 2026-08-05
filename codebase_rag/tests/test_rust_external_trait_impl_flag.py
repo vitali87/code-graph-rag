@@ -192,6 +192,32 @@ def test_generic_external_trait_impl_is_flagged(
     assert _prop(props, "Seq.from_iter").get(cs.KEY_OVERRIDES_EXTERNAL) is True
 
 
+def test_generic_scoped_external_trait_impl_is_flagged(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A generic wrapped around a SCOPED path is the spelling the trait-name
+    # extractor read nothing off, so the block reached none of this: no
+    # RustTraitImpl was recorded and its methods stayed ordinary dead-code
+    # candidates however plainly `std` speaks for the trait (issue #1080).
+    props = _build(
+        temp_repo / "rsgenericscoped",
+        mock_ingestor,
+        {
+            "lib.rs": (
+                "pub struct S(u32);\n"
+                "\n"
+                "impl std::ops::Add<u32> for S {\n"
+                "    type Output = S;\n"
+                "    fn add(self, other: u32) -> S {\n"
+                "        S(self.0 + other)\n"
+                "    }\n"
+                "}\n"
+            )
+        },
+    )
+    assert _prop(props, "S.add").get(cs.KEY_OVERRIDES_EXTERNAL) is True
+
+
 def test_first_party_trait_impl_is_not_flagged(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

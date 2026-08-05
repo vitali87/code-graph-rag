@@ -249,6 +249,25 @@ class ClassIngestMixin:
     def _resolve_to_qn(self, name: str, module_qn: str) -> str:
         return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"
 
+    def _resolve_rust_trait_qn(self, path: str, name: str, module_qn: str) -> str:
+        """Qn for the trait an `impl ... for Type` block names.
+
+        A crate-relative path names its trait outright, and resolving the
+        SIMPLE name instead ends in a project-wide sweep that any same-named
+        trait can answer: `impl crate::z::Base for S` recorded `a.Base`
+        (issue #1080). Every other head keeps the simple name, which is what
+        a `use` binds and what the external-trait check reads the spelling
+        for.
+        """
+        head = path.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+        if head in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER):
+            rewritten = self.import_processor._rewrite_rust_local_use_path(
+                path, module_qn
+            )
+            if rewritten != path:
+                return rewritten
+        return self._resolve_to_qn(name, module_qn)
+
     def _ingest_cpp_module_declarations(
         self,
         root_node: Node,
@@ -1171,7 +1190,11 @@ class ClassIngestMixin:
         impl_method_qns: list[str] = []
         trait_impl_method_qns: list[str] | None = None
         if trait_name := rs_utils.extract_impl_trait(class_node):
-            trait_qn = self._resolve_to_qn(trait_name, owner_module_qn)
+            trait_qn = self._resolve_rust_trait_qn(
+                rs_utils.extract_impl_trait_path(class_node) or trait_name,
+                trait_name,
+                owner_module_qn,
+            )
             # The trait (or the impl target) may live in a file not yet
             # parsed; hold the IMPLEMENTS edge back for
             # resolve_deferred_inherits so an unresolvable trait
