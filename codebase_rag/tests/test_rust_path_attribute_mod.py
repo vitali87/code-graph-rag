@@ -142,6 +142,98 @@ def test_crate_path_resolves_through_a_redirected_module(
     ) not in calls, calls
 
 
+def test_crate_path_resolves_a_redirect_declared_outside_an_entry_file(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The redirect sits in src/engine.rs, an ordinary module file, so only
+    # the crate entry's declarations used to be consulted and the tail of
+    # the path attached by name. src/engine/rig.rs is present and declared
+    # by nobody, which is exactly where the name-derived spelling lands
+    # (issue #1065); rustc compiles src/fixtures/rig.rs.
+    project = temp_repo / "rs_path_attr_deep"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_deep"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\npub mod a;\n",
+            "src/engine.rs": ('#[path = "fixtures/rig.rs"]\npub mod rig;\n'),
+            "src/fixtures/rig.rs": "pub fn build() -> i32 {\n    2\n}\n",
+            "src/engine/rig.rs": "pub fn build() -> i32 {\n    9\n}\n",
+            "src/a.rs": ("pub fn go() -> i32 {\n    crate::engine::rig::build()\n}\n"),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_deep.src.a.go"
+    assert (caller, "rs_path_attr_deep.src.fixtures.rig.build") in calls, calls
+    assert (caller, "rs_path_attr_deep.src.engine.rig.build") not in calls, calls
+
+
+def test_a_relative_path_resolves_a_redirect_declared_beside_it(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `super::rig` from a sibling module reaches the same declaration by a
+    # different route, and that route never touched the entry map at all.
+    project = temp_repo / "rs_path_attr_super"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\n",
+            "src/engine.rs": (
+                '#[path = "fixtures/rig.rs"]\npub mod rig;\npub mod a;\n'
+            ),
+            "src/fixtures/rig.rs": "pub fn build() -> i32 {\n    2\n}\n",
+            "src/engine/rig.rs": "pub fn build() -> i32 {\n    9\n}\n",
+            "src/engine/a.rs": ("pub fn go() -> i32 {\n    super::rig::build()\n}\n"),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super.src.engine.a.go"
+    assert (caller, "rs_path_attr_super.src.fixtures.rig.build") in calls, calls
+    assert (caller, "rs_path_attr_super.src.engine.rig.build") not in calls, calls
+
+
+def test_a_redirect_onto_a_mod_rs_is_not_read_off_its_sibling_shadow(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A redirect naming `platform/mod.rs` backs the DIRECTORY, and the qn
+    # scheme drops the `mod` segment, so `src.platform` looks exactly like a
+    # plain file module. Continuing the walk from the sibling `src/platform.rs`
+    # reads an undeclared shadow, whose own redirect then sends `inner` to a
+    # third file rustc never compiles into this path.
+    project = temp_repo / "rs_path_attr_modrs"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_modrs"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\npub mod a;\n",
+            "src/engine.rs": '#[path = "platform/mod.rs"]\npub mod platform;\n',
+            "src/platform/mod.rs": "pub mod inner;\n",
+            "src/platform/inner.rs": "pub fn go() -> i32 {\n    1\n}\n",
+            "src/platform.rs": '#[path = "elsewhere/inner.rs"]\npub mod inner;\n',
+            "src/elsewhere/inner.rs": "pub fn other() -> i32 {\n    9\n}\n",
+            "src/a.rs": (
+                "pub fn run() -> i32 {\n    crate::engine::platform::inner::go()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_modrs.src.a.run"
+    assert (caller, "rs_path_attr_modrs.src.platform.inner.go") in calls, calls
+    assert not [
+        pair for pair in calls if pair[0] == caller and "elsewhere" in pair[1]
+    ], calls
+
+
 def test_a_commented_out_redirect_does_not_hijack_a_live_declaration(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
