@@ -234,6 +234,65 @@ def test_a_redirect_onto_a_mod_rs_is_not_read_off_its_sibling_shadow(
     ], calls
 
 
+def test_super_inside_a_redirect_target_climbs_the_module_tree(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `#[path]` moves the FILE, not the module's place in the tree. `rig` is
+    # `crate::engine::rig`, so `super` is `engine` and `super::sib` is backed
+    # by src/engine/sib.rs. Popping a segment off the file's own qn lands on
+    # src/fixtures instead, where an undeclared shadow answers (issue #1083).
+    project = temp_repo / "rs_path_attr_super_target"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super_target"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\n",
+            "src/engine.rs": '#[path = "fixtures/rig.rs"]\npub mod rig;\npub mod sib;\n',
+            "src/engine/sib.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/fixtures/sib.rs": "pub fn run() -> i32 {\n    9\n}\n",
+            "src/fixtures/rig.rs": (
+                "pub fn build() -> i32 {\n    super::sib::run()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super_target.src.fixtures.rig.build"
+    assert (caller, "rs_path_attr_super_target.src.engine.sib.run") in calls, calls
+    assert (caller, "rs_path_attr_super_target.src.fixtures.sib.run") not in calls, (
+        calls
+    )
+
+
+def test_super_from_an_ordinary_module_still_climbs_its_own_directory(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The redirect map must claim only files a redirect names. A plain module
+    # in the same directory keeps the physical climb, which for it IS the
+    # module tree.
+    project = temp_repo / "rs_path_attr_super_plain"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super_plain"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\n",
+            "src/engine.rs": "pub mod rig;\npub mod sib;\n",
+            "src/engine/sib.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/engine/rig.rs": (
+                "pub fn build() -> i32 {\n    super::sib::run()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super_plain.src.engine.rig.build"
+    assert (caller, "rs_path_attr_super_plain.src.engine.sib.run") in calls, calls
+
+
 def test_a_commented_out_redirect_does_not_hijack_a_live_declaration(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
