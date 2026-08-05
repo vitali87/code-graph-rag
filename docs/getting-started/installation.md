@@ -158,6 +158,5 @@ This checks that all required dependencies and services are available.
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules
 - **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
-- **griffe**: Signatures for entire Python programs. Extract the structure, the frame, the skeleton of your project, to generate API documentation or find breaking changes in your API.
 - **pathspec**: Utility library for gitignore style pattern matching of file paths.
 <!-- /SECTION:dependencies -->
