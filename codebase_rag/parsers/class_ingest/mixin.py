@@ -280,6 +280,14 @@ class ClassIngestMixin:
         # for the trait.
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         expanded = f"{import_map.get(head, head)}{cs.SEPARATOR_DOUBLE_COLON}{tail}"
+        if expanded.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}"):
+            # A `use` of a first-party module, already rewritten to its qn:
+            # the binding says which module the head means, so the path is
+            # every bit as exact as the crate-relative spelling above.
+            return (
+                expanded.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT),
+                anchored,
+            )
         crate = expanded.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
         if crate in cs.RS_STDLIB_CRATES or (
             self.import_processor.rust_head_is_external_dep(crate, module_qn)
@@ -680,6 +688,31 @@ class ClassIngestMixin:
             stack.extend(implements_map.get(ancestor, []))
         return False
 
+    def _rust_reexport_target(self, entry: DeferredInherit) -> str | None:
+        """Where a `pub use` in the named module declares the parent.
+
+        `crate::Base` is a legal path for a trait the crate root re-exports,
+        and it is exact, but the trait registers where it is DECLARED. The
+        binding says where that is, so the written path still decides and no
+        project-wide sweep of the simple name has to (issue #1080). Only a
+        registered target answers: a re-export OUT of the project resolves
+        nowhere first-party, and guessing there would bind a decoy.
+        """
+        if entry.language != cs.SupportedLanguage.RUST:
+            return None
+        owner, _, item = entry.parent_qn.rpartition(cs.SEPARATOR_DOT)
+        bound = self.import_processor.import_mapping.get(owner, {}).get(item)
+        if not bound:
+            return None
+        target = (
+            bound
+            if bound.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
+            else self.import_processor._rust_resolve_relative(
+                owner, bound.split(cs.SEPARATOR_DOUBLE_COLON), owner
+            )
+        )
+        return target if self.function_registry.get(target) is not None else None
+
     def _resolve_deferred_parent_qn(
         self, entry: DeferredInherit
     ) -> tuple[str, bool] | None:
@@ -717,6 +750,8 @@ class ClassIngestMixin:
             return None
         if self.function_registry.get(entry.parent_qn) is not None:
             return entry.parent_qn, False
+        if (followed := self._rust_reexport_target(entry)) is not None:
+            return followed, False
         if entry.alt_parent_qn is not None:
             # The written path was exact and still landed on nothing, which a
             # re-export does: `crate::Base` names the entry module while the
