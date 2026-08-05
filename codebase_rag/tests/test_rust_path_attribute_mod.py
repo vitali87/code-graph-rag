@@ -7,6 +7,7 @@ attribute, so a `#[cfg(test)]` gate reaches the file it names and a crate
 path through the declared name lands on that file too (issue #1035).
 """
 
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -609,6 +610,36 @@ def test_an_absolute_redirect_claims_nothing(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     gates = _declared_gates(mock_ingestor, "rs_path_attr_abs.src.lib")
     assert not any("nowhere" in gate for gate in gates), gates
+
+
+def test_the_declaration_scan_stays_linear_in_blank_source() -> None:
+    # Every declaration pattern opened `^\s*`, and `\s` matches newlines, so
+    # under MULTILINE each line start rescanned the whole run of whitespace
+    # after it. Comment blanking turns a licence header or a doc block into
+    # exactly that run, and every crate entry file is scanned in full with no
+    # prescan in front of it (issue #1087). The budget is generous because
+    # only the SHAPE is being pinned: the quadratic scan took 25s here.
+    source = "pub mod a;\n" + "// a line of an ordinary doc block\n" * 20000
+    top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    start = time.perf_counter()
+    decls = _rs_entry_decls_of(top_level)
+    elapsed = time.perf_counter() - start
+    assert "a" in decls.mods, decls
+    assert elapsed < 2.0, f"{elapsed:.1f}s for {len(top_level)} chars"
+
+
+def test_an_attribute_on_its_own_line_still_reaches_its_declaration() -> None:
+    # The leading whitespace is what crosses lines wrongly; the whitespace
+    # BETWEEN an attribute and the declaration it decorates has to keep
+    # crossing them, since that spelling is the idiomatic one.
+    source = (
+        '#[cfg(unix)]\n\n    \n#[path = "sys/unix.rs"]\n    pub(crate) mod platform;\n'
+    )
+    decls = _rs_entry_decls_of(
+        _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    )
+    assert "platform" in decls.mods, decls
+    assert decls.redirects == {"platform": "sys/unix.rs"}, decls.redirects
 
 
 def test_two_cfg_variants_of_one_name_claim_no_single_target() -> None:
