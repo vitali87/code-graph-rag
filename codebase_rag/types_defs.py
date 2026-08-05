@@ -666,6 +666,11 @@ class DeferredInherit(NamedTuple):
     own module qn as a guess; the edge is emitted after Pass 2 with the guess
     re-resolved against the full registry. An unresolvable parent emits no
     edge rather than a phantom the database would drop.
+
+    `alt_parent_qn` is a second spelling to try when the first names no
+    registered node: a written path can be exact about where to look and
+    still point at a module that only RE-EXPORTS the parent, where the
+    name-anchored guess is what finds the declaring one.
     """
 
     rel_type: RelationshipType
@@ -674,6 +679,7 @@ class DeferredInherit(NamedTuple):
     module_qn: str
     base_index: int
     language: SupportedLanguage
+    alt_parent_qn: str | None = None
 
 
 class RustTraitImpl(NamedTuple):
