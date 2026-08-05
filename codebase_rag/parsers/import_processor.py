@@ -459,6 +459,7 @@ class ImportProcessor:
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
         "_rust_module_mod_decls",
+        "_rust_redirect_parents",
         "_rust_explicit_targets",
         "_rust_auto_build_flags",
         "_rust_workspace_crates",
@@ -519,6 +520,10 @@ class ImportProcessor:
         self._rust_module_mod_decls: dict[
             tuple[tuple[str, ...], bool], tuple[RustEntryDecls, list[str]] | None
         ] = {}
+        # `#[path]` target qn -> the module that DECLARES it, for the `super::`
+        # climb inside such a file (issue #1083). Lazy: a file cannot say who
+        # declares it, so filling this at all means sweeping the repository.
+        self._rust_redirect_parents: dict[str, str] | None = None
         # Explicit Cargo target entry paths per package dir ([[bin]]/[lib]/
         # [[example]]/[[test]]/[[bench]] `path` overrides): such entries
         # root their own crates wherever they sit, unlike auto-targets
@@ -1745,6 +1750,88 @@ class ImportProcessor:
         self._rust_module_mod_decls[key] = found
         return found
 
+    def _rust_module_is_declared(self, parts: list[str]) -> bool:
+        """Whether this module's own physical neighbour declares it.
+
+        True of every ordinary module, which is what keeps the redirect sweep
+        off the hot path: only a file no neighbour declares can be the target
+        of a `#[path]` written somewhere else.
+        """
+        if not parts:
+            return False
+        parent, name = parts[:-1], parts[-1]
+        found = self._rust_module_decls(parent)
+        if found is not None and name in found[0].mods:
+            return True
+        return any(
+            name in decls.mods for decls in self._rust_entry_decls(parent).values()
+        )
+
+    def _rust_redirect_parent_map(self) -> dict[str, str]:
+        """Every `#[path]` target's qn, mapped to the module declaring it.
+
+        Built by one sweep of the repository's Rust sources: a file cannot say
+        who declares it, and the declaration may sit in any file at all. The
+        prescan is what keeps that affordable, since a source with no
+        `#[path = "..."]` anywhere in it costs one regex search and no more.
+        """
+        if self._rust_redirect_parents is not None:
+            return self._rust_redirect_parents
+        parents: dict[str, str] = {}
+        for dirpath, dirnames, filenames in os.walk(self.repo_path):
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if name not in cs.IGNORE_PATTERNS
+                and not name.startswith(cs.SEPARATOR_DOT)
+            ]
+            for filename in filenames:
+                if not filename.endswith(cs.EXT_RS):
+                    continue
+                path = Path(dirpath, filename)
+                try:
+                    source = path.read_text(
+                        encoding=cs.RS_ENCODING_UTF8, errors="ignore"
+                    )
+                except OSError:
+                    continue
+                if _RS_PATH_ATTRIBUTE_PATTERN.search(source) is None:
+                    continue
+                try:
+                    dir_parts = list(path.relative_to(self.repo_path).parts[:-1])
+                except ValueError:
+                    continue
+                stem = filename[: -len(cs.EXT_RS)]
+                # A mod.rs IS its directory's module, so it contributes no
+                # segment of its own; every other file contributes its stem.
+                declarer = cs.SEPARATOR_DOT.join(
+                    [self.project_name, *dir_parts]
+                    if stem == cs.INDEX_MOD
+                    else [self.project_name, *dir_parts, stem]
+                )
+                decls = _rs_entry_decls_of(
+                    _rs_top_level_only(_rs_strip_comments_and_strings(source))
+                )
+                for redirect in decls.redirects.values():
+                    if target := rs_utils.path_attribute_qn_parts(dir_parts, redirect):
+                        key = cs.SEPARATOR_DOT.join([self.project_name, *target])
+                        parents[key] = declarer
+        self._rust_redirect_parents = parents
+        return parents
+
+    def _rust_logical_parent(self, module_qn: str) -> str | None:
+        """The module that declares this one, when `#[path]` moved its file.
+
+        The attribute moves the FILE, not the module's place in the tree, so
+        `super::` written inside the target means the DECLARING module rather
+        than a sibling of the file (issue #1083). An ordinary module is
+        declared by its own physical neighbour and answers None.
+        """
+        parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
+        if not parts or self._rust_module_is_declared(parts):
+            return None
+        return self._rust_redirect_parent_map().get(module_qn)
+
     def _rust_walk_mods(
         self, parts: list[str], rest: list[str], dir_backed: bool = False
     ) -> list[str]:
@@ -1914,7 +2001,13 @@ class ImportProcessor:
             depth = 0
             while depth < len(parts) and parts[depth] == cs.KEYWORD_SUPER:
                 depth += 1
-            keep = max(len(base_parts) - depth, 1)
+            climbs = depth
+            if (logical := self._rust_logical_parent(module_qn)) is not None:
+                # The first `super` is the DECLARING module, which `#[path]`
+                # moved this file away from; any further ones climb from
+                # there, exactly as they would had the file never moved.
+                base_parts, climbs = logical.split(cs.SEPARATOR_DOT), depth - 1
+            keep = max(len(base_parts) - climbs, 1)
             base = cs.SEPARATOR_DOT.join(base_parts[:keep])
             return self._rust_resolve_relative(base, parts[depth:], module_qn)
         if (
@@ -2484,6 +2577,7 @@ class ImportProcessor:
         self._rust_dir_listing.clear()
         self._rust_entry_mod_decls.clear()
         self._rust_module_mod_decls.clear()
+        self._rust_redirect_parents = None
         self._rust_explicit_targets.clear()
         self._rust_auto_build_flags.clear()
         self._rust_workspace_crates = None
