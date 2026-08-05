@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import (
+    RustEntryDecls,
     _rs_entry_decls_of,
     _rs_strip_comments_and_strings,
     _rs_top_level_only,
@@ -612,20 +613,39 @@ def test_an_absolute_redirect_claims_nothing(
     assert not any("nowhere" in gate for gate in gates), gates
 
 
+def _scan_cost_per_char(source: str) -> tuple[float, RustEntryDecls]:
+    """Best-of-three seconds per scanned character, and what was found."""
+    top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    best = None
+    for _ in range(3):
+        start = time.perf_counter()
+        decls = _rs_entry_decls_of(top_level)
+        elapsed = time.perf_counter() - start
+        best = elapsed if best is None else min(best, elapsed)
+    assert best is not None
+    return best / len(top_level), decls
+
+
 def test_the_declaration_scan_stays_linear_in_blank_source() -> None:
     # Every declaration pattern opened `^\s*`, and `\s` matches newlines, so
     # under MULTILINE each line start rescanned the whole run of whitespace
     # after it. Comment blanking turns a licence header or a doc block into
     # exactly that run, and every crate entry file is scanned in full with no
-    # prescan in front of it (issue #1087). The budget is generous because
-    # only the SHAPE is being pinned: the quadratic scan took 25s here.
-    source = "pub mod a;\n" + "// a line of an ordinary doc block\n" * 20000
-    top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
-    start = time.perf_counter()
-    decls = _rs_entry_decls_of(top_level)
-    elapsed = time.perf_counter() - start
+    # prescan in front of it (issue #1087).
+    #
+    # The comparison is against DENSE source through the same code path, so
+    # the machine's speed cancels and what is left is the property itself:
+    # whether blanked text costs more per character than real code. It did,
+    # by about 59000x; it now costs about 4x, and no absolute wall-clock
+    # budget has to be guessed for the slowest CI worker.
+    blank = "pub mod a;\n" + "// a line of an ordinary doc block\n" * 20000
+    dense = "pub mod a;\n" + "pub fn f(a: i32) -> i32 { a + 1 }\n" * 20000
+    blank_cost, decls = _scan_cost_per_char(blank)
+    dense_cost, _ = _scan_cost_per_char(dense)
     assert "a" in decls.mods, decls
-    assert elapsed < 2.0, f"{elapsed:.1f}s for {len(top_level)} chars"
+    assert blank_cost < dense_cost * 50, (
+        f"blank {blank_cost * 1e9:.1f}ns/char vs dense {dense_cost * 1e9:.1f}ns/char"
+    )
 
 
 def test_an_attribute_on_its_own_line_still_reaches_its_declaration() -> None:
