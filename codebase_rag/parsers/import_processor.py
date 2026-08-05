@@ -1803,37 +1803,50 @@ class ImportProcessor:
             for filename in sorted(filenames):
                 if not filename.endswith(cs.EXT_RS):
                     continue
-                try:
-                    source = Path(dirpath, filename).read_text(
-                        encoding=cs.RS_ENCODING_UTF8, errors="ignore"
-                    )
-                except OSError:
-                    continue
-                if _RS_PATH_ATTRIBUTE_PATTERN.search(source) is None:
-                    continue
-                dir_parts = list(here)
-                stem = filename[: -len(cs.EXT_RS)]
-                # A mod.rs IS its directory's module, so it contributes no
-                # segment of its own; every other file contributes its stem.
-                declarer = cs.SEPARATOR_DOT.join(
-                    [self.project_name, *dir_parts]
-                    if stem == cs.INDEX_MOD
-                    else [self.project_name, *dir_parts, stem]
-                )
-                decls = _rs_entry_decls_of(
-                    _rs_top_level_only(_rs_strip_comments_and_strings(source))
-                )
-                for redirect in decls.redirects.values():
-                    target = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
-                    if target is None or self._rust_module_is_declared(target):
-                        continue
-                    key = cs.SEPARATOR_DOT.join([self.project_name, *target])
+                for key, declarer in self._rust_redirects_in(
+                    Path(dirpath, filename), list(here)
+                ):
                     # Several files may name one target (a helper shared by
                     # two binaries), and rustc compiles it into each tree.
                     # The graph keys it once, so the walk order decides.
                     parents.setdefault(key, declarer)
         self._rust_redirect_parents = parents
         return parents
+
+    def _rust_redirects_in(
+        self, path: Path, dir_parts: list[str]
+    ) -> list[tuple[str, str]]:
+        """Modules one file's `#[path]` attributes move, each with its declarer.
+
+        A target its own physical neighbour also declares is left out: rustc
+        compiles such a file into both trees, and the neighbour's spelling is
+        the one `super::` inside it counts from.
+        """
+        try:
+            source = path.read_text(encoding=cs.RS_ENCODING_UTF8, errors="ignore")
+        except OSError:
+            return []
+        if _RS_PATH_ATTRIBUTE_PATTERN.search(source) is None:
+            return []
+        # A mod.rs IS its directory's module, so it contributes no segment of
+        # its own; every other file contributes its stem.
+        declarer = cs.SEPARATOR_DOT.join(
+            [self.project_name, *dir_parts]
+            if path.stem == cs.INDEX_MOD
+            else [self.project_name, *dir_parts, path.stem]
+        )
+        decls = _rs_entry_decls_of(
+            _rs_top_level_only(_rs_strip_comments_and_strings(source))
+        )
+        moved = []
+        for redirect in decls.redirects.values():
+            target = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
+            if target is None or self._rust_module_is_declared(target):
+                continue
+            moved.append(
+                (cs.SEPARATOR_DOT.join([self.project_name, *target]), declarer)
+            )
+        return moved
 
     def _rust_logical_parent(self, module_qn: str) -> str | None:
         """The module that declares this one, when `#[path]` moved its file.
