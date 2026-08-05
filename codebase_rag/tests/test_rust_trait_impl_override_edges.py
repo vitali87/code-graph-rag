@@ -298,6 +298,80 @@ def test_a_plain_scoped_trait_impl_implements_the_trait_it_names(
     assert (f"{base}.foo.S.run", f"{base}.a.Base.run") not in overrides, overrides
 
 
+def test_a_re_exported_trait_resolves_through_the_binding_not_a_sweep(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `crate::Base` is exact about where to look, and the crate root's own
+    # `pub use` says where the trait is declared. Falling back to the simple
+    # name instead hands the choice to a project-wide sweep, which the decoy
+    # in `a` answers first.
+    project = temp_repo / "rs_reexport_decoy_trait"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_reexport_decoy_trait"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": (
+                "pub mod a;\npub mod inner;\npub mod foo;\npub use inner::Base;\n"
+            ),
+            "src/a.rs": "pub trait Base { fn run(&self) -> u32; }\n",
+            "src/inner.rs": "pub trait Base { fn run(&self) -> u32; }\n",
+            "src/foo.rs": (
+                "pub struct S;\n\n"
+                "impl crate::Base for S {\n"
+                "    fn run(&self) -> u32 { 1 }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_reexport_decoy_trait.src"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _overrides(mock_ingestor)
+    assert (f"{base}.foo.S", f"{base}.inner.Base") in implements, implements
+    assert (f"{base}.foo.S", f"{base}.a.Base") not in implements, implements
+    assert (f"{base}.foo.S.run", f"{base}.inner.Base.run") in overrides, overrides
+    assert (f"{base}.foo.S.run", f"{base}.a.Base.run") not in overrides, overrides
+
+
+def test_a_locally_bound_module_head_names_the_trait_it_was_bound_to(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `use crate::z as alias;` then `impl alias::Base` is the same written
+    # path one indirection on, and the binding says exactly which module the
+    # head means. Testing the expansion only for externality throws that away
+    # and hands a first-party spelling back to the sweep, where the decoy in
+    # `a` answers first.
+    project = temp_repo / "rs_alias_scoped_implements"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_alias_scoped_implements"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod a;\npub mod z;\npub mod foo;\n",
+            "src/a.rs": "pub trait Base { fn run(&self) -> u32; }\n",
+            "src/z.rs": "pub trait Base { fn run(&self) -> u32; }\n",
+            "src/foo.rs": (
+                "use crate::z as alias;\n\n"
+                "pub struct S;\n\n"
+                "impl alias::Base for S {\n"
+                "    fn run(&self) -> u32 { 1 }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_alias_scoped_implements.src"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _overrides(mock_ingestor)
+    assert (f"{base}.foo.S", f"{base}.z.Base") in implements, implements
+    assert (f"{base}.foo.S", f"{base}.a.Base") not in implements, implements
+    assert (f"{base}.foo.S.run", f"{base}.z.Base.run") in overrides, overrides
+    assert (f"{base}.foo.S.run", f"{base}.a.Base.run") not in overrides, overrides
+
+
 def test_block_order_not_trait_name_decides_the_override_target(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
