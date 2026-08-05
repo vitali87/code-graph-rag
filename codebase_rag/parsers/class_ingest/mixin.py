@@ -696,22 +696,33 @@ class ClassIngestMixin:
         binding says where that is, so the written path still decides and no
         project-wide sweep of the simple name has to (issue #1080). Only a
         registered target answers: a re-export OUT of the project resolves
-        nowhere first-party, and guessing there would bind a decoy.
+        nowhere first-party, and guessing there would bind a decoy. A facade
+        module that re-exports what it was itself given is the usual reason
+        the crate root can name the trait at all, so the chain is followed to
+        its end rather than one hop.
         """
         if entry.language != cs.SupportedLanguage.RUST:
             return None
-        owner, _, item = entry.parent_qn.rpartition(cs.SEPARATOR_DOT)
-        bound = self.import_processor.import_mapping.get(owner, {}).get(item)
-        if not bound:
-            return None
-        target = (
-            bound
-            if bound.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
-            else self.import_processor._rust_resolve_relative(
-                owner, bound.split(cs.SEPARATOR_DOUBLE_COLON), owner
+        qn = entry.parent_qn
+        seen = {qn}
+        while True:
+            owner, _, item = qn.rpartition(cs.SEPARATOR_DOT)
+            bound = self.import_processor.import_mapping.get(owner, {}).get(item)
+            if not bound:
+                return None
+            qn = (
+                bound
+                if bound.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
+                else self.import_processor._rust_resolve_relative(
+                    owner, bound.split(cs.SEPARATOR_DOUBLE_COLON), owner
+                )
             )
-        )
-        return target if self.function_registry.get(target) is not None else None
+            if qn in seen:
+                # Two modules re-exporting each other's name never declare it.
+                return None
+            seen.add(qn)
+            if self.function_registry.get(qn) is not None:
+                return qn
 
     def _resolve_deferred_parent_qn(
         self, entry: DeferredInherit
