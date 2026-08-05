@@ -249,24 +249,43 @@ class ClassIngestMixin:
     def _resolve_to_qn(self, name: str, module_qn: str) -> str:
         return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"
 
-    def _resolve_rust_trait_qn(self, path: str, name: str, module_qn: str) -> str:
-        """Qn for the trait an `impl ... for Type` block names.
+    def _resolve_rust_trait_qn(
+        self, path: str, name: str, module_qn: str
+    ) -> tuple[str, str | None]:
+        """Qn for the trait an `impl ... for Type` block names, and a fallback.
 
-        A crate-relative path names its trait outright, and resolving the
-        SIMPLE name instead ends in a project-wide sweep that any same-named
-        trait can answer: `impl crate::z::Base for S` recorded `a.Base`
-        (issue #1080). Every other head keeps the simple name, which is what
-        a `use` binds and what the external-trait check reads the spelling
-        for.
+        Resolving the SIMPLE name alone ends in a project-wide sweep that any
+        same-named trait can answer, so `impl crate::z::Base for S` recorded
+        `a.Base` (issue #1080). The written path outranks the sweep wherever
+        it says where to look: a crate-relative head names a first-party
+        module outright, and a head the toolchain or the manifest speaks for
+        names another crate's trait, which no first-party sweep may answer
+        for however the spelling collides.
+
+        The crate-relative answer carries the name-anchored one as a
+        fallback, since `crate::Base` for a re-exported trait names the entry
+        module while the trait registers where it is declared.
         """
-        head = path.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+        head, _, tail = path.partition(cs.SEPARATOR_DOUBLE_COLON)
+        anchored = self._resolve_to_qn(name, module_qn)
+        if not tail:
+            return anchored, None
         if head in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER):
             rewritten = self.import_processor._rewrite_rust_local_use_path(
                 path, module_qn
             )
-            if rewritten != path:
-                return rewritten
-        return self._resolve_to_qn(name, module_qn)
+            return (rewritten, anchored) if rewritten != path else (anchored, None)
+        # The head is itself a name a `use` may have bound (`use std::io;`
+        # then `impl io::Read`), and only the expanded crate says who speaks
+        # for the trait.
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        expanded = f"{import_map.get(head, head)}{cs.SEPARATOR_DOUBLE_COLON}{tail}"
+        crate = expanded.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+        if crate in cs.RS_STDLIB_CRATES or (
+            self.import_processor.rust_head_is_external_dep(crate, module_qn)
+        ):
+            return expanded, None
+        return anchored, None
 
     def _ingest_cpp_module_declarations(
         self,
@@ -698,6 +717,14 @@ class ClassIngestMixin:
             return None
         if self.function_registry.get(entry.parent_qn) is not None:
             return entry.parent_qn, False
+        if entry.alt_parent_qn is not None:
+            # The written path was exact and still landed on nothing, which a
+            # re-export does: `crate::Base` names the entry module while the
+            # trait registers where it is declared. The second spelling gets
+            # the whole chain, not just the registry probe above.
+            return self._resolve_deferred_parent_qn(
+                entry._replace(parent_qn=entry.alt_parent_qn, alt_parent_qn=None)
+            )
         project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(project_prefix):
             external = entry.parent_qn.replace(
@@ -1190,7 +1217,7 @@ class ClassIngestMixin:
         impl_method_qns: list[str] = []
         trait_impl_method_qns: list[str] | None = None
         if trait_name := rs_utils.extract_impl_trait(class_node):
-            trait_qn = self._resolve_rust_trait_qn(
+            trait_qn, alt_trait_qn = self._resolve_rust_trait_qn(
                 rs_utils.extract_impl_trait_path(class_node) or trait_name,
                 trait_name,
                 owner_module_qn,
@@ -1206,6 +1233,7 @@ class ClassIngestMixin:
                 module_qn=owner_module_qn,
                 base_index=0,
                 language=cs.SupportedLanguage.RUST,
+                alt_parent_qn=alt_trait_qn,
             )
             self._deferred_inherits.append(trait_entry)
             # Collect this block's methods against the trait AS WRITTEN: if the

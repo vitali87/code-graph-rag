@@ -199,8 +199,9 @@ def test_a_generic_scoped_trait_impl_implements_the_trait_it_names(
     # The block above needed a supertrait to reach `Base` at all: on its own,
     # `impl crate::b::Base<u32> for S` read as no trait impl whatsoever, so no
     # IMPLEMENTS edge was queued and no implementer recorded (issue #1080).
-    # `src/c.rs` declares a same-named trait the project-wide simple-name
-    # sweep answers with, so only reading the WRITTEN path lands on `b`.
+    # The decoy sits in `a` and the real target in `z`, so the project-wide
+    # simple-name sweep the old resolution ends in picks the wrong one and
+    # only reading the WRITTEN path lands on `z`.
     project = temp_repo / "rs_scoped_generic_implements"
     _write(
         project,
@@ -208,12 +209,12 @@ def test_a_generic_scoped_trait_impl_implements_the_trait_it_names(
             "Cargo.toml": (
                 '[package]\nname = "rs_scoped_generic_implements"\nversion = "0.1.0"\n'
             ),
-            "src/lib.rs": "pub mod b;\npub mod c;\npub mod foo;\n",
-            "src/b.rs": "pub trait Base<T> { fn run(&self) -> T; }\n",
-            "src/c.rs": "pub trait Base<T> { fn run(&self) -> T; }\n",
+            "src/lib.rs": "pub mod a;\npub mod z;\npub mod foo;\n",
+            "src/a.rs": "pub trait Base<T> { fn run(&self) -> T; }\n",
+            "src/z.rs": "pub trait Base<T> { fn run(&self) -> T; }\n",
             "src/foo.rs": (
                 "pub struct S;\n\n"
-                "impl crate::b::Base<u32> for S {\n"
+                "impl crate::z::Base<u32> for S {\n"
                 "    fn run(&self) -> u32 { 1 }\n"
                 "}\n"
             ),
@@ -223,10 +224,42 @@ def test_a_generic_scoped_trait_impl_implements_the_trait_it_names(
     base = "rs_scoped_generic_implements.src"
     implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     overrides = _overrides(mock_ingestor)
-    assert (f"{base}.foo.S", f"{base}.b.Base") in implements, implements
-    assert (f"{base}.foo.S", f"{base}.c.Base") not in implements, implements
-    assert (f"{base}.foo.S.run", f"{base}.b.Base.run") in overrides, overrides
-    assert (f"{base}.foo.S.run", f"{base}.c.Base.run") not in overrides, overrides
+    assert (f"{base}.foo.S", f"{base}.z.Base") in implements, implements
+    assert (f"{base}.foo.S", f"{base}.a.Base") not in implements, implements
+    assert (f"{base}.foo.S.run", f"{base}.z.Base.run") in overrides, overrides
+    assert (f"{base}.foo.S.run", f"{base}.a.Base.run") not in overrides, overrides
+
+
+def test_a_crate_path_to_a_re_exported_trait_keeps_its_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `pub use inner::Base;` in the crate root makes `crate::Base` legal, but
+    # the trait registers where it is DECLARED. Reading the written path alone
+    # lands on the entry module, which holds no such node, so the exact answer
+    # has to fall back to the name-anchored one rather than emit nothing.
+    project = temp_repo / "rs_reexported_trait"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_reexported_trait"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod inner;\npub mod foo;\npub use inner::Base;\n",
+            "src/inner.rs": "pub trait Base { fn run(&self) -> u32; }\n",
+            "src/foo.rs": (
+                "pub struct S;\n\n"
+                "impl crate::Base for S {\n"
+                "    fn run(&self) -> u32 { 1 }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_reexported_trait.src"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _overrides(mock_ingestor)
+    assert (f"{base}.foo.S", f"{base}.inner.Base") in implements, implements
+    assert (f"{base}.foo.S.run", f"{base}.inner.Base.run") in overrides, overrides
 
 
 def test_a_plain_scoped_trait_impl_implements_the_trait_it_names(
