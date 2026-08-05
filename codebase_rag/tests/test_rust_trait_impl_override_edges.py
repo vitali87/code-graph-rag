@@ -193,6 +193,78 @@ def test_a_scoped_generic_trait_impl_is_not_mistaken_for_inherent(
     assert (f"{base}.foo.S.go", f"{base}.foo.Alpha.go") in overrides, overrides
 
 
+def test_a_generic_scoped_trait_impl_implements_the_trait_it_names(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The block above needed a supertrait to reach `Base` at all: on its own,
+    # `impl crate::b::Base<u32> for S` read as no trait impl whatsoever, so no
+    # IMPLEMENTS edge was queued and no implementer recorded (issue #1080).
+    # `src/c.rs` declares a same-named trait the project-wide simple-name
+    # sweep answers with, so only reading the WRITTEN path lands on `b`.
+    project = temp_repo / "rs_scoped_generic_implements"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_scoped_generic_implements"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod b;\npub mod c;\npub mod foo;\n",
+            "src/b.rs": "pub trait Base<T> { fn run(&self) -> T; }\n",
+            "src/c.rs": "pub trait Base<T> { fn run(&self) -> T; }\n",
+            "src/foo.rs": (
+                "pub struct S;\n\n"
+                "impl crate::b::Base<u32> for S {\n"
+                "    fn run(&self) -> u32 { 1 }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_scoped_generic_implements.src"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _overrides(mock_ingestor)
+    assert (f"{base}.foo.S", f"{base}.b.Base") in implements, implements
+    assert (f"{base}.foo.S", f"{base}.c.Base") not in implements, implements
+    assert (f"{base}.foo.S.run", f"{base}.b.Base.run") in overrides, overrides
+    assert (f"{base}.foo.S.run", f"{base}.c.Base.run") not in overrides, overrides
+
+
+def test_a_plain_scoped_trait_impl_implements_the_trait_it_names(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Without the generic wrapper the trait NAME does come out, but only as
+    # the bare `Base`, whose resolution ends in a project-wide sweep any
+    # same-named trait can answer. The decoy is deliberately in `a` and the
+    # real target in `z`, so the sweep's own ordering picks the wrong one and
+    # only the written path lands on the trait the block names.
+    project = temp_repo / "rs_scoped_plain_implements"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_scoped_plain_implements"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod a;\npub mod z;\npub mod foo;\n",
+            "src/a.rs": "pub trait Base { fn run(&self) -> u32; }\n",
+            "src/z.rs": "pub trait Base { fn run(&self) -> u32; }\n",
+            "src/foo.rs": (
+                "pub struct S;\n\n"
+                "impl crate::z::Base for S {\n"
+                "    fn run(&self) -> u32 { 1 }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_scoped_plain_implements.src"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    overrides = _overrides(mock_ingestor)
+    assert (f"{base}.foo.S", f"{base}.z.Base") in implements, implements
+    assert (f"{base}.foo.S", f"{base}.a.Base") not in implements, implements
+    assert (f"{base}.foo.S.run", f"{base}.z.Base.run") in overrides, overrides
+    assert (f"{base}.foo.S.run", f"{base}.a.Base.run") not in overrides, overrides
+
+
 def test_block_order_not_trait_name_decides_the_override_target(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
