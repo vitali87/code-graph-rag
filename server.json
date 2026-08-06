@@ -38,8 +38,8 @@
         },
         {
           "name": "ORCHESTRATOR_API_KEY",
-          "description": "API key for the orchestrator LLM provider",
-          "isRequired": true,
+          "description": "API key for the orchestrator LLM provider (not required when ORCHESTRATOR_PROVIDER is ollama)",
+          "isRequired": false,
           "isSecret": true
         },
         {
@@ -54,8 +54,8 @@
         },
         {
           "name": "CYPHER_API_KEY",
-          "description": "API key for the Cypher LLM provider",
-          "isRequired": true,
+          "description": "API key for the Cypher LLM provider (not required when CYPHER_PROVIDER is ollama)",
+          "isRequired": false,
           "isSecret": true
         },
         {
