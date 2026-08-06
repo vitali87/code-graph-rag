@@ -615,7 +615,7 @@ def record_effective_module(
     store: dict[str, str],
     qn: str,
     node: Node,
-    module_qn: str,
+    module_qn: str | None,
     language: cs.SupportedLanguage | None,
 ) -> None:
     """Record the MODULE a Rust item is contained by, keyed by its registered qn.
@@ -629,7 +629,9 @@ def record_effective_module(
     the same walk that builds the qn -- rather than re-derived at resolve time
     (issue #1086).
     """
-    if language != cs.SupportedLanguage.RUST:
+    if language != cs.SupportedLanguage.RUST or module_qn is None:
+        # No module to count from: recording the mod chain alone would key a
+        # relative fragment the resolver would read as an absolute qn.
         return
     mod_parts = build_module_path(node)
     store[qn] = (
