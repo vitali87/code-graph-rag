@@ -611,6 +611,36 @@ def enclosing_mod_fn_spans(node: Node) -> list[tuple[int, int]]:
     return spans
 
 
+def record_effective_module(
+    store: dict[str, str],
+    qn: str,
+    node: Node,
+    module_qn: str | None,
+    language: cs.SupportedLanguage | None,
+) -> None:
+    """Record the MODULE a Rust item is contained by, keyed by its registered qn.
+
+    `super::`/`self::` count from the innermost enclosing `mod`, which an impl
+    block is NOT, and qn space cannot tell the two apart: an inline mod and an
+    impl target are both a bare segment, and an impl target the graph never
+    registers (`impl Serialize for Vec<u8>`) is indistinguishable from a mod by
+    lookup alone. Guessing wrong climbs one level too few and mints a WRONG
+    edge, which revives dead code, so the answer is taken from the AST here --
+    the same walk that builds the qn -- rather than re-derived at resolve time
+    (issue #1086).
+    """
+    if language != cs.SupportedLanguage.RUST or module_qn is None:
+        # No module to count from: recording the mod chain alone would key a
+        # relative fragment the resolver would read as an absolute qn.
+        return
+    mod_parts = build_module_path(node)
+    store[qn] = (
+        module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(mod_parts)
+        if mod_parts
+        else module_qn
+    )
+
+
 def build_module_path(
     node: Node,
     include_impl_targets: bool = False,

@@ -239,6 +239,7 @@ class FunctionIngestMixin:
     function_locations: dict[FunctionSpanKey, FunctionLocation]
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     macro_qns: set[str]
+    rust_function_modules: dict[str, str]
     _deferred_js_anonymous: list[_DeferredRegistration]
     _deferred_rust_body_local: list[_DeferredRegistration]
     _deferred_cpp_artifacts: list[_DeferredCppArtifact]
@@ -1252,6 +1253,15 @@ class FunctionIngestMixin:
         )
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
+        # Keyed by the UNIQUE qn, since a collision rename above (issue #1017)
+        # is the key Pass-3 will look this up by.
+        rs_utils.record_effective_module(
+            self.rust_function_modules,
+            resolution.qualified_name,
+            func_node,
+            module_qn,
+            language,
+        )
         if is_macro:
             self.macro_qns.add(resolution.qualified_name)
         self.function_registry.mark_callable_params(

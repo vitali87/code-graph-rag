@@ -164,5 +164,6 @@ class ProcessorFactory:
                 rehydrated_definition_paths=(
                     self.definition_processor.rehydrated_definition_paths
                 ),
+                rust_function_modules=(self.definition_processor.rust_function_modules),
             )
         return self._call_processor

@@ -188,6 +188,7 @@ class ClassIngestMixin:
     cpp_module_interfaces: set[str]
     _deferred_cpp_module_impls: list[tuple[str, str]]
     declared_module_qns: set[str]
+    rust_function_modules: dict[str, str]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
@@ -1354,6 +1355,10 @@ class ClassIngestMixin:
             # its calls to this pass's twin.
             if ingested_qn is not None:
                 impl_method_qns.append(ingested_qn)
+                # An impl block is no module, so the method's `super::` counts
+                # from the impl's own enclosing module -- the file module unless
+                # the block sits in an inline `mod` (issue #1086).
+                self.rust_function_modules[ingested_qn] = owner_module_qn
                 span = function_span_key(module_qn, method_node)
                 if span not in self.function_locations:
                     self.function_locations[span] = FunctionLocation(
@@ -1505,6 +1510,15 @@ class ClassIngestMixin:
             ):
                 self.method_return_types[ingested_qn] = dart_return
             if ingested_qn is not None:
+                # Rust trait bodies reach here rather than the impl path above;
+                # a trait is no module either (issue #1086).
+                rs_utils.record_effective_module(
+                    self.rust_function_modules,
+                    ingested_qn,
+                    method_node,
+                    module_qn,
+                    language,
+                )
                 record_cpp_definition_span(
                     self.cpp_definition_spans,
                     language,
