@@ -86,6 +86,7 @@ class CallResolver:
         "_pending_field_bindings",
         "_module_language_cache",
         "rehydrated_definition_paths",
+        "rust_function_modules",
     )
 
     def __init__(
@@ -97,6 +98,7 @@ class CallResolver:
         type_aliases: dict[str, str] | None = None,
         interface_implementers: dict[str, set[str]] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
+        rust_function_modules: dict[str, str] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -138,6 +140,12 @@ class CallResolver:
             rehydrated_definition_paths
             if rehydrated_definition_paths is not None
             else {}
+        )
+        # {Rust function qn: containing module qn}, recorded from the AST during
+        # ingestion (shared ref). The authority on how many levels a `super::`
+        # written inside it climbs (issue #1086).
+        self.rust_function_modules = (
+            rust_function_modules if rust_function_modules is not None else {}
         )
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
@@ -1539,17 +1547,24 @@ class CallResolver:
         module_qn: str,
         caller_qn: str | None,
     ) -> tuple[tuple[str, str] | None, bool]:
-        # crate:: is chain-independent; self::/super:: resolve against the
-        # caller's innermost enclosing MOD chain, which a caller nested
-        # below the file module (an inline mod or an impl block,
-        # indistinguishable in qn space) does not expose, so those stay
-        # with the ordinary fallbacks.
-        if object_path[0] != cs.RUST_CRATE_KEYWORD and self._rust_enclosing_scopes(
-            module_qn, caller_qn
-        ):
-            return None, False
+        # crate:: is chain-independent; self::/super:: count from the caller's
+        # enclosing MOD chain, which qn space cannot reconstruct -- an inline
+        # mod and an impl block are both a bare segment. The ingest pass walked
+        # the AST and recorded the answer, so read it (issue #1086).
+        effective_module = module_qn
+        if object_path[0] != cs.RUST_CRATE_KEYWORD:
+            recorded = self.rust_function_modules.get(caller_qn) if caller_qn else None
+            if recorded is None:
+                # No record: a caller the ingest pass never registered (a
+                # rehydrated definition, a body-local fn). Guessing the depth
+                # would mint a WRONG edge, so decline as before and let the
+                # ordinary fallbacks keep their weaker but safe answer.
+                if self._rust_enclosing_scopes(module_qn, caller_qn):
+                    return None, False
+            else:
+                effective_module = recorded
         base = self.import_processor._rewrite_rust_local_use_path(
-            cs.SEPARATOR_DOUBLE_COLON.join(object_path), module_qn
+            cs.SEPARATOR_DOUBLE_COLON.join(object_path), effective_module
         )
         if cs.SEPARATOR_DOUBLE_COLON in base:
             return None, False
