@@ -2068,10 +2068,22 @@ class FunctionIngestMixin:
 
         # A Rust item inside `mod inner` is contained by that inline module, not the
         # file module. Its enclosing module qn is the file module plus the mod path;
-        # the inline Module node carries that exact qn.
-        if language == cs.SupportedLanguage.RUST and (
-            mod_parts := rs_utils.build_module_path(func_node)
+        # the inline Module node carries that exact qn, so this walk has to use the
+        # scope rule the Module node was named under -- type and impl segments
+        # included -- or the DEFINES edge names a module that does not exist
+        # (issue #1018).
+        # The mods-only walk is what decides whether an inline `mod` encloses
+        # this item at all; the full walk then spells that module the way its
+        # Module node was named.
+        if language == cs.SupportedLanguage.RUST and rs_utils.build_module_path(
+            func_node
         ):
+            mod_parts = rs_utils.build_module_path(
+                func_node,
+                include_impl_targets=True,
+                include_classes=True,
+                class_node_types=lang_config.class_node_types,
+            )
             nested = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(mod_parts)
             return cs.NodeLabel.MODULE, nested, None
 
