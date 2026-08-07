@@ -34,7 +34,7 @@
         {
           "name": "ORCHESTRATOR_MODEL",
           "description": "Model name for the orchestrator agent",
-          "default": "claude-sonnet-4-20250514"
+          "default": "claude-sonnet-4-6"
         },
         {
           "name": "ORCHESTRATOR_API_KEY",
@@ -50,7 +50,7 @@
         {
           "name": "CYPHER_MODEL",
           "description": "Model name for Cypher query generation",
-          "default": "claude-sonnet-4-20250514"
+          "default": "claude-sonnet-4-6"
         },
         {
           "name": "CYPHER_API_KEY",
