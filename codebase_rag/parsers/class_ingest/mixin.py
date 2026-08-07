@@ -251,7 +251,7 @@ class ClassIngestMixin:
 
     def _resolve_rust_trait_qn(
         self, path: str, name: str, module_qn: str
-    ) -> tuple[str, str | None]:
+    ) -> tuple[str | None, str | None]:
         """Qn for the trait an `impl ... for Type` block names, and a fallback.
 
         Resolving the SIMPLE name alone ends in a project-wide sweep that any
@@ -274,9 +274,14 @@ class ClassIngestMixin:
             rewritten = self.import_processor._rewrite_rust_local_use_path(
                 path, module_qn
             )
-            if rewritten is None or rewritten == path:
-                # None means the path runs through a `#[path]` target the qn
-                # scheme cannot key, so it names nothing here (issue #1082).
+            if rewritten is None:
+                # The path runs through a `#[path]` target the qn scheme
+                # cannot key. Falling back to the name-anchored candidate
+                # would let a same-named indexed trait collect IMPLEMENTS and
+                # OVERRIDES edges it has no claim to, which is the very
+                # shadow-binding this drop exists to prevent (issue #1082).
+                return None, None
+            if rewritten == path:
                 return anchored, None
             return rewritten, anchored
         # The head is itself a name a `use` may have bound (`use std::io;`
@@ -1269,12 +1274,20 @@ class ClassIngestMixin:
         # from the trait map as no information and guesses (issue #1078).
         impl_method_qns: list[str] = []
         trait_impl_method_qns: list[str] | None = None
-        if trait_name := rs_utils.extract_impl_trait(class_node):
-            trait_qn, alt_trait_qn = self._resolve_rust_trait_qn(
+        trait_name = rs_utils.extract_impl_trait(class_node)
+        trait_qn, alt_trait_qn = (
+            self._resolve_rust_trait_qn(
                 rs_utils.extract_impl_trait_path(class_node) or trait_name,
                 trait_name,
                 owner_module_qn,
             )
+            if trait_name
+            else (None, None)
+        )
+        # No trait qn means the written path runs through a `#[path]` target
+        # the qn scheme cannot key, so no first-party trait is its referent
+        # and this block records no IMPLEMENTS edge at all (issue #1082).
+        if trait_name and trait_qn is not None:
             # The trait (or the impl target) may live in a file not yet
             # parsed; hold the IMPLEMENTS edge back for
             # resolve_deferred_inherits so an unresolvable trait
@@ -1748,7 +1761,13 @@ class ClassIngestMixin:
         relative = self.import_processor._rust_resolve_relative(
             module_qn, [*chain, module_name], module_qn
         )
-        candidates = {relative} if relative is not None else set()
+        if relative is None:
+            # The declaration redirects through a `#[path]` target the qn
+            # scheme cannot key. The name-derived spellings below would hand
+            # its `#[cfg(test)]` gating to whatever indexed module happens to
+            # occupy one of those names (issue #1082).
+            return set()
+        candidates = {relative}
         if chain:
             # A chain declaration's target FILE lives under the declaring
             # file's directory tree regardless of the inline qn nesting
