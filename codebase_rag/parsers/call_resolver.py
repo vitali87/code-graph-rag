@@ -860,6 +860,26 @@ class CallResolver:
             if scoped is not None:
                 return scoped[0]
 
+        # A `crate::`/`self::`/`super::` path says outright which module holds
+        # the item, so it must not reach the probes that answer by NAME. Both
+        # the same-module and the import probe ignore the prefix and hand back
+        # the caller's OWN item of that name, which for `super::` is one module
+        # too low (issue #1093). Undecided here means the path names nothing
+        # first-party, so the ordinary fallbacks still run.
+        if (
+            language == cs.SupportedLanguage.RUST
+            and cs.SEPARATOR_DOUBLE_COLON in call_name
+            and call_name.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+            in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER)
+        ):
+            prefixed, decided = self._try_resolve_rust_module_qualified(
+                call_name, module_qn, caller_qn
+            )
+            if decided:
+                if use_cache:
+                    self._simple_resolution_cache[cache_key] = prefixed
+                return prefixed
+
         # Rust name resolution prefers items defined in the module itself: a
         # glob import NEVER shadows a local item, and a MODULE-scoped named
         # use colliding with one is a compile error (E0255). A use inside a
@@ -1540,11 +1560,13 @@ class CallResolver:
         caller_qn: str | None,
     ) -> tuple[tuple[str, str] | None, bool]:
         # crate:: is chain-independent; self::/super:: resolve against the
-        # caller's innermost enclosing MOD chain, which a caller nested
-        # below the file module (an inline mod or an impl block,
-        # indistinguishable in qn space) does not expose, so those stay
-        # with the ordinary fallbacks.
-        if object_path[0] != cs.RUST_CRATE_KEYWORD and self._rust_enclosing_scopes(
+        # caller's innermost enclosing MOD chain. An impl block also nests
+        # below the file module but is NOT a mod: `super::` inside a method
+        # counts from the file module's parent exactly as it does in a free
+        # function, and the type registry is what tells the two apart
+        # (issue #1093). A genuine inline mod chain still stays with the
+        # ordinary fallbacks (issue #1086).
+        if object_path[0] != cs.RUST_CRATE_KEYWORD and self._rust_enclosing_mod_scopes(
             module_qn, caller_qn
         ):
             return None, False
@@ -1569,6 +1591,22 @@ class CallResolver:
             scopes.append(scope)
             scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return scopes
+
+    def _rust_enclosing_mod_scopes(
+        self, module_qn: str, caller_qn: str | None
+    ) -> list[str]:
+        """Enclosing scopes that are inline `mod` blocks, not impl targets.
+
+        `_rust_enclosing_scopes` deliberately keeps impl targets, whose use
+        storage keys mirror mod scopes. A `super::` path cares which is which:
+        an impl block adds no module level, so a method's `super::` counts
+        from the file module's parent, while an inline mod's does not.
+        """
+        return [
+            scope
+            for scope in self._rust_enclosing_scopes(module_qn, caller_qn)
+            if self.function_registry.get(scope) not in cs.RS_TYPE_SCOPE_LABELS
+        ]
 
     def _decide_rust_module_item(
         self, mapped: str, rest: list[str], item: str, owner: str
