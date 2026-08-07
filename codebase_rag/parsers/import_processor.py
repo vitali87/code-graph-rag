@@ -3084,7 +3084,10 @@ class ImportProcessor:
         """
         if self._cpp_module_qn_map is None:
             self._cpp_module_qn_map = build_module_qn_map(
-                self.repo_path, self.project_name
+                self.repo_path,
+                self.project_name,
+                self.exclude_paths,
+                self.unignore_paths,
             )
             self._cpp_qn_to_rel = {
                 qn: rel for rel, qn in self._cpp_module_qn_map.items()

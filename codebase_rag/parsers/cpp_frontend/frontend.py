@@ -803,6 +803,8 @@ def run_cpp_frontend(
     function_registry: FunctionRegistryTrieProtocol | None = None,
     simple_name_lookup: SimpleNameLookup | None = None,
     structural_elements: dict[Path, str | None] | None = None,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
 ) -> frozenset[str]:
     """Index C/C++ via libclang + a compile_commands.json (macro-accurate).
 
@@ -821,7 +823,7 @@ def run_cpp_frontend(
     CONTAINS_MODULE (the full-replace path used by GraphUpdater).
     """
     collector = _Collector(
-        CppQnResolver(repo_path, project_name),
+        CppQnResolver(repo_path, project_name, exclude_paths, unignore_paths),
         function_registry,
         simple_name_lookup,
         structural_elements,
@@ -839,6 +841,8 @@ def run_cpp_frontend_hybrid(
     function_registry: FunctionRegistryTrieProtocol | None = None,
     simple_name_lookup: SimpleNameLookup | None = None,
     structural_elements: dict[Path, str | None] | None = None,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
 ) -> tuple[list[PendingMacroCall], list[PendingExpansionCall]]:
     """Layer libclang's macro, alias, and include facts onto a tree-sitter index.
 
@@ -852,7 +856,7 @@ def run_cpp_frontend_hybrid(
     the caller joins each to tree-sitter definition spans after Pass 2.
     """
     collector = _Collector(
-        CppQnResolver(repo_path, project_name),
+        CppQnResolver(repo_path, project_name, exclude_paths, unignore_paths),
         function_registry,
         simple_name_lookup,
         structural_elements,
