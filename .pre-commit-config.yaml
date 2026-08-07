@@ -19,7 +19,7 @@ repos:
     hooks:
       - id: ty
         name: ty check
-        entry: uv run ty check --exclude codebase_rag/tests/ --exclude benchmarks/ --exclude optimize/ --exclude codec/ --exclude grammars/ --exclude query_modules/
+        entry: uv run --frozen --no-sync ty check --exclude codebase_rag/tests/ --exclude benchmarks/ --exclude optimize/ --exclude codec/ --exclude grammars/ --exclude query_modules/
         language: system
         types: [python]
         exclude: ^(codec/.*_pb2\.py|benchmarks/|optimize/|grammars/|query_modules/)$
@@ -28,7 +28,7 @@ repos:
     hooks:
       - id: generate-readme
         name: generate README sections
-        entry: uv run python scripts/hooks/generate_readme.py
+        entry: uv run --frozen --no-sync python scripts/hooks/generate_readme.py
         language: system
         pass_filenames: false
         always_run: true

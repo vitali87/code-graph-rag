@@ -18,7 +18,7 @@ targets = [repo_root / relative for relative in TARGET_FILES]
 before = [digest(target) for target in targets]
 
 result = subprocess.run(
-    ["uv", "run", "python", "scripts/generate_readme.py"],
+    ["uv", "run", "--frozen", "--no-sync", "python", "scripts/generate_readme.py"],
     check=False,
     cwd=repo_root,
     capture_output=True,
