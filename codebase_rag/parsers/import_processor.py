@@ -22,7 +22,7 @@ from ..types_defs import (
     FunctionSpanKey,
     LanguageQueries,
 )
-from ..utils.path_utils import has_ignored_dir_part
+from ..utils.path_utils import should_keep_dir, should_skip_rel_file
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import dart_extract_uri, dart_local_name, dart_resolve_import
 from .go import discover_go_module_paths, resolve_go_import_path
@@ -440,6 +440,8 @@ class ImportProcessor:
         "project_name",
         "ingestor",
         "function_registry",
+        "exclude_paths",
+        "unignore_paths",
         "import_mapping",
         "commonjs_direct_exports",
         "conditional_imports",
@@ -485,11 +487,17 @@ class ImportProcessor:
         project_name: str,
         ingestor: IngestorProtocol | None = None,
         function_registry: FunctionRegistryTrieProtocol | None = None,
+        exclude_paths: frozenset[str] | None = None,
+        unignore_paths: frozenset[str] | None = None,
     ) -> None:
         self.repo_path = repo_path
         self.project_name = project_name
         self.ingestor = ingestor
         self.function_registry = function_registry
+        # The same sets the indexer walks with, so the redirect sweep sees
+        # exactly the files the graph holds (issue #1088).
+        self.exclude_paths = exclude_paths
+        self.unignore_paths = unignore_paths
         self.import_mapping: dict[str, dict[str, str]] = {}
         # CommonJS modules whose ENTIRE export is one function
         # (`module.exports = function (...) {...}`): module qn -> the
@@ -1791,17 +1799,29 @@ class ImportProcessor:
             except ValueError:
                 continue
             # Sorted so the tie-break below is the same on every filesystem,
-            # and pruned by the same predicate the indexer walks with, or a
-            # declaration under Cargo's src/bin/ (first-party, not build
-            # output) is missed for files the graph does hold.
+            # and pruned by the very predicate the indexer walks with: a
+            # declaration in a subtree the user excluded must claim nothing,
+            # and one in a subtree `.cgrignore` rescued must be read, or
+            # `super::` in the target counts from the wrong module (issue
+            # #1088). Cargo's src/bin/ carve-out rides along (issue #1085).
+            dir_prefix = f"{'/'.join(here)}/" if here else ""
             dirnames[:] = sorted(
                 name
                 for name in dirnames
-                if not name.startswith(cs.SEPARATOR_DOT)
-                and not has_ignored_dir_part((*here, name))
+                if should_keep_dir(
+                    name, dir_prefix, self.exclude_paths, self.unignore_paths
+                )
             )
             for filename in sorted(filenames):
                 if not filename.endswith(cs.EXT_RS):
+                    continue
+                if should_skip_rel_file(
+                    f"{dir_prefix}{filename}",
+                    here,
+                    cs.EXT_RS,
+                    exclude_paths=self.exclude_paths,
+                    unignore_paths=self.unignore_paths,
+                ):
                     continue
                 for key, declarer in self._rust_redirects_in(
                     Path(dirpath, filename), list(here)

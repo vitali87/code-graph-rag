@@ -254,7 +254,11 @@ def run_updater(
 
 
 def create_and_run_updater(
-    repo_path: Path, mock_ingestor: MagicMock, skip_if_missing: str | None = None
+    repo_path: Path,
+    mock_ingestor: MagicMock,
+    skip_if_missing: str | None = None,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     if skip_if_missing and skip_if_missing not in parsers:
@@ -264,6 +268,8 @@ def create_and_run_updater(
         repo_path=repo_path,
         parsers=parsers,
         queries=queries,
+        exclude_paths=exclude_paths,
+        unignore_paths=unignore_paths,
     )
     updater.run()
     _audit_recorded_graph(mock_ingestor)
