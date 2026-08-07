@@ -10,18 +10,28 @@ Get from zero to querying your codebase in 5 minutes.
 
 Parse and ingest a multi-language repository into the knowledge graph.
 
-**For the first repository (clean start):**
-
 ```bash
-cgr start --repo-path /path/to/repo1 --update-graph --clean
+cgr start --repo-path /path/to/repo1 --update-graph
 ```
 
-**For additional repositories (preserve existing data):**
+**For additional repositories:**
 
 ```bash
 cgr start --repo-path /path/to/repo2 --update-graph
 cgr start --repo-path /path/to/repo3 --update-graph
 ```
+
+The graph is shared across projects, and syncing one leaves the others intact.
+
+**To start over from an empty graph:**
+
+```bash
+cgr start --repo-path /path/to/repo1 --update-graph --clean
+```
+
+`--clean` deletes **every** project in the shared graph, not just the one named
+by `--repo-path`. It asks for confirmation when other projects would be lost;
+pass `--yes` to skip that prompt in scripts and CI.
 
 **Control Memgraph batch flushing:**
 

@@ -129,9 +129,14 @@ You also need Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites,
 cgr daemon up
 
 # Parse a repository into the graph, then query it
-cgr start --repo-path /path/to/repo --update-graph --clean
+cgr start --repo-path /path/to/repo --update-graph
 cgr start --repo-path /path/to/repo
 ```
+
+Repeat the first command for each repository you want indexed; the graph is
+shared, and syncing one project leaves the others alone. To start over from an
+empty graph, add `--clean` — it deletes **every** project in the shared graph,
+not just this one, and asks for confirmation first.
 
 The [Quick Start](docs/getting-started/quickstart.md) guide walks through parsing, querying, and exporting in five minutes.
 
