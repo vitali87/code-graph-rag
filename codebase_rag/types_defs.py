@@ -851,7 +851,19 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE,),
     ),
     RelationshipSchema(
-        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
+        # A Rust `mod` written in a trait const initializer or an impl method
+        # body is defined by the TYPE, whose node carries an Interface/Enum/
+        # Type/Union label as readily as Class (issue #1018).
+        (
+            NodeLabel.MODULE,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+            NodeLabel.CLASS,
+            NodeLabel.INTERFACE,
+            NodeLabel.ENUM,
+            NodeLabel.TYPE,
+            NodeLabel.UNION,
+        ),
         RelationshipType.DEFINES,
         (
             NodeLabel.CLASS,
