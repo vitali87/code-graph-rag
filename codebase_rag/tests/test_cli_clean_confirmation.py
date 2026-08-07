@@ -237,3 +237,34 @@ def test_clean_done_message_unchanged_for_the_happy_path(
 
     assert result.exit_code == 0, result.output
     assert cs.CLI_MSG_CLEAN_DONE in result.output
+
+
+def test_prompt_counts_every_project_the_wipe_deletes(
+    mock_memgraph_connect: MagicMock,
+    interactive_stdin: None,
+    tmp_path: Path,
+) -> None:
+    # This project has never been synced, so it is not in the graph. Deriving
+    # the count from the OTHER projects would report one more than exists.
+    ingestor = _ingestor(mock_memgraph_connect)
+    ingestor.list_projects.return_value = list(OTHER_PROJECTS)
+
+    result = runner.invoke(app, _start_args(tmp_path), input="n\n")
+
+    assert f"Delete all {len(OTHER_PROJECTS)} project(s)" in result.output, (
+        result.output
+    )
+
+
+def test_prompt_counts_this_project_when_it_is_already_in_the_graph(
+    mock_memgraph_connect: MagicMock,
+    interactive_stdin: None,
+    tmp_path: Path,
+) -> None:
+    ingestor = _ingestor(mock_memgraph_connect)
+    ingestor.list_projects.return_value = [*OTHER_PROJECTS, PROJECT_NAME]
+
+    result = runner.invoke(app, _start_args(tmp_path), input="n\n")
+
+    expected = len(OTHER_PROJECTS) + 1
+    assert f"Delete all {expected} project(s)" in result.output, result.output

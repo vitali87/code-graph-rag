@@ -207,15 +207,12 @@ def _stdin_is_interactive() -> bool:
         return False
 
 
-def _other_projects_in_graph(
-    ingestor: MemgraphIngestor, project_name: str
-) -> list[str]:
+def _projects_in_graph(ingestor: MemgraphIngestor) -> list[str]:
     try:
-        projects = ingestor.list_projects()
+        return sorted(ingestor.list_projects())
     except Exception as exc:
         logger.warning(ls.MG_LIST_PROJECTS_FAILED.format(error=exc))
         return []
-    return sorted(name for name in projects if name != project_name)
 
 
 def _confirm_destructive_clean(
@@ -225,7 +222,11 @@ def _confirm_destructive_clean(
     if assume_yes:
         return
 
-    others = _other_projects_in_graph(ingestor, project_name)
+    # `--clean` deletes the whole graph, so the prompt counts every project in
+    # it. Deriving that count from `others` would understate it by one whenever
+    # this project has not been synced yet and so is not in the graph.
+    projects = _projects_in_graph(ingestor)
+    others = [name for name in projects if name != project_name]
     if not others:
         return
 
@@ -250,7 +251,7 @@ def _confirm_destructive_clean(
         raise typer.Exit(1)
 
     confirmed = typer.confirm(
-        cs.CLI_PROMPT_CLEAN_CONFIRM.format(count=len(others) + 1), default=False
+        cs.CLI_PROMPT_CLEAN_CONFIRM.format(count=len(projects)), default=False
     )
     if not confirmed:
         app_context.console.print(style(cs.CLI_MSG_CLEAN_ABORTED, cs.Color.CYAN))
