@@ -1,6 +1,7 @@
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
@@ -36,6 +37,8 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 
+TimerFactory = Callable[..., "threading.Timer"]
+
 
 class CodeChangeEventHandler(FileSystemEventHandler):
     """
@@ -55,8 +58,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         updater: GraphUpdater,
         debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
         max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
+        timer_factory: TimerFactory = threading.Timer,
     ):
         self.updater = updater
+        # Injectable so a test can drive the debounce deterministically rather
+        # than racing a wall clock, which is what made these tests flaky on
+        # loaded runners (issue #1005). Production always uses threading.Timer.
+        self._timer_factory = timer_factory
         self.ignore_patterns = IGNORE_PATTERNS
         self.ignore_suffixes = IGNORE_SUFFIXES
 
@@ -146,7 +154,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             else:
                 remaining_wait = self.max_wait_seconds - time_since_first
                 effective_delay = min(self.debounce_seconds, remaining_wait)
-                timer = threading.Timer(
+                timer = self._timer_factory(
                     effective_delay,
                     self._process_debounced_change,
                     args=[relative_path_str],
@@ -166,7 +174,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def _schedule_immediate_processing(self, relative_path_str: str) -> None:
         """Process a file change immediately (called when max wait is exceeded)."""
         # Use a zero-delay timer to process in the timer thread
-        timer = threading.Timer(
+        timer = self._timer_factory(
             0, self._process_debounced_change, args=[relative_path_str]
         )
         timer.daemon = True
