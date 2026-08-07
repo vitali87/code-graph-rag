@@ -193,10 +193,10 @@ Configure via `.env` or environment variables:
 | `MEMGRAPH_HOST` | `localhost` | Memgraph hostname |
 | `MEMGRAPH_PORT` | `7687` | Memgraph port |
 | `ORCHESTRATOR_PROVIDER` | | Provider: `google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy` |
-| `ORCHESTRATOR_MODEL` | | Model ID (e.g. `gpt-4o`, `gemini-2.5-pro`) |
+| `ORCHESTRATOR_MODEL` | | Model ID (e.g. `claude-opus-5`, `gpt-4o`, `gemini-2.5-pro`) |
 | `ORCHESTRATOR_API_KEY` | | API key for the provider (not needed for `ollama`) |
 | `CYPHER_PROVIDER` | | Provider for Cypher generation |
-| `CYPHER_MODEL` | | Model ID for Cypher generation (e.g. `codellama`, `gpt-4o-mini`) |
+| `CYPHER_MODEL` | | Model ID for Cypher generation (e.g. `claude-haiku-4-5`, `codellama`, `gpt-4o-mini`) |
 | `CYPHER_API_KEY` | | API key for Cypher provider (not needed for `ollama`) |
 | `TARGET_REPO_PATH` | `.` | Default repository path |
 

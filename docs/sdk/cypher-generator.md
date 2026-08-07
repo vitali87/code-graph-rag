@@ -42,6 +42,7 @@ settings.set_cypher("google", "gemini-2.5-flash", api_key="your-key")
 
 | Provider | Example Models |
 |----------|---------------|
+| Anthropic | `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` |
 | Google | `gemini-2.5-pro`, `gemini-2.5-flash` |
 | OpenAI | `gpt-4o`, `gpt-4o-mini` |
 | Ollama | `codellama`, `llama3.2` |
