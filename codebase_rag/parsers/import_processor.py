@@ -3,7 +3,7 @@ import os
 import posixpath
 import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
@@ -1812,26 +1812,35 @@ class ImportProcessor:
                     name, dir_prefix, self.exclude_paths, self.unignore_paths
                 )
             )
-            for filename in sorted(filenames):
-                if not filename.endswith(cs.EXT_RS):
-                    continue
-                if should_skip_rel_file(
-                    f"{dir_prefix}{filename}",
-                    here,
-                    cs.EXT_RS,
-                    exclude_paths=self.exclude_paths,
-                    unignore_paths=self.unignore_paths,
-                ):
-                    continue
-                for key, declarer in self._rust_redirects_in(
-                    Path(dirpath, filename), list(here)
-                ):
+            for path in self._swept_rust_files(dirpath, dir_prefix, here, filenames):
+                for key, declarer in self._rust_redirects_in(path, list(here)):
                     # Several files may name one target (a helper shared by
                     # two binaries), and rustc compiles it into each tree.
                     # The graph keys it once, so the walk order decides.
                     parents.setdefault(key, declarer)
         self._rust_redirect_parents = parents
         return parents
+
+    def _swept_rust_files(
+        self,
+        dirpath: str,
+        dir_prefix: str,
+        here: tuple[str, ...],
+        filenames: list[str],
+    ) -> Iterator[Path]:
+        """One directory's Rust sources the indexer would hold, sorted."""
+        for filename in sorted(filenames):
+            if not filename.endswith(cs.EXT_RS):
+                continue
+            if should_skip_rel_file(
+                f"{dir_prefix}{filename}",
+                here,
+                cs.EXT_RS,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            ):
+                continue
+            yield Path(dirpath, filename)
 
     def _rust_redirects_in(
         self, path: Path, dir_parts: list[str]
