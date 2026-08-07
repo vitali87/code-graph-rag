@@ -360,6 +360,8 @@ class GraphUpdater:
                 structural_elements=(
                     self.factory.structure_processor.structural_elements
                 ),
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
             )
             logger.info(
                 ls.CPP_FRONTEND_HYBRID_PENDING.format(
@@ -376,6 +378,8 @@ class GraphUpdater:
             function_registry=self.function_registry,
             simple_name_lookup=self.simple_name_lookup,
             structural_elements=self.factory.structure_processor.structural_elements,
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
         )
         logger.info(
             ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
