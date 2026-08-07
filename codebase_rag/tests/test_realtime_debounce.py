@@ -400,6 +400,104 @@ class TestCodeChangeEventHandlerDebounce:
         assert len(handler.pending_events) == 5
 
 
+class TestTimerFactoryContract:
+    """`start()` runs under the handler's lock, which the callback re-acquires.
+
+    A factory that fires during `start()` therefore deadlocks the handler, so
+    the contract is that it queues the callback instead.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_ignore(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from codebase_rag import constants as cs
+
+        patched = cs.IGNORE_PATTERNS - {"tmp"}
+        monkeypatch.setattr(cs, "IGNORE_PATTERNS", patched)
+        monkeypatch.setattr("realtime_updater.IGNORE_PATTERNS", patched)
+
+    @pytest.fixture
+    def mock_ingestor(self) -> MockQueryIngestor:
+        return MockQueryIngestor()
+
+    @pytest.fixture
+    def mock_updater(
+        self, tmp_path: Path, mock_ingestor: MockQueryIngestor
+    ) -> MagicMock:
+        updater = MagicMock()
+        updater.repo_path = tmp_path
+        updater.ingestor = mock_ingestor
+        updater.remove_file_from_state = MagicMock()
+        updater.factory = MagicMock()
+        updater.factory.definition_processor.process_file = MagicMock(return_value=None)
+        updater._process_function_calls = MagicMock()
+        updater.parsers = {}
+        updater.queries = {}
+        updater.ast_cache = {}
+        return updater
+
+    @pytest.fixture
+    def sample_file(self, tmp_path: Path) -> Path:
+        test_file = tmp_path / "test.py"
+        test_file.write_text("# test file")
+        return test_file
+
+    def test_manual_timer_does_not_fire_during_start(self) -> None:
+        ManualTimer.reset()
+        fired: list[str] = []
+        timer = ManualTimer(0.0, lambda: fired.append("fired"))
+
+        timer.start()
+
+        assert fired == []
+        assert ManualTimer.pending == [timer]
+
+    def test_dispatching_under_a_manual_timer_flushes_nothing(
+        self,
+        mock_updater: MagicMock,
+        mock_ingestor: MockQueryIngestor,
+        sample_file: Path,
+    ) -> None:
+        # The real deadlock check: dispatch takes the lock and calls start(),
+        # and _process_debounced_change re-acquires that same lock.
+        from realtime_updater import CodeChangeEventHandler
+
+        ManualTimer.reset()
+        handler = CodeChangeEventHandler(
+            mock_updater,
+            debounce_seconds=1.0,
+            max_wait_seconds=30,
+            timer_factory=ManualTimer,
+        )
+
+        handler.dispatch(FileModifiedEvent(str(sample_file)))
+
+        assert mock_ingestor.flush_all.call_count == 0
+        assert handler.timers
+
+    def test_the_factory_result_supports_cancel(
+        self,
+        mock_updater: MagicMock,
+        sample_file: Path,
+    ) -> None:
+        # A newer event for the same path supersedes the scheduled timer.
+        from realtime_updater import CodeChangeEventHandler
+
+        ManualTimer.reset()
+        handler = CodeChangeEventHandler(
+            mock_updater,
+            debounce_seconds=1.0,
+            max_wait_seconds=30,
+            timer_factory=ManualTimer,
+        )
+
+        handler.dispatch(FileModifiedEvent(str(sample_file)))
+        first = handler.timers[next(iter(handler.timers))]
+        handler.dispatch(FileModifiedEvent(str(sample_file)))
+
+        assert first.cancelled
+        assert first.daemon is True
+
+
 class TestDebounceValidation:
     def test_validate_non_negative_float_accepts_zero(self) -> None:
         from realtime_updater import _validate_non_negative_float

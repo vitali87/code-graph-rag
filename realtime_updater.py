@@ -3,7 +3,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Protocol
 
 import typer
 from loguru import logger
@@ -37,7 +37,26 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 
-TimerFactory = Callable[..., "threading.Timer"]
+
+class PendingTimer(Protocol):
+    """What the handler needs back from a `TimerFactory`.
+
+    `daemon` is assigned before `start()`, and `cancel()` supersedes a timer
+    when a newer event arrives for the same path.
+    """
+
+    daemon: bool
+
+    def start(self) -> None: ...
+
+    def cancel(self) -> None: ...
+
+
+# `start()` is called with `self.lock` held and `_process_debounced_change`
+# re-acquires that same non-reentrant lock, so a factory MUST queue its
+# callback for another thread (or for a later explicit fire) rather than
+# invoking it during `start()` — doing so deadlocks the handler.
+TimerFactory = Callable[..., PendingTimer]
 
 
 class CodeChangeEventHandler(FileSystemEventHandler):
@@ -73,7 +92,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self.debounce_enabled = debounce_seconds > 0
 
         # Thread-safe state for tracking pending changes
-        self.timers: dict[str, threading.Timer] = {}
+        self.timers: dict[str, PendingTimer] = {}
         self.first_event_time: dict[str, float] = {}
         self.pending_events: dict[str, FileSystemEvent] = {}
         self.lock = threading.Lock()
