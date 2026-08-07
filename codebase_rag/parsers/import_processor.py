@@ -3,7 +3,7 @@ import os
 import posixpath
 import re
 import tomllib
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
@@ -1168,6 +1168,27 @@ class ImportProcessor:
             self._rust_dir_listing[key] = cached
         return cached
 
+    def _rust_file_is_indexed(self, rel_parts: Sequence[str]) -> bool:
+        """Whether the graph holds this file, per `--exclude` and `.cgrignore`.
+
+        The redirect sweep already walks with the indexer's predicate (#1088),
+        but the per-file declaration reads behind it did not, so a declaration
+        in a file the user excluded still decided where an indexed module sits
+        (issue #1100).
+        """
+        if not rel_parts:
+            return False
+        filename = rel_parts[-1]
+        dot = filename.rfind(cs.SEPARATOR_DOT)
+        suffix = filename[dot:] if dot != -1 else ""
+        return not should_skip_rel_file(
+            cs.SEPARATOR_SLASH.join(rel_parts),
+            tuple(rel_parts[:-1]),
+            suffix,
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
+        )
+
     def _rust_is_auto_target_dir(self, dir_parts: list[str], stem: str) -> bool:
         # Cargo auto-target locations whose .rs files are their OWN crate
         # roots: src/bin/*.rs, and examples/tests/benches/*.rs plus
@@ -1680,6 +1701,10 @@ class ImportProcessor:
         for entry in scan:
             if entry not in entries:
                 continue
+            if not self._rust_file_is_indexed([*dir_parts, entry]):
+                # An excluded entry file's `mod` declarations shape crate path
+                # and gate resolution for modules the graph does hold.
+                continue
             stem = entry.rsplit(cs.SEPARATOR_DOT, 1)[0]
             if stem in decls:
                 continue
@@ -1720,18 +1745,23 @@ class ImportProcessor:
         if not module_parts:
             return None
         parent = module_parts[:-1]
+        # A file the indexer skipped backs nothing: the graph holds no such
+        # module, so its declarations must not decide where an indexed one
+        # sits. Falling through lets mod.rs back the module when only the
+        # sibling .rs was excluded (issue #1100).
+        sibling = f"{module_parts[-1]}{cs.EXT_RS}"
         if (
             not dir_backed
-            and f"{module_parts[-1]}{cs.EXT_RS}"
-            in self._rust_dir_entries(self.repo_path.joinpath(*parent))
+            and sibling in self._rust_dir_entries(self.repo_path.joinpath(*parent))
+            and self._rust_file_is_indexed([*parent, sibling])
         ):
             path, base = (
-                self.repo_path.joinpath(*parent, f"{module_parts[-1]}{cs.EXT_RS}"),
+                self.repo_path.joinpath(*parent, sibling),
                 parent,
             )
         elif cs.MOD_RS in self._rust_dir_entries(
             self.repo_path.joinpath(*module_parts)
-        ):
+        ) and self._rust_file_is_indexed([*module_parts, cs.MOD_RS]):
             path, base = (
                 self.repo_path.joinpath(*module_parts, cs.MOD_RS),
                 module_parts,
