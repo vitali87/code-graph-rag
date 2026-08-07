@@ -77,9 +77,16 @@ def has_local_embedding_weights() -> bool:
     if not (has_torch() and has_transformers()):
         return False
     try:
-        from transformers import AutoConfig
+        from transformers import AutoConfig, AutoModel, AutoTokenizer
 
+        # The config alone is not the model: a cache holding only config.json
+        # satisfies AutoConfig and then fails in the embedder when the
+        # weights turn out to be missing. Resolve every artifact UniXcoder
+        # loads, all with local_files_only, so the probe answers the question
+        # the tests actually ask.
         AutoConfig.from_pretrained(UNIXCODER_MODEL, local_files_only=True)
+        AutoTokenizer.from_pretrained(UNIXCODER_MODEL, local_files_only=True)
+        AutoModel.from_pretrained(UNIXCODER_MODEL, local_files_only=True)
     except Exception:
         return False
     return True
