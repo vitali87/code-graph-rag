@@ -5,11 +5,34 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
 from loguru import logger
 
 from ..config import settings
 from . import constants as cs
 from .health import wait_for_memgraph, wait_for_qdrant
+
+
+def _publishes_on_all_interfaces(mapping: object) -> bool:
+    """Whether one `ports` entry publishes without a host address.
+
+    Long-form entries carry an explicit `host_ip`; short-form ones are
+    `[host_ip:]host:container`, so a host address is present exactly when the
+    mapping has two separators. A mapping bound to 0.0.0.0 or :: is public
+    even though it names a host.
+    """
+    if isinstance(mapping, dict):
+        declared = [
+            str(value).strip() for key, value in mapping.items() if key == "host_ip"
+        ]
+        return not declared or declared[0] in ("", "0.0.0.0", "::")
+    if not isinstance(mapping, str):
+        return False
+    text = mapping.strip()
+    if text.count(":") < 2:
+        return True
+    host_ip = text.rsplit(":", 2)[0]
+    return host_ip in ("0.0.0.0", "::", "*")
 
 
 class StackError(RuntimeError):
@@ -68,8 +91,36 @@ class StackManager:
         return target
 
     @staticmethod
-    def _warn_if_ports_are_public(compose_file: Path) -> None:
-        """Flag a compose file predating the loopback default (issue #1012).
+    def _public_port_mappings(compose_file: Path) -> list[str]:
+        """Published ports a compose file leaves bound to every interface.
+
+        Decided from the parsed `services.*.ports` entries, not from whether
+        some token appears in the text: a mapping is public exactly when it
+        carries no host address, so one corrected service, or the bind-host
+        name sitting in a comment, cannot vouch for the rest of the file
+        (issue #1012).
+        """
+        try:
+            compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            return []
+        if not isinstance(compose, dict):
+            return []
+        services = compose.get("services")
+        if not isinstance(services, dict):
+            return []
+        public: list[str] = []
+        for service, spec in services.items():
+            if not isinstance(spec, dict):
+                continue
+            for mapping in spec.get("ports") or []:
+                if _publishes_on_all_interfaces(mapping):
+                    public.append(f"{service}: {mapping}")
+        return public
+
+    @classmethod
+    def _warn_if_ports_are_public(cls, compose_file: Path) -> None:
+        """Flag a compose file that still publishes on every interface.
 
         The file is rendered once and never overwritten, so an existing install
         keeps publishing the unauthenticated Memgraph and Qdrant endpoints on
@@ -77,13 +128,14 @@ class StackManager:
         this reports the exposure and names the remedy rather than clobbering
         it.
         """
-        try:
-            content = compose_file.read_text(encoding="utf-8")
-        except OSError:
+        public = cls._public_port_mappings(compose_file)
+        if not public:
             return
-        if cs.COMPOSE_BIND_HOST_VAR in content:
-            return
-        logger.warning(cs.WARN_COMPOSE_PORTS_PUBLIC.format(path=compose_file))
+        logger.warning(
+            cs.WARN_COMPOSE_PORTS_PUBLIC.format(
+                path=compose_file, mappings=", ".join(public)
+            )
+        )
 
     def check_docker(self) -> None:
         if shutil.which(cs.DOCKER_BIN) is None:

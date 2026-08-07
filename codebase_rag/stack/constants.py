@@ -56,9 +56,9 @@ PACKAGE_COMPOSE_RELATIVE = "../docker-compose.yaml"
 # marks a compose file rendered before the loopback default (issue #1012).
 COMPOSE_BIND_HOST_VAR = "CGR_STACK_BIND_HOST"
 WARN_COMPOSE_PORTS_PUBLIC = (
-    "The compose file at {path} predates the loopback default and publishes "
-    "Memgraph, Memgraph Lab, and Qdrant on ALL interfaces, so any host on your "
-    "network can read the code graph from these unauthenticated services. "
-    "Delete the file and run 'cgr daemon up' again to re-render it with the "
-    "loopback bind, or add a '127.0.0.1:' prefix to each published port."
+    "The compose file at {path} publishes these ports on ALL interfaces, so "
+    "any host on your network can read the code graph from these "
+    "unauthenticated services: {mappings}. Delete the file and run "
+    "'cgr daemon up' again to re-render it with the loopback bind, or add a "
+    "'127.0.0.1:' prefix to each published port listed above."
 )

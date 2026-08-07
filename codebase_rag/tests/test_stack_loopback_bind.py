@@ -67,7 +67,7 @@ def test_ports_are_still_published_at_their_documented_numbers() -> None:
     assert container_ports == {"7687", "7444", "3000", "6333", "6334"}
 
 
-class TestStaleComposeWarning:
+class TestPublicPortWarning:
     def _manager(self, tmp_path: Path, rendered: str) -> StackManager:
         home = tmp_path / "cgr_home"
         home.mkdir()
@@ -95,6 +95,59 @@ class TestStaleComposeWarning:
 
     def test_a_current_compose_file_is_quiet(self, tmp_path: Path) -> None:
         manager = self._manager(tmp_path, COMPOSE_PATH.read_text(encoding="utf-8"))
+
+        assert self._warnings(manager) == []
+
+    def test_a_literal_loopback_mapping_is_quiet(self, tmp_path: Path) -> None:
+        # The documented remediation is a literal '127.0.0.1:' prefix. Warning
+        # on every `daemon up` after the user followed it trains them to
+        # ignore the warning.
+        manager = self._manager(
+            tmp_path,
+            'services:\n  memgraph:\n    ports:\n      - "127.0.0.1:7687:7687"\n',
+        )
+
+        assert self._warnings(manager) == []
+
+    def test_one_fixed_service_does_not_vouch_for_another(self, tmp_path: Path) -> None:
+        # A substring check over the whole file let a single corrected mapping
+        # silence the warning while another service stayed bound on 0.0.0.0.
+        manager = self._manager(
+            tmp_path,
+            "services:\n"
+            "  memgraph:\n"
+            '    ports:\n      - "${CGR_STACK_BIND_HOST:-127.0.0.1}:7687:7687"\n'
+            "  qdrant:\n"
+            '    ports:\n      - "6333:6333"\n',
+        )
+
+        messages = self._warnings(manager)
+        assert any("qdrant" in message for message in messages), messages
+
+    def test_a_comment_does_not_silence_the_warning(self, tmp_path: Path) -> None:
+        manager = self._manager(
+            tmp_path,
+            "# CGR_STACK_BIND_HOST is how you would fix this\n"
+            'services:\n  qdrant:\n    ports:\n      - "6333:6333"\n',
+        )
+
+        assert any("ALL interfaces" in message for message in self._warnings(manager))
+
+    def test_an_explicit_wildcard_host_still_warns(self, tmp_path: Path) -> None:
+        manager = self._manager(
+            tmp_path,
+            'services:\n  qdrant:\n    ports:\n      - "0.0.0.0:6333:6333"\n',
+        )
+
+        assert any("ALL interfaces" in message for message in self._warnings(manager))
+
+    def test_long_form_host_ip_is_honoured(self, tmp_path: Path) -> None:
+        manager = self._manager(
+            tmp_path,
+            "services:\n  qdrant:\n    ports:\n"
+            "      - target: 6333\n        published: 6333\n"
+            '        host_ip: "127.0.0.1"\n',
+        )
 
         assert self._warnings(manager) == []
 
