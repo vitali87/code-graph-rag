@@ -32,6 +32,11 @@ def _publishes_on_all_interfaces(mapping: object) -> bool:
     if text.count(":") < 2:
         return True
     host_ip = text.rsplit(":", 2)[0]
+    # Compose wraps an IPv6 host in brackets so its colons are not read as
+    # field separators, so `[::]` is the IPv6 wildcard and has to be unwrapped
+    # before it can be recognised as one.
+    if host_ip.startswith("[") and host_ip.endswith("]"):
+        host_ip = host_ip[1:-1]
     return host_ip in ("0.0.0.0", "::", "*")
 
 

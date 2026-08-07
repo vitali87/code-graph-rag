@@ -141,6 +141,24 @@ class TestPublicPortWarning:
 
         assert any("ALL interfaces" in message for message in self._warnings(manager))
 
+    def test_an_ipv6_wildcard_mapping_warns(self, tmp_path: Path) -> None:
+        # Compose brackets an IPv6 host so its colons are not field separators;
+        # `[::]` is the IPv6 equivalent of 0.0.0.0.
+        manager = self._manager(
+            tmp_path,
+            'services:\n  qdrant:\n    ports:\n      - "[::]:6333:6333"\n',
+        )
+
+        assert any("ALL interfaces" in message for message in self._warnings(manager))
+
+    def test_an_ipv6_loopback_mapping_is_quiet(self, tmp_path: Path) -> None:
+        manager = self._manager(
+            tmp_path,
+            'services:\n  qdrant:\n    ports:\n      - "[::1]:6333:6333"\n',
+        )
+
+        assert self._warnings(manager) == []
+
     def test_long_form_host_ip_is_honoured(self, tmp_path: Path) -> None:
         manager = self._manager(
             tmp_path,
