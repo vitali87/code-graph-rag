@@ -15,6 +15,32 @@ from watchdog.events import FileCreatedEvent, FileDeletedEvent, FileModifiedEven
 from codebase_rag.constants import DEFAULT_DEBOUNCE_SECONDS, DEFAULT_MAX_WAIT_SECONDS
 from codebase_rag.services import QueryProtocol
 
+# The debounce flush runs on a daemon timer thread. A fixed sleep sized to the
+# debounce window races that thread's scheduling on a loaded runner, which is
+# what made these tests fail on unrelated PRs and pass on re-run (issue #1005).
+# Waiting on the CONDITION instead makes each assertion depend on ordering, and
+# a generous deadline costs nothing when the thread is prompt.
+WAIT_TIMEOUT_SECONDS = 10.0
+POLL_SECONDS = 0.01
+
+
+def _wait_until(predicate: Any, timeout: float = WAIT_TIMEOUT_SECONDS) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(POLL_SECONDS)
+    return predicate()
+
+
+def _wait_for_flushes(
+    mock_ingestor: MockQueryIngestor,
+    count: int = 1,
+    timeout: float = WAIT_TIMEOUT_SECONDS,
+) -> int:
+    _wait_until(lambda: mock_ingestor.flush_all.call_count >= count, timeout)
+    return int(mock_ingestor.flush_all.call_count)
+
 
 class MockQueryIngestor:
     def __init__(self) -> None:
@@ -147,20 +173,21 @@ class TestCodeChangeEventHandlerDebounce:
     ) -> None:
         from realtime_updater import CodeChangeEventHandler
 
+        # A window far longer than the dispatch loop takes, so a stalled
+        # runner cannot let the timer fire mid-loop and break the batching
+        # assertion below.
         handler = CodeChangeEventHandler(
-            mock_updater, debounce_seconds=0.2, max_wait_seconds=5
+            mock_updater, debounce_seconds=1.0, max_wait_seconds=30
         )
 
         for _ in range(5):
             event = FileModifiedEvent(str(sample_file))
             handler.dispatch(event)
-            time.sleep(0.05)
+            time.sleep(0.01)
 
         assert len(handler.pending_events) == 1
 
-        time.sleep(0.4)
-
-        mock_ingestor.flush_all.assert_called_once()
+        assert _wait_for_flushes(mock_ingestor) == 1
 
     def test_no_debounce_processes_immediately(
         self,
@@ -201,15 +228,7 @@ class TestCodeChangeEventHandlerDebounce:
         event2 = FileModifiedEvent(str(sample_file))
         handler.dispatch(event2)
 
-        # The flush runs on a daemon timer thread; a fixed sleep races its
-        # scheduling on loaded CI runners, so poll with a generous deadline.
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            if mock_ingestor.flush_all.call_count >= 1:
-                break
-            time.sleep(0.02)
-
-        assert mock_ingestor.flush_all.call_count >= 1
+        assert _wait_for_flushes(mock_ingestor) >= 1
 
     def test_different_files_tracked_separately(
         self, mock_updater: MagicMock, tmp_path: Path
@@ -252,7 +271,7 @@ class TestCodeChangeEventHandlerDebounce:
         assert len(handler.pending_events) == 1
         assert len(handler.first_event_time) == 1
 
-        time.sleep(0.25)
+        assert _wait_until(lambda: not handler.timers)
 
         assert len(handler.pending_events) == 0
         assert len(handler.first_event_time) == 0
@@ -394,11 +413,13 @@ class TestDebounceIntegration:
             handler.dispatch(event)
             time.sleep(0.3)
 
-        time.sleep(0.7)
+        call_count = _wait_for_flushes(mock_ingestor)
 
-        # With max_wait=2s and 3s total time, expect ~2-4 updates
-        call_count = mock_ingestor.flush_all.call_count
-        assert 1 <= call_count <= 4, f"Expected 1-4 updates, got {call_count}"
+        # The claim is that saves BATCH: max_wait forces at least one update,
+        # and ten saves must not produce ten of them. An exact upper bound
+        # would just be measuring the runner, which is what made this file
+        # flaky in the first place.
+        assert 1 <= call_count < 10, f"Expected batching, got {call_count} updates"
 
     def test_single_edit_after_quiet_period(
         self, mock_updater: MagicMock, mock_ingestor: MockQueryIngestor, tmp_path: Path
@@ -415,6 +436,4 @@ class TestDebounceIntegration:
         event = FileModifiedEvent(str(test_file))
         handler.dispatch(event)
 
-        time.sleep(0.25)
-
-        mock_ingestor.flush_all.assert_called_once()
+        assert _wait_for_flushes(mock_ingestor) == 1
