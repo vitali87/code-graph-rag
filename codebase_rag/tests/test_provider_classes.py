@@ -269,7 +269,13 @@ class TestAnthropicProvider:
 
     @pytest.mark.parametrize(
         ("model_id", "context_window"),
-        [("claude-opus-4-8", 1_000_000), ("claude-opus-4-7", 1_000_000)],
+        [
+            ("claude-opus-5", 1_000_000),
+            ("claude-sonnet-5", 1_000_000),
+            ("claude-opus-4-8", 1_000_000),
+            ("claude-opus-4-7", 1_000_000),
+            ("claude-haiku-4-5", 200_000),
+        ],
     )
     def test_anthropic_context_windows(
         self, model_id: str, context_window: int

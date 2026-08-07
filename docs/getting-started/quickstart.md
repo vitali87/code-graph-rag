@@ -49,8 +49,8 @@ cgr start --repo-path /path/to/your/repo \
 
 ```bash
 cgr start --repo-path /path/to/your/repo \
-  --orchestrator google:gemini-2.0-flash-thinking-exp-01-21 \
-  --cypher google:gemini-2.5-flash-lite-preview-06-17
+  --orchestrator google:gemini-2.5-pro \
+  --cypher google:gemini-2.5-flash
 ```
 
 **Example queries:**

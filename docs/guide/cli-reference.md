@@ -34,8 +34,8 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--update-graph` | Parse and ingest the repository into the knowledge graph |
 | `--clean` | Delete every project from the shared graph and clear the selected repository's sync cache. With `--update-graph`, rebuild after deletion. |
 | `--batch-size` | Override Memgraph flush batch size |
-| `--orchestrator` | Specify provider:model for main operations (e.g., `google:gemini-2.5-pro`, `ollama:llama3.2`) |
-| `--cypher` | Specify provider:model for graph queries (e.g., `google:gemini-2.5-flash`, `ollama:codellama`) |
+| `--orchestrator` | Specify provider:model for main operations (e.g., `anthropic:claude-opus-5`, `google:gemini-2.5-pro`, `ollama:llama3.2`) |
+| `--cypher` | Specify provider:model for graph queries (e.g., `anthropic:claude-haiku-4-5`, `google:gemini-2.5-flash`, `ollama:codellama`) |
 | `-o`, `--output` | Write the updated graph to a JSON path. Requires `--update-graph`. |
 
 ### `cgr export`
