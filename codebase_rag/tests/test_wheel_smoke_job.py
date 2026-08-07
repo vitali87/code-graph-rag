@@ -63,6 +63,17 @@ class TestWorkflowJob:
             "freshly resolved venv's interpreter"
         )
 
+    def test_checkout_does_not_persist_credentials(self) -> None:
+        # The job installs freshly resolved third-party packages and then runs
+        # repository code; a persisted workflow token would be readable by it.
+        checkout = next(
+            step
+            for step in _workflow()["jobs"][JOB_ID]["steps"]
+            if step.get("uses", "").startswith("actions/checkout")
+        )
+
+        assert checkout.get("with", {}).get("persist-credentials") is False
+
     def test_job_runs_the_smoke_script(self) -> None:
         script = _job_run_script(_workflow()["jobs"][JOB_ID])
 
