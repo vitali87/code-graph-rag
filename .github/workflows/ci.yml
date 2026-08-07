@@ -233,6 +233,47 @@ jobs:
       - name: Test binary
         run: ./dist/code-graph-rag-* --version
 
+  # Every other job installs from uv.lock, so no job exercises the dependency
+  # resolution a real `pip install code-graph-rag` performs: newest versions
+  # satisfying the pyproject.toml floors. This job does, so a dependency that
+  # ships a breaking major inside our declared range fails here instead of in a
+  # user's terminal a week later (#1096).
+  wheel-fresh-resolution:
+    name: Wheel Smoke (unlocked resolution)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@f98e06938123ccabd21905ea5d0069192241f9f1 # v8.3.1
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      # Deliberately plain venv + pip: uv.lock must not participate.
+      - name: Install the wheel with unlocked resolution
+        run: |
+          python -m venv .fresh-venv
+          ./.fresh-venv/bin/python -m pip install --upgrade pip
+          ./.fresh-venv/bin/python -m pip install dist/*.whl
+
+      - name: Record resolved dependency versions
+        run: ./.fresh-venv/bin/python -m pip list
+
+      - name: Smoke the freshly resolved install
+        run: |
+          ./.fresh-venv/bin/python -c "import codebase_rag"
+          ./.fresh-venv/bin/cgr --version
+          ./.fresh-venv/bin/python scripts/smoke_wheel.py
+
   pr-title-check:
     name: PR Title Convention
     runs-on: ubuntu-latest
@@ -272,7 +313,15 @@ jobs:
     name: All Checks Pass
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, typecheck, test-unit, test-integration, binary-smoke]
+    needs:
+      [
+        lint,
+        typecheck,
+        test-unit,
+        test-integration,
+        binary-smoke,
+        wheel-fresh-resolution,
+      ]
     timeout-minutes: 5
 
     steps:
@@ -283,6 +332,7 @@ jobs:
           echo "Unit Tests: ${{ needs.test-unit.result }}"
           echo "Integration Tests: ${{ needs.test-integration.result }}"
           echo "Binary Smoke: ${{ needs.binary-smoke.result }}"
+          echo "Wheel Smoke: ${{ needs.wheel-fresh-resolution.result }}"
 
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
             echo "❌ Lint failed"
@@ -302,6 +352,10 @@ jobs:
           fi
           if [[ "${{ needs.binary-smoke.result }}" != "success" ]]; then
             echo "❌ Binary smoke test failed"
+            exit 1
+          fi
+          if [[ "${{ needs.wheel-fresh-resolution.result }}" != "success" ]]; then
+            echo "❌ Wheel smoke test (unlocked resolution) failed"
             exit 1
           fi
           echo "✅ All checks passed!"
