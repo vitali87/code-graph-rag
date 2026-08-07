@@ -27,6 +27,11 @@ The Cypher generator uses the configured Cypher provider. Set it via environment
 ```bash
 CYPHER_PROVIDER=google
 CYPHER_MODEL=gemini-2.5-flash
+
+# or Anthropic
+CYPHER_PROVIDER=anthropic
+CYPHER_MODEL=claude-haiku-4-5
+CYPHER_API_KEY=sk-ant-your-anthropic-key
 CYPHER_API_KEY=your-api-key
 ```
 
@@ -36,6 +41,9 @@ Or programmatically:
 from cgr import settings
 
 settings.set_cypher("google", "gemini-2.5-flash", api_key="your-key")
+
+# or Anthropic
+settings.set_cypher("anthropic", "claude-haiku-4-5", api_key="sk-ant-...")
 ```
 
 ## Supported Providers
