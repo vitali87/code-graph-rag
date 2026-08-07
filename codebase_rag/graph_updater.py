@@ -81,10 +81,9 @@ from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
     cached_relative_path,
-    matches_ignore_patterns,
+    should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
-    unignore_could_match_within,
 )
 from .utils.source_extraction import extract_source_with_fallback
 
@@ -1480,28 +1479,8 @@ class GraphUpdater:
         return None, None
 
     def _should_keep_dir(self, dirname: str, dir_prefix: str) -> bool:
-        rel_dir = f"{dir_prefix}{dirname}"
-        # an explicit exclude can never be rescued by unignore (excludes win
-        # at the file level too), so prune the subtree outright.
-        if self.exclude_paths and matches_ignore_patterns(
-            f"{rel_dir}/", self.exclude_paths
-        ):
-            return False
-        if dirname not in cs.IGNORE_PATTERNS:
-            return True
-        # Cargo's src/bin/ holds first-party binaries, not build output;
-        # mirrors has_ignored_dir_part.
-        if (
-            dirname == cs.DIR_BIN
-            and dir_prefix.rstrip(cs.SEPARATOR_SLASH).rsplit(cs.SEPARATOR_SLASH, 1)[-1]
-            == cs.DIR_SRC
-        ):
-            return True
-        return bool(
-            self.unignore_paths
-            and any(
-                unignore_could_match_within(u, rel_dir) for u in self.unignore_paths
-            )
+        return should_keep_dir(
+            dirname, dir_prefix, self.exclude_paths, self.unignore_paths
         )
 
     def _drop_cache_if_graph_lost(self) -> None:

@@ -79,6 +79,8 @@ class ProcessorFactory:
                 project_name=self.project_name,
                 ingestor=self.ingestor,
                 function_registry=self.function_registry,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
             )
         return self._import_processor
 
