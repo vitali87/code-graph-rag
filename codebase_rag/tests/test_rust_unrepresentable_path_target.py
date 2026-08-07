@@ -121,3 +121,44 @@ def test_no_redirect_still_binds_the_named_module(
 
     calls = _calls(mock_ingestor)
     assert (f"{name}.src.a.run", f"{name}.src.helpers.fixture") in calls, calls
+
+
+def _implements(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
+    return {
+        (call[0][0][2], call[0][2][2])
+        for call in mock_ingestor.ensure_relationship_batch.call_args_list
+        if call[0][1] == "IMPLEMENTS"
+    }
+
+
+def test_trait_path_through_an_unrepresentable_redirect_binds_no_trait(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `crate::helpers::Base` runs through a redirect the qn scheme cannot key.
+    # Falling back to the name-anchored candidate would hand the same-named
+    # indexed trait in src/other.rs an IMPLEMENTS edge it has no claim to.
+    name = "rs_path_trait"
+    project = temp_repo / name
+    _write(
+        project,
+        {
+            "Cargo.toml": CARGO.format(name=name),
+            "src/lib.rs": (
+                '#[path = "/nowhere/helpers.rs"]\nmod helpers;\n'
+                "pub mod other;\npub mod user;\n"
+            ),
+            "src/helpers.rs": "pub trait Base {\n    fn go(&self) -> i32;\n}\n",
+            "src/other.rs": "pub trait Base {\n    fn go(&self) -> i32;\n}\n",
+            "src/user.rs": (
+                "pub struct S;\n"
+                "impl crate::helpers::Base for S {\n"
+                "    fn go(&self) -> i32 {\n        1\n    }\n"
+                "}\n"
+            ),
+        },
+    )
+
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    edges = _implements(mock_ingestor)
+    assert not [pair for pair in edges if pair[1].endswith("Base")], edges
