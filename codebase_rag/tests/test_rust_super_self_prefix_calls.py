@@ -154,3 +154,34 @@ def test_use_super_item_declaration_still_resolves(
     calls = _calls(mock_ingestor)
     caller = f"{name}.src.engine.thing.build"
     assert (caller, f"{name}.src.engine.helper") in calls, calls
+
+
+def test_super_from_an_impl_on_an_unregistered_type_still_climbs(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `impl Trait for u8` has no Class node, so a scope that is merely absent
+    # from the type registry cannot be assumed to be an inline mod: doing so
+    # left `super::` one level short and bound the call inside this file.
+    name = "rs_super_primitive_impl"
+    project = temp_repo / name
+    _write(
+        project,
+        {
+            "Cargo.toml": CARGO.format(name=name),
+            "src/lib.rs": "pub mod area;\npub fn helper() -> i32 {\n    1\n}\n",
+            "src/area.rs": (
+                "pub fn helper() -> i32 {\n    9\n}\n"
+                "pub trait LocalTrait {\n    fn run(&self) -> i32;\n}\n"
+                "impl LocalTrait for u8 {\n"
+                "    fn run(&self) -> i32 {\n        super::helper()\n    }\n"
+                "}\n"
+            ),
+        },
+    )
+
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    caller = f"{name}.src.area.u8.run"
+    assert (caller, f"{name}.src.lib.helper") in calls, calls
+    assert (caller, f"{name}.src.area.helper") not in calls, calls

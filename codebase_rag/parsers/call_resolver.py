@@ -86,6 +86,7 @@ class CallResolver:
         "_pending_field_bindings",
         "_module_language_cache",
         "rehydrated_definition_paths",
+        "declared_module_qns",
     )
 
     def __init__(
@@ -97,11 +98,20 @@ class CallResolver:
         type_aliases: dict[str, str] | None = None,
         interface_implementers: dict[str, set[str]] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
+        declared_module_qns: set[str] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
+        # Every inline `mod` qn the class pass ingested (shared ref). A Rust
+        # enclosing scope is an inline mod IFF it is in here: an impl target is
+        # not, and neither is registered under a type label when it is a
+        # primitive or an unindexed foreign type, so absence-of-a-type-label
+        # cannot tell the two apart (issue #1093 review).
+        self.declared_module_qns = (
+            declared_module_qns if declared_module_qns is not None else set()
+        )
         # {interface_qn: [implementer_qns]} (shared ref, populated during
         # ingestion). Used to redirect an interface-typed call to the single
         # concrete implementer's method (call-graph accuracy; single-impl only).
@@ -1601,11 +1611,17 @@ class CallResolver:
         storage keys mirror mod scopes. A `super::` path cares which is which:
         an impl block adds no module level, so a method's `super::` counts
         from the file module's parent, while an inline mod's does not.
+
+        Membership of the ingested inline-mod set is what decides it. Asking
+        the type registry instead only proves a scope is NOT a registered
+        type, which an impl target on a primitive or an unindexed foreign type
+        also is not (`impl Trait for u8`), so that test silently read those
+        impl blocks as modules and left `super::` one level short.
         """
         return [
             scope
             for scope in self._rust_enclosing_scopes(module_qn, caller_qn)
-            if self.function_registry.get(scope) not in cs.RS_TYPE_SCOPE_LABELS
+            if scope in self.declared_module_qns
         ]
 
     def _decide_rust_module_item(

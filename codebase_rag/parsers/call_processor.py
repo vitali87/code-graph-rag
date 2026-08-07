@@ -919,6 +919,7 @@ class CallProcessor:
         ast_cache: ASTCacheProtocol | None = None,
         go_package_names: Mapping[str, str] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
+        declared_module_qns: set[str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -957,6 +958,7 @@ class CallProcessor:
             type_aliases=type_aliases,
             interface_implementers=interface_implementers,
             rehydrated_definition_paths=rehydrated_definition_paths,
+            declared_module_qns=declared_module_qns,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
