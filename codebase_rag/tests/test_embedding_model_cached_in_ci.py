@@ -18,16 +18,36 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 
 
+UNIT_SUITE_MARKER = 'pytest -n auto -m "not integration"'
+HUB_CACHE_PATH = "~/.cache/huggingface"
+EMBEDDING_MODEL = "microsoft/unixcoder-base"
+
+
+def _workflow_files() -> list[Path]:
+    return sorted([*WORKFLOW_DIR.glob("*.yml"), *WORKFLOW_DIR.glob("*.yaml")])
+
+
+def _step_script(step: dict) -> str:
+    return step.get("run", "") or ""
+
+
 def _jobs_running_the_unit_suite() -> list[tuple[str, str, list[dict]]]:
     found = []
-    for path in sorted(WORKFLOW_DIR.glob("*.yml")):
+    for path in _workflow_files():
         workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
         for job_name, job in (workflow.get("jobs") or {}).items():
             steps = job.get("steps") or []
-            script = "\n".join(step.get("run", "") for step in steps)
-            if 'pytest -n auto -m "not integration"' in script:
+            if any(UNIT_SUITE_MARKER in _step_script(step) for step in steps):
                 found.append((path.name, job_name, steps))
     return found
+
+
+def _steps_for(workflow: str, job: str) -> list[dict]:
+    return next(
+        steps
+        for name, job_name, steps in _jobs_running_the_unit_suite()
+        if name == workflow and job_name == job
+    )
 
 
 def test_at_least_one_job_runs_the_unit_suite() -> None:
@@ -38,20 +58,64 @@ def test_at_least_one_job_runs_the_unit_suite() -> None:
     ("workflow", "job"),
     [(w, j) for w, j, _ in _jobs_running_the_unit_suite()],
 )
-def test_unit_suite_jobs_cache_the_embedding_model(workflow: str, job: str) -> None:
-    steps = next(
-        s for w, j, s in _jobs_running_the_unit_suite() if w == workflow and j == job
-    )
-    uses = " ".join(step.get("uses", "") for step in steps)
-    script = "\n".join(step.get("run", "") for step in steps)
+def test_unit_suite_jobs_cache_the_hub_directory(workflow: str, job: str) -> None:
+    caches = [
+        step
+        for step in _steps_for(workflow, job)
+        if step.get("uses", "").startswith("actions/cache")
+        and HUB_CACHE_PATH in str(step.get("with", {}).get("path", ""))
+    ]
 
-    assert "actions/cache" in uses, (
-        f"{workflow}:{job} runs the unit suite without caching the HuggingFace "
-        "hub, so it downloads the embedding model on every run"
+    assert caches, (
+        f"{workflow}:{job} runs the unit suite without caching {HUB_CACHE_PATH}, "
+        "so it re-downloads the embedding model on every run"
     )
-    assert "snapshot_download" in script, (
-        f"{workflow}:{job} does not prefetch the embedding model, so a hub "
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job"),
+    [(w, j) for w, j, _ in _jobs_running_the_unit_suite()],
+)
+def test_unit_suite_jobs_prefetch_this_model_before_pytest(
+    workflow: str, job: str
+) -> None:
+    steps = _steps_for(workflow, job)
+    prefetch_at = [
+        index
+        for index, step in enumerate(steps)
+        if f'snapshot_download("{EMBEDDING_MODEL}")' in _step_script(step)
+        or f"snapshot_download('{EMBEDDING_MODEL}')" in _step_script(step)
+    ]
+    pytest_at = [
+        index
+        for index, step in enumerate(steps)
+        if UNIT_SUITE_MARKER in _step_script(step)
+    ]
+
+    assert prefetch_at, (
+        f"{workflow}:{job} does not prefetch {EMBEDDING_MODEL}, so a hub "
         "failure surfaces mid-pytest instead of in a named step"
+    )
+    assert min(prefetch_at) < min(pytest_at), (
+        f"{workflow}:{job} prefetches after running the suite, which defeats it"
+    )
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job"),
+    [(w, j) for w, j, _ in _jobs_running_the_unit_suite()],
+)
+def test_the_prefetch_retries_transient_hub_failures(workflow: str, job: str) -> None:
+    # 429 Too Many Requests is the reported transient; one attempt turns it
+    # into a red build.
+    script = "\n".join(
+        _step_script(step)
+        for step in _steps_for(workflow, job)
+        if "snapshot_download" in _step_script(step)
+    )
+
+    assert "for attempt in" in script, (
+        f"{workflow}:{job} prefetches without retrying, so a single 429 fails the build"
     )
 
 
