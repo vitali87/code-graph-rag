@@ -6,6 +6,7 @@ extra from the developer's virtualenv and rewrites ``uv.lock`` underneath the
 commit. The local hooks must therefore run with ``--no-sync`` and ``--frozen``.
 """
 
+import ast
 from pathlib import Path
 
 import yaml
@@ -76,24 +77,69 @@ def test_required_flags_precede_the_hook_command() -> None:
             )
 
 
+def uv_run_vectors(source: str) -> list[list[str]]:
+    """Every static ``["uv", "run", ...]`` argument vector in a script.
+
+    Parsed per call rather than grepped over the whole file: one guarded
+    invocation must not vouch for a second bare one sitting beside it.
+    """
+    vectors: list[list[str]] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.List | ast.Tuple):
+            continue
+        literals = [
+            element.value
+            for element in node.elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        ]
+        if len(literals) == len(node.elts) and literals[:2] == ["uv", "run"]:
+            vectors.append(literals)
+    return vectors
+
+
+def unguarded_uv_run_vectors(source: str) -> list[list[str]]:
+    """The vectors missing a required flag BEFORE the launched command."""
+    return [
+        vector
+        for vector in uv_run_vectors(source)
+        if any(flag not in _uv_run_flags(vector) for flag in REQUIRED_UV_RUN_FLAGS)
+    ]
+
+
 def test_hook_scripts_do_not_shell_out_to_a_bare_uv_run() -> None:
     hook_scripts = sorted((REPO_ROOT / "scripts" / "hooks").glob("*.py"))
     assert hook_scripts, "expected hook scripts under scripts/hooks/"
 
-    offenders = []
-    for script in hook_scripts:
-        source = script.read_text(encoding="utf-8")
-        if '"uv", "run"' not in source:
-            continue
-        for required in REQUIRED_UV_RUN_FLAGS:
-            if (
-                f'"uv", "run", "{required}"' not in source
-                and f'"{required}"' not in source
-            ):
-                offenders.append((script.name, required))
+    offenders = {
+        script.name: unguarded_uv_run_vectors(script.read_text(encoding="utf-8"))
+        for script in hook_scripts
+    }
+    unguarded = {name: vectors for name, vectors in offenders.items() if vectors}
 
-    assert offenders == [], (
-        f"hook scripts shell out to `uv run` without required flags: {offenders}. "
+    assert unguarded == {}, (
+        f"hook scripts shell out to `uv run` without required flags: {unguarded}. "
         "A nested bare `uv run` re-syncs the venv and rewrites uv.lock even when "
         "the pre-commit entry itself is guarded"
     )
+
+
+class TestNestedInvocationDetection:
+    GUARDED = 'subprocess.run(["uv", "run", "--frozen", "--no-sync", "python", "x.py"])'
+    BARE = 'subprocess.run(["uv", "run", "python", "y.py"])'
+
+    def test_a_guarded_invocation_alone_passes(self) -> None:
+        assert unguarded_uv_run_vectors(self.GUARDED) == []
+
+    def test_a_bare_invocation_alone_is_caught(self) -> None:
+        assert unguarded_uv_run_vectors(self.BARE)
+
+    def test_a_guarded_invocation_does_not_vouch_for_a_bare_one(self) -> None:
+        # The whole-file search this replaced passed on exactly this shape.
+        source = f"{self.GUARDED}\n{self.BARE}\n"
+
+        assert unguarded_uv_run_vectors(source) == [["uv", "run", "python", "y.py"]]
+
+    def test_flags_after_the_command_do_not_count(self) -> None:
+        source = 'subprocess.run(["uv", "run", "python", "--frozen", "--no-sync"])'
+
+        assert unguarded_uv_run_vectors(source)
