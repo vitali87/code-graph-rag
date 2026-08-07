@@ -1,23 +1,27 @@
+# Ports publish on loopback by default: Memgraph Bolt, Memgraph Lab, and
+# Qdrant are unauthenticated, so a bare "host:container" mapping (which Docker
+# binds to 0.0.0.0) puts the whole code graph on the local network (issue
+# #1012). Set CGR_STACK_BIND_HOST=0.0.0.0 to expose the stack deliberately.
 services:
   memgraph:
     image: memgraph/memgraph-mage
     ports:
-      - "${MEMGRAPH_PORT:-7687}:7687"
-      - "${MEMGRAPH_HTTP_PORT:-7444}:7444"
+      - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${MEMGRAPH_PORT:-7687}:7687"
+      - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${MEMGRAPH_HTTP_PORT:-7444}:7444"
     volumes:
       - memgraph_data:/var/lib/memgraph
       - memgraph_log:/var/log/memgraph
   lab:
     image: memgraph/lab
     ports:
-      - "${LAB_PORT:-3000}:3000"
+      - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${LAB_PORT:-3000}:3000"
     environment:
       QUICK_CONNECT_MG_HOST: memgraph
   qdrant:
     image: qdrant/qdrant
     ports:
-      - "${QDRANT_HTTP_PORT:-6333}:6333"
-      - "${QDRANT_GRPC_PORT:-6334}:6334"
+      - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
 

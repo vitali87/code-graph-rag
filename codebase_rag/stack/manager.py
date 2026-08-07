@@ -63,7 +63,27 @@ class StackManager:
                 )
             logger.info(cs.MSG_RENDERING_COMPOSE.format(path=target))
             shutil.copyfile(self.package_compose, target)
+        else:
+            self._warn_if_ports_are_public(target)
         return target
+
+    @staticmethod
+    def _warn_if_ports_are_public(compose_file: Path) -> None:
+        """Flag a compose file predating the loopback default (issue #1012).
+
+        The file is rendered once and never overwritten, so an existing install
+        keeps publishing the unauthenticated Memgraph and Qdrant endpoints on
+        every interface. It is the user's file and may carry their edits, so
+        this reports the exposure and names the remedy rather than clobbering
+        it.
+        """
+        try:
+            content = compose_file.read_text(encoding="utf-8")
+        except OSError:
+            return
+        if cs.COMPOSE_BIND_HOST_VAR in content:
+            return
+        logger.warning(cs.WARN_COMPOSE_PORTS_PUBLIC.format(path=compose_file))
 
     def check_docker(self) -> None:
         if shutil.which(cs.DOCKER_BIN) is None:
