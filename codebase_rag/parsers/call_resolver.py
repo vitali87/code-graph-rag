@@ -1536,6 +1536,11 @@ class CallResolver:
         base = self.import_processor._rust_resolve_relative(
             module_qn, list(object_path), module_qn
         )
+        if base is None:
+            # The path runs through a `#[path]` target the qn scheme cannot
+            # key, so no module here is its referent: a decided drop, never a
+            # bare-name guess at the shadow file (issue #1082).
+            return None, True
         return self._decide_rust_base(base, item)
 
     def _rust_self_module_head(
@@ -1574,6 +1579,8 @@ class CallResolver:
         base = self.import_processor._rewrite_rust_local_use_path(
             cs.SEPARATOR_DOUBLE_COLON.join(object_path), effective_qn
         )
+        if base is None:
+            return None, True
         if cs.SEPARATOR_DOUBLE_COLON in base:
             return None, False
         return self._decide_rust_base(base, item)
@@ -1665,6 +1672,8 @@ class CallResolver:
         head_qn = self.import_processor._rust_resolve_relative(
             owner, segments[:1], owner
         )
+        if head_qn is None:
+            return None
         if (
             head_qn in self.type_inference.module_qn_to_file_path
             or head_qn in self.import_processor.import_mapping

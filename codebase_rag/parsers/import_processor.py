@@ -1908,13 +1908,18 @@ class ImportProcessor:
 
     def _rust_walk_mods(
         self, parts: list[str], rest: list[str], dir_backed: bool = False
-    ) -> list[str]:
+    ) -> list[str] | None:
         """Walk a path tail from a resolved module prefix, honouring `#[path]`.
 
         Only the crate ENTRY's redirects are read above, and the tail used to
         attach by name straight past a redirect declared in any other file,
         landing on a qn no module owns or on an undeclared shadow file that
         happens to sit where the declared name points (issue #1065).
+
+        None when a redirect names a file the qn scheme cannot key, which is
+        NOT the same as no redirect at all: no qn names the module, so the
+        caller must drop rather than fall back to the declared name and bind
+        whatever sibling happens to sit there (issue #1082).
         """
         out = list(parts)
         for index, segment in enumerate(rest):
@@ -1926,12 +1931,12 @@ class ImportProcessor:
                 break
             decls, base = found
             redirect = decls.redirects.get(segment)
-            target = (
-                rs_utils.path_attribute_qn_parts(base, redirect) if redirect else None
-            )
-            if redirect is None or target is None:
+            if redirect is None:
                 out, dir_backed = [*out, segment], False
                 continue
+            target = rs_utils.path_attribute_qn_parts(base, redirect)
+            if target is None:
+                return None
             # A redirect onto a `mod.rs` names the DIRECTORY, and the qn
             # scheme drops the `mod` segment, so the resulting parts are
             # indistinguishable from a plain file module: without this the
@@ -1943,14 +1948,15 @@ class ImportProcessor:
 
     def _rust_join_mods(
         self, parts: list[str], rest: list[str], dir_backed: bool = False
-    ) -> str:
-        return cs.SEPARATOR_DOT.join(
-            [self.project_name, *self._rust_walk_mods(parts, rest, dir_backed)]
-        )
+    ) -> str | None:
+        walked = self._rust_walk_mods(parts, rest, dir_backed)
+        if walked is None:
+            return None
+        return cs.SEPARATOR_DOT.join([self.project_name, *walked])
 
     def _rust_attach(
         self, dir_parts: list[str], stem: str, rest: list[str], definitive: bool
-    ) -> str:
+    ) -> str | None:
         # A crate-root-relative path: the first segment names either a
         # submodule FILE/directory beside the entry point (crate::flags ->
         # src.flags) or an item/inline mod declared IN the entry file
@@ -1966,13 +1972,18 @@ class ImportProcessor:
             if redirect := chosen.redirects.get(rest[0]):
                 # The declaration names its backing file outright, and the
                 # module keys under that file, so the declared name never
-                # appears in the qn at all (issue #1035).
-                if target := rs_utils.path_attribute_qn_parts(dir_parts, redirect):
-                    return self._rust_join_mods(
-                        target,
-                        rest[1:],
-                        redirect.rsplit(cs.SEPARATOR_SLASH, 1)[-1] == cs.MOD_RS,
-                    )
+                # appears in the qn at all (issue #1035). A target the qn
+                # scheme cannot key names no module here: falling through to
+                # the declared name would bind an undeclared sibling that
+                # merely sits where the name points (issue #1082).
+                target = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
+                if target is None:
+                    return None
+                return self._rust_join_mods(
+                    target,
+                    rest[1:],
+                    redirect.rsplit(cs.SEPARATOR_SLASH, 1)[-1] == cs.MOD_RS,
+                )
             if rest[0] in file_mods:
                 return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
             if rest[0] in items:
@@ -1996,7 +2007,7 @@ class ImportProcessor:
 
     def _rust_resolve_relative(
         self, base_qn: str, rest: list[str], importer_qn: str
-    ) -> str:
+    ) -> str | None:
         """Attach path segments to a super::/self:: base module.
 
         The base may be an ordinary file module (children append: src/foo.rs
@@ -2039,6 +2050,8 @@ class ImportProcessor:
         if not rest:
             return base_qn
         walked = self._rust_walk_mods(parts, rest)
+        if walked is None:
+            return None
         if walked == [*parts, *rest]:
             # No redirect fired, so keep base_qn verbatim rather than
             # rebuilding it from project_name, which re-splits differently
@@ -2051,7 +2064,7 @@ class ImportProcessor:
         full_path: str,
         module_qn: str,
         local_mods: frozenset[str] = frozenset(),
-    ) -> str:
+    ) -> str | None:
         """Rewrite a crate::/super::/self:: use path to a project qn.
 
         Stored raw, these paths resolve nowhere: class resolution hands them
@@ -2063,6 +2076,10 @@ class ImportProcessor:
         way, unless a `mod` in the declaring scope (local_mods) claims it:
         rustc binds the local module first (issue #1033). External paths
         (std::fmt) pass through unchanged.
+
+        None when the path runs through a `#[path]` target the qn scheme
+        cannot key: no qn names that module, so a caller must drop rather
+        than record a spelling (issue #1082).
         """
         parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
         head = parts[0]
@@ -2085,7 +2102,7 @@ class ImportProcessor:
             return self._rust_attach(list(dir_parts), stem, parts[1:], definitive=True)
         return full_path
 
-    def _rust_rewrite_crate_path(self, rest: list[str], module_qn: str) -> str:
+    def _rust_rewrite_crate_path(self, rest: list[str], module_qn: str) -> str | None:
         root = self._rust_crate_root(module_qn)
         if root is None:
             return (
@@ -2805,6 +2822,13 @@ class ImportProcessor:
             resolved = self._rewrite_rust_local_use_path(
                 full_path, resolve_qn, local_mods
             )
+            if resolved is None:
+                # The path runs through a `#[path]` target the qn scheme
+                # cannot key. Recording the raw spelling would externalise it
+                # into a phantom module node, and recording the name-derived
+                # one would bind a shadow file, so the name stays unbound
+                # (issue #1082).
+                continue
             if imported_name.startswith(cs.RS_SELF_MODULE_PREFIX):
                 imported_name = imported_name[len(cs.RS_SELF_MODULE_PREFIX) :]
                 # A `{self}` item binds a MODULE, which lives in Rust's type
