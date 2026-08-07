@@ -274,7 +274,11 @@ class ClassIngestMixin:
             rewritten = self.import_processor._rewrite_rust_local_use_path(
                 path, module_qn
             )
-            return (rewritten, anchored) if rewritten != path else (anchored, None)
+            if rewritten is None or rewritten == path:
+                # None means the path runs through a `#[path]` target the qn
+                # scheme cannot key, so it names nothing here (issue #1082).
+                return anchored, None
+            return rewritten, anchored
         # The head is itself a name a `use` may have bound (`use std::io;`
         # then `impl io::Read`), and only the expanded crate says who speaks
         # for the trait.
@@ -710,13 +714,16 @@ class ClassIngestMixin:
             bound = self.import_processor.import_mapping.get(owner, {}).get(item)
             if not bound:
                 return None
-            qn = (
+            resolved = (
                 bound
                 if bound.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
                 else self.import_processor._rust_resolve_relative(
                     owner, bound.split(cs.SEPARATOR_DOUBLE_COLON), owner
                 )
             )
+            if resolved is None:
+                return None
+            qn = resolved
             if qn in seen:
                 # Two modules re-exporting each other's name never declare it.
                 return None
@@ -1738,11 +1745,10 @@ class ClassIngestMixin:
             # where the qn scheme keys the module, so the name-derived
             # spellings below back nothing at all here (issue #1035).
             return {redirect}
-        candidates = {
-            self.import_processor._rust_resolve_relative(
-                module_qn, [*chain, module_name], module_qn
-            )
-        }
+        relative = self.import_processor._rust_resolve_relative(
+            module_qn, [*chain, module_name], module_qn
+        )
+        candidates = {relative} if relative is not None else set()
         if chain:
             # A chain declaration's target FILE lives under the declaring
             # file's directory tree regardless of the inline qn nesting
