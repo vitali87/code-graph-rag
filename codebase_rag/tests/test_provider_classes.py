@@ -474,6 +474,31 @@ class TestModelCreation:
         assert "settings" in call_kwargs
         assert call_kwargs["settings"] == mock_settings
 
+    @patch("codebase_rag.providers.base.GoogleCloudProvider")
+    @patch("codebase_rag.providers.base.GoogleModel")
+    def test_google_vertex_model_creation_uses_cloud_provider(
+        self, mock_google_model: Any, mock_cloud_provider: Any
+    ) -> None:
+        provider = GoogleProvider(
+            provider_type=GoogleProviderType.VERTEX,
+            project_id="test-project",
+            region="us-central1",
+        )
+
+        mock_model = MagicMock()
+        mock_google_model.return_value = mock_model
+
+        provider.create_model("gemini-2.5-pro")
+
+        mock_cloud_provider.assert_called_once_with(
+            project="test-project",
+            location="us-central1",
+            credentials=None,
+        )
+        mock_google_model.assert_called_once_with(
+            "gemini-2.5-pro", provider=mock_cloud_provider.return_value
+        )
+
     @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
     @patch("codebase_rag.providers.base.OpenAIResponsesModel")
     def test_openai_model_creation(
