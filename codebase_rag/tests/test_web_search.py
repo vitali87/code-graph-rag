@@ -4,13 +4,33 @@ import pytest
 from pydantic_ai import Tool
 
 from codebase_rag import tool_errors as te
-from codebase_rag.tools.web_search import WebSearcher, create_web_search_tool
+from codebase_rag.tools.web_search import (
+    DuckDuckGoBackend,
+    SerpdiveBackend,
+    WebSearcher,
+    create_web_search_tool,
+    make_web_searcher,
+)
+
+DDG_PAGE = """
+<div class="result">
+  <a rel="nofollow" class="result__a"
+     href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.example.com%2Fa&amp;rut=x">
+     First <b>source</b></a>
+  <a class="result__snippet" href="#">the extracted <b>snippet</b> text</a>
+</div>
+<div class="result">
+  <a rel="nofollow" class="result__a" href="https://docs.example.com/b">Second source</a>
+  <a class="result__snippet" href="#">more snippet text</a>
+</div>
+"""
 
 
 class FakeResponse:
-    def __init__(self, payload: dict, status_code: int = 200):
+    def __init__(self, payload=None, status_code: int = 200, text: str = ""):
         self._payload = payload
         self.status_code = status_code
+        self.text = text
 
     def json(self) -> dict:
         return self._payload
@@ -23,7 +43,12 @@ def captured(monkeypatch) -> dict:
 
     def fake_post(url, **kwargs):
         sent.update(url=url, **kwargs)
-        return sent.pop("_response", None) or FakeResponse(
+        response = sent.pop("_response", None)
+        if response is not None:
+            return response
+        if "duckduckgo" in url:
+            return FakeResponse(text=DDG_PAGE)
+        return FakeResponse(
             {
                 "results": [
                     {
@@ -44,102 +69,136 @@ def captured(monkeypatch) -> dict:
     import httpx
 
     monkeypatch.setattr(httpx, "post", fake_post)
-    monkeypatch.delenv("SERPDIVE_MODEL", raising=False)
+    monkeypatch.delenv("WEB_SEARCH_PROVIDER", raising=False)
+    monkeypatch.delenv("SERPDIVE_API_KEY", raising=False)
     return sent
 
 
-def test_search_returns_page_content_not_just_links(captured: dict) -> None:
-    out = WebSearcher("sd_live_x").search_web("pydantic-ai tool api", max_results=2)
-
-    assert captured["url"] == "https://api.serpdive.com/v1/search"
-    assert captured["headers"]["Authorization"] == "Bearer sd_live_x"
-    assert captured["json"]["query"] == "pydantic-ai tool api"
-    assert captured["json"]["max_results"] == 2
-    # the URL is what the agent cites, the content is what it reads
-    assert "https://docs.example.com/a" in out
-    assert "the extracted text of the page" in out
-    assert "Published: 2026-07-01" in out
-    # a null title must never surface as "None"
-    assert "None" not in out
-    assert "Second source" in out
+def serpdive() -> WebSearcher:
+    return WebSearcher(SerpdiveBackend("sd_live_x"))
 
 
-def test_default_model_is_the_free_tier(captured: dict) -> None:
-    WebSearcher("k").search_web("q")
-    assert captured["json"]["model"] == "krill"
+def duckduckgo() -> WebSearcher:
+    return WebSearcher(DuckDuckGoBackend())
 
 
-def test_paid_model_is_opt_in_and_a_typo_falls_back_to_free(
-    captured: dict, monkeypatch
-) -> None:
-    monkeypatch.setenv("SERPDIVE_MODEL", "mako")
-    WebSearcher("k").search_web("q")
-    assert captured["json"]["model"] == "mako"
+class TestKeylessDefault:
+    def test_default_provider_needs_no_key_and_no_configuration(
+        self, captured: dict
+    ) -> None:
+        searcher = make_web_searcher()
+        assert isinstance(searcher.backend, DuckDuckGoBackend)
 
-    monkeypatch.setenv("SERPDIVE_MODEL", "MAKO-turbo")  # unknown value
-    WebSearcher("k").search_web("q")
-    assert captured["json"]["model"] == "krill"  # never a paid model by accident
+    def test_search_works_without_any_account(self, captured: dict) -> None:
+        out = duckduckgo().search_web("pydantic-ai tool api", max_results=2)
+
+        assert captured["url"] == "https://html.duckduckgo.com/html/"
+        assert "Authorization" not in captured.get("headers", {})
+        # the redirect wrapper is unwrapped to the target the agent cites
+        assert "https://docs.example.com/a" in out
+        assert "First source" in out
+        assert "the extracted snippet text" in out
+        assert "Second source" in out
+        assert "https://docs.example.com/b" in out
+
+    def test_max_results_caps_parsed_results(self, captured: dict) -> None:
+        out = duckduckgo().search_web("q", max_results=1)
+        assert "https://docs.example.com/a" in out
+        assert "https://docs.example.com/b" not in out
 
 
-def test_max_results_is_clamped(captured: dict) -> None:
-    WebSearcher("k").search_web("q", max_results=99)
-    assert captured["json"]["max_results"] == 10
-    WebSearcher("k").search_web("q", max_results=0)
-    assert captured["json"]["max_results"] == 1
+class TestProviderSelection:
+    def test_serpdive_is_selectable_with_a_key(self, captured: dict, monkeypatch):
+        monkeypatch.setenv("WEB_SEARCH_PROVIDER", "serpdive")
+        monkeypatch.setenv("SERPDIVE_API_KEY", "sd_live_x")
+        assert isinstance(make_web_searcher().backend, SerpdiveBackend)
+
+    def test_serpdive_without_a_key_falls_back_to_keyless(
+        self, captured: dict, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("WEB_SEARCH_PROVIDER", "serpdive")
+        assert isinstance(make_web_searcher().backend, DuckDuckGoBackend)
+
+    def test_unknown_provider_falls_back_to_keyless(
+        self, captured: dict, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("WEB_SEARCH_PROVIDER", "not-a-provider")
+        assert isinstance(make_web_searcher().backend, DuckDuckGoBackend)
 
 
-def test_empty_query_is_refused_without_a_call(captured: dict) -> None:
-    assert WebSearcher("k").search_web("   ") == te.WEB_SEARCH_EMPTY_QUERY
-    assert not captured  # nothing left the process
+class TestSerpdiveBackend:
+    def test_search_returns_page_content_not_just_links(self, captured: dict) -> None:
+        out = serpdive().search_web("pydantic-ai tool api", max_results=2)
 
+        assert captured["url"] == "https://api.serpdive.com/v1/search"
+        assert captured["headers"]["Authorization"] == "Bearer sd_live_x"
+        assert captured["json"]["query"] == "pydantic-ai tool api"
+        assert captured["json"]["max_results"] == 2
+        # the URL is what the agent cites, the content is what it reads
+        assert "https://docs.example.com/a" in out
+        assert "the extracted text of the page" in out
+        assert "Published: 2026-07-01" in out
+        # a null title must never surface as "None"
+        assert "None" not in out
+        assert "Second source" in out
 
-def test_http_error_is_reported_not_raised(monkeypatch) -> None:
-    import httpx
+    def test_outbound_model_is_always_the_free_tier(
+        self, captured: dict, monkeypatch
+    ) -> None:
+        """The open tree carries free capability only: no environment variable,
+        argument or typo can put a billed tier in the request body."""
+        monkeypatch.setenv("SERPDIVE_MODEL", "mako")
+        serpdive().search_web("q")
+        assert captured["json"]["model"] == "krill"
 
-    monkeypatch.setattr(
-        httpx, "post", lambda url, **kw: FakeResponse({}, status_code=401)
+    def test_max_results_is_clamped(self, captured: dict) -> None:
+        serpdive().search_web("q", max_results=99)
+        assert captured["json"]["max_results"] == 10
+        serpdive().search_web("q", max_results=0)
+        assert captured["json"]["max_results"] == 1
+
+    def test_no_results_is_a_message_not_an_error(self, captured: dict) -> None:
+        captured["_response"] = FakeResponse({"results": []})
+        assert serpdive().search_web("q") == te.WEB_SEARCH_NO_RESULTS.format(query="q")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            ["not", "a", "dict"],
+            {"results": "not a list"},
+            {"results": [{"url": "https://ok"}, "not a dict"]},
+            {},
+        ],
     )
-    out = WebSearcher("bad-key").search_web("q")
-    assert out == te.WEB_SEARCH_FAILED.format(status=401)
+    def test_malformed_payload_is_reported_not_raised(
+        self, captured: dict, payload
+    ) -> None:
+        """A 200 does not guarantee the shape; the tool must not raise."""
+        captured["_response"] = FakeResponse(payload)
+        assert serpdive().search_web("q") == te.WEB_SEARCH_BAD_RESPONSE
 
 
-def test_network_failure_is_reported_not_raised(monkeypatch) -> None:
-    import httpx
+@pytest.mark.parametrize("make", [serpdive, duckduckgo])
+class TestSharedGuards:
+    def test_empty_query_is_refused_without_a_call(self, captured: dict, make) -> None:
+        assert make().search_web("   ") == te.WEB_SEARCH_EMPTY_QUERY
+        assert not captured  # nothing left the process
 
-    def boom(url, **kw):
-        raise httpx.ConnectError("network down")
+    def test_http_error_is_reported_not_raised(self, captured: dict, make) -> None:
+        captured["_response"] = FakeResponse({}, status_code=401)
+        assert make().search_web("q") == te.WEB_SEARCH_FAILED.format(status=401)
 
-    monkeypatch.setattr(httpx, "post", boom)
-    assert WebSearcher("k").search_web("q") == te.WEB_SEARCH_UNREACHABLE
+    def test_network_failure_is_reported_not_raised(self, monkeypatch, make) -> None:
+        import httpx
 
+        def boom(url, **kw):
+            raise httpx.ConnectError("network down")
 
-def test_no_results_is_a_message_not_an_error(monkeypatch) -> None:
-    import httpx
-
-    monkeypatch.setattr(httpx, "post", lambda url, **kw: FakeResponse({"results": []}))
-    assert WebSearcher("k").search_web("q") == te.WEB_SEARCH_NO_RESULTS.format(
-        query="q"
-    )
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        ["not", "a", "dict"],
-        {"results": "not a list"},
-        {"results": [{"url": "https://ok"}, "not a dict"]},
-        {},
-    ],
-)
-def test_malformed_payload_is_reported_not_raised(monkeypatch, payload) -> None:
-    """A 200 does not guarantee the shape; the tool must not raise from inside."""
-    import httpx
-
-    monkeypatch.setattr(httpx, "post", lambda url, **kw: FakeResponse(payload))
-    assert WebSearcher("k").search_web("q") == te.WEB_SEARCH_BAD_RESPONSE
+        monkeypatch.setattr(httpx, "post", boom)
+        assert make().search_web("q") == te.WEB_SEARCH_UNREACHABLE
 
 
 def test_tool_is_registered_with_the_expected_name() -> None:
-    tool = create_web_search_tool(WebSearcher("k"))
+    tool = create_web_search_tool(WebSearcher(DuckDuckGoBackend()))
     assert isinstance(tool, Tool)
     assert tool.name == "web_search"

@@ -854,7 +854,13 @@ CAPTURE_DEPENDENCY_GAP = (
 )
 CAPTURE_RESOLVED = "Capture enabled: {rels}"
 
-WEB_SEARCH_QUERY = "Web search ({model}): {query}"
+WEB_SEARCH_QUERY = "Web search ({provider}): {query}"
 WEB_SEARCH_HTTP_ERROR = "Web search returned HTTP {status} for: {query}"
 WEB_SEARCH_ERROR = "Web search failed for '{query}': {error}"
 WEB_SEARCH_BAD_SHAPE = "Web search returned an unexpected payload shape for: {query}"
+WEB_SEARCH_KEYLESS_FALLBACK = (
+    "Web search provider '{provider}' has no API key set; using duckduckgo"
+)
+WEB_SEARCH_UNKNOWN_PROVIDER = (
+    "Unknown web search provider '{provider}'; using duckduckgo"
+)

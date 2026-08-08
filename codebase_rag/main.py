@@ -71,7 +71,7 @@ from .tools.semantic_search import (
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 from .tools.structural_editor import create_structural_editor_tool
 from .tools.structural_search import create_structural_search_tool
-from .tools.web_search import WebSearcher, create_web_search_tool
+from .tools.web_search import create_web_search_tool, make_web_searcher
 from .types_defs import (
     CHAT_LOOP_UI,
     OPTIMIZATION_LOOP_UI,
@@ -1664,9 +1664,7 @@ def _initialize_services_and_agent(
         structural_search_tool,
         structural_editor_tool,
     ]
-    # A key is created at https://serpdive.com/dashboard/keys
-    if serpdive_key := os.environ.get("SERPDIVE_API_KEY"):
-        agentic_tools.append(create_web_search_tool(WebSearcher(serpdive_key)))
+    agentic_tools.append(create_web_search_tool(make_web_searcher()))
 
     confirmation_tool_names = ConfirmationToolNames(
         replace_code=file_editor_tool.name,
