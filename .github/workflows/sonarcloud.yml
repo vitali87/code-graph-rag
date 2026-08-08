@@ -47,6 +47,16 @@ jobs:
       - name: Prefetch embedding model
         shell: bash
         run: |
+          # A warm cache must not touch the Hub at all: snapshot_download
+          # still calls out to check for updates unless local_files_only is
+          # set, which is exactly the 429 this step exists to avoid.
+          if uv run --no-sync python -c "
+          from huggingface_hub import snapshot_download
+          snapshot_download('microsoft/unixcoder-base', local_files_only=True)
+          "; then
+            echo "embedding model already cached; no Hub access needed"
+            exit 0
+          fi
           for attempt in 1 2 3; do
             if uv run --no-sync python -c "
           from huggingface_hub import snapshot_download

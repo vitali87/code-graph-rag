@@ -105,6 +105,31 @@ def test_unit_suite_jobs_prefetch_this_model_before_pytest(
     ("workflow", "job"),
     [(w, j) for w, j, _ in _jobs_running_the_unit_suite()],
 )
+def test_the_prefetch_probes_the_cache_before_reaching_the_hub(
+    workflow: str, job: str
+) -> None:
+    # snapshot_download still calls the Hub to check for updates unless
+    # local_files_only is set, so a warm cache would otherwise still be able
+    # to hit the 429 this step exists to avoid.
+    script = "\n".join(
+        _step_script(step)
+        for step in _steps_for(workflow, job)
+        if "snapshot_download" in _step_script(step)
+    )
+
+    assert "local_files_only=True" in script, (
+        f"{workflow}:{job} prefetches without an offline probe first, so a "
+        "warm cache still contacts the Hub"
+    )
+    assert script.index("local_files_only=True") < script.rindex("snapshot_download"), (
+        f"{workflow}:{job} probes the cache after the network download"
+    )
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job"),
+    [(w, j) for w, j, _ in _jobs_running_the_unit_suite()],
+)
 def test_the_prefetch_retries_transient_hub_failures(workflow: str, job: str) -> None:
     # 429 Too Many Requests is the reported transient; one attempt turns it
     # into a red build.
