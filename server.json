@@ -34,7 +34,7 @@
         {
           "name": "ORCHESTRATOR_MODEL",
           "description": "Model name for the orchestrator agent",
-          "default": "qwen2.5-coder"
+          "default": "llama3.2"
         },
         {
           "name": "ORCHESTRATOR_API_KEY",
@@ -49,7 +49,7 @@
         {
           "name": "CYPHER_MODEL",
           "description": "Model name for Cypher query generation",
-          "default": "qwen2.5-coder"
+          "default": "llama3.2"
         },
         {
           "name": "CYPHER_API_KEY",

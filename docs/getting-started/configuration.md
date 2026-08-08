@@ -12,7 +12,7 @@ Configuration is managed through environment variables in the `.env` file. The p
 
 ```bash
 ORCHESTRATOR_PROVIDER=ollama
-ORCHESTRATOR_MODEL=llama4
+ORCHESTRATOR_MODEL=qwen2.5-coder
 ORCHESTRATOR_ENDPOINT=http://localhost:11434/v1
 
 CYPHER_PROVIDER=ollama
@@ -24,11 +24,11 @@ CYPHER_ENDPOINT=http://localhost:11434/v1
 
 ```bash
 ORCHESTRATOR_PROVIDER=openai
-ORCHESTRATOR_MODEL=gpt-5.6-terra
+ORCHESTRATOR_MODEL=gpt-5.1
 ORCHESTRATOR_API_KEY=sk-your-openai-key
 
 CYPHER_PROVIDER=openai
-CYPHER_MODEL=gpt-5.6-luna
+CYPHER_MODEL=gpt-5-mini
 CYPHER_API_KEY=sk-your-openai-key
 ```
 
@@ -82,7 +82,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | Variable | Description |
 |----------|-------------|
 | `ORCHESTRATOR_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
-| `ORCHESTRATOR_MODEL` | Model ID (e.g., `gemini-3.1-pro`, `gpt-5.6-terra`, `llama4`, `claude-sonnet-5`) |
+| `ORCHESTRATOR_MODEL` | Model ID (e.g., `gemini-3.1-pro`, `gpt-5.1`, `llama4`, `claude-sonnet-5`) |
 | `ORCHESTRATOR_API_KEY` | API key for the provider (if required) |
 | `ORCHESTRATOR_ENDPOINT` | Custom endpoint URL (if required) |
 | `ORCHESTRATOR_PROJECT_ID` | Google Cloud project ID (for Vertex AI) |
@@ -96,7 +96,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | Variable | Description |
 |----------|-------------|
 | `CYPHER_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
-| `CYPHER_MODEL` | Model ID (e.g., `gemini-3.6-flash`, `gpt-5.6-luna`, `qwen2.5-coder`) |
+| `CYPHER_MODEL` | Model ID (e.g., `gemini-3.6-flash`, `gpt-5-mini`, `qwen2.5-coder`) |
 | `CYPHER_API_KEY` | API key for the provider (if required) |
 | `CYPHER_ENDPOINT` | Custom endpoint URL (if required) |
 | `CYPHER_PROJECT_ID` | Google Cloud project ID (for Vertex AI) |

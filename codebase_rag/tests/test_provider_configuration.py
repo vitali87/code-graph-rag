@@ -146,11 +146,11 @@ class TestProviderConfiguration:
 
             orch_config = config.active_orchestrator_config
             assert orch_config.provider == "ollama"
-            assert orch_config.model_id == "qwen2.5-coder"
+            assert orch_config.model_id == "llama3.2"
 
             cypher_config = config.active_cypher_config
             assert cypher_config.provider == "ollama"
-            assert cypher_config.model_id == "qwen2.5-coder"
+            assert cypher_config.model_id == "llama3.2"
 
     def test_bare_model_name_parsing(self) -> None:
         """Test that bare model names default to Ollama provider."""
