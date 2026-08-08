@@ -84,8 +84,8 @@ def test_block_item_binds_over_a_same_named_module_item(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     calls = _calls(mock_ingestor)
     caller = "rs_block_item_twin.src.a.f0"
-    # The block item registered under a span-suffixed variant, the module
-    # item having taken the natural qn first.
+    # The block item registered under a span-suffixed variant: the module's
+    # own item is the one a path can name, so it keeps the natural qn.
     assert (caller, "rs_block_item_twin.src.a.g@8") in calls, calls
     assert (caller, "rs_block_item_twin.src.a.g") not in calls, calls
     assert (caller, "rs_block_item_twin.src.gamma.g") not in calls, calls

@@ -37,7 +37,7 @@ Code-Graph-RAG is an accurate Retrieval-Augmented Generation (RAG) system that a
 ```bash
 pip install code-graph-rag
 cgr daemon up
-cgr start --repo-path ./my-project --update-graph --clean
+cgr start --repo-path ./my-project --update-graph
 ```
 
 See the [Installation](getting-started/installation.md) guide for full setup instructions.

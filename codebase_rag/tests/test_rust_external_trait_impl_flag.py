@@ -192,6 +192,50 @@ def test_generic_external_trait_impl_is_flagged(
     assert _prop(props, "Seq.from_iter").get(cs.KEY_OVERRIDES_EXTERNAL) is True
 
 
+def test_generic_scoped_external_trait_impl_is_flagged(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A generic wrapped around a SCOPED path is the spelling the trait-name
+    # extractor read nothing off, so the block reached none of this: no
+    # RustTraitImpl was recorded and its methods stayed ordinary dead-code
+    # candidates however plainly `std` speaks for the trait (issue #1080).
+    # `other::Add` is a same-named FIRST-PARTY trait, which the simple-name
+    # resolution behind the trait binding sweeps up project-wide. Letting it
+    # answer for `std::ops::Add` says `S` implements an unrelated trait,
+    # carries liveness in from that trait's method, and silences the external
+    # root this test is about. A head the toolchain speaks for settles it.
+    props = _build(
+        temp_repo / "rsgenericscoped",
+        mock_ingestor,
+        {
+            "lib.rs": (
+                "pub mod other;\n"
+                "\n"
+                "pub struct S(u32);\n"
+                "\n"
+                "impl std::ops::Add<u32> for S {\n"
+                "    type Output = S;\n"
+                "    fn add(self, other: u32) -> S {\n"
+                "        S(self.0 + other)\n"
+                "    }\n"
+                "}\n"
+            ),
+            "other.rs": (
+                "pub trait Add<T> {\n    fn add(self, other: T) -> Self;\n}\n"
+            ),
+        },
+    )
+    assert _prop(props, "S.add").get(cs.KEY_OVERRIDES_EXTERNAL) is True
+    # Nothing here overrides anything first-party: the only trait implemented
+    # belongs to std, and `other::Add` is a stranger that shares its name.
+    overrides = {
+        (call.args[0][2], call.args[2][2])
+        for call in mock_ingestor.ensure_relationship_batch.call_args_list
+        if call.args[1] == cs.RelationshipType.OVERRIDES.value
+    }
+    assert not overrides, overrides
+
+
 def test_first_party_trait_impl_is_not_flagged(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

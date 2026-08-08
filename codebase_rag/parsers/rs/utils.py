@@ -6,6 +6,7 @@ from collections.abc import Iterable, Sequence
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...types_defs import FunctionRegistryTrieProtocol
 from ..utils import safe_decode_text
 
 # `#[path = "support/helpers.rs"]` redirects the mod declaration it sits on
@@ -306,7 +307,15 @@ def extract_impl_trait(impl_node: Node) -> str | None:
     # simple name (a trait impl means Type IMPLEMENTS Trait).
     if impl_node.type != cs.TS_IMPL_ITEM:
         return None
-    return _impl_field_type_name(impl_node, cs.FIELD_TRAIT)
+    if name := _impl_field_type_name(impl_node, cs.FIELD_TRAIT):
+        return name
+    # A generic wrapping a SCOPED path (`std::ops::Add<u32>`) is the one
+    # trait spelling the field walk reads no name off, and the whole block
+    # then read as no trait impl at all: no IMPLEMENTS edge, no implementer,
+    # no override for its methods. The written path's last segment is the
+    # simple name (issue #1080).
+    path = extract_impl_trait_path(impl_node)
+    return path.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1] if path else None
 
 
 def extract_impl_trait_path(impl_node: Node) -> str | None:
@@ -414,6 +423,50 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
         current = current.parent
     parts.reverse()
     return None, parts, pure
+
+
+def block_item_at(
+    block_items: Iterable[tuple[int, int, dict[str, str]]],
+    registry: FunctionRegistryTrieProtocol,
+    name: str,
+    call_point: int | None,
+) -> str | None:
+    """The item `name` binds to in the innermost block holding this site.
+
+    Innermost wins: nested blocks may each declare the name, and only the
+    tightest one is in scope where the site is written. Keyed by FILE, not by
+    caller: a fn declared inside the block is inside the block, so its own
+    body binds the block's items too.
+    """
+    if call_point is None:
+        return None
+    best: tuple[int, str] | None = None
+    for start, end, items in block_items:
+        item_qn = items.get(name)
+        if item_qn is None or not (start <= call_point < end):
+            continue
+        if (best is None or end - start < best[0]) and item_qn in registry:
+            best = (end - start, item_qn)
+    return best[1] if best else None
+
+
+def is_body_local(node: Node) -> bool:
+    """True when *node* sits directly in a function body or an initializer.
+
+    Such an item is in scope for that body alone: no path from another module
+    names it, so it owns none of the qn its enclosing module or impl target
+    hands out (issue #1037). A type declared in the body is a different
+    matter, and the walk stops there: an `impl` written in a method body is
+    still the owner of the methods inside it, whatever encloses the impl.
+    """
+    current = node.parent
+    while current is not None and current.type != cs.TS_RS_SOURCE_FILE:
+        if current.type in cs.SPEC_RS_CLASS_TYPES:
+            return False
+        if current.type in cs.RS_BODY_LOCAL_CONTAINERS:
+            return True
+        current = current.parent
+    return False
 
 
 def enclosing_mod_names(node: Node) -> frozenset[str]:

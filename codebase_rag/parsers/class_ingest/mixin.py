@@ -115,6 +115,13 @@ def _method_belongs_directly(
 def _skip_method(
     method_node: Node, class_node: Node, class_body: Node, lang_config: LanguageSpec
 ) -> bool:
+    # Both walks below stop at a bodied function but cross a Rust const/static
+    # initializer without noticing, so an item written in one inside an impl
+    # was ingested as a method of that type and took its name (issue #1037).
+    if lang_config.language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(
+        method_node
+    ):
+        return True
     if settings.CAPTURE_FUNCTION_LOCAL_DEFINITIONS:
         return not _method_belongs_directly(method_node, class_node, lang_config)
     return _is_nested_inside_function(method_node, class_body, lang_config)
@@ -176,6 +183,8 @@ class ClassIngestMixin:
     _deferred_cpp_inherits: list[DeferredCppInherit]
     _deferred_inherits: list[DeferredInherit]
     _rust_trait_impls: list[RustTraitImpl]
+    rust_impl_method_traits: dict[str, str]
+    rust_inherent_impl_methods: set[str]
     cpp_module_interfaces: set[str]
     _deferred_cpp_module_impls: list[tuple[str, str]]
     declared_module_qns: set[str]
@@ -239,6 +248,52 @@ class ClassIngestMixin:
 
     def _resolve_to_qn(self, name: str, module_qn: str) -> str:
         return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"
+
+    def _resolve_rust_trait_qn(
+        self, path: str, name: str, module_qn: str
+    ) -> tuple[str, str | None]:
+        """Qn for the trait an `impl ... for Type` block names, and a fallback.
+
+        Resolving the SIMPLE name alone ends in a project-wide sweep that any
+        same-named trait can answer, so `impl crate::z::Base for S` recorded
+        `a.Base` (issue #1080). The written path outranks the sweep wherever
+        it says where to look: a crate-relative head names a first-party
+        module outright, and a head the toolchain or the manifest speaks for
+        names another crate's trait, which no first-party sweep may answer
+        for however the spelling collides.
+
+        The crate-relative answer carries the name-anchored one as a
+        fallback, since `crate::Base` for a re-exported trait names the entry
+        module while the trait registers where it is declared.
+        """
+        head, _, tail = path.partition(cs.SEPARATOR_DOUBLE_COLON)
+        anchored = self._resolve_to_qn(name, module_qn)
+        if not tail:
+            return anchored, None
+        if head in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER):
+            rewritten = self.import_processor._rewrite_rust_local_use_path(
+                path, module_qn
+            )
+            return (rewritten, anchored) if rewritten != path else (anchored, None)
+        # The head is itself a name a `use` may have bound (`use std::io;`
+        # then `impl io::Read`), and only the expanded crate says who speaks
+        # for the trait.
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        expanded = f"{import_map.get(head, head)}{cs.SEPARATOR_DOUBLE_COLON}{tail}"
+        if expanded.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}"):
+            # A `use` of a first-party module, already rewritten to its qn:
+            # the binding says which module the head means, so the path is
+            # every bit as exact as the crate-relative spelling above.
+            return (
+                expanded.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT),
+                anchored,
+            )
+        crate = expanded.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+        if crate in cs.RS_STDLIB_CRATES or (
+            self.import_processor.rust_head_is_external_dep(crate, module_qn)
+        ):
+            return expanded, None
+        return anchored, None
 
     def _ingest_cpp_module_declarations(
         self,
@@ -504,6 +559,10 @@ class ClassIngestMixin:
         self._rust_trait_impls = []
         for impl in impls:
             if not self._rust_trait_is_external(impl):
+                # First-party instead: bind its methods to the trait THIS block
+                # names, so the override pass stops deriving the parent from the
+                # method's qualified name (issue #1076).
+                self._record_rust_impl_method_traits(impl)
                 continue
             for method_qn in impl.method_qns:
                 self.ingestor.ensure_node_batch(
@@ -513,6 +572,19 @@ class ClassIngestMixin:
                         cs.KEY_OVERRIDES_EXTERNAL: True,
                     },
                 )
+
+    def _record_rust_impl_method_traits(self, impl: RustTraitImpl) -> None:
+        # Only a REGISTERED trait: the override edge needs a real endpoint, and
+        # a spelling that resolves nowhere leaves the generic ancestry walk as
+        # the better guess.
+        resolved = self._resolve_deferred_parent_qn(impl.entry)
+        if resolved is None or resolved[1]:
+            return
+        trait_qn = resolved[0]
+        if self.function_registry.get(trait_qn) != NodeType.INTERFACE:
+            return
+        for method_qn in impl.method_qns:
+            self.rust_impl_method_traits[method_qn] = trait_qn
 
     def _rust_trait_is_external(self, impl: RustTraitImpl) -> bool:
         # Only POSITIVE evidence roots: the crate the trait is written under
@@ -616,6 +688,42 @@ class ClassIngestMixin:
             stack.extend(implements_map.get(ancestor, []))
         return False
 
+    def _rust_reexport_target(self, entry: DeferredInherit) -> str | None:
+        """Where a `pub use` in the named module declares the parent.
+
+        `crate::Base` is a legal path for a trait the crate root re-exports,
+        and it is exact, but the trait registers where it is DECLARED. The
+        binding says where that is, so the written path still decides and no
+        project-wide sweep of the simple name has to (issue #1080). Only a
+        registered target answers: a re-export OUT of the project resolves
+        nowhere first-party, and guessing there would bind a decoy. A facade
+        module that re-exports what it was itself given is the usual reason
+        the crate root can name the trait at all, so the chain is followed to
+        its end rather than one hop.
+        """
+        if entry.language != cs.SupportedLanguage.RUST:
+            return None
+        qn = entry.parent_qn
+        seen = {qn}
+        while True:
+            owner, _, item = qn.rpartition(cs.SEPARATOR_DOT)
+            bound = self.import_processor.import_mapping.get(owner, {}).get(item)
+            if not bound:
+                return None
+            qn = (
+                bound
+                if bound.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
+                else self.import_processor._rust_resolve_relative(
+                    owner, bound.split(cs.SEPARATOR_DOUBLE_COLON), owner
+                )
+            )
+            if qn in seen:
+                # Two modules re-exporting each other's name never declare it.
+                return None
+            seen.add(qn)
+            if self.function_registry.get(qn) is not None:
+                return qn
+
     def _resolve_deferred_parent_qn(
         self, entry: DeferredInherit
     ) -> tuple[str, bool] | None:
@@ -653,6 +761,16 @@ class ClassIngestMixin:
             return None
         if self.function_registry.get(entry.parent_qn) is not None:
             return entry.parent_qn, False
+        if (followed := self._rust_reexport_target(entry)) is not None:
+            return followed, False
+        if entry.alt_parent_qn is not None:
+            # The written path was exact and still landed on nothing, which a
+            # re-export does: `crate::Base` names the entry module while the
+            # trait registers where it is declared. The second spelling gets
+            # the whole chain, not just the registry probe above.
+            return self._resolve_deferred_parent_qn(
+                entry._replace(parent_qn=entry.alt_parent_qn, alt_parent_qn=None)
+            )
         project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(project_prefix):
             external = entry.parent_qn.replace(
@@ -913,10 +1031,15 @@ class ClassIngestMixin:
             # the conditional attribute, not the `#if` line (matches Roslyn).
             from ..csharp import utils as csharp_utils
 
-            class_start_line = csharp_utils.definition_start_line(class_node)
+            class_start_line, class_start_col = csharp_utils.definition_start_point(
+                class_node
+            )
         else:
             class_start_line = class_node.start_point[0] + 1
-        class_qn = self.function_registry.register_unique_qn(class_qn, class_start_line)
+            class_start_col = class_node.start_point[1]
+        class_qn = self.function_registry.register_unique_qn(
+            class_qn, class_start_line, class_start_col
+        )
         node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
 
         modifiers, decorators = extract_modifiers_and_decorators(
@@ -1134,9 +1257,17 @@ class ClassIngestMixin:
         # `impl Trait for Type` means Type IMPLEMENTS Trait. The target type's
         # node label may be Class/Enum/Type, so match the relationship source
         # to its registered label (else the IMPLEMENTS edge never resolves).
+        # Collected either way: an inherent block's methods implement nothing,
+        # which the override pass has to be TOLD, or it reads their absence
+        # from the trait map as no information and guesses (issue #1078).
+        impl_method_qns: list[str] = []
         trait_impl_method_qns: list[str] | None = None
         if trait_name := rs_utils.extract_impl_trait(class_node):
-            trait_qn = self._resolve_to_qn(trait_name, owner_module_qn)
+            trait_qn, alt_trait_qn = self._resolve_rust_trait_qn(
+                rs_utils.extract_impl_trait_path(class_node) or trait_name,
+                trait_name,
+                owner_module_qn,
+            )
             # The trait (or the impl target) may live in a file not yet
             # parsed; hold the IMPLEMENTS edge back for
             # resolve_deferred_inherits so an unresolvable trait
@@ -1148,6 +1279,7 @@ class ClassIngestMixin:
                 module_qn=owner_module_qn,
                 base_index=0,
                 language=cs.SupportedLanguage.RUST,
+                alt_parent_qn=alt_trait_qn,
             )
             self._deferred_inherits.append(trait_entry)
             # Collect this block's methods against the trait AS WRITTEN: if the
@@ -1155,7 +1287,7 @@ class ClassIngestMixin:
             # they can ever have (issue #1048). The decision waits for
             # resolve_deferred_inherits, when every first-party trait is
             # registered.
-            trait_impl_method_qns = []
+            trait_impl_method_qns = impl_method_qns
             self._rust_trait_impls.append(
                 RustTraitImpl(
                     entry=trait_entry,
@@ -1221,8 +1353,7 @@ class ClassIngestMixin:
             # its own qn, and overwriting the record would re-attribute
             # its calls to this pass's twin.
             if ingested_qn is not None:
-                if trait_impl_method_qns is not None:
-                    trait_impl_method_qns.append(ingested_qn)
+                impl_method_qns.append(ingested_qn)
                 span = function_span_key(module_qn, method_node)
                 if span not in self.function_locations:
                     self.function_locations[span] = FunctionLocation(
@@ -1243,6 +1374,12 @@ class ClassIngestMixin:
                 self.method_return_types[
                     f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
                 ] = return_type
+
+        # The PATH decides, not the name: `extract_impl_trait` reads no name
+        # off `impl std::ops::Add<u32> for S`, and calling that inherent would
+        # bar a real trait impl's methods from ever overriding.
+        if rs_utils.extract_impl_trait_path(class_node) is None:
+            self.rust_inherent_impl_methods.update(impl_method_qns)
 
     def _ingest_class_methods(
         self,
@@ -1662,6 +1799,8 @@ class ClassIngestMixin:
             self.interface_implementers,
             self.csharp_methods,
             self.csharp_override_methods,
+            self.rust_impl_method_traits,
+            self.rust_inherent_impl_methods,
         )
         self._resolve_java_anon_overrides()
 

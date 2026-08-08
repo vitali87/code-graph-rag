@@ -7,11 +7,13 @@ attribute, so a `#[cfg(test)]` gate reaches the file it names and a crate
 path through the declared name lands on that file too (issue #1035).
 """
 
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import (
+    RustEntryDecls,
     _rs_entry_decls_of,
     _rs_strip_comments_and_strings,
     _rs_top_level_only,
@@ -142,6 +144,350 @@ def test_crate_path_resolves_through_a_redirected_module(
     ) not in calls, calls
 
 
+def test_crate_path_resolves_a_redirect_declared_outside_an_entry_file(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The redirect sits in src/engine.rs, an ordinary module file, so only
+    # the crate entry's declarations used to be consulted and the tail of
+    # the path attached by name. src/engine/rig.rs is present and declared
+    # by nobody, which is exactly where the name-derived spelling lands
+    # (issue #1065); rustc compiles src/fixtures/rig.rs.
+    project = temp_repo / "rs_path_attr_deep"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_deep"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\npub mod a;\n",
+            "src/engine.rs": ('#[path = "fixtures/rig.rs"]\npub mod rig;\n'),
+            "src/fixtures/rig.rs": "pub fn build() -> i32 {\n    2\n}\n",
+            "src/engine/rig.rs": "pub fn build() -> i32 {\n    9\n}\n",
+            "src/a.rs": ("pub fn go() -> i32 {\n    crate::engine::rig::build()\n}\n"),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_deep.src.a.go"
+    assert (caller, "rs_path_attr_deep.src.fixtures.rig.build") in calls, calls
+    assert (caller, "rs_path_attr_deep.src.engine.rig.build") not in calls, calls
+
+
+def test_a_relative_path_resolves_a_redirect_declared_beside_it(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `super::rig` from a sibling module reaches the same declaration by a
+    # different route, and that route never touched the entry map at all.
+    project = temp_repo / "rs_path_attr_super"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\n",
+            "src/engine.rs": (
+                '#[path = "fixtures/rig.rs"]\npub mod rig;\npub mod a;\n'
+            ),
+            "src/fixtures/rig.rs": "pub fn build() -> i32 {\n    2\n}\n",
+            "src/engine/rig.rs": "pub fn build() -> i32 {\n    9\n}\n",
+            "src/engine/a.rs": ("pub fn go() -> i32 {\n    super::rig::build()\n}\n"),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super.src.engine.a.go"
+    assert (caller, "rs_path_attr_super.src.fixtures.rig.build") in calls, calls
+    assert (caller, "rs_path_attr_super.src.engine.rig.build") not in calls, calls
+
+
+def test_a_redirect_onto_a_mod_rs_is_not_read_off_its_sibling_shadow(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A redirect naming `platform/mod.rs` backs the DIRECTORY, and the qn
+    # scheme drops the `mod` segment, so `src.platform` looks exactly like a
+    # plain file module. Continuing the walk from the sibling `src/platform.rs`
+    # reads an undeclared shadow, whose own redirect then sends `inner` to a
+    # third file rustc never compiles into this path.
+    project = temp_repo / "rs_path_attr_modrs"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_modrs"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\npub mod a;\n",
+            "src/engine.rs": '#[path = "platform/mod.rs"]\npub mod platform;\n',
+            "src/platform/mod.rs": "pub mod inner;\n",
+            "src/platform/inner.rs": "pub fn go() -> i32 {\n    1\n}\n",
+            "src/platform.rs": '#[path = "elsewhere/inner.rs"]\npub mod inner;\n',
+            "src/elsewhere/inner.rs": "pub fn other() -> i32 {\n    9\n}\n",
+            "src/a.rs": (
+                "pub fn run() -> i32 {\n    crate::engine::platform::inner::go()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_modrs.src.a.run"
+    assert (caller, "rs_path_attr_modrs.src.platform.inner.go") in calls, calls
+    assert not [
+        pair for pair in calls if pair[0] == caller and "elsewhere" in pair[1]
+    ], calls
+
+
+def test_super_inside_a_redirect_target_climbs_the_module_tree(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `#[path]` moves the FILE, not the module's place in the tree. `rig` is
+    # `crate::engine::rig`, so `super` is `engine` and `super::sib` is backed
+    # by src/engine/sib.rs. Popping a segment off the file's own qn lands on
+    # src/fixtures instead, where an undeclared shadow answers (issue #1083).
+    project = temp_repo / "rs_path_attr_super_target"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super_target"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\n",
+            "src/engine.rs": '#[path = "fixtures/rig.rs"]\npub mod rig;\npub mod sib;\n',
+            "src/engine/sib.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/fixtures/sib.rs": "pub fn run() -> i32 {\n    9\n}\n",
+            "src/fixtures/rig.rs": (
+                "pub fn build() -> i32 {\n    super::sib::run()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super_target.src.fixtures.rig.build"
+    assert (caller, "rs_path_attr_super_target.src.engine.sib.run") in calls, calls
+    assert (caller, "rs_path_attr_super_target.src.fixtures.sib.run") not in calls, (
+        calls
+    )
+
+
+def test_super_from_an_ordinary_module_still_climbs_its_own_directory(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The redirect map must claim only files a redirect names. A plain module
+    # in the same directory keeps the physical climb, which for it IS the
+    # module tree.
+    project = temp_repo / "rs_path_attr_super_plain"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super_plain"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\n",
+            "src/engine.rs": "pub mod rig;\npub mod sib;\n",
+            "src/engine/sib.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/engine/rig.rs": (
+                "pub fn build() -> i32 {\n    super::sib::run()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super_plain.src.engine.rig.build"
+    assert (caller, "rs_path_attr_super_plain.src.engine.sib.run") in calls, calls
+
+
+def test_a_module_declared_where_it_sits_keeps_its_own_super(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # rustc compiles a file into every tree that declares it, and `helper` is
+    # declared by its own neighbour as well as aliased from `a`. The
+    # neighbour's spelling is the one `super::` inside it counts from, so an
+    # alias written anywhere else must not move it.
+    project = temp_repo / "rs_path_attr_super_alias"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super_alias"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod a;\npub mod b;\n",
+            "src/b.rs": "pub mod helper;\npub mod sib;\n",
+            "src/b/sib.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/b/helper.rs": "pub fn build() -> i32 {\n    super::sib::run()\n}\n",
+            "src/a.rs": '#[path = "b/helper.rs"]\npub mod aliased;\npub mod sib;\n',
+            "src/a/sib.rs": "pub fn run() -> i32 {\n    9\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super_alias.src.b.helper.build"
+    assert (caller, "rs_path_attr_super_alias.src.b.sib.run") in calls, calls
+    assert (caller, "rs_path_attr_super_alias.src.a.sib.run") not in calls, calls
+
+
+def test_super_super_from_a_redirect_target_climbs_declarer_by_declarer(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `b` is `crate::a::b` and `a` is `crate::a`, both moved, so the two
+    # climbs are one hop each through the declaring module and land on the
+    # crate root. Popping segments off the declarer's own path instead stops
+    # inside src/fx, where a shadow answers.
+    project = temp_repo / "rs_path_attr_super_nested"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super_nested"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": '#[path = "fx/a.rs"]\npub mod a;\npub mod top;\n',
+            "src/fx/a.rs": '#[path = "b.rs"]\npub mod b;\n',
+            "src/fx/b.rs": ("pub fn build() -> i32 {\n    super::super::top::f()\n}\n"),
+            "src/top.rs": "pub fn f() -> i32 {\n    1\n}\n",
+            "src/fx/top.rs": "pub fn f() -> i32 {\n    9\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super_nested.src.fx.b.build"
+    assert (caller, "rs_path_attr_super_nested.src.top.f") in calls, calls
+    assert (caller, "rs_path_attr_super_nested.src.fx.top.f") not in calls, calls
+
+
+def test_super_from_an_inline_mod_inside_a_redirect_target_climbs_the_tree(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `#[cfg(test)] mod tests { use super::super::*; }` is the shape a
+    # `#[path]`-ed fixture file invites. The inline mod keeps its own place,
+    # so the first climb is the file's module and only the second is moved.
+    project = temp_repo / "rs_path_attr_super_inline"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super_inline"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\n",
+            "src/engine.rs": '#[path = "fixtures/rig.rs"]\npub mod rig;\npub mod sib;\n',
+            "src/engine/sib.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/fixtures/sib.rs": "pub fn run() -> i32 {\n    9\n}\n",
+            "src/fixtures/rig.rs": (
+                "pub mod inner {\n"
+                "    use super::super::sib::run;\n"
+                "\n"
+                "    pub fn build() -> i32 {\n"
+                "        run()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super_inline.src.fixtures.rig.inner.build"
+    assert (caller, "rs_path_attr_super_inline.src.engine.sib.run") in calls, calls
+    assert (caller, "rs_path_attr_super_inline.src.fixtures.sib.run") not in calls, (
+        calls
+    )
+
+
+def test_a_redirect_under_cargos_src_bin_still_moves_its_target(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `bin` is a build-output ignore EXCEPT directly under src/, where cargo
+    # keeps first-party binaries. The graph holds those files, so the sweep
+    # that reads their declarations has to walk there too.
+    project = temp_repo / "rs_path_attr_super_bin"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super_bin"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub fn lib_root() -> i32 {\n    0\n}\n",
+            "src/bin/tool.rs": (
+                '#[path = "fx/rig.rs"]\nmod rig;\nmod sib;\nfn main() {}\n'
+            ),
+            "src/bin/tool/sib.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/bin/fx/sib.rs": "pub fn run() -> i32 {\n    9\n}\n",
+            "src/bin/fx/rig.rs": (
+                "pub fn build() -> i32 {\n    super::sib::run()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super_bin.src.bin.fx.rig.build"
+    assert (caller, "rs_path_attr_super_bin.src.bin.tool.sib.run") in calls, calls
+    assert (caller, "rs_path_attr_super_bin.src.bin.fx.sib.run") not in calls, calls
+
+
+def test_two_declarers_of_one_target_resolve_the_same_way_everywhere(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A helper shared by two modules compiles into both trees, and the graph
+    # keys it once, so `super::` in it has to pick one. The pick is the walk
+    # order, which is sorted precisely so a developer machine and CI agree.
+    project = temp_repo / "rs_path_attr_super_dup"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super_dup"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod omega;\n",
+            "src/alpha.rs": (
+                '#[path = "fx/shared.rs"]\npub mod shared;\n'
+                "pub fn helper() -> i32 {\n    1\n}\n"
+            ),
+            "src/omega.rs": (
+                '#[path = "fx/shared.rs"]\npub mod shared;\n'
+                "pub fn helper() -> i32 {\n    2\n}\n"
+            ),
+            "src/fx/shared.rs": "pub fn build() -> i32 {\n    super::helper()\n}\n",
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_path_attr_super_dup.src.fx.shared.build"
+    assert (caller, "rs_path_attr_super_dup.src.alpha.helper") in calls, calls
+    assert (caller, "rs_path_attr_super_dup.src.omega.helper") not in calls, calls
+
+
+def test_a_new_redirect_moves_its_target_for_the_watcher(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The realtime watcher re-parses without entering _process_files, so the
+    # per-run reset never fires. An edit that adds or drops a redirect
+    # changes who declares the target, and a stale map keeps `super::` in
+    # that file pointing where it no longer belongs.
+    project = temp_repo / "rs_path_attr_super_watch"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_super_watch"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\n",
+            "src/engine.rs": "pub mod sib;\n",
+            "src/engine/sib.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/fixtures/rig.rs": (
+                "pub fn build() -> i32 {\n    super::sib::run()\n}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    processor = updater.factory.import_processor
+    target = "rs_path_attr_super_watch.src.fixtures.rig"
+    assert processor._rust_logical_parent(target) is None
+    engine = project / "src" / "engine.rs"
+    engine.write_text(
+        '#[path = "fixtures/rig.rs"]\npub mod rig;\npub mod sib;\n', encoding="utf-8"
+    )
+    processor.refresh_rust_path_caches_for(engine, created=False)
+    assert (
+        processor._rust_logical_parent(target) == "rs_path_attr_super_watch.src.engine"
+    )
+
+
 def test_a_commented_out_redirect_does_not_hijack_a_live_declaration(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -265,6 +611,55 @@ def test_an_absolute_redirect_claims_nothing(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     gates = _declared_gates(mock_ingestor, "rs_path_attr_abs.src.lib")
     assert not any("nowhere" in gate for gate in gates), gates
+
+
+def _scan_cost_per_char(source: str) -> tuple[float, RustEntryDecls]:
+    """Best-of-three seconds per scanned character, and what was found."""
+    top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    best = None
+    for _ in range(3):
+        start = time.perf_counter()
+        decls = _rs_entry_decls_of(top_level)
+        elapsed = time.perf_counter() - start
+        best = elapsed if best is None else min(best, elapsed)
+    assert best is not None
+    return best / len(top_level), decls
+
+
+def test_the_declaration_scan_stays_linear_in_blank_source() -> None:
+    # Every declaration pattern opened `^\s*`, and `\s` matches newlines, so
+    # under MULTILINE each line start rescanned the whole run of whitespace
+    # after it. Comment blanking turns a licence header or a doc block into
+    # exactly that run, and every crate entry file is scanned in full with no
+    # prescan in front of it (issue #1087).
+    #
+    # The comparison is against DENSE source through the same code path, so
+    # the machine's speed cancels and what is left is the property itself:
+    # whether blanked text costs more per character than real code. It did,
+    # by about 59000x; it now costs about 4x, and no absolute wall-clock
+    # budget has to be guessed for the slowest CI worker.
+    blank = "pub mod a;\n" + "// a line of an ordinary doc block\n" * 20000
+    dense = "pub mod a;\n" + "pub fn f(a: i32) -> i32 { a + 1 }\n" * 20000
+    blank_cost, decls = _scan_cost_per_char(blank)
+    dense_cost, _ = _scan_cost_per_char(dense)
+    assert "a" in decls.mods, decls
+    assert blank_cost < dense_cost * 50, (
+        f"blank {blank_cost * 1e9:.1f}ns/char vs dense {dense_cost * 1e9:.1f}ns/char"
+    )
+
+
+def test_an_attribute_on_its_own_line_still_reaches_its_declaration() -> None:
+    # The leading whitespace is what crosses lines wrongly; the whitespace
+    # BETWEEN an attribute and the declaration it decorates has to keep
+    # crossing them, since that spelling is the idiomatic one.
+    source = (
+        '#[cfg(unix)]\n\n    \n#[path = "sys/unix.rs"]\n    pub(crate) mod platform;\n'
+    )
+    decls = _rs_entry_decls_of(
+        _rs_top_level_only(_rs_strip_comments_and_strings(source))
+    )
+    assert "platform" in decls.mods, decls
+    assert decls.redirects == {"platform": "sys/unix.rs"}, decls.redirects
 
 
 def test_two_cfg_variants_of_one_name_claim_no_single_target() -> None:

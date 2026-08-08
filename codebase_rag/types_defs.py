@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, ItemsView, KeysView, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    ItemsView,
+    KeysView,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -118,7 +125,7 @@ class FunctionRegistryTrieProtocol(Protocol):
     def find_ending_with(self, suffix: str) -> list[QualifiedName]: ...
 
     def register_unique_qn(
-        self, natural_qn: QualifiedName, start_line: int
+        self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
     ) -> QualifiedName: ...
 
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]: ...
@@ -595,6 +602,41 @@ class FunctionLocation(NamedTuple):
     is_named: bool = True
 
 
+class FunctionLocations(dict[FunctionSpanKey, FunctionLocation]):
+    """`function_locations` that knows which module each span came from.
+
+    A reused GraphUpdater re-parses a module into a map still holding the
+    previous run's spans, and the key is (module_qn, start_line, start_col):
+    a function renamed in place keeps its key, so the stale record survives
+    and the first-claim guard blocks the live registration (issue #1019).
+
+    Nine call sites across the definition and class passes write into this
+    map, so the module index is maintained by the map itself rather than at
+    each of them, where the next new write site would silently miss it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._by_module: dict[str, set[FunctionSpanKey]] = {}
+
+    def __setitem__(self, key: FunctionSpanKey, value: FunctionLocation) -> None:
+        super().__setitem__(key, value)
+        self._by_module.setdefault(key[0], set()).add(key)
+
+    def update(  # type: ignore[override]
+        self, other: Mapping[FunctionSpanKey, FunctionLocation]
+    ) -> None:
+        # dict.update bypasses __setitem__ on a subclass, which would leave
+        # the index blind to whatever it wrote.
+        for key, value in other.items():
+            self[key] = value
+
+    def drop_module(self, module_qn: str) -> None:
+        """Forget every span record a module contributed, before it re-parses."""
+        for key in self._by_module.pop(module_qn, ()):
+            super().pop(key, None)
+
+
 class CppDefinitionSpan(NamedTuple):
     """Full line span of a C/C++ function or method the tree-sitter pass ingested.
 
@@ -666,6 +708,11 @@ class DeferredInherit(NamedTuple):
     own module qn as a guess; the edge is emitted after Pass 2 with the guess
     re-resolved against the full registry. An unresolvable parent emits no
     edge rather than a phantom the database would drop.
+
+    `alt_parent_qn` is a second spelling to try when the first names no
+    registered node: a written path can be exact about where to look and
+    still point at a module that only RE-EXPORTS the parent, where the
+    name-anchored guess is what finds the declaring one.
     """
 
     rel_type: RelationshipType
@@ -674,6 +721,7 @@ class DeferredInherit(NamedTuple):
     module_qn: str
     base_index: int
     language: SupportedLanguage
+    alt_parent_qn: str | None = None
 
 
 class RustTraitImpl(NamedTuple):

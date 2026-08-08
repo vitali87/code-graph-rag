@@ -1,8 +1,9 @@
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Protocol
 
 import typer
 from loguru import logger
@@ -37,6 +38,27 @@ from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 
+class PendingTimer(Protocol):
+    """What the handler needs back from a `TimerFactory`.
+
+    `daemon` is assigned before `start()`, and `cancel()` supersedes a timer
+    when a newer event arrives for the same path.
+    """
+
+    daemon: bool
+
+    def start(self) -> None: ...
+
+    def cancel(self) -> None: ...
+
+
+# `start()` is called with `self.lock` held and `_process_debounced_change`
+# re-acquires that same non-reentrant lock, so a factory MUST queue its
+# callback for another thread (or for a later explicit fire) rather than
+# invoking it during `start()` — doing so deadlocks the handler.
+TimerFactory = Callable[..., PendingTimer]
+
+
 class CodeChangeEventHandler(FileSystemEventHandler):
     """
     Handles file system events with debouncing to prevent redundant graph updates.
@@ -55,8 +77,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         updater: GraphUpdater,
         debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
         max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
+        timer_factory: TimerFactory = threading.Timer,
     ):
         self.updater = updater
+        # Injectable so a test can drive the debounce deterministically rather
+        # than racing a wall clock, which is what made these tests flaky on
+        # loaded runners (issue #1005). Production always uses threading.Timer.
+        self._timer_factory = timer_factory
         self.ignore_patterns = IGNORE_PATTERNS
         self.ignore_suffixes = IGNORE_SUFFIXES
 
@@ -65,7 +92,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self.debounce_enabled = debounce_seconds > 0
 
         # Thread-safe state for tracking pending changes
-        self.timers: dict[str, threading.Timer] = {}
+        self.timers: dict[str, PendingTimer] = {}
         self.first_event_time: dict[str, float] = {}
         self.pending_events: dict[str, FileSystemEvent] = {}
         self.lock = threading.Lock()
@@ -146,7 +173,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             else:
                 remaining_wait = self.max_wait_seconds - time_since_first
                 effective_delay = min(self.debounce_seconds, remaining_wait)
-                timer = threading.Timer(
+                timer = self._timer_factory(
                     effective_delay,
                     self._process_debounced_change,
                     args=[relative_path_str],
@@ -166,7 +193,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def _schedule_immediate_processing(self, relative_path_str: str) -> None:
         """Process a file change immediately (called when max wait is exceeded)."""
         # Use a zero-delay timer to process in the timer thread
-        timer = threading.Timer(
+        timer = self._timer_factory(
             0, self._process_debounced_change, args=[relative_path_str]
         )
         timer.daemon = True

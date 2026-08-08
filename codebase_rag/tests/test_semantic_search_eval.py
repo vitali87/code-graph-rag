@@ -2,7 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from codebase_rag.utils.dependencies import has_semantic_dependencies
+from codebase_rag.utils.dependencies import (
+    has_local_embedding_weights,
+    has_semantic_dependencies,
+)
 from evals import constants as ec
 from evals.semantic_search import (
     SemanticCase,
@@ -13,6 +16,11 @@ from evals.semantic_search import (
 
 needs_semantic = pytest.mark.skipif(
     not has_semantic_dependencies(), reason="semantic extra not installed"
+)
+# Embeds for real; see the note in test_embedder.py (issue #1092).
+needs_local_weights = pytest.mark.skipif(
+    not has_local_embedding_weights(),
+    reason="unixcoder weights are not in the local HuggingFace cache",
 )
 
 
@@ -52,6 +60,7 @@ def test_function_snippets_extracted_from_graph(tmp_path: Path) -> None:
 
 
 @needs_semantic
+@needs_local_weights
 def test_cgr_semantic_search_retrieves_expected_function(tmp_path: Path) -> None:
     src = tmp_path / "proj"
     _make_repo(src)

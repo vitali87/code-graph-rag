@@ -140,6 +140,7 @@ from .ast_python import (
 from .ast_rust import (
     TS_RS_CALL_EXPRESSION,
     TS_RS_CLOSURE_EXPRESSION,
+    TS_RS_CONST_ITEM,
     TS_RS_ENUM_ITEM,
     TS_RS_EXTERN_CRATE_DECLARATION,
     TS_RS_FUNCTION_ITEM,
@@ -149,6 +150,7 @@ from .ast_rust import (
     TS_RS_MACRO_INVOCATION,
     TS_RS_MOD_ITEM,
     TS_RS_SOURCE_FILE,
+    TS_RS_STATIC_ITEM,
     TS_RS_STRUCT_ITEM,
     TS_RS_TRAIT_ITEM,
     TS_RS_TYPE_ITEM,
@@ -409,6 +411,16 @@ RS_TYPE_NODE_TYPES = (
     TS_RS_TYPE_ITEM,
 )
 RS_IDENT_NODE_TYPES = (TS_RS_FUNCTION_ITEM, TS_RS_MOD_ITEM)
+
+# Nodes whose body holds items no path from another module can name.
+RS_BODY_LOCAL_CONTAINERS = frozenset(
+    {
+        TS_RS_FUNCTION_ITEM,
+        TS_RS_CLOSURE_EXPRESSION,
+        TS_RS_CONST_ITEM,
+        TS_RS_STATIC_ITEM,
+    }
+)
 
 CPP_NAME_NODE_TYPES = (
     CppNodeType.CLASS_SPECIFIER,

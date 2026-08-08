@@ -13,6 +13,7 @@ from ..language_spec import get_language_for_extension
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from .import_processor import ImportProcessor
 from .py import resolve_class_name
+from .rs import utils as rs_utils
 from .type_inference import TypeInferenceEngine
 from .utils import follow_reexports
 
@@ -85,6 +86,7 @@ class CallResolver:
         "_pending_field_bindings",
         "_module_language_cache",
         "rehydrated_definition_paths",
+        "declared_module_qns",
     )
 
     def __init__(
@@ -96,11 +98,20 @@ class CallResolver:
         type_aliases: dict[str, str] | None = None,
         interface_implementers: dict[str, set[str]] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
+        declared_module_qns: set[str] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
+        # Every inline `mod` qn the class pass ingested (shared ref). A Rust
+        # enclosing scope is an inline mod IFF it is in here: an impl target is
+        # not, and neither is registered under a type label when it is a
+        # primitive or an unindexed foreign type, so absence-of-a-type-label
+        # cannot tell the two apart (issue #1093 review).
+        self.declared_module_qns = (
+            declared_module_qns if declared_module_qns is not None else set()
+        )
         # {interface_qn: [implementer_qns]} (shared ref, populated during
         # ingestion). Used to redirect an interface-typed call to the single
         # concrete implementer's method (call-graph accuracy; single-impl only).
@@ -859,6 +870,26 @@ class CallResolver:
             if scoped is not None:
                 return scoped[0]
 
+        # A `crate::`/`self::`/`super::` path says outright which module holds
+        # the item, so it must not reach the probes that answer by NAME. Both
+        # the same-module and the import probe ignore the prefix and hand back
+        # the caller's OWN item of that name, which for `super::` is one module
+        # too low (issue #1093). Undecided here means the path names nothing
+        # first-party, so the ordinary fallbacks still run.
+        if (
+            language == cs.SupportedLanguage.RUST
+            and cs.SEPARATOR_DOUBLE_COLON in call_name
+            and call_name.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+            in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER)
+        ):
+            prefixed, decided = self._try_resolve_rust_module_qualified(
+                call_name, module_qn, caller_qn
+            )
+            if decided:
+                if use_cache:
+                    self._simple_resolution_cache[cache_key] = prefixed
+                return prefixed
+
         # Rust name resolution prefers items defined in the module itself: a
         # glob import NEVER shadows a local item, and a MODULE-scoped named
         # use colliding with one is a compile error (E0255). A use inside a
@@ -1442,20 +1473,12 @@ class CallResolver:
         FILE, not by caller: a fn declared inside the block is inside the
         block, so its own body binds the block's items too.
         """
-        if call_point is None:
-            return None
-        best: tuple[int, str] | None = None
-        for start, end, items in self.import_processor.rust_block_items.get(
-            module_qn, ()
-        ):
-            item_qn = items.get(name)
-            if item_qn is None or not (start <= call_point < end):
-                continue
-            if (best is None or end - start < best[0]) and (
-                item_qn in self.function_registry
-            ):
-                best = (end - start, item_qn)
-        return best[1] if best else None
+        return rs_utils.block_item_at(
+            self.import_processor.rust_block_items.get(module_qn, ()),
+            self.function_registry,
+            name,
+            call_point,
+        )
 
     def _try_resolve_rust_module_qualified(
         self, call_name: str, module_qn: str, caller_qn: str | None
@@ -1547,11 +1570,13 @@ class CallResolver:
         caller_qn: str | None,
     ) -> tuple[tuple[str, str] | None, bool]:
         # crate:: is chain-independent; self::/super:: resolve against the
-        # caller's innermost enclosing MOD chain, which a caller nested
-        # below the file module (an inline mod or an impl block,
-        # indistinguishable in qn space) does not expose, so those stay
-        # with the ordinary fallbacks.
-        if object_path[0] != cs.RUST_CRATE_KEYWORD and self._rust_enclosing_scopes(
+        # caller's innermost enclosing MOD chain. An impl block also nests
+        # below the file module but is NOT a mod: `super::` inside a method
+        # counts from the file module's parent exactly as it does in a free
+        # function, and the type registry is what tells the two apart
+        # (issue #1093). A genuine inline mod chain still stays with the
+        # ordinary fallbacks (issue #1086).
+        if object_path[0] != cs.RUST_CRATE_KEYWORD and self._rust_enclosing_mod_scopes(
             module_qn, caller_qn
         ):
             return None, False
@@ -1576,6 +1601,28 @@ class CallResolver:
             scopes.append(scope)
             scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
         return scopes
+
+    def _rust_enclosing_mod_scopes(
+        self, module_qn: str, caller_qn: str | None
+    ) -> list[str]:
+        """Enclosing scopes that are inline `mod` blocks, not impl targets.
+
+        `_rust_enclosing_scopes` deliberately keeps impl targets, whose use
+        storage keys mirror mod scopes. A `super::` path cares which is which:
+        an impl block adds no module level, so a method's `super::` counts
+        from the file module's parent, while an inline mod's does not.
+
+        Membership of the ingested inline-mod set is what decides it. Asking
+        the type registry instead only proves a scope is NOT a registered
+        type, which an impl target on a primitive or an unindexed foreign type
+        also is not (`impl Trait for u8`), so that test silently read those
+        impl blocks as modules and left `super::` one level short.
+        """
+        return [
+            scope
+            for scope in self._rust_enclosing_scopes(module_qn, caller_qn)
+            if scope in self.declared_module_qns
+        ]
 
     def _decide_rust_module_item(
         self, mapped: str, rest: list[str], item: str, owner: str

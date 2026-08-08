@@ -229,7 +229,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 if self._span_claimed_for_qn(module_qn, func_node, method_qn):
                     continue
                 method_qn = self.function_registry.register_unique_qn(
-                    method_qn, func_node.start_point[0] + 1
+                    method_qn, func_node.start_point[0] + 1, func_node.start_point[1]
                 )
 
                 method_props = module_function_props(
@@ -400,7 +400,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         if self._span_claimed_for_qn(module_qn, method_func_node, method_qn):
             return
         method_qn = self.function_registry.register_unique_qn(
-            method_qn, method_func_node.start_point[0] + 1
+            method_qn,
+            method_func_node.start_point[0] + 1,
+            method_func_node.start_point[1],
         )
         method_props = module_function_props(
             method_qn,
@@ -640,7 +642,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         if self._span_claimed_for_qn(module_qn, function_node, function_qn):
             return
         function_qn = self.function_registry.register_unique_qn(
-            function_qn, function_node.start_point[0] + 1
+            function_qn, function_node.start_point[0] + 1, function_node.start_point[1]
         )
         function_props = module_function_props(
             function_qn,
