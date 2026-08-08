@@ -10,6 +10,7 @@ that would have run keyless.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -88,11 +89,20 @@ def test_runtime_default_config_needs_no_user_supplied_key(
 ) -> None:
     # Pins the behaviour the manifest is being aligned to, so a change to
     # either side has to face the other.
-    for role in ("ORCHESTRATOR", "CYPHER"):
-        for suffix in ("PROVIDER", "MODEL", "API_KEY"):
-            monkeypatch.delenv(f"{role}_{suffix}", raising=False)
+    #
+    # AppConfig reads settings case-insensitively and loads a local `.env`, so
+    # clearing only the upper-case names would let `orchestrator_api_key` or a
+    # developer's `.env` supply the very key this asserts is unnecessary.
+    wanted = {
+        f"{role}_{suffix}"
+        for role in ("ORCHESTRATOR", "CYPHER")
+        for suffix in ("PROVIDER", "MODEL", "API_KEY", "ENDPOINT")
+    }
+    for name in list(os.environ):
+        if name.upper() in wanted:
+            monkeypatch.delenv(name, raising=False)
 
-    config = AppConfig()
+    config = AppConfig(_env_file=None)
     model_config = config._get_default_orchestrator_config()
 
     assert model_config.provider == cs.Provider.OLLAMA
