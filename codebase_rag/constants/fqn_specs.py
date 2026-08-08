@@ -82,6 +82,7 @@ from .ast_js import (
     TS_CLASS_BODY,
     TS_FUNCTION_DECLARATION,
     TS_FUNCTION_EXPRESSION,
+    TS_GENERATOR_FUNCTION,
     TS_GENERATOR_FUNCTION_DECLARATION,
     TS_OBJECT,
 )
@@ -94,6 +95,7 @@ from .ast_lua import (
 from .ast_nodes import (
     TS_CALL_EXPRESSION,
     TS_CLASS_DECLARATION,
+    TS_CLASS_EXPRESSION,
     TS_ENUM_DECLARATION,
     TS_ENUM_SPECIFIER,
     TS_FUNCTION_SIGNATURE,
@@ -138,6 +140,7 @@ from .ast_python import (
 from .ast_rust import (
     TS_RS_CALL_EXPRESSION,
     TS_RS_CLOSURE_EXPRESSION,
+    TS_RS_CONST_ITEM,
     TS_RS_ENUM_ITEM,
     TS_RS_EXTERN_CRATE_DECLARATION,
     TS_RS_FUNCTION_ITEM,
@@ -147,6 +150,7 @@ from .ast_rust import (
     TS_RS_MACRO_INVOCATION,
     TS_RS_MOD_ITEM,
     TS_RS_SOURCE_FILE,
+    TS_RS_STATIC_ITEM,
     TS_RS_STRUCT_ITEM,
     TS_RS_TRAIT_ITEM,
     TS_RS_TYPE_ITEM,
@@ -184,6 +188,7 @@ FQN_PY_FUNCTION_TYPES = (TS_PY_FUNCTION_DEFINITION,)
 
 FQN_JS_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
+    TS_CLASS_EXPRESSION,
     TS_PROGRAM,
     TS_FUNCTION_DECLARATION,
     TS_FUNCTION_EXPRESSION,
@@ -195,6 +200,10 @@ FQN_JS_FUNCTION_TYPES = (
     TS_METHOD_DEFINITION,
     TS_ARROW_FUNCTION,
     TS_FUNCTION_EXPRESSION,
+    # A generator EXPRESSION (`const g = function* () {}`) is a function
+    # value like any function_expression; without it the node never
+    # registers and nothing can reference it (issue #994).
+    TS_GENERATOR_FUNCTION,
 )
 
 # The grammar emits `internal_module` for a `namespace`/`module` block; without
@@ -202,6 +211,7 @@ FQN_JS_FUNCTION_TYPES = (
 # collides with a top-level same name.
 FQN_TS_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
+    TS_CLASS_EXPRESSION,
     TS_INTERFACE_DECLARATION,
     TS_NAMESPACE_DEFINITION,
     TS_INTERNAL_MODULE,
@@ -216,6 +226,7 @@ FQN_TS_FUNCTION_TYPES = (
     TS_METHOD_DEFINITION,
     TS_ARROW_FUNCTION,
     TS_FUNCTION_EXPRESSION,
+    TS_GENERATOR_FUNCTION,
     TS_FUNCTION_SIGNATURE,
 )
 
@@ -400,6 +411,16 @@ RS_TYPE_NODE_TYPES = (
     TS_RS_TYPE_ITEM,
 )
 RS_IDENT_NODE_TYPES = (TS_RS_FUNCTION_ITEM, TS_RS_MOD_ITEM)
+
+# Nodes whose body holds items no path from another module can name.
+RS_BODY_LOCAL_CONTAINERS = frozenset(
+    {
+        TS_RS_FUNCTION_ITEM,
+        TS_RS_CLOSURE_EXPRESSION,
+        TS_RS_CONST_ITEM,
+        TS_RS_STATIC_ITEM,
+    }
+)
 
 CPP_NAME_NODE_TYPES = (
     CppNodeType.CLASS_SPECIFIER,

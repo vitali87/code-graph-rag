@@ -269,7 +269,13 @@ class TestAnthropicProvider:
 
     @pytest.mark.parametrize(
         ("model_id", "context_window"),
-        [("claude-opus-4-8", 1_000_000), ("claude-opus-4-7", 1_000_000)],
+        [
+            ("claude-opus-5", 1_000_000),
+            ("claude-sonnet-5", 1_000_000),
+            ("claude-opus-4-8", 1_000_000),
+            ("claude-opus-4-7", 1_000_000),
+            ("claude-haiku-4-5", 200_000),
+        ],
     )
     def test_anthropic_context_windows(
         self, model_id: str, context_window: int
@@ -473,6 +479,31 @@ class TestModelCreation:
         call_kwargs = mock_google_model.call_args[1]
         assert "settings" in call_kwargs
         assert call_kwargs["settings"] == mock_settings
+
+    @patch("codebase_rag.providers.base.GoogleCloudProvider")
+    @patch("codebase_rag.providers.base.GoogleModel")
+    def test_google_vertex_model_creation_uses_cloud_provider(
+        self, mock_google_model: Any, mock_cloud_provider: Any
+    ) -> None:
+        provider = GoogleProvider(
+            provider_type=GoogleProviderType.VERTEX,
+            project_id="test-project",
+            region="us-central1",
+        )
+
+        mock_model = MagicMock()
+        mock_google_model.return_value = mock_model
+
+        provider.create_model("gemini-2.5-pro")
+
+        mock_cloud_provider.assert_called_once_with(
+            project="test-project",
+            location="us-central1",
+            credentials=None,
+        )
+        mock_google_model.assert_called_once_with(
+            "gemini-2.5-pro", provider=mock_cloud_provider.return_value
+        )
 
     @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
     @patch("codebase_rag.providers.base.OpenAIResponsesModel")

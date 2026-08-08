@@ -283,6 +283,10 @@ MG_BATCH_ERROR = "!!! Batch Cypher Error: {error}"
 MG_BATCH_PARAMS_TRUNCATED = "    Params (first 10 of {count}): {params}..."
 MG_CLEANING_DB = "--- Cleaning database... ---"
 MG_DB_CLEANED = "--- Database cleaned. ---"
+MG_LIST_PROJECTS_FAILED = (
+    "Could not list existing projects before --clean: {error}. "
+    "Proceeding without the other-project confirmation."
+)
 MG_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
 MG_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
 MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
@@ -457,6 +461,10 @@ FILE_OUTSIDE_ROOT = "Security risk: Attempted to {action} file outside of projec
 # Call processor logs
 CALL_PROCESSING_FILE = "Processing calls in cached AST for: {path}"
 CALL_PROCESSING_FAILED = "Failed to process calls in {path}: {error}"
+# Re-reading a file evicted from the bounded AST cache is tolerate-and-continue,
+# not a pass failure, and must not borrow the message above: the test harness
+# fails a run on that one (issue #1070).
+AST_RELOAD_FAILED = "Could not re-read {path} for call attribution: {error}"
 CALL_FOUND_NODES = "Found {count} call nodes in {language} for {caller}"
 CALL_SKIP_CLASS = "Skipping CALLS edge from {caller} to {call_name} (callee is Class node: {callee_qn})"
 CALL_FOUND = (

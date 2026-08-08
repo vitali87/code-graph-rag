@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 import time
 from collections.abc import Callable
 from fnmatch import fnmatch
@@ -199,6 +200,78 @@ def _capture_selection(capture: list[str] | None) -> CaptureSelection:
     return resolve_capture([*split_spec(settings.CGR_CAPTURE), *(capture or [])])
 
 
+def _stdin_is_interactive() -> bool:
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _projects_in_graph(ingestor: MemgraphIngestor) -> list[str] | None:
+    """Every project in the graph, or None when the graph cannot be read.
+
+    None is NOT an empty graph: treating a failed enumeration as "no other
+    projects" would skip the confirmation and wipe every project precisely
+    when we cannot say what would be lost.
+    """
+    try:
+        return sorted(ingestor.list_projects())
+    except Exception as exc:
+        logger.warning(ls.MG_LIST_PROJECTS_FAILED.format(error=exc))
+        return None
+
+
+def _confirm_destructive_clean(
+    ingestor: MemgraphIngestor, project_name: str, assume_yes: bool
+) -> None:
+    """Abort unless the user accepts losing every other project in the graph."""
+    if assume_yes:
+        return
+
+    # `--clean` deletes the whole graph, so the prompt counts every project in
+    # it. Deriving that count from `others` would understate it by one whenever
+    # this project has not been synced yet and so is not in the graph.
+    projects = _projects_in_graph(ingestor)
+    if projects is None:
+        # Fail closed: an unreadable project list cannot show what the wipe
+        # would destroy, so it must not be read as an empty graph.
+        app_context.console.print(
+            style(cs.CLI_ERR_CLEAN_UNKNOWN_PROJECTS, cs.Color.RED)
+        )
+        raise typer.Exit(1)
+
+    others = [name for name in projects if name != project_name]
+    if not others:
+        return
+
+    app_context.console.print(
+        style(
+            cs.CLI_WARN_CLEAN_OTHER_PROJECTS.format(
+                project_name=project_name,
+                count=len(others),
+                projects=", ".join(others),
+            ),
+            cs.Color.YELLOW,
+        )
+    )
+
+    if not _stdin_is_interactive():
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_CLEAN_NEEDS_CONFIRMATION.format(project_name=project_name),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
+
+    confirmed = typer.confirm(
+        cs.CLI_PROMPT_CLEAN_CONFIRM.format(count=len(projects)), default=False
+    )
+    if not confirmed:
+        app_context.console.print(style(cs.CLI_MSG_CLEAN_ABORTED, cs.Color.CYAN))
+        raise typer.Exit(1)
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -209,6 +282,7 @@ def _run_graph_sync(
     output: str | None = None,
     capture: list[str] | None = None,
     skip_embeddings: bool | None = None,
+    assume_yes: bool = False,
 ) -> None:
     cgrignore = load_ignore_patterns(repo)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
@@ -222,6 +296,7 @@ def _run_graph_sync(
     elapsed = time.monotonic()
     with connect_memgraph(batch_size) as ingestor:
         if clean:
+            _confirm_destructive_clean(ingestor, project_name, assume_yes)
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
             ingestor.clean_database()
             _delete_hash_cache(repo)
@@ -335,6 +410,12 @@ def start(
         False,
         "--clean",
         help=ch.HELP_CLEAN_DB,
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help=ch.HELP_ASSUME_YES,
     ),
     output: str | None = typer.Option(
         None,
@@ -452,6 +533,7 @@ def start(
     if clean and not update_graph:
         repo_to_clean = Path(target_repo_path)
         with connect_memgraph(effective_batch_size) as ingestor:
+            _confirm_destructive_clean(ingestor, resolved_project_name, yes)
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
             ingestor.clean_database()
 
@@ -481,6 +563,7 @@ def start(
             output=output,
             capture=capture,
             skip_embeddings=no_embeddings or None,
+            assume_yes=yes,
         )
         _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return

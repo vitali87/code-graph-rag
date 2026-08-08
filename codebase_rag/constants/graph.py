@@ -54,6 +54,7 @@ ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"
 
 PROTOBUF_INDEX_FILE = "index.bin"
+PROTOBUF_PAYLOAD_ONEOF = "payload"
 PROTOBUF_NODES_FILE = "nodes.bin"
 PROTOBUF_RELS_FILE = "relationships.bin"
 
@@ -312,6 +313,13 @@ NODE_PROJECT = NodeLabel.PROJECT
 
 KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
+# Target-module qn candidates of `#[cfg(test)] mod NAME;` declarations in a
+# Rust file, stored on the DECLARING module's node (issue #1010). The
+# ungated counterpart lets a production target's declaration of the SAME
+# file module win over another target's gate (src/lib.rs gating what
+# src/main.rs compiles for real).
+KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
+KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"

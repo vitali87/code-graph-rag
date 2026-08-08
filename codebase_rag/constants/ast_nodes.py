@@ -51,11 +51,18 @@ IMPORT_NODES_INCLUDE = ("preproc_include",)
 JS_TS_FUNCTION_NODES = (
     "function_declaration",
     "generator_function_declaration",
+    # The generator EXPRESSION (`const g = function* () {}`) is a function
+    # value like function_expression; omitting it left such nodes
+    # unregistered and unreferencable (issue #994).
+    "generator_function",
     "function_expression",
     "arrow_function",
     "method_definition",
 )
-JS_TS_CLASS_NODES = ("class_declaration", "class")
+# The anonymous class-expression node type (`const X = class {...}`); the named
+# form is `class_declaration`.
+TS_CLASS_EXPRESSION = "class"
+JS_TS_CLASS_NODES = ("class_declaration", TS_CLASS_EXPRESSION)
 JS_TS_IMPORT_NODES = (
     "import_statement",
     "lexical_declaration",
@@ -83,6 +90,10 @@ FIELD_RETURN_TYPE = "return_type"
 FIELD_CONSTRUCTOR = "constructor"
 FIELD_DECLARATOR = "declarator"
 FIELD_PARAMETERS = "parameters"
+# A JS/TS arrow with a single bare-identifier parameter (`x => ...`) carries it
+# in the singular `parameter` field, with no formal_parameters wrapper.
+FIELD_PARAMETER = "parameter"
+FIELD_KIND = "kind"
 FIELD_RECEIVER = "receiver"
 FIELD_TYPE = "type"
 # The wrapped function/class inside a Python decorated_definition node.

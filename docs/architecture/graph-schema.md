@@ -74,13 +74,13 @@ The `io` capture group (opt-in; excluded from the default capture set) adds thre
 
 `READS_FROM` and `WRITES_TO` connect a callable to a `Resource` it reads from or writes to (for example `os.getenv("K")` reads the `ENV` resource, `print(x)` writes the `STDOUT` resource).
 
-`FLOWS_TO` records intra-procedural value flow, turning provenance questions into graph reachability. It is emitted in three shapes, distinguished by a `kind` edge property:
+`FLOWS_TO` records value flow, turning provenance questions into graph reachability. It is emitted in three shapes, distinguished by a `kind` edge property:
 
 - **resource → resource** (`kind = resource`): a value read from one resource reaches a write to another within a function body, e.g. `x = os.getenv("K"); print(x)` yields `Resource(ENV::K) -FLOWS_TO-> Resource(STDOUT)`.
 - **caller → callee** (`kind = arg`): a tainted local value is passed as an argument to a first-party callee. A `via` edge property names the conduit as `arg:<index>` or `kw:<name>`.
-- **callee → caller** (`kind = return`, `via = return`): a callee whose return value is tainted flows that value back to the assignment in its caller.
+- **callee → caller** (`kind = return`, `via = return`): a callee whose return value is tainted flows that value back to its caller. The edge terminates at the calling function, not at the assignment that received the value.
 
-Taint is propagated through plain `x = y` assignments. `FLOWS_TO` is intentionally conservative and intra-procedural in this phase; a tainted value is only tracked within a single function body plus one level of argument/return hand-off.
+Taint is propagated through plain `x = y` assignments. `FLOWS_TO` is intentionally conservative in this phase: flow inside a body is tracked by an intra-procedural walk, return taint composes transitively across functions and files, and argument hand-off is one level.
 
 See [I/O and Data-Flow Edges](data-flow-edges.md) for the detailed reference: the taint model, propagation and kill rules, the `kind`/`via` edge properties, scope attribution, and example queries.
 
@@ -120,12 +120,12 @@ The function- and class-defining AST node types captured per language (auto-gene
 - **Dart**: `class_definition`, `constant_constructor_signature`, `constructor_signature`, `enum_declaration`, `extension_declaration`, `extension_type_declaration`, `factory_constructor_signature`, `function_signature`, `getter_signature`, `mixin_declaration`, `setter_signature`
 - **Go**: `function_declaration`, `method_declaration`, `type_alias`, `type_spec`
 - **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
-- **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function_declaration`, `method_definition`
+- **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function`, `generator_function_declaration`, `method_definition`
 - **Lua**: `function_declaration`, `function_definition`
 - **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `interface_declaration`, `method_declaration`, `trait_declaration`
 - **Python**: `class_definition`, `function_definition`
 - **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `macro_definition`, `struct_item`, `trait_item`, `type_item`, `union_item`
-- **TypeScript (TSX)**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
-- **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
+- **TypeScript (TSX)**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
+- **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
 <!-- /SECTION:language_mappings -->

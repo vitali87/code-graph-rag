@@ -67,6 +67,24 @@ GO_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"init", "main"})
 # call site -- a reachability root (gated by .rs).
 RUST_ROOT_FUNCTION_NAMES: frozenset[str] = frozenset({"main"})
 
+# Rust test attributes: the harness invokes these functions with no call site.
+# Bare names match exactly; scoped runner variants (#[tokio::test],
+# #[async_std::test]) match by the ::test suffix. Gated by .rs (issue #1008).
+RUST_TEST_ATTRIBUTE_NAMES: frozenset[str] = frozenset({"test", "bench"})
+RUST_TEST_ATTRIBUTE_SUFFIX = "::test"
+
+# The `#[cfg(test)] mod tests` convention: a real MODULE node named
+# `tests` or `test` in a .rs file marks inline test code (issue #1008).
+# This is deliberately WIDER than TEST_PATH_PATTERNS (whose /tests/ and
+# /test/ entries match directory segments only, never a src/test.rs file
+# or an inline mod): the name is a proxy for the `#[cfg(test)]` gate the
+# graph does not yet record. Measured across a 972-crate corpus, 4155
+# such modules are cfg-gated test code and 41 are ungated, of which two
+# ship as production API (aws-lc-rs `pub mod test`, alacritty's terminal
+# test helpers), both test-support by nature; that residual silencing is
+# accepted until issue #1010 replaces the name proxy with cfg awareness.
+RUST_TEST_MODULE_SEGMENTS: frozenset[str] = frozenset({"tests", "test"})
+
 # Rust trait-impl methods the language/std dispatches implicitly (Display::fmt
 # via format!, PartialEq::eq via ==, Iterator::next via for, operator traits,
 # Drop::drop, serde, ...), never through an explicit call the graph can see.
@@ -208,6 +226,96 @@ TEST_PATH_PATTERNS: tuple[str, ...] = (
     ".test.",
     ".spec.",
     "__tests__",
+)
+
+# NestJS component decorators that mark a CLASS as instantiated and driven by
+# the DI container / framework, never by a first-party `new` the graph can see:
+# `@Injectable` (providers/services), `@Controller`, `@Module`, `@Catch`
+# (exception filters), `@Resolver` (GraphQL), `@WebSocketGateway`. Such a class's
+# constructor is invoked by the container and its framework-contract methods by
+# Nest, so both are reachability roots (gated by a JS/TS extension). Names are the
+# lowercased, argument-stripped form _norm_decorator produces.
+NEST_ROOT_CLASS_DECORATORS: frozenset[str] = frozenset(
+    {
+        "injectable",
+        "controller",
+        "module",
+        "catch",
+        "resolver",
+        "websocketgateway",
+    }
+)
+
+# NestJS async-options factory interfaces follow the `XxxOptionsFactory` naming
+# convention (`TypeOrmOptionsFactory`, `MongooseOptionsFactory`,
+# `GqlOptionsFactory`, ...). A class that `implements` one has its factory method
+# invoked by Nest, so its methods are roots. Matched on the interface leaf name
+# so only these framework contracts root (an unrelated third-party interface
+# does not), gated to an EXTERNAL interface (outside the project prefix).
+NEST_OPTIONS_FACTORY_SUFFIX = "OptionsFactory"
+
+# NestJS methods invoked by the framework through a lifecycle or interface
+# contract, never by a named call the graph can see: lifecycle hooks
+# (`onModuleInit`, `onApplicationBootstrap`, ...) and the single-method
+# interface contracts (`NestMiddleware.use`, `NestInterceptor.intercept`,
+# `NestModule.configure`, `CanActivate.canActivate`, `ExceptionFilter.catch`,
+# `PipeTransform.transform`). Rooted only on a method of a NestJS component
+# class (a NEST_ROOT_CLASS_DECORATORS decorator), so a same-named ordinary
+# method (`use`, `transform`) on a plain class is NOT force-rooted.
+NEST_FRAMEWORK_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "onModuleInit",
+        "onModuleDestroy",
+        "onApplicationBootstrap",
+        "onApplicationShutdown",
+        "beforeApplicationShutdown",
+        "configure",
+        "use",
+        "intercept",
+        "canActivate",
+        "catch",
+        "transform",
+    }
+)
+
+# React component base classes: a class that `extends` one of these is a class
+# component whose lifecycle methods React drives at runtime. Matched on the base
+# interface/class leaf name (`React.Component`, `PureComponent`, and the rarely
+# spelled-out `React.PureComponent`), so the INHERITS target's last segment
+# identifies it regardless of the import alias.
+REACT_COMPONENT_BASE_NAMES: frozenset[str] = frozenset({"Component", "PureComponent"})
+
+# The module namespace React's `Component`/`PureComponent` base lives in
+# (`react.Component`, `React.Component`). The base's namespace must equal this
+# EXACTLY (lowercased), so a look-alike (`preact.Component`, `notreact.Component`,
+# Ember/Glimmer's `@glimmer/component.Component`) is not mistaken for React.
+REACT_NAMESPACE_TOKEN = "react"
+
+# React class-component lifecycle methods the runtime invokes (mount/update/
+# unmount/render/error), plus the constructor React calls when it instantiates
+# the component. Never called by a first-party call the graph can see, so they
+# are reachability roots on a React component class (gated by INHERITS to a
+# REACT_COMPONENT_BASE_NAMES base and a JS/TS extension); the methods and
+# callbacks they reach via `this.` then expand from them.
+REACT_LIFECYCLE_METHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "render",
+        "constructor",
+        "componentDidMount",
+        "componentDidUpdate",
+        "componentWillUnmount",
+        "shouldComponentUpdate",
+        "getSnapshotBeforeUpdate",
+        "componentDidCatch",
+        "getDerivedStateFromProps",
+        "getDerivedStateFromError",
+        "componentWillMount",
+        "componentWillReceiveProps",
+        "componentWillUpdate",
+        "UNSAFE_componentWillMount",
+        "UNSAFE_componentWillReceiveProps",
+        "UNSAFE_componentWillUpdate",
+    }
 )
 
 # Python Enum protocol hooks: the enum machinery invokes these sunder

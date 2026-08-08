@@ -154,4 +154,10 @@ LANG_GIT_SUFFIX = ".git"
 LANG_GITMODULES_FILE = ".gitmodules"
 LANG_CALL_KEYWORD_EXCLUDE = "call"
 
-LANG_GITMODULES_REGEX = r"path = (grammars/tree-sitter-[^\\n]+)"
+LANG_GITMODULES_REGEX = r"path = (grammars/tree-sitter-[^\n]+)"
+LANG_CONFIG_TMP_SUFFIX = ".tmp"
+
+LANG_SPECS_NAME = "LANGUAGE_SPECS"
+LANG_ENUM_KEY_TEMPLATE = "cs.SupportedLanguage.{member}"
+
+LANG_ERR_ENTRY_NOT_IN_CONFIG = "no config entry found for '{name}'"

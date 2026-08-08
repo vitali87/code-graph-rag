@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import os
 import shutil
 import sys
@@ -49,6 +50,12 @@ class MockNode:
         return self.node_type
 
     @property
+    def id(self) -> int:
+        # Real tree-sitter nodes expose a per-parse identity; object identity
+        # is the mock's equivalent.
+        return builtins.id(self)
+
+    @property
     def children(self) -> list[MockNode]:
         return self.node_children
 
@@ -88,6 +95,56 @@ def create_mock_node(
 
 
 logger.remove()
+
+# Every per-file pass swallows all exceptions so one bad file cannot abandon a
+# whole index, and only logs. Nothing looked at those logs, so a bug inside a
+# pass dropped the file's edges while the run reported success, and the suite
+# saw it at best as unrelated assertion failures elsewhere (issue #1070). One
+# entry per pass, and the import pass logs at WARNING rather than ERROR.
+_PASS_FAILURE_PREFIXES = (
+    "Failed to process calls in ",
+    "Failed to parse or ingest ",
+    "Failed to parse imports in ",
+    "Error parsing ",
+)
+
+
+@pytest.fixture(autouse=True)
+def _fail_on_swallowed_pass_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[list[str], None, None]:
+    """Fail any test whose indexing run swallowed a pass failure (issue #1070).
+
+    Armed around `GraphUpdater.run` rather than around the whole test, and
+    autouse rather than folded into the updater helpers. Most test files build
+    an updater and call `run()` themselves, so a gate the next test bypasses by
+    not calling a helper is no gate; and scoping it to the run keeps it off the
+    unit tests that call a parser directly to exercise its own error path.
+
+    A test that means to index a broken file requests this fixture, asserts on
+    the list and clears it.
+    """
+    failures: list[str] = []
+    original_run = GraphUpdater.run
+
+    def run_watching_for_pass_failures(self: GraphUpdater, force: bool = False) -> None:
+        sink_id = logger.add(
+            lambda message: failures.append(message.record["message"]),
+            level="WARNING",
+            filter=lambda record: record["message"].startswith(_PASS_FAILURE_PREFIXES),
+        )
+        try:
+            original_run(self, force)
+        finally:
+            logger.remove(sink_id)
+
+    monkeypatch.setattr(GraphUpdater, "run", run_watching_for_pass_failures)
+    yield failures
+    assert_no_pass_failures(failures)
+
+
+def assert_no_pass_failures(failures: list[str]) -> None:
+    assert not failures, "a per-file pass failed:\n" + "\n".join(failures)
 
 
 @pytest.fixture(autouse=True)
@@ -197,7 +254,11 @@ def run_updater(
 
 
 def create_and_run_updater(
-    repo_path: Path, mock_ingestor: MagicMock, skip_if_missing: str | None = None
+    repo_path: Path,
+    mock_ingestor: MagicMock,
+    skip_if_missing: str | None = None,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     if skip_if_missing and skip_if_missing not in parsers:
@@ -207,6 +268,8 @@ def create_and_run_updater(
         repo_path=repo_path,
         parsers=parsers,
         queries=queries,
+        exclude_paths=exclude_paths,
+        unignore_paths=unignore_paths,
     )
     updater.run()
     _audit_recorded_graph(mock_ingestor)

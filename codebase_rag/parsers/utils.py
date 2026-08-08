@@ -763,13 +763,18 @@ def ingest_method(
         # conditional attribute, not the `#if` line (matches Roslyn's span).
         from .csharp import utils as csharp_utils
 
-        method_start_line = csharp_utils.definition_start_line(method_node)
+        method_start_line, method_start_col = csharp_utils.definition_start_point(
+            method_node
+        )
     else:
         method_start_line = method_node.start_point[0] + 1
+        method_start_col = method_node.start_point[1]
 
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
     if language != cs.SupportedLanguage.CPP:
-        method_qn = function_registry.register_unique_qn(method_qn, method_start_line)
+        method_qn = function_registry.register_unique_qn(
+            method_qn, method_start_line, method_start_col
+        )
 
     decorators = []
     modifiers = []
@@ -812,9 +817,27 @@ def ingest_method(
     # Python's @property marking feeds its attribute-access pass. A Dart
     # getter_signature is the same shape (issue #869): its accesses are
     # attribute reads the Dart getter-read pass resolves through this flag.
-    is_property = _is_property_decorator(decorators) or method_node.type in (
-        cs.TS_CSHARP_PROPERTY_DECLARATION,
-        cs.TS_DART_GETTER_SIGNATURE,
+    # A JS/TS getter is a `method_definition` carrying the `get` keyword; its
+    # reads are member accesses (`obj.thing`), so mark it like the other
+    # languages' properties to feed the JS/TS getter-read pass. The keyword is a
+    # direct child but not always the first (`static get x()` leads with
+    # `static`); a method named `get` carries a property_identifier, not a `get`
+    # keyword node, so scanning direct children stays exact.
+    is_js_ts_getter = (
+        language in cs.JS_TS_LANGUAGES
+        and method_node.type == cs.TS_METHOD_DEFINITION
+        and any(
+            child.type == cs.TS_GET_ACCESSOR_KEYWORD for child in method_node.children
+        )
+    )
+    is_property = (
+        _is_property_decorator(decorators)
+        or is_js_ts_getter
+        or method_node.type
+        in (
+            cs.TS_CSHARP_PROPERTY_DECLARATION,
+            cs.TS_DART_GETTER_SIGNATURE,
+        )
     )
     if is_property:
         method_props[cs.KEY_IS_PROPERTY] = True
@@ -964,8 +987,11 @@ def ingest_exported_function(
         if current.type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):
             return None
         current = current.parent
+    # No variant is reachable here while the guard above returns early on any
+    # qn already registered; the span is passed so the call stays correct if
+    # that guard moves.
     function_qn = function_registry.register_unique_qn(
-        function_qn, function_node.start_point[0] + 1
+        function_qn, function_node.start_point[0] + 1, function_node.start_point[1]
     )
 
     function_props = module_function_props(

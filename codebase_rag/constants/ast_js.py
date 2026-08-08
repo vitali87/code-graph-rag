@@ -77,11 +77,18 @@ TS_ARRAY = "array"
 # name; arrows nested under a const-bound object still take the object's name.
 JS_CALL_RESULT_VALUE_TYPES = frozenset({TS_CALL_EXPRESSION, TS_NEW_EXPRESSION})
 TS_FUNCTION_EXPRESSION = "function_expression"
+# The `get` accessor keyword prefixing a getter `method_definition`
+# (`get thing() {...}`); its presence marks the method as a property whose
+# reads are member accesses, not invocations.
+TS_GET_ACCESSOR_KEYWORD = "get"
 TS_ARROW_FUNCTION = "arrow_function"
 TS_REQUIRED_PARAMETER = "required_parameter"
 TS_OPTIONAL_PARAMETER = "optional_parameter"
 TS_ASSIGNMENT_PATTERN = "assignment_pattern"
 TS_JS_ASSIGNMENT_EXPRESSION = "assignment_expression"
+# A class field holding a value (`log = noop`); `name` is the property, `value`
+# is the initializer. Used to reference a NAMED function a field binds.
+TS_PUBLIC_FIELD_DEFINITION = "public_field_definition"
 # `x += v` and friends: reads the old value AND writes the new one.
 TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION = "augmented_assignment_expression"
 # `x++` / `--x`: also a read-then-write; the operand is the `argument` field.
@@ -93,6 +100,16 @@ TS_MODULE = "module"
 TS_CLASS_BODY = "class_body"
 
 TS_PROPERTY_IDENTIFIER = "property_identifier"
+# `[expr]` as an object-literal / class-member key.
+TS_JS_COMPUTED_PROPERTY_NAME = "computed_property_name"
+# The `(a, b = 1, ...rest)` parameter list of a function.
+TS_JS_FORMAL_PARAMETERS = "formal_parameters"
+# A class field in the JS grammar (`[k] = v` in a class body); TS spells it
+# public_field_definition. Its key sits in the `property` field.
+TS_JS_FIELD_DEFINITION = "field_definition"
+# The Symbol global: `Symbol('x')` / `Symbol.for('x')` mint the unique keys
+# that symbol-keyed member dispatch (issue #989) indexes.
+JS_SYMBOL_GLOBAL = "Symbol"
 
 # JS prototype property keywords
 JS_PROTOTYPE_KEYWORD = "prototype"
@@ -134,14 +151,14 @@ JS_PROTOTYPE_METHOD_QUERY = """
       object: (identifier) @constructor_name
       property: (property_identifier) @prototype_keyword (#eq? @prototype_keyword "prototype"))
     property: (property_identifier) @method_name)
-  right: (function_expression) @method_function)
+  right: [(function_expression) (generator_function)] @method_function)
 """
 
 # JS object method query
 JS_OBJECT_METHOD_QUERY = """
 (pair
   key: (property_identifier) @method_name
-  value: (function_expression) @method_function)
+  value: [(function_expression) (generator_function)] @method_function)
 """
 
 # JS method definition query
@@ -170,7 +187,7 @@ JS_ASSIGNMENT_ARROW_QUERY = """
 JS_ASSIGNMENT_FUNCTION_QUERY = """
 (assignment_expression
   (member_expression) @member_expr
-  (function_expression) @function_expr)
+  [(function_expression) (generator_function)] @function_expr)
 """
 
 # JS/TS control-flow node types + fields for the path-sensitive taint walk
@@ -187,17 +204,36 @@ TS_JS_SWITCH_DEFAULT = "switch_default"
 # `c ? a : b` (shared name with the Java grammar); C++ spells it
 # conditional_expression.
 TS_JS_TERNARY_EXPRESSION = "ternary_expression"
+# tree-sitter-javascript parses `await (X)()` as a CALL to an identifier
+# spelled `await` with X as its argument (the TS grammar does not); climbs
+# treat that call as the transparent await it denotes.
+JS_AWAIT_IDENTIFIER = "await"
 # Short-circuit operators whose result IS one of the operands, so a
 # bind through them unions both operands' taints.
 JS_SHORT_CIRCUIT_OPERATORS: frozenset[str] = frozenset({"||", "??", "&&"})
+# The computed-name leaf prefix of a well-known-symbol class member
+# (`[Symbol.iterator]`, `[Symbol.toStringTag]`) as the definition pass
+# registers it; user symbol keys register without the `Symbol.` path.
+JS_WELL_KNOWN_SYMBOL_NAME_PREFIX = "[Symbol."
+JS_COMPUTED_NAME_SUFFIX = "]"
+JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX = "[Symbol["
+# `&&` alone among them cannot yield its LEFT operand as a function value.
+JS_OPERATOR_LOGICAL_AND = "&&"
 TS_JS_ELSE_CLAUSE = "else_clause"
 TS_JS_WHILE_STATEMENT = "while_statement"
 TS_JS_FOR_STATEMENT = "for_statement"
 TS_JS_FOR_IN_STATEMENT = "for_in_statement"
 TS_JS_TRY_STATEMENT = "try_statement"
 TS_JS_CATCH_CLAUSE = "catch_clause"
+# `(a, b)`: the comma operator; its value is the LAST operand.
+TS_JS_SEQUENCE_EXPRESSION = "sequence_expression"
+TS_JS_SWITCH_BODY = "switch_body"
+# `for (var x of xs)` hoists x to the function; only this `kind` widens the
+# loop binding's scope past the for statement itself.
+TS_JS_VAR_KIND = "var"
 TS_JS_FINALLY_CLAUSE = "finally_clause"
 FIELD_ALTERNATIVE = "alternative"
+FIELD_CONSEQUENCE = "consequence"
 FIELD_HANDLER = "handler"
 FIELD_FINALIZER = "finalizer"
 # The C-style `for (init; cond; increment)` update clause, which runs AFTER the
@@ -205,18 +241,25 @@ FIELD_FINALIZER = "finalizer"
 FIELD_INCREMENT = "increment"
 
 # JS/TS module system node types
+TS_TYPE_ANNOTATION = "type_annotation"
+TS_IMPORT_ALIAS = "import_alias"
+TS_JS_WITH_STATEMENT = "with_statement"
+TS_CLASS_STATIC_BLOCK = "class_static_block"
 TS_OBJECT_PATTERN = "object_pattern"
 TS_ARRAY_PATTERN = "array_pattern"
 TS_REST_PATTERN = "rest_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN = "shorthand_property_identifier_pattern"
 TS_SHORTHAND_PROPERTY_IDENTIFIER = "shorthand_property_identifier"
 TS_PAIR_PATTERN = "pair_pattern"
+# `{ a = dflt }` in a destructuring pattern: `left` binds, `right` is a READ.
+TS_OBJECT_ASSIGNMENT_PATTERN = "object_assignment_pattern"
 # `process.env.X` is a member_expression; `process.env['X']` a subscript, used
 # to detect environment-variable reads (issue #714 process.env follow-up).
 TS_SUBSCRIPT_EXPRESSION = "subscript_expression"
 TS_FIELD_INDEX = "index"
 TS_FUNCTION_DECLARATION = "function_declaration"
 TS_GENERATOR_FUNCTION_DECLARATION = "generator_function_declaration"
+TS_GENERATOR_FUNCTION = "generator_function"
 
 # Tree-sitter field names for module system
 FIELD_FUNCTION = "function"
@@ -255,6 +298,17 @@ JS_COMMONJS_EXPORTS_FUNCTION_QUERY = """
 """
 
 # JS/TS CommonJS module.exports query
+# The DIRECT form `module.exports = function (...) {...}` / arrow: the whole
+# module IS one function (fastify's generated error-serializer). Two-level
+# member on the left, unlike the three-level named-property form below.
+JS_COMMONJS_DIRECT_EXPORT_QUERY = """
+(assignment_expression
+  left: (member_expression
+    object: (identifier) @module_obj
+    property: (property_identifier) @exports_prop)
+  right: [(function_expression) (arrow_function) (call_expression)] @export_function)
+"""
+
 JS_COMMONJS_MODULE_EXPORTS_QUERY = """
 (assignment_expression
   left: (member_expression

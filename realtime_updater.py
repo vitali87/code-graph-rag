@@ -1,8 +1,9 @@
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Protocol
 
 import typer
 from loguru import logger
@@ -37,6 +38,27 @@ from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 
+class PendingTimer(Protocol):
+    """What the handler needs back from a `TimerFactory`.
+
+    `daemon` is assigned before `start()`, and `cancel()` supersedes a timer
+    when a newer event arrives for the same path.
+    """
+
+    daemon: bool
+
+    def start(self) -> None: ...
+
+    def cancel(self) -> None: ...
+
+
+# `start()` is called with `self.lock` held and `_process_debounced_change`
+# re-acquires that same non-reentrant lock, so a factory MUST queue its
+# callback for another thread (or for a later explicit fire) rather than
+# invoking it during `start()` — doing so deadlocks the handler.
+TimerFactory = Callable[..., PendingTimer]
+
+
 class CodeChangeEventHandler(FileSystemEventHandler):
     """
     Handles file system events with debouncing to prevent redundant graph updates.
@@ -55,8 +77,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         updater: GraphUpdater,
         debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
         max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
+        timer_factory: TimerFactory = threading.Timer,
     ):
         self.updater = updater
+        # Injectable so a test can drive the debounce deterministically rather
+        # than racing a wall clock, which is what made these tests flaky on
+        # loaded runners (issue #1005). Production always uses threading.Timer.
+        self._timer_factory = timer_factory
         self.ignore_patterns = IGNORE_PATTERNS
         self.ignore_suffixes = IGNORE_SUFFIXES
 
@@ -65,7 +92,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self.debounce_enabled = debounce_seconds > 0
 
         # Thread-safe state for tracking pending changes
-        self.timers: dict[str, threading.Timer] = {}
+        self.timers: dict[str, PendingTimer] = {}
         self.first_event_time: dict[str, float] = {}
         self.pending_events: dict[str, FileSystemEvent] = {}
         self.lock = threading.Lock()
@@ -146,7 +173,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             else:
                 remaining_wait = self.max_wait_seconds - time_since_first
                 effective_delay = min(self.debounce_seconds, remaining_wait)
-                timer = threading.Timer(
+                timer = self._timer_factory(
                     effective_delay,
                     self._process_debounced_change,
                     args=[relative_path_str],
@@ -166,7 +193,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def _schedule_immediate_processing(self, relative_path_str: str) -> None:
         """Process a file change immediately (called when max wait is exceeded)."""
         # Use a zero-delay timer to process in the timer thread
-        timer = threading.Timer(
+        timer = self._timer_factory(
             0, self._process_debounced_change, args=[relative_path_str]
         )
         timer.daemon = True
@@ -235,6 +262,18 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # Step 2: Clear in-memory state
         self.updater.remove_file_from_state(path)
 
+        # The Rust path caches (exact-case directory listings, entry-file
+        # mod declarations, explicit targets) were filled during the last
+        # run; a CREATE or MODIFY re-observes what this event can have
+        # changed before any re-parse resolves crate::/super::/self::
+        # against them. DELETEs keep the stale view so an atomic-save or
+        # checkout storm cannot bake a transient absence into a sibling's
+        # import map.
+        if event.event_type != EventType.DELETED:
+            self.updater.factory.import_processor.refresh_rust_path_caches_for(
+                path, created=event.event_type == EventType.CREATED
+            )
+
         # Step 3: Re-parse code files and create File nodes for ALL files
         if event.event_type in (EventType.MODIFIED, EventType.CREATED):
             lang_config = get_language_spec(path.suffix)
@@ -257,8 +296,18 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 path, path.name
             )
 
-        # Step 4
+        # Rust inline-mod import maps retract at the end of every parse
+        # and only re-commit through arbitration; run() is not on this
+        # path, so arbitrate here before calls recompute through the maps.
+        self.updater.factory.import_processor.finalise_rust_mod_scope_uses(
+            self.updater.known_module_paths()
+        )
+
+        # Step 4: every CALLS edge is deleted and recomputed, so the
+        # resolution caches reset with them; a re-parsed file's moved use
+        # must not serve last pass's cached answer.
         logger.info(logs.RECALC_CALLS)
+        self.updater.factory.call_processor.reset_resolution_caches()
         ingestor.execute_write(CYPHER_DELETE_CALLS)
         self.updater._process_function_calls()
 

@@ -32,6 +32,18 @@ CYPHER_MODEL=gpt-4o-mini
 CYPHER_API_KEY=sk-your-openai-key
 ```
 
+### All Anthropic Models
+
+```bash
+ORCHESTRATOR_PROVIDER=anthropic
+ORCHESTRATOR_MODEL=claude-opus-5
+ORCHESTRATOR_API_KEY=sk-ant-your-anthropic-key
+
+CYPHER_PROVIDER=anthropic
+CYPHER_MODEL=claude-haiku-4-5
+CYPHER_API_KEY=sk-ant-your-anthropic-key
+```
+
 ### All Google Models
 
 ```bash
@@ -82,7 +94,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | Variable | Description |
 |----------|-------------|
 | `ORCHESTRATOR_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
-| `ORCHESTRATOR_MODEL` | Model ID (e.g., `gemini-2.5-pro`, `gpt-4o`, `llama3.2`) |
+| `ORCHESTRATOR_MODEL` | Model ID (e.g., `claude-opus-5`, `gemini-2.5-pro`, `gpt-4o`, `llama3.2`) |
 | `ORCHESTRATOR_API_KEY` | API key for the provider (if required) |
 | `ORCHESTRATOR_ENDPOINT` | Custom endpoint URL (if required) |
 | `ORCHESTRATOR_PROJECT_ID` | Google Cloud project ID (for Vertex AI) |
@@ -96,7 +108,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | Variable | Description |
 |----------|-------------|
 | `CYPHER_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
-| `CYPHER_MODEL` | Model ID (e.g., `gemini-2.5-flash`, `gpt-4o-mini`, `codellama`) |
+| `CYPHER_MODEL` | Model ID (e.g., `claude-haiku-4-5`, `gemini-2.5-flash`, `gpt-4o-mini`, `codellama`) |
 | `CYPHER_API_KEY` | API key for the provider (if required) |
 | `CYPHER_ENDPOINT` | Custom endpoint URL (if required) |
 | `CYPHER_PROJECT_ID` | Google Cloud project ID (for Vertex AI) |

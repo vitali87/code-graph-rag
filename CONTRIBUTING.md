@@ -1,6 +1,6 @@
 # Contributing to Code Graph RAG
 
-Thank you for your interest in contributing to Code Graph RAG! We welcome contributions from the community.
+Thank you for your interest in contributing to Code Graph RAG! We welcome contributions from the community. How the project is run, who decides what, and how to become a maintainer are described in [GOVERNANCE.md](GOVERNANCE.md).
 
 ## Getting Started
 
@@ -55,7 +55,7 @@ Labels are automatically synced from [`.github/labels.yml`](.github/labels.yml).
 
 3. **Make Your Changes**:
    - Follow the existing code style and patterns
-   - Add tests for new functionality
+   - Add tests: this is project policy, not a suggestion. New functionality must come with tests that exercise it, and bug fixes must include a regression test that fails without the fix
    - Update documentation if needed
    - Do not add inline comments (see Comment Policy below)
 
@@ -74,7 +74,7 @@ Labels are automatically synced from [`.github/labels.yml`](.github/labels.yml).
 
 - Keep PRs focused on a single issue or feature
 - Write clear, descriptive commit messages
-- Include tests for new functionality
+- Tests are required for new functionality and for bug fixes; PRs adding major functionality without tests will not be merged
 - Update documentation when necessary
 - Be responsive to feedback during code review
 
@@ -147,7 +147,16 @@ This process ensures that human reviewers focus on high-level design and logic r
 
 ### Agentic Framework
 
-- **PydanticAI Only**: This project uses PydanticAI as the official agentic framework. Do not introduce other frameworks like LangChain, CrewAI, or AutoGen.
+- **PydanticAI for now**: PydanticAI is the agentic framework the project runs on today. That is a current choice, not a permanent commitment, and a well-argued case for moving is welcome. What it does rule out is arriving at a second framework by accident, so do not introduce one (LangChain, CrewAI, AutoGen) as part of a feature pull request. Open an issue first, as `GOVERNANCE.md` asks for architectural decisions.
+
+### External Service Integrations
+
+Integrations with external services (search APIs, model hosts, data providers) are welcome, on these terms:
+
+- **Free tier only**: The open-source tree carries capability that works without payment. Do not add configuration that selects a vendor's paid plan, and do not document a route to one. Paid capability belongs in [Enterprise Services](https://code-graph-rag.com/enterprise), not in an environment variable here.
+- **No single-vendor lock**: A generic capability resolves its backend from configuration, the way model and embedding providers already do in `codebase_rag/config.py`. A capability that works only for holders of one vendor's key is not a capability this project has.
+- **Keyless default**: Where a provider needs no account, it is the default, so the feature works on a fresh checkout.
+- **Disclose affiliation**: If you work for, or are compensated by, the service you are integrating, say so in the pull request description.
 
 ### Code Standards
 
@@ -806,6 +815,10 @@ The scope (in parentheses) is optional and can contain alphanumeric characters, 
 ### Comment Policy
 
 Write comments that explain **why** and **how**, not **what**. A comment that only restates the adjacent code adds no value; one that captures a non-obvious reason, a tricky invariant, or a concrete edge case earns its place.
+
+## Licensing of Contributions
+
+This project is licensed under the [MIT licence](LICENSE). By submitting a contribution, you agree that it is your own work (or that you have the right to submit it) and that it is licensed to the project and its users under the same MIT licence. You retain copyright in your contribution; no copyright assignment is required.
 
 ## Questions?
 

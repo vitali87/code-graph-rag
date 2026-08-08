@@ -77,6 +77,39 @@ def unignore_could_match_within(pattern: str, rel_dir: str) -> bool:
     )
 
 
+def should_keep_dir(
+    dirname: str,
+    dir_prefix: str,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> bool:
+    """Whether a repository walk descends into this directory.
+
+    The one predicate every whole-repo walk prunes with, so a sweep that
+    reads files the indexer skipped (or skips files the indexer holds)
+    cannot happen by construction (issue #1088).
+    """
+    rel_dir = f"{dir_prefix}{dirname}"
+    # an explicit exclude can never be rescued by unignore (excludes win
+    # at the file level too), so prune the subtree outright.
+    if exclude_paths and matches_ignore_patterns(f"{rel_dir}/", exclude_paths):
+        return False
+    if dirname not in cs.IGNORE_PATTERNS:
+        return True
+    # Cargo's src/bin/ holds first-party binaries, not build output;
+    # mirrors has_ignored_dir_part.
+    if (
+        dirname == cs.DIR_BIN
+        and dir_prefix.rstrip(cs.SEPARATOR_SLASH).rsplit(cs.SEPARATOR_SLASH, 1)[-1]
+        == cs.DIR_SRC
+    ):
+        return True
+    return bool(
+        unignore_paths
+        and any(unignore_could_match_within(u, rel_dir) for u in unignore_paths)
+    )
+
+
 def should_skip_path(
     path: Path,
     repo_path: Path,

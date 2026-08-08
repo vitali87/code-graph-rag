@@ -17,6 +17,7 @@ from ..types_defs import (
     DeferredCppInherit,
     DeferredParentLink,
     FunctionLocation,
+    FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     NodeType,
@@ -29,6 +30,7 @@ from .cpp import utils as cpp_utils
 from .dart import dart_definition_end_point, dart_return_type_name
 from .endpoints import emit_endpoints, queue_endpoints
 from .go import utils as go_utils
+from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .utils import (
@@ -140,14 +142,16 @@ class _DeferredCppPrototype(NamedTuple):
     lang_queries: LanguageQueries
 
 
-class _DeferredJsAnonymous(NamedTuple):
-    """Unnamed JS/TS function expression held back until named passes claim.
+class _DeferredRegistration(NamedTuple):
+    """A function held back from the generic pass until later passes claim.
 
-    The generic function pass runs before the JS-specific passes, so
-    registering `anonymous_row_col` eagerly minted a second node for every
-    function a named pass registers later (521 locations on thrift's JS
-    corpora). Registration happens at the per-file flush, only for spans no
-    named pass claimed.
+    Two shapes need this. An unnamed JS/TS function expression may be one a
+    named pass registers under its real name, and registering
+    `anonymous_row_col` eagerly minted a second node for every one of them
+    (521 locations on thrift's JS corpora). A Rust definition written inside a
+    function body owns no name any caller can reach, so it must not take one
+    from the method or module item that does (issue #1037). Registration
+    happens at the per-file flush.
     """
 
     func_node: Node
@@ -233,10 +237,11 @@ class FunctionIngestMixin:
     method_return_types: dict[str, str]
     go_function_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
-    function_locations: dict[FunctionSpanKey, FunctionLocation]
+    function_locations: FunctionLocations
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     macro_qns: set[str]
-    _deferred_js_anonymous: list[_DeferredJsAnonymous]
+    _deferred_js_anonymous: list[_DeferredRegistration]
+    _deferred_rust_body_local: list[_DeferredRegistration]
     _deferred_cpp_artifacts: list[_DeferredCppArtifact]
     _deferred_cpp_prototypes: list[_DeferredCppPrototype]
     class_inheritance: dict[str, list[str]]
@@ -387,7 +392,29 @@ class FunctionIngestMixin:
             # registration was a duplicate node).
             if language in cs.JS_TS_LANGUAGES and resolution.is_anonymous:
                 self._deferred_js_anonymous.append(
-                    _DeferredJsAnonymous(
+                    _DeferredRegistration(
+                        func_node,
+                        resolution,
+                        module_qn,
+                        language,
+                        lang_config,
+                        lang_queries,
+                    )
+                )
+                continue
+
+            # A Rust item written inside a function body, a closure or a
+            # const/static initializer is reachable by path from nowhere, yet it
+            # registers in the qn space of the module or impl target that
+            # encloses it. Registering it here would let it take the natural qn
+            # of the method or module item of that name, which does own it and
+            # whose callers then resolve to this one; hold it back until those
+            # have claimed their names (issue #1037).
+            if language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(
+                func_node
+            ):
+                self._deferred_rust_body_local.append(
+                    _DeferredRegistration(
                         func_node,
                         resolution,
                         module_qn,
@@ -470,6 +497,33 @@ class FunctionIngestMixin:
                 qualified_name=qualified_name,
                 container_qn=None,
             )
+
+    def _flush_deferred_rust_body_local(self) -> None:
+        """Register the file's held-back Rust body-local items (issue #1037)."""
+        deferred = self._deferred_rust_body_local
+        self._deferred_rust_body_local = []
+        for entry in deferred:
+            self._register_function(
+                entry.func_node,
+                entry.resolution,
+                entry.module_qn,
+                entry.language,
+                entry.lang_config,
+                entry.lang_queries,
+            )
+            # A call-bound local (`let s = make()`) types from this map, so the
+            # return type has to be recorded here too. Under the qn the
+            # registry HANDED OUT, which for a body-local item contesting a
+            # module item of that name is the `@<line>` variant: recording
+            # under the proposed qn would overwrite the module item's own
+            # return type and mistype every caller of it.
+            location = self.function_locations.get(
+                function_span_key(entry.module_qn, entry.func_node)
+            )
+            if location is not None and (
+                return_type := rs_utils.extract_return_type_name(entry.func_node, None)
+            ):
+                self.method_return_types[location.qualified_name] = return_type
 
     def _flush_deferred_js_anonymous(self) -> None:
         deferred = self._deferred_js_anonymous
@@ -1167,7 +1221,9 @@ class FunctionIngestMixin:
         lang_queries: LanguageQueries,
     ) -> None:
         unique_qn = self.function_registry.register_unique_qn(
-            resolution.qualified_name, func_node.start_point[0] + 1
+            resolution.qualified_name,
+            func_node.start_point[0] + 1,
+            func_node.start_point[1],
         )
         if unique_qn != resolution.qualified_name:
             resolution = resolution._replace(qualified_name=unique_qn)
@@ -1378,37 +1434,13 @@ class FunctionIngestMixin:
         if name_node and name_node.text:
             return safe_decode_text(name_node)
 
-        # Anonymous function EXPRESSIONS bound to a declarator (`export const
-        # api = (function (x) {...}) as unknown as Api`) take the binding name like
-        # arrows: the call pass's binding-name climb accepts both, and the two
-        # passes must agree or the caller qn is a phantom.
-        if func_node.type in (cs.TS_ARROW_FUNCTION, cs.TS_FUNCTION_EXPRESSION):
-            current = func_node.parent
-            while current:
-                if current.type == cs.TS_VARIABLE_DECLARATOR:
-                    # `const m = useMutation({fn: () => {}})` binds the CALL result
-                    # to `m`, not the inner arrow; naming the arrow `m` invents a
-                    # phantom function (dead-code false positive). Only claim the
-                    # declarator name when its value is not a call.
-                    value = current.child_by_field_name(cs.FIELD_VALUE)
-                    if (
-                        value is not None
-                        and value.type in cs.JS_CALL_RESULT_VALUE_TYPES
-                    ):
-                        return None
-                    for child in current.children:
-                        if child.type == cs.TS_IDENTIFIER and child.text:
-                            return safe_decode_text(child)
-                    return None
-                # Crossing another function's body means this arrow is nested
-                # inside it (a JSX handler, a `.map()` callback), not bound to the
-                # outer const: stop so it stays anonymous instead of inheriting the
-                # component's name as a `Component.Component` phantom.
-                if current.type in cs.JS_ARROW_NAME_CLIMB_BOUNDARY:
-                    return None
-                current = current.parent
-
-        return None
+        # An anonymous arrow / function expression bound to a name (a
+        # `const f = () => ...` declarator OR a `helper = () => ...` class field)
+        # takes that binding name, in lock-step with the call pass's
+        # binding-name climb (they must agree or the caller qn is a phantom and
+        # the arrow's body callbacks report dead). One shared helper keeps both
+        # passes' naming identical.
+        return js_ts_utils.arrow_binding_name(func_node)
 
     def _generate_anonymous_function_name(self, func_node: Node, module_qn: str) -> str:
         parent = func_node.parent
@@ -1530,7 +1562,14 @@ class FunctionIngestMixin:
         # which always builds that path, references the same node; otherwise the
         # closure is orphaned and reports as dead.
         if self._is_nested_within_class_member(func_node, class_node, lang_config):
-            return self._extract_node_name(class_node)
+            if name := self._extract_node_name(class_node):
+                return name
+            # An anonymous class expression (`static Proxy = class {...}`) has no
+            # `name` field; recover its binding name so a closure nested in its
+            # methods keeps the full `Outer.Proxy.method.<name>` path the call
+            # pass builds, instead of an orphaned `Outer.method.<name>` (issue
+            # #970).
+            return js_ts_utils.class_binding_name(class_node)
         return False
 
     def _is_nested_within_class_member(
@@ -1572,6 +1611,14 @@ class FunctionIngestMixin:
         return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
+        # A const/static initializer is a body like a function's, but it is no
+        # function node, so the shared walk climbs out of it to the impl above
+        # and calls the item inside it a method of that type. It is a free
+        # function local to the initializer (issue #1037).
+        if lang_config.language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(
+            func_node
+        ):
+            return False
         return is_method_node(func_node, lang_config)
 
     def _csharp_scope_qn(self, node: Node, module_qn: str) -> str:

@@ -81,10 +81,9 @@ from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
     cached_relative_path,
-    matches_ignore_patterns,
+    should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
-    unignore_could_match_within,
 )
 from .utils.source_extraction import extract_source_with_fallback
 
@@ -361,6 +360,8 @@ class GraphUpdater:
                 structural_elements=(
                     self.factory.structure_processor.structural_elements
                 ),
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
             )
             logger.info(
                 ls.CPP_FRONTEND_HYBRID_PENDING.format(
@@ -377,6 +378,8 @@ class GraphUpdater:
             function_registry=self.function_registry,
             simple_name_lookup=self.simple_name_lookup,
             structural_elements=self.factory.structure_processor.structural_elements,
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
         )
         logger.info(
             ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
@@ -723,6 +726,17 @@ class GraphUpdater:
         if inherits:
             logger.info("Resolved {} deferred C++ inheritance bases", inherits)
 
+        # IMPORTS edges and the Rust sub-scope arbitration verify against
+        # every module qn this run produced (files, inline modules,
+        # rehydrated unchanged files); an internal target that resolves
+        # nowhere emits no edge.
+        known_module_paths = self.known_module_paths()
+
+        # Inline-mod import maps commit BEFORE the deferred inheritance
+        # pass below: it re-resolves module-anchored trait guesses through
+        # them.
+        self.factory.import_processor.finalise_rust_mod_scope_uses(known_module_paths)
+
         # Same reasoning for every other language: parents resolve against
         # the full registry (including rehydrated definitions), and an
         # unresolvable parent emits no edge instead of a phantom.
@@ -739,19 +753,6 @@ class GraphUpdater:
         if module_impls:
             logger.info("Resolved {} C++20 module implementation links", module_impls)
 
-        # IMPORTS edges verify against every module qn this run produced
-        # (files, inline modules, rehydrated unchanged files); an internal
-        # target that resolves nowhere emits no edge.
-        known_module_paths: dict[str, str] = {
-            str(qn): path.as_posix()
-            for qn, path in (
-                self.factory.definition_processor.module_qn_to_file_path.items()
-            )
-        }
-        for qn in self.factory.definition_processor.declared_module_qns:
-            known_module_paths.setdefault(qn, "")
-        for qn in self._rehydrated_module_qns:
-            known_module_paths.setdefault(qn, "")
         imports_emitted = self.factory.import_processor.flush_deferred_import_edges(
             known_module_paths
         )
@@ -1286,6 +1287,22 @@ class GraphUpdater:
         if restored:
             logger.info(ls.INCREMENTAL_REBUILD_INBOUND, count=restored)
 
+    def known_module_paths(self) -> dict[str, str]:
+        # Module qns this updater has produced, mapped to file paths;
+        # declared and rehydrated qns carry no path and never win the
+        # Rust sub-scope ownership arbitration.
+        known: dict[str, str] = {
+            str(qn): path.as_posix()
+            for qn, path in (
+                self.factory.definition_processor.module_qn_to_file_path.items()
+            )
+        }
+        for qn in self.factory.definition_processor.declared_module_qns:
+            known.setdefault(qn, "")
+        for qn in self._rehydrated_module_qns:
+            known.setdefault(qn, "")
+        return known
+
     def remove_file_from_state(self, file_path: Path) -> None:
         logger.debug(ls.REMOVING_STATE, path=file_path)
 
@@ -1300,6 +1317,25 @@ class GraphUpdater:
             else relative_path.with_suffix("").parts
         )
         module_qn_prefix = cs.SEPARATOR_DOT.join([self.project_name, *path_parts])
+        self.factory.import_processor.commonjs_direct_exports.pop(
+            module_qn_prefix, None
+        )
+        # A deleted file is no writer: its mod-scope registry entries must
+        # not weigh in the next arbitration (a modified file re-drops this
+        # in its own re-parse, harmlessly twice). The drop keys on the qn
+        # the parse actually RECORDED, which can differ from any path-derived
+        # form twice over: mod.rs collapses to its directory, and
+        # _disambiguate_module_qn suffixes a qn whose bare form an
+        # earlier-parsed file already owns (src/a/mod.rs beside src/a.rs or
+        # src/a.py records as ...a.rs). Recomputing from the path would wipe
+        # the bare qn's real owner, which this event does not re-parse, while
+        # the deleted file's own writers kept voting forever. A Rust file
+        # with no recorded qn was never parsed and owns no import state.
+        if file_path.suffix == cs.EXT_RS:
+            qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+            for qn, path in qn_to_path.items():
+                if path == file_path:
+                    self.factory.import_processor.drop_rust_module_import_state(qn)
 
         qns_to_remove = set()
 
@@ -1447,28 +1483,8 @@ class GraphUpdater:
         return None, None
 
     def _should_keep_dir(self, dirname: str, dir_prefix: str) -> bool:
-        rel_dir = f"{dir_prefix}{dirname}"
-        # an explicit exclude can never be rescued by unignore (excludes win
-        # at the file level too), so prune the subtree outright.
-        if self.exclude_paths and matches_ignore_patterns(
-            f"{rel_dir}/", self.exclude_paths
-        ):
-            return False
-        if dirname not in cs.IGNORE_PATTERNS:
-            return True
-        # Cargo's src/bin/ holds first-party binaries, not build output;
-        # mirrors has_ignored_dir_part.
-        if (
-            dirname == cs.DIR_BIN
-            and dir_prefix.rstrip(cs.SEPARATOR_SLASH).rsplit(cs.SEPARATOR_SLASH, 1)[-1]
-            == cs.DIR_SRC
-        ):
-            return True
-        return bool(
-            self.unignore_paths
-            and any(
-                unignore_could_match_within(u, rel_dir) for u in self.unignore_paths
-            )
+        return should_keep_dir(
+            dirname, dir_prefix, self.exclude_paths, self.unignore_paths
         )
 
     def _drop_cache_if_graph_lost(self) -> None:
@@ -1619,6 +1635,7 @@ class GraphUpdater:
         return eligible
 
     def _process_files(self, force: bool = False) -> None:
+        self.factory.import_processor.reset_rust_path_caches()
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
@@ -1887,13 +1904,18 @@ class GraphUpdater:
         try:
             file_bytes = file_path.read_bytes()
         except OSError as e:
-            logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
+            logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
             return None
         root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
 
     def _process_function_calls(self) -> None:
+        # A reused updater (watch mode, a second run) re-parses files; the
+        # JS receiver-binding index holds nodes from the PREVIOUS parse,
+        # whose spans would resolve against the refreshed registry onto
+        # whatever now sits at the old line/column.
+        self.factory.call_processor.reset_js_receiver_bindings()
         captures_cache = self.factory._func_class_captures_cache
         # Iterate every file parsed this run, not the bounded AST cache: on a
         # large repo the cache evicts most files, and iterating it drops their
@@ -1909,10 +1931,16 @@ class GraphUpdater:
                 self.queries,
                 func_class_captures_cache=captures_cache,
             )
+            self.factory.call_processor.collect_js_symbol_bindings(
+                file_path, root_node, language
+            )
         # Bindings are pending until every file's ctor metadata (param order,
         # param->attribute renames) is in: a construction site may be scanned
-        # before the file defining its class.
+        # before the file defining its class. Symbol-keyed installations wait
+        # the same way: a `[kX]: value` site may be swept before the file
+        # defining kX.
         self.factory.call_processor.finalize_callable_field_bindings()
+        self.factory.call_processor.finalize_js_symbol_bindings()
         for file_path, language in self._parsed_files:
             root_node = self._ast_for(file_path)
             if root_node is None:

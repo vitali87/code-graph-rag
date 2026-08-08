@@ -113,9 +113,16 @@ class TestComputeParserFingerprint:
     ) -> None:
         # The frontend selection is part of the parser identity: flipping it
         # rewrites edges for unchanged sources, so it must change the
-        # fingerprint and trip the staleness warning (issue #738).
+        # fingerprint and trip the staleness warning (issue #738). The
+        # fingerprint records the RESOLVED mode, and without a dotnet
+        # toolchain HYBRID degrades to TREESITTER so both fingerprints
+        # collide; availability is stubbed so the test is hermetic on
+        # hosts without dotnet while still exercising the real
+        # resolution logic (issue #1101).
         from codebase_rag.config import settings as cfg
+        from codebase_rag.parsers.csharp_frontend import frontend
 
+        monkeypatch.setattr(frontend, "csharp_frontend_available", lambda: True)
         monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
         before = compute_parser_fingerprint()
         monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
