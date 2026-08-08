@@ -166,3 +166,36 @@ def test_an_excluded_sibling_file_falls_through_to_mod_rs(
     )
     assert found is not None
     assert "extra" in found[0].mods, found
+
+
+def test_watch_refresh_does_not_cache_an_excluded_entry_file(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The watcher's relevance filter only knows the built-in ignores, so an
+    # excluded entry file still reaches refresh_rust_path_caches_for. If its
+    # declarations land in the cache, _rust_entry_decls returns them before
+    # its own exclude gate ever runs.
+    name = "rs_watch_excluded_entry"
+    project = temp_repo / name
+    _write(
+        project,
+        {
+            "Cargo.toml": CARGO.format(name=name),
+            "src/lib.rs": "pub mod alpha;\n",
+            "src/main.rs": "mod beta;\nfn main() {}\n",
+            "src/alpha.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/beta.rs": "pub fn run() -> i32 {\n    2\n}\n",
+        },
+    )
+    updater = create_and_run_updater(
+        project,
+        mock_ingestor,
+        skip_if_missing="rust",
+        exclude_paths=frozenset({"src/main.rs"}),
+    )
+    processor = updater.factory.import_processor
+
+    processor.refresh_rust_path_caches_for(project / "src" / "main.rs", created=False)
+
+    decls = processor._rust_entry_decls(["src"])
+    assert "main" not in decls, decls

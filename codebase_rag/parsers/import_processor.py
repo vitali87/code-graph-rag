@@ -2743,7 +2743,14 @@ class ImportProcessor:
             # _rust_entry_stem to its non-definitive fallback, letting the
             # item tie-break flip a definitive crate attribution.
             stems = self._rust_entry_mod_decls.get(tuple(dir_parts))
-            if stems is not None:
+            # The watcher's own relevance filter only knows the built-in
+            # ignores, so an `--exclude`d entry file still reaches here. Its
+            # declarations must not enter the cache: `_rust_entry_decls`
+            # gates its OWN reads, but returns whatever this path cached
+            # before that gate ever runs (issue #1100).
+            if stems is not None and self._rust_file_is_indexed(
+                [*dir_parts, file_path.name]
+            ):
                 try:
                     source = file_path.read_text(
                         encoding=cs.RS_ENCODING_UTF8, errors="ignore"
