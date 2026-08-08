@@ -79,7 +79,7 @@ cgr start --repo-path /path/to/your/repo \
 **Export during graph update:**
 
 ```bash
-cgr start --repo-path /path/to/repo --update-graph --clean -o my_graph.json
+cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 ```
 
 **Export existing graph without updating:**

@@ -207,12 +207,18 @@ def _stdin_is_interactive() -> bool:
         return False
 
 
-def _projects_in_graph(ingestor: MemgraphIngestor) -> list[str]:
+def _projects_in_graph(ingestor: MemgraphIngestor) -> list[str] | None:
+    """Every project in the graph, or None when the graph cannot be read.
+
+    None is NOT an empty graph: treating a failed enumeration as "no other
+    projects" would skip the confirmation and wipe every project precisely
+    when we cannot say what would be lost.
+    """
     try:
         return sorted(ingestor.list_projects())
     except Exception as exc:
         logger.warning(ls.MG_LIST_PROJECTS_FAILED.format(error=exc))
-        return []
+        return None
 
 
 def _confirm_destructive_clean(
@@ -226,6 +232,14 @@ def _confirm_destructive_clean(
     # it. Deriving that count from `others` would understate it by one whenever
     # this project has not been synced yet and so is not in the graph.
     projects = _projects_in_graph(ingestor)
+    if projects is None:
+        # Fail closed: an unreadable project list cannot show what the wipe
+        # would destroy, so it must not be read as an empty graph.
+        app_context.console.print(
+            style(cs.CLI_ERR_CLEAN_UNKNOWN_PROJECTS, cs.Color.RED)
+        )
+        raise typer.Exit(1)
+
     others = [name for name in projects if name != project_name]
     if not others:
         return

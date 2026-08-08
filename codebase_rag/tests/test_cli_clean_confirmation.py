@@ -63,16 +63,16 @@ def interactive_stdin() -> Generator[None, None, None]:
 
 
 @pytest.fixture
-def stub_sync() -> Generator[None, None, None]:
+def stub_sync() -> Generator[MagicMock, None, None]:
     with (
-        patch("codebase_rag.cli.GraphUpdater"),
+        patch("codebase_rag.cli.GraphUpdater") as mock_updater,
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
         patch("codebase_rag.cli.load_ignore_patterns") as mock_cgrignore,
     ):
         mock_cgrignore.return_value = CgrignorePatterns(
             exclude=frozenset(), unignore=frozenset()
         )
-        yield
+        yield mock_updater
 
 
 class TestCleanConfirmation:
@@ -155,7 +155,23 @@ class TestCleanConfirmation:
         ingestor.clean_database.assert_not_called()
         assert "--yes" in result.output
 
-    def test_unreadable_project_list_does_not_block_clean(
+    def test_unreadable_project_list_refuses_to_clean(
+        self,
+        mock_memgraph_connect: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        # Fail closed: if the projects cannot be listed there is no way to show
+        # what the wipe destroys, so proceeding would delete every project
+        # unconfirmed precisely when we know least.
+        ingestor = _ingestor(mock_memgraph_connect)
+        ingestor.list_projects.side_effect = RuntimeError("memgraph down")
+
+        result = runner.invoke(app, _start_args(tmp_path))
+
+        assert result.exit_code == 1, result.output
+        ingestor.clean_database.assert_not_called()
+
+    def test_unreadable_project_list_still_yields_to_an_explicit_yes(
         self,
         mock_memgraph_connect: MagicMock,
         tmp_path: Path,
@@ -163,7 +179,7 @@ class TestCleanConfirmation:
         ingestor = _ingestor(mock_memgraph_connect)
         ingestor.list_projects.side_effect = RuntimeError("memgraph down")
 
-        result = runner.invoke(app, _start_args(tmp_path))
+        result = runner.invoke(app, _start_args(tmp_path, "--yes"))
 
         assert result.exit_code == 0, result.output
         ingestor.clean_database.assert_called_once()
@@ -174,7 +190,7 @@ class TestCleanConfirmationWithUpdateGraph:
         self,
         mock_memgraph_connect: MagicMock,
         interactive_stdin: None,
-        stub_sync: None,
+        stub_sync: MagicMock,
         tmp_path: Path,
     ) -> None:
         ingestor = _with_other_projects(mock_memgraph_connect)
@@ -187,12 +203,15 @@ class TestCleanConfirmationWithUpdateGraph:
 
         assert result.exit_code == 1, result.output
         ingestor.clean_database.assert_not_called()
+        # A regression that ran the rebuild before the confirmation exited
+        # would still pass the assertion above.
+        stub_sync.return_value.run.assert_not_called()
 
     def test_yes_flag_allows_the_wipe(
         self,
         mock_memgraph_connect: MagicMock,
         interactive_stdin: None,
-        stub_sync: None,
+        stub_sync: MagicMock,
         tmp_path: Path,
     ) -> None:
         ingestor = _with_other_projects(mock_memgraph_connect)
@@ -208,7 +227,7 @@ class TestCleanConfirmationWithUpdateGraph:
     def test_non_interactive_run_refuses_instead_of_deleting(
         self,
         mock_memgraph_connect: MagicMock,
-        stub_sync: None,
+        stub_sync: MagicMock,
         tmp_path: Path,
     ) -> None:
         ingestor = _with_other_projects(mock_memgraph_connect)

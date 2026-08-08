@@ -86,6 +86,11 @@ CLI_ERR_CLEAN_NEEDS_CONFIRMATION = (
     "Re-run with --yes to delete every project in the shared graph, or drop "
     "--clean to update '{project_name}' in place."
 )
+CLI_ERR_CLEAN_UNKNOWN_PROJECTS = (
+    "Refusing to run --clean: the existing projects could not be listed, so "
+    "there is no way to show what the wipe would destroy. Fix the graph "
+    "connection, or pass --yes to delete everything regardless."
+)
 CLI_MSG_CLEAN_ABORTED = "Aborted: the graph was left untouched."
 CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
 CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."

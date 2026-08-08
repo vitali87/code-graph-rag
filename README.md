@@ -136,7 +136,8 @@ cgr start --repo-path /path/to/repo
 Repeat the first command for each repository you want indexed; the graph is
 shared, and syncing one project leaves the others alone. To start over from an
 empty graph, add `--clean` — it deletes **every** project in the shared graph,
-not just this one, and asks for confirmation first.
+not just this one, and asks for confirmation first when other
+projects would be destroyed.
 
 The [Quick Start](docs/getting-started/quickstart.md) guide walks through parsing, querying, and exporting in five minutes.
 
