@@ -96,8 +96,12 @@ Each [GitHub release](https://github.com/vitali87/code-graph-rag/releases) ships
 To verify provenance with the [GitHub CLI](https://cli.github.com/):
 
 ```bash
-gh attestation verify code-graph-rag-linux-amd64 --repo vitali87/code-graph-rag
+gh attestation verify code-graph-rag-linux-amd64 \
+  --repo vitali87/code-graph-rag \
+  --signer-workflow vitali87/code-graph-rag/.github/workflows/build-binaries.yml
 ```
+
+The `--signer-workflow` flag pins the attestation to the release workflow itself; `--repo` alone accepts an attestation signed by any workflow in the repository.
 
 To verify a signature with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/):
 
@@ -109,7 +113,7 @@ cosign verify-blob \
   code-graph-rag-linux-amd64
 ```
 
-Substitute the binary name for your platform. Packages installed from PyPI are protected separately by PyPI's own integrity checks through `pip` and `uv`.
+Substitute the binary name for your platform. Packages installed from PyPI are protected differently: `pip` and `uv` verify package hashes, which proves integrity in transit, and releases after v0.0.187 additionally carry a [PEP 740](https://peps.python.org/pep-0740/) attestation. That is a publish attestation — proof that the file was uploaded by this project's trusted publisher — rather than build provenance, and it can be queried through PyPI's [Integrity API](https://docs.pypi.org/api/integrity/).
 
 ## Start Memgraph
 

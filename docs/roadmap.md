@@ -4,7 +4,7 @@ description: "What Code-Graph-RAG intends to do, and not do, over the next year.
 
 # Roadmap
 
-This page describes what the project intends to do, and deliberately not do, over roughly the next year (from mid 2026). It is a statement of direction rather than a schedule; items ship when they are ready. Day-to-day priorities live in the [issue tracker](https://github.com/vitali87/code-graph-rag/issues), and known analysis gaps are catalogued in [TODO.md](https://github.com/vitali87/code-graph-rag/blob/main/docs/TODO.md).
+This page describes what the project intends to do, and deliberately not do, over roughly the next year (from mid-2026). It is a statement of direction rather than a schedule; items ship when they are ready. Day-to-day priorities live in the [issue tracker](https://github.com/vitali87/code-graph-rag/issues), and known analysis gaps are catalogued in [TODO.md](https://github.com/vitali87/code-graph-rag/blob/main/docs/TODO.md).
 
 ## What we intend to do
 
