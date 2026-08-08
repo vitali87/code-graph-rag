@@ -96,6 +96,8 @@ DEFAULT_CONTEXT_WINDOW = 200_000
 MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "MiniMax-M3": 1_000_000,
     "MiniMax-M2.7": 204_800,
+    "claude-opus-5": 1_000_000,
+    "claude-sonnet-5": 1_000_000,
     "claude-opus-4-8": 1_000_000,
     "claude-opus-4-7": 1_000_000,
     "claude-opus-4-6": 200_000,

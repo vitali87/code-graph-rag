@@ -14,7 +14,7 @@ cd /path/to/your/project
 claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH="$(pwd)" \
   --env CYPHER_PROVIDER=google \
-  --env CYPHER_MODEL=gemini-2.0-flash \
+  --env CYPHER_MODEL=gemini-2.5-flash \
   --env CYPHER_API_KEY=your-google-api-key \
   -- uv run --directory /absolute/path/to/code-graph-rag code-graph-rag mcp-server
 ```
@@ -33,7 +33,7 @@ Specify the repository path explicitly:
 claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH=/absolute/path/to/your/project \
   --env CYPHER_PROVIDER=google \
-  --env CYPHER_MODEL=gemini-2.0-flash \
+  --env CYPHER_MODEL=gemini-2.5-flash \
   --env CYPHER_API_KEY=your-google-api-key \
   -- uv run --directory /absolute/path/to/code-graph-rag code-graph-rag mcp-server
 ```
@@ -85,7 +85,7 @@ docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
 **OpenAI** (recommended):
 ```bash
 --env CYPHER_PROVIDER=openai \
---env CYPHER_MODEL=gpt-4 \
+--env CYPHER_MODEL=gpt-4o \
 --env CYPHER_API_KEY=sk-...
 ```
 
@@ -110,14 +110,14 @@ Add separate named instances for different projects:
 claude mcp add --transport stdio code-graph-rag-backend \
   --env TARGET_REPO_PATH=/path/to/backend \
   --env CYPHER_PROVIDER=openai \
-  --env CYPHER_MODEL=gpt-4 \
+  --env CYPHER_MODEL=gpt-4o \
   --env CYPHER_API_KEY=your-api-key \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 
 claude mcp add --transport stdio code-graph-rag-frontend \
   --env TARGET_REPO_PATH=/path/to/frontend \
   --env CYPHER_PROVIDER=openai \
-  --env CYPHER_MODEL=gpt-4 \
+  --env CYPHER_MODEL=gpt-4o \
   --env CYPHER_API_KEY=your-api-key \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
