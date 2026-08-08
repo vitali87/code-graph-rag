@@ -85,16 +85,30 @@ def uv_run_vectors(source: str) -> list[list[str]]:
     """
     vectors: list[list[str]] = []
     for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.List | ast.Tuple):
+        # Only the argv of an actual subprocess launch counts. Matching every
+        # list literal would flag an unrelated `EXAMPLE = ["uv", "run", ...]`
+        # constant that never runs anything.
+        if not isinstance(node, ast.Call) or not _is_subprocess_launch(node.func):
             continue
-        literals = [
-            element.value
-            for element in node.elts
-            if isinstance(element, ast.Constant) and isinstance(element.value, str)
-        ]
-        if len(literals) == len(node.elts) and literals[:2] == ["uv", "run"]:
-            vectors.append(literals)
+        for argument in [*node.args, *(kw.value for kw in node.keywords)]:
+            if not isinstance(argument, ast.List | ast.Tuple):
+                continue
+            literals = [
+                element.value
+                for element in argument.elts
+                if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            ]
+            if len(literals) == len(argument.elts) and literals[:2] == ["uv", "run"]:
+                vectors.append(literals)
     return vectors
+
+
+def _is_subprocess_launch(func: ast.expr) -> bool:
+    """Whether a call expression launches a child process."""
+    launchers = {"run", "call", "check_call", "check_output", "Popen"}
+    if isinstance(func, ast.Attribute):
+        return func.attr in launchers
+    return isinstance(func, ast.Name) and func.id in launchers
 
 
 def unguarded_uv_run_vectors(source: str) -> list[list[str]]:
@@ -138,6 +152,18 @@ class TestNestedInvocationDetection:
         source = f"{self.GUARDED}\n{self.BARE}\n"
 
         assert unguarded_uv_run_vectors(source) == [["uv", "run", "python", "y.py"]]
+
+    def test_an_unrelated_literal_is_not_an_offender(self) -> None:
+        # A constant that merely looks like an argv launches nothing.
+        source = 'EXAMPLE = ["uv", "run", "python", "example.py"]'
+
+        assert unguarded_uv_run_vectors(source) == []
+
+    def test_a_bare_launch_is_caught_through_any_subprocess_helper(self) -> None:
+        for call in ("subprocess.call", "subprocess.check_call", "subprocess.Popen"):
+            source = f'{call}(["uv", "run", "python", "y.py"])'
+
+            assert unguarded_uv_run_vectors(source), call
 
     def test_flags_after_the_command_do_not_count(self) -> None:
         source = 'subprocess.run(["uv", "run", "python", "--frozen", "--no-sync"])'
