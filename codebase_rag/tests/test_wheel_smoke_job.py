@@ -74,6 +74,17 @@ class TestWorkflowJob:
 
         assert checkout.get("with", {}).get("persist-credentials") is False
 
+    def test_job_installs_into_an_isolated_venv(self) -> None:
+        # The isolation is the point: the wheel must be exercised from a fresh
+        # interpreter, not from the lock-synced dev environment.
+        script = _job_run_script(_workflow()["jobs"][JOB_ID])
+
+        assert "python -m venv" in script
+        assert "./.fresh-venv/bin/python -m pip install dist/" in script
+        assert "./.fresh-venv/bin/python" in script, (
+            "the smoke must run on the fresh venv's interpreter"
+        )
+
     def test_job_runs_the_smoke_script(self) -> None:
         script = _job_run_script(_workflow()["jobs"][JOB_ID])
 
