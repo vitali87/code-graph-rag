@@ -146,6 +146,28 @@ class TestDuckDuckGoParsing:
         assert "snippet" not in bare
         assert "third snippet" in third
 
+    def test_snippet_before_the_title_anchor_stays_with_its_result(
+        self, captured: dict
+    ) -> None:
+        """Reordered markup inside a container must not push the snippet onto
+        the preceding result."""
+        page = """
+        <div class="result web-result">
+          <a rel="nofollow" class="result__a" href="https://docs.example.com/one">One</a>
+        </div>
+        <div class="result web-result">
+          <a class="result__snippet" href="#">second snippet first</a>
+          <a rel="nofollow" class="result__a" href="https://docs.example.com/two">Two</a>
+        </div>
+        """
+        captured["_response"] = FakeResponse(text=page)
+        out = duckduckgo().search_web("q")
+        blocks = out.split("\n\n")
+        one = next(b for b in blocks if "https://docs.example.com/one" in b)
+        two = next(b for b in blocks if "https://docs.example.com/two" in b)
+        assert "second snippet first" not in one
+        assert "second snippet first" in two
+
 
 class TestProviderSelection:
     def test_serpdive_is_selectable_with_a_key(self, captured: dict, monkeypatch):

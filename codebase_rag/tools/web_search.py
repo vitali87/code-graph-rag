@@ -25,10 +25,12 @@ _MAX_RESULTS = 10
 # works out of the box; richer backends are opt-in through WEB_SEARCH_PROVIDER.
 DUCKDUCKGO_URL = "https://html.duckduckgo.com/html/"
 _DDG_ANCHOR = re.compile(r"<a\s(?P<attrs>[^>]*)>(?P<body>.*?)</a>", re.DOTALL)
+_DDG_DIV = re.compile(r"<div\s(?P<attrs>[^>]*)>")
 _DDG_HREF = re.compile(r'href="(?P<href>[^"]*)"')
 _DDG_CLASS = re.compile(r'class="(?P<classes>[^"]*)"')
 _DDG_RESULT_CLASS = "result__a"
 _DDG_SNIPPET_CLASS = "result__snippet"
+_DDG_CONTAINER_CLASSES = frozenset({"result", "web-result"})
 _TAGS = re.compile(r"<[^>]+>")
 
 # Keys are created at https://serpdive.com/dashboard/keys (free, no card).
@@ -134,27 +136,56 @@ def _ddg_anchors(page: str, class_token: str) -> list[tuple[int, str, str]]:
     return anchors
 
 
+def _ddg_container_bounds(page: str) -> list[tuple[int, int]]:
+    # Each hit lives in its own container div (class token `result` or
+    # `web-result`); nested elements carry distinct `result__*` tokens, so
+    # token equality finds exactly the per-result boundaries.
+    starts = [
+        m.start()
+        for m in _DDG_DIV.finditer(page)
+        if (classes := _DDG_CLASS.search(m.group("attrs")))
+        and not _DDG_CONTAINER_CLASSES.isdisjoint(classes.group("classes").split())
+    ]
+    return [
+        (start, starts[i + 1] if i + 1 < len(starts) else len(page))
+        for i, start in enumerate(starts)
+    ]
+
+
 def _parse_ddg_page(page: str, max_results: int) -> list[dict]:
-    hits = _ddg_anchors(page, _DDG_RESULT_CLASS)
-    snippets = _ddg_anchors(page, _DDG_SNIPPET_CLASS)
+    # A snippet belongs to the result whose CONTAINER it sits in, wherever it
+    # appears inside that container: reordered markup must not attach text to
+    # the neighbouring URL, and a snippetless result yields no content rather
+    # than stealing one. Pages without recognisable containers fall back to
+    # one segment per title anchor.
+    segments = [
+        page[start:end] for start, end in _ddg_container_bounds(page)
+    ] or _ddg_anchor_segments(page)
     results: list[dict] = []
-    for i, (position, href, title) in enumerate(hits[:max_results]):
-        # A snippet belongs to the result whose block it sits in: after this
-        # result's anchor and before the next one. A result without a snippet
-        # therefore yields no content instead of stealing its neighbour's.
-        block_end = hits[i + 1][0] if i + 1 < len(hits) else len(page)
-        content = next(
-            (body for pos, _, body in snippets if position < pos < block_end),
-            None,
-        )
+    for segment in segments:
+        if len(results) >= max_results:
+            break
+        hits = _ddg_anchors(segment, _DDG_RESULT_CLASS)
+        if not hits:
+            continue
+        _, href, title = hits[0]
+        snippets = _ddg_anchors(segment, _DDG_SNIPPET_CLASS)
         results.append(
             {
                 "url": _decode_ddg_href(href),
                 "title": _strip_markup(title),
-                "content": _strip_markup(content) if content is not None else None,
+                "content": _strip_markup(snippets[0][2]) if snippets else None,
             }
         )
     return results
+
+
+def _ddg_anchor_segments(page: str) -> list[str]:
+    positions = [pos for pos, _, _ in _ddg_anchors(page, _DDG_RESULT_CLASS)]
+    return [
+        page[start : positions[i + 1] if i + 1 < len(positions) else len(page)]
+        for i, start in enumerate(positions)
+    ]
 
 
 def _decode_ddg_href(href: str) -> str:
