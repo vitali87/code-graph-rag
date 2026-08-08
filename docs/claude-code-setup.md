@@ -85,14 +85,14 @@ docker run -p 7687:7687 -p 7444:7444 memgraph/memgraph-platform
 **OpenAI** (recommended):
 ```bash
 --env CYPHER_PROVIDER=openai \
---env CYPHER_MODEL=gpt-4o-mini \
+--env CYPHER_MODEL=gpt-5.6-luna \
 --env CYPHER_API_KEY=sk-...
 ```
 
 **Google Gemini**:
 ```bash
 --env CYPHER_PROVIDER=google \
---env CYPHER_MODEL=gemini-3.6-flash \
+--env CYPHER_MODEL=gemini-3.5-flash-lite \
 --env CYPHER_API_KEY=...
 ```
 
@@ -110,14 +110,14 @@ Add separate named instances for different projects:
 claude mcp add --transport stdio code-graph-rag-backend \
   --env TARGET_REPO_PATH=/path/to/backend \
   --env CYPHER_PROVIDER=openai \
-  --env CYPHER_MODEL=gpt-4o-mini \
+  --env CYPHER_MODEL=gpt-5.6-luna \
   --env CYPHER_API_KEY=your-api-key \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 
 claude mcp add --transport stdio code-graph-rag-frontend \
   --env TARGET_REPO_PATH=/path/to/frontend \
   --env CYPHER_PROVIDER=openai \
-  --env CYPHER_MODEL=gpt-4o-mini \
+  --env CYPHER_MODEL=gpt-5.6-luna \
   --env CYPHER_API_KEY=your-api-key \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```

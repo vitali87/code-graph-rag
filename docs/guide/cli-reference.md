@@ -35,8 +35,8 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--clean` | **Destructive.** Delete every project from the shared graph and clear the selected repository's sync cache. With `--update-graph`, rebuild after deletion. Asks for confirmation when other projects would be destroyed. |
 | `-y`, `--yes` | Answer yes to destructive confirmations, such as the one `--clean` asks. Required when `--clean` runs non-interactively and other projects would be destroyed, or when the existing projects cannot be listed. |
 | `--batch-size` | Override Memgraph flush batch size |
-| `--orchestrator` | Specify provider:model for main operations (e.g., `anthropic:claude-opus-5`, `google:gemini-2.5-pro`, `ollama:llama3.2`) |
-| `--cypher` | Specify provider:model for graph queries (e.g., `anthropic:claude-haiku-4-5`, `google:gemini-2.5-flash`, `ollama:codellama`) |
+| `--orchestrator` | Specify provider:model for main operations (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.6-flash`, `ollama:qwen2.5-coder`) |
+| `--cypher` | Specify provider:model for graph queries (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.5-flash-lite`, `ollama:qwen2.5-coder`) |
 | `-o`, `--output` | Write the updated graph to a JSON path. Requires `--update-graph`. |
 
 ### `cgr export`

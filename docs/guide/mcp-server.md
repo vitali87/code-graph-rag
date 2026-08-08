@@ -14,7 +14,7 @@ Code-Graph-RAG can run as an MCP (Model Context Protocol) server, enabling seaml
 claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH=/absolute/path/to/your/project \
   --env CYPHER_PROVIDER=openai \
-  --env CYPHER_MODEL=gpt-4o \
+  --env CYPHER_MODEL=gpt-5.6-luna \
   --env CYPHER_API_KEY=your-api-key \
   -- code-graph-rag mcp-server
 ```
@@ -25,7 +25,7 @@ claude mcp add --transport stdio code-graph-rag \
 claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH=/absolute/path/to/your/project \
   --env CYPHER_PROVIDER=openai \
-  --env CYPHER_MODEL=gpt-4o \
+  --env CYPHER_MODEL=gpt-5.6-luna \
   --env CYPHER_API_KEY=your-api-key \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
@@ -38,7 +38,7 @@ cd /path/to/your/project
 claude mcp add --transport stdio code-graph-rag \
   --env TARGET_REPO_PATH="$(pwd)" \
   --env CYPHER_PROVIDER=google \
-  --env CYPHER_MODEL=gemini-2.5-flash \
+  --env CYPHER_MODEL=gemini-3.5-flash-lite \
   --env CYPHER_API_KEY=your-google-api-key \
   -- uv run --directory /absolute/path/to/code-graph-rag code-graph-rag mcp-server
 ```
@@ -89,7 +89,7 @@ cgr daemon up
 
     ```bash
     --env CYPHER_PROVIDER=openai \
-    --env CYPHER_MODEL=gpt-4o \
+    --env CYPHER_MODEL=gpt-5.6-luna \
     --env CYPHER_API_KEY=sk-...
     ```
 
@@ -97,7 +97,7 @@ cgr daemon up
 
     ```bash
     --env CYPHER_PROVIDER=google \
-    --env CYPHER_MODEL=gemini-2.5-flash \
+    --env CYPHER_MODEL=gemini-3.5-flash-lite \
     --env CYPHER_API_KEY=...
     ```
 
@@ -105,7 +105,7 @@ cgr daemon up
 
     ```bash
     --env CYPHER_PROVIDER=ollama \
-    --env CYPHER_MODEL=llama3.2
+    --env CYPHER_MODEL=qwen2.5-coder
     ```
 
 ## Multi-Repository Setup
@@ -116,14 +116,14 @@ Add separate named instances for different projects:
 claude mcp add --transport stdio code-graph-rag-backend \
   --env TARGET_REPO_PATH=/path/to/backend \
   --env CYPHER_PROVIDER=openai \
-  --env CYPHER_MODEL=gpt-4o \
+  --env CYPHER_MODEL=gpt-5.6-luna \
   --env CYPHER_API_KEY=your-api-key \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 
 claude mcp add --transport stdio code-graph-rag-frontend \
   --env TARGET_REPO_PATH=/path/to/frontend \
   --env CYPHER_PROVIDER=openai \
-  --env CYPHER_MODEL=gpt-4o \
+  --env CYPHER_MODEL=gpt-5.6-luna \
   --env CYPHER_API_KEY=your-api-key \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```

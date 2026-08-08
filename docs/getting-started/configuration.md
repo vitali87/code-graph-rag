@@ -24,11 +24,11 @@ CYPHER_ENDPOINT=http://localhost:11434/v1
 
 ```bash
 ORCHESTRATOR_PROVIDER=openai
-ORCHESTRATOR_MODEL=gpt-5.1
+ORCHESTRATOR_MODEL=gpt-5.6-terra
 ORCHESTRATOR_API_KEY=sk-your-openai-key
 
 CYPHER_PROVIDER=openai
-CYPHER_MODEL=gpt-5-mini
+CYPHER_MODEL=gpt-5.6-luna
 CYPHER_API_KEY=sk-your-openai-key
 ```
 
@@ -36,11 +36,11 @@ CYPHER_API_KEY=sk-your-openai-key
 
 ```bash
 ORCHESTRATOR_PROVIDER=google
-ORCHESTRATOR_MODEL=gemini-3.1-pro
+ORCHESTRATOR_MODEL=gemini-3.6-flash
 ORCHESTRATOR_API_KEY=your-google-api-key
 
 CYPHER_PROVIDER=google
-CYPHER_MODEL=gemini-3.6-flash
+CYPHER_MODEL=gemini-3.5-flash-lite
 CYPHER_API_KEY=your-google-api-key
 ```
 
@@ -50,7 +50,7 @@ Get your Google API key from [Google AI Studio](https://aistudio.google.com/app/
 
 ```bash
 ORCHESTRATOR_PROVIDER=google
-ORCHESTRATOR_MODEL=gemini-3.1-pro
+ORCHESTRATOR_MODEL=gemini-3.6-flash
 ORCHESTRATOR_API_KEY=your-google-api-key
 
 CYPHER_PROVIDER=ollama
@@ -82,7 +82,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | Variable | Description |
 |----------|-------------|
 | `ORCHESTRATOR_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
-| `ORCHESTRATOR_MODEL` | Model ID (e.g., `gemini-3.1-pro`, `gpt-5.1`, `llama4`, `claude-sonnet-5`) |
+| `ORCHESTRATOR_MODEL` | Model ID (e.g., `gemini-3.6-flash`, `gpt-5.6-terra`, `claude-sonnet-5`, `qwen2.5-coder`; `gemini-3.1-pro-preview` for a heavier option) |
 | `ORCHESTRATOR_API_KEY` | API key for the provider (if required) |
 | `ORCHESTRATOR_ENDPOINT` | Custom endpoint URL (if required) |
 | `ORCHESTRATOR_PROJECT_ID` | Google Cloud project ID (for Vertex AI) |
@@ -96,7 +96,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | Variable | Description |
 |----------|-------------|
 | `CYPHER_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
-| `CYPHER_MODEL` | Model ID (e.g., `gemini-3.6-flash`, `gpt-5-mini`, `qwen2.5-coder`) |
+| `CYPHER_MODEL` | Model ID (e.g., `gemini-3.5-flash-lite`, `gpt-5.6-luna`, `qwen2.5-coder`) |
 | `CYPHER_API_KEY` | API key for the provider (if required) |
 | `CYPHER_ENDPOINT` | Custom endpoint URL (if required) |
 | `CYPHER_PROJECT_ID` | Google Cloud project ID (for Vertex AI) |
@@ -125,7 +125,6 @@ curl -fsSL https://ollama.ai/install.sh | sh
 
 ollama pull qwen2.5-coder
 # Or try other models:
-# ollama pull llama4
 # ollama pull deepseek-r1
 ```
 
@@ -141,6 +140,6 @@ You can also configure providers programmatically via the Python SDK:
 ```python
 from cgr import settings
 
-settings.set_orchestrator("openai", "gpt-4o", api_key="sk-...")
-settings.set_cypher("google", "gemini-2.5-flash", api_key="your-key")
+settings.set_orchestrator("openai", "gpt-5.6-terra", api_key="sk-...")
+settings.set_cypher("google", "gemini-3.5-flash-lite", api_key="your-key")
 ```
