@@ -14,10 +14,11 @@ def _env_vars() -> dict[str, dict[str, object]]:
 
 class TestApiKeyEnvVarsNotUnconditionallyRequired:
     """isRequired can't express "required unless ollama"
-    (test_local_providers_skip_validation), so it must be False."""
+    (test_local_providers_skip_validation), so it must be False or absent
+    (the registry schema defaults isRequired to False)."""
 
     def test_orchestrator_api_key_not_marked_required(self) -> None:
-        assert _env_vars()["ORCHESTRATOR_API_KEY"]["isRequired"] is False
+        assert _env_vars()["ORCHESTRATOR_API_KEY"].get("isRequired", False) is False
 
     def test_cypher_api_key_not_marked_required(self) -> None:
-        assert _env_vars()["CYPHER_API_KEY"]["isRequired"] is False
+        assert _env_vars()["CYPHER_API_KEY"].get("isRequired", False) is False

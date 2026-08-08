@@ -4,6 +4,7 @@ from .ast_java import TS_GENERIC_TYPE
 from .ast_nodes import TS_IDENTIFIER, TS_SCOPED_IDENTIFIER, TS_TYPE_IDENTIFIER
 from .ast_scala import TS_GENERIC_FUNCTION
 from .core import KEYWORD_SELF, KEYWORD_SUPER
+from .graph import NodeLabel
 
 TS_RS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
 TS_RS_PRIMITIVE_TYPE = "primitive_type"
@@ -213,6 +214,19 @@ RS_MANIFEST_TARGET_TABLE_KEY = "target"
 # Crates shipped with the toolchain: external by construction, no
 # manifest needed to know a use head naming one is outside the project.
 RS_STDLIB_CRATES = frozenset({"std", "core", "alloc", "proc_macro"})
+
+# Node labels a Rust qn segment carries when it is a TYPE the caller sits
+# inside (an impl block), not an inline `mod`. An impl adds no module level,
+# so `super::` inside a method counts from the file module's parent (#1093).
+RS_TYPE_SCOPE_LABELS = frozenset(
+    {
+        NodeLabel.CLASS.value,
+        NodeLabel.INTERFACE.value,
+        NodeLabel.ENUM.value,
+        NodeLabel.TYPE.value,
+        NodeLabel.UNION.value,
+    }
+)
 
 # Traits the Rust prelude puts in scope with no `use`: an impl naming one
 # without importing it and without a same-named first-party declaration

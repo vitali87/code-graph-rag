@@ -15,7 +15,7 @@ from ..types_defs import (
     CppDefinitionSpan,
     DeferredCppInherit,
     DeferredInherit,
-    FunctionLocation,
+    FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     RustTraitImpl,
@@ -207,7 +207,7 @@ class DefinitionProcessor(
         # method node Pass 2 registered, so Pass-3 caller attribution reuses
         # the registered label/qn instead of re-deriving them structurally
         # (the walks diverge on preprocessor-distorted class bodies).
-        self.function_locations: dict[FunctionSpanKey, FunctionLocation] = {}
+        self.function_locations: FunctionLocations = FunctionLocations()
         # {rel path: [full line spans]} of every C/C++ function/method the
         # tree-sitter pass ingested; the hybrid C++ frontend's macro-use
         # CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
@@ -369,6 +369,13 @@ class DefinitionProcessor(
                         cache_entry[key] = combined_captures[key]
                 if cache_entry:
                     self._func_class_captures_cache[file_path] = cache_entry
+
+            # A reused updater's second run re-parses this module into a map
+            # still holding the first run's spans. The key is (module_qn,
+            # line, col), so a function renamed in place keeps its key and the
+            # first-claim guard would block the live registration, filing body
+            # `use` imports under the dead qn (issue #1019).
+            self.function_locations.drop_module(module_qn)
 
             self.import_processor.parse_imports(
                 root_node,

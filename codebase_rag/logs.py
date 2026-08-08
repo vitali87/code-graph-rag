@@ -283,6 +283,10 @@ MG_BATCH_ERROR = "!!! Batch Cypher Error: {error}"
 MG_BATCH_PARAMS_TRUNCATED = "    Params (first 10 of {count}): {params}..."
 MG_CLEANING_DB = "--- Cleaning database... ---"
 MG_DB_CLEANED = "--- Database cleaned. ---"
+MG_LIST_PROJECTS_FAILED = (
+    "Could not list existing projects before --clean: {error}. "
+    "Proceeding without the other-project confirmation."
+)
 MG_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
 MG_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
 MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."

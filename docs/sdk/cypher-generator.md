@@ -27,7 +27,15 @@ The Cypher generator uses the configured Cypher provider. Set it via environment
 ```bash
 CYPHER_PROVIDER=google
 CYPHER_MODEL=gemini-2.5-flash
-CYPHER_API_KEY=your-api-key
+CYPHER_API_KEY=your-google-api-key
+```
+
+Or with Anthropic:
+
+```bash
+CYPHER_PROVIDER=anthropic
+CYPHER_MODEL=claude-haiku-4-5
+CYPHER_API_KEY=sk-ant-your-anthropic-key
 ```
 
 Or programmatically:
@@ -35,13 +43,22 @@ Or programmatically:
 ```python
 from cgr import settings
 
-settings.set_cypher("google", "gemini-2.5-flash", api_key="your-key")
+settings.set_cypher("google", "gemini-2.5-flash", api_key="your-google-api-key")
+```
+
+Or with Anthropic:
+
+```python
+from cgr import settings
+
+settings.set_cypher("anthropic", "claude-haiku-4-5", api_key="sk-ant-your-key")
 ```
 
 ## Supported Providers
 
 | Provider | Example Models |
 |----------|---------------|
+| Anthropic | `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` |
 | Google | `gemini-2.5-pro`, `gemini-2.5-flash` |
 | OpenAI | `gpt-4o`, `gpt-4o-mini` |
 | Ollama | `codellama`, `llama3.2` |

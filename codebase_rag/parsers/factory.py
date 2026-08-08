@@ -79,6 +79,8 @@ class ProcessorFactory:
                 project_name=self.project_name,
                 ingestor=self.ingestor,
                 function_registry=self.function_registry,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
             )
         return self._import_processor
 
@@ -164,5 +166,6 @@ class ProcessorFactory:
                 rehydrated_definition_paths=(
                     self.definition_processor.rehydrated_definition_paths
                 ),
+                declared_module_qns=self.definition_processor.declared_module_qns,
             )
         return self._call_processor

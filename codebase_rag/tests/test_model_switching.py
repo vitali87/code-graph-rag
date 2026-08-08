@@ -173,7 +173,7 @@ class TestModelOverrideInAgentLoop:
         mock_response = MagicMock()
         mock_response.output = "Test response"
         mock_response.new_messages.return_value = []
-        mock_response.usage.return_value = RunUsage(input_tokens=0, output_tokens=0)
+        mock_response.usage = RunUsage(input_tokens=0, output_tokens=0)
         mock_agent.run = AsyncMock(return_value=mock_response)
 
         mock_model = MagicMock()
@@ -215,7 +215,7 @@ class TestModelOverrideInAgentLoop:
         mock_response = MagicMock()
         mock_response.output = "Test response"
         mock_response.new_messages.return_value = []
-        mock_response.usage.return_value = RunUsage(input_tokens=0, output_tokens=0)
+        mock_response.usage = RunUsage(input_tokens=0, output_tokens=0)
         mock_agent.run = AsyncMock(return_value=mock_response)
 
         tool_names = ConfirmationToolNames(
@@ -253,7 +253,7 @@ class TestAgentLoopUserPromptOnResume:
         response = MagicMock()
         response.output = output
         response.new_messages.return_value = []
-        response.usage.return_value = RunUsage(input_tokens=0, output_tokens=0)
+        response.usage = RunUsage(input_tokens=0, output_tokens=0)
         return response
 
     @staticmethod
