@@ -652,7 +652,7 @@ async def _run_agent_response_loop(
 
         message_history.extend(response.new_messages())
 
-        run_usage = response.usage()
+        run_usage = response.usage
         turn_input += run_usage.input_tokens
         turn_output += run_usage.output_tokens
         run_cost = _price_current_run(run_usage, model_override_config)

@@ -14,6 +14,7 @@ from pydantic_ai.providers.anthropic import (
 )
 from pydantic_ai.providers.azure import AzureProvider as PydanticAzureProvider
 from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
+from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
 from .. import constants as cs
@@ -104,10 +105,12 @@ class GoogleProvider(ModelProvider):
                     self.service_account_file,
                     scopes=[cs.GOOGLE_CLOUD_SCOPE],
                 )
-            provider = PydanticGoogleProvider(
-                project=self.project_id,
-                location=self.region,
-                credentials=credentials,
+            provider: PydanticGoogleProvider | GoogleCloudProvider = (
+                GoogleCloudProvider(
+                    project=self.project_id,
+                    location=self.region,
+                    credentials=credentials,
+                )
             )
         else:
             # api_key is guaranteed to be set by validate_config for gla type

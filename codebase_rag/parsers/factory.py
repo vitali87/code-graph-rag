@@ -79,6 +79,8 @@ class ProcessorFactory:
                 project_name=self.project_name,
                 ingestor=self.ingestor,
                 function_registry=self.function_registry,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
             )
         return self._import_processor
 
@@ -165,5 +167,6 @@ class ProcessorFactory:
                     self.definition_processor.rehydrated_definition_paths
                 ),
                 rust_function_modules=(self.definition_processor.rust_function_modules),
+                declared_module_qns=self.definition_processor.declared_module_qns,
             )
         return self._call_processor
