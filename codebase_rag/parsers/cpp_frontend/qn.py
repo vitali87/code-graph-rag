@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import constants as cs
-from ...utils.path_utils import should_skip_rel_file
+from ...utils.path_utils import should_keep_dir, should_skip_rel_file
 from ..cpp.utils import convert_operator_symbol_to_name
 from . import constants as fc
 
@@ -13,26 +13,47 @@ if TYPE_CHECKING:
     from clang.cindex import Cursor
 
 
-def _eligible_rel_files(repo_path: Path) -> list[str]:
+def _eligible_rel_files(
+    repo_path: Path,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> list[str]:
     # Reproduce GraphUpdater._collect_eligible_files' ordering exactly: an
-    # os.walk with dirnames AND filenames sorted, top-down. The module-qn
-    # disambiguation below depends on this order (the file processed LATER in a
-    # basename collision gets its extension appended), so it must match cgr's
-    # tree-sitter pass to produce identical qualified names.
+    # os.walk with dirnames AND filenames sorted, top-down, pruned and filtered
+    # with the same predicates. The module-qn disambiguation below depends on
+    # this order (the file processed LATER in a basename collision gets its
+    # extension appended), so it must match cgr's tree-sitter pass to produce
+    # identical qualified names. Walking a different file set is what makes the
+    # two disagree: an excluded file claiming a base qn pushes the indexed file
+    # onto the suffixed one, and a .cgrignore rescue the map never sees leaves
+    # an indexed file with no qn at all (issue #1099).
     repo_str = str(repo_path)
     repo_prefix_len = len(repo_str) + 1
+    state_filenames = cs.CGR_STATE_FILENAMES
     rels: list[str] = []
     for dirpath, dirnames, filenames in os.walk(repo_str):
         rel_dir = "" if len(dirpath) < repo_prefix_len else dirpath[repo_prefix_len:]
         rel_dir = rel_dir.replace(os.sep, "/")
         dir_parts = tuple(rel_dir.split("/")) if rel_dir else ()
         dir_prefix = f"{rel_dir}/" if rel_dir else ""
-        dirnames[:] = sorted(dirnames)
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if should_keep_dir(d, dir_prefix, exclude_paths, unignore_paths)
+        )
         for fname in sorted(filenames):
+            if fname in state_filenames:
+                continue
             dot = fname.rfind(".")
             suffix = fname[dot:] if dot != -1 else ""
             rel_path_str = f"{dir_prefix}{fname}"
-            if not should_skip_rel_file(rel_path_str, dir_parts, suffix):
+            if not should_skip_rel_file(
+                rel_path_str,
+                dir_parts,
+                suffix,
+                exclude_paths=exclude_paths,
+                unignore_paths=unignore_paths,
+            ):
                 rels.append(rel_path_str)
     return rels
 
@@ -46,13 +67,18 @@ def _base_module_qn(rel: str, project_name: str) -> str:
     return cs.SEPARATOR_DOT.join([project_name, *parts])
 
 
-def build_module_qn_map(repo_path: Path, project_name: str) -> dict[str, str]:
+def build_module_qn_map(
+    repo_path: Path,
+    project_name: str,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> dict[str, str]:
     # Mirror DefinitionProcessor._disambiguate_module_qn: a base qn is claimed
     # by the first file (in walk order); a later file colliding on that base qn
     # gets its extension appended (foo.cpp -> proj.foo, foo.h -> proj.foo.h).
     claimed: dict[str, str] = {}
     result: dict[str, str] = {}
-    for rel in _eligible_rel_files(repo_path):
+    for rel in _eligible_rel_files(repo_path, exclude_paths, unignore_paths):
         base = _base_module_qn(rel, project_name)
         existing = claimed.get(base)
         if existing is None or existing == rel:
@@ -73,10 +99,18 @@ class CppQnResolver:
     resolver), because the whole graph keys on them.
     """
 
-    def __init__(self, repo_path: Path, project_name: str) -> None:
+    def __init__(
+        self,
+        repo_path: Path,
+        project_name: str,
+        exclude_paths: frozenset[str] | None = None,
+        unignore_paths: frozenset[str] | None = None,
+    ) -> None:
         self.repo_path = repo_path.resolve()
         self.project_name = project_name
-        self._module_qn = build_module_qn_map(self.repo_path, project_name)
+        self._module_qn = build_module_qn_map(
+            self.repo_path, project_name, exclude_paths, unignore_paths
+        )
 
     def rel_path(self, absolute_file: str) -> str | None:
         try:
