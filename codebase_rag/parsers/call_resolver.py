@@ -1569,19 +1569,20 @@ class CallResolver:
         module_qn: str,
         caller_qn: str | None,
     ) -> tuple[tuple[str, str] | None, bool]:
-        # crate:: is chain-independent; self::/super:: resolve against the
-        # caller's innermost enclosing MOD chain. An impl block also nests
-        # below the file module but is NOT a mod: `super::` inside a method
-        # counts from the file module's parent exactly as it does in a free
-        # function, and the type registry is what tells the two apart
-        # (issue #1093). A genuine inline mod chain still stays with the
-        # ordinary fallbacks (issue #1086).
-        if object_path[0] != cs.RUST_CRATE_KEYWORD and self._rust_enclosing_mod_scopes(
-            module_qn, caller_qn
-        ):
-            return None, False
+        # crate:: is chain-independent; self::/super:: count from the caller's
+        # innermost enclosing MOD, which is the file module unless an inline
+        # `mod` block encloses the caller, in which case that block's qn IS
+        # the effective module the written path counts from (issue #1086) --
+        # the same "effective module" the use-declaration half already passes
+        # down. An impl block also nests below the file module but is NOT a
+        # mod and adds no level, and the type registry is what tells the two
+        # apart (issue #1093).
+        effective_qn = module_qn
+        if object_path[0] != cs.RUST_CRATE_KEYWORD:
+            if mod_scopes := self._rust_enclosing_mod_scopes(module_qn, caller_qn):
+                effective_qn = mod_scopes[0]
         base = self.import_processor._rewrite_rust_local_use_path(
-            cs.SEPARATOR_DOUBLE_COLON.join(object_path), module_qn
+            cs.SEPARATOR_DOUBLE_COLON.join(object_path), effective_qn
         )
         if cs.SEPARATOR_DOUBLE_COLON in base:
             return None, False
