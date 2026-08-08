@@ -107,6 +107,46 @@ class TestKeylessDefault:
         assert "https://docs.example.com/b" not in out
 
 
+DDG_PAGE_HOSTILE = """
+<div class="result">
+  <a href="https://docs.example.com/first" rel="nofollow"
+     class="result__a result--url-above">First</a>
+  <a class="snippet result__snippet" href="#">first snippet</a>
+</div>
+<div class="result">
+  <a rel="nofollow" class="result__a" href="https://docs.example.com/bare">Bare</a>
+</div>
+<div class="result">
+  <a rel="nofollow" class="result__a" href="https://docs.example.com/third">Third</a>
+  <a class="result__snippet" href="#">third snippet</a>
+</div>
+"""
+
+
+class TestDuckDuckGoParsing:
+    def test_href_first_and_multi_class_anchors_are_matched(
+        self, captured: dict
+    ) -> None:
+        """Attribute order and extra class tokens are valid HTML, not a miss."""
+        captured["_response"] = FakeResponse(text=DDG_PAGE_HOSTILE)
+        out = duckduckgo().search_web("q")
+        assert "https://docs.example.com/first" in out
+        assert "first snippet" in out
+
+    def test_snippetless_result_does_not_steal_the_next_snippet(
+        self, captured: dict
+    ) -> None:
+        """A missing snippet must yield no content for that result, never a
+        neighbour's text attributed to the wrong URL."""
+        captured["_response"] = FakeResponse(text=DDG_PAGE_HOSTILE)
+        out = duckduckgo().search_web("q")
+        blocks = out.split("\n\n")
+        bare = next(b for b in blocks if "https://docs.example.com/bare" in b)
+        third = next(b for b in blocks if "https://docs.example.com/third" in b)
+        assert "snippet" not in bare
+        assert "third snippet" in third
+
+
 class TestProviderSelection:
     def test_serpdive_is_selectable_with_a_key(self, captured: dict, monkeypatch):
         monkeypatch.setenv("WEB_SEARCH_PROVIDER", "serpdive")

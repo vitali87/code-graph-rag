@@ -24,13 +24,11 @@ _MAX_RESULTS = 10
 # Keyless default. DuckDuckGo's HTML endpoint needs no account, so the tool
 # works out of the box; richer backends are opt-in through WEB_SEARCH_PROVIDER.
 DUCKDUCKGO_URL = "https://html.duckduckgo.com/html/"
-_DDG_RESULT = re.compile(
-    r'<a[^>]+class="result__a"[^>]+href="(?P<href>[^"]+)"[^>]*>(?P<title>.*?)</a>',
-    re.DOTALL,
-)
-_DDG_SNIPPET = re.compile(
-    r'<a[^>]+class="result__snippet"[^>]*>(?P<snippet>.*?)</a>', re.DOTALL
-)
+_DDG_ANCHOR = re.compile(r"<a\s(?P<attrs>[^>]*)>(?P<body>.*?)</a>", re.DOTALL)
+_DDG_HREF = re.compile(r'href="(?P<href>[^"]*)"')
+_DDG_CLASS = re.compile(r'class="(?P<classes>[^"]*)"')
+_DDG_RESULT_CLASS = "result__a"
+_DDG_SNIPPET_CLASS = "result__snippet"
 _TAGS = re.compile(r"<[^>]+>")
 
 # Keys are created at https://serpdive.com/dashboard/keys (free, no card).
@@ -69,21 +67,7 @@ class DuckDuckGoBackend:
             )
             return te.WEB_SEARCH_FAILED.format(status=response.status_code)
 
-        snippets = [m.group("snippet") for m in _DDG_SNIPPET.finditer(response.text)]
-        results: list[dict] = []
-        for i, m in enumerate(_DDG_RESULT.finditer(response.text)):
-            if len(results) >= max_results:
-                break
-            results.append(
-                {
-                    "url": _decode_ddg_href(m.group("href")),
-                    "title": _strip_markup(m.group("title")),
-                    "content": (
-                        _strip_markup(snippets[i]) if i < len(snippets) else None
-                    ),
-                }
-            )
-        return results
+        return _parse_ddg_page(response.text, max_results)
 
 
 class SerpdiveBackend:
@@ -134,6 +118,43 @@ class SerpdiveBackend:
             logger.error(ls.WEB_SEARCH_BAD_SHAPE.format(query=query))
             return te.WEB_SEARCH_BAD_RESPONSE
         return results
+
+
+def _ddg_anchors(page: str, class_token: str) -> list[tuple[int, str, str]]:
+    # Anchor attributes appear in any order and class carries multiple tokens,
+    # so match the tag first and test class membership rather than relying on
+    # one attribute layout.
+    anchors: list[tuple[int, str, str]] = []
+    for m in _DDG_ANCHOR.finditer(page):
+        classes = _DDG_CLASS.search(m.group("attrs"))
+        if classes is None or class_token not in classes.group("classes").split():
+            continue
+        href = _DDG_HREF.search(m.group("attrs"))
+        anchors.append((m.start(), href.group("href") if href else "", m.group("body")))
+    return anchors
+
+
+def _parse_ddg_page(page: str, max_results: int) -> list[dict]:
+    hits = _ddg_anchors(page, _DDG_RESULT_CLASS)
+    snippets = _ddg_anchors(page, _DDG_SNIPPET_CLASS)
+    results: list[dict] = []
+    for i, (position, href, title) in enumerate(hits[:max_results]):
+        # A snippet belongs to the result whose block it sits in: after this
+        # result's anchor and before the next one. A result without a snippet
+        # therefore yields no content instead of stealing its neighbour's.
+        block_end = hits[i + 1][0] if i + 1 < len(hits) else len(page)
+        content = next(
+            (body for pos, _, body in snippets if position < pos < block_end),
+            None,
+        )
+        results.append(
+            {
+                "url": _decode_ddg_href(href),
+                "title": _strip_markup(title),
+                "content": _strip_markup(content) if content is not None else None,
+            }
+        )
+    return results
 
 
 def _decode_ddg_href(href: str) -> str:
