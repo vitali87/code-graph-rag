@@ -83,12 +83,16 @@ def uv_run_vectors(source: str) -> list[list[str]]:
     Parsed per call rather than grepped over the whole file: one guarded
     invocation must not vouch for a second bare one sitting beside it.
     """
+    tree = ast.parse(source)
+    modules, direct = _subprocess_aliases(tree)
     vectors: list[list[str]] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(tree):
         # Only the argv of an actual subprocess launch counts. Matching every
         # list literal would flag an unrelated `EXAMPLE = ["uv", "run", ...]`
         # constant that never runs anything.
-        if not isinstance(node, ast.Call) or not _is_subprocess_launch(node.func):
+        if not isinstance(node, ast.Call) or not _is_subprocess_launch(
+            node.func, modules, direct
+        ):
             continue
         for argument in [*node.args, *(kw.value for kw in node.keywords)]:
             if not isinstance(argument, ast.List | ast.Tuple):
@@ -103,12 +107,38 @@ def uv_run_vectors(source: str) -> list[list[str]]:
     return vectors
 
 
-def _is_subprocess_launch(func: ast.expr) -> bool:
+LAUNCHERS = frozenset({"run", "call", "check_call", "check_output", "Popen"})
+
+
+def _subprocess_aliases(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """Names bound to `subprocess`, and launcher names imported from it.
+
+    A method merely *called* `run` proves nothing — `runner.run([...])` is not
+    a child process. Only a callee that resolves back to `subprocess` counts.
+    """
+    modules: set[str] = set()
+    direct: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "subprocess":
+                    modules.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            for alias in node.names:
+                if alias.name in LAUNCHERS:
+                    direct.add(alias.asname or alias.name)
+    return modules, direct
+
+
+def _is_subprocess_launch(func: ast.expr, modules: set[str], direct: set[str]) -> bool:
     """Whether a call expression launches a child process."""
-    launchers = {"run", "call", "check_call", "check_output", "Popen"}
     if isinstance(func, ast.Attribute):
-        return func.attr in launchers
-    return isinstance(func, ast.Name) and func.id in launchers
+        return (
+            func.attr in LAUNCHERS
+            and isinstance(func.value, ast.Name)
+            and func.value.id in modules
+        )
+    return isinstance(func, ast.Name) and func.id in direct
 
 
 def unguarded_uv_run_vectors(source: str) -> list[list[str]]:
@@ -138,8 +168,8 @@ def test_hook_scripts_do_not_shell_out_to_a_bare_uv_run() -> None:
 
 
 class TestNestedInvocationDetection:
-    GUARDED = 'subprocess.run(["uv", "run", "--frozen", "--no-sync", "python", "x.py"])'
-    BARE = 'subprocess.run(["uv", "run", "python", "y.py"])'
+    GUARDED = 'import subprocess\nsubprocess.run(["uv", "run", "--frozen", "--no-sync", "python", "x.py"])'
+    BARE = 'import subprocess\nsubprocess.run(["uv", "run", "python", "y.py"])'
 
     def test_a_guarded_invocation_alone_passes(self) -> None:
         assert unguarded_uv_run_vectors(self.GUARDED) == []
@@ -161,11 +191,31 @@ class TestNestedInvocationDetection:
 
     def test_a_bare_launch_is_caught_through_any_subprocess_helper(self) -> None:
         for call in ("subprocess.call", "subprocess.check_call", "subprocess.Popen"):
-            source = f'{call}(["uv", "run", "python", "y.py"])'
+            source = f'import subprocess\n{call}(["uv", "run", "python", "y.py"])'
 
             assert unguarded_uv_run_vectors(source), call
 
+    def test_an_unrelated_run_method_is_not_a_launch(self) -> None:
+        # `runner.run(...)` is not a child process just because the method is
+        # named `run`; the receiver has to resolve to subprocess.
+        source = 'runner.run(["uv", "run", "python", "y.py"])'
+
+        assert unguarded_uv_run_vectors(source) == []
+
+    def test_a_module_alias_still_resolves(self) -> None:
+        source = 'import subprocess as sp\nsp.run(["uv", "run", "python", "y.py"])'
+
+        assert unguarded_uv_run_vectors(source)
+
+    def test_a_direct_import_still_resolves(self) -> None:
+        source = 'from subprocess import run\nrun(["uv", "run", "python", "y.py"])'
+
+        assert unguarded_uv_run_vectors(source)
+
     def test_flags_after_the_command_do_not_count(self) -> None:
-        source = 'subprocess.run(["uv", "run", "python", "--frozen", "--no-sync"])'
+        source = (
+            "import subprocess\n"
+            'subprocess.run(["uv", "run", "python", "--frozen", "--no-sync"])'
+        )
 
         assert unguarded_uv_run_vectors(source)
