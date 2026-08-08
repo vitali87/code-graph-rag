@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, ItemsView, KeysView, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    ItemsView,
+    KeysView,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -593,6 +600,41 @@ class FunctionLocation(NamedTuple):
     # node registered for `exports.f = function`), while a generated record
     # keeps the historical bubble-to-module attribution.
     is_named: bool = True
+
+
+class FunctionLocations(dict[FunctionSpanKey, FunctionLocation]):
+    """`function_locations` that knows which module each span came from.
+
+    A reused GraphUpdater re-parses a module into a map still holding the
+    previous run's spans, and the key is (module_qn, start_line, start_col):
+    a function renamed in place keeps its key, so the stale record survives
+    and the first-claim guard blocks the live registration (issue #1019).
+
+    Nine call sites across the definition and class passes write into this
+    map, so the module index is maintained by the map itself rather than at
+    each of them, where the next new write site would silently miss it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._by_module: dict[str, set[FunctionSpanKey]] = {}
+
+    def __setitem__(self, key: FunctionSpanKey, value: FunctionLocation) -> None:
+        super().__setitem__(key, value)
+        self._by_module.setdefault(key[0], set()).add(key)
+
+    def update(  # type: ignore[override]
+        self, other: Mapping[FunctionSpanKey, FunctionLocation]
+    ) -> None:
+        # dict.update bypasses __setitem__ on a subclass, which would leave
+        # the index blind to whatever it wrote.
+        for key, value in other.items():
+            self[key] = value
+
+    def drop_module(self, module_qn: str) -> None:
+        """Forget every span record a module contributed, before it re-parses."""
+        for key in self._by_module.pop(module_qn, ()):
+            super().pop(key, None)
 
 
 class CppDefinitionSpan(NamedTuple):

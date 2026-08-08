@@ -17,6 +17,7 @@ from ..types_defs import (
     DeferredCppInherit,
     DeferredParentLink,
     FunctionLocation,
+    FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     NodeType,
@@ -236,7 +237,7 @@ class FunctionIngestMixin:
     method_return_types: dict[str, str]
     go_function_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
-    function_locations: dict[FunctionSpanKey, FunctionLocation]
+    function_locations: FunctionLocations
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     macro_qns: set[str]
     _deferred_js_anonymous: list[_DeferredRegistration]
