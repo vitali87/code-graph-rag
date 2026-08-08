@@ -146,8 +146,13 @@ HELP_MAX_WAIT = (
 
 HELP_UPDATE_GRAPH = "Parse the repository and sync its graph before continuing."
 HELP_CLEAN_DB = (
-    "Delete every project from the shared graph and clear the selected repository's "
-    "sync cache. With --update-graph, rebuild after deletion."
+    "DESTRUCTIVE: Delete every project from the shared graph and clear the selected "
+    "repository's sync cache. With --update-graph, rebuild after deletion. Asks for "
+    "confirmation when other projects would be destroyed; use --yes to skip the prompt."
+)
+HELP_ASSUME_YES = (
+    "Answer yes to destructive confirmations, such as the one --clean asks before "
+    "deleting other projects from the shared graph."
 )
 HELP_OUTPUT_GRAPH = "Write the updated graph to PATH as JSON. Requires --update-graph."
 HELP_OUTPUT_PATH = "Write the exported graph to PATH."

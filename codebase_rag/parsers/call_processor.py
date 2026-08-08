@@ -919,6 +919,7 @@ class CallProcessor:
         ast_cache: ASTCacheProtocol | None = None,
         go_package_names: Mapping[str, str] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
+        declared_module_qns: set[str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -957,6 +958,7 @@ class CallProcessor:
             type_aliases=type_aliases,
             interface_implementers=interface_implementers,
             rehydrated_definition_paths=rehydrated_definition_paths,
+            declared_module_qns=declared_module_qns,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
@@ -3695,7 +3697,20 @@ class CallProcessor:
                 callee_type = cs.NodeLabel.METHOD
                 callee_qn = init_qn
 
-            for target_qn in resolver.function_registry.variants(callee_qn):
+            targets = resolver.function_registry.variants(callee_qn)
+            if len(
+                targets
+            ) > 1 and not resolver.import_processor.rust_block_item_qns.isdisjoint(
+                targets
+            ):
+                # The dedup bucket holds a Rust block-local item beside an
+                # item of another scope. Those are different functions
+                # sharing a natural name, not spellings of one callee, and
+                # the span-gated probe already chose between them, so the
+                # hedge that fans an ambiguous callee onto its twins would
+                # cross the block boundary here (issue #1061).
+                targets = [callee_qn]
+            for target_qn in targets:
                 # A duplicate-suffixed variant may be a DIFFERENT kind of
                 # node (a TS namespace merged onto a function registers as
                 # a class); only callable variants take a CALLS edge, and

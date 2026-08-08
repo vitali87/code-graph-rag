@@ -1555,7 +1555,7 @@ def test_nested_fn_body_use_applies_to_nested_fn(
     assert (f"{base}.foo.inner", f"{base}.foo.helper") not in calls, calls
 
 
-def test_duplicate_method_qn_does_not_steal_body_use(
+def test_duplicate_method_qn_owns_its_body_use_and_its_calls(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # Two traits implemented for the SAME type both name their method `run`,
@@ -1581,10 +1581,11 @@ def test_duplicate_method_qn_does_not_steal_body_use(
                 "impl Beta for S {\n"
                 "    fn run(&self) -> u32 {\n"
                 "        use crate::alpha::other;\n"
-                "        other()\n"
+                "        other() + beta_only()\n"
                 "    }\n"
                 "}\n\n"
                 "pub fn other() -> u32 { 1 }\n"
+                "pub fn beta_only() -> u32 { 3 }\n"
             ),
         },
     )
@@ -1594,9 +1595,17 @@ def test_duplicate_method_qn_does_not_steal_body_use(
     base = "rs_dup_method_use.src"
     assert (f"{base}.foo.S.run", f"{base}.foo.other") in calls, calls
     assert (f"{base}.foo.S.run", f"{base}.alpha.other") not in calls, calls
-    # Beta::run's use is keyed on its dedup variant, ready for the caller
-    # side: the method call pass still attributes Beta::run's calls to the
-    # natural qn (issue #1014), so no @13 caller edge exists yet.
+    # And the caller side keys on the variant too (issue #1014): both methods'
+    # calls used to be attributed to the natural qn, leaving the variant with
+    # no outgoing edge at all. `beta_only` is called with no `use` in sight, so
+    # it pins caller attribution itself rather than the scope-import lookup
+    # that `other` alone would resolve through.
+    assert (f"{base}.foo.S.run@13", f"{base}.alpha.other") in calls, calls
+    assert (f"{base}.foo.S.run@13", f"{base}.foo.beta_only") in calls, calls
+    assert (f"{base}.foo.S.run", f"{base}.foo.beta_only") not in calls, calls
+    # Attribution moves calls, it does not copy them: a variant that collected
+    # BOTH methods' calls would satisfy every assertion above.
+    assert (f"{base}.foo.S.run@13", f"{base}.foo.other") not in calls, calls
     scope_uses = updater.factory.import_processor.rust_fn_scope_imports.get(
         f"{base}.foo.S.run@13"
     )
@@ -4223,6 +4232,9 @@ def test_inner_block_own_item_beats_block_use_at_block_level(
     base = "rs_inner_block_item_a.src"
     assert not any(dst == f"{base}.gamma.g" for _src, dst in calls), calls
     assert any(dst.startswith(f"{base}.a.g@") for _src, dst in calls), calls
+    # And ONLY the block's item: the module's own `g` is a different
+    # function that happens to share the natural qn (issue #1061).
+    assert not any(dst == f"{base}.a.g" for _src, dst in calls), calls
 
 
 def test_inner_let_block_item_beats_block_use_in_nested_fn(

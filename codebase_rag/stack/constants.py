@@ -51,3 +51,14 @@ MSG_RENDERING_COMPOSE = "Rendering compose file to {path}"
 MSG_WAITING_FOR_HEALTH = "Waiting for {service} on {host}:{port}..."
 
 PACKAGE_COMPOSE_RELATIVE = "../docker-compose.yaml"
+
+# The substitution that pins published ports to a host address. Its absence
+# marks a compose file rendered before the loopback default (issue #1012).
+COMPOSE_BIND_HOST_VAR = "CGR_STACK_BIND_HOST"
+WARN_COMPOSE_PORTS_PUBLIC = (
+    "The compose file at {path} publishes these ports on ALL interfaces, so "
+    "any host on your network can read the code graph from these "
+    "unauthenticated services: {mappings}. Delete the file and run "
+    "'cgr daemon up' again to re-render it with the loopback bind, or add a "
+    "'127.0.0.1:' prefix to each published port listed above."
+)

@@ -23,6 +23,7 @@ from .js_ts import JsTypeInferenceEngine
 from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
 from .rs import RustTypeInferenceEngine
+from .rs import utils as rs_utils
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
@@ -558,13 +559,15 @@ class TypeInferenceEngine:
         # later `cmd.apply()` resolves to the real type, not the ambiguous name-only
         # trie fallback. Only fills names not already typed.
         bounds: dict[str, list[str]] | None = None
-        for name, segments in self.rust_type_inference.collect_call_var_bindings(
-            caller_node
-        ):
+        for (
+            name,
+            segments,
+            call_point,
+        ) in self.rust_type_inference.collect_call_var_bindings(caller_node):
             if name in var_types:
                 continue
             if return_type := self._infer_rust_call_return_type(
-                segments, module_qn, var_types
+                segments, module_qn, var_types, call_point
             ):
                 var_types[name] = return_type
                 if len(segments) == 2 and segments[0] == cs.KEYWORD_SELF:
@@ -580,7 +583,11 @@ class TypeInferenceEngine:
                     self._apply_rust_generic_bound(bounds, module_qn, var_types, name)
 
     def _infer_rust_call_return_type(
-        self, segments: list[str], module_qn: str, var_types: dict[str, str]
+        self,
+        segments: list[str],
+        module_qn: str,
+        var_types: dict[str, str],
+        call_point: int | None,
     ) -> str | None:
         # Walk a flattened chain to the type it yields:
         #   ['Command','from_frame']  -> base type Command, method from_frame
@@ -591,7 +598,9 @@ class TypeInferenceEngine:
         # field) -> field-type -> method-return -> identity.
         if not segments:
             return None
-        current_type = self._rust_chain_base_type(segments, module_qn, var_types)
+        current_type = self._rust_chain_base_type(
+            segments, module_qn, var_types, call_point
+        )
         if current_type is None:
             return None
         # Inner type of the guard-wrapped field just hopped through, pending a guard
@@ -623,14 +632,18 @@ class TypeInferenceEngine:
         return current_type
 
     def _rust_chain_base_type(
-        self, segments: list[str], module_qn: str, var_types: dict[str, str]
+        self,
+        segments: list[str],
+        module_qn: str,
+        var_types: dict[str, str],
+        call_point: int | None,
     ) -> str | None:
         # Base of a flattened chain: a typed local (self/var) when present in
         # var_types, else a free fn called by bare name (`let s = make()`), else the
         # segment itself as a type name, useful only when there are hops to walk, so
         # a bare unresolved name types nothing.
         base = var_types.get(segments[0]) or self._rust_free_fn_return_type(
-            segments[0], module_qn
+            segments[0], module_qn, call_point
         )
         if base is not None:
             return base
@@ -666,12 +679,35 @@ class TypeInferenceEngine:
             )
         return self._resolve_class_name(type_name, module_qn) or type_name
 
-    def _rust_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
+    def _rust_free_fn_return_type(
+        self, name: str, module_qn: str, call_point: int | None
+    ) -> str | None:
         # Return type of a free fn called by bare name: same-module first, then a
         # `use`-imported fn resolved through its raw `::` path. A type-name base
         # (`Maker::make`) misses here because a bare type is never a recorded key
         # (fns and types share a name only across Rust's separate fn/type namespaces,
         # which idiomatic code never does).
+        # A body-local fn shadows the module's own for the block it is written
+        # in, and it registers under a `@<line>` variant when the module item
+        # owns the natural qn, so the site decides which of the two is meant
+        # (issue #1069).
+        if shadowing := rs_utils.block_item_at(
+            self.import_processor.rust_block_items.get(module_qn, ()),
+            self.function_registry,
+            name,
+            call_point,
+        ):
+            # The site names the block item, so the module item of that name is
+            # not what is meant, whatever comes of the block item's own return.
+            # A unit or tuple return records nothing, and a generic return
+            # records a type parameter that resolves to no class here; either
+            # way the answer is no type rather than the module item's, since
+            # the known-external guard would delete the edge the trie fallback
+            # still finds and an unresolvable binding is worse than none.
+            shadow_type = self.method_return_types.get(shadowing)
+            if shadow_type and self._rust_binding_type_resolves(shadow_type, module_qn):
+                return shadow_type
+            return None
         if return_type := self.method_return_types.get(
             f"{module_qn}{cs.SEPARATOR_DOT}{name}"
         ):

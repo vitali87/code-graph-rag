@@ -3,9 +3,10 @@ import os
 import posixpath
 import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from functools import lru_cache
 from pathlib import Path
+from typing import NamedTuple
 
 from loguru import logger
 from tree_sitter import Node
@@ -21,6 +22,7 @@ from ..types_defs import (
     FunctionSpanKey,
     LanguageQueries,
 )
+from ..utils.path_utils import should_keep_dir, should_skip_rel_file
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import dart_extract_uri, dart_local_name, dart_resolve_import
 from .go import discover_go_module_paths, resolve_go_import_path
@@ -55,7 +57,7 @@ _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
 # commented-out declaration nor one hidden behind a string literal containing
 # a comment marker can flip the crate attribution.
 _RS_MOD_DECL_PATTERN = re.compile(
-    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
+    r"^[^\S\n]*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
     r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
     re.MULTILINE,
 )
@@ -65,8 +67,22 @@ _RS_MOD_DECL_PATTERN = re.compile(
 # importing module. `mod` here catches INLINE `mod x { ... }` blocks, which
 # declare a name in the entry module but pull no file into the crate (the
 # bodyless pattern above is what assigns files).
+# A `#[path = "..."]` attribute among a bodyless declaration's attributes
+# names the file backing it, which is where the qn scheme keys the module.
+# Only the plain string form is read: a cfg_attr wrapper is conditional and
+# no single target speaks for it (issue #1035).
+_RS_MOD_REDIRECT_PATTERN = re.compile(
+    r"^[^\S\n]*((?:#\[[^\]\n]*\]\s*)*)"
+    r"(?:pub\s*(?:\([^)]*\))?\s+)?"
+    r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
+    re.MULTILINE,
+)
+_RS_PATH_ATTRIBUTE_PATTERN = re.compile(r'#\[\s*path\s*=\s*"([^"\n]+)"\s*\]')
+# The opening of a path attribute, matched against the code the lexer has
+# already emitted, so the literal that follows can be kept verbatim.
+_RS_PATH_ATTRIBUTE_OPEN = re.compile(r"#\[\s*path\s*=\s*$")
 _RS_ITEM_DECL_PATTERN = re.compile(
-    r"^\s*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
+    r"^[^\S\n]*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
     r'(?:(?:unsafe|async|const|extern\s+"[^"]*")\s+)*'
     r"(?:trait|struct|enum|fn|type|const|static|union|mod)"
     r"\s+(?:mut\s+)?(?:r#)?([A-Za-z_][A-Za-z0-9_]*)",
@@ -87,6 +103,13 @@ def _rs_strip_comments_and_strings(source: str) -> str:
     A regex cannot do this: block comments NEST, and string literals may
     contain comment markers (`const P: &str = "/*";`) or newline-separated
     text that would fake a `mod x;` line.
+
+    The one literal kept is a `#[path = "..."]` value, which names the file
+    backing a mod declaration and so has to survive for the declaration
+    scan to read it (issue #1035). Keeping it is safe precisely because
+    this lexer decides it: the opening `#[path =` is matched in code the
+    lexer has already walked, so no comment or outer string can present
+    one.
     """
     out: list[str] = []
     i, n = 0, len(source)
@@ -125,6 +148,7 @@ def _rs_strip_comments_and_strings(source: str) -> str:
                 out.append('""')
                 continue
         if c == '"':
+            start = i
             i += 1
             while i < n:
                 if source[i] == "\\":
@@ -134,7 +158,9 @@ def _rs_strip_comments_and_strings(source: str) -> str:
                     i += 1
                     break
                 i += 1
-            out.append('""')
+            literal = source[start:i]
+            keep = _RS_PATH_ATTRIBUTE_OPEN.search("".join(out[-80:])) is not None
+            out.append(literal if keep and "\n" not in literal else '""')
             continue
         if c == "'":
             # A char literal ('x', '\n', '\u{7f}'); a lifetime ('a) has no
@@ -162,6 +188,40 @@ def _rs_strip_comments_and_strings(source: str) -> str:
         out.append(c)
         i += 1
     return "".join(out)
+
+
+class RustEntryDecls(NamedTuple):
+    """What an entry file's top level declares, for crate attribution."""
+
+    mods: set[str]
+    items: set[str]
+    # Declared name -> the file path its `#[path]` attribute names, kept
+    # separate because the qn scheme keys the module by that FILE while
+    # every crate path names it by the declared name (issue #1035).
+    redirects: dict[str, str]
+
+
+def _rs_entry_decls_of(top_level: str) -> RustEntryDecls:
+    # One name may be declared once per cfg (`#[cfg(unix)] mod platform;`
+    # beside its windows twin), each redirected somewhere else. Exactly one
+    # of them compiles and nothing here knows which, so disagreeing targets
+    # are ambiguous and the name keeps no redirect at all.
+    redirects: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for attributes, name in _RS_MOD_REDIRECT_PATTERN.findall(top_level):
+        match = _RS_PATH_ATTRIBUTE_PATTERN.search(attributes)
+        target = match.group(1) if match else None
+        if name in redirects and redirects[name] != target:
+            ambiguous.add(name)
+        elif target is not None:
+            redirects[name] = target
+    for name in ambiguous:
+        redirects.pop(name, None)
+    return RustEntryDecls(
+        set(_RS_MOD_DECL_PATTERN.findall(top_level)),
+        set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
+        redirects,
+    )
 
 
 def _rs_top_level_only(stripped: str) -> str:
@@ -380,6 +440,8 @@ class ImportProcessor:
         "project_name",
         "ingestor",
         "function_registry",
+        "exclude_paths",
+        "unignore_paths",
         "import_mapping",
         "commonjs_direct_exports",
         "conditional_imports",
@@ -399,6 +461,8 @@ class ImportProcessor:
         "_cpp_declaration_mappings",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
+        "_rust_module_mod_decls",
+        "_rust_redirect_parents",
         "_rust_explicit_targets",
         "_rust_auto_build_flags",
         "_rust_workspace_crates",
@@ -407,6 +471,8 @@ class ImportProcessor:
         "_rust_pending_fn_scope_uses",
         "rust_fn_scope_imports",
         "rust_fn_scope_mod_imports",
+        "rust_block_items",
+        "rust_block_item_qns",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "_rust_fn_scope_keys",
@@ -421,11 +487,17 @@ class ImportProcessor:
         project_name: str,
         ingestor: IngestorProtocol | None = None,
         function_registry: FunctionRegistryTrieProtocol | None = None,
+        exclude_paths: frozenset[str] | None = None,
+        unignore_paths: frozenset[str] | None = None,
     ) -> None:
         self.repo_path = repo_path
         self.project_name = project_name
         self.ingestor = ingestor
         self.function_registry = function_registry
+        # The same sets the indexer walks with, so the redirect sweep sees
+        # exactly the files the graph holds (issue #1088).
+        self.exclude_paths = exclude_paths
+        self.unignore_paths = unignore_paths
         self.import_mapping: dict[str, dict[str, str]] = {}
         # CommonJS modules whose ENTIRE export is one function
         # (`module.exports = function (...) {...}`): module qn -> the
@@ -449,8 +521,19 @@ class ImportProcessor:
         # reset_rust_path_caches so watch re-runs re-observe the filesystem.
         self._rust_dir_listing: dict[str, frozenset[str]] = {}
         self._rust_entry_mod_decls: dict[
-            tuple[str, ...], dict[str, tuple[set[str], set[str]]]
+            tuple[str, ...], dict[str, RustEntryDecls]
         ] = {}
+        # Same, for an ORDINARY module file: its own declarations, plus the
+        # directory its `#[path]` targets count from. Kept apart from the
+        # entry map, whose every stem is a crate root candidate (issue #1065).
+        self._rust_module_mod_decls: dict[
+            tuple[tuple[str, ...], bool, bool],
+            tuple[RustEntryDecls, list[str]] | None,
+        ] = {}
+        # `#[path]` target qn -> the module that DECLARES it, for the `super::`
+        # climb inside such a file (issue #1083). Lazy: a file cannot say who
+        # declares it, so filling this at all means sweeping the repository.
+        self._rust_redirect_parents: dict[str, str] | None = None
         # Explicit Cargo target entry paths per package dir ([[bin]]/[lib]/
         # [[example]]/[[test]]/[[bench]] `path` overrides): such entries
         # root their own crates wherever they sit, unlike auto-targets
@@ -499,6 +582,15 @@ class ImportProcessor:
         # resolver consults it only after local items, unlike the body-use
         # map above which shadows everything.
         self.rust_fn_scope_mod_imports: dict[str, dict[str, str]] = {}
+        # Every plain block in a file that declares function items directly,
+        # by span, each name mapped to the REGISTERED qn of the item it
+        # declares. Blocks nest inside functions and never overlap, so the
+        # innermost block holding a call site is the scope that binds these
+        # names, whatever else in the module answers to them (issue #1026),
+        # and the companion set of those qns is what keeps a name lookup
+        # from reaching them from outside their block (issue #1061).
+        self.rust_block_items: dict[str, list[tuple[int, int, dict[str, str]]]] = {}
+        self.rust_block_item_qns: set[str] = set()
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -519,7 +611,7 @@ class ImportProcessor:
                     dict[str, str],
                     list[tuple[int, int]],
                     list[tuple[int, int]],
-                    list[tuple[int, int, frozenset[str]]],
+                    list[tuple[int, int, dict[str, tuple[int, int]]]],
                 ]
             ],
         ] = {}
@@ -1505,7 +1597,7 @@ class ImportProcessor:
             # declares that module (cargo-verified: src/cli/sub.rs builds
             # into the lib when lib.rs declares `mod cli;`).
             return top, True
-        declaring = [stem for stem, (mods, _items) in decls.items() if top in mods]
+        declaring = [stem for stem, entry in decls.items() if top in entry.mods]
         if declaring:
             return declaring[0], len(declaring) == 1
         for stem in ("lib", "main"):
@@ -1541,8 +1633,8 @@ class ImportProcessor:
             # hole exactly like an unreadable lib.rs and does.
             claiming = {
                 stem
-                for stem, (mods, items) in decls.items()
-                if mods or (items - {"main"})
+                for stem, entry in decls.items()
+                if entry.mods or (entry.items - {"main"})
             }
             if (
                 not build_hole
@@ -1564,10 +1656,8 @@ class ImportProcessor:
                 return stem, True
         return "lib", False
 
-    def _rust_entry_decls(
-        self, dir_parts: list[str]
-    ) -> dict[str, tuple[set[str], set[str]]]:
-        """Per entry stem: (mod declarations, top-level item names)."""
+    def _rust_entry_decls(self, dir_parts: list[str]) -> dict[str, RustEntryDecls]:
+        """Per entry stem: mod declarations, item names, `#[path]` targets."""
         key = tuple(dir_parts)
         decls = self._rust_entry_mod_decls.setdefault(key, {})
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
@@ -1605,11 +1695,258 @@ class ImportProcessor:
                 # tie-break's real but wrong answer.
                 continue
             top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
-            decls[stem] = (
-                set(_RS_MOD_DECL_PATTERN.findall(top_level)),
-                set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
-            )
+            decls[stem] = _rs_entry_decls_of(top_level)
         return decls
+
+    def _rust_module_decls(
+        self,
+        module_parts: list[str],
+        dir_backed: bool = False,
+        want_mods: bool = False,
+    ) -> tuple[RustEntryDecls, list[str]] | None:
+        """Declarations of the file backing a module, and its `#[path]` base.
+
+        `src/engine.rs` and `src/engine/mod.rs` both back `src.engine`, and a
+        redirect written in either counts from the directory the file sits in.
+        Declaring both is a rustc error, so either may be preferred, EXCEPT
+        when the caller already knows the module is directory-backed. None
+        when no file backs the module: an inline `mod`, or a segment that was
+        never a module at all. Only redirects survive the prescan below, so a
+        caller reading any other field must ask for the full scan.
+        """
+        key = (tuple(module_parts), dir_backed, want_mods)
+        if key in self._rust_module_mod_decls:
+            return self._rust_module_mod_decls[key]
+        if not module_parts:
+            return None
+        parent = module_parts[:-1]
+        if (
+            not dir_backed
+            and f"{module_parts[-1]}{cs.EXT_RS}"
+            in self._rust_dir_entries(self.repo_path.joinpath(*parent))
+        ):
+            path, base = (
+                self.repo_path.joinpath(*parent, f"{module_parts[-1]}{cs.EXT_RS}"),
+                parent,
+            )
+        elif cs.MOD_RS in self._rust_dir_entries(
+            self.repo_path.joinpath(*module_parts)
+        ):
+            path, base = (
+                self.repo_path.joinpath(*module_parts, cs.MOD_RS),
+                module_parts,
+            )
+        else:
+            self._rust_module_mod_decls[key] = None
+            return None
+        try:
+            source = path.read_text(encoding=cs.RS_ENCODING_UTF8, errors="ignore")
+        except OSError:
+            # Uncached, so the next access retries: a storm's transient
+            # absence must not bake in "this module declares nothing".
+            return None
+        if not want_mods and _RS_PATH_ATTRIBUTE_PATTERN.search(source) is None:
+            # Only redirects are read here, and both the lexer and the
+            # declaration scan behind them cost far more than this prescan
+            # (the scan is superlinear in file length, so a 30k-line
+            # generated module spends tens of seconds proving it declares no
+            # redirect). Searching the RAW source overshoots by the
+            # commented-out and quoted spellings, which merely fall through
+            # to the real scan; nothing it misses can be a redirect.
+            found = (RustEntryDecls(set(), set(), {}), list(base))
+        else:
+            found = (
+                _rs_entry_decls_of(
+                    _rs_top_level_only(_rs_strip_comments_and_strings(source))
+                ),
+                list(base),
+            )
+        self._rust_module_mod_decls[key] = found
+        return found
+
+    def _rust_module_is_declared(self, parts: list[str]) -> bool:
+        """Whether this module's own physical neighbour declares it.
+
+        A file that is BOTH declared where it sits and named by a `#[path]`
+        elsewhere is an ordinary module of the tree its own declaration sits
+        in: rustc compiles it into both, and only the neighbour's spelling
+        keeps `super::` inside it pointing where the file physically is.
+        """
+        if not parts:
+            return False
+        parent, name = parts[:-1], parts[-1]
+        found = self._rust_module_decls(parent, want_mods=True)
+        if found is not None and name in found[0].mods:
+            return True
+        return any(
+            name in decls.mods for decls in self._rust_entry_decls(parent).values()
+        )
+
+    def _rust_redirect_parent_map(self) -> dict[str, str]:
+        """Every moved module's qn, mapped to the module declaring it.
+
+        Built by one sweep of the repository's Rust sources: a file cannot say
+        who declares it, and the declaration may sit in any file at all. The
+        prescan is what keeps that affordable, since a source with no
+        `#[path = "..."]` anywhere in it costs one regex search and no more.
+        """
+        if self._rust_redirect_parents is not None:
+            return self._rust_redirect_parents
+        parents: dict[str, str] = {}
+        for dirpath, dirnames, filenames in os.walk(self.repo_path):
+            try:
+                here = Path(dirpath).relative_to(self.repo_path).parts
+            except ValueError:
+                continue
+            # Sorted so the tie-break below is the same on every filesystem,
+            # and pruned by the very predicate the indexer walks with: a
+            # declaration in a subtree the user excluded must claim nothing,
+            # and one in a subtree `.cgrignore` rescued must be read, or
+            # `super::` in the target counts from the wrong module (issue
+            # #1088). Cargo's src/bin/ carve-out rides along (issue #1085).
+            dir_prefix = f"{'/'.join(here)}/" if here else ""
+            dirnames[:] = sorted(
+                name
+                for name in dirnames
+                if should_keep_dir(
+                    name, dir_prefix, self.exclude_paths, self.unignore_paths
+                )
+            )
+            for path in self._swept_rust_files(dirpath, dir_prefix, here, filenames):
+                for key, declarer in self._rust_redirects_in(path, list(here)):
+                    # Several files may name one target (a helper shared by
+                    # two binaries), and rustc compiles it into each tree.
+                    # The graph keys it once, so the walk order decides.
+                    parents.setdefault(key, declarer)
+        self._rust_redirect_parents = parents
+        return parents
+
+    def _swept_rust_files(
+        self,
+        dirpath: str,
+        dir_prefix: str,
+        here: tuple[str, ...],
+        filenames: list[str],
+    ) -> Iterator[Path]:
+        """One directory's Rust sources the indexer would hold, sorted."""
+        for filename in sorted(filenames):
+            if not filename.endswith(cs.EXT_RS):
+                continue
+            if should_skip_rel_file(
+                f"{dir_prefix}{filename}",
+                here,
+                cs.EXT_RS,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            ):
+                continue
+            yield Path(dirpath, filename)
+
+    def _rust_redirects_in(
+        self, path: Path, dir_parts: list[str]
+    ) -> list[tuple[str, str]]:
+        """Modules one file's `#[path]` attributes move, each with its declarer.
+
+        A target its own physical neighbour also declares is left out: rustc
+        compiles such a file into both trees, and the neighbour's spelling is
+        the one `super::` inside it counts from.
+        """
+        try:
+            source = path.read_text(encoding=cs.RS_ENCODING_UTF8, errors="ignore")
+        except OSError:
+            return []
+        if _RS_PATH_ATTRIBUTE_PATTERN.search(source) is None:
+            return []
+        # A mod.rs IS its directory's module, so it contributes no segment of
+        # its own; every other file contributes its stem.
+        declarer = cs.SEPARATOR_DOT.join(
+            [self.project_name, *dir_parts]
+            if path.stem == cs.INDEX_MOD
+            else [self.project_name, *dir_parts, path.stem]
+        )
+        decls = _rs_entry_decls_of(
+            _rs_top_level_only(_rs_strip_comments_and_strings(source))
+        )
+        moved = []
+        for redirect in decls.redirects.values():
+            target = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
+            if target is None or self._rust_module_is_declared(target):
+                continue
+            moved.append(
+                (cs.SEPARATOR_DOT.join([self.project_name, *target]), declarer)
+            )
+        return moved
+
+    def _rust_logical_parent(self, module_qn: str) -> str | None:
+        """The module that declares this one, when `#[path]` moved its file.
+
+        The attribute moves the FILE, not the module's place in the tree, so
+        `super::` written inside the target means the DECLARING module rather
+        than a sibling of the file (issue #1083). An ordinary module answers
+        None, as does anything below a moved one: an inline `mod` inside the
+        target keeps its own place, and the climb reaches the declarer by
+        stepping through the file's module first.
+        """
+        return self._rust_redirect_parent_map().get(module_qn)
+
+    def _rust_super_base(self, module_qn: str, depth: int) -> str:
+        """Climb `depth` module parents from a module.
+
+        Each step asks who DECLARES the module rather than which directory
+        holds its file, and the declaring module may itself have been moved
+        by a `#[path]` of its own. Where none was, the two are the same.
+        """
+        parts = module_qn.split(cs.SEPARATOR_DOT)
+        for _ in range(depth):
+            if (
+                logical := self._rust_logical_parent(cs.SEPARATOR_DOT.join(parts))
+            ) is not None:
+                parts = logical.split(cs.SEPARATOR_DOT)
+            elif len(parts) > 1:
+                parts = parts[:-1]
+        return cs.SEPARATOR_DOT.join(parts)
+
+    def _rust_walk_mods(
+        self, parts: list[str], rest: list[str], dir_backed: bool = False
+    ) -> list[str]:
+        """Walk a path tail from a resolved module prefix, honouring `#[path]`.
+
+        Only the crate ENTRY's redirects are read above, and the tail used to
+        attach by name straight past a redirect declared in any other file,
+        landing on a qn no module owns or on an undeclared shadow file that
+        happens to sit where the declared name points (issue #1065).
+        """
+        out = list(parts)
+        for index, segment in enumerate(rest):
+            found = self._rust_module_decls(out, dir_backed)
+            if found is None:
+                # Past the module tree and into items, whose names back no
+                # file and so can declare nothing.
+                out.extend(rest[index:])
+                break
+            decls, base = found
+            redirect = decls.redirects.get(segment)
+            target = (
+                rs_utils.path_attribute_qn_parts(base, redirect) if redirect else None
+            )
+            if redirect is None or target is None:
+                out, dir_backed = [*out, segment], False
+                continue
+            # A redirect onto a `mod.rs` names the DIRECTORY, and the qn
+            # scheme drops the `mod` segment, so the resulting parts are
+            # indistinguishable from a plain file module: without this the
+            # next hop reads the sibling `<parts>.rs`, an undeclared shadow
+            # rustc never compiles into this path.
+            out = target
+            dir_backed = redirect.rsplit(cs.SEPARATOR_SLASH, 1)[-1] == cs.MOD_RS
+        return out
+
+    def _rust_join_mods(
+        self, parts: list[str], rest: list[str], dir_backed: bool = False
+    ) -> str:
+        return cs.SEPARATOR_DOT.join(
+            [self.project_name, *self._rust_walk_mods(parts, rest, dir_backed)]
+        )
 
     def _rust_attach(
         self, dir_parts: list[str], stem: str, rest: list[str], definitive: bool
@@ -1625,9 +1962,19 @@ class ImportProcessor:
         entries = self._rust_dir_entries(directory)
         chosen = self._rust_entry_decls(dir_parts).get(stem)
         if rest and chosen is not None:
-            file_mods, items = chosen
+            file_mods, items = chosen.mods, chosen.items
+            if redirect := chosen.redirects.get(rest[0]):
+                # The declaration names its backing file outright, and the
+                # module keys under that file, so the declared name never
+                # appears in the qn at all (issue #1035).
+                if target := rs_utils.path_attribute_qn_parts(dir_parts, redirect):
+                    return self._rust_join_mods(
+                        target,
+                        rest[1:],
+                        redirect.rsplit(cs.SEPARATOR_SLASH, 1)[-1] == cs.MOD_RS,
+                    )
             if rest[0] in file_mods:
-                return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
+                return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
             if rest[0] in items:
                 return cs.SEPARATOR_DOT.join(
                     [self.project_name, *dir_parts, stem, *rest]
@@ -1636,13 +1983,13 @@ class ImportProcessor:
             f"{rest[0]}{cs.EXT_RS}" in entries
             or (rest[0] in entries and (directory / rest[0]).is_dir())
         ):
-            return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, *rest])
+            return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
         if rest and not definitive and chosen is not None:
             # When a file compiles into BOTH crates (lib.rs and main.rs each
             # declare its module), the path can only mean the entry that
             # DECLARES the item; the chosen entry declaring it returned above.
-            for other, (_mods, items) in self._rust_entry_decls(dir_parts).items():
-                if other != stem and rest[0] in items:
+            for other, other_decls in self._rust_entry_decls(dir_parts).items():
+                if other != stem and rest[0] in other_decls.items:
                     stem = other
                     break
         return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, stem, *rest])
@@ -1689,7 +2036,15 @@ class ImportProcessor:
             # The base IS a crate entry module (self:: in lib.rs); a module
             # merely NAMED main/lib deeper in the tree attaches normally.
             return self._rust_attach(parts[:-1], parts[-1], rest, definitive=True)
-        return cs.SEPARATOR_DOT.join([base_qn, *rest]) if rest else base_qn
+        if not rest:
+            return base_qn
+        walked = self._rust_walk_mods(parts, rest)
+        if walked == [*parts, *rest]:
+            # No redirect fired, so keep base_qn verbatim rather than
+            # rebuilding it from project_name, which re-splits differently
+            # when the repository directory name itself contains a dot.
+            return cs.SEPARATOR_DOT.join([base_qn, *rest])
+        return cs.SEPARATOR_DOT.join([self.project_name, *walked])
 
     def _rewrite_rust_local_use_path(
         self,
@@ -1716,12 +2071,10 @@ class ImportProcessor:
         if head == cs.KEYWORD_SELF:
             return self._rust_resolve_relative(module_qn, parts[1:], module_qn)
         if head == cs.KEYWORD_SUPER:
-            base_parts = module_qn.split(cs.SEPARATOR_DOT)
             depth = 0
             while depth < len(parts) and parts[depth] == cs.KEYWORD_SUPER:
                 depth += 1
-            keep = max(len(base_parts) - depth, 1)
-            base = cs.SEPARATOR_DOT.join(base_parts[:keep])
+            base = self._rust_super_base(module_qn, depth)
             return self._rust_resolve_relative(base, parts[depth:], module_qn)
         if (
             head not in local_mods
@@ -1744,7 +2097,7 @@ class ImportProcessor:
         if kind == "file":
             # An auto-target crate (src/bin/tool.rs): items and
             # submodules both nest under the entry file's qn.
-            return cs.SEPARATOR_DOT.join([self.project_name, *root_parts, *rest])
+            return self._rust_join_mods(root_parts, rest)
         if kind == "entry":
             # An explicit manifest target: the root file IS the entry,
             # so submodule files sit beside it and items nest in it.
@@ -2289,6 +2642,8 @@ class ImportProcessor:
         # were filled; called per run by GraphUpdater._process_files.
         self._rust_dir_listing.clear()
         self._rust_entry_mod_decls.clear()
+        self._rust_module_mod_decls.clear()
+        self._rust_redirect_parents = None
         self._rust_explicit_targets.clear()
         self._rust_auto_build_flags.clear()
         self._rust_workspace_crates = None
@@ -2325,6 +2680,24 @@ class ImportProcessor:
             dir_parts = directory.relative_to(self.repo_path).parts
         except ValueError:
             return
+        if file_path.suffix == cs.EXT_RS:
+            # Any .rs file may back a module and declare a redirect, so its
+            # own entry is evicted rather than replaced: an unreadable file
+            # then re-reads on the next access instead of caching a hole.
+            module = (
+                dir_parts
+                if file_path.stem == cs.INDEX_MOD
+                else (*dir_parts, file_path.stem)
+            )
+            for dir_backed in (False, True):
+                for want_mods in (False, True):
+                    self._rust_module_mod_decls.pop(
+                        (module, dir_backed, want_mods), None
+                    )
+            # Whole-map, because the edit may have added or removed a
+            # redirect naming any file at all, and a stale declarer keeps
+            # `super::` in a file it no longer moves pointing at it.
+            self._rust_redirect_parents = None
         if (
             file_path.name in (cs.LIB_RS, cs.MAIN_RS)
             or file_path.name in self._rust_explicit_entry_files(tuple(dir_parts))
@@ -2351,10 +2724,7 @@ class ImportProcessor:
                     top_level = _rs_top_level_only(
                         _rs_strip_comments_and_strings(source)
                     )
-                    stems[file_path.stem] = (
-                        set(_RS_MOD_DECL_PATTERN.findall(top_level)),
-                        set(_RS_ITEM_DECL_PATTERN.findall(top_level)),
-                    )
+                    stems[file_path.stem] = _rs_entry_decls_of(top_level)
         if file_path.name == cs.PKG_CARGO_TOML:
             # A manifest edit can add, remove, or repoint explicit targets
             # anywhere in its package, and a CREATED manifest moves the
@@ -2387,6 +2757,8 @@ class ImportProcessor:
         self._rust_pending_mod_scope_uses.pop(module_qn, None)
         self._rust_mod_scope_registry.pop(module_qn, None)
         self.rust_block_scope_imports.pop(module_qn, None)
+        for _start, _end, items in self.rust_block_items.pop(module_qn, ()):
+            self.rust_block_item_qns.difference_update(items.values())
         self.rust_self_module_imports.pop(module_qn, None)
         for key in self._rust_fn_scope_keys.pop(module_qn, ()):
             self.rust_fn_scope_imports.pop(key, None)
@@ -2614,6 +2986,34 @@ class ImportProcessor:
                 self.rust_fn_scope_imports.setdefault(key, {}).update(imports)
             self._rust_fn_scope_keys.setdefault(module_qn, set()).add(key)
 
+    def record_rust_block_items(
+        self,
+        module_qn: str,
+        root_node: Node,
+        function_locations: Mapping[FunctionSpanKey, FunctionLocation],
+    ) -> None:
+        """Record this file's block-local function items by span and by qn.
+
+        Runs beside finalise_rust_function_scope_uses, once the registry
+        has handed out the qns (natural or `natural@<start_line>`) these
+        spans have to be spoken of by. An item span with no record was
+        never registered, so no call can bind it and the name stays with
+        whatever else answers to it.
+        """
+        scopes: list[tuple[int, int, dict[str, str]]] = []
+        for start, end, items in rs_utils.rust_block_item_scopes(root_node):
+            resolved = {
+                name: location.qualified_name
+                for name, span in items.items()
+                if (location := function_locations.get((module_qn, *span)))
+            }
+            if not resolved:
+                continue
+            scopes.append((start, end, resolved))
+            self.rust_block_item_qns.update(resolved.values())
+        if scopes:
+            self.rust_block_items[module_qn] = scopes
+
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_GO_IMPORT_DECLARATION:
@@ -2684,7 +3084,10 @@ class ImportProcessor:
         """
         if self._cpp_module_qn_map is None:
             self._cpp_module_qn_map = build_module_qn_map(
-                self.repo_path, self.project_name
+                self.repo_path,
+                self.project_name,
+                self.exclude_paths,
+                self.unignore_paths,
             )
             self._cpp_qn_to_rel = {
                 qn: rel for rel, qn in self._cpp_module_qn_map.items()

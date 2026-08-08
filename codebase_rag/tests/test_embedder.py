@@ -9,7 +9,21 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.embedder import EmbeddingCache, clear_embedding_cache
-from codebase_rag.utils.dependencies import has_torch, has_transformers
+from codebase_rag.utils.dependencies import (
+    has_local_embedding_weights,
+    has_torch,
+    has_transformers,
+)
+
+# These embed for real. Gating on the weights being on disk keeps the unit
+# suite off the network: a HuggingFace outage or 429 used to fail PRs for
+# reasons unrelated to the change under test (issue #1092). CI populates the
+# hub cache in an explicit step, so there the tests still run and still fail
+# hard.
+needs_local_weights = pytest.mark.skipif(
+    not has_local_embedding_weights(),
+    reason=f"{cs.UNIXCODER_MODEL} weights are not in the local HuggingFace cache",
+)
 
 
 def _has_semantic_deps() -> bool:
@@ -216,7 +230,7 @@ def test_get_model_moves_to_mps_when_available(reset_model_cache: None) -> None:
     mock_instance.to.assert_called_once_with("mps")
 
 
-@pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
+@needs_local_weights
 @pytest.mark.slow
 def test_embed_code_integration(reset_model_cache: None) -> None:
     from codebase_rag.embedder import embed_code
@@ -229,7 +243,7 @@ def test_embed_code_integration(reset_model_cache: None) -> None:
     assert all(isinstance(x, float) for x in result)
 
 
-@pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
+@needs_local_weights
 @pytest.mark.slow
 def test_similar_code_has_similar_embeddings(reset_model_cache: None) -> None:
     from codebase_rag.embedder import embed_code

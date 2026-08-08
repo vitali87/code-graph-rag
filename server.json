@@ -8,13 +8,13 @@
     "url": "https://github.com/vitali87/code-graph-rag",
     "source": "github"
   },
-  "version": "0.0.542",
+  "version": "0.0.566",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "code-graph-rag",
-      "version": "0.0.542",
+      "version": "0.0.566",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
@@ -29,33 +29,31 @@
         {
           "name": "ORCHESTRATOR_PROVIDER",
           "description": "LLM provider for the orchestrator agent (openai, anthropic, google, azure, cohere, ollama)",
-          "default": "anthropic"
+          "default": "ollama"
         },
         {
           "name": "ORCHESTRATOR_MODEL",
           "description": "Model name for the orchestrator agent",
-          "default": "claude-sonnet-4-20250514"
+          "default": "qwen2.5-coder"
         },
         {
           "name": "ORCHESTRATOR_API_KEY",
-          "description": "API key for the orchestrator LLM provider",
-          "isRequired": true,
+          "description": "API key for the orchestrator LLM provider (not needed for the default local ollama provider)",
           "isSecret": true
         },
         {
           "name": "CYPHER_PROVIDER",
           "description": "LLM provider for Cypher query generation (openai, anthropic, google, azure, cohere, ollama)",
-          "default": "anthropic"
+          "default": "ollama"
         },
         {
           "name": "CYPHER_MODEL",
           "description": "Model name for Cypher query generation",
-          "default": "claude-sonnet-4-20250514"
+          "default": "qwen2.5-coder"
         },
         {
           "name": "CYPHER_API_KEY",
-          "description": "API key for the Cypher LLM provider",
-          "isRequired": true,
+          "description": "API key for the Cypher LLM provider (not needed for the default local ollama provider)",
           "isSecret": true
         },
         {

@@ -1,9 +1,61 @@
-from collections.abc import Sequence
+import ntpath
+import posixpath
+import re
+from collections.abc import Iterable, Sequence
 
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...types_defs import FunctionRegistryTrieProtocol
 from ..utils import safe_decode_text
+
+# `#[path = "support/helpers.rs"]` redirects the mod declaration it sits on
+# to an arbitrary file. Only the plain string form is read: a cfg_attr
+# wrapper is conditional and no single target speaks for it.
+_RS_PATH_ATTRIBUTE = re.compile(r'^#\[\s*path\s*=\s*"([^"]+)"\s*\]$')
+
+
+def path_attribute_target(decorators: Iterable[object]) -> str | None:
+    """The file a `#[path = "..."]` attribute points the declaration at."""
+    for decorator in decorators:
+        if match := _RS_PATH_ATTRIBUTE.match(str(decorator).strip()):
+            return match.group(1)
+    return None
+
+
+def path_attribute_qn_parts(
+    dir_parts: Sequence[str], redirect: str
+) -> list[str] | None:
+    """Qn segments for a `#[path]` target, or None when none can be named.
+
+    `dir_parts` is the directory the path counts from, and a `mod.rs`
+    target names that directory rather than a file beside it. An absolute
+    path, a Windows separator, a non-`.rs` target, or a climb above the
+    repository root names a file the qn scheme never keys, so nothing is
+    claimed rather than a spelling guessed at.
+    """
+    if (
+        not redirect.endswith(cs.EXT_RS)
+        or redirect.startswith("/")
+        or ntpath.splitdrive(redirect)[0]
+        or "\\" in redirect
+    ):
+        # Only a `.rs` file backs a module, and a rooted path names one the
+        # qn scheme never keys. Both rooted forms are spelled out here: a
+        # leading slash, and a `C:` drive that `ntpath` is what recognises
+        # whatever platform the indexer itself runs on. `ntpath.isabs` is
+        # not the check, since 3.13 changed it to call a single leading
+        # slash relative (to the current drive), which is true of Windows
+        # but says nothing about whether the repository holds the file.
+        return None
+    parts = posixpath.normpath(posixpath.join(*dir_parts, redirect)).split("/")
+    stem = parts.pop()[: -len(cs.EXT_RS)]
+    if not stem:
+        return None
+    if stem != cs.INDEX_MOD:
+        parts.append(stem)
+    cleaned = [part for part in parts if part not in ("", ".")]
+    return None if not cleaned or ".." in cleaned else cleaned
 
 
 def _collect_path_parts(node: Node, parts: list[str]) -> None:
@@ -255,7 +307,15 @@ def extract_impl_trait(impl_node: Node) -> str | None:
     # simple name (a trait impl means Type IMPLEMENTS Trait).
     if impl_node.type != cs.TS_IMPL_ITEM:
         return None
-    return _impl_field_type_name(impl_node, cs.FIELD_TRAIT)
+    if name := _impl_field_type_name(impl_node, cs.FIELD_TRAIT):
+        return name
+    # A generic wrapping a SCOPED path (`std::ops::Add<u32>`) is the one
+    # trait spelling the field walk reads no name off, and the whole block
+    # then read as no trait impl at all: no IMPLEMENTS edge, no implementer,
+    # no override for its methods. The written path's last segment is the
+    # simple name (issue #1080).
+    path = extract_impl_trait_path(impl_node)
+    return path.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1] if path else None
 
 
 def extract_impl_trait_path(impl_node: Node) -> str | None:
@@ -365,6 +425,50 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
     return None, parts, pure
 
 
+def block_item_at(
+    block_items: Iterable[tuple[int, int, dict[str, str]]],
+    registry: FunctionRegistryTrieProtocol,
+    name: str,
+    call_point: int | None,
+) -> str | None:
+    """The item `name` binds to in the innermost block holding this site.
+
+    Innermost wins: nested blocks may each declare the name, and only the
+    tightest one is in scope where the site is written. Keyed by FILE, not by
+    caller: a fn declared inside the block is inside the block, so its own
+    body binds the block's items too.
+    """
+    if call_point is None:
+        return None
+    best: tuple[int, str] | None = None
+    for start, end, items in block_items:
+        item_qn = items.get(name)
+        if item_qn is None or not (start <= call_point < end):
+            continue
+        if (best is None or end - start < best[0]) and item_qn in registry:
+            best = (end - start, item_qn)
+    return best[1] if best else None
+
+
+def is_body_local(node: Node) -> bool:
+    """True when *node* sits directly in a function body or an initializer.
+
+    Such an item is in scope for that body alone: no path from another module
+    names it, so it owns none of the qn its enclosing module or impl target
+    hands out (issue #1037). A type declared in the body is a different
+    matter, and the walk stops there: an `impl` written in a method body is
+    still the owner of the methods inside it, whatever encloses the impl.
+    """
+    current = node.parent
+    while current is not None and current.type != cs.TS_RS_SOURCE_FILE:
+        if current.type in cs.SPEC_RS_CLASS_TYPES:
+            return False
+        if current.type in cs.RS_BODY_LOCAL_CONTAINERS:
+            return True
+        current = current.parent
+    return False
+
+
 def enclosing_mod_names(node: Node) -> frozenset[str]:
     """Names of `mod` items in scope at the node's own module level.
 
@@ -399,7 +503,7 @@ def rust_block_scope_holes(
 ) -> tuple[
     list[tuple[int, int]],
     list[tuple[int, int]],
-    list[tuple[int, int, frozenset[str]]],
+    list[tuple[int, int, dict[str, tuple[int, int]]]],
 ]:
     """Byte spans of the scope-forming items nested inside a block.
 
@@ -412,7 +516,8 @@ def rust_block_scope_holes(
     block in the subtree is an item scope in Rust (a fn body, a let or
     const initializer, an if/match/loop body alike), so each nested
     block declaring function items as DIRECT children is recorded with
-    those names, and a call inside it naming one binds the local item,
+    those items by name and span, and a call inside it naming one binds
+    that local item,
     never the initializer block's use (rustc-verified; items deeper
     inside are invisible at that block's level, and methods in impl or
     trait bodies are not bare names at all). The walk descends
@@ -421,7 +526,7 @@ def rust_block_scope_holes(
     """
     mod_holes: list[tuple[int, int]] = []
     fn_holes: list[tuple[int, int]] = []
-    item_scopes: list[tuple[int, int, frozenset[str]]] = []
+    item_scopes: list[tuple[int, int, dict[str, tuple[int, int]]]] = []
     stack = list(block.children)
     while stack:
         current = stack.pop()
@@ -430,23 +535,53 @@ def rust_block_scope_holes(
         elif current.type == cs.TS_RS_FUNCTION_ITEM:
             fn_holes.append((current.start_byte, current.end_byte))
         elif current.type == cs.TS_RS_BLOCK and (
-            names := _rust_direct_block_item_names(current)
+            items := _rust_direct_block_items(current)
         ):
-            item_scopes.append((current.start_byte, current.end_byte, names))
+            item_scopes.append((current.start_byte, current.end_byte, items))
         stack.extend(current.children)
     return mod_holes, fn_holes, item_scopes
 
 
-def _rust_direct_block_item_names(block_node: Node) -> frozenset[str]:
-    names: set[str] = set()
+def rust_block_item_scopes(
+    root: Node,
+) -> list[tuple[int, int, dict[str, tuple[int, int]]]]:
+    """Every plain block in the file that declares function items directly.
+
+    A block item is in scope for the block alone, yet it registers flat in
+    the enclosing module beside the module's own items, so the span is the
+    only thing that says which calls may reach it (issue #1061).
+    """
+    scopes: list[tuple[int, int, dict[str, tuple[int, int]]]] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_RS_BLOCK and (
+            items := _rust_direct_block_items(current)
+        ):
+            scopes.append((current.start_byte, current.end_byte, items))
+        stack.extend(current.children)
+    return scopes
+
+
+def _rust_direct_block_items(block_node: Node) -> dict[str, tuple[int, int]]:
+    """Function items declared directly in a block, by name and span key.
+
+    The span (1-based line, column) is the item's identity: a block item
+    and a same-named item at module level register flat in one module, so
+    only the span tells a caller which of them a call in the block binds.
+    """
+    items: dict[str, tuple[int, int]] = {}
     for child in block_node.children:
         if (
             child.type == cs.TS_RS_FUNCTION_ITEM
             and (name_node := child.child_by_field_name(cs.FIELD_NAME))
             and (text := name_node.text) is not None
         ):
-            names.add(text.decode(cs.RS_ENCODING_UTF8))
-    return frozenset(names)
+            items[text.decode(cs.RS_ENCODING_UTF8)] = (
+                child.start_point[0] + 1,
+                child.start_point[1],
+            )
+    return items
 
 
 def enclosing_mod_fn_spans(node: Node) -> list[tuple[int, int]]:
