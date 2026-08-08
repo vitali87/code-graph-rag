@@ -195,6 +195,13 @@ def test_watch_refresh_does_not_cache_an_excluded_entry_file(
     )
     processor = updater.factory.import_processor
 
+    # Establish the precondition explicitly: the refresh only writes when the
+    # entry-declaration cache already holds this directory, so without this
+    # the assertion below could hold for the wrong reason.
+    primed = processor._rust_entry_decls(["src"])
+    assert "lib" in primed, primed
+    assert "main" not in primed, primed
+
     processor.refresh_rust_path_caches_for(project / "src" / "main.rs", created=False)
 
     decls = processor._rust_entry_decls(["src"])
