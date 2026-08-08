@@ -237,6 +237,11 @@ class DefinitionProcessor(
         # Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
         # import verification counts them as real internal targets.
         self.declared_module_qns: set[str] = set()
+        # {Rust function/method qn: the module qn it is contained by}, taken
+        # from the AST at ingest because qn space cannot distinguish an inline
+        # `mod` from an impl block. Pass-3 resolves `super::`/`self::` against
+        # it (issue #1086).
+        self.rust_function_modules: dict[str, str] = {}
         # Route-decorated handlers deferred from Pass 2: endpoint templates
         # need router mount prefixes, which may live in modules parsed later
         # (issue #877). (label, qn, route decorators, module_qn).

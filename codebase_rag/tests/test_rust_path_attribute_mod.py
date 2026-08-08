@@ -764,3 +764,74 @@ def test_redirect_inside_an_inline_module_gates_the_file_it_names(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     gates = _declared_gates(mock_ingestor, "rs_path_attr_inline.src.lib")
     assert "rs_path_attr_inline.src.outer.redirected" in gates, gates
+
+
+def test_a_super_call_from_an_inline_mod_resolves_through_the_written_path(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The same climb as the `use` above, written at the CALL instead. The
+    # resolver used to decline every relative path from a caller nested below
+    # the file module, because an inline mod and an impl block are one shape in
+    # qn space, and the enclosing-scope fallback then matched the tail by NAME
+    # against the file's own physical ancestors -- landing on the undeclared
+    # shadow that happens to sit there (issue #1086).
+    project = temp_repo / "rs_inline_super_call"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_inline_super_call"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\n",
+            "src/engine.rs": '#[path = "fixtures/rig.rs"]\npub mod rig;\npub mod sib;\n',
+            "src/engine/sib.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/fixtures/sib.rs": "pub fn run() -> i32 {\n    9\n}\n",
+            "src/fixtures/rig.rs": (
+                "pub mod inner {\n"
+                "    pub fn build() -> i32 {\n"
+                "        super::super::sib::run()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_inline_super_call.src.fixtures.rig.inner.build"
+    assert (caller, "rs_inline_super_call.src.engine.sib.run") in calls, calls
+    assert (caller, "rs_inline_super_call.src.fixtures.sib.run") not in calls, calls
+
+
+def test_a_super_call_from_a_cfg_test_mod_resolves_through_the_written_path(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `#[cfg(test)] mod tests { ... super::super::... }` inside a `#[path]`-ed
+    # fixture file is the shape that reaches this most often (issue #1086). The
+    # gate makes no difference to the climb: `tests` is an inline mod like any
+    # other, so the first hop is the file's module and only the second is moved.
+    project = temp_repo / "rs_cfg_test_super_call"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_cfg_test_super_call"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod engine;\n",
+            "src/engine.rs": '#[path = "fixtures/rig.rs"]\npub mod rig;\npub mod sib;\n',
+            "src/engine/sib.rs": "pub fn run() -> i32 {\n    1\n}\n",
+            "src/fixtures/sib.rs": "pub fn run() -> i32 {\n    9\n}\n",
+            "src/fixtures/rig.rs": (
+                "#[cfg(test)]\n"
+                "mod tests {\n"
+                "    pub fn check() -> i32 {\n"
+                "        super::super::sib::run()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    caller = "rs_cfg_test_super_call.src.fixtures.rig.tests.check"
+    assert (caller, "rs_cfg_test_super_call.src.engine.sib.run") in calls, calls
+    assert (caller, "rs_cfg_test_super_call.src.fixtures.sib.run") not in calls, calls

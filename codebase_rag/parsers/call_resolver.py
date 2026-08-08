@@ -86,6 +86,7 @@ class CallResolver:
         "_pending_field_bindings",
         "_module_language_cache",
         "rehydrated_definition_paths",
+        "rust_function_modules",
         "declared_module_qns",
     )
 
@@ -98,6 +99,7 @@ class CallResolver:
         type_aliases: dict[str, str] | None = None,
         interface_implementers: dict[str, set[str]] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
+        rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
     ) -> None:
         self.function_registry = function_registry
@@ -148,6 +150,12 @@ class CallResolver:
             rehydrated_definition_paths
             if rehydrated_definition_paths is not None
             else {}
+        )
+        # {Rust function qn: containing module qn}, recorded from the AST during
+        # ingestion (shared ref). The authority on how many levels a `super::`
+        # written inside it climbs (issue #1086).
+        self.rust_function_modules = (
+            rust_function_modules if rust_function_modules is not None else {}
         )
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
@@ -1569,19 +1577,23 @@ class CallResolver:
         module_qn: str,
         caller_qn: str | None,
     ) -> tuple[tuple[str, str] | None, bool]:
-        # crate:: is chain-independent; self::/super:: resolve against the
-        # caller's innermost enclosing MOD chain. An impl block also nests
-        # below the file module but is NOT a mod: `super::` inside a method
-        # counts from the file module's parent exactly as it does in a free
-        # function, and the type registry is what tells the two apart
-        # (issue #1093). A genuine inline mod chain still stays with the
-        # ordinary fallbacks (issue #1086).
-        if object_path[0] != cs.RUST_CRATE_KEYWORD and self._rust_enclosing_mod_scopes(
-            module_qn, caller_qn
-        ):
-            return None, False
+        # crate:: is chain-independent; self::/super:: count from the caller's
+        # enclosing MOD chain, which qn space cannot reconstruct -- an inline
+        # mod and an impl block are both a bare segment. The ingest pass walked
+        # the AST and recorded the answer, so read it (issue #1086). Without a
+        # record (a rehydrated definition, a body-local fn), an impl block
+        # still resolves from the file module exactly like a free function
+        # (issue #1093); only a genuine declared mod chain declines, letting
+        # the ordinary fallbacks keep their weaker but safe answer.
+        effective_module = module_qn
+        if object_path[0] != cs.RUST_CRATE_KEYWORD:
+            recorded = self.rust_function_modules.get(caller_qn) if caller_qn else None
+            if recorded is not None:
+                effective_module = recorded
+            elif self._rust_enclosing_mod_scopes(module_qn, caller_qn):
+                return None, False
         base = self.import_processor._rewrite_rust_local_use_path(
-            cs.SEPARATOR_DOUBLE_COLON.join(object_path), module_qn
+            cs.SEPARATOR_DOUBLE_COLON.join(object_path), effective_module
         )
         if cs.SEPARATOR_DOUBLE_COLON in base:
             return None, False
