@@ -1661,10 +1661,9 @@ class ClassIngestMixin:
                 continue
 
             module_name = safe_decode_text(module_name_node)
-            nested_qn = id_.build_nested_qualified_name_for_class(
+            inline_module_qn = self._rust_inline_module_qn(
                 module_node, module_qn, module_name or "", lang_config
             )
-            inline_module_qn = nested_qn or f"{module_qn}.{module_name}"
 
             module_props: PropertyDict = {
                 cs.KEY_QUALIFIED_NAME: inline_module_qn,
@@ -1694,12 +1693,19 @@ class ClassIngestMixin:
             self.declared_module_qns.add(inline_module_qn)
 
             # Link the inline module into the containment tree: its enclosing
-            # module (file module, or an outer mod) DEFINES it. Without this the
-            # inline Module node is an orphan defining nothing.
-            parent_module_qn = inline_module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            if parent_module_qn and parent_module_qn != inline_module_qn:
+            # scope DEFINES it. Without this the inline Module node is an
+            # orphan defining nothing. The parent is not always a Module: a
+            # `mod` written in a trait const initializer or an impl method
+            # body hangs off the TYPE, whose node carries a Class/Interface/
+            # Enum label, and a hard-coded Module label dangles (issue #1018).
+            parent_qn = inline_module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if parent_qn and parent_qn != inline_module_qn:
                 self.ingestor.ensure_relationship_batch(
-                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, parent_module_qn),
+                    (
+                        self._registered_label(parent_qn),
+                        cs.KEY_QUALIFIED_NAME,
+                        parent_qn,
+                    ),
                     cs.RelationshipType.DEFINES,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, inline_module_qn),
                 )
@@ -1710,6 +1716,34 @@ class ClassIngestMixin:
             if ungated_targets:
                 decl_props[cs.KEY_RUST_UNGATED_MODS] = sorted(ungated_targets)
             self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, decl_props)
+
+    def _rust_inline_module_qn(
+        self,
+        module_node: Node,
+        module_qn: str,
+        module_name: str,
+        lang_config: LanguageSpec,
+    ) -> str:
+        """The qn of an inline `mod`, under the scope rule its own items use.
+
+        Module ingestion named these by mod and type segments while the
+        function fqn walk also keeps the enclosing IMPL target, so a `mod`
+        written in an impl method body became `foo.inner` while the functions
+        inside it registered as `foo.S.inner.g`: the Module node, its DEFINES
+        edge, and its contents landed under three different qns (issue #1018).
+        """
+        chain = rs_utils.build_module_path(
+            module_node,
+            include_impl_targets=True,
+            include_classes=True,
+            class_node_types=lang_config.class_node_types,
+        )
+        return cs.SEPARATOR_DOT.join([module_qn, *chain, module_name])
+
+    def _registered_label(self, qn: str) -> cs.NodeLabel:
+        """The label a qn was registered under, for an edge endpoint match."""
+        node_type = self.function_registry.get(qn)
+        return cs.NodeLabel(node_type.value) if node_type else cs.NodeLabel.MODULE
 
     def _rust_cfg_test_candidates(
         self,
