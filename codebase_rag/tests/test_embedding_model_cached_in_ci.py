@@ -150,13 +150,29 @@ class TestLocalWeightsProbe:
         transformers = pytest.importorskip("transformers")
         monkeypatch.setattr(dependencies, "has_torch", lambda: True)
         monkeypatch.setattr(dependencies, "has_transformers", lambda: True)
+        reached: list[str] = []
 
-        def _raise(*_args: object, **_kwargs: object) -> None:
-            raise OSError(f"{missing} not in the local cache")
+        def _stub(name: str) -> object:
+            def inner(*_args: object, **_kwargs: object) -> object:
+                reached.append(name)
+                if name == missing:
+                    raise OSError(f"{name} not in the local cache")
+                return object()
 
-        monkeypatch.setattr(getattr(transformers, missing), "from_pretrained", _raise)
+            return inner
+
+        # Every loader is stubbed, not just the failing one: on a machine with
+        # no cache an earlier REAL loader raises first, and the case then
+        # passes without ever reaching the artifact it is named for.
+        for name in ("AutoConfig", "AutoTokenizer", "AutoModel"):
+            monkeypatch.setattr(
+                getattr(transformers, name), "from_pretrained", _stub(name)
+            )
 
         assert dependencies.has_local_embedding_weights() is False
+        assert missing in reached, (
+            f"the probe never reached {missing}, so this case proved nothing"
+        )
 
     def test_true_when_every_artifact_resolves(
         self, monkeypatch: pytest.MonkeyPatch
