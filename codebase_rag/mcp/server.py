@@ -77,6 +77,17 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         logger.error(lg.MCP_SERVER_CONFIG_ERROR.format(error=e))
         raise
 
+    # Fail at startup with the role-aware missing-key diagnostic rather than
+    # letting the first tool call surface a wrapped provider error from deep
+    # inside CypherGenerator or the orchestrator (issue #1125). Local
+    # providers pass through the validator's existing exemption.
+    try:
+        settings.active_orchestrator_config.validate_api_key(cs.ModelRole.ORCHESTRATOR)
+        settings.active_cypher_config.validate_api_key(cs.ModelRole.CYPHER)
+    except ValueError as e:
+        logger.error(lg.MCP_SERVER_CONFIG_ERROR.format(error=e))
+        raise
+
     logger.info(lg.MCP_SERVER_INIT_SERVICES)
 
     ingestor = MemgraphIngestor(
