@@ -64,8 +64,11 @@ The package installs a `cgr` command.
 ```bash
 cgr daemon up                              # start Memgraph + Qdrant
 cgr start --repo-path ./my-project \
-          --update-graph --clean           # parse & launch interactive chat
+          --update-graph                   # parse & launch interactive chat
 ```
+
+Add `--clean` only to start over: it deletes every project in the shared graph,
+not just the one being synced.
 
 **Index to protobuf for offline use:**
 
