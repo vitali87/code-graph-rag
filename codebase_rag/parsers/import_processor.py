@@ -2992,8 +2992,11 @@ class ImportProcessor:
             # package boundary for every file below it, so the whole
             # target cache rebuilds. The entry-declaration map is DERIVED
             # from the target set: evict exactly the stems the fresh
-            # manifests no longer back, keeping lib/main declarations (and
-            # their storm protection) untouched.
+            # manifests no longer back. lib/main keep their declarations
+            # (and their storm protection) only while their kind's
+            # discovery opt-out permits them — an edit flipping autolib or
+            # autobins to false must leave the map exactly as a clean
+            # index would (issue #1030 review).
             self._rust_explicit_targets.clear()
             self._rust_auto_build_flags.clear()
             self._rust_auto_discovery_flags.clear()
@@ -3004,8 +3007,13 @@ class ImportProcessor:
                     name[: -len(cs.EXT_RS)]
                     for name in self._rust_explicit_entry_files(key)
                 }
+                auto_lib, auto_bins = self._rust_src_auto_entry_flags(list(key))
+                if auto_lib:
+                    allowed.add(cs.LIB_RS[: -len(cs.EXT_RS)])
+                if auto_bins:
+                    allowed.add(cs.MAIN_RS[: -len(cs.EXT_RS)])
                 for stem in list(stems):
-                    if stem not in ("lib", "main") and stem not in allowed:
+                    if stem not in allowed:
                         stems.pop(stem, None)
 
     def drop_rust_module_import_state(self, module_qn: str) -> None:

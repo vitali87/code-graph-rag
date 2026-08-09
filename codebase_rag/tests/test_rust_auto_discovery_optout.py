@@ -292,3 +292,23 @@ def test_autolib_default_keeps_lib_in_the_entry_scan(tmp_path: Path) -> None:
     (tmp_path / "src" / "foo.rs").write_text("pub fn f() {}\n")
     processor = _processor(tmp_path)
     assert "lib" in processor._rust_entry_decls(["src"])
+
+
+def test_manifest_refresh_evicts_newly_disabled_entry_stems(tmp_path: Path) -> None:
+    """A watched manifest edit flipping autolib/autobins to false must leave
+    the entry-declaration map exactly as a clean index would."""
+    _package(tmp_path)
+    (tmp_path / "src" / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    warmed = processor._rust_entry_decls(["src"])
+    assert "lib" in warmed and "main" in warmed
+
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "fixture"\nversion = "0.1.0"\n'
+        "autolib = false\nautobins = false\n"
+    )
+    processor.refresh_rust_path_caches_for(tmp_path / "Cargo.toml", created=False)
+    refreshed = processor._rust_entry_decls(["src"])
+    assert "lib" not in refreshed and "main" not in refreshed
+    fresh = _processor(tmp_path)._rust_entry_decls(["src"])
+    assert set(refreshed) == set(fresh)
