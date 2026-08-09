@@ -222,16 +222,18 @@ RS_AUTO_DIR_KEYS = {
     "tests": RS_MANIFEST_AUTOTESTS_KEY,
     "benches": RS_MANIFEST_AUTOBENCHES_KEY,
 }
-# Conventional path of a PATHLESS manifest target table: [lib] means
-# src/lib.rs; the named kinds live in their kind's directory. `{name}`
-# substitutes the table's `name` key.
-RS_MANIFEST_NAME_TEMPLATE = "{name}"
-RS_MANIFEST_DEFAULT_TARGET_PATHS = {
-    "lib": "src/lib.rs",
-    "bin": "src/bin/{name}.rs",
-    "example": "examples/{name}.rs",
-    "test": "tests/{name}.rs",
-    "bench": "benches/{name}.rs",
+# Candidate locations of a PATHLESS manifest target table, matched against
+# the files that actually exist (cargo errors on an ambiguous pair, so only
+# a single existing candidate resolves). [lib] is fixed at src/lib.rs; a bin
+# whose name equals the package name may be src/main.rs.
+RS_DEFAULT_LIB_PATH = "src/lib.rs"
+RS_DEFAULT_MAIN_PATH = "src/main.rs"
+RS_MANIFEST_BIN_SECTION = "bin"
+RS_MANIFEST_KIND_DIRS = {
+    "bin": "src/bin",
+    "example": "examples",
+    "test": "tests",
+    "bench": "benches",
 }
 RS_MANIFEST_WORKSPACE_KEY = "workspace"
 RS_MANIFEST_MEMBERS_KEY = "members"

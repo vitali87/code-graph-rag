@@ -1309,17 +1309,51 @@ class ImportProcessor:
         self._rust_explicit_target_paths(pkg_parts)
         return self._rust_auto_build_flags.get(pkg_parts, False)
 
-    @staticmethod
-    def _rust_default_target_path(section: str, entry: dict) -> str | None:
-        template = cs.RS_MANIFEST_DEFAULT_TARGET_PATHS.get(section)
-        if template is None:
-            return None
-        if cs.RS_MANIFEST_NAME_TEMPLATE not in template:
-            return template
+    def _rust_default_target_path(
+        self,
+        pkg_parts: tuple[str, ...],
+        section: str,
+        entry: dict,
+        manifest: dict,
+    ) -> str | None:
+        # Cargo resolves a pathless table by matching the target name
+        # against its candidate files (src/main.rs for a package-name bin,
+        # <kind dir>/<name>.rs, <kind dir>/<name>/main.rs) and errors on an
+        # ambiguous pair, so only a single EXISTING candidate resolves here.
+        if section == cs.RS_MANIFEST_LIB_SECTION:
+            return cs.RS_DEFAULT_LIB_PATH
+        kind_dir = cs.RS_MANIFEST_KIND_DIRS.get(section)
         name = entry.get(cs.RS_MANIFEST_NAME_KEY)
-        if not isinstance(name, str) or not name:
+        if kind_dir is None or not isinstance(name, str) or not name:
             return None
-        return template.replace(cs.RS_MANIFEST_NAME_TEMPLATE, name)
+        candidates = []
+        if section == cs.RS_MANIFEST_BIN_SECTION:
+            package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+            pkg_name = (
+                package.get(cs.RS_MANIFEST_NAME_KEY)
+                if isinstance(package, dict)
+                else None
+            )
+            if name == pkg_name:
+                candidates.append(cs.RS_DEFAULT_MAIN_PATH)
+        candidates.append(f"{kind_dir}{cs.SEPARATOR_SLASH}{name}{cs.EXT_RS}")
+        candidates.append(
+            f"{kind_dir}{cs.SEPARATOR_SLASH}{name}{cs.SEPARATOR_SLASH}{cs.MAIN_RS}"
+        )
+        existing = [
+            candidate
+            for candidate in candidates
+            if self._rust_pkg_relative_file_exists(pkg_parts, candidate)
+        ]
+        return existing[0] if len(existing) == 1 else None
+
+    def _rust_pkg_relative_file_exists(
+        self, pkg_parts: tuple[str, ...], relative: str
+    ) -> bool:
+        parts = relative.split(cs.SEPARATOR_SLASH)
+        return parts[-1] in self._rust_dir_entries(
+            self.repo_path.joinpath(*pkg_parts, *parts[:-1])
+        )
 
     def _rust_src_auto_entry_flags(self, dir_parts: list[str]) -> tuple[bool, bool]:
         # (lib flag, main flag) for lib.rs/main.rs sitting in THIS directory.
@@ -1436,7 +1470,9 @@ class ImportProcessor:
                     continue
                 if isinstance(path := entry.get(cs.RS_MANIFEST_PATH_KEY), str):
                     paths.add(_rust_norm_manifest_path(path))
-                elif default := self._rust_default_target_path(section, entry):
+                elif default := self._rust_default_target_path(
+                    pkg_parts, section, entry, manifest
+                ):
                     # A PATHLESS table is still an explicit target at its
                     # conventional location ([lib] means src/lib.rs), and an
                     # explicit target must survive its kind's auto-discovery

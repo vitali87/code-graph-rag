@@ -213,6 +213,35 @@ def test_default_flags_keep_multi_file_target_dirs(tmp_path: Path) -> None:
     assert processor._rust_is_crate_root_dir(["tests", "suite"]) is True
 
 
+def test_pathless_package_name_bin_resolves_to_src_main(tmp_path: Path) -> None:
+    """[[bin]] name = <package name> is src/main.rs, kept under autobins=false."""
+    _package(tmp_path, 'autobins = false\n\n[[bin]]\nname = "fixture"\n')
+    (tmp_path / "src" / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_explicit_target(["src"], "main") is True
+    assert processor._rust_is_crate_root_dir(["src"]) is True
+
+
+def test_pathless_bin_resolves_to_multi_file_target(tmp_path: Path) -> None:
+    _package(tmp_path, 'autobins = false\n\n[[bin]]\nname = "tool"\n')
+    tool = tmp_path / "src" / "bin" / "tool"
+    tool.mkdir(parents=True)
+    (tool / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_explicit_target(["src", "bin", "tool"], "main") is True
+
+
+def test_ambiguous_pathless_bin_resolves_nowhere(tmp_path: Path) -> None:
+    """Cargo errors on tool.rs + tool/main.rs both existing; record neither."""
+    _package(tmp_path, 'autobins = false\n\n[[bin]]\nname = "tool"\n')
+    (tmp_path / "src" / "bin" / "tool").mkdir(parents=True)
+    (tmp_path / "src" / "bin" / "tool.rs").write_text("fn main() {}\n")
+    (tmp_path / "src" / "bin" / "tool" / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_explicit_target(["src", "bin"], "tool") is False
+    assert processor._rust_is_explicit_target(["src", "bin", "tool"], "main") is False
+
+
 def test_autobins_false_stops_direct_src_bin_main(tmp_path: Path) -> None:
     """src/bin/main.rs is itself a bin auto target."""
     _package(tmp_path, "autobins = false\n")
