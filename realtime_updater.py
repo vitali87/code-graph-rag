@@ -290,6 +290,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 ):
                     root_node, language = result
                     self.updater.ast_cache[path] = (root_node, language)
+                    self.updater.register_parsed_file(path, language)
 
             # Create File node for ALL files (code and non-code like .md, .json, etc.)
             self.updater.factory.structure_processor.process_generic_file(

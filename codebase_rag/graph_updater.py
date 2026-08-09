@@ -1310,6 +1310,13 @@ class GraphUpdater:
             del self.ast_cache[file_path]
             logger.debug(ls.REMOVED_FROM_CACHE)
 
+        # The call pass iterates _parsed_files; a removed file must leave it
+        # (a re-parse re-registers), or deleted files keep contributing and
+        # created files never do (issue #1028).
+        self._parsed_files = [
+            entry for entry in self._parsed_files if entry[0] != file_path
+        ]
+
         relative_path = cached_relative_path(file_path, self.repo_path)
         path_parts = (
             relative_path.parent.parts
@@ -1910,6 +1917,15 @@ class GraphUpdater:
         root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
+
+    def register_parsed_file(
+        self, file_path: Path, language: cs.SupportedLanguage
+    ) -> None:
+        # Watch-mode events parse outside run(): the file must join the
+        # call pass's iteration set or its outgoing CALLS edges are never
+        # emitted (issue #1028).
+        if all(existing != file_path for existing, _ in self._parsed_files):
+            self._parsed_files.append((file_path, language))
 
     def _process_function_calls(self) -> None:
         # A reused updater (watch mode, a second run) re-parses files; the
