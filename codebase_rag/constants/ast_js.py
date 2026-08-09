@@ -215,6 +215,7 @@ JS_SHORT_CIRCUIT_OPERATORS: frozenset[str] = frozenset({"||", "??", "&&"})
 # (`[Symbol.iterator]`, `[Symbol.toStringTag]`) as the definition pass
 # registers it; user symbol keys register without the `Symbol.` path.
 JS_WELL_KNOWN_SYMBOL_NAME_PREFIX = "[Symbol."
+JS_COMPUTED_NAME_PREFIX = "["
 JS_COMPUTED_NAME_SUFFIX = "]"
 JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX = "[Symbol["
 JS_SYMBOL_FOR_PREFIX = "for("
