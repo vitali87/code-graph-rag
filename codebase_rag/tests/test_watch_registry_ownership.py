@@ -153,3 +153,25 @@ def test_incremental_cleanup_spares_freshly_registered_frontend_state(
 
     updater.remove_file_from_state(project / "src" / "app.cpp")
     assert qn not in updater.function_registry
+
+
+def test_in_sync_noop_run_keeps_the_ownership_map(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A reused updater whose second run() short-circuits as in-sync must
+    keep the frontend ownership map a later watch sweep reads."""
+    project = temp_repo / "cpp_noop_owner"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "app.py").write_text("def go():\n    return 1\n")
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+    updater._frontend_owned_qns["src/other.cpp"] = {"x.src.other.keep"}
+    updater.run()
+    assert updater.skipped_because_in_sync is True
+    assert updater._frontend_owned_qns.get("src/other.cpp") == {"x.src.other.keep"}

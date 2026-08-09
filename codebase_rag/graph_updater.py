@@ -622,7 +622,6 @@ class GraphUpdater:
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
         self._parsed_files.clear()
-        self._frontend_owned_qns.clear()
         self._sink.ensure_node_batch(
             cs.NODE_PROJECT,
             {
@@ -641,6 +640,11 @@ class GraphUpdater:
             self.skipped_because_in_sync = True
             self.ingestor.flush_all()
             return
+
+        # Cleared only when a REAL indexing run begins: an in-sync no-op above
+        # must keep the last run's ownership map, which a later watch-event
+        # prefix sweep still reads (issue #1025 review).
+        self._frontend_owned_qns.clear()
 
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
