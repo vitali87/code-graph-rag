@@ -72,8 +72,10 @@ def test_sibling_inline_mod_functions_survive_the_prefix_sweep(
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
+    touched = project / "src" / "a" / "b.rs"
+    touched.write_text("pub fn refreshed_wrap() {}\n", encoding="utf-8")
     mock_ingestor.reset_mock()
-    handler.dispatch(FileModifiedEvent(str(project / "src" / "a" / "b.rs")))
+    handler.dispatch(FileModifiedEvent(str(touched)))
 
     # The sibling's registration survives the sweep untouched...
     assert go_qn in updater.function_registry
@@ -85,5 +87,7 @@ def test_sibling_inline_mod_functions_survive_the_prefix_sweep(
     }
     assert (go_qn, f"{base}.src.beta.helper") in calls, sorted(calls)
     assert (f"{base}.src.a.go", f"{base}.src.beta.helper") not in calls, sorted(calls)
-    # The touched file's own registration was swept and re-registered.
-    assert f"{base}.src.a.b.wrap" in updater.function_registry
+    # The touched file's own registration was genuinely swept (the renamed
+    # content proves removal happened) and the fresh parse re-registered.
+    assert f"{base}.src.a.b.wrap" not in updater.function_registry
+    assert f"{base}.src.a.b.refreshed_wrap" in updater.function_registry
