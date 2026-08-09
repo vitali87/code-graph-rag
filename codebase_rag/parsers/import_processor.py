@@ -1381,24 +1381,28 @@ class ImportProcessor:
             and dir_parts[-1] == cs.RS_BIN_DIR
             and dir_parts[-2] == cs.LANG_SRC_DIR
         ):
-            # src/bin/main.rs is itself a bin auto target.
+            # Every .rs directly in src/bin — main.rs and lib.rs alike — is
+            # a bin auto target, so both entry stems follow autobins.
             pkg_parts = tuple(dir_parts[:-2])
             if cs.PKG_CARGO_TOML in self._rust_dir_entries(
                 self.repo_path.joinpath(*pkg_parts)
             ):
-                return True, self._rust_auto_kind_enabled(
+                enabled = self._rust_auto_kind_enabled(
                     pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
                 )
+                return enabled, enabled
             return True, True
         if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS:
-            # <kind>/main.rs is a direct auto target of its kind.
+            # Every .rs directly in a kind dir is that kind's auto target,
+            # so both entry stems follow the kind's flag.
             pkg_parts = tuple(dir_parts[:-1])
             if cs.PKG_CARGO_TOML in self._rust_dir_entries(
                 self.repo_path.joinpath(*pkg_parts)
             ):
-                return True, self._rust_auto_kind_enabled(
+                enabled = self._rust_auto_kind_enabled(
                     pkg_parts, cs.RS_AUTO_DIR_KEYS[dir_parts[-1]]
                 )
+                return enabled, enabled
             return True, True
         if (
             len(dir_parts) >= 3

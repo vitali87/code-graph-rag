@@ -259,6 +259,15 @@ def test_autoexamples_false_stops_direct_examples_main(tmp_path: Path) -> None:
     assert processor._rust_is_crate_root_dir(["examples"]) is False
 
 
+def test_autoexamples_false_stops_direct_examples_lib(tmp_path: Path) -> None:
+    """A lib.rs directly in a kind dir is that kind's target, not a library."""
+    _package(tmp_path, "autoexamples = false\n")
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples" / "lib.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["examples"]) is False
+
+
 def test_default_direct_examples_main_still_roots(tmp_path: Path) -> None:
     _package(tmp_path)
     (tmp_path / "examples").mkdir()
