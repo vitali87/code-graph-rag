@@ -74,3 +74,52 @@ def test_watch_created_rust_file_emits_calls_in_the_same_cycle(
         f"{base}.src.existing.helper",
     )
     assert edge in _calls(mock_ingestor), sorted(_calls(mock_ingestor))
+
+
+def test_watch_updates_run_under_the_update_lock(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every graph update must hold the transaction lock: debounce timers
+    fire on separate threads and an unserialized pair can drop a
+    just-registered file's CALLS edges (issues #1028, #1032)."""
+    project = temp_repo / "rs_watch_lock"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_watch_lock"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod existing;\n",
+            "src/existing.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+        },
+    )
+    parsers, queries = load_parsers()
+    if "rust" not in parsers:
+        pytest.skip("rust parser not available")
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    held: list[bool] = []
+    original = updater._process_function_calls
+
+    def probe() -> None:
+        held.append(handler._update_lock.locked())
+        original()
+
+    monkeypatch.setattr(updater, "_process_function_calls", probe)
+    from watchdog.events import FileModifiedEvent
+
+    handler.dispatch(FileModifiedEvent(str(project / "src" / "existing.rs")))
+    assert held == [True], held
