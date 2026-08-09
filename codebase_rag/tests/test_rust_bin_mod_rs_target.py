@@ -40,7 +40,7 @@ def test_src_bin_mod_rs_roots_its_own_crate(tmp_path: Path) -> None:
     (tmp_path / "src" / "bin").mkdir(parents=True)
     (tmp_path / "src" / "bin" / "mod.rs").write_text(BIN_MOD_SOURCE)
     processor = _processor(tmp_path)
-    assert processor._rust_crate_root("proj.src.bin") == ("file", ["src", "bin"])
+    assert processor._rust_crate_root("proj.src.bin") == ("dir_file", ["src", "bin"])
 
 
 def test_src_bin_mod_rs_crate_paths_resolve_to_the_directory_qn(
@@ -67,7 +67,7 @@ def test_explicit_mod_rs_target_roots_its_own_crate(tmp_path: Path) -> None:
     (tmp_path / "src" / "tool").mkdir(parents=True)
     (tmp_path / "src" / "tool" / "mod.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
-    assert processor._rust_crate_root("proj.src.tool") == ("file", ["src", "tool"])
+    assert processor._rust_crate_root("proj.src.tool") == ("dir_file", ["src", "tool"])
 
 
 def test_mod_rs_sibling_does_not_unroot_src_bin_main(tmp_path: Path) -> None:
@@ -87,3 +87,51 @@ def test_ordinary_module_directory_mod_rs_stays_a_module(tmp_path: Path) -> None
     processor = _processor(tmp_path)
     assert processor._rust_crate_root("proj.src.foo") == ("classic", ["src"])
     assert processor._rust_is_crate_root_dir(["src", "foo"]) is False
+
+
+def test_mod_rs_root_redirects_read_mod_rs_not_a_dir_shadow(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """The root's declarations live in mod.rs: a #[path] redirect declared
+    there must steer crate:: paths, which a dir-unaware walk (looking for a
+    src/bin.rs entry) would never see."""
+    _manifest(tmp_path)
+    (tmp_path / "src" / "bin").mkdir(parents=True)
+    (tmp_path / "src" / "bin" / "mod.rs").write_text(
+        '#[path = "alt.rs"]\nmod sub;\nuse crate::sub::f as g;\nfn main() { g(); }\n'
+    )
+    (tmp_path / "src" / "bin" / "alt.rs").write_text("pub fn f() {}\n")
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+    updater.run()
+    imports = updater.factory.import_processor.import_mapping.get("proj.src.bin", {})
+    assert imports.get("g") == "proj.src.bin.alt.f", imports
+
+
+def test_self_paths_in_src_bin_mod_rs_resolve_to_the_directory_qn(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    _manifest(tmp_path)
+    (tmp_path / "src" / "bin").mkdir(parents=True)
+    (tmp_path / "src" / "bin" / "main.rs").write_text("fn main() {}\n")
+    (tmp_path / "src" / "bin" / "mod.rs").write_text(
+        "use self::helper as sh;\n\npub const fn helper() -> u32 { 7 }\n\n"
+        "fn main() { let _ = sh(); }\n"
+    )
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+    updater.run()
+    imports = updater.factory.import_processor.import_mapping.get("proj.src.bin", {})
+    assert imports.get("sh") == "proj.src.bin.helper", imports

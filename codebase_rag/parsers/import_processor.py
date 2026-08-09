@@ -1769,9 +1769,10 @@ class ImportProcessor:
             # path ends in mod.rs) as a target named `mod` whose crate root
             # is the file itself. The mod.rs spelling maps the module to its
             # DIRECTORY qn, so that qn is the file root and `mod x;` inside
-            # it resolves beside it — exactly the file-root nesting
+            # it resolves beside it — file-root nesting whose declarations
+            # come from mod.rs, not a sibling `<dir>.rs` shadow
             # (issue #1031).
-            return "file", qn_parts
+            return "dir_file", qn_parts
         for i in range(len(dir_parts), -1, -1):
             if i >= 1:
                 name = dir_parts[i - 1]
@@ -2275,6 +2276,20 @@ class ImportProcessor:
         beside the entry point, so route through _rust_attach.
         """
         parts = base_qn.split(cs.SEPARATOR_DOT)[1:]
+        mod_stem = cs.MOD_RS[: -len(cs.EXT_RS)]
+        if (
+            parts
+            and cs.MOD_RS in self._rust_dir_entries(self.repo_path.joinpath(*parts))
+            and (
+                self._rust_is_auto_target_dir(parts, mod_stem)
+                or self._rust_is_explicit_target(parts, mod_stem)
+            )
+        ):
+            # The base qn IS a mod.rs-backed target (src/bin/mod.rs): its
+            # self:: — and super:: chains landing on it — attach beside
+            # mod.rs, never through a sibling entry stem like src/bin's
+            # main.rs (issue #1031).
+            return self._rust_join_mods(parts, rest, dir_backed=True)
         if self._rust_is_crate_root_dir(parts):
             stem, definitive = self._rust_entry_stem(parts, importer_qn)
             return self._rust_attach(parts, stem, rest, definitive)
@@ -2367,6 +2382,11 @@ class ImportProcessor:
             # An auto-target crate (src/bin/tool.rs): items and
             # submodules both nest under the entry file's qn.
             return self._rust_join_mods(root_parts, rest)
+        if kind == "dir_file":
+            # A mod.rs-backed target (src/bin/mod.rs): same nesting, but
+            # the root's declarations live in mod.rs, so the walk must not
+            # read a sibling `<dir>.rs` shadow.
+            return self._rust_join_mods(root_parts, rest, dir_backed=True)
         if kind == "entry":
             # An explicit manifest target: the root file IS the entry,
             # so submodule files sit beside it and items nest in it.
