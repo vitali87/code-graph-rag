@@ -148,6 +148,7 @@ public class StaticUser {
     helper_qn = f"{project}.src.main.java.com.example.myapp.util.MyHelper"
     edges = _import_edges(mock_ingestor, user_qn)
     assert (str(cs.NodeLabel.MODULE), helper_qn) in edges, edges
+    assert not [e for e in edges if e[0] == str(cs.NodeLabel.EXTERNAL_MODULE)], edges
 
 
 def test_nested_class_import_targets_the_outer_class_module(
@@ -190,6 +191,7 @@ public class NestedUser {
     outer_qn = f"{project}.src.main.java.com.example.myapp.Outer"
     edges = _import_edges(mock_ingestor, user_qn)
     assert (str(cs.NodeLabel.MODULE), outer_qn) in edges, edges
+    assert not [e for e in edges if e[0] == str(cs.NodeLabel.EXTERNAL_MODULE)], edges
 
 
 def test_test_root_class_resolves_to_the_test_source_root(
