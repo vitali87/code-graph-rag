@@ -105,6 +105,34 @@ def test_build_default_keeps_build_script_classification(tmp_path: Path) -> None
     assert processor._rust_is_auto_target_dir([], "build") is True
 
 
+def test_autolib_false_stops_crate_root_dir_classification(tmp_path: Path) -> None:
+    _package(tmp_path, "autolib = false\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["src"]) is False
+
+
+def test_autolib_false_with_explicit_lib_target_still_roots(tmp_path: Path) -> None:
+    _package(tmp_path, 'autolib = false\n\n[lib]\npath = "src/lib.rs"\n')
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["src"]) is True
+
+
+def test_autobins_false_alone_stops_main_rooting_the_dir(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "fixture"\nversion = "0.1.0"\nautobins = false\n'
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["src"]) is False
+
+
+def test_default_flags_keep_crate_root_dir_classification(tmp_path: Path) -> None:
+    _package(tmp_path)
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["src"]) is True
+
+
 def test_autolib_false_drops_lib_from_the_entry_scan(tmp_path: Path) -> None:
     _package(tmp_path, "autolib = false\n")
     (tmp_path / "src" / "lib.rs").write_text("pub mod foo;\n")

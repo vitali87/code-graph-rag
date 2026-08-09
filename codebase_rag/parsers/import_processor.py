@@ -1309,6 +1309,22 @@ class ImportProcessor:
         self._rust_explicit_target_paths(pkg_parts)
         return self._rust_auto_build_flags.get(pkg_parts, False)
 
+    def _rust_src_auto_entry_flags(self, dir_parts: list[str]) -> tuple[bool, bool]:
+        # (autolib, autobins) for lib.rs/main.rs sitting in THIS directory:
+        # the opt-outs govern cargo's src/ auto locations, so they apply
+        # only when the directory is a package's src/ (manifest beside it).
+        if not dir_parts or dir_parts[-1] != cs.LANG_SRC_DIR:
+            return True, True
+        pkg_parts = tuple(dir_parts[:-1])
+        if cs.PKG_CARGO_TOML not in self._rust_dir_entries(
+            self.repo_path.joinpath(*pkg_parts)
+        ):
+            return True, True
+        return (
+            self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOLIB_KEY),
+            self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY),
+        )
+
     def _rust_auto_kind_enabled(self, pkg_parts: tuple[str, ...], key: str) -> bool:
         # Cargo's per-kind discovery opt-outs (`autobins = false` and
         # siblings in [package]): a disabled kind's auto-location files are
@@ -1641,13 +1657,19 @@ class ImportProcessor:
         # sibling app.rs is the tell), not a crate (verified against rustc:
         # self::foo inside app::main is app::main::foo).
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+        explicit_names = self._rust_explicit_entry_files(tuple(dir_parts))
+        auto_lib, auto_bins = self._rust_src_auto_entry_flags(dir_parts)
+        # A physical lib.rs/main.rs counts only while its kind's discovery
+        # opt-out is unset, or when the manifest names it explicitly
+        # (issue #1030).
+        lib_roots = cs.LIB_RS in entries and (auto_lib or cs.LIB_RS in explicit_names)
+        main_roots = cs.MAIN_RS in entries and (
+            auto_bins or cs.MAIN_RS in explicit_names
+        )
         if (
-            cs.LIB_RS not in entries
-            and cs.MAIN_RS not in entries
-            and not any(
-                name in entries
-                for name in self._rust_explicit_entry_files(tuple(dir_parts))
-            )
+            not lib_roots
+            and not main_roots
+            and not any(name in entries for name in explicit_names)
         ):
             # An explicit manifest target is an entry too: a package whose
             # ONLY entry is `[[bin]] path = "src/cli.rs"` still roots its
@@ -1755,18 +1777,7 @@ class ImportProcessor:
         # src/lib.rs and src/main.rs are auto-discovered only while their
         # kind's opt-out is unset; an explicit manifest target re-adds the
         # file below regardless (issue #1030).
-        auto_lib = auto_bins = True
-        if dir_parts and dir_parts[-1] == cs.LANG_SRC_DIR:
-            pkg_parts = tuple(dir_parts[:-1])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                auto_lib = self._rust_auto_kind_enabled(
-                    pkg_parts, cs.RS_MANIFEST_AUTOLIB_KEY
-                )
-                auto_bins = self._rust_auto_kind_enabled(
-                    pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
-                )
+        auto_lib, auto_bins = self._rust_src_auto_entry_flags(dir_parts)
         scan = [
             name
             for name, enabled in ((cs.LIB_RS, auto_lib), (cs.MAIN_RS, auto_bins))
