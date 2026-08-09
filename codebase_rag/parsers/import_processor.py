@@ -1764,18 +1764,19 @@ class ImportProcessor:
                 # cargo-verified), so it attaches classically with
                 # itself as the definitive entry stem.
                 return "entry", qn_parts
-        if (
-            stem in cs.RS_ENTRY_STEMS
-            and f"{stem}{cs.EXT_RS}"
-            in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-            and self._rust_is_auto_target_dir(dir_parts, stem)
+        if stem in cs.RS_ENTRY_STEMS and f"{stem}{cs.EXT_RS}" in self._rust_dir_entries(
+            self.repo_path.joinpath(*dir_parts)
         ):
-            # An entry-stem FILE in a direct auto-target location
-            # (src/bin/main.rs beside src/bin/mod.rs) keeps its own crate:
-            # its qn carries the stem only when a sibling claimed the dir
-            # qn, and the ancestor mod.rs check below must not swallow it
+            # An entry-stem FILE that is a target in its own right — by
+            # auto location (src/bin/main.rs beside src/bin/mod.rs) or by
+            # explicit manifest path — keeps its own crate: its qn carries
+            # the stem only when a sibling claimed the dir qn, and the
+            # ancestor mod.rs check below must not swallow it
             # (issue #1031 review).
-            return "file", qn_parts
+            if self._rust_is_auto_target_dir(dir_parts, stem):
+                return "file", qn_parts
+            if self._rust_is_explicit_target(dir_parts, stem):
+                return "entry", qn_parts
         if self._rust_is_mod_rs_target(qn_parts):
             # Cargo compiles src/bin/mod.rs (or an explicit target whose
             # path ends in mod.rs) as a target named `mod` whose crate root

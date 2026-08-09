@@ -234,3 +234,38 @@ def test_root_level_mod_rs_redirects_are_read(
     updater.run()
     imports = updater.factory.import_processor.import_mapping.get("proj", {})
     assert imports.get("g") == "proj.alt.f", imports
+
+
+def test_explicit_main_target_keeps_its_crate_beside_explicit_mod_target(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    _manifest(
+        tmp_path,
+        '\n[[bin]]\nname = "tools"\npath = "src/tools/mod.rs"\n\n'
+        '[[bin]]\nname = "tools-main"\npath = "src/tools/main.rs"\n',
+    )
+    tools = tmp_path / "src" / "tools"
+    tools.mkdir(parents=True)
+    (tools / "mod.rs").write_text("fn main() {}\n")
+    (tools / "main.rs").write_text(
+        "use crate::own as o;\n\npub const fn own() -> u32 { 1 }\n\n"
+        "fn main() { let _ = o(); }\n"
+    )
+    processor = _processor(tmp_path)
+    assert processor._rust_crate_root("proj.src.tools.main") == (
+        "entry",
+        ["src", "tools", "main"],
+    )
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+    updater.run()
+    imports = updater.factory.import_processor.import_mapping.get(
+        "proj.src.tools.main", {}
+    )
+    assert imports.get("o") == "proj.src.tools.main.own", imports
