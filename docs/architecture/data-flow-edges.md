@@ -379,10 +379,13 @@ sits outside what the analysis covers" look identical, and for assurance
 questions an absent path must never be read as a pass. Two mechanisms make
 the distinction queryable:
 
-- Every `Module` node carries a `flow_covered` boolean: `true` when the
-  module's language is in the source/sink registry **and** the `FLOWS_TO`
-  capture group was enabled at indexing time. It is directly queryable in
-  Cypher.
+- Every file-backed `Module` node carries a `flow_covered` boolean: `true`
+  when the module's language is in the source/sink registry **and** the
+  `FLOWS_TO` capture group was enabled at indexing time. A bodied inline
+  `mod` stamps the same value as its file; inline Module nodes that keep a
+  synthetic `inline_module_*` path have no independent coverage and are
+  excluded from gap reporting rather than counted as gaps. Directly
+  queryable in Cypher.
 - A source-to-sink reachability question, exposed as the `flow_verdict` MCP
   tool, answers with one of three verdicts:
     - `FOUND` — a `FLOWS_TO` path exists; the qualified-name path is

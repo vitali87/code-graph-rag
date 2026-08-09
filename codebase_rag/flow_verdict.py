@@ -14,16 +14,25 @@ FLOW_VERDICT_FOUND = "FOUND"
 FLOW_VERDICT_NO_FLOW = "NO_FLOW"
 FLOW_VERDICT_UNKNOWN = "UNKNOWN"
 
+# Either endpoint may anchor the edge to the project: FLOWS_TO sources can
+# be Resource nodes whose qns carry their own scheme, and dropping their
+# edges would hide resource-originated flows from the scan.
 CYPHER_FLOW_EDGES = f"""MATCH (a)-[:{cs.RelationshipType.FLOWS_TO.value}]->(b)
 WHERE a.qualified_name STARTS WITH $project_prefix
+   OR b.qualified_name STARTS WITH $project_prefix
+   OR a.qualified_name = $project_name
+   OR b.qualified_name = $project_name
 RETURN a.qualified_name AS source, b.qualified_name AS target
 """
 
 # Inline `mod` blocks mint Module nodes with synthetic inline paths and no
 # coverage property of their own; their coverage IS their file module's, so
 # they are excluded rather than reported as spurious gaps.
+# The bare project qn is a real module too (a repository-root __init__.py
+# or root-level mod.rs maps to it), so equality joins the prefix filter.
 CYPHER_FLOW_COVERAGE_GAPS = f"""MATCH (m:{cs.NodeLabel.MODULE.value})
-WHERE m.qualified_name STARTS WITH $project_prefix
+WHERE (m.qualified_name STARTS WITH $project_prefix
+   OR m.qualified_name = $project_name)
   AND coalesce(m.{cs.KEY_FLOW_COVERED}, false) = false
   AND NOT m.path STARTS WITH '{cs.INLINE_MODULE_PATH_PREFIX}'
 RETURN m.path AS path
@@ -60,7 +69,11 @@ def flow_reachability_verdict(
     sink_qn: str,
 ) -> FlowVerdict:
     prefix = f"{project_name}{cs.SEPARATOR_DOT}"
-    rows = fetch_all(CYPHER_FLOW_EDGES, {cs.KEY_PROJECT_PREFIX: prefix})
+    params = {
+        cs.KEY_PROJECT_PREFIX: prefix,
+        cs.KEY_PROJECT_NAME: project_name,
+    }
+    rows = fetch_all(CYPHER_FLOW_EDGES, params)
     edges: dict[str, list[str]] = {}
     for row in rows:
         source, target = row.get("source"), row.get("target")
@@ -70,7 +83,7 @@ def flow_reachability_verdict(
     if path := _bfs_path(edges, source_qn, sink_qn):
         return FlowVerdict(FLOW_VERDICT_FOUND, tuple(path), ())
 
-    gap_rows = fetch_all(CYPHER_FLOW_COVERAGE_GAPS, {cs.KEY_PROJECT_PREFIX: prefix})
+    gap_rows = fetch_all(CYPHER_FLOW_COVERAGE_GAPS, params)
     gaps = tuple(
         sorted(
             path for row in gap_rows if isinstance(path := row.get(cs.KEY_PATH), str)

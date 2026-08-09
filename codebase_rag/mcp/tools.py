@@ -472,13 +472,17 @@ class MCPToolsRegistry:
         from codebase_rag.flow_verdict import flow_reachability_verdict
 
         project = derive_project_name(Path(self.project_root))
-        result = await asyncio.to_thread(
-            flow_reachability_verdict,
-            self.ingestor.fetch_all,
-            project,
-            source_qualified_name,
-            sink_qualified_name,
-        )
+        # The edge scan and coverage read must see one consistent graph:
+        # index/update handlers hold this lock while they delete and
+        # rebuild, and an interleaved read would mix generations.
+        async with self._ingestor_lock:
+            result = await asyncio.to_thread(
+                flow_reachability_verdict,
+                self.ingestor.fetch_all,
+                project,
+                source_qualified_name,
+                sink_qualified_name,
+            )
         return {
             "verdict": result.verdict,
             "path": list(result.path),
