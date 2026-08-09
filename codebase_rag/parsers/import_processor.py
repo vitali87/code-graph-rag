@@ -1343,15 +1343,41 @@ class ImportProcessor:
                 )
             return True, True
         if (
-            len(dir_parts) >= 3
-            and dir_parts[-2] == cs.RS_BIN_DIR
-            and dir_parts[-3] == cs.LANG_SRC_DIR
+            len(dir_parts) >= 2
+            and dir_parts[-1] == cs.RS_BIN_DIR
+            and dir_parts[-2] == cs.LANG_SRC_DIR
         ):
-            pkg_parts = tuple(dir_parts[:-3])
+            # src/bin/main.rs is itself a bin auto target.
+            pkg_parts = tuple(dir_parts[:-2])
             if cs.PKG_CARGO_TOML in self._rust_dir_entries(
                 self.repo_path.joinpath(*pkg_parts)
             ):
                 return True, self._rust_auto_kind_enabled(
+                    pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
+                )
+            return True, True
+        if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS:
+            # <kind>/main.rs is a direct auto target of its kind.
+            pkg_parts = tuple(dir_parts[:-1])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                return True, self._rust_auto_kind_enabled(
+                    pkg_parts, cs.RS_AUTO_DIR_KEYS[dir_parts[-1]]
+                )
+            return True, True
+        if (
+            len(dir_parts) >= 3
+            and dir_parts[-2] == cs.RS_BIN_DIR
+            and dir_parts[-3] == cs.LANG_SRC_DIR
+        ):
+            # A multi-file target compiles <name>/main.rs; a lib.rs there is
+            # never a cargo target, so the lib flag is off in nested dirs.
+            pkg_parts = tuple(dir_parts[:-3])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                return False, self._rust_auto_kind_enabled(
                     pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
                 )
             return True, True
@@ -1360,7 +1386,7 @@ class ImportProcessor:
             if cs.PKG_CARGO_TOML in self._rust_dir_entries(
                 self.repo_path.joinpath(*pkg_parts)
             ):
-                return True, self._rust_auto_kind_enabled(
+                return False, self._rust_auto_kind_enabled(
                     pkg_parts, cs.RS_AUTO_DIR_KEYS[dir_parts[-2]]
                 )
         return True, True

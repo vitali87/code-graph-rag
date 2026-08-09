@@ -213,6 +213,42 @@ def test_default_flags_keep_multi_file_target_dirs(tmp_path: Path) -> None:
     assert processor._rust_is_crate_root_dir(["tests", "suite"]) is True
 
 
+def test_autobins_false_stops_direct_src_bin_main(tmp_path: Path) -> None:
+    """src/bin/main.rs is itself a bin auto target."""
+    _package(tmp_path, "autobins = false\n")
+    (tmp_path / "src" / "bin").mkdir(parents=True)
+    (tmp_path / "src" / "bin" / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["src", "bin"]) is False
+
+
+def test_autoexamples_false_stops_direct_examples_main(tmp_path: Path) -> None:
+    _package(tmp_path, "autoexamples = false\n")
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples" / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["examples"]) is False
+
+
+def test_default_direct_examples_main_still_roots(tmp_path: Path) -> None:
+    _package(tmp_path)
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples" / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["examples"]) is True
+
+
+def test_nested_lib_rs_is_never_a_target(tmp_path: Path) -> None:
+    """Cargo multi-file targets compile <name>/main.rs; a lone lib.rs in a
+    nested target dir is not a crate root even with default flags."""
+    _package(tmp_path)
+    tool = tmp_path / "src" / "bin" / "tool"
+    tool.mkdir(parents=True)
+    (tool / "lib.rs").write_text("pub fn f() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["src", "bin", "tool"]) is False
+
+
 def test_autolib_false_drops_lib_from_the_entry_scan(tmp_path: Path) -> None:
     _package(tmp_path, "autolib = false\n")
     (tmp_path / "src" / "lib.rs").write_text("pub mod foo;\n")
