@@ -709,7 +709,29 @@ class _JsFileBindingCollector:
             cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
         ):
             self._visit_assignment(node)
+        elif node_type == cs.TS_FUNCTION_SIGNATURE:
+            self._visit_function_signature(node, fn_container)
         return True, frame
+
+    def _visit_function_signature(self, node: Node, fn_container: Node) -> None:
+        # An ambient namespace member (`declare namespace N { export function
+        # helper(): number }`) is a function_signature, yet declaration
+        # merging makes it a real introduction in every sibling block of the
+        # same namespace: a call there that TS resolves to the merged member
+        # must not fall through to a same-named file-level function (issue
+        # #996). Count-only (no function node) so it can only suppress, and
+        # replicated across the merge group like other exported members;
+        # file-level overload signatures stay uncollected — they denote the
+        # same function as their implementation. Ambient members are exported
+        # whether or not they carry the keyword, so every namespace-level
+        # signature replicates.
+        if fn_container.type not in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):
+            return
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None or not (sig_name := safe_decode_text(name_node)):
+            return
+        self._add(sig_name, None, fn_container)
+        self._ns_exported.append((sig_name, None, fn_container))
 
     def _visit_callable(
         self, node: Node, fn_container: Node
