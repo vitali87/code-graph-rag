@@ -135,3 +135,46 @@ def test_self_paths_in_src_bin_mod_rs_resolve_to_the_directory_qn(
     updater.run()
     imports = updater.factory.import_processor.import_mapping.get("proj.src.bin", {})
     assert imports.get("sh") == "proj.src.bin.helper", imports
+
+
+def test_descendant_module_roots_at_the_mod_rs_target(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """A submodule declared from src/bin/mod.rs roots at the target's
+    directory qn, so its crate:: paths stay inside the mod crate."""
+    _manifest(tmp_path)
+    child = tmp_path / "src" / "bin" / "child"
+    child.mkdir(parents=True)
+    (tmp_path / "src" / "bin" / "mod.rs").write_text(
+        "mod child;\n\npub const fn helper() -> u32 { 7 }\n\nfn main() {}\n"
+    )
+    (child / "mod.rs").write_text(
+        "use crate::helper as h;\npub fn use_it() -> u32 { h() }\n"
+    )
+    processor = _processor(tmp_path)
+    assert processor._rust_crate_root("proj.src.bin.child") == (
+        "dir_file",
+        ["src", "bin"],
+    )
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+    updater.run()
+    imports = updater.factory.import_processor.import_mapping.get(
+        "proj.src.bin.child", {}
+    )
+    assert imports.get("h") == "proj.src.bin.helper", imports
+
+
+def test_root_level_explicit_mod_rs_target_roots_the_project_qn(
+    tmp_path: Path,
+) -> None:
+    _manifest(tmp_path, '\n[[bin]]\nname = "tool"\npath = "mod.rs"\n')
+    (tmp_path / "mod.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_crate_root("proj") == ("dir_file", [])
