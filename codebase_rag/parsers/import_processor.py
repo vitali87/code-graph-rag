@@ -451,6 +451,7 @@ class ImportProcessor:
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
+        "_java_source_root_prefix_cached",
         "_project_named_package",
         "_map_py_source_root",
         "_map_go_import_path",
@@ -737,10 +738,24 @@ class ImportProcessor:
         @lru_cache(maxsize=4096)
         def _is_local_java_import_cached(import_path: str) -> bool:
             top_level = import_path.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
-            return (repo_path / top_level).is_dir()
+            return (repo_path / top_level).is_dir() or any(
+                (repo_path.joinpath(*parts) / top_level).is_dir()
+                for parts in cs.JAVA_MAVEN_SOURCE_ROOTS
+            )
+
+        @lru_cache(maxsize=4096)
+        def _java_source_root_prefix_cached(top_level: str) -> str:
+            # The registered Module qns carry the build-tool source root
+            # (src.main.java.), so a local import's qn must too; a flat
+            # layout keeps the empty prefix and is unchanged (issue #1121).
+            for parts in cs.JAVA_MAVEN_SOURCE_ROOTS:
+                if (repo_path.joinpath(*parts) / top_level).is_dir():
+                    return cs.SEPARATOR_DOT.join(parts) + cs.SEPARATOR_DOT
+            return ""
 
         self._is_local_module_cached = _is_local_module_cached
         self._is_local_java_import_cached = _is_local_java_import_cached
+        self._java_source_root_prefix_cached = _java_source_root_prefix_cached
 
         load_persistent_cache()
 
@@ -1128,7 +1143,9 @@ class ImportProcessor:
 
     def _resolve_java_import_path(self, import_path: str) -> str:
         if self._is_local_java_import(import_path):
-            return f"{self.project_name}{cs.SEPARATOR_DOT}{import_path}"
+            top_level = import_path.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
+            prefix = self._java_source_root_prefix_cached(top_level)
+            return f"{self.project_name}{cs.SEPARATOR_DOT}{prefix}{import_path}"
         return import_path
 
     def _is_local_js_import(self, full_name: str) -> bool:

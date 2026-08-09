@@ -750,7 +750,7 @@ public class MainClass {
     assert main_module_qn in updater.factory.import_processor.import_mapping
     imports = updater.factory.import_processor.import_mapping[main_module_qn]
     assert "Helper" in imports
-    assert imports["Helper"] == "com.example.utils.Helper"
+    assert imports["Helper"] == f"{project_name}.src.main.java.com.example.utils.Helper"
 
     call_relationships = get_relationships(mock_ingestor, "CALLS")
 
