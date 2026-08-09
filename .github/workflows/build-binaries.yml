@@ -53,7 +53,18 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Install dependencies
+        shell: bash
         run: |
+          # cryptography ships no Intel macOS wheels since v50, so uv compiles it from
+          # source on this leg. Statically link OpenSSL (as the official wheels do) so the
+          # extension does not resolve against whichever libssl.3.dylib PyInstaller happens
+          # to bundle — see issue #1143. The cache clean is required because uv's
+          # built-wheel cache is not keyed by these env vars.
+          if [ "${{ matrix.platform }}" = "darwin" ] && [ "${{ matrix.arch }}" = "amd64" ]; then
+            export OPENSSL_DIR="$(brew --prefix openssl@3)"
+            export OPENSSL_STATIC=1
+            uv cache clean cryptography
+          fi
           uv sync --extra treesitter-full
           uv add --dev pyinstaller
 
