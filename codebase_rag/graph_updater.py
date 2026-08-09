@@ -364,6 +364,7 @@ class GraphUpdater:
                 structural_elements=(
                     self.factory.structure_processor.structural_elements
                 ),
+                owned_qns=self._frontend_owned_qns,
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
             )
@@ -1374,7 +1375,7 @@ class GraphUpdater:
         }
         # Frontend registrations (libclang C/C++) have no span records; their
         # ownership is tracked per rel path at registration time.
-        touched_rel = str(relative_path)
+        touched_rel = relative_path.as_posix()
         for owner_rel, owner_qns in self._frontend_owned_qns.items():
             if owner_rel != touched_rel:
                 foreign_qns |= owner_qns

@@ -854,6 +854,7 @@ def run_cpp_frontend_hybrid(
     structural_elements: dict[Path, str | None] | None = None,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
+    owned_qns: dict[str, set[str]] | None = None,
 ) -> tuple[list[PendingMacroCall], list[PendingExpansionCall]]:
     """Layer libclang's macro, alias, and include facts onto a tree-sitter index.
 
@@ -872,6 +873,7 @@ def run_cpp_frontend_hybrid(
         simple_name_lookup,
         structural_elements,
         hybrid=True,
+        owned_qns=owned_qns,
     )
     _parse_and_collect(collector, compdb_dir)
     collector.flush(ingestor)
