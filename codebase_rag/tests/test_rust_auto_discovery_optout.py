@@ -133,6 +133,54 @@ def test_default_flags_keep_crate_root_dir_classification(tmp_path: Path) -> Non
     assert processor._rust_is_crate_root_dir(["src"]) is True
 
 
+def test_pathless_lib_table_survives_autolib_false(tmp_path: Path) -> None:
+    """[lib] with no path is an explicit target at the default src/lib.rs."""
+    _package(tmp_path, 'autolib = false\n\n[lib]\nname = "fixture"\n')
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["src"]) is True
+    assert "lib" in processor._rust_entry_decls(["src"])
+
+
+def test_pathless_bin_table_survives_autobins_false(tmp_path: Path) -> None:
+    _package(tmp_path, 'autobins = false\n\n[[bin]]\nname = "tool"\n')
+    (tmp_path / "src" / "bin").mkdir(parents=True)
+    (tmp_path / "src" / "bin" / "tool.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_explicit_target(["src", "bin"], "tool") is True
+
+
+def test_autolib_false_member_is_not_an_importable_lib(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[workspace]\nmembers = ["member"]\n')
+    member = tmp_path / "member"
+    (member / "src").mkdir(parents=True)
+    (member / "Cargo.toml").write_text(
+        '[package]\nname = "member"\nversion = "0.1.0"\nautolib = false\n'
+    )
+    (member / "src" / "lib.rs").write_text("pub fn f() {}\n")
+    processor = _processor(tmp_path)
+    manifest = processor._rust_read_manifest(member)
+    assert processor._rust_member_lib_root(member, manifest) is None
+
+
+def test_pathless_lib_member_stays_importable_under_autolib_false(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "Cargo.toml").write_text('[workspace]\nmembers = ["member"]\n')
+    member = tmp_path / "member"
+    (member / "src").mkdir(parents=True)
+    (member / "Cargo.toml").write_text(
+        '[package]\nname = "member"\nversion = "0.1.0"\nautolib = false\n\n'
+        '[lib]\nname = "member"\n'
+    )
+    (member / "src" / "lib.rs").write_text("pub fn f() {}\n")
+    processor = _processor(tmp_path)
+    manifest = processor._rust_read_manifest(member)
+    assert processor._rust_member_lib_root(member, manifest) == (
+        ("member", "src"),
+        "lib",
+    )
+
+
 def test_autolib_false_drops_lib_from_the_entry_scan(tmp_path: Path) -> None:
     _package(tmp_path, "autolib = false\n")
     (tmp_path / "src" / "lib.rs").write_text("pub mod foo;\n")

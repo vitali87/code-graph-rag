@@ -1309,6 +1309,18 @@ class ImportProcessor:
         self._rust_explicit_target_paths(pkg_parts)
         return self._rust_auto_build_flags.get(pkg_parts, False)
 
+    @staticmethod
+    def _rust_default_target_path(section: str, entry: dict) -> str | None:
+        template = cs.RS_MANIFEST_DEFAULT_TARGET_PATHS.get(section)
+        if template is None:
+            return None
+        if cs.RS_MANIFEST_NAME_TEMPLATE not in template:
+            return template
+        name = entry.get(cs.RS_MANIFEST_NAME_KEY)
+        if not isinstance(name, str) or not name:
+            return None
+        return template.replace(cs.RS_MANIFEST_NAME_TEMPLATE, name)
+
     def _rust_src_auto_entry_flags(self, dir_parts: list[str]) -> tuple[bool, bool]:
         # (autolib, autobins) for lib.rs/main.rs sitting in THIS directory:
         # the opt-outs govern cargo's src/ auto locations, so they apply
@@ -1366,10 +1378,16 @@ class ImportProcessor:
             if not isinstance(entries, list):
                 continue
             for entry in entries:
-                if isinstance(entry, dict) and isinstance(
-                    path := entry.get(cs.RS_MANIFEST_PATH_KEY), str
-                ):
+                if not isinstance(entry, dict):
+                    continue
+                if isinstance(path := entry.get(cs.RS_MANIFEST_PATH_KEY), str):
                     paths.add(_rust_norm_manifest_path(path))
+                elif default := self._rust_default_target_path(section, entry):
+                    # A PATHLESS table is still an explicit target at its
+                    # conventional location ([lib] means src/lib.rs), and an
+                    # explicit target must survive its kind's auto-discovery
+                    # opt-out (issue #1030 review).
+                    paths.add(default)
         # `[package] build = "..."` overrides the build script location;
         # the named file is a crate root like any explicit target.
         package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
@@ -1485,7 +1503,17 @@ class ImportProcessor:
             parts = _rust_norm_manifest_path(path).split(cs.SEPARATOR_SLASH)
             if parts[-1].endswith(cs.EXT_RS):
                 return (*rel, *parts[:-1]), parts[-1][: -len(cs.EXT_RS)]
-        if cs.LIB_RS in self._rust_dir_entries(member / cs.LANG_SRC_DIR):
+        # A pathless [lib] table is still an explicit target at the default
+        # src/lib.rs; only a genuinely undeclared library respects the
+        # autolib opt-out (issue #1030 review).
+        package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+        auto_lib = not (
+            isinstance(package, dict)
+            and package.get(cs.RS_MANIFEST_AUTOLIB_KEY) is False
+        )
+        if (auto_lib or isinstance(lib, dict)) and cs.LIB_RS in self._rust_dir_entries(
+            member / cs.LANG_SRC_DIR
+        ):
             return (*rel, cs.LANG_SRC_DIR), "lib"
         return None
 

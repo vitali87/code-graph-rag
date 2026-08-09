@@ -222,6 +222,17 @@ RS_AUTO_DIR_KEYS = {
     "tests": RS_MANIFEST_AUTOTESTS_KEY,
     "benches": RS_MANIFEST_AUTOBENCHES_KEY,
 }
+# Conventional path of a PATHLESS manifest target table: [lib] means
+# src/lib.rs; the named kinds live in their kind's directory. `{name}`
+# substitutes the table's `name` key.
+RS_MANIFEST_NAME_TEMPLATE = "{name}"
+RS_MANIFEST_DEFAULT_TARGET_PATHS = {
+    "lib": "src/lib.rs",
+    "bin": "src/bin/{name}.rs",
+    "example": "examples/{name}.rs",
+    "test": "tests/{name}.rs",
+    "bench": "benches/{name}.rs",
+}
 RS_MANIFEST_WORKSPACE_KEY = "workspace"
 RS_MANIFEST_MEMBERS_KEY = "members"
 RS_MANIFEST_NAME_KEY = "name"
