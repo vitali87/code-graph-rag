@@ -4,6 +4,19 @@ on:
   push:
     tags:
       - "v*"
+  # Binaries are otherwise first exercised on a release tag, where a failure
+  # ships a broken release (issue #1145). Build them pre-merge on any PR that
+  # touches a build input, and weekly to surface upstream drift (dropped
+  # wheels, resolver changes) that arrives without any repo commit.
+  pull_request:
+    paths:
+      - ".github/workflows/build-binaries.yml"
+      - "build_binary.py"
+      - "**.spec"
+      - "pyproject.toml"
+      - "uv.lock"
+  schedule:
+    - cron: "17 5 * * 1"
   workflow_dispatch:
   release:
     types: [created]
