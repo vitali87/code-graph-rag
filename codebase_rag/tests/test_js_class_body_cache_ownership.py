@@ -23,10 +23,23 @@ def test_owner_is_held_by_reference_not_recycled_id() -> None:
     found = js_utils.find_method_in_ast(root_a, "Box", "open")
     assert found is not None
 
-    # The cache must HOLD the owning root: that reference is what makes the
-    # identity comparison sound, because a live object's address cannot be
-    # reused by a new parse.
-    assert js_utils._CLASS_BODY_CACHE_OWNER is root_a
+    # The cache must HOLD the owning root: that reference pins the tree, so
+    # no live tree can alias its address — which is what makes the equality
+    # comparison sound.
+    assert js_utils._CLASS_BODY_CACHE_OWNER == root_a
+
+
+def test_fresh_wrapper_over_the_same_tree_keeps_the_cache(tmp_path=None) -> None:
+    # Each `tree.root_node` access mints a NEW wrapper object; a same-tree
+    # lookup through a fresh wrapper must hit the cache, not reset it.
+    tree = _parse("class Box { open () { return 1 } }")
+    first = tree.root_node
+    assert js_utils.find_method_in_ast(first, "Box", "open") is not None
+    marker = js_utils._CLASS_BODY_CACHE.get("Box")
+    fresh = tree.root_node
+    assert fresh is not first
+    assert js_utils.find_method_in_ast(fresh, "Box", "open") is not None
+    assert js_utils._CLASS_BODY_CACHE.get("Box") is marker
 
 
 def test_fresh_root_never_inherits_the_previous_trees_entries() -> None:

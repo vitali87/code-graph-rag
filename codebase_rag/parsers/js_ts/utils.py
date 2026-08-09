@@ -55,12 +55,13 @@ def find_method_in_class_body(class_body_node: Node, method_name: str) -> Node |
 
 
 _CLASS_BODY_CACHE: dict[str, Node | None] = {}
-# The OWNER is a strong reference compared by identity, never by id(): a
-# freed tree's heap address gets recycled, so an integer owner could
-# masquerade as current and serve Node values from a dead tree (the xdist
-# worker-distribution flake, issue #1042). While this reference is held the
-# address cannot be reused, and a fresh root — equal id or not — is a
-# different object, so the cache always resets with it. Pins exactly one
+# The OWNER is a strong reference, never a bare id(): a freed tree's heap
+# address gets recycled, so an integer owner could masquerade as current and
+# serve Node values from a dead tree (the xdist worker-distribution flake,
+# issue #1042). Holding the reference pins the owner's tree, so no live tree
+# can alias its address — which is what makes NODE EQUALITY sound here, and
+# equality (not identity) is required because each `tree.root_node` access
+# mints a fresh wrapper object over the same tree node. Pins exactly one
 # tree, the one the cache describes.
 _CLASS_BODY_CACHE_OWNER: Node | None = None
 
@@ -69,7 +70,7 @@ def find_method_in_ast(
     root_node: Node, class_name: str, method_name: str
 ) -> Node | None:
     global _CLASS_BODY_CACHE_OWNER
-    if _CLASS_BODY_CACHE_OWNER is not root_node:
+    if _CLASS_BODY_CACHE_OWNER != root_node:
         _CLASS_BODY_CACHE.clear()
         _CLASS_BODY_CACHE_OWNER = root_node
     cache_key = class_name
