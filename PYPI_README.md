@@ -64,11 +64,8 @@ The package installs a `cgr` command.
 ```bash
 cgr daemon up                              # start Memgraph + Qdrant
 cgr start --repo-path ./my-project \
-          --update-graph                   # parse & launch interactive chat
+          --update-graph --clean           # parse & launch interactive chat
 ```
-
-Add `--clean` only to start over: it deletes every project in the shared graph,
-not just the one being synced.
 
 **Index to protobuf for offline use:**
 
@@ -183,8 +180,8 @@ print(f"Embedding dimension: {len(embedding)}")
 ```python
 from cgr import settings
 
-settings.set_orchestrator("openai", "gpt-4o", api_key="sk-...")
-settings.set_cypher("google", "gemini-2.5-flash", api_key="your-key")
+settings.set_orchestrator("openai", "gpt-5.6-terra", api_key="sk-...")
+settings.set_cypher("google", "gemini-3.5-flash-lite", api_key="your-key")
 ```
 
 ## Environment Variables
@@ -196,10 +193,10 @@ Configure via `.env` or environment variables:
 | `MEMGRAPH_HOST` | `localhost` | Memgraph hostname |
 | `MEMGRAPH_PORT` | `7687` | Memgraph port |
 | `ORCHESTRATOR_PROVIDER` | | Provider: `google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy` |
-| `ORCHESTRATOR_MODEL` | | Model ID (e.g. `claude-opus-5`, `gpt-4o`, `gemini-2.5-pro`) |
+| `ORCHESTRATOR_MODEL` | | Model ID (e.g. `gpt-5.6-terra`, `gemini-3.6-flash`, `claude-sonnet-5`, `qwen2.5-coder`) |
 | `ORCHESTRATOR_API_KEY` | | API key for the provider (not needed for `ollama`) |
 | `CYPHER_PROVIDER` | | Provider for Cypher generation |
-| `CYPHER_MODEL` | | Model ID for Cypher generation (e.g. `claude-haiku-4-5`, `codellama`, `gpt-4o-mini`) |
+| `CYPHER_MODEL` | | Model ID for Cypher generation (e.g. `qwen2.5-coder`, `gpt-5.6-luna`, `gemini-3.5-flash-lite`) |
 | `CYPHER_API_KEY` | | API key for Cypher provider (not needed for `ollama`) |
 | `TARGET_REPO_PATH` | `.` | Default repository path |
 

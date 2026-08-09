@@ -17,7 +17,7 @@ description: "Troubleshoot common Code-Graph-RAG issues with Memgraph, Ollama, a
 ## Local Model Issues (Ollama)
 
 - Verify Ollama is running: `ollama list`
-- Check if models are downloaded: `ollama pull llama3`
+- Check if models are downloaded: `ollama pull qwen2.5-coder`
 - Test Ollama API: `curl http://localhost:11434/v1/models`
 - Check Ollama logs: `ollama logs`
 

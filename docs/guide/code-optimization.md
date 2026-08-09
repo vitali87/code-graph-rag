@@ -39,7 +39,7 @@ The agent incorporates guidance from your reference documents when suggesting op
 ```bash
 cgr optimize javascript \
   --repo-path /path/to/frontend \
-  --orchestrator google:gemini-2.5-pro
+  --orchestrator google:gemini-3.6-flash
 ```
 
 ```bash

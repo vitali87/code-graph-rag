@@ -53,14 +53,14 @@ cgr start --repo-path /path/to/your/repo
 
 ```bash
 cgr start --repo-path /path/to/your/repo \
-  --orchestrator ollama:llama3.2 \
-  --cypher ollama:codellama
+  --orchestrator ollama:qwen2.5-coder \
+  --cypher ollama:qwen2.5-coder
 ```
 
 ```bash
 cgr start --repo-path /path/to/your/repo \
-  --orchestrator google:gemini-2.5-pro \
-  --cypher google:gemini-2.5-flash
+  --orchestrator google:gemini-3.6-flash \
+  --cypher google:gemini-3.5-flash-lite
 ```
 
 **Example queries:**
