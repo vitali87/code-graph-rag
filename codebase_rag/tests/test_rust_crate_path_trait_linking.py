@@ -3549,8 +3549,8 @@ def test_watch_create_of_owned_module_keeps_its_own_imports(
     mock_ingestor.reset_mock()
     handler.dispatch(FileCreatedEvent(str(inner_rs)))
 
-    # Files created during watch get no CALLS edges (issue #1028), so
-    # the import map IS the observable contract here.
+    # Created files emit their CALLS edges in the same cycle since issue
+    # #1028; the import map remains the contract THIS test pins.
     mapping = updater.factory.import_processor.import_mapping.get(key)
     assert mapping == {"ah": f"{base}.alpha.helper"}, mapping
 

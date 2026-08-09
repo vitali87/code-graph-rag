@@ -96,6 +96,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self.first_event_time: dict[str, float] = {}
         self.pending_events: dict[str, FileSystemEvent] = {}
         self.lock = threading.Lock()
+        # Debounce timers fire on separate threads, and a graph update
+        # mutates shared parser state (_parsed_files, import maps, caches)
+        # then deletes and recomputes every CALLS edge: two interleaved
+        # updates can drop a just-registered file's edges. The whole
+        # update runs as one serialized transaction (issues #1028, #1032).
+        self._update_lock = threading.Lock()
 
         if self.debounce_enabled:
             logger.info(
@@ -217,6 +223,10 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
     def _process_change(self, event: FileSystemEvent) -> None:
         """Execute the actual graph update for a file change."""
+        with self._update_lock:
+            self._process_change_locked(event)
+
+    def _process_change_locked(self, event: FileSystemEvent) -> None:
         src_path = event.src_path
         if isinstance(src_path, bytes):
             src_path = src_path.decode()
@@ -290,6 +300,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 ):
                     root_node, language = result
                     self.updater.ast_cache[path] = (root_node, language)
+                    self.updater.register_parsed_file(path, language)
 
             # Create File node for ALL files (code and non-code like .md, .json, etc.)
             self.updater.factory.structure_processor.process_generic_file(
