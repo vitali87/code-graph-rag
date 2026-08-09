@@ -80,23 +80,24 @@ def flow_reachability_verdict(
 def _bfs_path(
     edges: dict[str, list[str]], source_qn: str, sink_qn: str
 ) -> list[str] | None:
-    if source_qn == sink_qn:
-        return [source_qn]
+    # The sink test precedes the seen check so a path is always at least one
+    # real edge: equal source and sink report FOUND only through a genuine
+    # cycle, never by name equality alone.
     parent: dict[str, str] = {}
     queue: deque[str] = deque([source_qn])
     seen = {source_qn}
     while queue:
         current = queue.popleft()
         for target in edges.get(current, ()):
+            if target == sink_qn:
+                chain = [current]
+                while chain[-1] != source_qn:
+                    chain.append(parent[chain[-1]])
+                chain.reverse()
+                return [*chain, target]
             if target in seen:
                 continue
             parent[target] = current
-            if target == sink_qn:
-                path = [target]
-                while path[-1] != source_qn:
-                    path.append(parent[path[-1]])
-                path.reverse()
-                return path
             seen.add(target)
             queue.append(target)
     return None

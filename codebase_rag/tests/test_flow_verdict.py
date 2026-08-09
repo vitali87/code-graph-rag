@@ -69,6 +69,29 @@ def test_unknown_names_the_gaps() -> None:
     assert result.gaps == ("legacy/script.lua", "legacy/tool.php")
 
 
+def test_equal_names_without_an_edge_are_not_a_path() -> None:
+    """Two identical (even nonexistent) qns must not report FOUND by name
+    equality alone; only a genuine cycle through FLOWS_TO edges counts."""
+    result = flow_reachability_verdict(
+        _query_fn([("p.a", "p.b")], []),
+        "p",
+        "p.ghost",
+        "p.ghost",
+    )
+    assert result.verdict == FLOW_VERDICT_NO_FLOW
+
+
+def test_equal_names_with_a_real_cycle_are_found() -> None:
+    result = flow_reachability_verdict(
+        _query_fn([("p.a.src", "p.a.mid"), ("p.a.mid", "p.a.src")], []),
+        "p",
+        "p.a.src",
+        "p.a.src",
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == ("p.a.src", "p.a.mid", "p.a.src")
+
+
 def test_cycles_terminate() -> None:
     result = flow_reachability_verdict(
         _query_fn([("p.a", "p.b"), ("p.b", "p.a")], []),
