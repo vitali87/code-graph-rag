@@ -466,6 +466,7 @@ class ImportProcessor:
         "_rust_redirect_parents",
         "_rust_explicit_targets",
         "_rust_auto_build_flags",
+        "_rust_auto_discovery_flags",
         "_rust_workspace_crates",
         "_rust_pkg_deps",
         "_rust_inline_scope_keys",
@@ -545,6 +546,7 @@ class ImportProcessor:
         # explicitly, false disables it entirely). Filled alongside the
         # explicit-target parse, cleared with it.
         self._rust_auto_build_flags: dict[tuple[str, ...], bool] = {}
+        self._rust_auto_discovery_flags: dict[tuple[str, ...], dict[str, bool]] = {}
         # Workspace crate names (underscore-spelled) -> (package dir, lib
         # root dir, entry stem), so `use grep_searcher::sinks;` rewrites
         # to a project qn at parse time like crate:: paths do (issue
@@ -1247,15 +1249,21 @@ class ImportProcessor:
         # the ancestor walk must never treat a directory as a file crate
         # just because a sibling file is an explicit target.
         if not dir_parts:
-            return stem == cs.RS_BUILD_STEM and (
-                cs.PKG_CARGO_TOML in self._rust_dir_entries(self.repo_path)
+            return (
+                stem == cs.RS_BUILD_STEM
+                and cs.PKG_CARGO_TOML in self._rust_dir_entries(self.repo_path)
+                and self._rust_has_auto_build(())
             )
         if len(dir_parts) >= 2 and dir_parts[-1] == cs.RS_BIN_DIR:
             if dir_parts[-2] == cs.LANG_SRC_DIR:
-                return True
+                return self._rust_auto_kind_enabled(
+                    tuple(dir_parts[:-2]), cs.RS_MANIFEST_AUTOBINS_KEY
+                )
         if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS:
             return cs.PKG_CARGO_TOML in self._rust_dir_entries(
                 self.repo_path.joinpath(*dir_parts[:-1])
+            ) and self._rust_auto_kind_enabled(
+                tuple(dir_parts[:-1]), cs.RS_AUTO_DIR_KEYS[dir_parts[-1]]
             )
         return False
 
@@ -1300,6 +1308,15 @@ class ImportProcessor:
     def _rust_has_auto_build(self, pkg_parts: tuple[str, ...]) -> bool:
         self._rust_explicit_target_paths(pkg_parts)
         return self._rust_auto_build_flags.get(pkg_parts, False)
+
+    def _rust_auto_kind_enabled(self, pkg_parts: tuple[str, ...], key: str) -> bool:
+        # Cargo's per-kind discovery opt-outs (`autobins = false` and
+        # siblings in [package]): a disabled kind's auto-location files are
+        # plain non-target files unless an explicit manifest target names
+        # them (issue #1030). Only an explicit false disables — unset and
+        # true both mean auto-discovery.
+        self._rust_explicit_target_paths(pkg_parts)
+        return self._rust_auto_discovery_flags.get(pkg_parts, {}).get(key, True)
 
     def _rust_explicit_entry_files(self, dir_parts: tuple[str, ...]) -> set[str]:
         # File names of explicit manifest targets that sit DIRECTLY in
@@ -1353,6 +1370,11 @@ class ImportProcessor:
         self._rust_auto_build_flags[pkg_parts] = (
             build_value is None or build_value is True
         )
+        self._rust_auto_discovery_flags[pkg_parts] = {
+            key: False
+            for key in cs.RS_MANIFEST_AUTO_KEYS
+            if isinstance(package, dict) and package.get(key) is False
+        }
         result = frozenset(paths)
         self._rust_explicit_targets[pkg_parts] = result
         return result
@@ -1730,7 +1752,26 @@ class ImportProcessor:
         key = tuple(dir_parts)
         decls = self._rust_entry_mod_decls.setdefault(key, {})
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-        scan = [cs.LIB_RS, cs.MAIN_RS]
+        # src/lib.rs and src/main.rs are auto-discovered only while their
+        # kind's opt-out is unset; an explicit manifest target re-adds the
+        # file below regardless (issue #1030).
+        auto_lib = auto_bins = True
+        if dir_parts and dir_parts[-1] == cs.LANG_SRC_DIR:
+            pkg_parts = tuple(dir_parts[:-1])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                auto_lib = self._rust_auto_kind_enabled(
+                    pkg_parts, cs.RS_MANIFEST_AUTOLIB_KEY
+                )
+                auto_bins = self._rust_auto_kind_enabled(
+                    pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
+                )
+        scan = [
+            name
+            for name, enabled in ((cs.LIB_RS, auto_lib), (cs.MAIN_RS, auto_bins))
+            if enabled
+        ]
         if cs.PKG_CARGO_TOML in entries and self._rust_has_auto_build(key):
             # build.rs beside the manifest is cargo's fifth auto crate
             # root, but only while [package] build is UNSET (a string
@@ -2729,6 +2770,7 @@ class ImportProcessor:
         self._rust_redirect_parents = None
         self._rust_explicit_targets.clear()
         self._rust_auto_build_flags.clear()
+        self._rust_auto_discovery_flags.clear()
         self._rust_workspace_crates = None
         self._rust_pkg_deps.clear()
 
@@ -2825,6 +2867,7 @@ class ImportProcessor:
             # their storm protection) untouched.
             self._rust_explicit_targets.clear()
             self._rust_auto_build_flags.clear()
+            self._rust_auto_discovery_flags.clear()
             self._rust_workspace_crates = None
             self._rust_pkg_deps.clear()
             for key, stems in self._rust_entry_mod_decls.items():

@@ -1,0 +1,121 @@
+"""Cargo's per-kind discovery opt-outs (autobins/autoexamples/autotests/
+autobenches/autolib and build=false) must stop the corresponding auto
+locations from classifying as automatic crate roots, while an explicit
+manifest target at the same path still roots the file (issue #1030)."""
+
+from pathlib import Path
+
+import pytest
+
+from codebase_rag.parsers.import_processor import ImportProcessor
+
+
+def _processor(repo: Path) -> ImportProcessor:
+    return ImportProcessor(
+        repo_path=repo,
+        project_name="proj",
+        ingestor=None,
+        function_registry=None,
+    )
+
+
+def _package(repo: Path, manifest_extra: str = "") -> None:
+    (repo / "Cargo.toml").write_text(
+        '[package]\nname = "fixture"\nversion = "0.1.0"\n' + manifest_extra
+    )
+    (repo / "src").mkdir(exist_ok=True)
+    (repo / "src" / "lib.rs").write_text("pub fn seed() {}\n")
+
+
+@pytest.mark.parametrize(
+    ("key", "dir_name"),
+    [
+        ("autotests", "tests"),
+        ("autoexamples", "examples"),
+        ("autobenches", "benches"),
+    ],
+)
+def test_disabled_kind_stops_auto_classification(
+    tmp_path: Path, key: str, dir_name: str
+) -> None:
+    _package(tmp_path, f"{key} = false\n")
+    (tmp_path / dir_name).mkdir()
+    (tmp_path / dir_name / "probe.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_auto_target_dir([dir_name], "probe") is False
+
+
+@pytest.mark.parametrize(
+    ("key", "dir_name"),
+    [
+        ("autotests", "tests"),
+        ("autoexamples", "examples"),
+        ("autobenches", "benches"),
+    ],
+)
+def test_enabled_kind_keeps_auto_classification(
+    tmp_path: Path, key: str, dir_name: str
+) -> None:
+    _package(tmp_path)
+    (tmp_path / dir_name).mkdir()
+    (tmp_path / dir_name / "probe.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_auto_target_dir([dir_name], "probe") is True
+
+
+def test_disabled_kind_still_roots_an_explicit_target(tmp_path: Path) -> None:
+    _package(
+        tmp_path,
+        'autotests = false\n\n[[test]]\nname = "probe"\npath = "tests/probe.rs"\n',
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "probe.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_auto_target_dir(["tests"], "probe") is False
+    assert processor._rust_is_explicit_target(["tests"], "probe") is True
+
+
+def test_autobins_false_stops_src_bin_classification(tmp_path: Path) -> None:
+    _package(tmp_path, "autobins = false\n")
+    (tmp_path / "src" / "bin").mkdir(parents=True)
+    (tmp_path / "src" / "bin" / "tool.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_auto_target_dir(["src", "bin"], "tool") is False
+
+
+def test_autobins_default_keeps_src_bin_classification(tmp_path: Path) -> None:
+    _package(tmp_path)
+    (tmp_path / "src" / "bin").mkdir(parents=True)
+    (tmp_path / "src" / "bin" / "tool.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_auto_target_dir(["src", "bin"], "tool") is True
+
+
+def test_build_false_stops_build_script_classification(tmp_path: Path) -> None:
+    _package(tmp_path, "build = false\n")
+    (tmp_path / "build.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_auto_target_dir([], "build") is False
+
+
+def test_build_default_keeps_build_script_classification(tmp_path: Path) -> None:
+    _package(tmp_path)
+    (tmp_path / "build.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_auto_target_dir([], "build") is True
+
+
+def test_autolib_false_drops_lib_from_the_entry_scan(tmp_path: Path) -> None:
+    _package(tmp_path, "autolib = false\n")
+    (tmp_path / "src" / "lib.rs").write_text("pub mod foo;\n")
+    (tmp_path / "src" / "foo.rs").write_text("pub fn f() {}\n")
+    processor = _processor(tmp_path)
+    assert "lib" not in processor._rust_entry_decls(["src"])
+
+
+def test_autolib_default_keeps_lib_in_the_entry_scan(tmp_path: Path) -> None:
+    _package(tmp_path)
+    (tmp_path / "src" / "lib.rs").write_text("pub mod foo;\n")
+    (tmp_path / "src" / "foo.rs").write_text("pub fn f() {}\n")
+    processor = _processor(tmp_path)
+    assert "lib" in processor._rust_entry_decls(["src"])
