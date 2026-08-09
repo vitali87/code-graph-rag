@@ -249,7 +249,11 @@ class WebSearcher:
             return results
         if not results:
             return te.WEB_SEARCH_NO_RESULTS.format(query=query)
-        return "\n\n".join(self._format(i, r) for i, r in enumerate(results, 1))
+        # The request parameter asks; this slice enforces. A provider that
+        # returns more than requested must not widen the tool's output.
+        return "\n\n".join(
+            self._format(i, r) for i, r in enumerate(results[:capped], 1)
+        )
 
     @staticmethod
     def _format(index: int, result: dict) -> str:

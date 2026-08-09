@@ -223,6 +223,22 @@ class TestSerpdiveBackend:
         captured["_response"] = FakeResponse({"results": []})
         assert serpdive().search_web("q") == te.WEB_SEARCH_NO_RESULTS.format(query="q")
 
+    def test_overdelivering_provider_is_sliced_to_the_request(
+        self, captured: dict
+    ) -> None:
+        """A provider returning more than max_results must not widen the output."""
+        captured["_response"] = FakeResponse(
+            {
+                "results": [
+                    {"url": "https://docs.example.com/a", "title": "A"},
+                    {"url": "https://docs.example.com/b", "title": "B"},
+                ]
+            }
+        )
+        out = serpdive().search_web("q", max_results=1)
+        assert "https://docs.example.com/a" in out
+        assert "https://docs.example.com/b" not in out
+
     @pytest.mark.parametrize(
         "payload",
         [
