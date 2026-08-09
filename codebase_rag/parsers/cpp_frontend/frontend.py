@@ -94,8 +94,13 @@ class _Collector:
         simple_name_lookup: SimpleNameLookup | None = None,
         structural_elements: dict[Path, str | None] | None = None,
         hybrid: bool = False,
+        owned_qns: dict[str, set[str]] | None = None,
     ) -> None:
         self.resolver = resolver
+        # Per-file ownership of every registered qn: frontend registrations
+        # have no tree-sitter span records, so the watch prefix sweep needs
+        # its own record of which FILE registered each qn (issue #1025).
+        self.owned_qns = owned_qns
         # Hybrid mode: tree-sitter remains the backbone (its definitions and
         # CALLS stand), so collect ONLY the facts libclang is uniquely right
         # about: macro definitions/uses and includes. Definition qns diverge
@@ -664,6 +669,10 @@ class _Collector:
         if not isinstance(qn, str):
             return
         self.function_registry[qn] = NodeType(label)
+        if self.owned_qns is not None and isinstance(
+            path := props.get(cs.KEY_PATH), str
+        ):
+            self.owned_qns.setdefault(path, set()).add(qn)
         name = props[cs.KEY_NAME]
         if self.simple_name_lookup is not None and isinstance(name, str):
             self.simple_name_lookup[name].add(qn)
@@ -805,6 +814,7 @@ def run_cpp_frontend(
     structural_elements: dict[Path, str | None] | None = None,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
+    owned_qns: dict[str, set[str]] | None = None,
 ) -> frozenset[str]:
     """Index C/C++ via libclang + a compile_commands.json (macro-accurate).
 
@@ -827,6 +837,7 @@ def run_cpp_frontend(
         function_registry,
         simple_name_lookup,
         structural_elements,
+        owned_qns=owned_qns,
     )
     _parse_and_collect(collector, compdb_dir)
     collector.flush(ingestor)

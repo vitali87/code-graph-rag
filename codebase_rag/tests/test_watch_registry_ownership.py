@@ -91,3 +91,35 @@ def test_sibling_inline_mod_functions_survive_the_prefix_sweep(
     # content proves removal happened) and the fresh parse re-registered.
     assert f"{base}.src.a.b.wrap" not in updater.function_registry
     assert f"{base}.src.a.b.refreshed_wrap" in updater.function_registry
+
+
+def test_frontend_owned_registrations_survive_a_prefixing_sibling_sweep(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """Frontend (libclang) registrations have no span records; their per-file
+    ownership map must spare them when a prefix-sharing sibling is swept."""
+    project = temp_repo / "cpp_watch_owner"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "app.cpp").write_text("int go() { return 1; }\n")
+    (project / "src" / "app_util.cpp").write_text("int wrap() { return 2; }\n")
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
+    )
+    base = project.name
+    touched_qn = f"{base}.src.app.go"
+    sibling_qn = f"{base}.src.app.util.helper"
+    from codebase_rag.types_defs import NodeType
+
+    updater.function_registry[touched_qn] = NodeType.FUNCTION
+    updater.function_registry[sibling_qn] = NodeType.FUNCTION
+    updater._frontend_owned_qns["src/app.cpp"] = {touched_qn}
+    updater._frontend_owned_qns["src/app_util.cpp"] = {sibling_qn}
+
+    updater.remove_file_from_state(project / "src" / "app.cpp")
+
+    assert touched_qn not in updater.function_registry
+    assert sibling_qn in updater.function_registry

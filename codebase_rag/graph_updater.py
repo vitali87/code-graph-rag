@@ -264,6 +264,10 @@ class GraphUpdater:
         # and evicts on large repos, so Pass 3 must iterate this full list (not
         # the cache) and re-parse evicted files, or their calls are dropped.
         self._parsed_files: list[tuple[Path, cs.SupportedLanguage]] = []
+        # Rel-path -> registered qns for FRONTEND registrations, which have
+        # no tree-sitter span records; the watch prefix sweep reads this to
+        # spare foreign files' entries (issue #1025).
+        self._frontend_owned_qns: dict[str, set[str]] = {}
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
         # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
@@ -380,6 +384,7 @@ class GraphUpdater:
             structural_elements=self.factory.structure_processor.structural_elements,
             exclude_paths=self.exclude_paths,
             unignore_paths=self.unignore_paths,
+            owned_qns=self._frontend_owned_qns,
         )
         logger.info(
             ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
@@ -616,6 +621,7 @@ class GraphUpdater:
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
         self._parsed_files.clear()
+        self._frontend_owned_qns.clear()
         self._sink.ensure_node_batch(
             cs.NODE_PROJECT,
             {
@@ -1366,6 +1372,12 @@ class GraphUpdater:
             ), location in self.factory.definition_processor.function_locations.items()
             if span_module not in touched_modules
         }
+        # Frontend registrations (libclang C/C++) have no span records; their
+        # ownership is tracked per rel path at registration time.
+        touched_rel = str(relative_path)
+        for owner_rel, owner_qns in self._frontend_owned_qns.items():
+            if owner_rel != touched_rel:
+                foreign_qns |= owner_qns
 
         qns_to_remove = set()
 
