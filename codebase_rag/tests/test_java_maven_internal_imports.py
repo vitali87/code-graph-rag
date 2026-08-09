@@ -120,6 +120,78 @@ public class JsonUser {
     ) in edges, edges
 
 
+def test_static_member_import_targets_the_owning_class_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """import static ...MyHelper.help must land on the MyHelper Module."""
+    _skip_without_java()
+    _write_maven_project(temp_repo)
+    consumer = temp_repo / "src" / "main" / "java" / "com" / "example" / "myapp"
+    (consumer / "StaticUser.java").write_text(
+        """
+package com.example.myapp;
+
+import static com.example.myapp.util.MyHelper.help;
+
+public class StaticUser {
+    public int use() {
+        return help();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    project = temp_repo.name
+    user_qn = f"{project}.src.main.java.com.example.myapp.StaticUser"
+    helper_qn = f"{project}.src.main.java.com.example.myapp.util.MyHelper"
+    edges = _import_edges(mock_ingestor, user_qn)
+    assert (str(cs.NodeLabel.MODULE), helper_qn) in edges, edges
+
+
+def test_nested_class_import_targets_the_outer_class_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """import ...Outer.Inner must land on the Outer Module, not go external."""
+    _skip_without_java()
+    _write_maven_project(temp_repo)
+    base = temp_repo / "src" / "main" / "java" / "com" / "example" / "myapp"
+    (base / "Outer.java").write_text(
+        """
+package com.example.myapp;
+
+public class Outer {
+    public static class Inner {
+        public static final int CONSTANT = 1;
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    (base / "NestedUser.java").write_text(
+        """
+package com.example.myapp;
+
+import com.example.myapp.Outer.Inner;
+
+public class NestedUser {
+    public int use() {
+        return Inner.CONSTANT;
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    project = temp_repo.name
+    user_qn = f"{project}.src.main.java.com.example.myapp.NestedUser"
+    outer_qn = f"{project}.src.main.java.com.example.myapp.Outer"
+    edges = _import_edges(mock_ingestor, user_qn)
+    assert (str(cs.NodeLabel.MODULE), outer_qn) in edges, edges
+
+
 def test_test_root_class_resolves_to_the_test_source_root(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

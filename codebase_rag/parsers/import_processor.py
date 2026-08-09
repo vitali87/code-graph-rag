@@ -745,21 +745,18 @@ class ImportProcessor:
             # (com.fasterxml under a repo with src/main/java/com) stays
             # external, and a test-only class binds to src/test/java even
             # when src/main/java also contains the top-level package. The
-            # target may be a package dir, a class file, or a class file
-            # named by the second-to-last segment (static member or nested
-            # class imports).
+            # target may be a package dir or any class-file ancestor: a
+            # static member (Utility.run) sits one segment past its file and
+            # a nested-class member (Outer.Inner.CONSTANT) two or more, so
+            # every ancestor is probed.
             parts = import_path.split(cs.SEPARATOR_DOT)
             for root in ((), *cs.JAVA_MAVEN_SOURCE_ROOTS):
                 base = repo_path.joinpath(*root)
-                if (
-                    base.joinpath(*parts).is_dir()
-                    or base.joinpath(*parts[:-1], f"{parts[-1]}{cs.EXT_JAVA}").is_file()
-                    or (
-                        len(parts) > 1
-                        and base.joinpath(
-                            *parts[:-2], f"{parts[-2]}{cs.EXT_JAVA}"
-                        ).is_file()
-                    )
+                if base.joinpath(*parts).is_dir() or any(
+                    base.joinpath(
+                        *parts[: end - 1], f"{parts[end - 1]}{cs.EXT_JAVA}"
+                    ).is_file()
+                    for end in range(len(parts), 0, -1)
                 ):
                     return (
                         cs.SEPARATOR_DOT.join(root) + cs.SEPARATOR_DOT if root else ""
@@ -1162,6 +1159,25 @@ class ImportProcessor:
         if prefix is not None:
             return f"{self.project_name}{cs.SEPARATOR_DOT}{prefix}{import_path}"
         return import_path
+
+    def _java_owning_module_qn(self, full_name: str) -> str:
+        # A static or nested-class import carries symbol segments past the
+        # class file (Utility.run, Outer.Inner.CONSTANT). The import map keeps
+        # the full path for call resolution, but the IMPORTS edge must land on
+        # the owning file-level Module, so truncate to the deepest ancestor
+        # whose .java file exists. Package (wildcard) and file-level targets
+        # come back unchanged.
+        project_prefix = self.project_name + cs.SEPARATOR_DOT
+        segments = full_name[len(project_prefix) :].split(cs.SEPARATOR_DOT)
+        for end in range(len(segments), 0, -1):
+            candidate = segments[:end]
+            if self.repo_path.joinpath(*candidate).is_dir():
+                break
+            if self.repo_path.joinpath(
+                *candidate[:-1], f"{candidate[-1]}{cs.EXT_JAVA}"
+            ).is_file():
+                return project_prefix + cs.SEPARATOR_DOT.join(candidate)
+        return full_name
 
     def _is_local_js_import(self, full_name: str) -> bool:
         return full_name.startswith(self.project_name + cs.SEPARATOR_DOT)
@@ -2226,7 +2242,7 @@ class ImportProcessor:
             # asymmetry is intentional.
             case cs.SupportedLanguage.JAVA:
                 if full_name.startswith(project_prefix):
-                    return full_name
+                    return self._java_owning_module_qn(full_name)
             case (
                 cs.SupportedLanguage.JS
                 | cs.SupportedLanguage.TS
