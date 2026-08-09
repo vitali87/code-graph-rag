@@ -67,6 +67,26 @@ class TestPrependNews:
         assert inserted == ["- **First Feature**: The very first entry."]
         assert updated.endswith("- **First Feature**: The very first entry.\n")
 
+    def test_duplicate_theme_within_one_fragment_inserted_once(self) -> None:
+        fragment = (
+            "- **Web Search**: The agent can now search the web.\n"
+            "- **web search**: The same theme phrased again.\n"
+        )
+        updated, inserted = prepend_news(NEWS, fragment)
+        assert inserted == ["- **Web Search**: The agent can now search the web."]
+        assert "phrased again" not in updated
+
+    def test_fragment_is_capped_at_three_entries(self) -> None:
+        fragment = (
+            "- **One**: first.\n"
+            "- **Two**: second.\n"
+            "- **Three**: third.\n"
+            "- **Four**: fourth.\n"
+        )
+        updated, inserted = prepend_news(NEWS, fragment)
+        assert len(inserted) == 3
+        assert "- **Four**" not in updated
+
     def test_mixed_fragment_inserts_only_fresh_themes(self) -> None:
         fragment = (
             "- **Web Search**: The agent can now search the web.\n"

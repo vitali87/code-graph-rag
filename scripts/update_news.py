@@ -23,6 +23,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)\*\*: \S.*$")
 
+MAX_ENTRIES = 3
+
 
 def extract_bullets(fragment: str) -> list[str]:
     """Return the well-formed news bullets contained in a markdown fragment."""
@@ -46,15 +48,24 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
     """Insert fragment bullets with unseen themes above the newest NEWS entry.
 
     Returns the updated NEWS.md content and the bullets that were inserted.
-    Bullets whose theme already appears anywhere in NEWS.md are dropped, which
-    makes a rerun of the same release idempotent.
+    Bullets whose theme already appears anywhere in NEWS.md or earlier in the
+    same fragment are dropped, which makes a rerun of the same release
+    idempotent, and at most MAX_ENTRIES bullets are accepted per fragment so
+    an over-long AI response cannot flood the file.
     """
     themes = existing_themes(news)
-    fresh = [
-        bullet
-        for bullet in extract_bullets(fragment)
-        if BULLET_PATTERN.match(bullet).group("theme").casefold() not in themes  # type: ignore[union-attr]
-    ]
+    fresh: list[str] = []
+    for bullet in extract_bullets(fragment):
+        match = BULLET_PATTERN.match(bullet)
+        if match is None:
+            continue
+        theme = match.group("theme").casefold()
+        if theme in themes:
+            continue
+        fresh.append(bullet)
+        themes.add(theme)
+        if len(fresh) == MAX_ENTRIES:
+            break
     if not fresh:
         return news, []
 
