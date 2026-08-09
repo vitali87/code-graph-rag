@@ -1760,6 +1760,18 @@ class ImportProcessor:
                 # cargo-verified), so it attaches classically with
                 # itself as the definitive entry stem.
                 return "entry", qn_parts
+        mod_stem = cs.MOD_RS[: -len(cs.EXT_RS)]
+        if cs.MOD_RS in self._rust_dir_entries(self.repo_path.joinpath(*qn_parts)) and (
+            self._rust_is_auto_target_dir(qn_parts, mod_stem)
+            or self._rust_is_explicit_target(qn_parts, mod_stem)
+        ):
+            # Cargo compiles src/bin/mod.rs (or an explicit target whose
+            # path ends in mod.rs) as a target named `mod` whose crate root
+            # is the file itself. The mod.rs spelling maps the module to its
+            # DIRECTORY qn, so that qn is the file root and `mod x;` inside
+            # it resolves beside it — exactly the file-root nesting
+            # (issue #1031).
+            return "file", qn_parts
         for i in range(len(dir_parts), -1, -1):
             if i >= 1:
                 name = dir_parts[i - 1]
@@ -1798,8 +1810,13 @@ class ImportProcessor:
             # declared submodules here (cargo-verified), with the entry
             # stem chosen by the declaring scan over the explicit stems.
             return False
-        if cs.MOD_RS in entries:
-            # The mod.rs spelling of a module directory.
+        if cs.MOD_RS in entries and not self._rust_is_auto_target_dir(
+            dir_parts, cs.MOD_RS[: -len(cs.EXT_RS)]
+        ):
+            # The mod.rs spelling of a module directory — except in a direct
+            # auto-target location, where mod.rs is itself a target named
+            # `mod` and must not stop its main.rs sibling from rooting the
+            # directory (issue #1031).
             return False
         if dir_parts and f"{dir_parts[-1]}{cs.EXT_RS}" in self._rust_dir_entries(
             self.repo_path.joinpath(*dir_parts[:-1])
