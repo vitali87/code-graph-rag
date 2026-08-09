@@ -2,7 +2,9 @@
 
 Newest first. The top three entries are rendered into the README's "Latest News"
 section automatically by `scripts/generate_readme.py`, so edit them here rather
-than in the README.
+than in the README. The release workflow also prepends entries for each
+released feature via `scripts/update_news.py`; hand edits remain welcome
+between releases.
 
 - **Ruby Support**: Ruby joins the graph through a new pluggable ast-grep tier that adds a language from a single YAML pattern file, emitting `Module`, `Function`, and `Class` nodes plus import edges without a hand-written parser.
 - **Structural Search & Replace**: Find and rewrite code by AST pattern with ast-grep, exposed as agent tools so you can match and transform structure across the whole codebase instead of relying on text or regex.

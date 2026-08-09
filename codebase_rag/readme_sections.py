@@ -231,8 +231,10 @@ def format_dependencies(deps: list[str]) -> str:
 
 def format_latest_news(news_path: Path, limit: int = 3) -> str:
     # Render the top `limit` bullet entries from NEWS.md into the README's
-    # "Latest News" section. NEWS.md is the hand-curated source of truth
-    # (newest first); the generator only syncs it into the README.
+    # "Latest News" section. NEWS.md is the source of truth (newest first):
+    # the release workflow prepends entries via scripts/update_news.py and
+    # hand edits remain welcome between releases (issue #1146); the generator
+    # only syncs it into the README.
     try:
         content = news_path.read_text(encoding=ENCODING_UTF8)
     except OSError:
