@@ -1322,20 +1322,48 @@ class ImportProcessor:
         return template.replace(cs.RS_MANIFEST_NAME_TEMPLATE, name)
 
     def _rust_src_auto_entry_flags(self, dir_parts: list[str]) -> tuple[bool, bool]:
-        # (autolib, autobins) for lib.rs/main.rs sitting in THIS directory:
-        # the opt-outs govern cargo's src/ auto locations, so they apply
-        # only when the directory is a package's src/ (manifest beside it).
-        if not dir_parts or dir_parts[-1] != cs.LANG_SRC_DIR:
+        # (lib flag, main flag) for lib.rs/main.rs sitting in THIS directory.
+        # The opt-outs govern cargo's auto locations: a package's src/
+        # (autolib + autobins), and the MULTI-FILE auto target dirs whose
+        # main.rs is the kind's target — src/bin/<name>/ (autobins) and
+        # <kind>/<name>/ for examples/tests/benches. Elsewhere both stay
+        # enabled.
+        if not dir_parts:
             return True, True
-        pkg_parts = tuple(dir_parts[:-1])
-        if cs.PKG_CARGO_TOML not in self._rust_dir_entries(
-            self.repo_path.joinpath(*pkg_parts)
+        if dir_parts[-1] == cs.LANG_SRC_DIR:
+            pkg_parts = tuple(dir_parts[:-1])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                return (
+                    self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOLIB_KEY),
+                    self._rust_auto_kind_enabled(
+                        pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
+                    ),
+                )
+            return True, True
+        if (
+            len(dir_parts) >= 3
+            and dir_parts[-2] == cs.RS_BIN_DIR
+            and dir_parts[-3] == cs.LANG_SRC_DIR
         ):
+            pkg_parts = tuple(dir_parts[:-3])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                return True, self._rust_auto_kind_enabled(
+                    pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
+                )
             return True, True
-        return (
-            self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOLIB_KEY),
-            self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY),
-        )
+        if len(dir_parts) >= 2 and dir_parts[-2] in cs.RS_AUTO_TARGET_DIRS:
+            pkg_parts = tuple(dir_parts[:-2])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                return True, self._rust_auto_kind_enabled(
+                    pkg_parts, cs.RS_AUTO_DIR_KEYS[dir_parts[-2]]
+                )
+        return True, True
 
     def _rust_auto_kind_enabled(self, pkg_parts: tuple[str, ...], key: str) -> bool:
         # Cargo's per-kind discovery opt-outs (`autobins = false` and

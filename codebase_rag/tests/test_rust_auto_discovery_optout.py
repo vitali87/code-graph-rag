@@ -181,6 +181,38 @@ def test_pathless_lib_member_stays_importable_under_autolib_false(
     )
 
 
+def test_autobins_false_stops_multi_file_bin_dir(tmp_path: Path) -> None:
+    """src/bin/<name>/main.rs is the bin kind's auto target too."""
+    _package(tmp_path, "autobins = false\n")
+    tool = tmp_path / "src" / "bin" / "tool"
+    tool.mkdir(parents=True)
+    (tool / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["src", "bin", "tool"]) is False
+
+
+def test_autotests_false_stops_multi_file_test_dir(tmp_path: Path) -> None:
+    _package(tmp_path, "autotests = false\n")
+    suite = tmp_path / "tests" / "suite"
+    suite.mkdir(parents=True)
+    (suite / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["tests", "suite"]) is False
+
+
+def test_default_flags_keep_multi_file_target_dirs(tmp_path: Path) -> None:
+    _package(tmp_path)
+    tool = tmp_path / "src" / "bin" / "tool"
+    tool.mkdir(parents=True)
+    (tool / "main.rs").write_text("fn main() {}\n")
+    suite = tmp_path / "tests" / "suite"
+    suite.mkdir(parents=True)
+    (suite / "main.rs").write_text("fn main() {}\n")
+    processor = _processor(tmp_path)
+    assert processor._rust_is_crate_root_dir(["src", "bin", "tool"]) is True
+    assert processor._rust_is_crate_root_dir(["tests", "suite"]) is True
+
+
 def test_autolib_false_drops_lib_from_the_entry_scan(tmp_path: Path) -> None:
     _package(tmp_path, "autolib = false\n")
     (tmp_path / "src" / "lib.rs").write_text("pub mod foo;\n")
