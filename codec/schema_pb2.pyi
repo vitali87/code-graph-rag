@@ -158,7 +158,7 @@ class Module(_message.Message):
     rust_cfg_test_mods: _containers.RepeatedScalarFieldContainer[str]
     rust_ungated_mods: _containers.RepeatedScalarFieldContainer[str]
     flow_covered: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., decorators: _Optional[_Iterable[str]] = ..., rust_cfg_test_mods: _Optional[_Iterable[str]] = ..., rust_ungated_mods: _Optional[_Iterable[str]] = ..., flow_covered: bool = ...) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., decorators: _Optional[_Iterable[str]] = ..., rust_cfg_test_mods: _Optional[_Iterable[str]] = ..., rust_ungated_mods: _Optional[_Iterable[str]] = ..., flow_covered: _Optional[bool] = ...) -> None: ...
 
 class ExternalModule(_message.Message):
     __slots__ = ("qualified_name", "name", "path")
@@ -224,7 +224,7 @@ class Function(_message.Message):
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
     is_exported: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ...) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: _Optional[bool] = ...) -> None: ...
 
 class Method(_message.Message):
     __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators")
@@ -258,7 +258,7 @@ class Class(_message.Message):
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
     is_exported: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ...) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: _Optional[bool] = ...) -> None: ...
 
 class Interface(_message.Message):
     __slots__ = ("qualified_name", "name", "path", "absolute_path")

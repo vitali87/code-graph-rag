@@ -151,9 +151,12 @@ def test_default_capture_reports_modules_uncovered(
 
 
 def test_protobuf_export_preserves_flow_coverage(tmp_path: Path) -> None:
+    """Full round trip: serialize to disk, reload, and read the property."""
+    import codec.schema_pb2 as pb
+    from codebase_rag import constants as cs
     from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 
-    ingestor = ProtobufFileIngestor(str(tmp_path / "graph.pb"))
+    ingestor = ProtobufFileIngestor(str(tmp_path))
     ingestor.ensure_node_batch(
         "Module",
         {
@@ -163,16 +166,20 @@ def test_protobuf_export_preserves_flow_coverage(tmp_path: Path) -> None:
             "flow_covered": True,
         },
     )
-    node = next(iter(ingestor._nodes.values()))
-    assert node.module.flow_covered is True
+    ingestor.flush_all()
+    raw = (tmp_path / cs.PROTOBUF_INDEX_FILE).read_bytes()
+    index = pb.GraphCodeIndex.FromString(raw)
+    modules = [n.module for n in index.nodes if n.WhichOneof("payload") == "module"]
+    assert modules and modules[0].flow_covered is True
 
 
 def test_inline_modules_are_never_spurious_coverage_gaps(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    """A bodied inline mod mints a Module node without the coverage property;
-    the gaps query excludes its synthetic inline path, so every property-less
-    module producer must stay inside that exclusion."""
+    """Every full Module emission either carries flow_covered (the bodied
+    inline-mod producer stamps it, matching its file's coverage) or uses the
+    synthetic inline path the gaps query excludes; either way an inline mod
+    can never surface as a spurious coverage gap."""
     (temp_repo / "src").mkdir()
     (temp_repo / "Cargo.toml").write_text('[package]\nname = "x"\nversion = "0.1.0"\n')
     (temp_repo / "src" / "lib.rs").write_text(
@@ -197,6 +204,6 @@ def test_inline_modules_are_never_spurious_coverage_gaps(
             # Partial MERGE updates onto an existing node carry no path and
             # must not erase the property either.
             continue
-        assert "flow_covered" in props or str(props["path"]).startswith(
+        assert props.get("flow_covered") is True or str(props["path"]).startswith(
             cs.INLINE_MODULE_PATH_PREFIX
         ), props
