@@ -76,6 +76,22 @@ CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s
 CLI_MSG_CLEANING_DB = "Cleaning database..."
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
+CLI_WARN_CLEAN_OTHER_PROJECTS = (
+    "--clean deletes EVERY project from the shared graph, not just "
+    "'{project_name}'.\n{count} other project(s) would be destroyed: {projects}"
+)
+CLI_PROMPT_CLEAN_CONFIRM = "Delete all {count} project(s) from the shared graph?"
+CLI_ERR_CLEAN_NEEDS_CONFIRMATION = (
+    "Refusing to run --clean without a terminal to confirm on. "
+    "Re-run with --yes to delete every project in the shared graph, or drop "
+    "--clean to update '{project_name}' in place."
+)
+CLI_ERR_CLEAN_UNKNOWN_PROJECTS = (
+    "Refusing to run --clean: the existing projects could not be listed, so "
+    "there is no way to show what the wipe would destroy. Fix the graph "
+    "connection, or pass --yes to delete everything regardless."
+)
+CLI_MSG_CLEAN_ABORTED = "Aborted: the graph was left untouched."
 CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
 CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
 CLI_ERR_PROJECT_NOT_FOUND = (

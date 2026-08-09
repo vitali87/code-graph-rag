@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.rs.utils import (
     build_module_path,
@@ -195,7 +196,10 @@ class TestExtractUseImports:
         assert "File" in result
         assert result["Read"] == "std::io::Read"
         assert result["Write"] == "std::io::Write"
-        assert result["File"] == "fs::File"
+        # A scoped identifier inside the brace list keeps the list's
+        # base: `fs::File` here names std::fs::File (issue #1039; the
+        # old expectation pinned the dropped base path).
+        assert result["File"] == "std::fs::File"
 
     def test_self_alias_in_group(self) -> None:
         code = "use std::io::{self as Sio, Read};"
@@ -551,7 +555,8 @@ fn use_aliases() {
         assert imports["ReadTrait"] == "std::io::Read"
 
         assert "UserModel" in imports
-        assert imports["UserModel"] == "crate::models::User"
+        # crate:: targets are rewritten to project qns at parse time (#1007).
+        assert imports["UserModel"] == f"{project_name}.models.User"
 
 
 class TestExtractUseImportsEdgeCases:
@@ -591,9 +596,28 @@ class TestExtractUseImportsEdgeCases:
         assert use_node is not None
 
         result = extract_use_imports(use_node)
-        assert "self" in result
+        # `{self}` binds the base path under the name it is in scope as, `fs`,
+        # marked weak because the name comes from the path rather than the
+        # source. Keyed on the keyword instead, the entry was unreachable and
+        # every `fs::...` spelling in the file resolved to nothing (#1054).
+        weak_fs = f"{cs.RS_SELF_MODULE_PREFIX}fs"
+        assert weak_fs in result
+        assert "self" not in result
         assert "File" in result
         assert "read_to_string" in result
-        assert result["self"] == "std::fs"
+        assert result[weak_fs] == "std::fs"
         assert result["File"] == "std::fs::File"
         assert result["read_to_string"] == "std::fs::read_to_string"
+
+
+class TestBraceListGlobBase:
+    def test_glob_inside_brace_list_keeps_base_path(self) -> None:
+        # `use crate::flags::{hiargs::*};` globs crate::flags::hiargs;
+        # dropped bases left an unfollowable relative glob (issue #1039).
+        code = "use crate::flags::{hiargs::*};"
+        root = parse_rust_code(code)
+        use_node = find_node_by_type(root, "use_declaration")
+        assert use_node is not None
+
+        result = extract_use_imports(use_node)
+        assert result["*crate::flags::hiargs"] == "crate::flags::hiargs"

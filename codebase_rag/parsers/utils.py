@@ -763,13 +763,18 @@ def ingest_method(
         # conditional attribute, not the `#if` line (matches Roslyn's span).
         from .csharp import utils as csharp_utils
 
-        method_start_line = csharp_utils.definition_start_line(method_node)
+        method_start_line, method_start_col = csharp_utils.definition_start_point(
+            method_node
+        )
     else:
         method_start_line = method_node.start_point[0] + 1
+        method_start_col = method_node.start_point[1]
 
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
     if language != cs.SupportedLanguage.CPP:
-        method_qn = function_registry.register_unique_qn(method_qn, method_start_line)
+        method_qn = function_registry.register_unique_qn(
+            method_qn, method_start_line, method_start_col
+        )
 
     decorators = []
     modifiers = []
@@ -982,8 +987,11 @@ def ingest_exported_function(
         if current.type in (cs.TS_INTERNAL_MODULE, cs.TS_MODULE):
             return None
         current = current.parent
+    # No variant is reachable here while the guard above returns early on any
+    # qn already registered; the span is passed so the call stays correct if
+    # that guard moves.
     function_qn = function_registry.register_unique_qn(
-        function_qn, function_node.start_point[0] + 1
+        function_qn, function_node.start_point[0] + 1, function_node.start_point[1]
     )
 
     function_props = module_function_props(

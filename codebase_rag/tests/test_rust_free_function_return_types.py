@@ -103,6 +103,104 @@ def test_bare_identifier_binding_is_not_a_call() -> None:
     parser = Parser(Language(tsrust.language()))
     src = b"fn user() { let f = make; let s = make(); }\n"
     fn_node = parser.parse(src).root_node.children[0]
-    bindings = dict(rs_ti.RustTypeInferenceEngine().collect_call_var_bindings(fn_node))
+    collected = rs_ti.RustTypeInferenceEngine().collect_call_var_bindings(fn_node)
+    bindings = {name: segments for name, segments, _point in collected}
     assert "f" not in bindings, bindings
     assert bindings.get("s") == ["make"]
+    # The CALL's own offset rides along, so a shadowing block item can be told
+    # from the module item of that name (issue #1069). The `let` starts earlier
+    # and the two differ once the call sits in a nested block.
+    assert [point for _name, _segments, point in collected] == [src.index(b"make()")], (
+        collected
+    )
+
+
+# The block item returns Zzz and the module item Aaa, so the name-only trie
+# fallback an untyped local falls to would answer Aaa: only reading the block
+# item's OWN return type gets Zzz, and the assertion can tell the two apart.
+BODY_LOCAL_FACTORY = (
+    "pub struct Aaa;\n"
+    "pub struct Zzz;\n"
+    "impl Aaa { pub fn run(&self) -> u32 { 1 } }\n"
+    "impl Zzz { pub fn run(&self) -> u32 { 2 } }\n"
+    "pub fn make() -> Aaa { Aaa }\n"
+    "pub fn outer() -> u32 {\n"
+    "    fn make() -> Zzz { Zzz }\n"
+    "    let t = make();\n"
+    "    t.run()\n"
+    "}\n"
+    "pub fn sibling() -> u32 {\n"
+    "    let u = make();\n"
+    "    u.run()\n"
+    "}\n"
+)
+
+
+def test_body_local_factory_types_from_its_own_return(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A body-local `fn make` shadows the module's own for the whole of the
+    # body it is written in, and it registers under a `@<line>` variant
+    # because the module item owns the natural qn. The return-type lookup
+    # keyed by name alone could only ever read the module item, so the local
+    # bound from the shadowing fn typed as the module fn's return (#1069).
+    calls = _run_calls(temp_repo, mock_ingestor, {"m.rs": BODY_LOCAL_FACTORY})
+    base = f"{temp_repo.name}.m"
+    assert (f"{base}.outer", f"{base}.Zzz.run") in calls, calls
+    assert (f"{base}.outer", f"{base}.Aaa.run") not in calls, calls
+    # The module item's own callers are unaffected by the shadowing.
+    assert (f"{base}.sibling", f"{base}.Aaa.run") in calls, calls
+    assert (f"{base}.sibling", f"{base}.Zzz.run") not in calls, calls
+
+
+def test_unit_returning_shadow_does_not_fall_through_to_the_module_item(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A shadow with no recorded return type records nothing at all: a unit
+    # return has no type name. The site still names the block item, so the
+    # module item's return is not the answer either, and typing the local
+    # from it fabricates a call on a value that was never of that type.
+    source = (
+        "pub struct Aaa;\n"
+        "pub struct Zed;\n"
+        "impl Aaa { pub fn run(&self) -> u32 { 1 } }\n"
+        "impl Zed { pub fn run(&self) -> u32 { 2 } }\n"
+        "pub fn make() -> Zed { Zed }\n"
+        "pub fn outer() {\n"
+        "    fn make() { }\n"
+        "    let u = make();\n"
+        "    u.run();\n"
+        "}\n"
+    )
+    calls = _run_calls(temp_repo, mock_ingestor, {"m.rs": source})
+    base = f"{temp_repo.name}.m"
+    assert (f"{base}.outer", f"{base}.Zed.run") not in calls, calls
+
+
+def test_generic_returning_shadow_does_not_fall_through_to_the_module_item(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A generic return records the type PARAMETER, which resolves to no class
+    # here. Recording it would let the known-external guard delete the edge the
+    # trie fallback still finds, so it types nothing rather than the module
+    # item's own return.
+    source = (
+        "pub struct Aaa;\n"
+        "pub struct Zed;\n"
+        "impl Aaa { pub fn run(&self) -> u32 { 1 } }\n"
+        "impl Zed { pub fn run(&self) -> u32 { 2 } }\n"
+        "pub fn make() -> Zed { Zed }\n"
+        "pub fn outer() -> u32 {\n"
+        "    fn make<X: Default>() -> X { X::default() }\n"
+        "    let t = make::<Aaa>();\n"
+        "    t.run()\n"
+        "}\n"
+    )
+    calls = _run_calls(temp_repo, mock_ingestor, {"m.rs": source})
+    base = f"{temp_repo.name}.m"
+    # Naming Zed after Aaa separates the two ways this can go wrong: falling
+    # through to the module item types the local Zed, while recording the
+    # unresolvable parameter deletes the edge outright. Neither is the
+    # untyped local the trie then answers for.
+    assert (f"{base}.outer", f"{base}.Aaa.run") in calls, calls
+    assert (f"{base}.outer", f"{base}.Zed.run") not in calls, calls

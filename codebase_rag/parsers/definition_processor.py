@@ -15,9 +15,10 @@ from ..types_defs import (
     CppDefinitionSpan,
     DeferredCppInherit,
     DeferredInherit,
-    FunctionLocation,
+    FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
+    RustTraitImpl,
     SimpleNameLookup,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
@@ -161,6 +162,10 @@ class DefinitionProcessor(
         # the WRAPPER; this inner is applied only when a receiver chain reaches a
         # lock/read/borrow guard accessor (guards do not deref-coerce).
         self.class_field_guard_inner: dict[str, dict[str, str]] = {}
+        # {class_qn: {field_name: element_type}} for Rust sequence fields
+        # (`workers: Vec<Worker>` -> {"workers": "Worker"}), applied only when
+        # an iterator adaptor's closure parameter binds the element (#1045).
+        self.class_field_element_types: dict[str, dict[str, str]] = {}
         # {alias_name: underlying_bare_type} for C++ typedef/using aliases, so a
         # receiver declared with an alias resolves to the aliased class. Collected
         # across all files (an alias in a header is used in a .cc), read by the
@@ -186,6 +191,7 @@ class DefinitionProcessor(
         # Unnamed JS/TS function expressions held back until the named
         # JS passes have claimed their spans (one node per source function).
         self._deferred_js_anonymous: list = []
+        self._deferred_rust_body_local: list = []
         # Macro-invocation-shaped C++ nodes held until every class (incl.
         # rehydrated ones) is known; resolve_deferred_cpp_artifacts decides
         # orphaned-ctor vs macro.
@@ -201,7 +207,7 @@ class DefinitionProcessor(
         # method node Pass 2 registered, so Pass-3 caller attribution reuses
         # the registered label/qn instead of re-deriving them structurally
         # (the walks diverge on preprocessor-distorted class bodies).
-        self.function_locations: dict[FunctionSpanKey, FunctionLocation] = {}
+        self.function_locations: FunctionLocations = FunctionLocations()
         # {rel path: [full line spans]} of every C/C++ function/method the
         # tree-sitter pass ingested; the hybrid C++ frontend's macro-use
         # CALLS resolve against these after Pass 2 (see CppDefinitionSpan).
@@ -210,6 +216,19 @@ class DefinitionProcessor(
         # Non-C++ INHERITS/IMPLEMENTS held back until every class is
         # registered; resolve_deferred_inherits re-resolves the guesses.
         self._deferred_inherits: list[DeferredInherit] = []
+        # Rust `impl Trait for Type` blocks paired with the method qns they
+        # ingested. Whether the trait is external is only knowable once every
+        # trait is registered, so resolve_deferred_inherits judges it and
+        # flags the methods of the external ones (issue #1048).
+        self._rust_trait_impls: list[RustTraitImpl] = []
+        # method qn -> the first-party trait qn its own impl block names. The
+        # override pass cannot re-derive this: two traits declaring one method
+        # name leave the method qns indistinguishable (issue #1076).
+        self.rust_impl_method_traits: dict[str, str] = {}
+        # Methods of an inherent `impl Type` block. Rust has no
+        # inheritance, so these override nothing and must never reach the
+        # ancestry walk (issue #1078).
+        self.rust_inherent_impl_methods: set[str] = set()
         # C++20 module interfaces declared this run (export module X), and
         # implementation units whose IMPLEMENTS edge waits for its
         # interface to be known.
@@ -218,6 +237,11 @@ class DefinitionProcessor(
         # Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
         # import verification counts them as real internal targets.
         self.declared_module_qns: set[str] = set()
+        # {Rust function/method qn: the module qn it is contained by}, taken
+        # from the AST at ingest because qn space cannot distinguish an inline
+        # `mod` from an impl block. Pass-3 resolves `super::`/`self::` against
+        # it (issue #1086).
+        self.rust_function_modules: dict[str, str] = {}
         # Route-decorated handlers deferred from Pass 2: endpoint templates
         # need router mount prefixes, which may live in modules parsed later
         # (issue #877). (label, qn, route decorators, module_qn).
@@ -351,6 +375,13 @@ class DefinitionProcessor(
                 if cache_entry:
                     self._func_class_captures_cache[file_path] = cache_entry
 
+            # A reused updater's second run re-parses this module into a map
+            # still holding the first run's spans. The key is (module_qn,
+            # line, col), so a function renamed in place keeps its key and the
+            # first-claim guard would block the live registration, filing body
+            # `use` imports under the dead qn (issue #1019).
+            self.function_locations.drop_module(module_qn)
+
             self.import_processor.parse_imports(
                 root_node,
                 module_qn,
@@ -381,6 +412,25 @@ class DefinitionProcessor(
                 queries,
                 combined_captures=combined_captures,
             )
+            if language == cs.SupportedLanguage.RUST:
+                # The methods above have claimed their names; a body-local item
+                # may now take what is left of the one it shares.
+                self._flush_deferred_rust_body_local()
+                # Function-body uses key on the REGISTERED qn of their
+                # enclosing function, knowable only now that dedup variants
+                # (`natural@<line>`) have been handed out.
+                self.import_processor.finalise_rust_function_scope_uses(
+                    module_qn, self.function_locations
+                )
+                # Block-local items key on their own registered qn, which
+                # the same pass has just handed out.
+                self.import_processor.record_rust_block_items(
+                    module_qn, root_node, self.function_locations
+                )
+                # Inline-mod maps were visible to this file's own impl
+                # ingestion above; retract them until the flush-time
+                # arbitration decides key ownership across all files.
+                self.import_processor.retract_rust_mod_scope_uses(module_qn)
             if language in cs.JS_TS_LANGUAGES:
                 self._ingest_object_literal_methods(
                     root_node, module_qn, language, queries

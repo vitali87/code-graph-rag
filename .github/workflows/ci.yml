@@ -113,6 +113,38 @@ jobs:
         run: |
           uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
 
+      # Three unit tests embed for real. Without a cache each job pulled
+      # microsoft/unixcoder-base from HuggingFace mid-suite, so a 429 or an
+      # outage failed PRs for reasons unrelated to the change under test
+      # (issue #1092). Cached per model id, and prefetched in an explicit step
+      # so a hub problem is an attributable failure here rather than a
+      # mysterious one inside pytest.
+      - name: Cache HuggingFace hub
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/huggingface
+          key: hf-unixcoder-base-${{ runner.os }}-v1
+
+      # A warm cache makes this a no-op with no network at all; a cold one
+      # retries, because 429 Too Many Requests is exactly the transient the
+      # issue reported. A genuine outage still fails here, loudly and in a
+      # step whose name says what broke.
+      - name: Prefetch embedding model
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if uv run --no-sync python -c "
+          from huggingface_hub import snapshot_download
+          snapshot_download('microsoft/unixcoder-base')
+          "; then
+              exit 0
+            fi
+            echo "prefetch attempt $attempt failed; retrying"
+            sleep $((attempt * 15))
+          done
+          echo "could not fetch the embedding model after 3 attempts"
+          exit 1
+
       # --no-sync is required: a bare `uv run` re-syncs to .python-version
       # (3.12) with default deps only, so on a 3.13 matrix (and on Windows,
       # where interpreter discovery mismatches the venv) it silently rebuilds
@@ -233,6 +265,52 @@ jobs:
       - name: Test binary
         run: ./dist/code-graph-rag-* --version
 
+  # Every other job installs from uv.lock, so no job exercises the dependency
+  # resolution a real `pip install code-graph-rag` performs: newest versions
+  # satisfying the pyproject.toml floors. This job does, so a dependency that
+  # ships a breaking major inside our declared range fails here instead of in a
+  # user's terminal a week later (#1096).
+  wheel-fresh-resolution:
+    name: Wheel Smoke (unlocked resolution)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # This job installs freshly resolved third-party packages and then runs
+      # repository code, so it must not leave the workflow token in the local
+      # git config for that code to read.
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@f98e06938123ccabd21905ea5d0069192241f9f1 # v8.3.1
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      # Deliberately plain venv + pip: uv.lock must not participate.
+      - name: Install the wheel with unlocked resolution
+        run: |
+          python -m venv .fresh-venv
+          ./.fresh-venv/bin/python -m pip install --upgrade pip
+          ./.fresh-venv/bin/python -m pip install dist/*.whl
+
+      - name: Record resolved dependency versions
+        run: ./.fresh-venv/bin/python -m pip list
+
+      - name: Smoke the freshly resolved install
+        run: |
+          ./.fresh-venv/bin/python -c "import codebase_rag"
+          ./.fresh-venv/bin/cgr --version
+          ./.fresh-venv/bin/python scripts/smoke_wheel.py
+
   pr-title-check:
     name: PR Title Convention
     runs-on: ubuntu-latest
@@ -272,7 +350,15 @@ jobs:
     name: All Checks Pass
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, typecheck, test-unit, test-integration, binary-smoke]
+    needs:
+      [
+        lint,
+        typecheck,
+        test-unit,
+        test-integration,
+        binary-smoke,
+        wheel-fresh-resolution,
+      ]
     timeout-minutes: 5
 
     steps:
@@ -283,6 +369,7 @@ jobs:
           echo "Unit Tests: ${{ needs.test-unit.result }}"
           echo "Integration Tests: ${{ needs.test-integration.result }}"
           echo "Binary Smoke: ${{ needs.binary-smoke.result }}"
+          echo "Wheel Smoke: ${{ needs.wheel-fresh-resolution.result }}"
 
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
             echo "❌ Lint failed"
@@ -302,6 +389,10 @@ jobs:
           fi
           if [[ "${{ needs.binary-smoke.result }}" != "success" ]]; then
             echo "❌ Binary smoke test failed"
+            exit 1
+          fi
+          if [[ "${{ needs.wheel-fresh-resolution.result }}" != "success" ]]; then
+            echo "❌ Wheel smoke test (unlocked resolution) failed"
             exit 1
           fi
           echo "✅ All checks passed!"

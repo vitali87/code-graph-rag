@@ -17,6 +17,7 @@ from ..types_defs import (
     DeferredCppInherit,
     DeferredParentLink,
     FunctionLocation,
+    FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     NodeType,
@@ -141,14 +142,16 @@ class _DeferredCppPrototype(NamedTuple):
     lang_queries: LanguageQueries
 
 
-class _DeferredJsAnonymous(NamedTuple):
-    """Unnamed JS/TS function expression held back until named passes claim.
+class _DeferredRegistration(NamedTuple):
+    """A function held back from the generic pass until later passes claim.
 
-    The generic function pass runs before the JS-specific passes, so
-    registering `anonymous_row_col` eagerly minted a second node for every
-    function a named pass registers later (521 locations on thrift's JS
-    corpora). Registration happens at the per-file flush, only for spans no
-    named pass claimed.
+    Two shapes need this. An unnamed JS/TS function expression may be one a
+    named pass registers under its real name, and registering
+    `anonymous_row_col` eagerly minted a second node for every one of them
+    (521 locations on thrift's JS corpora). A Rust definition written inside a
+    function body owns no name any caller can reach, so it must not take one
+    from the method or module item that does (issue #1037). Registration
+    happens at the per-file flush.
     """
 
     func_node: Node
@@ -234,10 +237,12 @@ class FunctionIngestMixin:
     method_return_types: dict[str, str]
     go_function_return_types: dict[str, str]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
-    function_locations: dict[FunctionSpanKey, FunctionLocation]
+    function_locations: FunctionLocations
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     macro_qns: set[str]
-    _deferred_js_anonymous: list[_DeferredJsAnonymous]
+    rust_function_modules: dict[str, str]
+    _deferred_js_anonymous: list[_DeferredRegistration]
+    _deferred_rust_body_local: list[_DeferredRegistration]
     _deferred_cpp_artifacts: list[_DeferredCppArtifact]
     _deferred_cpp_prototypes: list[_DeferredCppPrototype]
     class_inheritance: dict[str, list[str]]
@@ -388,7 +393,29 @@ class FunctionIngestMixin:
             # registration was a duplicate node).
             if language in cs.JS_TS_LANGUAGES and resolution.is_anonymous:
                 self._deferred_js_anonymous.append(
-                    _DeferredJsAnonymous(
+                    _DeferredRegistration(
+                        func_node,
+                        resolution,
+                        module_qn,
+                        language,
+                        lang_config,
+                        lang_queries,
+                    )
+                )
+                continue
+
+            # A Rust item written inside a function body, a closure or a
+            # const/static initializer is reachable by path from nowhere, yet it
+            # registers in the qn space of the module or impl target that
+            # encloses it. Registering it here would let it take the natural qn
+            # of the method or module item of that name, which does own it and
+            # whose callers then resolve to this one; hold it back until those
+            # have claimed their names (issue #1037).
+            if language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(
+                func_node
+            ):
+                self._deferred_rust_body_local.append(
+                    _DeferredRegistration(
                         func_node,
                         resolution,
                         module_qn,
@@ -471,6 +498,33 @@ class FunctionIngestMixin:
                 qualified_name=qualified_name,
                 container_qn=None,
             )
+
+    def _flush_deferred_rust_body_local(self) -> None:
+        """Register the file's held-back Rust body-local items (issue #1037)."""
+        deferred = self._deferred_rust_body_local
+        self._deferred_rust_body_local = []
+        for entry in deferred:
+            self._register_function(
+                entry.func_node,
+                entry.resolution,
+                entry.module_qn,
+                entry.language,
+                entry.lang_config,
+                entry.lang_queries,
+            )
+            # A call-bound local (`let s = make()`) types from this map, so the
+            # return type has to be recorded here too. Under the qn the
+            # registry HANDED OUT, which for a body-local item contesting a
+            # module item of that name is the `@<line>` variant: recording
+            # under the proposed qn would overwrite the module item's own
+            # return type and mistype every caller of it.
+            location = self.function_locations.get(
+                function_span_key(entry.module_qn, entry.func_node)
+            )
+            if location is not None and (
+                return_type := rs_utils.extract_return_type_name(entry.func_node, None)
+            ):
+                self.method_return_types[location.qualified_name] = return_type
 
     def _flush_deferred_js_anonymous(self) -> None:
         deferred = self._deferred_js_anonymous
@@ -1168,7 +1222,9 @@ class FunctionIngestMixin:
         lang_queries: LanguageQueries,
     ) -> None:
         unique_qn = self.function_registry.register_unique_qn(
-            resolution.qualified_name, func_node.start_point[0] + 1
+            resolution.qualified_name,
+            func_node.start_point[0] + 1,
+            func_node.start_point[1],
         )
         if unique_qn != resolution.qualified_name:
             resolution = resolution._replace(qualified_name=unique_qn)
@@ -1198,6 +1254,15 @@ class FunctionIngestMixin:
         )
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
+        # Keyed by the UNIQUE qn, since a collision rename above (issue #1017)
+        # is the key Pass-3 will look this up by.
+        rs_utils.record_effective_module(
+            self.rust_function_modules,
+            resolution.qualified_name,
+            func_node,
+            module_qn,
+            language,
+        )
         if is_macro:
             self.macro_qns.add(resolution.qualified_name)
         self.function_registry.mark_callable_params(
@@ -1556,6 +1621,14 @@ class FunctionIngestMixin:
         return f"{module_qn}.{func_name}"
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
+        # A const/static initializer is a body like a function's, but it is no
+        # function node, so the shared walk climbs out of it to the impl above
+        # and calls the item inside it a method of that type. It is a free
+        # function local to the initializer (issue #1037).
+        if lang_config.language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(
+            func_node
+        ):
+            return False
         return is_method_node(func_node, lang_config)
 
     def _csharp_scope_qn(self, node: Node, module_qn: str) -> str:

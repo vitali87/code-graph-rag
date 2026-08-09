@@ -4,6 +4,7 @@ from .ast_java import TS_GENERIC_TYPE
 from .ast_nodes import TS_IDENTIFIER, TS_SCOPED_IDENTIFIER, TS_TYPE_IDENTIFIER
 from .ast_scala import TS_GENERIC_FUNCTION
 from .core import KEYWORD_SELF, KEYWORD_SUPER
+from .graph import NodeLabel
 
 TS_RS_SCOPED_TYPE_IDENTIFIER = "scoped_type_identifier"
 TS_RS_PRIMITIVE_TYPE = "primitive_type"
@@ -20,10 +21,19 @@ TS_RS_ENUM_ITEM = "enum_item"
 TS_RS_TRAIT_ITEM = "trait_item"
 TS_RS_TYPE_ITEM = "type_item"
 TS_RS_FUNCTION_ITEM = "function_item"
+TS_RS_CONST_ITEM = "const_item"
+TS_RS_STATIC_ITEM = "static_item"
 TS_RS_IMPL_ITEM = "impl_item"
 TS_RS_FUNCTION_SIGNATURE_ITEM = "function_signature_item"
 TS_RS_CLOSURE_EXPRESSION = "closure_expression"
 TS_RS_UNION_ITEM = "union_item"
+TS_RS_TYPE_PARAMETERS = "type_parameters"
+TS_RS_TYPE_PARAMETER = "type_parameter"
+TS_RS_WHERE_CLAUSE = "where_clause"
+TS_RS_WHERE_PREDICATE = "where_predicate"
+# Items whose generic parameter lists and where clauses put trait bounds in
+# scope for the calls beneath them.
+RS_GENERIC_SCOPE_ITEMS = (TS_RS_FUNCTION_ITEM, TS_RS_IMPL_ITEM, TS_RS_TRAIT_ITEM)
 TS_RS_USE_DECLARATION = "use_declaration"
 TS_RS_EXTERN_CRATE_DECLARATION = "extern_crate_declaration"
 TS_RS_CALL_EXPRESSION = "call_expression"
@@ -35,6 +45,12 @@ TS_RS_BLOCK_COMMENT = "block_comment"
 RS_COMMENT_TYPES = (TS_RS_LINE_COMMENT, TS_RS_BLOCK_COMMENT)
 TS_RS_ATTRIBUTE_ITEM = "attribute_item"
 TS_RS_INNER_ATTRIBUTE_ITEM = "inner_attribute_item"
+# The `#[cfg(test)]` gate in whitespace-normalised form: attributes are
+# token streams, so extracted text is compared after dropping ALL
+# whitespace (`#[cfg( test )]` names the same gate). Recorded on a mod
+# declaration's TARGET module and read by dead-code test detection
+# (issue #1010).
+RS_CFG_TEST_ATTRIBUTE = "#[cfg(test)]"
 
 # Rust I/O direct-sink walk node types (issue #714). call_expression keeps a
 # `function` field (a scoped_identifier like `std::fs::write`), so call_name works
@@ -168,5 +184,110 @@ RS_USE_LIST_DELIMITERS = frozenset({"{", "}", ","})
 RS_ENCODING_UTF8 = "utf8"
 
 RS_WILDCARD_PREFIX = "*"
+# Marks a `use path::{self}` entry, whose name the base path supplies rather
+# than the source. Rust keeps types and values in separate namespaces while
+# the import map holds one slot per name, so such a binding is WEAK: it never
+# displaces a name another `use` in the same scope already claimed (#1054).
+# No Rust identifier can contain the marker character.
+RS_SELF_MODULE_PREFIX = "@"
 
 RS_FIELD_ARGUMENT = "argument"
+
+# Cargo target layout (issue #1007 crate-root discovery). Auto-target
+# directories root every .rs file directly inside them; explicit target
+# `path` overrides in the manifest sections below root the named file
+# wherever it sits. Entry stems never root themselves as file targets.
+RS_AUTO_TARGET_DIRS = frozenset({"examples", "tests", "benches"})
+RS_BIN_DIR = "bin"
+RS_BUILD_STEM = "build"
+RS_ENTRY_STEMS = frozenset({"lib", "main", "mod"})
+RS_MANIFEST_TARGET_SECTIONS = ("bin", "lib", "example", "test", "bench")
+RS_MANIFEST_PATH_KEY = "path"
+RS_MANIFEST_PACKAGE_KEY = "package"
+RS_MANIFEST_BUILD_KEY = "build"
+RS_MANIFEST_WORKSPACE_KEY = "workspace"
+RS_MANIFEST_MEMBERS_KEY = "members"
+RS_MANIFEST_NAME_KEY = "name"
+RS_MANIFEST_LIB_SECTION = "lib"
+RS_MANIFEST_DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
+RS_MANIFEST_TARGET_TABLE_KEY = "target"
+# Crates shipped with the toolchain: external by construction, no
+# manifest needed to know a use head naming one is outside the project.
+RS_STDLIB_CRATES = frozenset({"std", "core", "alloc", "proc_macro"})
+
+# Node labels a Rust qn segment carries when it is a TYPE the caller sits
+# inside (an impl block), not an inline `mod`. An impl adds no module level,
+# so `super::` inside a method counts from the file module's parent (#1093).
+RS_TYPE_SCOPE_LABELS = frozenset(
+    {
+        NodeLabel.CLASS.value,
+        NodeLabel.INTERFACE.value,
+        NodeLabel.ENUM.value,
+        NodeLabel.TYPE.value,
+        NodeLabel.UNION.value,
+    }
+)
+
+# Traits the Rust prelude puts in scope with no `use`: an impl naming one
+# without importing it and without a same-named first-party declaration
+# implements the standard trait, whose dispatch lives outside the graph
+# (issue #1048). Marker traits with no methods are omitted as pointless.
+RS_PRELUDE_TRAITS = frozenset(
+    {
+        "AsMut",
+        "AsRef",
+        "Clone",
+        "Default",
+        "DoubleEndedIterator",
+        "Drop",
+        "ExactSizeIterator",
+        "Extend",
+        "Fn",
+        "FnMut",
+        "FnOnce",
+        "From",
+        "FromIterator",
+        "Into",
+        "IntoIterator",
+        "Iterator",
+        "Ord",
+        "PartialEq",
+        "PartialOrd",
+        "ToOwned",
+        "ToString",
+        "TryFrom",
+        "TryInto",
+    }
+)
+
+# Iterator-adaptor closure typing (issue #1045): a closure argument of one
+# of these adaptors receives the sequence's element (by value or
+# reference, indistinguishable for method binding), so its parameter can
+# type from the iterated collection's element type.
+RS_ITER_ADAPTORS = frozenset(
+    {
+        "map",
+        "filter",
+        "for_each",
+        "inspect",
+        "take_while",
+        "skip_while",
+        "filter_map",
+        "find",
+        "position",
+        "any",
+        "all",
+    }
+)
+# Chain hops between the collection and the adaptor that preserve the
+# element type. Element-changing adaptors (enumerate, zip, flat_map) are
+# deliberately absent: crossing one loses the element.
+RS_ITER_NEUTRAL_HOPS = frozenset(
+    {"iter", "into_iter", "iter_mut", "by_ref", "rev", "cloned", "copied", "filter"}
+)
+# Sequence containers whose FIRST generic argument is the element type.
+RS_ELEMENT_CONTAINERS = frozenset({"Vec", "VecDeque"})
+RS_ITER_MAP = "map"
+RS_ITER_COLLECT = "collect"
+TS_RS_ARRAY_TYPE = "array_type"
+RS_FIELD_ELEMENT = "element"

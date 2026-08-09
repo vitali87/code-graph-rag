@@ -23,6 +23,7 @@ from .js_ts import JsTypeInferenceEngine
 from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
 from .rs import RustTypeInferenceEngine
+from .rs import utils as rs_utils
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
@@ -41,6 +42,7 @@ class TypeInferenceEngine:
         "simple_name_lookup",
         "class_field_types",
         "class_field_guard_inner",
+        "class_field_element_types",
         "method_return_types",
         "go_function_return_types",
         "csharp_partial_groups",
@@ -79,6 +81,7 @@ class TypeInferenceEngine:
         simple_name_lookup: SimpleNameLookup,
         class_field_types: dict[str, dict[str, str]] | None = None,
         class_field_guard_inner: dict[str, dict[str, str]] | None = None,
+        class_field_element_types: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
         go_function_return_types: dict[str, str] | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
@@ -114,6 +117,13 @@ class TypeInferenceEngine:
         # guard-accessor hop so a direct wrapper call isn't mis-resolved to it.
         self.class_field_guard_inner = (
             class_field_guard_inner if class_field_guard_inner is not None else {}
+        )
+        # Shared reference (as with class_field_types): Rust sequence-field
+        # element types (`Pool.workers` -> Worker for a `Vec<Worker>` field),
+        # applied only when an iterator adaptor's closure parameter binds the
+        # element (issue #1045).
+        self.class_field_element_types = (
+            class_field_element_types if class_field_element_types is not None else {}
         )
         # Shared reference (as with class_field_types): DefinitionProcessor's
         # func_qn -> return-type map, populated during ingestion and read by the
@@ -319,10 +329,127 @@ class TypeInferenceEngine:
                     local.setdefault(
                         f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOT}{field}", ftype
                     )
+            # Substitute BEFORE enrichment: params, lets, and fields spell
+            # generic names from the caller's own scope chain, but an
+            # enriched call-return type (`let x = Maker::make()` with
+            # `fn make() -> M`) spells the CALLEE's generic parameter, which
+            # the caller's bounds must not capture. Sole exception: a
+            # `self.<method>()` return spells the caller's own impl-header
+            # generics, handled inside enrichment.
+            self._substitute_rust_generic_bounds(caller_node, module_qn, local)
             self._enrich_rust_call_locals(caller_node, module_qn, local)
         elif language == cs.SupportedLanguage.DART:
             self._enrich_dart_call_locals(caller_node, local)
         return local
+
+    def collect_rust_span_bindings(
+        self, caller_node: ASTNode, module_qn: str, class_context: str | None
+    ) -> list[tuple[int, int, str, str]]:
+        """Span-scoped Rust bindings overlaid at each call's position.
+
+        Match-arm variant bindings plus iterator-adaptor closure-parameter
+        bindings (issue #1045): both rebind one name to different types at
+        different byte ranges, which the flat map cannot express. Element
+        types come from the caller's own collection-typed params/lets plus
+        its class's sequence fields, keyed `self.<field>` exactly as the
+        flat map spells field receivers. Closure bindings whose type does
+        NOT resolve to a registered class from this module are dropped: a
+        type parameter (`Vec<T>`) or a name invisible here would let the
+        external-receiver guard delete the edge the trie fallback still
+        finds, so an unresolvable binding is strictly worse than none.
+        """
+        engine = self.rust_type_inference
+        bindings = engine.collect_match_arm_bindings(caller_node)
+        element_entries = engine.collect_element_entries(caller_node)
+        if class_context:
+            span = (caller_node.start_byte, caller_node.end_byte)
+            for field, elem in self.class_field_element_types.get(
+                class_context, {}
+            ).items():
+                element_entries.append(
+                    (f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOT}{field}", elem, *span, 0)
+                )
+        bindings.extend(
+            binding
+            for binding in engine.collect_closure_param_bindings(
+                caller_node, element_entries
+            )
+            if self._rust_binding_type_resolves(binding[3], module_qn)
+        )
+        return bindings
+
+    def _substitute_rust_generic_bounds(
+        self, caller_node: ASTNode, module_qn: str, var_types: dict[str, str]
+    ) -> None:
+        # A receiver typed as a bare generic parameter (`m: M`, a field `M` of
+        # an `impl<M: Matcher>` block) dispatches through the parameter's trait
+        # bound, so rewrite the recorded type to the qn of the first bound that
+        # resolves strictly first-party (issue #1047). A parameter whose bounds
+        # resolve to nothing keeps the generic name: the known-external
+        # receiver guard then suppresses the name-based fallback instead of
+        # letting it fabricate an edge onto an unrelated same-named method.
+        if not var_types:
+            # Nothing recorded to rewrite, so the ancestor walk that collects
+            # the bounds is pure waste.
+            return
+        bounds = self.rust_type_inference.collect_generic_bounds(caller_node)
+        if not bounds:
+            return
+        for name in var_types:
+            self._apply_rust_generic_bound(bounds, module_qn, var_types, name)
+
+    def _apply_rust_generic_bound(
+        self,
+        bounds: dict[str, list[str]],
+        module_qn: str,
+        var_types: dict[str, str],
+        name: str,
+    ) -> None:
+        for spelling in bounds.get(var_types[name], ()):
+            if trait_qn := self._rust_bound_trait_qn(spelling, module_qn):
+                var_types[name] = trait_qn
+                break
+
+    def _rust_bound_trait_qn(self, spelling: str, module_qn: str) -> str | None:
+        # Resolve a bound spelling STRICTLY to a registered first-party qn;
+        # anything looser fabricates edges: the simple-name fallbacks would
+        # bind `use std::io::Write` + `W: Write` (or a bare prelude `Clone`)
+        # to an arbitrary first-party type sharing the leaf name. The qn goes
+        # into the map directly, so the consumer cannot re-resolve it fuzzily.
+        if cs.SEPARATOR_DOUBLE_COLON in spelling:
+            # A scoped bound substitutes only on an exact module-path match.
+            parts = [
+                p
+                for p in spelling.split(cs.SEPARATOR_DOUBLE_COLON)
+                if p not in cs.RS_PATH_KEYWORDS
+            ]
+            qn = self._resolve_rust_import_path(
+                spelling, node_types=(NodeType.INTERFACE,)
+            )
+            suffix = cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
+            if qn.endswith(suffix) and self._rust_registered_trait(qn):
+                return qn
+            return None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if (target := import_map.get(spelling)) is not None:
+            # An external `use` target is a raw `::` path; a first-party one
+            # arrives as an already-resolved project qn.
+            if cs.SEPARATOR_DOUBLE_COLON in target:
+                return None
+            return target if self._rust_registered_trait(target) else None
+        # No import in scope: a bare name is only visible when defined in
+        # this module (a prelude trait lands here and resolves to None).
+        local_qn = f"{module_qn}{cs.SEPARATOR_DOT}{spelling}"
+        return local_qn if self._rust_registered_trait(local_qn) else None
+
+    def _rust_registered_trait(self, qn: str) -> bool:
+        # A Rust bound always names a trait, which registers as INTERFACE;
+        # a same-named struct/enum must never satisfy it.
+        return self.function_registry.get(qn) == NodeType.INTERFACE
+
+    def _rust_binding_type_resolves(self, type_name: str, module_qn: str) -> bool:
+        qn = self._resolve_rust_type_qn(type_name, module_qn)
+        return self.function_registry.get(qn) is not None
 
     def _enrich_dart_call_locals(
         self, caller_node: ASTNode, var_types: dict[str, str]
@@ -431,18 +558,36 @@ class TypeInferenceEngine:
         # (`let cmd = Command::from_frame(f)?`) with the call's return type, so a
         # later `cmd.apply()` resolves to the real type, not the ambiguous name-only
         # trie fallback. Only fills names not already typed.
-        for name, segments in self.rust_type_inference.collect_call_var_bindings(
-            caller_node
-        ):
+        bounds: dict[str, list[str]] | None = None
+        for (
+            name,
+            segments,
+            call_point,
+        ) in self.rust_type_inference.collect_call_var_bindings(caller_node):
             if name in var_types:
                 continue
             if return_type := self._infer_rust_call_return_type(
-                segments, module_qn, var_types
+                segments, module_qn, var_types, call_point
             ):
                 var_types[name] = return_type
+                if len(segments) == 2 and segments[0] == cs.KEYWORD_SELF:
+                    # A `let m = self.get()` callee lives in the caller's own
+                    # impl, whose header generics a method cannot shadow
+                    # (E0403): a generic return spells the CALLER's own
+                    # parameter, so its bound applies. Any other callee's
+                    # generic return stays uncaptured (issue #1047).
+                    if bounds is None:
+                        bounds = self.rust_type_inference.collect_generic_bounds(
+                            caller_node
+                        )
+                    self._apply_rust_generic_bound(bounds, module_qn, var_types, name)
 
     def _infer_rust_call_return_type(
-        self, segments: list[str], module_qn: str, var_types: dict[str, str]
+        self,
+        segments: list[str],
+        module_qn: str,
+        var_types: dict[str, str],
+        call_point: int | None,
     ) -> str | None:
         # Walk a flattened chain to the type it yields:
         #   ['Command','from_frame']  -> base type Command, method from_frame
@@ -453,7 +598,9 @@ class TypeInferenceEngine:
         # field) -> field-type -> method-return -> identity.
         if not segments:
             return None
-        current_type = self._rust_chain_base_type(segments, module_qn, var_types)
+        current_type = self._rust_chain_base_type(
+            segments, module_qn, var_types, call_point
+        )
         if current_type is None:
             return None
         # Inner type of the guard-wrapped field just hopped through, pending a guard
@@ -485,50 +632,94 @@ class TypeInferenceEngine:
         return current_type
 
     def _rust_chain_base_type(
-        self, segments: list[str], module_qn: str, var_types: dict[str, str]
+        self,
+        segments: list[str],
+        module_qn: str,
+        var_types: dict[str, str],
+        call_point: int | None,
     ) -> str | None:
         # Base of a flattened chain: a typed local (self/var) when present in
         # var_types, else a free fn called by bare name (`let s = make()`), else the
         # segment itself as a type name, useful only when there are hops to walk, so
         # a bare unresolved name types nothing.
         base = var_types.get(segments[0]) or self._rust_free_fn_return_type(
-            segments[0], module_qn
+            segments[0], module_qn, call_point
         )
         if base is not None:
             return base
         return segments[0] if len(segments) > 1 else None
 
     def _resolve_rust_type_qn(self, type_name: str, module_qn: str) -> str:
-        # Resolve a Rust type name to its class-node qn, honoring imports: a `use`
-        # target is a raw `::`-path (`crate::cmd::Command`), not a registry qn, so
-        # find the registered class node whose simple name matches. Falls back to
-        # same-module resolution for a locally-defined type. A fully-qualified inline
-        # base (`crate::cmd::Command`) carries its own path.
+        # Resolve a Rust type name to its class-node qn, honoring imports: an
+        # external `use` target is a raw `::`-path (`std::io::Read`) matched by
+        # simple name, a local one an already-resolved project qn. Falls back to
+        # same-module resolution for a locally-defined type. A fully-qualified
+        # inline base (`crate::cmd::Command`) carries its own path.
         if cs.SEPARATOR_DOUBLE_COLON in type_name:
             return self._resolve_rust_import_path(type_name)
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        if (target := import_map.get(type_name)) and (
-            cs.SEPARATOR_DOUBLE_COLON in target
-        ):
-            return self._resolve_rust_import_path(target)
+        if target := import_map.get(type_name):
+            if cs.SEPARATOR_DOUBLE_COLON in target:
+                return self._resolve_rust_import_path(target)
+            # A crate::/super::/self:: use target arrives as an already
+            # resolved project qn; use it when it names a registered type.
+            # Otherwise fall through with require_registered so the SAME
+            # unregistered map value cannot come back verbatim.
+            if self.function_registry.get(target) is not None:
+                return target
+            return (
+                resolve_class_name(
+                    type_name,
+                    module_qn,
+                    self.import_processor,
+                    self.function_registry,
+                    require_registered=True,
+                )
+                or type_name
+            )
         return self._resolve_class_name(type_name, module_qn) or type_name
 
-    def _rust_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
+    def _rust_free_fn_return_type(
+        self, name: str, module_qn: str, call_point: int | None
+    ) -> str | None:
         # Return type of a free fn called by bare name: same-module first, then a
         # `use`-imported fn resolved through its raw `::` path. A type-name base
         # (`Maker::make`) misses here because a bare type is never a recorded key
         # (fns and types share a name only across Rust's separate fn/type namespaces,
         # which idiomatic code never does).
+        # A body-local fn shadows the module's own for the block it is written
+        # in, and it registers under a `@<line>` variant when the module item
+        # owns the natural qn, so the site decides which of the two is meant
+        # (issue #1069).
+        if shadowing := rs_utils.block_item_at(
+            self.import_processor.rust_block_items.get(module_qn, ()),
+            self.function_registry,
+            name,
+            call_point,
+        ):
+            # The site names the block item, so the module item of that name is
+            # not what is meant, whatever comes of the block item's own return.
+            # A unit or tuple return records nothing, and a generic return
+            # records a type parameter that resolves to no class here; either
+            # way the answer is no type rather than the module item's, since
+            # the known-external guard would delete the edge the trie fallback
+            # still finds and an unresolvable binding is worse than none.
+            shadow_type = self.method_return_types.get(shadowing)
+            if shadow_type and self._rust_binding_type_resolves(shadow_type, module_qn):
+                return shadow_type
+            return None
         if return_type := self.method_return_types.get(
             f"{module_qn}{cs.SEPARATOR_DOT}{name}"
         ):
             return return_type
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        if (target := import_map.get(name)) and cs.SEPARATOR_DOUBLE_COLON in target:
-            fn_qn = self._resolve_rust_import_path(
-                target, node_types=(NodeType.FUNCTION,)
-            )
-            return self.method_return_types.get(fn_qn)
+        if target := import_map.get(name):
+            if cs.SEPARATOR_DOUBLE_COLON in target:
+                target = self._resolve_rust_import_path(
+                    target, node_types=(NodeType.FUNCTION,)
+                )
+            # A crate::/super::/self:: use target is already a project qn.
+            return self.method_return_types.get(target)
         return None
 
     def _resolve_rust_import_path(

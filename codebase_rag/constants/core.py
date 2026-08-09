@@ -21,6 +21,10 @@ SEPARATOR_SLASH = "/"
 # Disambiguates definitions that share one qualified name (if/else import
 # fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
 DUP_QN_MARKER = "@"
+# Joined after the line when a same-named definition already holds that line,
+# so same-line twins stay distinct (issue #1071). Every consumer splits on
+# DUP_QN_MARKER and keeps the base, so nothing reads the suffix back.
+DUP_QN_COLUMN_MARKER = "_"
 
 PATH_CURRENT_DIR = "."
 PATH_PARENT_DIR = ".."
@@ -90,9 +94,11 @@ TEXT_UNKNOWN = "unknown"
 TMP_EXTENSION = ".tmp"
 
 MOD_RS = "mod.rs"
+LIB_RS = "lib.rs"
+MAIN_RS = "main.rs"
 SEPARATOR_DOUBLE_COLON = "::"
 SEPARATOR_PROTOTYPE = ".prototype."
-RUST_CRATE_PREFIX = "crate::"
+RUST_CRATE_KEYWORD = "crate"
 BUILTIN_PREFIX = "builtin"
 IIFE_FUNC_PREFIX = "iife_func_"
 IIFE_ARROW_PREFIX = "iife_arrow_"

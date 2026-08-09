@@ -59,7 +59,9 @@ class MockFunctionRegistry:
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
         return self._suffix_index.get(suffix, [])
 
-    def register_unique_qn(self, natural_qn: QualifiedName, start_line: int) -> str:
+    def register_unique_qn(
+        self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
+    ) -> str:
         return natural_qn
 
     def variants(self, qn: QualifiedName) -> list[QualifiedName]:

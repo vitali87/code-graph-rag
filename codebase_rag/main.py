@@ -652,7 +652,7 @@ async def _run_agent_response_loop(
 
         message_history.extend(response.new_messages())
 
-        run_usage = response.usage()
+        run_usage = response.usage
         turn_input += run_usage.input_tokens
         turn_output += run_usage.output_tokens
         run_cost = _price_current_run(run_usage, model_override_config)
@@ -709,9 +709,9 @@ def _find_multimodal_paths(question: str) -> list[Path]:
 
 def _path_variants(path_str: str) -> tuple[str, ...]:
     return (
-        path_str.replace(" ", r"\ "),
         f"'{path_str}'",
         f'"{path_str}"',
+        path_str.replace(" ", r"\ "),
         path_str,
     )
 
@@ -740,7 +740,7 @@ def _build_user_prompt(question: str) -> str | list[UserContent]:
             continue
         before, _, after = remaining.partition(match_token)
         if before.strip():
-            content.append(before.rstrip())
+            content.append(before.strip())
         try:
             content.append(
                 BinaryContent(

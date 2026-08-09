@@ -87,6 +87,155 @@ def _is_rust_runtime_root(name: str, is_method: bool, path: str) -> bool:
     return is_method and name in cs.RUST_TRAIT_METHOD_NAMES
 
 
+def _has_rust_test_attribute(props: PropertyDict) -> bool:
+    decorators = props.get(cs.KEY_DECORATORS)
+    if not isinstance(decorators, list):
+        return False
+    for decorator in decorators:
+        head = str(decorator).strip("#[] ").split(cs.CHAR_PAREN_OPEN)[0]
+        # Attribute paths are token streams: `#[tokio :: test]` names the
+        # same attribute as `#[tokio::test]`, so drop internal whitespace
+        # before matching.
+        name = "".join(head.split())
+        if name in cs.RUST_TEST_ATTRIBUTE_NAMES or name.endswith(
+            cs.RUST_TEST_ATTRIBUTE_SUFFIX
+        ):
+            return True
+    return False
+
+
+def _is_rust_test_symbol(
+    props: PropertyDict, qn: str, path: str, rust_test_modules: set[str]
+) -> bool:
+    # Rust unit tests live INSIDE source files (`#[cfg(test)] mod tests`), so
+    # path-based test detection never sees them (issue #1008). Test code is a
+    # function carrying a `#[test]` family attribute (#[test], #[tokio::test],
+    # #[bench]) or any symbol inside a `tests`/`test` MODULE (the #[cfg(test)]
+    # convention), including the plain helpers such modules define. The
+    # module check walks the qn's PREFIXES against real Module qns: a type
+    # or method named `tests`, or a dotted project name, shares the string
+    # shape but has no Module node and must stay reportable.
+    if not path.endswith(cs.EXT_RS):
+        return False
+    if rust_test_modules:
+        prefix = ""
+        for segment in qn.split(cs.SEPARATOR_DOT)[:-1]:
+            prefix = f"{prefix}{cs.SEPARATOR_DOT}{segment}" if prefix else segment
+            if prefix in rust_test_modules:
+                return True
+    return _has_rust_test_attribute(props)
+
+
+def _rust_test_modules_from_nodes(
+    nodes: dict[_NodeId, PropertyDict],
+) -> set[str]:
+    # Test modules by three signals, all gated to Rust files (inline `mod
+    # tests` blocks carry synthesised inline paths): a test-module NAME
+    # spelling, an OWN `#[cfg(test)]` decorator (bodied inline mods), or a
+    # DECLARATION-recorded gate (`#[cfg(test)] mod testutil;` stores its
+    # target-qn candidates on the declaring module, issue #1010). Declared
+    # candidates count only when they name a real Rust module here: a
+    # spelling the qn scheme does not produce (a #[path] override) must
+    # stay inert instead of mismarking whatever shares the string.
+    modules: set[str] = set()
+    rust_modules: set[str] = set()
+    declared: list[str] = []
+    ungated: set[str] = set()
+    for (label, uid), props in nodes.items():
+        if label != _MODULE:
+            continue
+        declared_here = props.get(cs.KEY_RUST_CFG_TEST_MODS)
+        if isinstance(declared_here, list):
+            declared.extend(str(target) for target in declared_here)
+        ungated_here = props.get(cs.KEY_RUST_UNGATED_MODS)
+        if isinstance(ungated_here, list):
+            ungated.update(str(target) for target in ungated_here)
+        path = str(props.get(cs.KEY_PATH, ""))
+        if not (
+            path.endswith(cs.EXT_RS) or path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+        ):
+            continue
+        qn = str(uid)
+        rust_modules.add(qn)
+        if qn.rsplit(cs.SEPARATOR_DOT, 1)[
+            -1
+        ] in cs.RUST_TEST_MODULE_SEGMENTS or _has_rust_cfg_test_gate(props):
+            modules.add(qn)
+    # An ungated declaration from ANY target (src/main.rs compiling the
+    # module for production) outweighs a gated sibling declaration.
+    modules.update(
+        target
+        for target in declared
+        if target in rust_modules and target not in ungated
+    )
+    return modules
+
+
+def _has_rust_cfg_test_gate(props: PropertyDict) -> bool:
+    decorators = props.get(cs.KEY_DECORATORS)
+    if not isinstance(decorators, list):
+        return False
+    return any(
+        "".join(str(decorator).split()) == cs.RS_CFG_TEST_ATTRIBUTE
+        for decorator in decorators
+    )
+
+
+def _rust_test_fn_spans(
+    nodes: dict[_NodeId, PropertyDict],
+) -> dict[str, list[tuple[int, int]]]:
+    # Spans of `#[test]` family functions per Rust file: a nested fn
+    # registers FLAT under the module qn and a closure as
+    # anonymous_<line>_<col>, so with tests excluded, symbols lexically
+    # inside a suppressed test fn are recognised by span containment.
+    spans: dict[str, list[tuple[int, int]]] = {}
+    for (label, uid), props in nodes.items():
+        if label not in (_FUNCTION, _METHOD):
+            continue
+        path = str(props.get(cs.KEY_PATH, ""))
+        if not path.endswith(cs.EXT_RS) or not _has_rust_test_attribute(props):
+            continue
+        start = props.get(cs.KEY_START_LINE)
+        end = props.get(cs.KEY_END_LINE)
+        if isinstance(start, int) and isinstance(end, int) and start > 0:
+            spans.setdefault(path, []).append((start, end))
+    return spans
+
+
+def _is_test_symbol(
+    props: PropertyDict,
+    qn: str,
+    path: str,
+    test_patterns: tuple[str, ...],
+    rust_test_modules: set[str],
+    rust_test_spans: dict[str, list[tuple[int, int]]],
+) -> bool:
+    # One definition for BOTH polarities: a symbol excluded as test code
+    # when tests are off must be the same symbol rooted when they are on,
+    # or the two modes silently diverge.
+    return (
+        matches_test_path(path, test_patterns)
+        or _is_rust_test_symbol(props, qn, path, rust_test_modules)
+        or _within_rust_test_span(props, rust_test_spans)
+    )
+
+
+def _within_rust_test_span(
+    props: PropertyDict, spans: dict[str, list[tuple[int, int]]]
+) -> bool:
+    path_spans = spans.get(str(props.get(cs.KEY_PATH, "")))
+    if not path_spans:
+        return False
+    start = props.get(cs.KEY_START_LINE)
+    end = props.get(cs.KEY_END_LINE)
+    if not isinstance(start, int) or not isinstance(end, int) or start <= 0:
+        return False
+    # Strict on both ends: spans carry no columns, so a production fn
+    # packed onto the test fn's first or last physical line must not be
+    # swallowed; every rustfmt-shaped nested symbol sits strictly inside.
+    return any(s < start and end < e for s, e in path_spans)
+
+
 def _is_c_cpp_entry_root(
     name: str, is_method: bool, path: str, qn: str, project_prefix: str
 ) -> bool:
@@ -358,6 +507,12 @@ def dead_code_from_graph(
     props_by_qn: dict[str, PropertyDict] = {}
     method_qns: set[str] = set()
     module_path: dict[str, str] = {}
+    rust_test_modules = _rust_test_modules_from_nodes(nodes)
+    # Both polarities need the spans: excluded test fns take their nested
+    # symbols with them, and INCLUDED ones must root those same symbols (a
+    # fn passed as a value, `filter(is_even)`, has no CALLS edge to revive
+    # it).
+    rust_test_spans = _rust_test_fn_spans(nodes)
     # Normalized decorators per CLASS qn (collected for every class, not just
     # class candidates), so a method root rule can consult its class's
     # @Injectable/@Controller/@Module marker (NestJS DI roots, issue #973).
@@ -372,11 +527,18 @@ def dead_code_from_graph(
                     _norm_decorator(str(d)) for d in decorators
                 )
         if label in labels and str(uid).startswith(project_prefix):
-            # With tests excluded, a test-file symbol's only callers are
-            # excluded as roots, so reporting it is noise (test helpers and
-            # mocks are infrastructure, not dead production code).
-            if not config.include_tests and matches_test_path(
-                str(props.get(cs.KEY_PATH) or ""), config.test_patterns
+            # With tests excluded, a test symbol's only callers are excluded
+            # as roots, so reporting it is noise (test helpers and mocks are
+            # infrastructure, not dead production code). Rust test code lives
+            # INSIDE source files, so it is matched by attribute/module, not
+            # path (issue #1008).
+            if not config.include_tests and _is_test_symbol(
+                props,
+                str(uid),
+                str(props.get(cs.KEY_PATH) or ""),
+                config.test_patterns,
+                rust_test_modules,
+                rust_test_spans,
             ):
                 continue
             candidates.add(str(uid))
@@ -528,7 +690,14 @@ def dead_code_from_graph(
             roots.add(qn)
         elif any(qn.endswith(entry) for entry in config.entry_points):
             roots.add(qn)
-        elif config.include_tests and matches_test_path(path, config.test_patterns):
+        elif config.include_tests and _is_test_symbol(
+            props,
+            qn,
+            path,
+            config.test_patterns,
+            rust_test_modules,
+            rust_test_spans,
+        ):
             roots.add(qn)
 
     adjacency: dict[str, set[str]] = defaultdict(set)
@@ -651,7 +820,17 @@ def _node_props(row: ResultRow) -> PropertyDict:
         cs.KEY_DECORATORS: _as_str_list(row.get(cs.KEY_DECORATORS)),
         cs.KEY_IS_EXPORTED: row.get(cs.KEY_IS_EXPORTED) is True,
         cs.KEY_OVERRIDES_EXTERNAL: row.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
+        # Spans feed the Rust nested-test-symbol exclusion (issue #1008);
+        # non-int values coalesce to 0 so the containment checks skip them.
+        cs.KEY_START_LINE: _as_line(row.get(cs.KEY_START_LINE)),
+        cs.KEY_END_LINE: _as_line(row.get(cs.KEY_END_LINE)),
+        cs.KEY_RUST_CFG_TEST_MODS: _as_str_list(row.get(cs.KEY_RUST_CFG_TEST_MODS)),
+        cs.KEY_RUST_UNGATED_MODS: _as_str_list(row.get(cs.KEY_RUST_UNGATED_MODS)),
     }
+
+
+def _as_line(value: object) -> int:
+    return value if isinstance(value, int) else 0
 
 
 def _row_qn(row: ResultRow) -> str:

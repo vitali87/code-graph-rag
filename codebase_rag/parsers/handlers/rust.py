@@ -16,27 +16,36 @@ if TYPE_CHECKING:
     from ...types_defs import ASTNode
 
 
+def _outer_attribute_texts(node: ASTNode) -> list[str]:
+    # Doc comments are named siblings that may sit BETWEEN an attribute
+    # and its item (`#[cfg(test)]` above `/// docs` above `mod m;` is
+    # legal and the attribute still applies), so the walk skips them
+    # rather than stopping.
+    texts: list[str] = []
+    sibling = node.prev_named_sibling
+    while sibling and sibling.type in (cs.TS_RS_ATTRIBUTE_ITEM, *cs.RS_COMMENT_TYPES):
+        if sibling.type == cs.TS_RS_ATTRIBUTE_ITEM and (
+            attr_text := safe_decode_text(sibling)
+        ):
+            texts.append(attr_text)
+        sibling = sibling.prev_named_sibling
+    texts.reverse()
+    return texts
+
+
 class RustHandler(BaseLanguageHandler):
     __slots__ = ()
 
     def extract_decorators(self, node: ASTNode) -> list[str]:
-        outer_decorators: list[str] = []
-        sibling = node.prev_named_sibling
-        while sibling and sibling.type == cs.TS_RS_ATTRIBUTE_ITEM:
-            if attr_text := safe_decode_text(sibling):
-                outer_decorators.append(attr_text)
-            sibling = sibling.prev_named_sibling
-
-        decorators = list(reversed(outer_decorators))
+        decorators = _outer_attribute_texts(node)
 
         nodes_to_search = [node]
         if body_node := node.child_by_field_name(cs.FIELD_BODY):
             nodes_to_search.append(body_node)
 
-        inner_attr_type = cs.TS_RS_INNER_ATTRIBUTE_ITEM
         for search_node in nodes_to_search:
             for child in search_node.children:
-                if child.type == inner_attr_type:
+                if child.type == cs.TS_RS_INNER_ATTRIBUTE_ITEM:
                     if attr_text := safe_decode_text(child):
                         decorators.append(attr_text)
 

@@ -89,6 +89,32 @@ make dev
 
 This installs all dependencies and sets up pre-commit hooks automatically.
 
+## Verify Release Artifacts
+
+Each [GitHub release](https://github.com/vitali87/code-graph-rag/releases) ships prebuilt binaries together with Sigstore signatures (`*.sigstore.json`); releases from v0.0.484 onwards also carry a SLSA build provenance attestation (`multiple.intoto.jsonl`). Both are produced by the `build-binaries.yml` GitHub Actions workflow using keyless signing, so there is no maintainer-held key to obtain: verification checks that the artifact was built by this repository's release workflow.
+
+To verify provenance with the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify code-graph-rag-linux-amd64 \
+  --repo vitali87/code-graph-rag \
+  --signer-workflow vitali87/code-graph-rag/.github/workflows/build-binaries.yml
+```
+
+The `--signer-workflow` flag pins the attestation to the release workflow itself; `--repo` alone accepts an attestation signed by any workflow in the repository.
+
+To verify a signature with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/):
+
+```bash
+cosign verify-blob \
+  --bundle code-graph-rag-linux-amd64.sigstore.json \
+  --certificate-identity-regexp 'https://github\.com/vitali87/code-graph-rag/\.github/workflows/build-binaries\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  code-graph-rag-linux-amd64
+```
+
+Substitute the binary name for your platform. Packages installed from PyPI are protected differently: `pip` and `uv` verify package hashes, which proves integrity in transit, and releases after v0.0.187 additionally carry a [PEP 740](https://peps.python.org/pep-0740/) attestation. That is a publish attestation — proof that the file was uploaded by this project's trusted publisher — rather than build provenance, and it can be queried through PyPI's [Integrity API](https://docs.pypi.org/api/integrity/).
+
 ## Start Memgraph
 
 ```bash
@@ -136,6 +162,5 @@ This checks that all required dependencies and services are available.
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules
 - **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
-- **griffe**: Signatures for entire Python programs. Extract the structure, the frame, the skeleton of your project, to generate API documentation or find breaking changes in your API.
 - **pathspec**: Utility library for gitignore style pattern matching of file paths.
 <!-- /SECTION:dependencies -->

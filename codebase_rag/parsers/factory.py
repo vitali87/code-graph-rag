@@ -79,6 +79,8 @@ class ProcessorFactory:
                 project_name=self.project_name,
                 ingestor=self.ingestor,
                 function_registry=self.function_registry,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
             )
         return self._import_processor
 
@@ -125,6 +127,7 @@ class ProcessorFactory:
                 simple_name_lookup=self.simple_name_lookup,
                 class_field_types=self.definition_processor.class_field_types,
                 class_field_guard_inner=self.definition_processor.class_field_guard_inner,
+                class_field_element_types=self.definition_processor.class_field_element_types,
                 method_return_types=self.definition_processor.method_return_types,
                 go_function_return_types=self.definition_processor.go_function_return_types,
                 csharp_partial_groups=self.definition_processor.csharp_partial_groups,
@@ -163,5 +166,7 @@ class ProcessorFactory:
                 rehydrated_definition_paths=(
                     self.definition_processor.rehydrated_definition_paths
                 ),
+                rust_function_modules=(self.definition_processor.rust_function_modules),
+                declared_module_qns=self.definition_processor.declared_module_qns,
             )
         return self._call_processor
