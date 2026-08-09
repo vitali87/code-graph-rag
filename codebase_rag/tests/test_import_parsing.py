@@ -532,7 +532,7 @@ class TestIsLocalModuleCache:
         processor._is_local_java_import("com.example.Service")
         processor._is_local_java_import("com.example.Service")
 
-        info = processor._is_local_java_import_cached.cache_info()
+        info = processor._java_source_root_prefix_cached.cache_info()
         assert info.hits >= 2
         assert info.misses == 1
 

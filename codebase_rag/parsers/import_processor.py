@@ -451,6 +451,7 @@ class ImportProcessor:
         "stdlib_extractor",
         "_is_local_module_cached",
         "_is_local_java_import_cached",
+        "_java_source_root_prefix_cached",
         "_project_named_package",
         "_map_py_source_root",
         "_map_go_import_path",
@@ -735,12 +736,39 @@ class ImportProcessor:
             )
 
         @lru_cache(maxsize=4096)
+        def _java_source_root_prefix_cached(import_path: str) -> str | None:
+            # The registered Module qns carry the build-tool source root
+            # (src.main.java.), so a local import's qn must too; a flat
+            # layout keeps the empty prefix and is unchanged (issue #1121).
+            # Resolution probes the COMPLETE import target under each root:
+            # an external import sharing a local top-level segment
+            # (com.fasterxml under a repo with src/main/java/com) stays
+            # external, and a test-only class binds to src/test/java even
+            # when src/main/java also contains the top-level package. The
+            # target may be a package dir or any class-file ancestor: a
+            # static member (Utility.run) sits one segment past its file and
+            # a nested-class member (Outer.Inner.CONSTANT) two or more, so
+            # every ancestor is probed.
+            parts = import_path.split(cs.SEPARATOR_DOT)
+            for root in ((), *cs.JAVA_MAVEN_SOURCE_ROOTS):
+                base = repo_path.joinpath(*root)
+                if base.joinpath(*parts).is_dir() or any(
+                    base.joinpath(
+                        *parts[: end - 1], f"{parts[end - 1]}{cs.EXT_JAVA}"
+                    ).is_file()
+                    for end in range(len(parts), 0, -1)
+                ):
+                    return (
+                        cs.SEPARATOR_DOT.join(root) + cs.SEPARATOR_DOT if root else ""
+                    )
+            return None
+
         def _is_local_java_import_cached(import_path: str) -> bool:
-            top_level = import_path.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
-            return (repo_path / top_level).is_dir()
+            return _java_source_root_prefix_cached(import_path) is not None
 
         self._is_local_module_cached = _is_local_module_cached
         self._is_local_java_import_cached = _is_local_java_import_cached
+        self._java_source_root_prefix_cached = _java_source_root_prefix_cached
 
         load_persistent_cache()
 
@@ -1127,9 +1155,29 @@ class ImportProcessor:
         return self._is_local_java_import_cached(import_path)
 
     def _resolve_java_import_path(self, import_path: str) -> str:
-        if self._is_local_java_import(import_path):
-            return f"{self.project_name}{cs.SEPARATOR_DOT}{import_path}"
+        prefix = self._java_source_root_prefix_cached(import_path)
+        if prefix is not None:
+            return f"{self.project_name}{cs.SEPARATOR_DOT}{prefix}{import_path}"
         return import_path
+
+    def _java_owning_module_qn(self, full_name: str) -> str:
+        # A static or nested-class import carries symbol segments past the
+        # class file (Utility.run, Outer.Inner.CONSTANT). The import map keeps
+        # the full path for call resolution, but the IMPORTS edge must land on
+        # the owning file-level Module, so truncate to the deepest ancestor
+        # whose .java file exists. Package (wildcard) and file-level targets
+        # come back unchanged.
+        project_prefix = self.project_name + cs.SEPARATOR_DOT
+        segments = full_name[len(project_prefix) :].split(cs.SEPARATOR_DOT)
+        for end in range(len(segments), 0, -1):
+            candidate = segments[:end]
+            if self.repo_path.joinpath(*candidate).is_dir():
+                break
+            if self.repo_path.joinpath(
+                *candidate[:-1], f"{candidate[-1]}{cs.EXT_JAVA}"
+            ).is_file():
+                return project_prefix + cs.SEPARATOR_DOT.join(candidate)
+        return full_name
 
     def _is_local_js_import(self, full_name: str) -> bool:
         return full_name.startswith(self.project_name + cs.SEPARATOR_DOT)
@@ -2194,7 +2242,7 @@ class ImportProcessor:
             # asymmetry is intentional.
             case cs.SupportedLanguage.JAVA:
                 if full_name.startswith(project_prefix):
-                    return full_name
+                    return self._java_owning_module_qn(full_name)
             case (
                 cs.SupportedLanguage.JS
                 | cs.SupportedLanguage.TS
@@ -2666,6 +2714,11 @@ class ImportProcessor:
                 local_name = imported_path.split(cs.SEPARATOR_DOT)[-1]
             self.import_mapping[module_qn][local_name] = imported_path
             logger.debug(ls.IMP_CSHARP, name=local_name, path=imported_path)
+
+    def reset_java_path_caches(self) -> None:
+        # Same contract as reset_rust_path_caches: the filesystem may have
+        # gained or lost files since the layout decisions were cached.
+        self._java_source_root_prefix_cached.cache_clear()
 
     def reset_rust_path_caches(self) -> None:
         # The filesystem may have gained or lost files since the caches

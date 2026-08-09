@@ -387,7 +387,7 @@ public class LocalImports {
     imports = updater.factory.import_processor.import_mapping[module_qn]
 
     expected_imports = {
-        "MathUtils": "com.example.utils.MathUtils",
+        "MathUtils": (f"{project_name}.src.main.java.com.example.utils.MathUtils"),
     }
 
     for name, path in expected_imports.items():
