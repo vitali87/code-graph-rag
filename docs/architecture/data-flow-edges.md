@@ -371,3 +371,30 @@ module is re-exported under its own name. A project that does
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
+
+## Coverage metadata and the three-verdict query
+
+An empty flow result is ambiguous on its own: "no flow exists" and "the flow
+sits outside what the analysis covers" look identical, and for assurance
+questions an absent path must never be read as a pass. Two mechanisms make
+the distinction queryable:
+
+- Every `Module` node carries a `flow_covered` boolean: `true` when the
+  module's language is in the source/sink registry **and** the `FLOWS_TO`
+  capture group was enabled at indexing time. It is directly queryable in
+  Cypher.
+- A source-to-sink reachability question, exposed as the `flow_verdict` MCP
+  tool, answers with one of three verdicts:
+    - `FOUND` — a `FLOWS_TO` path exists; the qualified-name path is
+      returned.
+    - `NO_FLOW` — no path, and every module of the project was inside
+      analysed coverage.
+    - `UNKNOWN` — no path was found, but part of the project sits outside
+      coverage; the uncovered files are named.
+
+The coverage read is deliberately project-wide rather than restricted to the
+query's reachable surface: without path sensitivity, a flow through an
+uncovered file cannot be ruled out from the covered part of the graph, so
+narrowing the check would manufacture false `NO_FLOW` verdicts. Reachability
+itself runs client-side over a linear scan of the project's `FLOWS_TO`
+edges, the same discipline as dead-code detection.

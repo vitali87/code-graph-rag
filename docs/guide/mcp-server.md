@@ -73,6 +73,7 @@ cgr daemon up
 | `structural_search` | Search code structurally by AST pattern using ast-grep syntax (not text/regex). Returns file paths, line and column numbers, and the matched code. Requires the 'ast-grep' extra to be installed. |
 | `structural_replace` | Rewrite code structurally by AST pattern using ast-grep syntax. Metavariables captured by the pattern are substituted into the rewrite. Defaults to dry_run (returns a diff); set dry_run=false to write changes. Requires the 'ast-grep' extra to be installed. |
 | `ask_agent` | Ask the Code Graph RAG agent a question about the codebase. Uses the full RAG pipeline to analyse the code graph and provide a detailed answer. Use this for general questions about architecture, functionality, and code relationships. |
+| `flow_verdict` | Answer a source-to-sink data-flow reachability question with one of three verdicts: FOUND (a FLOWS_TO path exists, returned as qualified names), NO_FLOW (no path, and every module of the project was inside flow-analysis coverage), or UNKNOWN (no path found, but part of the project sits outside coverage; the uncovered files are named). An absent path must never be read as a verified absence when coverage gaps exist. |
 <!-- /SECTION:mcp_tools -->
 
 ## Example Usage

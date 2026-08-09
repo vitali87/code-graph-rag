@@ -413,6 +413,27 @@ class MCPToolsRegistry:
             returns_json=True,
         )
 
+        self._tools[cs.MCPToolName.FLOW_VERDICT] = ToolMetadata(
+            name=cs.MCPToolName.FLOW_VERDICT,
+            description=td.MCP_TOOLS[cs.MCPToolName.FLOW_VERDICT],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.SOURCE_QN: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_SOURCE_QN,
+                    ),
+                    cs.MCPParamName.SINK_QN: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_SINK_QN,
+                    ),
+                },
+                required=[cs.MCPParamName.SOURCE_QN, cs.MCPParamName.SINK_QN],
+            ),
+            handler=self.flow_verdict,
+            returns_json=True,
+        )
+
     @property
     def rag_agent(self) -> Agent:
         if self._rag_agent is None:
@@ -444,6 +465,25 @@ class MCPToolsRegistry:
     @rag_agent.setter
     def rag_agent(self, value: Agent) -> None:
         self._rag_agent = value
+
+    async def flow_verdict(
+        self, source_qualified_name: str, sink_qualified_name: str
+    ) -> dict:
+        from codebase_rag.flow_verdict import flow_reachability_verdict
+
+        project = derive_project_name(Path(self.project_root))
+        result = await asyncio.to_thread(
+            flow_reachability_verdict,
+            self.ingestor.fetch_all,
+            project,
+            source_qualified_name,
+            sink_qualified_name,
+        )
+        return {
+            "verdict": result.verdict,
+            "path": list(result.path),
+            "gaps": list(result.gaps),
+        }
 
     async def list_projects(self) -> ListProjectsResult:
         logger.info(lg.MCP_LISTING_PROJECTS)

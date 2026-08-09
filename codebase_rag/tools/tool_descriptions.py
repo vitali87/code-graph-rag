@@ -192,6 +192,19 @@ MCP_ASK_AGENT = (
 )
 
 
+MCP_FLOW_VERDICT = (
+    "Answer a source-to-sink data-flow reachability question with one of "
+    "three verdicts: FOUND (a FLOWS_TO path exists, returned as qualified "
+    "names), NO_FLOW (no path, and every module of the project was inside "
+    "flow-analysis coverage), or UNKNOWN (no path found, but part of the "
+    "project sits outside coverage; the uncovered files are named). An "
+    "absent path must never be read as a verified absence when coverage "
+    "gaps exist."
+)
+
+MCP_PARAM_SOURCE_QN = "Qualified name of the flow source (function/method)"
+MCP_PARAM_SINK_QN = "Qualified name of the flow sink (function/method)"
+
 MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.LIST_PROJECTS: MCP_LIST_PROJECTS,
     MCPToolName.DELETE_PROJECT: MCP_DELETE_PROJECT,
@@ -208,6 +221,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.STRUCTURAL_SEARCH: MCP_STRUCTURAL_SEARCH,
     MCPToolName.STRUCTURAL_REPLACE: MCP_STRUCTURAL_REPLACE,
     MCPToolName.ASK_AGENT: MCP_ASK_AGENT,
+    MCPToolName.FLOW_VERDICT: MCP_FLOW_VERDICT,
 }
 
 AGENTIC_TOOLS: dict[AgenticToolName, str] = {
