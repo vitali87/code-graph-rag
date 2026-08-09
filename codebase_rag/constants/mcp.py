@@ -19,6 +19,7 @@ class MCPToolName(StrEnum):
     STRUCTURAL_SEARCH = "structural_search"
     STRUCTURAL_REPLACE = "structural_replace"
     ASK_AGENT = "ask_agent"
+    FLOW_VERDICT = "flow_verdict"
 
 
 class MCPTransport(StrEnum):
@@ -64,6 +65,8 @@ class MCPParamName(StrEnum):
     PATTERN = "pattern"
     REWRITE = "rewrite"
     LANGUAGE = "language"
+    SOURCE_QN = "source_qualified_name"
+    SINK_QN = "sink_qualified_name"
     DRY_RUN = "dry_run"
 
 

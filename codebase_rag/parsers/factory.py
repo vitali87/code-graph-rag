@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..capture import ALL_ENABLED, CaptureSelection
-from ..constants import SupportedLanguage
+from ..constants import RelationshipType, SupportedLanguage
 from ..services import IngestorProtocol
 from ..types_defs import (
     ASTCacheProtocol,
@@ -109,6 +109,9 @@ class ProcessorFactory:
                 import_processor=self.import_processor,
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 func_class_captures_cache=self._func_class_captures_cache,
+                flow_capture_enabled=(
+                    RelationshipType.FLOWS_TO in self.capture.enabled_rels
+                ),
             )
         return self._definition_processor
 

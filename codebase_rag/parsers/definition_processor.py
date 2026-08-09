@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from ..types_defs import LanguageQueries
     from .handlers import LanguageHandler
     from .import_processor import ImportProcessor
+from .io_access import FLOW_REGISTERED_LANGUAGES
 
 
 class DefinitionProcessor(
@@ -57,6 +58,8 @@ class DefinitionProcessor(
         import_processor: ImportProcessor,
         module_qn_to_file_path: dict[str, Path],
         func_class_captures_cache: dict[Path, dict] | None = None,
+        *,
+        flow_capture_enabled: bool = False,
     ):
         super().__init__()
         self.ingestor = ingestor
@@ -66,6 +69,7 @@ class DefinitionProcessor(
         self.simple_name_lookup = simple_name_lookup
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
+        self.flow_capture_enabled = flow_capture_enabled
         # {go module qn: its `package` clause name}; Go package membership is
         # (directory, clause), so receiver binding needs both.
         self.go_package_names: dict[str, str] = {}
@@ -335,6 +339,10 @@ class DefinitionProcessor(
                     cs.KEY_NAME: file_path.name,
                     cs.KEY_PATH: relative_path_str,
                     cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
+                    cs.KEY_FLOW_COVERED: (
+                        self.flow_capture_enabled
+                        and language in FLOW_REGISTERED_LANGUAGES
+                    ),
                 },
             )
 

@@ -28,6 +28,7 @@ from .extract import (
 from .models import HandleBinding, HandleConstructor, IOSink
 from .processor import IOAccessProcessor
 from .registry import (
+    FLOW_REGISTERED_LANGUAGES,
     IO_HANDLE_CONSTRUCTORS,
     IO_HANDLE_METHODS,
     IO_MACRO_SINKS,
@@ -38,6 +39,7 @@ from .registry import (
 
 __all__ = [
     "DYNAMIC_TARGET",
+    "FLOW_REGISTERED_LANGUAGES",
     "IO_HANDLE_CONSTRUCTORS",
     "IO_HANDLE_METHODS",
     "IO_MACRO_SINKS",

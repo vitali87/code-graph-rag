@@ -462,6 +462,12 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     ),
 }
 
+# The languages the flow/I-O analysis covers at all: a Module in any other
+# language emits no FLOWS_TO edges, which the three-verdict flow query
+# reports as an UNKNOWN coverage gap rather than a verified absence
+# (issue #1050).
+FLOW_REGISTERED_LANGUAGES: frozenset[cs.SupportedLanguage] = frozenset(IO_SINKS)
+
 # Call-shaped handle sinks per language (libc FILE* family); C++ gets both
 # the bare and std:: spellings.
 IO_ARG_HANDLE_SINKS: dict[cs.SupportedLanguage, dict[str, ArgHandleSink]] = {

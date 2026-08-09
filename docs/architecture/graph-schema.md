@@ -14,7 +14,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
-| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, end_line: int?}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, flow_covered: boolean?, start_line: int?, end_line: int?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
 | Function | same as Class, plus `is_macro: boolean?` |
 | Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?` |
