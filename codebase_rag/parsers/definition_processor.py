@@ -57,8 +57,9 @@ class DefinitionProcessor(
         simple_name_lookup: SimpleNameLookup,
         import_processor: ImportProcessor,
         module_qn_to_file_path: dict[str, Path],
-        flow_capture_enabled: bool = True,
         func_class_captures_cache: dict[Path, dict] | None = None,
+        *,
+        flow_capture_enabled: bool = False,
     ):
         super().__init__()
         self.ingestor = ingestor
