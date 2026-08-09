@@ -264,6 +264,10 @@ class GraphUpdater:
         # and evicts on large repos, so Pass 3 must iterate this full list (not
         # the cache) and re-parse evicted files, or their calls are dropped.
         self._parsed_files: list[tuple[Path, cs.SupportedLanguage]] = []
+        # Rel-path -> registered qns for FRONTEND registrations, which have
+        # no tree-sitter span records; the watch prefix sweep reads this to
+        # spare foreign files' entries (issue #1025).
+        self._frontend_owned_qns: dict[str, set[str]] = {}
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
         # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
@@ -360,6 +364,7 @@ class GraphUpdater:
                 structural_elements=(
                     self.factory.structure_processor.structural_elements
                 ),
+                owned_qns=self._frontend_owned_qns,
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
             )
@@ -380,6 +385,7 @@ class GraphUpdater:
             structural_elements=self.factory.structure_processor.structural_elements,
             exclude_paths=self.exclude_paths,
             unignore_paths=self.unignore_paths,
+            owned_qns=self._frontend_owned_qns,
         )
         logger.info(
             ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
@@ -634,6 +640,11 @@ class GraphUpdater:
             self.skipped_because_in_sync = True
             self.ingestor.flush_all()
             return
+
+        # Cleared only when a REAL indexing run begins: an in-sync no-op above
+        # must keep the last run's ownership map, which a later watch-event
+        # prefix sweep still reads (issue #1025 review).
+        self._frontend_owned_qns.clear()
 
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
@@ -1303,7 +1314,9 @@ class GraphUpdater:
             known.setdefault(qn, "")
         return known
 
-    def remove_file_from_state(self, file_path: Path) -> None:
+    def remove_file_from_state(
+        self, file_path: Path, frontend_current: bool = False
+    ) -> None:
         logger.debug(ls.REMOVING_STATE, path=file_path)
 
         if file_path in self.ast_cache:
@@ -1344,10 +1357,49 @@ class GraphUpdater:
                 if path == file_path:
                     self.factory.import_processor.drop_rust_module_import_state(qn)
 
+        # Ownership guard for the prefix sweep: another file's inline-mod
+        # chain can share this file's qn prefix (the #1017 shape), and a
+        # sweep by prefix alone deregisters functions that file still owns —
+        # they are never re-registered because it is not re-parsed. The span
+        # records key by the REGISTERING file's module qn, so a qn recorded
+        # under a module this event does not touch survives (issue #1025).
+        touched_modules = {
+            qn
+            for qn, path in (
+                self.factory.definition_processor.module_qn_to_file_path.items()
+            )
+            if path == file_path
+        }
+        foreign_qns = {
+            location.qualified_name
+            for (
+                span_module,
+                _line,
+                _col,
+            ), location in self.factory.definition_processor.function_locations.items()
+            if span_module not in touched_modules
+        }
+        # Frontend registrations (libclang C/C++) have no span records; their
+        # ownership is tracked per rel path at registration time.
+        touched_rel = relative_path.as_posix()
+        for owner_rel, owner_qns in self._frontend_owned_qns.items():
+            if owner_rel != touched_rel:
+                foreign_qns |= owner_qns
+        if frontend_current:
+            # Incremental full run in LIBCLANG mode: the frontend ALREADY
+            # re-registered this file's current state before this cleanup,
+            # and the tree-sitter pass will skip it as covered — sweeping
+            # here would wipe registrations nothing restores (issue #1025
+            # review). Watch events keep the default: the frontend does not
+            # rerun there, so its stale entries must go.
+            foreign_qns |= self._frontend_owned_qns.get(touched_rel, set())
+
         qns_to_remove = set()
 
         for qn in list(self.function_registry.keys()):
-            if qn.startswith(f"{module_qn_prefix}.") or qn == module_qn_prefix:
+            if (
+                qn.startswith(f"{module_qn_prefix}.") or qn == module_qn_prefix
+            ) and qn not in foreign_qns:
                 qns_to_remove.add(qn)
                 del self.function_registry[qn]
 
@@ -1753,7 +1805,12 @@ class GraphUpdater:
 
             for filepath, file_key, is_new, file_bytes in changed_entries:
                 if not is_new:
-                    self.remove_file_from_state(filepath)
+                    self.remove_file_from_state(
+                        filepath,
+                        frontend_current=bool(self._cpp_frontend_covered)
+                        and cached_relative_path(filepath, self.repo_path).as_posix()
+                        in self._cpp_frontend_covered,
+                    )
                     self._delete_module_entities(file_key)
 
                 changed_count += 1
