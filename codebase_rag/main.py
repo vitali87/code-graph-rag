@@ -71,6 +71,7 @@ from .tools.semantic_search import (
 from .tools.shell_command import ShellCommander, create_shell_command_tool
 from .tools.structural_editor import create_structural_editor_tool
 from .tools.structural_search import create_structural_search_tool
+from .tools.web_search import create_web_search_tool, make_web_searcher
 from .types_defs import (
     CHAT_LOOP_UI,
     OPTIMIZATION_LOOP_UI,
@@ -1647,6 +1648,24 @@ def _initialize_services_and_agent(
     structural_search_tool = create_structural_search_tool(ast_grep_service)
     structural_editor_tool = create_structural_editor_tool(ast_grep_service)
 
+    # Web search always registers: the default DuckDuckGo backend needs no key,
+    # and WEB_SEARCH_PROVIDER=serpdive (with SERPDIVE_API_KEY) swaps in the
+    # free-tier SERPdive backend behind the same tool.
+    agentic_tools = [
+        query_tool,
+        code_tool,
+        file_reader_tool,
+        file_writer_tool,
+        file_editor_tool,
+        shell_command_tool,
+        directory_lister_tool,
+        semantic_search_tool,
+        function_source_tool,
+        structural_search_tool,
+        structural_editor_tool,
+    ]
+    agentic_tools.append(create_web_search_tool(make_web_searcher()))
+
     confirmation_tool_names = ConfirmationToolNames(
         replace_code=file_editor_tool.name,
         create_file=file_writer_tool.name,
@@ -1655,19 +1674,7 @@ def _initialize_services_and_agent(
     )
 
     rag_agent, system_prompt = create_rag_orchestrator(
-        tools=[
-            query_tool,
-            code_tool,
-            file_reader_tool,
-            file_writer_tool,
-            file_editor_tool,
-            shell_command_tool,
-            directory_lister_tool,
-            semantic_search_tool,
-            function_source_tool,
-            structural_search_tool,
-            structural_editor_tool,
-        ],
+        tools=agentic_tools,
         project_root=Path(repo_path),
         load_instructions=app_context.session.load_cgr_instructions,
         active_projects=active_projects,
