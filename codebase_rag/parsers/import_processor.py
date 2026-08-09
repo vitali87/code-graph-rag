@@ -1744,6 +1744,10 @@ class ImportProcessor:
         """
         qn_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
         if not qn_parts:
+            # A root-level explicit `path = "mod.rs"` target maps to the
+            # bare project qn; nothing else roots there (issue #1031).
+            if self._rust_is_mod_rs_target([]):
+                return "dir_file", []
             return None
         dir_parts, stem = qn_parts[:-1], qn_parts[-1]
         if (
@@ -1760,6 +1764,28 @@ class ImportProcessor:
                 # cargo-verified), so it attaches classically with
                 # itself as the definitive entry stem.
                 return "entry", qn_parts
+        if stem in cs.RS_ENTRY_STEMS and f"{stem}{cs.EXT_RS}" in self._rust_dir_entries(
+            self.repo_path.joinpath(*dir_parts)
+        ):
+            # An entry-stem FILE that is a target in its own right — by
+            # auto location (src/bin/main.rs beside src/bin/mod.rs) or by
+            # explicit manifest path — keeps its own crate: its qn carries
+            # the stem only when a sibling claimed the dir qn, and the
+            # ancestor mod.rs check below must not swallow it
+            # (issue #1031 review).
+            if self._rust_is_auto_target_dir(dir_parts, stem):
+                return "file", qn_parts
+            if self._rust_is_explicit_target(dir_parts, stem):
+                return "entry", qn_parts
+        if self._rust_is_mod_rs_target(qn_parts):
+            # Cargo compiles src/bin/mod.rs (or an explicit target whose
+            # path ends in mod.rs) as a target named `mod` whose crate root
+            # is the file itself. The mod.rs spelling maps the module to its
+            # DIRECTORY qn, so that qn is the file root and `mod x;` inside
+            # it resolves beside it — file-root nesting whose declarations
+            # come from mod.rs, not a sibling `<dir>.rs` shadow
+            # (issue #1031).
+            return "dir_file", qn_parts
         for i in range(len(dir_parts), -1, -1):
             if i >= 1:
                 name = dir_parts[i - 1]
@@ -1768,9 +1794,23 @@ class ImportProcessor:
                     self.repo_path.joinpath(*parent)
                 ) and self._rust_is_auto_target_dir(parent, name):
                     return "file", dir_parts[:i]
+            if self._rust_is_mod_rs_target(dir_parts[:i]):
+                # A DESCENDANT module of a mod.rs-backed target (declared
+                # from src/bin/mod.rs) roots at that target's directory qn,
+                # exactly like the target itself (issue #1031).
+                return "dir_file", dir_parts[:i]
             if self._rust_is_crate_root_dir(dir_parts[:i]):
                 return "classic", dir_parts[:i]
         return None
+
+    def _rust_is_mod_rs_target(self, dir_parts: list[str]) -> bool:
+        mod_stem = cs.MOD_RS[: -len(cs.EXT_RS)]
+        return cs.MOD_RS in self._rust_dir_entries(
+            self.repo_path.joinpath(*dir_parts)
+        ) and (
+            self._rust_is_auto_target_dir(dir_parts, mod_stem)
+            or self._rust_is_explicit_target(dir_parts, mod_stem)
+        )
 
     def _rust_is_crate_root_dir(self, dir_parts: list[str]) -> bool:
         # A directory is a crate root only when it holds an entry file AND is
@@ -1798,8 +1838,13 @@ class ImportProcessor:
             # declared submodules here (cargo-verified), with the entry
             # stem chosen by the declaring scan over the explicit stems.
             return False
-        if cs.MOD_RS in entries:
-            # The mod.rs spelling of a module directory.
+        if cs.MOD_RS in entries and not self._rust_is_auto_target_dir(
+            dir_parts, cs.MOD_RS[: -len(cs.EXT_RS)]
+        ):
+            # The mod.rs spelling of a module directory — except in a direct
+            # auto-target location, where mod.rs is itself a target named
+            # `mod` and must not stop its main.rs sibling from rooting the
+            # directory (issue #1031).
             return False
         if dir_parts and f"{dir_parts[-1]}{cs.EXT_RS}" in self._rust_dir_entries(
             self.repo_path.joinpath(*dir_parts[:-1])
@@ -1964,16 +2009,19 @@ class ImportProcessor:
         key = (tuple(module_parts), dir_backed, want_mods)
         if key in self._rust_module_mod_decls:
             return self._rust_module_mod_decls[key]
-        if not module_parts:
+        if not module_parts and not dir_backed:
+            # Only a dir-backed root can live at the bare project qn: a
+            # root-level explicit `path = "mod.rs"` target (issue #1031).
             return None
         parent = module_parts[:-1]
         # A file the indexer skipped backs nothing: the graph holds no such
         # module, so its declarations must not decide where an indexed one
         # sits. Falling through lets mod.rs back the module when only the
         # sibling .rs was excluded (issue #1100).
-        sibling = f"{module_parts[-1]}{cs.EXT_RS}"
+        sibling = f"{module_parts[-1]}{cs.EXT_RS}" if module_parts else ""
         if (
             not dir_backed
+            and module_parts
             and sibling in self._rust_dir_entries(self.repo_path.joinpath(*parent))
             and self._rust_file_is_indexed([*parent, sibling])
         ):
@@ -2258,6 +2306,12 @@ class ImportProcessor:
         beside the entry point, so route through _rust_attach.
         """
         parts = base_qn.split(cs.SEPARATOR_DOT)[1:]
+        if self._rust_is_mod_rs_target(parts):
+            # The base qn IS a mod.rs-backed target (src/bin/mod.rs): its
+            # self:: — and super:: chains landing on it — attach beside
+            # mod.rs, never through a sibling entry stem like src/bin's
+            # main.rs (issue #1031).
+            return self._rust_join_mods(parts, rest, dir_backed=True)
         if self._rust_is_crate_root_dir(parts):
             stem, definitive = self._rust_entry_stem(parts, importer_qn)
             return self._rust_attach(parts, stem, rest, definitive)
@@ -2350,6 +2404,11 @@ class ImportProcessor:
             # An auto-target crate (src/bin/tool.rs): items and
             # submodules both nest under the entry file's qn.
             return self._rust_join_mods(root_parts, rest)
+        if kind == "dir_file":
+            # A mod.rs-backed target (src/bin/mod.rs): same nesting, but
+            # the root's declarations live in mod.rs, so the walk must not
+            # read a sibling `<dir>.rs` shadow.
+            return self._rust_join_mods(root_parts, rest, dir_backed=True)
         if kind == "entry":
             # An explicit manifest target: the root file IS the entry,
             # so submodule files sit beside it and items nest in it.
