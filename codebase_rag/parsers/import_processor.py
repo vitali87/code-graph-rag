@@ -736,22 +736,38 @@ class ImportProcessor:
             )
 
         @lru_cache(maxsize=4096)
-        def _is_local_java_import_cached(import_path: str) -> bool:
-            top_level = import_path.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
-            return (repo_path / top_level).is_dir() or any(
-                (repo_path.joinpath(*parts) / top_level).is_dir()
-                for parts in cs.JAVA_MAVEN_SOURCE_ROOTS
-            )
-
-        @lru_cache(maxsize=4096)
-        def _java_source_root_prefix_cached(top_level: str) -> str:
+        def _java_source_root_prefix_cached(import_path: str) -> str | None:
             # The registered Module qns carry the build-tool source root
             # (src.main.java.), so a local import's qn must too; a flat
             # layout keeps the empty prefix and is unchanged (issue #1121).
-            for parts in cs.JAVA_MAVEN_SOURCE_ROOTS:
-                if (repo_path.joinpath(*parts) / top_level).is_dir():
-                    return cs.SEPARATOR_DOT.join(parts) + cs.SEPARATOR_DOT
-            return ""
+            # Resolution probes the COMPLETE import target under each root:
+            # an external import sharing a local top-level segment
+            # (com.fasterxml under a repo with src/main/java/com) stays
+            # external, and a test-only class binds to src/test/java even
+            # when src/main/java also contains the top-level package. The
+            # target may be a package dir, a class file, or a class file
+            # named by the second-to-last segment (static member or nested
+            # class imports).
+            parts = import_path.split(cs.SEPARATOR_DOT)
+            for root in ((), *cs.JAVA_MAVEN_SOURCE_ROOTS):
+                base = repo_path.joinpath(*root)
+                if (
+                    base.joinpath(*parts).is_dir()
+                    or base.joinpath(*parts[:-1], f"{parts[-1]}{cs.EXT_JAVA}").is_file()
+                    or (
+                        len(parts) > 1
+                        and base.joinpath(
+                            *parts[:-2], f"{parts[-2]}{cs.EXT_JAVA}"
+                        ).is_file()
+                    )
+                ):
+                    return (
+                        cs.SEPARATOR_DOT.join(root) + cs.SEPARATOR_DOT if root else ""
+                    )
+            return None
+
+        def _is_local_java_import_cached(import_path: str) -> bool:
+            return _java_source_root_prefix_cached(import_path) is not None
 
         self._is_local_module_cached = _is_local_module_cached
         self._is_local_java_import_cached = _is_local_java_import_cached
@@ -1142,9 +1158,8 @@ class ImportProcessor:
         return self._is_local_java_import_cached(import_path)
 
     def _resolve_java_import_path(self, import_path: str) -> str:
-        if self._is_local_java_import(import_path):
-            top_level = import_path.split(cs.SEPARATOR_DOT, maxsplit=1)[0]
-            prefix = self._java_source_root_prefix_cached(top_level)
+        prefix = self._java_source_root_prefix_cached(import_path)
+        if prefix is not None:
             return f"{self.project_name}{cs.SEPARATOR_DOT}{prefix}{import_path}"
         return import_path
 
@@ -2683,6 +2698,11 @@ class ImportProcessor:
                 local_name = imported_path.split(cs.SEPARATOR_DOT)[-1]
             self.import_mapping[module_qn][local_name] = imported_path
             logger.debug(ls.IMP_CSHARP, name=local_name, path=imported_path)
+
+    def reset_java_path_caches(self) -> None:
+        # Same contract as reset_rust_path_caches: the filesystem may have
+        # gained or lost files since the layout decisions were cached.
+        self._java_source_root_prefix_cached.cache_clear()
 
     def reset_rust_path_caches(self) -> None:
         # The filesystem may have gained or lost files since the caches

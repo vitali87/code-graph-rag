@@ -84,3 +84,80 @@ def test_maven_internal_import_creates_no_external_module(
     }
     internal = {qn for qn in external_qns if qn and "com.example.myapp" in qn}
     assert not internal, internal
+
+
+def test_external_import_sharing_local_top_level_stays_external(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`src/main/java/com` existing must not make com.fasterxml.* local."""
+    _skip_without_java()
+    _write_maven_project(temp_repo)
+    consumer = temp_repo / "src" / "main" / "java" / "com" / "example" / "myapp"
+    (consumer / "JsonUser.java").write_text(
+        """
+package com.example.myapp;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+public class JsonUser {
+    private ObjectMapper mapper = new ObjectMapper();
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    project = temp_repo.name
+    consumer_qn = f"{project}.src.main.java.com.example.myapp.JsonUser"
+    edges = _import_edges(mock_ingestor, consumer_qn)
+    targets = {qn for _, qn in edges}
+    assert not any("fasterxml" in qn and qn.startswith(project) for qn in targets), (
+        targets
+    )
+    assert (
+        str(cs.NodeLabel.EXTERNAL_MODULE),
+        "com.fasterxml.jackson.databind",
+    ) in edges, edges
+
+
+def test_test_root_class_resolves_to_the_test_source_root(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """With com/ under both roots, a test-only class binds to src/test/java."""
+    _skip_without_java()
+    _write_maven_project(temp_repo)
+    test_base = temp_repo / "src" / "test" / "java" / "com" / "example" / "myapp"
+    (test_base / "support").mkdir(parents=True)
+    (test_base / "support" / "Fixtures.java").write_text(
+        """
+package com.example.myapp.support;
+
+public class Fixtures {
+    public static int seed() {
+        return 7;
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    (test_base / "MyServiceTest.java").write_text(
+        """
+package com.example.myapp;
+
+import com.example.myapp.support.Fixtures;
+
+public class MyServiceTest {
+    public int prepare() {
+        return Fixtures.seed();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    project = temp_repo.name
+    tester_qn = f"{project}.src.test.java.com.example.myapp.MyServiceTest"
+    fixtures_qn = f"{project}.src.test.java.com.example.myapp.support.Fixtures"
+    edges = _import_edges(mock_ingestor, tester_qn)
+    assert (str(cs.NodeLabel.MODULE), fixtures_qn) in edges, edges
