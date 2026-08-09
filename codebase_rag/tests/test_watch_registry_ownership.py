@@ -123,3 +123,33 @@ def test_frontend_owned_registrations_survive_a_prefixing_sibling_sweep(
 
     assert touched_qn not in updater.function_registry
     assert sibling_qn in updater.function_registry
+
+
+def test_incremental_cleanup_spares_freshly_registered_frontend_state(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """In a LIBCLANG incremental run the frontend re-registers a changed file
+    BEFORE its stale-state cleanup, and the covered skip means nothing would
+    restore a swept entry; the cleanup must spare it. A watch event (default)
+    still sweeps, because the frontend does not rerun there."""
+    project = temp_repo / "cpp_incr_owner"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "app.cpp").write_text("int go() { return 1; }\n")
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project,
+        parsers=parsers,
+        queries=queries,
+    )
+    from codebase_rag.types_defs import NodeType
+
+    qn = f"{project.name}.src.app.go"
+    updater.function_registry[qn] = NodeType.FUNCTION
+    updater._frontend_owned_qns["src/app.cpp"] = {qn}
+
+    updater.remove_file_from_state(project / "src" / "app.cpp", frontend_current=True)
+    assert qn in updater.function_registry
+
+    updater.remove_file_from_state(project / "src" / "app.cpp")
+    assert qn not in updater.function_registry

@@ -1310,7 +1310,9 @@ class GraphUpdater:
             known.setdefault(qn, "")
         return known
 
-    def remove_file_from_state(self, file_path: Path) -> None:
+    def remove_file_from_state(
+        self, file_path: Path, frontend_current: bool = False
+    ) -> None:
         logger.debug(ls.REMOVING_STATE, path=file_path)
 
         if file_path in self.ast_cache:
@@ -1379,6 +1381,14 @@ class GraphUpdater:
         for owner_rel, owner_qns in self._frontend_owned_qns.items():
             if owner_rel != touched_rel:
                 foreign_qns |= owner_qns
+        if frontend_current:
+            # Incremental full run in LIBCLANG mode: the frontend ALREADY
+            # re-registered this file's current state before this cleanup,
+            # and the tree-sitter pass will skip it as covered — sweeping
+            # here would wipe registrations nothing restores (issue #1025
+            # review). Watch events keep the default: the frontend does not
+            # rerun there, so its stale entries must go.
+            foreign_qns |= self._frontend_owned_qns.get(touched_rel, set())
 
         qns_to_remove = set()
 
@@ -1791,7 +1801,12 @@ class GraphUpdater:
 
             for filepath, file_key, is_new, file_bytes in changed_entries:
                 if not is_new:
-                    self.remove_file_from_state(filepath)
+                    self.remove_file_from_state(
+                        filepath,
+                        frontend_current=bool(self._cpp_frontend_covered)
+                        and cached_relative_path(filepath, self.repo_path).as_posix()
+                        in self._cpp_frontend_covered,
+                    )
                     self._delete_module_entities(file_key)
 
                 changed_count += 1
