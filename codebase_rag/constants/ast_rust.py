@@ -205,6 +205,36 @@ RS_MANIFEST_TARGET_SECTIONS = ("bin", "lib", "example", "test", "bench")
 RS_MANIFEST_PATH_KEY = "path"
 RS_MANIFEST_PACKAGE_KEY = "package"
 RS_MANIFEST_BUILD_KEY = "build"
+RS_MANIFEST_AUTOLIB_KEY = "autolib"
+RS_MANIFEST_AUTOBINS_KEY = "autobins"
+RS_MANIFEST_AUTOEXAMPLES_KEY = "autoexamples"
+RS_MANIFEST_AUTOTESTS_KEY = "autotests"
+RS_MANIFEST_AUTOBENCHES_KEY = "autobenches"
+RS_MANIFEST_AUTO_KEYS = (
+    RS_MANIFEST_AUTOLIB_KEY,
+    RS_MANIFEST_AUTOBINS_KEY,
+    RS_MANIFEST_AUTOEXAMPLES_KEY,
+    RS_MANIFEST_AUTOTESTS_KEY,
+    RS_MANIFEST_AUTOBENCHES_KEY,
+)
+RS_AUTO_DIR_KEYS = {
+    "examples": RS_MANIFEST_AUTOEXAMPLES_KEY,
+    "tests": RS_MANIFEST_AUTOTESTS_KEY,
+    "benches": RS_MANIFEST_AUTOBENCHES_KEY,
+}
+# Candidate locations of a PATHLESS manifest target table, matched against
+# the files that actually exist (cargo errors on an ambiguous pair, so only
+# a single existing candidate resolves). [lib] is fixed at src/lib.rs; a bin
+# whose name equals the package name may be src/main.rs.
+RS_DEFAULT_LIB_PATH = "src/lib.rs"
+RS_DEFAULT_MAIN_PATH = "src/main.rs"
+RS_MANIFEST_BIN_SECTION = "bin"
+RS_MANIFEST_KIND_DIRS = {
+    "bin": "src/bin",
+    "example": "examples",
+    "test": "tests",
+    "bench": "benches",
+}
 RS_MANIFEST_WORKSPACE_KEY = "workspace"
 RS_MANIFEST_MEMBERS_KEY = "members"
 RS_MANIFEST_NAME_KEY = "name"

@@ -466,6 +466,7 @@ class ImportProcessor:
         "_rust_redirect_parents",
         "_rust_explicit_targets",
         "_rust_auto_build_flags",
+        "_rust_auto_discovery_flags",
         "_rust_workspace_crates",
         "_rust_pkg_deps",
         "_rust_inline_scope_keys",
@@ -545,6 +546,7 @@ class ImportProcessor:
         # explicitly, false disables it entirely). Filled alongside the
         # explicit-target parse, cleared with it.
         self._rust_auto_build_flags: dict[tuple[str, ...], bool] = {}
+        self._rust_auto_discovery_flags: dict[tuple[str, ...], dict[str, bool]] = {}
         # Workspace crate names (underscore-spelled) -> (package dir, lib
         # root dir, entry stem), so `use grep_searcher::sinks;` rewrites
         # to a project qn at parse time like crate:: paths do (issue
@@ -1247,15 +1249,21 @@ class ImportProcessor:
         # the ancestor walk must never treat a directory as a file crate
         # just because a sibling file is an explicit target.
         if not dir_parts:
-            return stem == cs.RS_BUILD_STEM and (
-                cs.PKG_CARGO_TOML in self._rust_dir_entries(self.repo_path)
+            return (
+                stem == cs.RS_BUILD_STEM
+                and cs.PKG_CARGO_TOML in self._rust_dir_entries(self.repo_path)
+                and self._rust_has_auto_build(())
             )
         if len(dir_parts) >= 2 and dir_parts[-1] == cs.RS_BIN_DIR:
             if dir_parts[-2] == cs.LANG_SRC_DIR:
-                return True
+                return self._rust_auto_kind_enabled(
+                    tuple(dir_parts[:-2]), cs.RS_MANIFEST_AUTOBINS_KEY
+                )
         if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS:
             return cs.PKG_CARGO_TOML in self._rust_dir_entries(
                 self.repo_path.joinpath(*dir_parts[:-1])
+            ) and self._rust_auto_kind_enabled(
+                tuple(dir_parts[:-1]), cs.RS_AUTO_DIR_KEYS[dir_parts[-1]]
             )
         return False
 
@@ -1301,6 +1309,135 @@ class ImportProcessor:
         self._rust_explicit_target_paths(pkg_parts)
         return self._rust_auto_build_flags.get(pkg_parts, False)
 
+    def _rust_default_target_path(
+        self,
+        pkg_parts: tuple[str, ...],
+        section: str,
+        entry: dict,
+        manifest: dict,
+    ) -> str | None:
+        # Cargo resolves a pathless table by matching the target name
+        # against its candidate files (src/main.rs for a package-name bin,
+        # <kind dir>/<name>.rs, <kind dir>/<name>/main.rs) and errors on an
+        # ambiguous pair, so only a single EXISTING candidate resolves here.
+        if section == cs.RS_MANIFEST_LIB_SECTION:
+            return cs.RS_DEFAULT_LIB_PATH
+        kind_dir = cs.RS_MANIFEST_KIND_DIRS.get(section)
+        name = entry.get(cs.RS_MANIFEST_NAME_KEY)
+        if kind_dir is None or not isinstance(name, str) or not name:
+            return None
+        candidates = []
+        if section == cs.RS_MANIFEST_BIN_SECTION:
+            package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+            pkg_name = (
+                package.get(cs.RS_MANIFEST_NAME_KEY)
+                if isinstance(package, dict)
+                else None
+            )
+            if name == pkg_name:
+                candidates.append(cs.RS_DEFAULT_MAIN_PATH)
+        candidates.append(f"{kind_dir}{cs.SEPARATOR_SLASH}{name}{cs.EXT_RS}")
+        candidates.append(
+            f"{kind_dir}{cs.SEPARATOR_SLASH}{name}{cs.SEPARATOR_SLASH}{cs.MAIN_RS}"
+        )
+        existing = [
+            candidate
+            for candidate in candidates
+            if self._rust_pkg_relative_file_exists(pkg_parts, candidate)
+        ]
+        return existing[0] if len(existing) == 1 else None
+
+    def _rust_pkg_relative_file_exists(
+        self, pkg_parts: tuple[str, ...], relative: str
+    ) -> bool:
+        parts = relative.split(cs.SEPARATOR_SLASH)
+        return parts[-1] in self._rust_dir_entries(
+            self.repo_path.joinpath(*pkg_parts, *parts[:-1])
+        )
+
+    def _rust_src_auto_entry_flags(self, dir_parts: list[str]) -> tuple[bool, bool]:
+        # (lib flag, main flag) for lib.rs/main.rs sitting in THIS directory.
+        # The opt-outs govern cargo's auto locations: a package's src/
+        # (autolib + autobins), and the MULTI-FILE auto target dirs whose
+        # main.rs is the kind's target — src/bin/<name>/ (autobins) and
+        # <kind>/<name>/ for examples/tests/benches. Elsewhere both stay
+        # enabled.
+        if not dir_parts:
+            return True, True
+        if dir_parts[-1] == cs.LANG_SRC_DIR:
+            pkg_parts = tuple(dir_parts[:-1])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                return (
+                    self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOLIB_KEY),
+                    self._rust_auto_kind_enabled(
+                        pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
+                    ),
+                )
+            return True, True
+        if (
+            len(dir_parts) >= 2
+            and dir_parts[-1] == cs.RS_BIN_DIR
+            and dir_parts[-2] == cs.LANG_SRC_DIR
+        ):
+            # Every .rs directly in src/bin — main.rs and lib.rs alike — is
+            # a bin auto target, so both entry stems follow autobins.
+            pkg_parts = tuple(dir_parts[:-2])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                enabled = self._rust_auto_kind_enabled(
+                    pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
+                )
+                return enabled, enabled
+            return True, True
+        if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS:
+            # Every .rs directly in a kind dir is that kind's auto target,
+            # so both entry stems follow the kind's flag.
+            pkg_parts = tuple(dir_parts[:-1])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                enabled = self._rust_auto_kind_enabled(
+                    pkg_parts, cs.RS_AUTO_DIR_KEYS[dir_parts[-1]]
+                )
+                return enabled, enabled
+            return True, True
+        if (
+            len(dir_parts) >= 3
+            and dir_parts[-2] == cs.RS_BIN_DIR
+            and dir_parts[-3] == cs.LANG_SRC_DIR
+        ):
+            # A multi-file target compiles <name>/main.rs; a lib.rs there is
+            # never a cargo target, so the lib flag is off in nested dirs.
+            pkg_parts = tuple(dir_parts[:-3])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                return False, self._rust_auto_kind_enabled(
+                    pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
+                )
+            return True, True
+        if len(dir_parts) >= 2 and dir_parts[-2] in cs.RS_AUTO_TARGET_DIRS:
+            pkg_parts = tuple(dir_parts[:-2])
+            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
+                self.repo_path.joinpath(*pkg_parts)
+            ):
+                return False, self._rust_auto_kind_enabled(
+                    pkg_parts, cs.RS_AUTO_DIR_KEYS[dir_parts[-2]]
+                )
+        return True, True
+
+    def _rust_auto_kind_enabled(self, pkg_parts: tuple[str, ...], key: str) -> bool:
+        # Cargo's per-kind discovery opt-outs (`autobins = false` and
+        # siblings in [package]): a disabled kind's auto-location files are
+        # plain non-target files unless an explicit manifest target names
+        # them (issue #1030). Only an explicit false disables — unset and
+        # true both mean auto-discovery.
+        self._rust_explicit_target_paths(pkg_parts)
+        return self._rust_auto_discovery_flags.get(pkg_parts, {}).get(key, True)
+
     def _rust_explicit_entry_files(self, dir_parts: tuple[str, ...]) -> set[str]:
         # File names of explicit manifest targets that sit DIRECTLY in
         # this directory (their declarations join the entry-declaration
@@ -1333,10 +1470,18 @@ class ImportProcessor:
             if not isinstance(entries, list):
                 continue
             for entry in entries:
-                if isinstance(entry, dict) and isinstance(
-                    path := entry.get(cs.RS_MANIFEST_PATH_KEY), str
-                ):
+                if not isinstance(entry, dict):
+                    continue
+                if isinstance(path := entry.get(cs.RS_MANIFEST_PATH_KEY), str):
                     paths.add(_rust_norm_manifest_path(path))
+                elif default := self._rust_default_target_path(
+                    pkg_parts, section, entry, manifest
+                ):
+                    # A PATHLESS table is still an explicit target at its
+                    # conventional location ([lib] means src/lib.rs), and an
+                    # explicit target must survive its kind's auto-discovery
+                    # opt-out (issue #1030 review).
+                    paths.add(default)
         # `[package] build = "..."` overrides the build script location;
         # the named file is a crate root like any explicit target.
         package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
@@ -1353,6 +1498,11 @@ class ImportProcessor:
         self._rust_auto_build_flags[pkg_parts] = (
             build_value is None or build_value is True
         )
+        self._rust_auto_discovery_flags[pkg_parts] = {
+            key: False
+            for key in cs.RS_MANIFEST_AUTO_KEYS
+            if isinstance(package, dict) and package.get(key) is False
+        }
         result = frozenset(paths)
         self._rust_explicit_targets[pkg_parts] = result
         return result
@@ -1447,7 +1597,17 @@ class ImportProcessor:
             parts = _rust_norm_manifest_path(path).split(cs.SEPARATOR_SLASH)
             if parts[-1].endswith(cs.EXT_RS):
                 return (*rel, *parts[:-1]), parts[-1][: -len(cs.EXT_RS)]
-        if cs.LIB_RS in self._rust_dir_entries(member / cs.LANG_SRC_DIR):
+        # A pathless [lib] table is still an explicit target at the default
+        # src/lib.rs; only a genuinely undeclared library respects the
+        # autolib opt-out (issue #1030 review).
+        package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+        auto_lib = not (
+            isinstance(package, dict)
+            and package.get(cs.RS_MANIFEST_AUTOLIB_KEY) is False
+        )
+        if (auto_lib or isinstance(lib, dict)) and cs.LIB_RS in self._rust_dir_entries(
+            member / cs.LANG_SRC_DIR
+        ):
             return (*rel, cs.LANG_SRC_DIR), "lib"
         return None
 
@@ -1619,13 +1779,19 @@ class ImportProcessor:
         # sibling app.rs is the tell), not a crate (verified against rustc:
         # self::foo inside app::main is app::main::foo).
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+        explicit_names = self._rust_explicit_entry_files(tuple(dir_parts))
+        auto_lib, auto_bins = self._rust_src_auto_entry_flags(dir_parts)
+        # A physical lib.rs/main.rs counts only while its kind's discovery
+        # opt-out is unset, or when the manifest names it explicitly
+        # (issue #1030).
+        lib_roots = cs.LIB_RS in entries and (auto_lib or cs.LIB_RS in explicit_names)
+        main_roots = cs.MAIN_RS in entries and (
+            auto_bins or cs.MAIN_RS in explicit_names
+        )
         if (
-            cs.LIB_RS not in entries
-            and cs.MAIN_RS not in entries
-            and not any(
-                name in entries
-                for name in self._rust_explicit_entry_files(tuple(dir_parts))
-            )
+            not lib_roots
+            and not main_roots
+            and not any(name in entries for name in explicit_names)
         ):
             # An explicit manifest target is an entry too: a package whose
             # ONLY entry is `[[bin]] path = "src/cli.rs"` still roots its
@@ -1730,7 +1896,15 @@ class ImportProcessor:
         key = tuple(dir_parts)
         decls = self._rust_entry_mod_decls.setdefault(key, {})
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-        scan = [cs.LIB_RS, cs.MAIN_RS]
+        # src/lib.rs and src/main.rs are auto-discovered only while their
+        # kind's opt-out is unset; an explicit manifest target re-adds the
+        # file below regardless (issue #1030).
+        auto_lib, auto_bins = self._rust_src_auto_entry_flags(dir_parts)
+        scan = [
+            name
+            for name, enabled in ((cs.LIB_RS, auto_lib), (cs.MAIN_RS, auto_bins))
+            if enabled
+        ]
         if cs.PKG_CARGO_TOML in entries and self._rust_has_auto_build(key):
             # build.rs beside the manifest is cargo's fifth auto crate
             # root, but only while [package] build is UNSET (a string
@@ -2729,6 +2903,7 @@ class ImportProcessor:
         self._rust_redirect_parents = None
         self._rust_explicit_targets.clear()
         self._rust_auto_build_flags.clear()
+        self._rust_auto_discovery_flags.clear()
         self._rust_workspace_crates = None
         self._rust_pkg_deps.clear()
 
@@ -2821,10 +2996,14 @@ class ImportProcessor:
             # package boundary for every file below it, so the whole
             # target cache rebuilds. The entry-declaration map is DERIVED
             # from the target set: evict exactly the stems the fresh
-            # manifests no longer back, keeping lib/main declarations (and
-            # their storm protection) untouched.
+            # manifests no longer back. lib/main keep their declarations
+            # (and their storm protection) only while their kind's
+            # discovery opt-out permits them — an edit flipping autolib or
+            # autobins to false must leave the map exactly as a clean
+            # index would (issue #1030 review).
             self._rust_explicit_targets.clear()
             self._rust_auto_build_flags.clear()
+            self._rust_auto_discovery_flags.clear()
             self._rust_workspace_crates = None
             self._rust_pkg_deps.clear()
             for key, stems in self._rust_entry_mod_decls.items():
@@ -2832,8 +3011,13 @@ class ImportProcessor:
                     name[: -len(cs.EXT_RS)]
                     for name in self._rust_explicit_entry_files(key)
                 }
+                auto_lib, auto_bins = self._rust_src_auto_entry_flags(list(key))
+                if auto_lib:
+                    allowed.add(cs.LIB_RS[: -len(cs.EXT_RS)])
+                if auto_bins:
+                    allowed.add(cs.MAIN_RS[: -len(cs.EXT_RS)])
                 for stem in list(stems):
-                    if stem not in ("lib", "main") and stem not in allowed:
+                    if stem not in allowed:
                         stems.pop(stem, None)
 
     def drop_rust_module_import_state(self, module_qn: str) -> None:
