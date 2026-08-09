@@ -587,7 +587,17 @@ class FunctionIngestMixin:
         # than recomputing from the path, so same-stem cross-language siblings stay
         # distinct.
         func_qn = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
-        simple_name = func_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        # A plain dotted name (Lua `M.foo`) keeps only its final segment, as
+        # the qn rsplit always did. A computed bracket name is different: its
+        # dot belongs to the name itself, and re-splitting registered an
+        # object-literal `[Symbol.iterator]` member as `iterator]`
+        # (issue #998).
+        simple_name = (
+            func_name
+            if func_name.startswith(cs.JS_COMPUTED_NAME_PREFIX)
+            and func_name.endswith(cs.JS_COMPUTED_NAME_SUFFIX)
+            else func_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        )
 
         is_exported = export_detection.is_exported(func_node, simple_name, language)
         return FunctionResolution(func_qn, simple_name, is_exported)
