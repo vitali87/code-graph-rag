@@ -78,6 +78,30 @@ namespace N { export function use (): number { return helper.call(this) } }
     assert not wrong, wrong
 
 
+def test_overload_signatures_beside_their_implementation_still_resolve(
+    tmp_path: Path,
+) -> None:
+    cap = _run(
+        tmp_path,
+        """
+namespace N {
+  export function pick (x: string): string
+  export function pick (x: number): number
+  export function pick (x: unknown): unknown { return x }
+  export function use (): unknown { return pick.call(this, 1) }
+}
+""",
+    )
+    edges = [
+        r
+        for r in cap.rels
+        if r[1] == "CALLS"
+        and str(r[0]).endswith(".use")
+        and str(r[2]).startswith(f"{PROJECT}.a.N.pick")
+    ]
+    assert edges, [r for r in cap.rels if r[1] == "CALLS"]
+
+
 def test_without_ambient_merge_the_file_level_binding_still_resolves(
     tmp_path: Path,
 ) -> None:

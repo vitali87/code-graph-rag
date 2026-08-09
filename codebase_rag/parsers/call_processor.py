@@ -730,8 +730,35 @@ class _JsFileBindingCollector:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node is None or not (sig_name := safe_decode_text(name_node)):
             return
+        if self._sibling_implementation_exists(node, sig_name):
+            # An overload signature beside its implementation in the same
+            # block denotes THAT implementation, not a distinct introduction;
+            # counting it would discard correct resolutions to the
+            # implementation. Only declaration-only signatures participate.
+            return
         self._add(sig_name, None, fn_container)
         self._ns_exported.append((sig_name, None, fn_container))
+
+    @staticmethod
+    def _sibling_implementation_exists(node: Node, sig_name: str) -> bool:
+        block = node.parent
+        if block is not None and block.type == cs.TS_EXPORT_STATEMENT:
+            block = block.parent
+        if block is None:
+            return False
+        for sibling in block.named_children:
+            candidate: Node | None = sibling
+            if sibling.type == cs.TS_EXPORT_STATEMENT:
+                candidate = next(iter(sibling.named_children), None)
+            if candidate is None or candidate.type not in (
+                cs.TS_FUNCTION_DECLARATION,
+                cs.TS_GENERATOR_FUNCTION_DECLARATION,
+            ):
+                continue
+            impl_name = candidate.child_by_field_name(cs.FIELD_NAME)
+            if impl_name is not None and safe_decode_text(impl_name) == sig_name:
+                return True
+        return False
 
     def _visit_callable(
         self, node: Node, fn_container: Node
