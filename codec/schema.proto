@@ -190,6 +190,10 @@ message GraphCodeIndex {
     // production target's declaration of the same file module win.
     repeated string rust_cfg_test_mods = 5;
     repeated string rust_ungated_mods = 6;
+    // Whether flow analysis covered this module: its language is in the
+    // source/sink registry and the FLOWS_TO capture group was enabled at
+    // indexing (issue #1050).
+    bool flow_covered = 7;
   }
 
   message ExternalModule {

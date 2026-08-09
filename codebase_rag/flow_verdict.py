@@ -19,9 +19,13 @@ WHERE a.qualified_name STARTS WITH $project_prefix
 RETURN a.qualified_name AS source, b.qualified_name AS target
 """
 
+# Inline `mod` blocks mint Module nodes with synthetic inline paths and no
+# coverage property of their own; their coverage IS their file module's, so
+# they are excluded rather than reported as spurious gaps.
 CYPHER_FLOW_COVERAGE_GAPS = f"""MATCH (m:{cs.NodeLabel.MODULE.value})
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND coalesce(m.{cs.KEY_FLOW_COVERED}, false) = false
+  AND NOT m.path STARTS WITH '{cs.INLINE_MODULE_PATH_PREFIX}'
 RETURN m.path AS path
 ORDER BY path
 """

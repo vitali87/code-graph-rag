@@ -156,6 +156,7 @@ class ClassIngestMixin:
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
+    flow_capture_enabled: bool
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     dart_annotated_overrides: dict[str, list[tuple[str, str]]]
@@ -1686,6 +1687,12 @@ class ClassIngestMixin:
                 cs.KEY_PATH: f"{cs.INLINE_MODULE_PATH_PREFIX}{module_name}",
                 cs.KEY_START_LINE: module_node.start_point[0] + 1,
                 cs.KEY_END_LINE: module_node.end_point[0] + 1,
+                # An inline mod's coverage is its FILE's: this producer is
+                # the Rust bodied-mod path and Rust sits in the source/sink
+                # registry, so only the capture toggle decides — a missing
+                # property would read as a spurious coverage gap under the
+                # file's real path (issue #1050 review).
+                cs.KEY_FLOW_COVERED: self.flow_capture_enabled,
             }
             if decorators:
                 module_props[cs.KEY_DECORATORS] = decorators

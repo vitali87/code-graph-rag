@@ -143,20 +143,22 @@ class File(_message.Message):
     def __init__(self, path: _Optional[str] = ..., name: _Optional[str] = ..., extension: _Optional[str] = ...) -> None: ...
 
 class Module(_message.Message):
-    __slots__ = ("qualified_name", "name", "path", "decorators", "rust_cfg_test_mods", "rust_ungated_mods")
+    __slots__ = ("qualified_name", "name", "path", "decorators", "rust_cfg_test_mods", "rust_ungated_mods", "flow_covered")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
     DECORATORS_FIELD_NUMBER: _ClassVar[int]
     RUST_CFG_TEST_MODS_FIELD_NUMBER: _ClassVar[int]
     RUST_UNGATED_MODS_FIELD_NUMBER: _ClassVar[int]
+    FLOW_COVERED_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     path: str
     decorators: _containers.RepeatedScalarFieldContainer[str]
     rust_cfg_test_mods: _containers.RepeatedScalarFieldContainer[str]
     rust_ungated_mods: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., decorators: _Optional[_Iterable[str]] = ..., rust_cfg_test_mods: _Optional[_Iterable[str]] = ..., rust_ungated_mods: _Optional[_Iterable[str]] = ...) -> None: ...
+    flow_covered: bool
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., decorators: _Optional[_Iterable[str]] = ..., rust_cfg_test_mods: _Optional[_Iterable[str]] = ..., rust_ungated_mods: _Optional[_Iterable[str]] = ..., flow_covered: bool = ...) -> None: ...
 
 class ExternalModule(_message.Message):
     __slots__ = ("qualified_name", "name", "path")
@@ -222,7 +224,7 @@ class Function(_message.Message):
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
     is_exported: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: _Optional[bool] = ...) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ...) -> None: ...
 
 class Method(_message.Message):
     __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators")
@@ -256,7 +258,7 @@ class Class(_message.Message):
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
     is_exported: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: _Optional[bool] = ...) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ...) -> None: ...
 
 class Interface(_message.Message):
     __slots__ = ("qualified_name", "name", "path", "absolute_path")

@@ -148,3 +148,55 @@ def test_default_capture_reports_modules_uncovered(
     updater.run()
     modules = _module_props(mock_ingestor)
     assert modules[f"{temp_repo.name}.covered"]["flow_covered"] is False
+
+
+def test_protobuf_export_preserves_flow_coverage(tmp_path: Path) -> None:
+    from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+
+    ingestor = ProtobufFileIngestor(str(tmp_path / "graph.pb"))
+    ingestor.ensure_node_batch(
+        "Module",
+        {
+            "qualified_name": "p.covered",
+            "name": "covered.py",
+            "path": "covered.py",
+            "flow_covered": True,
+        },
+    )
+    node = next(iter(ingestor._nodes.values()))
+    assert node.module.flow_covered is True
+
+
+def test_inline_modules_are_never_spurious_coverage_gaps(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A bodied inline mod mints a Module node without the coverage property;
+    the gaps query excludes its synthetic inline path, so every property-less
+    module producer must stay inside that exclusion."""
+    (temp_repo / "src").mkdir()
+    (temp_repo / "Cargo.toml").write_text('[package]\nname = "x"\nversion = "0.1.0"\n')
+    (temp_repo / "src" / "lib.rs").write_text(
+        "pub mod inner {\n    pub fn f() -> u32 { 1 }\n}\n"
+    )
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=temp_repo,
+        parsers=parsers,
+        queries=queries,
+        capture=ALL_ENABLED,
+    )
+    updater.run()
+    from codebase_rag import constants as cs
+
+    for call in mock_ingestor.ensure_node_batch.call_args_list:
+        if str(call.args[0]) != "Module":
+            continue
+        props = call.args[1]
+        if "path" not in props:
+            # Partial MERGE updates onto an existing node carry no path and
+            # must not erase the property either.
+            continue
+        assert "flow_covered" in props or str(props["path"]).startswith(
+            cs.INLINE_MODULE_PATH_PREFIX
+        ), props
