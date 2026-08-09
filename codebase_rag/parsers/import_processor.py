@@ -57,7 +57,7 @@ _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
 # commented-out declaration nor one hidden behind a string literal containing
 # a comment marker can flip the crate attribution.
 _RS_MOD_DECL_PATTERN = re.compile(
-    r"^[^\S\n]*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
+    r"^[^\S\n]*(?:#\[[^\]\n]*\][^\S\n]*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
     r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
     re.MULTILINE,
 )
@@ -72,17 +72,23 @@ _RS_MOD_DECL_PATTERN = re.compile(
 # Only the plain string form is read: a cfg_attr wrapper is conditional and
 # no single target speaks for it (issue #1035).
 _RS_MOD_REDIRECT_PATTERN = re.compile(
-    r"^[^\S\n]*((?:#\[[^\]\n]*\]\s*)*)"
+    r"^[^\S\n]*((?:#\[[^\]\n]*\][^\S\n]*)*)"
     r"(?:pub\s*(?:\([^)]*\))?\s+)?"
     r"mod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*;",
     re.MULTILINE,
 )
+# One attribute-only line, for the linear back-walk that gathers the block
+# ABOVE a declaration. Keeping every attribute group line-local is what makes
+# a long unbroken attribute run scan linearly: with `\s*` crossing newlines,
+# every line of the run restarted a match attempt that consumed the rest of
+# the run before failing, which is quadratic in the run length (issue #1089).
+_RS_ATTRIBUTE_LINE_PATTERN = re.compile(r"^[^\S\n]*((?:#\[[^\]\n]*\][^\S\n]*)+)$")
 _RS_PATH_ATTRIBUTE_PATTERN = re.compile(r'#\[\s*path\s*=\s*"([^"\n]+)"\s*\]')
 # The opening of a path attribute, matched against the code the lexer has
 # already emitted, so the literal that follows can be kept verbatim.
 _RS_PATH_ATTRIBUTE_OPEN = re.compile(r"#\[\s*path\s*=\s*$")
 _RS_ITEM_DECL_PATTERN = re.compile(
-    r"^[^\S\n]*(?:#\[[^\]\n]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
+    r"^[^\S\n]*(?:#\[[^\]\n]*\][^\S\n]*)*(?:pub\s*(?:\([^)]*\))?\s+)?"
     r'(?:(?:unsafe|async|const|extern\s+"[^"]*")\s+)*'
     r"(?:trait|struct|enum|fn|type|const|static|union|mod)"
     r"\s+(?:mut\s+)?(?:r#)?([A-Za-z_][A-Za-z0-9_]*)",
@@ -201,6 +207,25 @@ class RustEntryDecls(NamedTuple):
     redirects: dict[str, str]
 
 
+def _rs_preceding_attribute_lines(top_level: str, decl_start: int) -> str:
+    collected: list[str] = []
+    end = decl_start
+    while end > 0:
+        line_start = top_level.rfind("\n", 0, end - 1) + 1
+        line = top_level[line_start : end - 1]
+        if not line.strip():
+            # Whitespace between an attribute and its item is legal; keep
+            # walking, exactly as the old newline-crossing `\s*` matched.
+            end = line_start
+            continue
+        line_match = _RS_ATTRIBUTE_LINE_PATTERN.fullmatch(line)
+        if line_match is None:
+            break
+        collected.append(line_match.group(1))
+        end = line_start
+    return "".join(reversed(collected))
+
+
 def _rs_entry_decls_of(top_level: str) -> RustEntryDecls:
     # One name may be declared once per cfg (`#[cfg(unix)] mod platform;`
     # beside its windows twin), each redirected somewhere else. Exactly one
@@ -208,7 +233,12 @@ def _rs_entry_decls_of(top_level: str) -> RustEntryDecls:
     # are ambiguous and the name keeps no redirect at all.
     redirects: dict[str, str] = {}
     ambiguous: set[str] = set()
-    for attributes, name in _RS_MOD_REDIRECT_PATTERN.findall(top_level):
+    for decl in _RS_MOD_REDIRECT_PATTERN.finditer(top_level):
+        attributes, name = decl.group(1), decl.group(2)
+        # The pattern only sees SAME-LINE attributes now (line-local group,
+        # issue #1089); the block above the declaration is gathered by a
+        # linear walk over the preceding attribute-only lines.
+        attributes = _rs_preceding_attribute_lines(top_level, decl.start()) + attributes
         match = _RS_PATH_ATTRIBUTE_PATTERN.search(attributes)
         target = match.group(1) if match else None
         if name in redirects and redirects[name] != target:
