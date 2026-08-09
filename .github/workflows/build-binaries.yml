@@ -12,6 +12,8 @@ on:
     paths:
       - ".github/workflows/build-binaries.yml"
       - "build_binary.py"
+      - "main.py"
+      - "codebase_rag/constants/build.py"
       - "**.spec"
       - "pyproject.toml"
       - "uv.lock"
