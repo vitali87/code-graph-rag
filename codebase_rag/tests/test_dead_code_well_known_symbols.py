@@ -5,7 +5,10 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag.cli import app
-from codebase_rag.dead_code import is_well_known_symbol_member
+from codebase_rag.dead_code import (
+    _is_js_well_known_symbol_root,
+    is_well_known_symbol_member,
+)
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
 
@@ -38,6 +41,33 @@ def test_is_well_known_symbol_member() -> None:
     assert is_well_known_symbol_member("[mySym]") is False
     assert is_well_known_symbol_member("[Symbol.notARealSymbol]") is False
     assert is_well_known_symbol_member("[Symbol.iterator]Extra") is False
+
+
+def test_method_symbol_root_predicate_is_allowlisted() -> None:
+    # The METHOD-gated predicate must reject application registry symbols
+    # too: rooting [Symbol.for('app.tag')] hides dead protocol members.
+    assert _is_js_well_known_symbol_root("[Symbol.iterator]", True, "a.ts") is True
+    assert _is_js_well_known_symbol_root("[ Symbol.iterator ]", True, "a.ts") is True
+    assert _is_js_well_known_symbol_root('[Symbol["iterator"]]', True, "a.ts") is True
+    assert (
+        _is_js_well_known_symbol_root(
+            "[Symbol.for('nodejs.util.inspect.custom')]", True, "a.ts"
+        )
+        is True
+    )
+
+    assert (
+        _is_js_well_known_symbol_root("[Symbol.for('app.tag')]", True, "a.ts") is False
+    )
+    assert (
+        _is_js_well_known_symbol_root('[Symbol.for("app.tag")]', True, "a.ts") is False
+    )
+    assert (
+        _is_js_well_known_symbol_root("[Symbol.notARealSymbol]", True, "a.ts") is False
+    )
+    assert _is_js_well_known_symbol_root("[Symbol.iterator]", False, "a.ts") is False
+    assert _is_js_well_known_symbol_root("[Symbol.iterator]", True, "a.py") is False
+    assert _is_js_well_known_symbol_root("[mySym]", True, "a.ts") is False
 
 
 @skip_if_no_memgraph

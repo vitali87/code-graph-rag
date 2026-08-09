@@ -207,6 +207,16 @@ JS_SHORT_CIRCUIT_OPERATORS: frozenset[str] = frozenset({"||", "??", "&&"})
 JS_WELL_KNOWN_SYMBOL_NAME_PREFIX = "[Symbol."
 JS_COMPUTED_NAME_SUFFIX = "]"
 JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX = "[Symbol["
+JS_SYMBOL_FOR_PREFIX = "for("
+JS_STRING_QUOTES = "'\""
+# Registry symbols whose members RUNTIMES invoke themselves; an
+# application-defined Symbol.for(...) key is reached only by visible code.
+JS_RUNTIME_REGISTRY_SYMBOL_KEYS = frozenset(
+    {
+        "nodejs.util.inspect.custom",
+        "nodejs.rejection",
+    }
+)
 # `&&` alone among them cannot yield its LEFT operand as a function value.
 JS_OPERATOR_LOGICAL_AND = "&&"
 TS_JS_ELSE_CLAUSE = "else_clause"

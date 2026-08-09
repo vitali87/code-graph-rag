@@ -136,16 +136,46 @@ def _is_js_well_known_symbol_root(name: str, is_method: bool, path: str) -> bool
     # Formatting must not decide (`[ Symbol.iterator ]`, `[\tSymbol.iterator\t]`,
     # `[Symbol["iterator"]]` spell the same protocol member): compare free of
     # ALL whitespace, accepting the dotted and the bracket-notation access off
-    # the Symbol global. Deliberately any Symbol access, not an allowlist of
-    # the well-known set: `Symbol.for(...)` registry members (Node invokes
-    # `Symbol.for('nodejs.util.inspect.custom')`) are runtime-reached too. A
-    # string key (`['Symbol.fake']`) or user symbol variable (`[mySym]`) keeps
-    # its own spelling and never matches.
+    # the Symbol global. The member itself must sit on an allowlist: the
+    # well-known set, plus the registry keys runtimes invoke themselves
+    # (Node calls `Symbol.for('nodejs.util.inspect.custom')`). An
+    # application-defined `Symbol.for('app.tag')` member is reached only by
+    # code the graph can see, so rooting it would hide dead protocol members.
+    # A string key (`['Symbol.fake']`) or user symbol variable (`[mySym]`)
+    # keeps its own spelling and never matches.
+    member = _js_symbol_member(name)
+    if member is None:
+        return False
+    if member in cs.JS_WELL_KNOWN_SYMBOLS:
+        return True
+    return _js_registry_symbol_key(member) in cs.JS_RUNTIME_REGISTRY_SYMBOL_KEYS
+
+
+def _js_symbol_member(name: str) -> str | None:
     compact = "".join(name.split())
-    return compact.endswith(cs.JS_COMPUTED_NAME_SUFFIX) and (
-        compact.startswith(cs.JS_WELL_KNOWN_SYMBOL_NAME_PREFIX)
-        or compact.startswith(cs.JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX)
-    )
+    if not compact.endswith(cs.JS_COMPUTED_NAME_SUFFIX):
+        return None
+    if compact.startswith(cs.JS_WELL_KNOWN_SYMBOL_NAME_PREFIX):
+        return compact[len(cs.JS_WELL_KNOWN_SYMBOL_NAME_PREFIX) : -1]
+    if compact.startswith(cs.JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX):
+        return _js_unquote(compact[len(cs.JS_WELL_KNOWN_SYMBOL_BRACKET_PREFIX) : -2])
+    return None
+
+
+def _js_registry_symbol_key(member: str | None) -> str | None:
+    if (
+        member is None
+        or not member.startswith(cs.JS_SYMBOL_FOR_PREFIX)
+        or not member.endswith(cs.CHAR_PAREN_CLOSE)
+    ):
+        return None
+    return _js_unquote(member[len(cs.JS_SYMBOL_FOR_PREFIX) : -1])
+
+
+def _js_unquote(text: str) -> str | None:
+    if len(text) > 1 and text[0] == text[-1] and text[0] in cs.JS_STRING_QUOTES:
+        return text[1:-1]
+    return None
 
 
 def _is_java_serialization_root(name: str, is_method: bool, path: str) -> bool:
