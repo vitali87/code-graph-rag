@@ -230,6 +230,9 @@ class TestSerpdiveBackend:
             {"results": "not a list"},
             {"results": [{"url": "https://ok"}, "not a dict"]},
             {},
+            {"results": [{"url": None, "title": "no url"}]},
+            {"results": [{"url": "https://ok", "content": ["not", "a", "string"]}]},
+            {"results": [{"url": "https://ok", "date": 20260701}]},
         ],
     )
     def test_malformed_payload_is_reported_not_raised(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import os
 import re
@@ -32,6 +33,14 @@ _DDG_RESULT_CLASS = "result__a"
 _DDG_SNIPPET_CLASS = "result__snippet"
 _DDG_CONTAINER_CLASSES = frozenset({"result", "web-result"})
 _TAGS = re.compile(r"<[^>]+>")
+_DIGEST_LENGTH = 12
+
+
+def _query_digest(query: str) -> str:
+    # Queries can carry user or repository data, so logs identify them by a
+    # non-reversible digest instead of persisting the raw text.
+    return hashlib.sha256(query.encode()).hexdigest()[:_DIGEST_LENGTH]
+
 
 # Keys are created at https://serpdive.com/dashboard/keys (free, no card).
 # `krill` is SERPdive's free tier and the only tier this tool will ever
@@ -59,12 +68,14 @@ class DuckDuckGoBackend:
                 follow_redirects=True,
             )
         except Exception as e:
-            logger.error(ls.WEB_SEARCH_ERROR.format(query=query, error=e))
+            logger.error(
+                ls.WEB_SEARCH_ERROR.format(digest=_query_digest(query), error=e)
+            )
             return te.WEB_SEARCH_UNREACHABLE
         if response.status_code != 200:
             logger.error(
                 ls.WEB_SEARCH_HTTP_ERROR.format(
-                    status=response.status_code, query=query
+                    status=response.status_code, digest=_query_digest(query)
                 )
             )
             return te.WEB_SEARCH_FAILED.format(status=response.status_code)
@@ -96,12 +107,14 @@ class SerpdiveBackend:
                 timeout=_TIMEOUT,
             )
         except Exception as e:
-            logger.error(ls.WEB_SEARCH_ERROR.format(query=query, error=e))
+            logger.error(
+                ls.WEB_SEARCH_ERROR.format(digest=_query_digest(query), error=e)
+            )
             return te.WEB_SEARCH_UNREACHABLE
         if response.status_code != 200:
             logger.error(
                 ls.WEB_SEARCH_HTTP_ERROR.format(
-                    status=response.status_code, query=query
+                    status=response.status_code, digest=_query_digest(query)
                 )
             )
             return te.WEB_SEARCH_FAILED.format(status=response.status_code)
@@ -109,17 +122,28 @@ class SerpdiveBackend:
         try:
             payload = response.json()
         except Exception as e:
-            logger.error(ls.WEB_SEARCH_ERROR.format(query=query, error=e))
+            logger.error(
+                ls.WEB_SEARCH_ERROR.format(digest=_query_digest(query), error=e)
+            )
             return te.WEB_SEARCH_BAD_RESPONSE
         # A 200 does not guarantee the shape. Validate before formatting rather
-        # than letting a malformed payload raise from inside the tool.
+        # than letting a malformed payload raise from inside the tool — field
+        # values included: a null url or a non-string content would raise from
+        # the join in _format.
         results = payload.get("results") if isinstance(payload, dict) else None
         if not isinstance(results, list) or any(
-            not isinstance(r, dict) for r in results
+            not isinstance(r, dict) or not _has_valid_fields(r) for r in results
         ):
-            logger.error(ls.WEB_SEARCH_BAD_SHAPE.format(query=query))
+            logger.error(ls.WEB_SEARCH_BAD_SHAPE.format(digest=_query_digest(query)))
             return te.WEB_SEARCH_BAD_RESPONSE
         return results
+
+
+def _has_valid_fields(result: dict) -> bool:
+    return isinstance(result.get("url"), str) and all(
+        result.get(key) is None or isinstance(result.get(key), str)
+        for key in ("title", "content", "date")
+    )
 
 
 def _ddg_anchors(page: str, class_token: str) -> list[tuple[int, str, str]]:
@@ -215,7 +239,11 @@ class WebSearcher:
         if not (query := query.strip()):
             return te.WEB_SEARCH_EMPTY_QUERY
         capped = max(1, min(int(max_results), _MAX_RESULTS))
-        logger.info(ls.WEB_SEARCH_QUERY.format(provider=self.backend.name, query=query))
+        logger.info(
+            ls.WEB_SEARCH_QUERY.format(
+                provider=self.backend.name, digest=_query_digest(query)
+            )
+        )
         results = self.backend.fetch(query, capped)
         if isinstance(results, str):
             return results

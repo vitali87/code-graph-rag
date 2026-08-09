@@ -1648,9 +1648,9 @@ def _initialize_services_and_agent(
     structural_search_tool = create_structural_search_tool(ast_grep_service)
     structural_editor_tool = create_structural_editor_tool(ast_grep_service)
 
-    # Web search is only offered when a key is configured: an agent must never
-    # be handed a tool that can only fail. SERPdive's default model is free and
-    # unlimited under fair use, so having the key set costs nothing.
+    # Web search always registers: the default DuckDuckGo backend needs no key,
+    # and WEB_SEARCH_PROVIDER=serpdive (with SERPDIVE_API_KEY) swaps in the
+    # free-tier SERPdive backend behind the same tool.
     agentic_tools = [
         query_tool,
         code_tool,
