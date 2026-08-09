@@ -2,8 +2,10 @@
 # keyed by id(root), a recycled heap address: after a tree was freed, a new
 # parse allocated at the same address inherited the dead tree's Node values
 # on one xdist worker distribution (issue #1042). Ownership is now a strong
-# reference compared by identity — while held, the address cannot recycle,
-# and any fresh root object resets the cache.
+# reference compared by NODE EQUALITY — the held reference pins the owner's
+# tree so no live tree can alias it, a fresh wrapper over the same tree
+# compares equal and keeps the cache, and a root from another tree compares
+# unequal and clears it.
 from __future__ import annotations
 
 import tree_sitter_javascript as tsj
@@ -59,9 +61,9 @@ def test_fresh_root_never_inherits_the_previous_trees_entries() -> None:
 
 def test_stale_poisoned_entry_cannot_be_served() -> None:
     # Model the recycled-address hazard directly: an entry for the same class
-    # name planted by ANOTHER tree sits in the cache dict. Because ownership
-    # is compared by object identity, a fresh root must clear it rather than
-    # read through it.
+    # name planted by ANOTHER tree sits in the cache dict. A root from a
+    # different tree compares UNEQUAL to the held owner, so the cache clears
+    # rather than reading through it.
     tree_a = _parse("class Box { open () { return 1 } }")
     root_a = tree_a.root_node
     wrong_body = js_utils.find_method_in_ast(root_a, "Box", "open")
