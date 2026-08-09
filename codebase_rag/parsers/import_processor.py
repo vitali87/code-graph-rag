@@ -1764,6 +1764,18 @@ class ImportProcessor:
                 # cargo-verified), so it attaches classically with
                 # itself as the definitive entry stem.
                 return "entry", qn_parts
+        if (
+            stem in cs.RS_ENTRY_STEMS
+            and f"{stem}{cs.EXT_RS}"
+            in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
+            and self._rust_is_auto_target_dir(dir_parts, stem)
+        ):
+            # An entry-stem FILE in a direct auto-target location
+            # (src/bin/main.rs beside src/bin/mod.rs) keeps its own crate:
+            # its qn carries the stem only when a sibling claimed the dir
+            # qn, and the ancestor mod.rs check below must not swallow it
+            # (issue #1031 review).
+            return "file", qn_parts
         if self._rust_is_mod_rs_target(qn_parts):
             # Cargo compiles src/bin/mod.rs (or an explicit target whose
             # path ends in mod.rs) as a target named `mod` whose crate root
@@ -1996,16 +2008,19 @@ class ImportProcessor:
         key = (tuple(module_parts), dir_backed, want_mods)
         if key in self._rust_module_mod_decls:
             return self._rust_module_mod_decls[key]
-        if not module_parts:
+        if not module_parts and not dir_backed:
+            # Only a dir-backed root can live at the bare project qn: a
+            # root-level explicit `path = "mod.rs"` target (issue #1031).
             return None
         parent = module_parts[:-1]
         # A file the indexer skipped backs nothing: the graph holds no such
         # module, so its declarations must not decide where an indexed one
         # sits. Falling through lets mod.rs back the module when only the
         # sibling .rs was excluded (issue #1100).
-        sibling = f"{module_parts[-1]}{cs.EXT_RS}"
+        sibling = f"{module_parts[-1]}{cs.EXT_RS}" if module_parts else ""
         if (
             not dir_backed
+            and module_parts
             and sibling in self._rust_dir_entries(self.repo_path.joinpath(*parent))
             and self._rust_file_is_indexed([*parent, sibling])
         ):

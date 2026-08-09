@@ -178,3 +178,59 @@ def test_root_level_explicit_mod_rs_target_roots_the_project_qn(
     (tmp_path / "mod.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
     assert processor._rust_crate_root("proj") == ("dir_file", [])
+
+
+def test_src_bin_main_keeps_its_own_crate_beside_mod_rs(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """With both siblings, main.rs's crate:: items nest under its own qn."""
+    _manifest(tmp_path)
+    (tmp_path / "src" / "bin").mkdir(parents=True)
+    (tmp_path / "src" / "bin" / "mod.rs").write_text(
+        "pub const fn helper() -> u32 { 7 }\nfn main() {}\n"
+    )
+    (tmp_path / "src" / "bin" / "main.rs").write_text(
+        "use crate::own as o;\n\npub const fn own() -> u32 { 1 }\n\n"
+        "fn main() { let _ = o(); }\n"
+    )
+    processor = _processor(tmp_path)
+    assert processor._rust_crate_root("proj.src.bin.main") == (
+        "file",
+        ["src", "bin", "main"],
+    )
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+    updater.run()
+    imports = updater.factory.import_processor.import_mapping.get(
+        "proj.src.bin.main", {}
+    )
+    assert imports.get("o") == "proj.src.bin.main.own", imports
+
+
+def test_root_level_mod_rs_redirects_are_read(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """#[path] redirects declared in a root-level mod.rs target steer its
+    crate:: paths."""
+    _manifest(tmp_path, '\n[[bin]]\nname = "tool"\npath = "mod.rs"\n')
+    (tmp_path / "mod.rs").write_text(
+        '#[path = "alt.rs"]\nmod sub;\nuse crate::sub::f as g;\nfn main() { g(); }\n'
+    )
+    (tmp_path / "alt.rs").write_text("pub fn f() {}\n")
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+    updater.run()
+    imports = updater.factory.import_processor.import_mapping.get("proj", {})
+    assert imports.get("g") == "proj.alt.f", imports
