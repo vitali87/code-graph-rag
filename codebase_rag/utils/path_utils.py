@@ -120,6 +120,14 @@ def should_skip_path(
     _is_file = path.is_file() if is_file is None else is_file
     if _is_file and path.suffix in cs.IGNORE_SUFFIXES:
         return True
+    # Containment below is lexical, so a symlink whose target escapes the root
+    # would pass it and let a repo-scoped sweep read or overwrite outside files
+    # (GHSA-85gg-2gfq-q95m). Resolve first, mirroring validate_project_path
+    # (decorators.py) and absolute_path_within_project_root (this module).
+    try:
+        path.resolve().relative_to(repo_path.resolve())
+    except ValueError:
+        return True
     rel_path = cached_relative_path(path, repo_path)
     rel_path_str = rel_path.as_posix()
     # a trailing slash marks the path as a directory for dir-only patterns.
