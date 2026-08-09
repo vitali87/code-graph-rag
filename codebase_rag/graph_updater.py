@@ -1344,10 +1344,35 @@ class GraphUpdater:
                 if path == file_path:
                     self.factory.import_processor.drop_rust_module_import_state(qn)
 
+        # Ownership guard for the prefix sweep: another file's inline-mod
+        # chain can share this file's qn prefix (the #1017 shape), and a
+        # sweep by prefix alone deregisters functions that file still owns —
+        # they are never re-registered because it is not re-parsed. The span
+        # records key by the REGISTERING file's module qn, so a qn recorded
+        # under a module this event does not touch survives (issue #1025).
+        touched_modules = {
+            qn
+            for qn, path in (
+                self.factory.definition_processor.module_qn_to_file_path.items()
+            )
+            if path == file_path
+        }
+        foreign_qns = {
+            location.qualified_name
+            for (
+                span_module,
+                _line,
+                _col,
+            ), location in self.factory.definition_processor.function_locations.items()
+            if span_module not in touched_modules
+        }
+
         qns_to_remove = set()
 
         for qn in list(self.function_registry.keys()):
-            if qn.startswith(f"{module_qn_prefix}.") or qn == module_qn_prefix:
+            if (
+                qn.startswith(f"{module_qn_prefix}.") or qn == module_qn_prefix
+            ) and qn not in foreign_qns:
                 qns_to_remove.add(qn)
                 del self.function_registry[qn]
 
