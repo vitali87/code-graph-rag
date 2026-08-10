@@ -301,3 +301,157 @@ def test_multiple_returns_distinct_sources_all_flow(tmp_path: Path) -> None:
         "resource::STDOUT::<dynamic>",
         kind=FlowKind.RESOURCE.value,
     )
+
+
+def test_param_taint_through_logging_wrapper(tmp_path: Path) -> None:
+    # The canonical case (issue #1142): a secret handed to a logging wrapper
+    # whose parameter is logged. The source and the sink live in different
+    # bodies, so without forward parameter taint the ENV read never connects to
+    # the STDOUT sink and the "secrets in logs" query is a false negative.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def log_it(msg):\n    print(msg)\n\n"
+            "def caller():\n    secret = os.getenv('K')\n    log_it(secret)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_through_keyword_argument(tmp_path: Path) -> None:
+    # The parameter is matched by keyword name, not position.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def log_it(msg):\n    print(msg)\n\n"
+            "def caller():\n    secret = os.getenv('K')\n    log_it(msg=secret)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_through_two_wrapper_hops(tmp_path: Path) -> None:
+    # A wrapper of a wrapper: the parameter is handed on to a second callee that
+    # sinks it. The parameter-sink closure must compose transitively.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def inner(x):\n    print(x)\n\n"
+            "def log_it(msg):\n    inner(msg)\n\n"
+            "def caller():\n    secret = os.getenv('K')\n    log_it(secret)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_wrapper_defined_after_caller(tmp_path: Path) -> None:
+    # The wrapper is defined AFTER the caller, so its parameter-sink summary is
+    # only known at finalize; the forward/cross-body composition must still fire.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def caller():\n    secret = os.getenv('K')\n    log_it(secret)\n\n"
+            "def log_it(msg):\n    print(msg)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_wrapper_across_files(tmp_path: Path) -> None:
+    # Source in one module, logging wrapper in another: the summary crosses the
+    # file boundary exactly like the return-direction fixpoint.
+    files = {
+        "wrap.py": "def log_it(msg):\n    print(msg)\n",
+        "m.py": (
+            "import os\n\n"
+            "from wrap import log_it\n\n"
+            "def caller():\n    secret = os.getenv('K')\n    log_it(secret)\n"
+        ),
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_from_pending_argument(tmp_path: Path) -> None:
+    # The argument is itself the return of a tainted callee (pending at the call
+    # site); its origins resolve at finalize and must then reach the wrapper's
+    # sink.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def build():\n    return os.getenv('K')\n\n"
+            "def log_it(msg):\n    print(msg)\n\n"
+            "def caller():\n    secret = build()\n    log_it(secret)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_negative_control_param_never_sinks(tmp_path: Path) -> None:
+    # A wrapper whose parameter never reaches a sink must NOT invent a resource
+    # flow: NO_FLOW stays trustworthy. The arg edge still records the hand-off.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def keep(msg):\n    store = msg\n\n"
+            "def caller():\n    secret = os.getenv('K')\n    keep(secret)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+    assert _has(edges, "m.caller", "m.keep", via="arg:0", kind=FlowKind.ARG.value)
+
+
+def test_param_taint_untainted_argument_emits_nothing(tmp_path: Path) -> None:
+    # A clean argument into a sinking wrapper produces no resource flow: the
+    # parameter-sink summary only fires for arguments that actually carry taint.
+    files = {
+        "m.py": (
+            "def log_it(msg):\n    print(msg)\n\ndef caller():\n    log_it('literal')\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not any(
+        a.startswith("resource::") and b.endswith("STDOUT::<dynamic>")
+        for a, b, _ in edges
+    )

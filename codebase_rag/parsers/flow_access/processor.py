@@ -40,6 +40,7 @@ from ..io_access import (
     string_literal,
     unwrap_argument,
 )
+from ..utils import python_parameter_names
 from .constants import (
     KEY_KIND,
     KEY_VIA,
@@ -51,6 +52,12 @@ from .constants import (
 
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
 
+# The `kind` half of an argument `via` tag (VIA_ARG_FORMAT / VIA_KW_FORMAT),
+# used to map a call-site argument back to the callee's parameter (issue #1142).
+_VIA_SEPARATOR = ":"
+_VIA_ARG_KIND = VIA_ARG_FORMAT.split(_VIA_SEPARATOR, 1)[0]
+_VIA_KW_KIND = VIA_KW_FORMAT.split(_VIA_SEPARATOR, 1)[0]
+
 
 class Taint(NamedTuple):
     # What is tainting a variable: resolved resource origins plus the set of
@@ -60,13 +67,18 @@ class Taint(NamedTuple):
     # tainted return -- how forward/cross-file return-taint is recovered (712).
     origins: frozenset[HandleBinding]
     pending: frozenset[str]
+    # Names of the enclosing function's own parameters this value carries, so a
+    # tainted argument passed at a call site connects to a sink reached inside
+    # the callee body (forward parameter taint, issue #1142). Seeded only in the
+    # Python walk today; empty everywhere else, leaving other walks unchanged.
+    params: frozenset[str] = frozenset()
 
 
 _EMPTY_TAINT = Taint(frozenset(), frozenset())
 
 
 def _merge_taint(a: Taint, b: Taint) -> Taint:
-    return Taint(a.origins | b.origins, a.pending | b.pending)
+    return Taint(a.origins | b.origins, a.pending | b.pending, a.params | b.params)
 
 
 # Live taint state threaded through the walk: variable -> its Taint.
@@ -368,6 +380,24 @@ class FlowProcessor:
         # call processor drives one caller at a time).
         self._acc_returns_taint = False
         self._acc_return_taint = _EMPTY_TAINT
+        # Forward parameter-taint (issue #1142). A function's parameter is seeded
+        # as a pseudo-origin during the walk; where it reaches a write sink or is
+        # handed to another callee we record it here and compose at finalize, so
+        # `secret = getenv(); log_it(secret)` with `log_it(m): logger.info(m)`
+        # connects ENV -> STDOUT even though the source and the sink live in
+        # different bodies. Only resolved callees participate.
+        # (function_qn, parameter_name) -> the write sinks that parameter reaches.
+        self._param_sinks: dict[tuple[str, str], set[tuple[ResourceKind, str]]] = (
+            defaultdict(set)
+        )
+        # Transitive hand-off: function F's parameter P is passed as argument
+        # `via` into resolved callee C, so C's reached sinks flow back to (F, P)
+        # while the closure is computed (wrapper-of-a-wrapper).
+        self._param_flow_edges: list[tuple[str, str, str, str]] = []
+        # Concrete call sites: an argument carrying resolved origins or pending
+        # callee returns enters resolved callee C as argument `via`. Composed
+        # against the parameter-sink closure in finalize to emit origin -> sink.
+        self._param_call_sites: list[tuple[Taint, str, str]] = []
 
     def process_flow_for_caller(
         self,
@@ -428,6 +458,10 @@ class FlowProcessor:
         # header only (default args/decorators/bases run in THIS scope, its
         # body is a separate caller). Same scoping as io_access.
         tainted: _TaintMap = {}
+        # Seed each parameter as a pseudo-origin so a sink or callee hand-off it
+        # reaches becomes a parameter-taint summary composed at finalize (#1142).
+        for pname in python_parameter_names(caller_node):
+            tainted[pname] = Taint(frozenset(), frozenset(), frozenset({pname}))
         for node in scope_seed_nodes(caller_node):
             tainted = self._walk_stmt(node, tainted, ctx)
 
@@ -1816,6 +1850,13 @@ class FlowProcessor:
                     self._deferred_resource_flows.append(
                         (taint.pending, sink.kind, dst_identity)
                     )
+                # A parameter reaching this sink is a parameter-to-sink summary
+                # (issue #1142): composed at finalize against every call site
+                # that passes a tainted argument into this parameter.
+                for pname in taint.params:
+                    self._param_sinks[(ctx.caller_qn, pname)].add(
+                        (sink.kind, dst_identity)
+                    )
             return
         callee = self._resolve(
             raw,
@@ -1846,6 +1887,15 @@ class FlowProcessor:
                 self._deferred_arg_edges.append(
                     (taint.pending, ctx.caller_spec, callee_type, callee_qn, via)
                 )
+            # Forward parameter-taint (issue #1142), orthogonal to the arg edge:
+            # a concrete argument records a call site to compose against the
+            # callee's parameter-sink closure; an argument that IS one of this
+            # function's parameters records a transitive hand-off so a wrapper of
+            # a wrapper still resolves.
+            if taint.origins or taint.pending:
+                self._param_call_sites.append((taint, callee_qn, via))
+            for pname in taint.params:
+                self._param_flow_edges.append((ctx.caller_qn, pname, callee_qn, via))
 
     def _return_taint_source(
         self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
@@ -1898,7 +1948,7 @@ class FlowProcessor:
             properties={KEY_VIA: VIA_RETURN, KEY_KIND: FlowKind.RETURN.value},
         )
 
-    def finalize(self) -> None:
+    def finalize(self, param_names: dict[str, list[str]] | None = None) -> None:
         # Called once after every function has been walked (issue #712): resolve
         # the per-function return-taint summaries to a fixpoint, then drain the
         # deferred facts. A callee processed AFTER its caller is now known, so a
@@ -1907,6 +1957,7 @@ class FlowProcessor:
         # inline walk already produced (backward case) is harmless.
         if not self._enabled:
             return
+        param_names = param_names or {}
         resolved, is_tainted = self._resolve_summaries()
         for callee_type, callee_qn, caller_spec in self._return_edge_candidates:
             if is_tainted.get(callee_qn):
@@ -1933,10 +1984,32 @@ class FlowProcessor:
                     (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
                     properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
                 )
+        # Forward parameter-taint (issue #1142): close the parameter-sink map
+        # over transitive hand-offs, then for each concrete call site emit a
+        # resource flow from every origin the argument resolves to (its own plus
+        # any pending callee's return origins) into every sink the matched
+        # parameter reaches.
+        param_sink_closure = self._resolve_param_sinks(param_names)
+        for arg_taint, callee_qn, via in self._param_call_sites:
+            pname = self._param_name_for_via(callee_qn, via, param_names)
+            if pname is None:
+                continue
+            reached = param_sink_closure.get((callee_qn, pname))
+            if not reached:
+                continue
+            origins = set(arg_taint.origins)
+            for p in arg_taint.pending:
+                origins |= resolved.get(p, frozenset())
+            for origin in origins:
+                for sink_kind, sink_identity in reached:
+                    self._emit_resource_flow(origin, sink_kind, sink_identity)
         # One-shot per run: clear so a reused processor never re-emits.
         self._return_edge_candidates.clear()
         self._deferred_resource_flows.clear()
         self._deferred_arg_edges.clear()
+        self._param_sinks.clear()
+        self._param_flow_edges.clear()
+        self._param_call_sites.clear()
 
     def _resolve_summaries(
         self,
@@ -1973,6 +2046,56 @@ class FlowProcessor:
                         worklist.append(caller)
                         queued.add(caller)
         return resolved, is_tainted
+
+    def _resolve_param_sinks(
+        self, param_names: dict[str, list[str]]
+    ) -> dict[tuple[str, str], set[tuple[ResourceKind, str]]]:
+        # Close the (function, parameter) -> sinks map over transitive hand-offs:
+        # if F's parameter P is passed into callee C's parameter Q, every sink Q
+        # reaches is also reached by P. Monotone growth, so the naive fixpoint
+        # converges and recursion/cycles terminate (mirrors the return fixpoint).
+        closure: dict[tuple[str, str], set[tuple[ResourceKind, str]]] = {
+            key: set(sinks) for key, sinks in self._param_sinks.items()
+        }
+        changed = True
+        while changed:
+            changed = False
+            for f_qn, p_name, c_qn, via in self._param_flow_edges:
+                callee_param = self._param_name_for_via(c_qn, via, param_names)
+                if callee_param is None:
+                    continue
+                src = closure.get((c_qn, callee_param))
+                if not src:
+                    continue
+                dst = closure.setdefault((f_qn, p_name), set())
+                if not src <= dst:
+                    dst |= src
+                    changed = True
+        return closure
+
+    @staticmethod
+    def _param_name_for_via(
+        callee_qn: str, via: str, param_names: dict[str, list[str]]
+    ) -> str | None:
+        # Map an argument's `via` tag to the callee's parameter name: `kw:<name>`
+        # names the parameter directly; `arg:<index>` resolves through the
+        # callee's ordered parameter names (leading self/cls already dropped, so
+        # positions line up). A callee with no recorded parameter names (e.g.
+        # Java/Rust/C#) yields None, matching the existing arg-edge limits.
+        kind, _, rest = via.partition(_VIA_SEPARATOR)
+        if kind == _VIA_KW_KIND:
+            return rest or None
+        if kind == _VIA_ARG_KIND:
+            names = param_names.get(callee_qn)
+            if names is None:
+                return None
+            try:
+                index = int(rest)
+            except ValueError:
+                return None
+            if 0 <= index < len(names):
+                return names[index]
+        return None
 
     @staticmethod
     def _source_binding(
