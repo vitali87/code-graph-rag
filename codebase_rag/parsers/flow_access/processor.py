@@ -94,7 +94,13 @@ def _py_positional_param_names(func_node: Node) -> list[str]:
         return []
     names: list[str] = []
     for child in params_node.named_children:
+        # A comment or the `/` positional-only marker sits between parameters
+        # without consuming a position; skip them and keep collecting.
+        if child.type in (cs.TS_COMMENT, cs.TS_PY_POSITIONAL_SEPARATOR):
+            continue
         if child.type not in _PY_POSITIONAL_PARAM_TYPES:
+            # `*`, `*args`, `**kwargs` (or anything unexpected): everything after
+            # is variadic-absorbed or keyword-only, so positional mapping stops.
             break
         name = _py_positional_param_name(child)
         if name is None:
@@ -1964,6 +1970,10 @@ class FlowProcessor:
         out: list[tuple[Taint, str]] = []
         index = 0
         for child in args.named_children:
+            # Comments are named children; skip them so they neither consume a
+            # positional index nor get evaluated as a value.
+            if child.type == cs.TS_COMMENT:
+                continue
             if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
                 key = child.child_by_field_name(cs.TS_FIELD_NAME)
                 value = child.child_by_field_name(cs.FIELD_VALUE)

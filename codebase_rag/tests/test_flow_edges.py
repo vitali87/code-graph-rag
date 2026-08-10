@@ -503,6 +503,64 @@ def test_param_taint_keyword_only_param_composes_by_keyword(tmp_path: Path) -> N
     )
 
 
+def test_param_taint_positional_only_separator_param(tmp_path: Path) -> None:
+    # A `/` positional-only marker does not consume a position: `sink` after it
+    # is still positionally bound, so arg:1 must map to it and the flow appears
+    # (CodeRabbit review on PR #1167).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def target(prefix, /, sink):\n    print(sink)\n\n"
+            "def caller():\n    secret = os.getenv('K')\n    target('p', secret)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_comment_between_parameters(tmp_path: Path) -> None:
+    # A comment node between parameters must not shift positional mapping.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def target(prefix,  # first\n           sink):\n    print(sink)\n\n"
+            "def caller():\n    secret = os.getenv('K')\n    target('p', secret)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_comment_between_arguments(tmp_path: Path) -> None:
+    # A comment node between call arguments must not shift the argument index.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def target(prefix, sink):\n    print(sink)\n\n"
+            "def caller():\n"
+            "    secret = os.getenv('K')\n"
+            "    target('p',  # note\n           secret)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_param_taint_negative_control_param_never_sinks(tmp_path: Path) -> None:
     # A wrapper whose parameter never reaches a sink must NOT invent a resource
     # flow: NO_FLOW stays trustworthy. The arg edge still records the hand-off.
