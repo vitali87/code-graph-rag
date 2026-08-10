@@ -266,7 +266,9 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             },
         )
         # Delete File node (for all files including non-code like .md, .json)
-        ingestor.execute_write(CYPHER_DELETE_FILE, {KEY_PATH: relative_path_str})
+        ingestor.execute_write(
+            CYPHER_DELETE_FILE, {KEY_PATH: path.resolve().as_posix()}
+        )
         logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
 
         # Step 2: Clear in-memory state
