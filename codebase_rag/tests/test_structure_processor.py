@@ -389,6 +389,34 @@ class TestProcessGenericFile:
             (temp_repo / "pkg" / "data.json").resolve().as_posix(),
         )
 
+    def test_symlinked_file_keyed_on_link_not_target(
+        self,
+        temp_repo: Path,
+        processor: StructureProcessor,
+        mock_ingestor: MagicMock,
+    ) -> None:
+        target = temp_repo / "real.md"
+        target.write_text("payload")
+        link = temp_repo / "alias.md"
+        link.symlink_to(target)
+
+        processor.process_generic_file(link, "alias.md")
+
+        node_calls = [
+            c
+            for c in mock_ingestor.ensure_node_batch.call_args_list
+            if c[0][0] == "File"
+        ]
+        assert len(node_calls) == 1
+        stored = node_calls[0][0][1]["absolute_path"]
+
+        expected = (temp_repo.resolve() / "alias.md").as_posix()
+        assert stored == expected
+        assert stored != (temp_repo.resolve() / "real.md").as_posix()
+
+        link.unlink()
+        assert link.resolve().as_posix() == stored
+
     def test_file_in_folder(
         self,
         temp_repo: Path,
