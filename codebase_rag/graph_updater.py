@@ -2121,22 +2121,23 @@ class GraphUpdater:
                 )
                 if outside:
                     # A pre-GHSA-85gg File keyed on a leaf-dereferenced
-                    # external target fails this gate. Sweep it only when
-                    # we can prove it is ours: the relative path still
-                    # resolves to that target, or this project owns the
-                    # node. In-repo symlink mismatches stay: they share
-                    # the real file's key (issue #1156).
+                    # external target fails this gate. Queue it only when
+                    # the relative path still resolves to that target or
+                    # the path is gone; deletion waits on project
+                    # ownership. In-repo symlink mismatches stay: they
+                    # share the real file's key (issue #1156).
                     if (
                         label == cs.NodeLabel.FILE
                         and isinstance(abs_path, str)
                         and abs_path
+                        and (
+                            self._is_live_legacy_target_resolved_file(
+                                path, abs_path, repo_abs
+                            )
+                            or not (self.repo_path / path).exists()
+                        )
                     ):
-                        if self._is_live_legacy_target_resolved_file(
-                            path, abs_path, repo_abs
-                        ):
-                            orphans.append((path, abs_path))
-                        elif not (self.repo_path / path).exists():
-                            unverified_outside_files.append((path, abs_path))
+                        unverified_outside_files.append((path, abs_path))
                     continue
                 if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
                     continue

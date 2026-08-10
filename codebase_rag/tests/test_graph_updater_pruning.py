@@ -483,7 +483,7 @@ class TestPruneLegacyTargetResolvedFileIdentity:
             [{"path": link.name, "absolute_path": outside_abs}],
             [],
             [],
-            [],
+            [{cs.KEY_ABSOLUTE_PATH: outside_abs}],
         ]
         updater._prune_orphan_nodes()
 
@@ -499,7 +499,11 @@ class TestPruneLegacyTargetResolvedFileIdentity:
             for c in mock_ingestor.fetch_all.call_args_list
             if c.args[0] == cs.CYPHER_PROJECT_OWNED_FILE_ABSOLUTE_PATHS
         ]
-        assert owned_queries == []
+        assert len(owned_queries) == 1
+        assert owned_queries[0].args[1] == {
+            cs.KEY_PROJECT_NAME: updater.project_name,
+            cs.KEY_PATHS: [outside_abs],
+        }
 
     def test_prune_removes_deleted_legacy_external_symlink_when_project_owned(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -521,6 +525,41 @@ class TestPruneLegacyTargetResolvedFileIdentity:
         ]
         assert len(file_deletes) == 1
         assert file_deletes[0].args[1] == {cs.KEY_PATH: outside_abs}
+        owned_queries = [
+            c
+            for c in mock_ingestor.fetch_all.call_args_list
+            if c.args[0] == cs.CYPHER_PROJECT_OWNED_FILE_ABSOLUTE_PATHS
+        ]
+        assert len(owned_queries) == 1
+        assert owned_queries[0].args[1] == {
+            cs.KEY_PROJECT_NAME: updater.project_name,
+            cs.KEY_PATHS: [outside_abs],
+        }
+
+    def test_prune_skips_live_external_symlink_when_not_project_owned(
+        self, py_project: Path, mock_ingestor: MagicMock, tmp_path: Path
+    ) -> None:
+        outside = tmp_path / "other_project_file.py"
+        outside.write_text("owned_elsewhere = 1\n")
+        link = py_project / "vendor.py"
+        link.symlink_to(outside)
+        outside_abs = outside.resolve().as_posix()
+
+        updater = self._updater(py_project, mock_ingestor)
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": link.name, "absolute_path": outside_abs}],
+            [],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        file_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert file_deletes == []
         owned_queries = [
             c
             for c in mock_ingestor.fetch_all.call_args_list
