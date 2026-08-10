@@ -103,16 +103,19 @@ jobs:
           # merges do), an explicit [security] marker, or an associated pull
           # request labelled "security".
           MESSAGE=$(git log -1 --pretty=%B)
+          GHSA=$(printf '%s' "$MESSAGE" | grep -oiE 'GHSA(-[0-9a-z]{4}){3}' | head -1 || true)
           SECURITY=false
           case "$MESSAGE" in
-            *GHSA-*|*'[security]'*) SECURITY=true ;;
+            *'[security]'*) SECURITY=true ;;
           esac
+          if [ -n "$GHSA" ]; then
+            SECURITY=true
+          fi
           if [ "$SECURITY" != "true" ] && gh api \
               "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
               --jq '.[].labels[].name' 2>/dev/null | grep -qx security; then
             SECURITY=true
           fi
-          GHSA=$(printf '%s' "$MESSAGE" | grep -oiE 'GHSA(-[0-9a-z]{4}){3}' | head -1 || true)
           RELEASE=false
           if [ "$SECURITY" = "true" ]; then
             RELEASE=true
@@ -174,9 +177,7 @@ jobs:
             echo
             echo "**Upgrading is strongly recommended.**"
             echo
-            cat /tmp/notes.md
-          } > /tmp/notes.sec.md
-          mv /tmp/notes.sec.md /tmp/notes.md
+          } > /tmp/security.md
 
       - name: Generate highlights
         if: steps.decide.outputs.release == 'true'
@@ -284,10 +285,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${{ steps.bump_version.outputs.new }}"
-          if [ -s /tmp/highlights.md ]; then
-            cat /tmp/highlights.md /tmp/notes.md > /tmp/body.md
-          else
-            cp /tmp/notes.md /tmp/body.md
-          fi
+          : > /tmp/body.md
+          # The 🔒 Security disclaimer must lead the release body, above the
+          # AI highlights and the generated changelog (issue #1149).
+          [ -s /tmp/security.md ] && cat /tmp/security.md >> /tmp/body.md
+          [ -s /tmp/highlights.md ] && cat /tmp/highlights.md >> /tmp/body.md
+          cat /tmp/notes.md >> /tmp/body.md
           gh release create "$TAG" --title "$TAG" --notes-file /tmp/body.md --verify-tag \
             || gh release edit "$TAG" --notes-file /tmp/body.md
