@@ -1700,7 +1700,11 @@ class ClassIngestMixin:
 
             module_name = safe_decode_text(module_name_node)
             nested_qn = id_.build_nested_qualified_name_for_class(
-                module_node, module_qn, module_name or "", lang_config
+                module_node,
+                module_qn,
+                module_name or "",
+                lang_config,
+                include_impl_targets=True,
             )
             inline_module_qn = nested_qn or f"{module_qn}.{module_name}"
 
@@ -1739,8 +1743,17 @@ class ClassIngestMixin:
 
             # Link the inline module into the containment tree: its enclosing
             # module (file module, or an outer mod) DEFINES it. Without this the
-            # inline Module node is an orphan defining nothing.
-            parent_module_qn = inline_module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            # inline Module node is an orphan defining nothing. The parent is
+            # the nearest enclosing MODULE, not the qn's rsplit prefix: a mod
+            # under a trait/impl body keeps the class scope in its qn
+            # (foo.T.inner), whose prefix foo.T is the TRAIT node, not a module,
+            # so a Module->Module DEFINES to it would dangle (issue #1018).
+            enclosing_mods = rs_utils.build_module_path(module_node)
+            parent_module_qn = (
+                f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(enclosing_mods)}"
+                if enclosing_mods
+                else module_qn
+            )
             if parent_module_qn and parent_module_qn != inline_module_qn:
                 self.ingestor.ensure_relationship_batch(
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, parent_module_qn),

@@ -2086,13 +2086,16 @@ class FunctionIngestMixin:
 
             current = current.parent
 
-        # A Rust item inside `mod inner` is contained by that inline module, not the
-        # file module. Its enclosing module qn is the file module plus the mod path;
-        # the inline Module node carries that exact qn.
-        if language == cs.SupportedLanguage.RUST and (
-            mod_parts := rs_utils.build_module_path(func_node)
+        # A Rust item inside `mod inner` is contained by that inline module, not
+        # the file module. Its enclosing module qn is the item's OWN qn minus the
+        # item segment: re-deriving the mod path with build_module_path drops the
+        # class scope an inline mod under a trait/impl body carries (foo.inner vs
+        # foo.T.inner), so the DEFINES edge dangles off the inline Module node,
+        # which keeps that scope (issue #1018). The item qn already carries it.
+        if language == cs.SupportedLanguage.RUST and rs_utils.build_module_path(
+            func_node
         ):
-            nested = module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(mod_parts)
+            nested = func_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
             return cs.NodeLabel.MODULE, nested, None
 
         return cs.NodeLabel.MODULE, module_qn, None
