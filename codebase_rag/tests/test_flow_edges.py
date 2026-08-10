@@ -594,3 +594,125 @@ def test_param_taint_untainted_argument_emits_nothing(tmp_path: Path) -> None:
         a.startswith("resource::") and b.endswith("STDOUT::<dynamic>")
         for a, b, _ in edges
     )
+
+
+def _RESOURCE(edges: list[FlowEdge]) -> bool:
+    return _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_passthrough_return_positional(tmp_path: Path) -> None:
+    # A pass-through helper (issue #1168): redact returns its parameter, so a
+    # secret routed through it must still reach the later sink. Without
+    # parameter-to-return, redact's return summary is empty and this is a false
+    # NO_FLOW.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def redact(v):\n    return v\n\n"
+            "def caller():\n"
+            "    secret = os.getenv('K')\n    y = redact(secret)\n    print(y)\n"
+        )
+    }
+    assert _RESOURCE(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_return_transitive(tmp_path: Path) -> None:
+    # wrap returns redact(x): the parameter reaches wrap's return through a
+    # second pass-through, which the return-param closure must compose.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def redact(v):\n    return v\n\n"
+            "def wrap(x):\n    return redact(x)\n\n"
+            "def caller():\n    y = wrap(os.getenv('K'))\n    print(y)\n"
+        )
+    }
+    assert _RESOURCE(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_across_files(tmp_path: Path) -> None:
+    # The pass-through helper lives in another module; the summary crosses the
+    # file boundary like the return-taint fixpoint.
+    files = {
+        "helpers.py": "def redact(v):\n    return v\n",
+        "m.py": (
+            "import os\n\n"
+            "from helpers import redact\n\n"
+            "def caller():\n"
+            "    secret = os.getenv('K')\n    y = redact(secret)\n    print(y)\n"
+        ),
+    }
+    assert _RESOURCE(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_defined_after_caller(tmp_path: Path) -> None:
+    # The helper is defined after the caller, so its return-param status is only
+    # known at finalize; the forward composition must still fire.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def caller():\n"
+            "    secret = os.getenv('K')\n    y = redact(secret)\n    print(y)\n\n"
+            "def redact(v):\n    return v\n"
+        )
+    }
+    assert _RESOURCE(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_keyword_argument(tmp_path: Path) -> None:
+    # The pass-through argument is passed by keyword.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def redact(v):\n    return v\n\n"
+            "def caller():\n    y = redact(v=os.getenv('K'))\n    print(y)\n"
+        )
+    }
+    assert _RESOURCE(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_pending_argument(tmp_path: Path) -> None:
+    # The argument into the pass-through is itself a tainted callee return
+    # (pending); its origins resolve at finalize and then flow through redact.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def build():\n    return os.getenv('K')\n\n"
+            "def redact(v):\n    return v\n\n"
+            "def caller():\n    y = redact(build())\n    print(y)\n"
+        )
+    }
+    assert _RESOURCE(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_returned_not_sunk(tmp_path: Path) -> None:
+    # The pass-through result is never sunk, so no resource->sink flow may be
+    # invented (a redact->caller return edge may legitimately exist).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def redact(v):\n    return v\n\n"
+            "def caller():\n    secret = os.getenv('K')\n    y = redact(secret)\n"
+        )
+    }
+    assert not _RESOURCE(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_returns_fresh_value_no_flow(tmp_path: Path) -> None:
+    # Negative control: the helper returns a fresh value, not its parameter, so
+    # no parameter-to-return relationship exists and the secret does not reach
+    # the sink.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def redact(v):\n    return 'clean'\n\n"
+            "def caller():\n"
+            "    secret = os.getenv('K')\n    y = redact(secret)\n    print(y)\n"
+        )
+    }
+    assert not _RESOURCE(_run_flow(tmp_path, files))

@@ -446,6 +446,11 @@ class FlowProcessor:
         # `via` into resolved callee C, so C's reached sinks flow back to (F, P)
         # while the closure is computed (wrapper-of-a-wrapper).
         self._param_flow_edges: list[tuple[str, str, str, str]] = []
+        # Return-direction hand-off (issue #1168): function F's parameter P is
+        # passed as `via` into callee C AND F returns C's return value
+        # (`return redact(x)`), so if C's matched parameter reaches C's return,
+        # P reaches F's return too. The return analog of _param_flow_edges.
+        self._return_param_edges: list[tuple[str, str, str, str]] = []
         # Concrete call sites: an argument carrying resolved origins or pending
         # callee returns enters resolved callee C as argument `via`. Composed
         # against the parameter-sink closure in finalize to emit origin -> sink.
@@ -2033,7 +2038,78 @@ class FlowProcessor:
                     result = _merge_taint(
                         result, Taint(frozenset(), frozenset({callee[1]}))
                     )
+                    # `return redact(x)`: record that each of this function's
+                    # parameters appearing in the returned call reaches its return
+                    # through the callee, so a pass-through chain resolves (#1168).
+                    for pnames, via in self._returned_arg_params(child, tainted):
+                        for pname in pnames:
+                            self._return_param_edges.append(
+                                (ctx.caller_qn, pname, callee[1], via)
+                            )
         return result if tainted_here else None
+
+    def _returned_arg_params(
+        self, call_node: Node, tainted: _TaintMap
+    ) -> list[tuple[frozenset[str], str]]:
+        # The enclosing function's parameters each argument of a returned call
+        # carries, tagged with the argument's `via`. Params-only (never touches
+        # the deferred-candidate lists), because the value/return-edge side of the
+        # returned call is already handled by the walk's descent into it.
+        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+        if args is None:
+            return []
+        out: list[tuple[frozenset[str], str]] = []
+        index = 0
+        for child in args.named_children:
+            if child.type == cs.TS_COMMENT:
+                continue
+            if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
+                key = child.child_by_field_name(cs.TS_FIELD_NAME)
+                value = child.child_by_field_name(cs.FIELD_VALUE)
+                if key is not None and key.text is not None and value is not None:
+                    params = self._value_params(value, tainted)
+                    if params:
+                        out.append(
+                            (
+                                params,
+                                VIA_KW_FORMAT.format(
+                                    name=key.text.decode(cs.ENCODING_UTF8)
+                                ),
+                            )
+                        )
+                continue
+            params = self._value_params(child, tainted)
+            if params:
+                out.append((params, VIA_ARG_FORMAT.format(index=index)))
+            index += 1
+        return out
+
+    def _value_params(self, node: Node, tainted: _TaintMap) -> frozenset[str]:
+        # The parameter names a value expression carries, following the same
+        # aliasing forms _py_value_taint threads (identifier, parenthesis, and the
+        # value-selection unions) but reading only the seeded `params` field.
+        if node.type == cs.TS_PY_IDENTIFIER and node.text is not None:
+            taint = tainted.get(node.text.decode(cs.ENCODING_UTF8))
+            return taint.params if taint is not None else frozenset()
+        if node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+            inner = next(iter(node.named_children), None)
+            return self._value_params(inner, tainted) if inner else frozenset()
+        if node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+            values = node.named_children
+            if len(values) != 3:
+                return frozenset()
+            return self._value_params(values[0], tainted) | self._value_params(
+                values[2], tainted
+            )
+        if node.type == cs.TS_PY_BOOLEAN_OPERATOR:
+            left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+            right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+            return (
+                self._value_params(left, tainted) if left is not None else frozenset()
+            ) | (
+                self._value_params(right, tainted) if right is not None else frozenset()
+            )
+        return frozenset()
 
     def _emit_return_edge(
         self, callee: tuple[str, str], caller_spec: tuple[str, str, str]
@@ -2055,7 +2131,20 @@ class FlowProcessor:
         # inline walk already produced (backward case) is harmless.
         if not self._enabled:
             return
-        resolved, is_tainted = self._resolve_summaries()
+        # Forward parameter-to-return (issue #1168): fold each call site whose
+        # argument enters a pass-through parameter (one that reaches the callee's
+        # return) into that callee's return summary, so a caller consuming the
+        # callee's return resolves through to the argument's origins.
+        return_params = self._resolve_return_params()
+        extra_origins: dict[str, set[HandleBinding]] = defaultdict(set)
+        extra_pending: dict[str, set[str]] = defaultdict(set)
+        for arg_taint, callee_qn, via in self._param_call_sites:
+            pname = self._param_name_for_via(callee_qn, via)
+            if pname is None or (callee_qn, pname) not in return_params:
+                continue
+            extra_origins[callee_qn] |= arg_taint.origins
+            extra_pending[callee_qn] |= arg_taint.pending
+        resolved, is_tainted = self._resolve_summaries(extra_origins, extra_pending)
         for callee_type, callee_qn, caller_spec in self._return_edge_candidates:
             if is_tainted.get(callee_qn):
                 self._emit_return_edge((callee_type, callee_qn), caller_spec)
@@ -2106,34 +2195,47 @@ class FlowProcessor:
         self._deferred_arg_edges.clear()
         self._param_sinks.clear()
         self._param_flow_edges.clear()
+        self._return_param_edges.clear()
         self._param_call_sites.clear()
         self._positional_params.clear()
 
     def _resolve_summaries(
         self,
+        extra_origins: dict[str, set[HandleBinding]] | None = None,
+        extra_pending: dict[str, set[str]] | None = None,
     ) -> tuple[dict[str, frozenset[HandleBinding]], dict[str, bool]]:
         # Worklist fixpoint over the serialized summaries: a function's resolved
         # origins are its own plus every pending callee's, and it is tainted if
         # it has an origin or any pending callee is tainted. Origins/taintedness
         # only grow, so this converges through recursion. Re-queue only a
         # callee's callers when it changes, keeping the whole pass O(V + E).
-        resolved = {qn: summary.origins for qn, summary in self._summaries.items()}
-        is_tainted = {
-            qn: bool(summary.origins) for qn, summary in self._summaries.items()
-        }
+        # extra_origins/extra_pending inject pass-through argument taint into a
+        # callee's return summary (issue #1168); a callee may appear only there.
+        extra_origins = extra_origins or {}
+        extra_pending = extra_pending or {}
+        all_qns = set(self._summaries) | set(extra_origins) | set(extra_pending)
+        base: dict[str, frozenset[HandleBinding]] = {}
+        pend: dict[str, set[str]] = {}
+        for qn in all_qns:
+            summary = self._summaries.get(qn)
+            own_origins = summary.origins if summary is not None else frozenset()
+            own_pending = summary.pending if summary is not None else frozenset()
+            base[qn] = own_origins | frozenset(extra_origins.get(qn, ()))
+            pend[qn] = set(own_pending) | set(extra_pending.get(qn, ()))
+        resolved = dict(base)
+        is_tainted = {qn: bool(base[qn]) for qn in all_qns}
         callers_of: dict[str, set[str]] = defaultdict(set)
-        for qn, summary in self._summaries.items():
-            for callee_qn in summary.pending:
+        for qn in all_qns:
+            for callee_qn in pend[qn]:
                 callers_of[callee_qn].add(qn)
-        worklist = deque(qn for qn, s in self._summaries.items() if s.pending)
+        worklist = deque(qn for qn in all_qns if pend[qn])
         queued = set(worklist)
         while worklist:
             qn = worklist.popleft()
             queued.discard(qn)
-            summary = self._summaries[qn]
-            new_origins = summary.origins
-            new_tainted = bool(summary.origins)
-            for callee_qn in summary.pending:
+            new_origins = base[qn]
+            new_tainted = bool(base[qn])
+            for callee_qn in pend[qn]:
                 new_origins = new_origins | resolved.get(callee_qn, frozenset())
                 new_tainted = new_tainted or is_tainted.get(callee_qn, False)
             if new_origins != resolved[qn] or new_tainted != is_tainted[qn]:
@@ -2144,6 +2246,28 @@ class FlowProcessor:
                         worklist.append(caller)
                         queued.add(caller)
         return resolved, is_tainted
+
+    def _resolve_return_params(self) -> set[tuple[str, str]]:
+        # The (function, parameter) pairs whose value reaches the function's
+        # return: directly (`return p`, captured in the summary's params field)
+        # or transitively (`return other(p)` and pass-through chains). Monotone
+        # growth over a finite pair universe, so the closure terminates (mirrors
+        # _resolve_param_sinks); all facts are global once every body is walked.
+        rp: set[tuple[str, str]] = set()
+        for qn, summary in self._summaries.items():
+            for pname in summary.params:
+                rp.add((qn, pname))
+        changed = True
+        while changed:
+            changed = False
+            for f_qn, p_name, c_qn, via in self._return_param_edges:
+                callee_param = self._param_name_for_via(c_qn, via)
+                if callee_param is None:
+                    continue
+                if (c_qn, callee_param) in rp and (f_qn, p_name) not in rp:
+                    rp.add((f_qn, p_name))
+                    changed = True
+        return rp
 
     def _resolve_param_sinks(
         self,
