@@ -393,6 +393,13 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
                 # that block alone (rustc-verified): store it span-gated
                 # like an initializer-block use, never fn-wide.
                 return block, None, True
+            if current.type in cs.FQN_RS_SCOPE_TYPES and block is not None:
+                # An expression block in a class-body position (enum
+                # discriminant, array length, const-generic default) is
+                # scoped to that block alone, exactly like a const/static
+                # initializer: a class type has no qn a use could key on,
+                # so store it span-gated instead of dropping it (#1016).
+                return block, None, True
             nearest = current
             break
         current = current.parent
