@@ -29,6 +29,7 @@ KEY_RESPONSE = "response"
 KEY_START_LINE = "start_line"
 KEY_END_LINE = "end_line"
 KEY_PATH = "path"
+KEY_PATHS = "paths"
 KEY_ABSOLUTE_PATH = "absolute_path"
 # Whether flow analysis covered a Module: its language is in the source/sink
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
@@ -391,6 +392,16 @@ CYPHER_COUNT_PROJECT_MODULES = (
 # Queries for orphan pruning: return all paths stored in the graph
 CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+# Pre-GHSA-85gg File nodes keyed on a leaf-dereferenced external target
+# fail the prune containment gate. Ownership via this project's CONTAINS_*
+# path lets a deleted symlink's leftover node be swept without touching a
+# sibling project's file that happens to share the relative path (#1156).
+CYPHER_PROJECT_OWNED_FILE_ABSOLUTE_PATHS = (
+    "MATCH (p:Project {name: $project_name})"
+    "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE*]->(f:File) "
+    "WHERE f.absolute_path IN $paths "
+    "RETURN DISTINCT f.absolute_path AS absolute_path"
 )
 CYPHER_ALL_MODULE_PATHS_INTERNAL = (
     "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"

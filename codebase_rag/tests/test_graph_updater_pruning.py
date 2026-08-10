@@ -455,3 +455,151 @@ class TestPruneSiblingRootPrefix:
         ]
         assert len(file_deletes) == 1
         assert file_deletes[0].args[1] == {cs.KEY_PATH: own_abs}
+
+
+class TestPruneLegacyTargetResolvedFileIdentity:
+    def _updater(self, py_project: Path, mock_ingestor: MagicMock) -> GraphUpdater:
+        parsers, queries = load_parsers()
+        return GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+
+    def test_prune_removes_live_legacy_external_symlink_file(
+        self, py_project: Path, mock_ingestor: MagicMock, tmp_path: Path
+    ) -> None:
+        outside = tmp_path / "outside_secret.py"
+        outside.write_text("secret = 1\n")
+        link = py_project / "vendor.py"
+        link.symlink_to(outside)
+        outside_abs = outside.resolve().as_posix()
+        link_identity = (py_project.resolve() / link.name).as_posix()
+        assert outside_abs != link_identity
+
+        updater = self._updater(py_project, mock_ingestor)
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": link.name, "absolute_path": outside_abs}],
+            [],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        file_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert len(file_deletes) == 1
+        assert file_deletes[0].args[1] == {cs.KEY_PATH: outside_abs}
+        owned_queries = [
+            c
+            for c in mock_ingestor.fetch_all.call_args_list
+            if c.args[0] == cs.CYPHER_PROJECT_OWNED_FILE_ABSOLUTE_PATHS
+        ]
+        assert owned_queries == []
+
+    def test_prune_removes_deleted_legacy_external_symlink_when_project_owned(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        outside_abs = "/var/secret/legacy_vendor.py"
+        updater = self._updater(py_project, mock_ingestor)
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": "vendor.py", "absolute_path": outside_abs}],
+            [],
+            [],
+            [{cs.KEY_ABSOLUTE_PATH: outside_abs}],
+        ]
+        updater._prune_orphan_nodes()
+
+        file_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert len(file_deletes) == 1
+        assert file_deletes[0].args[1] == {cs.KEY_PATH: outside_abs}
+        owned_queries = [
+            c
+            for c in mock_ingestor.fetch_all.call_args_list
+            if c.args[0] == cs.CYPHER_PROJECT_OWNED_FILE_ABSOLUTE_PATHS
+        ]
+        assert len(owned_queries) == 1
+        assert owned_queries[0].args[1] == {
+            cs.KEY_PROJECT_NAME: updater.project_name,
+            cs.KEY_PATHS: [outside_abs],
+        }
+
+    def test_prune_skips_unowned_outside_file_when_relative_path_missing(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        outside_abs = "/other/project/app.py"
+        updater = self._updater(py_project, mock_ingestor)
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": "app.py", "absolute_path": outside_abs}],
+            [],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        file_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert file_deletes == []
+
+    def test_prune_keeps_in_repo_symlink_sharing_target_key(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        target = py_project / "real.md"
+        target.write_text("payload\n")
+        link = py_project / "alias.md"
+        link.symlink_to(target)
+        target_abs = target.resolve().as_posix()
+
+        updater = self._updater(py_project, mock_ingestor)
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": link.name, "absolute_path": target_abs}],
+            [],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        file_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert file_deletes == []
+
+    def test_prune_keeps_file_under_symlinked_ancestor(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        real_dir = py_project / "realdir"
+        real_dir.mkdir()
+        nested = real_dir / "nested.py"
+        nested.write_text("x = 1\n")
+        link_dir = py_project / "linkdir"
+        link_dir.symlink_to(real_dir)
+        stored_abs = nested.resolve().as_posix()
+
+        updater = self._updater(py_project, mock_ingestor)
+        mock_ingestor.fetch_all.side_effect = [
+            [{"path": "linkdir/nested.py", "absolute_path": stored_abs}],
+            [],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        file_deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert file_deletes == []

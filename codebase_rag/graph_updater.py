@@ -80,7 +80,9 @@ from .types_defs import (
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
+    cached_file_identity_posix,
     cached_relative_path,
+    cached_resolve_posix,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
@@ -2036,6 +2038,42 @@ class GraphUpdater:
         self.factory.call_processor.finalize_flow()
         self.factory.call_processor.finalize_dispatch()
 
+    def _abs_path_outside_repo(self, abs_path: str, repo_abs: str) -> bool:
+        return not (abs_path == repo_abs or abs_path.startswith(repo_abs + "/"))
+
+    def _is_live_legacy_target_resolved_file(
+        self, rel_path: str, abs_path: str, repo_abs: str
+    ) -> bool:
+        if not self._abs_path_outside_repo(abs_path, repo_abs):
+            return False
+        live = self.repo_path / rel_path
+        if not live.exists():
+            return False
+        if cached_file_identity_posix(live) == abs_path:
+            return False
+        return cached_resolve_posix(live) == abs_path
+
+    def _owned_file_absolute_paths(self, abs_paths: set[str]) -> set[str]:
+        if not abs_paths or not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_OWNED_FILE_ABSOLUTE_PATHS,
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PATHS: sorted(abs_paths),
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label=cs.NodeLabel.FILE)
+            return set()
+        owned: set[str] = set()
+        for row in rows:
+            value = row.get(cs.KEY_ABSOLUTE_PATH)
+            if isinstance(value, str) and value:
+                owned.add(value)
+        return owned
+
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""
         if not isinstance(self.ingestor, QueryProtocol):
@@ -2047,16 +2085,17 @@ class GraphUpdater:
         project_prefix = self.project_name + "."
         repo_abs = self.repo_path.resolve().as_posix()
         prune_specs: list[tuple[str, str, str]] = [
-            (cs.CYPHER_ALL_FILE_PATHS, cs.CYPHER_DELETE_FILE, "File"),
+            (cs.CYPHER_ALL_FILE_PATHS, cs.CYPHER_DELETE_FILE, cs.NodeLabel.FILE),
             (
                 cs.CYPHER_ALL_MODULE_PATHS_INTERNAL,
                 cs.CYPHER_DELETE_MODULE,
-                "Module",
+                cs.NodeLabel.MODULE,
             ),
-            (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, "Folder"),
+            (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, cs.NodeLabel.FOLDER),
         ]
 
         read_failed = False
+        unverified_outside_files: list[tuple[str, str]] = []
         for query_all, delete_query, label in prune_specs:
             try:
                 rows = self.ingestor.fetch_all(query_all)
@@ -2077,9 +2116,27 @@ class GraphUpdater:
                 qn = r.get("qualified_name", "")
                 # Component-aware containment: a bare prefix test would also
                 # match a sibling root such as <repo>-old (issue #897).
-                if isinstance(abs_path, str) and not (
-                    abs_path == repo_abs or abs_path.startswith(repo_abs + "/")
-                ):
+                outside = isinstance(abs_path, str) and self._abs_path_outside_repo(
+                    abs_path, repo_abs
+                )
+                if outside:
+                    # A pre-GHSA-85gg File keyed on a leaf-dereferenced
+                    # external target fails this gate. Sweep it only when
+                    # we can prove it is ours: the relative path still
+                    # resolves to that target, or this project owns the
+                    # node. In-repo symlink mismatches stay: they share
+                    # the real file's key (issue #1156).
+                    if (
+                        label == cs.NodeLabel.FILE
+                        and isinstance(abs_path, str)
+                        and abs_path
+                    ):
+                        if self._is_live_legacy_target_resolved_file(
+                            path, abs_path, repo_abs
+                        ):
+                            orphans.append((path, abs_path))
+                        elif not (self.repo_path / path).exists():
+                            unverified_outside_files.append((path, abs_path))
                     continue
                 if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
                     continue
@@ -2106,6 +2163,32 @@ class GraphUpdater:
                             delete_query, {cs.KEY_PATH: orphan_key}
                         )
                 total_pruned += len(orphans)
+
+        if (
+            not read_failed
+            and unverified_outside_files
+            and isinstance(self.ingestor, QueryProtocol)
+        ):
+            owned = self._owned_file_absolute_paths(
+                {key for _path, key in unverified_outside_files}
+            )
+            owned_orphans = [
+                (path, key) for path, key in unverified_outside_files if key in owned
+            ]
+            if owned_orphans:
+                logger.info(
+                    ls.PRUNE_FOUND,
+                    count=len(owned_orphans),
+                    label=cs.NodeLabel.FILE,
+                )
+                for orphan_path, orphan_key in owned_orphans:
+                    logger.debug(
+                        ls.PRUNE_DELETING, label=cs.NodeLabel.FILE, path=orphan_path
+                    )
+                    self.ingestor.execute_write(
+                        cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: orphan_key}
+                    )
+                total_pruned += len(owned_orphans)
 
         if read_failed:
             # The same outage that broke the path reads would break (or act
