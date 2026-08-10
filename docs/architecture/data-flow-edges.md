@@ -361,10 +361,21 @@ module is re-exported under its own name. A project that does
   summaries are resolved by a worklist fixpoint once every file has been walked, so
   a callee defined after (or in a different file from) its caller is still known to
   return a tainted value at the caller's site.
-- Argument hand-off is one level: a `FLOWS_TO` edge with `kind = arg` records that a
-  tainted value reached a call, but the taint does not enter the callee's body. There
-  are no `Parameter` nodes and no SSA-level precision, and sources and sinks are
-  direct I/O calls from the registry.
+- Forward argument taint composes into callee **sinks** for Python: a parameter that
+  reaches a write sink inside its body is recorded as a per-function parameter-sink
+  summary (closed over transitive parameter hand-offs by the same finalize fixpoint),
+  so a tainted argument passed at a call site emits the full `resource -> resource`
+  flow even when the source and the sink live in different bodies — the logging-wrapper
+  case `secret = getenv('K'); log_it(secret)` with `log_it(m): logger.info(m)` connects
+  ENV to STDOUT. Only resolved callees participate; there are still no `Parameter` nodes
+  and no SSA-level precision. Forward taint through a callee's **return** value
+  (pass-through helpers such as `def redact(v): return v`) is **not** supported:
+  `Taint.params` is not propagated through the return fixpoint (`_resolve_summaries`),
+  so a parameter returned to the caller does not carry the argument's taint to a later
+  sink. Parameter-to-return propagation and the non-Python walks are out of scope for now.
+- The `kind = arg` edge itself is still recorded one level deep — it marks that a
+  tainted value reached a call — and is emitted alongside the forward composition above.
+  Sources and sinks are direct I/O calls from the registry.
 - The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
   Go, Java, Rust, C, C++, and C#; a language not in the registry emits no I/O or
   flow edges until its table is added.

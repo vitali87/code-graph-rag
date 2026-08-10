@@ -5717,7 +5717,8 @@ class CallProcessor:
     def finalize_flow(self) -> None:
         # Resolve deferred FLOWS_TO return-taint once every function body has
         # been walked, so a callee processed after its caller still contributes
-        # its return edge and resource flow (issue #712).
+        # its return edge and resource flow (issue #712), and compose forward
+        # parameter-taint the same way (issue #1142).
         self._flow_processor.finalize()
 
     def finalize_callable_param_flow(self) -> None:
