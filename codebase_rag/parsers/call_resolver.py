@@ -1595,6 +1595,12 @@ class CallResolver:
         base = self.import_processor._rewrite_rust_local_use_path(
             cs.SEPARATOR_DOUBLE_COLON.join(object_path), effective_module
         )
+        if base == cs.RUST_UNRESOLVABLE_QN:
+            # The path names a module backed by a file the qn scheme cannot
+            # key (an unrepresentable #[path]): it has no referent, so drop it
+            # rather than let a weaker fallback bind a name-derived shadow
+            # file that merely sits where the name points (issue #1082).
+            return None, True
         if cs.SEPARATOR_DOUBLE_COLON in base:
             return None, False
         return self._decide_rust_base(base, item)

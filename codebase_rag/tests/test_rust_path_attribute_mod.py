@@ -613,6 +613,33 @@ def test_an_absolute_redirect_claims_nothing(
     assert not any("nowhere" in gate for gate in gates), gates
 
 
+def test_an_absolute_redirect_binds_no_crate_path(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The crate-path side must stand down like the gate: a #[path] naming a
+    # file outside the indexed tree has no referent, so crate::helpers must
+    # resolve to nothing rather than fall back to the name-derived sibling
+    # src/helpers.rs, an undeclared shadow the mod never backs (issue #1082).
+    project = temp_repo / "rs_path_attr_abs_call"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_abs_call"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": (
+                '#[path = "/nowhere/helpers.rs"]\nmod helpers;\n\npub mod a;\n'
+            ),
+            "src/helpers.rs": "pub fn fixture() -> i32 {\n    1\n}\n",
+            "src/a.rs": ("pub fn run() -> i32 {\n    crate::helpers::fixture()\n}\n"),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    base = "rs_path_attr_abs_call.src"
+    assert (f"{base}.a.run", f"{base}.helpers.fixture") not in calls, calls
+
+
 def _scan_cost_per_char(source: str) -> tuple[float, RustEntryDecls]:
     """Best-of-three seconds per scanned character, and what was found."""
     top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))

@@ -99,6 +99,13 @@ MAIN_RS = "main.rs"
 SEPARATOR_DOUBLE_COLON = "::"
 SEPARATOR_PROTOTYPE = ".prototype."
 RUST_CRATE_KEYWORD = "crate"
+# A Rust crate path whose module is backed by a file the qn scheme cannot key
+# (an unrepresentable `#[path]` target: absolute, Windows-separated, or a climb
+# above the repository root) has no referent in the graph. The resolvers return
+# this qn so the path binds nothing and callers treat it as a decided drop
+# rather than falling back to a name-derived shadow file (issue #1082). The NUL
+# byte keeps it distinct from every real qn while remaining an ordinary str.
+RUST_UNRESOLVABLE_QN = "\x00unrepresentable"
 BUILTIN_PREFIX = "builtin"
 IIFE_FUNC_PREFIX = "iife_func_"
 IIFE_ARROW_PREFIX = "iife_arrow_"
