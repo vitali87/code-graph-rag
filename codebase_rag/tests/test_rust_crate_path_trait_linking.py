@@ -6340,3 +6340,48 @@ def test_inline_mod_in_an_impl_body_has_consistent_module_and_defines_qns(
     defines = _pairs(mock_ingestor, RelationshipType.DEFINES.value)
     assert (f"{base}.foo", f"{base}.foo.S.inner") in defines, defines
     assert (f"{base}.foo.S.inner", f"{base}.foo.S.inner.g") in defines, defines
+
+
+def test_nested_inline_mods_in_a_trait_body_keep_the_scoped_parent_qn(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A mod nested inside another mod inside a trait body: the inner mod's
+    # enclosing-module DEFINES must point at the outer mod's SCOPED qn
+    # (foo.T.outer), not a mods-only re-walk that drops the trait scope to
+    # foo.outer (a node that does not exist), which would dangle the edge
+    # (CodeRabbit review on PR #1166).
+    project = temp_repo / "rs_nested_inline_mod_trait"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_nested_inline_mod_trait"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod foo;\n",
+            "src/foo.rs": (
+                "pub trait T {\n"
+                "    const C: u32 = {\n"
+                "        mod outer {\n"
+                "            pub mod inner {\n"
+                "                pub const fn g() -> u32 {\n                    1\n                }\n"
+                "            }\n"
+                "        }\n"
+                "        outer::inner::g()\n"
+                "    };\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_nested_inline_mod_trait.src"
+    modules = _module_qns(mock_ingestor)
+    assert f"{base}.foo.T.outer" in modules, modules
+    assert f"{base}.foo.T.outer.inner" in modules, modules
+    assert f"{base}.foo.outer" not in modules, modules
+    defines = _pairs(mock_ingestor, RelationshipType.DEFINES.value)
+    assert (f"{base}.foo", f"{base}.foo.T.outer") in defines, defines
+    assert (f"{base}.foo.T.outer", f"{base}.foo.T.outer.inner") in defines, defines
+    assert (
+        f"{base}.foo.T.outer.inner",
+        f"{base}.foo.T.outer.inner.g",
+    ) in defines, defines
