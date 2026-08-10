@@ -368,11 +368,14 @@ module is re-exported under its own name. A project that does
   flow even when the source and the sink live in different bodies — the logging-wrapper
   case `secret = getenv('K'); log_it(secret)` with `log_it(m): logger.info(m)` connects
   ENV to STDOUT. Only resolved callees participate; there are still no `Parameter` nodes
-  and no SSA-level precision. Forward taint through a callee's **return** value
-  (pass-through helpers such as `def redact(v): return v`) is **not** supported:
-  `Taint.params` is not propagated through the return fixpoint (`_resolve_summaries`),
-  so a parameter returned to the caller does not carry the argument's taint to a later
-  sink. Parameter-to-return propagation and the non-Python walks are out of scope for now.
+  and no SSA-level precision.
+- Forward argument taint also composes through a callee's **return** value for Python
+  (pass-through helpers such as `def redact(v): return v`): a parameter that reaches the
+  function's return — directly or transitively through `return other(p)` and pass-through
+  chains — is closed over by the same finalize fixpoint, and a call site passing a tainted
+  argument into such a parameter folds that argument's origins into the callee's return
+  summary, so a caller consuming the return (`y = redact(secret); print(y)`) resolves the
+  secret to the sink. The non-Python walks remain one level for now.
 - The `kind = arg` edge itself is still recorded one level deep — it marks that a
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.
