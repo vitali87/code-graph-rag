@@ -3240,16 +3240,20 @@ class ImportProcessor:
         self._rust_pending_mod_scope_uses.setdefault(module_qn, []).append(
             (effective_qn, pure_chain, resolved_imports)
         )
-        if not pure_chain:
-            # A fn-local mod can lose the shared-key arbitration to a pure
-            # twin (issue #1017: one qn, two modules), yet its own functions
-            # still see this use: fan it out to their spans so the weak
-            # fn-scope map answers for them instead of whatever the key
-            # ends up holding.
-            for line, col in rs_utils.enclosing_mod_fn_spans(use_node):
-                self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
-                    (line, col, resolved_imports, True)
-                )
+        # Fan every inline-mod use out to its own functions' spans as weak
+        # fn-scope entries, so a function binds through its enclosing mod
+        # body even when the shared qn key is corrupted (issue #1017: one
+        # qn, two modules). A fn-local mod can lose the shared-key
+        # arbitration to a pure twin, and two pure cfg/macro twins merge
+        # onto one key and overwrite each other; either way the span-gated
+        # fn-scope map answers for each function instead of whatever the key
+        # ends up holding. enclosing_mod_fn_spans is empty unless the use
+        # sits directly in an inline `mod {}` body, so file-level uses are
+        # untouched.
+        for line, col in rs_utils.enclosing_mod_fn_spans(use_node):
+            self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
+                (line, col, resolved_imports, True)
+            )
 
     def retract_rust_mod_scope_uses(self, module_qn: str) -> None:
         # Reverse replay so a key shadowing another file's entries (the
