@@ -667,10 +667,41 @@ def test_use_import_through_unrepresentable_redirect_emits_no_phantom(
     calls = _calls(mock_ingestor)
     base = "rs_unrep_use.src"
     assert (f"{base}.a.run", f"{base}.helpers.fixture") not in calls, calls
+    # The only import in the crate names an unrepresentable module, so no
+    # IMPORTS edge is valid: not the sentinel, and not a shadow fallback.
     imports = _pairs(mock_ingestor, RelationshipType.IMPORTS.value)
-    assert not any(
-        "\x00" in target or "unrepresentable" in target for _src, target in imports
-    ), imports
+    assert not imports, imports
+
+
+def test_inner_unrepresentable_use_shadows_an_outer_same_named_item(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An inner inline mod's `use` of a name through an unrepresentable #[path]
+    # still OWNS that name inside the mod, shadowing an outer same-named item:
+    # the inner call must drop, not bind the outer fixture (issue #1082).
+    project = temp_repo / "rs_unrep_shadow"
+    _write(
+        project,
+        {
+            "Cargo.toml": ('[package]\nname = "rs_unrep_shadow"\nversion = "0.1.0"\n'),
+            "src/lib.rs": "pub mod a;\n",
+            "src/a.rs": (
+                "pub fn fixture() -> i32 {\n    9\n}\n\n"
+                "pub mod inner {\n"
+                '    #[path = "/nowhere/helpers.rs"]\n'
+                "    mod helpers;\n\n"
+                "    use crate::a::inner::helpers::fixture;\n\n"
+                "    pub fn run() -> i32 {\n"
+                "        fixture()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    base = "rs_unrep_shadow.src"
+    assert (f"{base}.a.inner.run", f"{base}.a.fixture") not in calls, calls
 
 
 def _scan_cost_per_char(source: str) -> tuple[float, RustEntryDecls]:

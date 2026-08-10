@@ -1465,12 +1465,13 @@ class CallResolver:
             ) and not self._rust_block_item_hidden(local[1], module_qn, call_point):
                 return local, None
             raw = import_mapping.get(scope, {}).get(call_name)
-            if raw == cs.RUST_UNRESOLVABLE_QN:
-                # An unrepresentable #[path] import binds no scope: keep
-                # walking rather than surfacing the sentinel as a target
-                # (issue #1082).
-                raw = None
             target = weak if weak is not None else raw
+            if target == cs.RUST_UNRESOLVABLE_QN:
+                # An inner unrepresentable #[path] import still OWNS the
+                # imported name and shadows any outer same-named item, so it
+                # is a deliberate drop: stop the walk and hand the sentinel
+                # back rather than letting an outer binding answer (#1082).
+                return None, target
             if target is not None:
                 return None, target
             scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
