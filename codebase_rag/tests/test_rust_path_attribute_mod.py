@@ -704,6 +704,35 @@ def test_inner_unrepresentable_use_shadows_an_outer_same_named_item(
     assert (f"{base}.a.inner.run", f"{base}.a.fixture") not in calls, calls
 
 
+def test_impl_of_a_trait_through_unrepresentable_redirect_binds_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `impl crate::helpers::T for S` where helpers is unrepresentable: the
+    # trait path has no referent, so it must not bind an IMPLEMENTS edge to a
+    # same-named decoy trait the name-anchored fallback would find (#1082).
+    project = temp_repo / "rs_unrep_trait"
+    _write(
+        project,
+        {
+            "Cargo.toml": ('[package]\nname = "rs_unrep_trait"\nversion = "0.1.0"\n'),
+            "src/lib.rs": (
+                '#[path = "/nowhere/helpers.rs"]\nmod helpers;\n\n'
+                "pub mod decoy;\npub mod a;\n"
+            ),
+            "src/decoy.rs": "pub trait T {\n    fn go(&self) -> i32;\n}\n",
+            "src/a.rs": (
+                "pub struct S;\n\n"
+                "impl crate::helpers::T for S {\n"
+                "    fn go(&self) -> i32 {\n        1\n    }\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    base = "rs_unrep_trait.src"
+    assert (f"{base}.a.S", f"{base}.decoy.T") not in implements, implements
+
+
 def _scan_cost_per_char(source: str) -> tuple[float, RustEntryDecls]:
     """Best-of-three seconds per scanned character, and what was found."""
     top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
