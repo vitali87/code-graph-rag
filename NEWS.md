@@ -6,6 +6,7 @@ than in the README. The release workflow also prepends entries for each
 released feature via `scripts/update_news.py`; hand edits remain welcome
 between releases.
 
+- **Release Automation**: `NEWS.md` and the README's "Latest News" section now refresh automatically on every release, and security patches ship out-of-cadence with a mandatory disclaimer in the release notes instead of waiting for the tag cycle.
 - **Ruby Support**: Ruby joins the graph through a new pluggable ast-grep tier that adds a language from a single YAML pattern file, emitting `Module`, `Function`, and `Class` nodes plus import edges without a hand-written parser.
 - **Structural Search & Replace**: Find and rewrite code by AST pattern with ast-grep, exposed as agent tools so you can match and transform structure across the whole codebase instead of relying on text or regex.
 - **Data-Flow Tracing**: New `FLOWS_TO` taint edges follow values through assignments, function calls, and I/O sinks, with coverage across C#, Java, C, and Go.
