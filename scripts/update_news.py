@@ -25,14 +25,47 @@ BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)\*\*: \S.*$")
 
 MAX_ENTRIES = 3
 
+# Latest News is for user-facing features, never CI, developer tooling,
+# release/build automation, refactors, docs, tests, or bug fixes. Any bullet
+# whose theme names that kind of work is dropped so it can never reach the
+# README, independent of what the AI generator emits (issue: news must be
+# features, not devx).
+NON_FEATURE_THEME = re.compile(
+    r"\b(?:"
+    r"automation|releases?|ci|cd|devx|tooling|changelog|"
+    r"refactor(?:s|ing|ed)?|chore|packaging|"
+    r"lint(?:ing|ers?)?|formatting|scaffolding|maintenance|"
+    r"benchmarks?|coverage|hotfix(?:es)?|bumps?|"
+    r"docs?|documentation|tests?|testing|perf|performance|deprecations?"
+    r")\b"
+    r"|bug[- ]?fix(?:es)?|developer experience|release notes",
+    re.IGNORECASE,
+)
+
+
+def is_feature_theme(theme: str) -> bool:
+    """True when a bullet's theme names a substantial product feature.
+
+    Rejects CI, developer tooling, release/build automation, refactors, docs,
+    tests, and bug fixes so they never surface in the README's Latest News.
+    """
+    return NON_FEATURE_THEME.search(theme) is None
+
 
 def extract_bullets(fragment: str) -> list[str]:
-    """Return the well-formed news bullets contained in a markdown fragment."""
-    return [
-        line.rstrip()
-        for line in fragment.splitlines()
-        if BULLET_PATTERN.match(line.rstrip())
-    ]
+    """Return the well-formed, feature-themed news bullets in a fragment.
+
+    A bullet must match the NEWS.md entry format AND name a product feature;
+    non-feature themes (CI/devx/release/bug/etc.) are discarded here so neither
+    the count cap nor the dedup downstream ever considers them.
+    """
+    bullets: list[str] = []
+    for line in fragment.splitlines():
+        stripped = line.rstrip()
+        match = BULLET_PATTERN.match(stripped)
+        if match and is_feature_theme(match.group("theme")):
+            bullets.append(stripped)
+    return bullets
 
 
 def existing_themes(news: str) -> set[str]:

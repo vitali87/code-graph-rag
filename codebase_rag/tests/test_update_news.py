@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from scripts.update_news import existing_themes, extract_bullets, prepend_news
+from scripts.update_news import (
+    existing_themes,
+    extract_bullets,
+    is_feature_theme,
+    prepend_news,
+)
 
 NEWS = """# Latest News
 
@@ -28,6 +33,49 @@ class TestExtractBullets:
 
     def test_empty_fragment_yields_nothing(self) -> None:
         assert extract_bullets("") == []
+
+    def test_drops_non_feature_themed_bullets(self) -> None:
+        fragment = (
+            "- **Release Automation**: NEWS.md refreshes on every release.\n"
+            "- **CI Speedups**: builds now finish faster.\n"
+            "- **Bug Fixes**: assorted crashes resolved.\n"
+            "- **Web Search**: the agent can now search the web.\n"
+        )
+        assert extract_bullets(fragment) == [
+            "- **Web Search**: the agent can now search the web."
+        ]
+
+
+class TestIsFeatureTheme:
+    def test_rejects_non_feature_themes(self) -> None:
+        for theme in (
+            "Release Automation",
+            "CI",
+            "Developer Experience",
+            "Tooling",
+            "Refactor",
+            "Refactors",
+            "Bug Fix",
+            "Bug-Fix",
+            "Release Notes",
+            "Dependency Bumps",
+            "Documentation",
+            "Tests",
+            "Performance",
+        ):
+            assert not is_feature_theme(theme), theme
+
+    def test_accepts_product_feature_themes(self) -> None:
+        for theme in (
+            "Ruby Support",
+            "Data-Flow Tracing",
+            "Structural Search & Replace",
+            "Web Search",
+            "Dependency Graph",
+            "Pipeline Analysis",
+            "Workflow Visualisation",
+        ):
+            assert is_feature_theme(theme), theme
 
 
 class TestExistingThemes:
