@@ -276,6 +276,11 @@ class ClassIngestMixin:
             rewritten = self.import_processor._rewrite_rust_local_use_path(
                 path, module_qn
             )
+            if rewritten == cs.RUST_UNRESOLVABLE_QN:
+                # The trait path traverses an unrepresentable #[path] module:
+                # it has no referent, so it must not become a synthetic
+                # external trait qn (issue #1082).
+                return anchored, None
             return (rewritten, anchored) if rewritten != path else (anchored, None)
         # The head is itself a name a `use` may have bound (`use std::io;`
         # then `impl io::Read`), and only the expanded crate says who speaks
@@ -1759,11 +1764,16 @@ class ClassIngestMixin:
             # where the qn scheme keys the module, so the name-derived
             # spellings below back nothing at all here (issue #1035).
             return {redirect}
-        candidates = {
-            self.import_processor._rust_resolve_relative(
-                module_qn, [*chain, module_name], module_qn
-            )
-        }
+        resolved_candidate = self.import_processor._rust_resolve_relative(
+            module_qn, [*chain, module_name], module_qn
+        )
+        # An unrepresentable #[path] target yields no candidate qn (issue
+        # #1082); the file-derived spelling below still applies for a chain.
+        candidates = (
+            set()
+            if resolved_candidate == cs.RUST_UNRESOLVABLE_QN
+            else {resolved_candidate}
+        )
         if chain:
             # A chain declaration's target FILE lives under the declaring
             # file's directory tree regardless of the inline qn nesting
