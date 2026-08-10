@@ -1,12 +1,9 @@
 <div align="center">
-  <!-- Bitbucket strips <picture>/<source> tags, so we use a single light-mode <img>. Restore the theme-aware <picture> block below when the GitHub account is reinstated:
   <picture>
-    <source srcset="assets/logo-dark-any.png" media="(prefers-color-scheme: dark)">
-    <source srcset="assets/logo-light-any.png" media="(prefers-color-scheme: light)">
-    <img src="assets/logo-dark-any.png" alt="Code-Graph-RAG Logo" width="480">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark-any.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light-any.png">
+    <img src="assets/logo-light-any.png" alt="Code-Graph-RAG Logo" width="480">
   </picture>
-  -->
-  <img src="assets/logo-light-any.png" alt="Code-Graph-RAG Logo" width="480">
 
   <p>
     <a href="https://trendshift.io/repositories/99619" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/99619" alt="vitali87/code-graph-rag | Trendshift" width="250" height="55"/></a>
