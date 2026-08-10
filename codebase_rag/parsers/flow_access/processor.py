@@ -40,7 +40,7 @@ from ..io_access import (
     string_literal,
     unwrap_argument,
 )
-from ..utils import python_parameter_names
+from ..utils import python_parameter_names, safe_decode_text
 from .constants import (
     KEY_KIND,
     KEY_VIA,
@@ -57,6 +57,52 @@ _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
 _VIA_SEPARATOR = ":"
 _VIA_ARG_KIND = VIA_ARG_FORMAT.split(_VIA_SEPARATOR, 1)[0]
 _VIA_KW_KIND = VIA_KW_FORMAT.split(_VIA_SEPARATOR, 1)[0]
+
+# Python parameter node types a positional argument can bind to, in order.
+_PY_POSITIONAL_PARAM_TYPES = frozenset(
+    {
+        cs.TS_PY_IDENTIFIER,
+        cs.TS_PY_TYPED_PARAMETER,
+        cs.TS_PY_DEFAULT_PARAMETER,
+        cs.TS_PY_TYPED_DEFAULT_PARAMETER,
+    }
+)
+
+
+def _py_positional_param_name(node: Node) -> str | None:
+    if node.type == cs.TS_PY_IDENTIFIER:
+        return safe_decode_text(node)
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    if name_node is not None and name_node.type == cs.TS_PY_IDENTIFIER:
+        return safe_decode_text(name_node)
+    if node.type == cs.TS_PY_TYPED_PARAMETER:
+        for child in node.children:
+            if child.type == cs.TS_PY_IDENTIFIER:
+                return safe_decode_text(child)
+    return None
+
+
+def _py_positional_param_names(func_node: Node) -> list[str]:
+    # Parameter names a positional argument can bind to, in order, STOPPING at
+    # the first `*args`/`**kwargs`/bare-`*` boundary: positional arguments past
+    # that point are absorbed by the variadic or are keyword-only, so mapping
+    # arg:<index> into the full (variadic-dropping) name list would bind to the
+    # wrong parameter (issue #1142, Greptile review on PR #1167). A leading
+    # self/cls is dropped so positions line up with call-site arguments.
+    params_node = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params_node is None:
+        return []
+    names: list[str] = []
+    for child in params_node.named_children:
+        if child.type not in _PY_POSITIONAL_PARAM_TYPES:
+            break
+        name = _py_positional_param_name(child)
+        if name is None:
+            break
+        names.append(name)
+    if names and names[0] in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
+        names = names[1:]
+    return names
 
 
 class Taint(NamedTuple):
@@ -398,6 +444,11 @@ class FlowProcessor:
         # callee returns enters resolved callee C as argument `via`. Composed
         # against the parameter-sink closure in finalize to emit origin -> sink.
         self._param_call_sites: list[tuple[Taint, str, str]] = []
+        # Per-function positional parameter names (self/cls dropped, truncated at
+        # the first variadic/keyword-only boundary) so a call site's arg:<index>
+        # resolves to the right callee parameter without binding a positional
+        # argument to a keyword-only parameter.
+        self._positional_params: dict[str, list[str]] = {}
 
     def process_flow_for_caller(
         self,
@@ -460,8 +511,13 @@ class FlowProcessor:
         tainted: _TaintMap = {}
         # Seed each parameter as a pseudo-origin so a sink or callee hand-off it
         # reaches becomes a parameter-taint summary composed at finalize (#1142).
+        # Every parameter (including keyword-only) is seeded so it can be matched
+        # by keyword; positional matching uses the truncated list recorded below.
         for pname in python_parameter_names(caller_node):
             tainted[pname] = Taint(frozenset(), frozenset(), frozenset({pname}))
+        positional = _py_positional_param_names(caller_node)
+        if positional:
+            self._positional_params[caller_qn] = positional
         for node in scope_seed_nodes(caller_node):
             tainted = self._walk_stmt(node, tainted, ctx)
 
@@ -1832,16 +1888,16 @@ class FlowProcessor:
         raw = call_name(node)
         if raw is None:
             return
-        arg_names = self._arg_names(node)
-        if not arg_names:
+        # Evaluate every argument through the value-taint evaluator, so a source
+        # or tainted callee written inline -- log_it(os.getenv("K")) -- is seen,
+        # not only a bare tainted identifier (CodeRabbit review on PR #1167).
+        arg_taints = self._arg_taints(node, tainted, ctx)
+        if not arg_taints:
             return
         sink = registry_match(ctx.write_sinks, raw, ctx.import_map)
         if sink is not None:
             dst_identity = literal_target(node, sink.target_arg, sink.target_kw)
-            for arg_name, _via in arg_names:
-                taint = tainted.get(arg_name)
-                if taint is None:
-                    continue
+            for taint, _via in arg_taints:
                 # Resolved origins emit resource flows now; pending callees defer
                 # to finalize, when the (possibly forward) callee's origins resolve.
                 for source in taint.origins:
@@ -1869,10 +1925,7 @@ class FlowProcessor:
         if callee is None:
             return
         callee_type, callee_qn = callee
-        for arg_name, via in arg_names:
-            taint = tainted.get(arg_name)
-            if taint is None:
-                continue
+        for taint, via in arg_taints:
             if taint.origins:
                 # Definitely tainted arg: emit the caller->callee arg edge now.
                 self.ingestor.ensure_relationship_batch(
@@ -1896,6 +1949,41 @@ class FlowProcessor:
                 self._param_call_sites.append((taint, callee_qn, via))
             for pname in taint.params:
                 self._param_flow_edges.append((ctx.caller_qn, pname, callee_qn, via))
+
+    def _arg_taints(
+        self, call_node: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> list[tuple[Taint, str]]:
+        # The Taint each argument carries, tagged with its `via` channel. Unlike
+        # the identifier-only reading, this evaluates the full argument
+        # expression, so an inline source or tainted call is tracked; positional
+        # index counts positional args only (keywords never advance it), keeping
+        # arg:<i> aligned with the callee's parameter order.
+        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+        if args is None:
+            return []
+        out: list[tuple[Taint, str]] = []
+        index = 0
+        for child in args.named_children:
+            if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
+                key = child.child_by_field_name(cs.TS_FIELD_NAME)
+                value = child.child_by_field_name(cs.FIELD_VALUE)
+                if key is not None and key.text is not None and value is not None:
+                    taint = self._py_value_taint(value, tainted, ctx)
+                    if taint is not None:
+                        out.append(
+                            (
+                                taint,
+                                VIA_KW_FORMAT.format(
+                                    name=key.text.decode(cs.ENCODING_UTF8)
+                                ),
+                            )
+                        )
+                continue
+            taint = self._py_value_taint(child, tainted, ctx)
+            if taint is not None:
+                out.append((taint, VIA_ARG_FORMAT.format(index=index)))
+            index += 1
+        return out
 
     def _return_taint_source(
         self, node: Node, tainted: _TaintMap, ctx: _FlowCtx
@@ -1948,7 +2036,7 @@ class FlowProcessor:
             properties={KEY_VIA: VIA_RETURN, KEY_KIND: FlowKind.RETURN.value},
         )
 
-    def finalize(self, param_names: dict[str, list[str]] | None = None) -> None:
+    def finalize(self) -> None:
         # Called once after every function has been walked (issue #712): resolve
         # the per-function return-taint summaries to a fixpoint, then drain the
         # deferred facts. A callee processed AFTER its caller is now known, so a
@@ -1957,7 +2045,6 @@ class FlowProcessor:
         # inline walk already produced (backward case) is harmless.
         if not self._enabled:
             return
-        param_names = param_names or {}
         resolved, is_tainted = self._resolve_summaries()
         for callee_type, callee_qn, caller_spec in self._return_edge_candidates:
             if is_tainted.get(callee_qn):
@@ -1989,9 +2076,9 @@ class FlowProcessor:
         # resource flow from every origin the argument resolves to (its own plus
         # any pending callee's return origins) into every sink the matched
         # parameter reaches.
-        param_sink_closure = self._resolve_param_sinks(param_names)
+        param_sink_closure = self._resolve_param_sinks()
         for arg_taint, callee_qn, via in self._param_call_sites:
-            pname = self._param_name_for_via(callee_qn, via, param_names)
+            pname = self._param_name_for_via(callee_qn, via)
             if pname is None:
                 continue
             reached = param_sink_closure.get((callee_qn, pname))
@@ -2010,6 +2097,7 @@ class FlowProcessor:
         self._param_sinks.clear()
         self._param_flow_edges.clear()
         self._param_call_sites.clear()
+        self._positional_params.clear()
 
     def _resolve_summaries(
         self,
@@ -2048,7 +2136,7 @@ class FlowProcessor:
         return resolved, is_tainted
 
     def _resolve_param_sinks(
-        self, param_names: dict[str, list[str]]
+        self,
     ) -> dict[tuple[str, str], set[tuple[ResourceKind, str]]]:
         # Close the (function, parameter) -> sinks map over transitive hand-offs:
         # if F's parameter P is passed into callee C's parameter Q, every sink Q
@@ -2061,7 +2149,7 @@ class FlowProcessor:
         while changed:
             changed = False
             for f_qn, p_name, c_qn, via in self._param_flow_edges:
-                callee_param = self._param_name_for_via(c_qn, via, param_names)
+                callee_param = self._param_name_for_via(c_qn, via)
                 if callee_param is None:
                     continue
                 src = closure.get((c_qn, callee_param))
@@ -2073,20 +2161,18 @@ class FlowProcessor:
                     changed = True
         return closure
 
-    @staticmethod
-    def _param_name_for_via(
-        callee_qn: str, via: str, param_names: dict[str, list[str]]
-    ) -> str | None:
+    def _param_name_for_via(self, callee_qn: str, via: str) -> str | None:
         # Map an argument's `via` tag to the callee's parameter name: `kw:<name>`
-        # names the parameter directly; `arg:<index>` resolves through the
-        # callee's ordered parameter names (leading self/cls already dropped, so
-        # positions line up). A callee with no recorded parameter names (e.g.
-        # Java/Rust/C#) yields None, matching the existing arg-edge limits.
+        # names the parameter directly (so keyword-only parameters still match);
+        # `arg:<index>` resolves through the callee's positional parameter names,
+        # which stop at the first variadic/keyword-only boundary so a positional
+        # argument never binds to a keyword-only parameter. A callee with no
+        # recorded positional names yields None.
         kind, _, rest = via.partition(_VIA_SEPARATOR)
         if kind == _VIA_KW_KIND:
             return rest or None
         if kind == _VIA_ARG_KIND:
-            names = param_names.get(callee_qn)
+            names = self._positional_params.get(callee_qn)
             if names is None:
                 return None
             try:
@@ -2149,40 +2235,3 @@ class FlowProcessor:
         if info is None or info[1].startswith(_BUILTIN_QN_PREFIX):
             return None
         return info
-
-    @staticmethod
-    def _arg_names(call_node: Node) -> list[tuple[str, str]]:
-        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-        if args is None:
-            return []
-        names: list[tuple[str, str]] = []
-        index = 0
-        for child in args.named_children:
-            if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
-                key = child.child_by_field_name(cs.TS_FIELD_NAME)
-                value = child.child_by_field_name(cs.FIELD_VALUE)
-                if (
-                    key is not None
-                    and key.text is not None
-                    and value is not None
-                    and value.type == cs.TS_PY_IDENTIFIER
-                    and value.text is not None
-                ):
-                    names.append(
-                        (
-                            value.text.decode(cs.ENCODING_UTF8),
-                            VIA_KW_FORMAT.format(
-                                name=key.text.decode(cs.ENCODING_UTF8)
-                            ),
-                        )
-                    )
-                continue
-            if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
-                names.append(
-                    (
-                        child.text.decode(cs.ENCODING_UTF8),
-                        VIA_ARG_FORMAT.format(index=index),
-                    )
-                )
-            index += 1
-        return names

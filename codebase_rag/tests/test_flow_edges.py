@@ -324,6 +324,44 @@ def test_param_taint_through_logging_wrapper(tmp_path: Path) -> None:
     )
 
 
+def test_param_taint_direct_positional_source_expression(tmp_path: Path) -> None:
+    # The source is written inline as the argument, not bound to a local first:
+    # log_it(os.getenv('K')). The argument expression must be evaluated, or the
+    # parameter-sink composition never sees the origin (CodeRabbit review, #1167).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def log_it(msg):\n    print(msg)\n\n"
+            "def caller():\n    log_it(os.getenv('K'))\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_direct_keyword_source_expression(tmp_path: Path) -> None:
+    # Same, passed by keyword: log_it(msg=os.getenv('K')).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def log_it(msg):\n    print(msg)\n\n"
+            "def caller():\n    log_it(msg=os.getenv('K'))\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_param_taint_through_keyword_argument(tmp_path: Path) -> None:
     # The parameter is matched by keyword name, not position.
     files = {
@@ -411,6 +449,49 @@ def test_param_taint_from_pending_argument(tmp_path: Path) -> None:
             "def build():\n    return os.getenv('K')\n\n"
             "def log_it(msg):\n    print(msg)\n\n"
             "def caller():\n    secret = build()\n    log_it(secret)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_positional_arg_not_bound_to_keyword_only_param(
+    tmp_path: Path,
+) -> None:
+    # def target(prefix, *args, sink): print(sink). A second POSITIONAL argument
+    # is absorbed by *args, not bound to the keyword-only `sink`; positional
+    # mapping must stop at the variadic so no phantom ENV->STDOUT flow appears
+    # (Greptile review on PR #1167).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def target(prefix, *args, sink):\n    print(sink)\n\n"
+            "def caller():\n    secret = os.getenv('K')\n    target('p', secret)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_keyword_only_param_composes_by_keyword(tmp_path: Path) -> None:
+    # The keyword-only parameter is still reached when passed by keyword, so the
+    # variadic guard does not suppress the genuine flow.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def target(prefix, *args, sink):\n    print(sink)\n\n"
+            "def caller():\n"
+            "    secret = os.getenv('K')\n    target('p', sink=secret)\n"
         )
     }
     edges = _run_flow(tmp_path, files)
