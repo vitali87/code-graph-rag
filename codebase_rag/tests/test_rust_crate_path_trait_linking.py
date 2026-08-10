@@ -2080,6 +2080,60 @@ def test_method_local_mod_use_reaches_its_own_functions(
     assert (f"{base}.foo.S.inner.g", f"{base}.foo.helper") not in calls, calls
 
 
+def test_two_impls_method_local_mod_inner_keep_separate_uses(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two impls of the same type each declare a method-local `mod inner`;
+    # both share the effective scope qn foo.S.inner, but their block-local
+    # uses import different helpers. Each inner's function must bind through
+    # its OWN use, not a merged foo.S.inner import map (#1017 shape 3).
+    project = temp_repo / "rs_two_impls_inner"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_two_impls_inner"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                "pub struct S;\n\n"
+                "impl S {\n"
+                "    pub fn m(&self) -> u32 {\n"
+                "        mod inner {\n"
+                "            use crate::alpha::helper;\n\n"
+                "            pub fn gm() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        inner::gm()\n"
+                "    }\n"
+                "}\n\n"
+                "impl S {\n"
+                "    pub fn n(&self) -> u32 {\n"
+                "        mod inner {\n"
+                "            use crate::beta::helper;\n\n"
+                "            pub fn gn() -> u32 {\n"
+                "                helper()\n"
+                "            }\n"
+                "        }\n"
+                "        inner::gn()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_two_impls_inner.src"
+    assert (f"{base}.foo.S.inner.gm", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.S.inner.gn", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.S.inner.gm", f"{base}.beta.helper") not in calls, calls
+    assert (f"{base}.foo.S.inner.gn", f"{base}.alpha.helper") not in calls, calls
+
+
 def test_const_block_mod_function_keeps_first_claimed_span(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -6156,3 +6210,48 @@ def test_watch_modify_of_an_already_deleted_file_leaves_the_listing_alone(
     )
     assert listing is not None, "the full run should have cached the src listing"
     assert "gamma2.rs" not in listing, sorted(listing)
+
+
+def test_two_bodied_cfg_twin_mods_keep_separate_uses(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two mutually-exclusive cfg twins declare a bodied `mod run` in one
+    # file; both share the qn foo.run and are indexed unconditionally, but
+    # each twin imports a different helper. A twin's function must bind
+    # through its OWN mod-body use, not the merged foo.run map (#1017).
+    project = temp_repo / "rs_cfg_twin_bodied"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_cfg_twin_bodied"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod alpha;\npub mod beta;\npub mod foo;\n",
+            "src/alpha.rs": "pub fn helper() -> u32 {\n    2\n}\n",
+            "src/beta.rs": "pub fn helper() -> u32 {\n    3\n}\n",
+            "src/foo.rs": (
+                '#[cfg(feature = "ext")]\n'
+                "pub mod run {\n"
+                "    use crate::alpha::helper;\n\n"
+                "    pub fn ga() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n\n"
+                '#[cfg(not(feature = "ext"))]\n'
+                "pub mod run {\n"
+                "    use crate::beta::helper;\n\n"
+                "    pub fn gb() -> u32 {\n"
+                "        helper()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_cfg_twin_bodied.src"
+    assert (f"{base}.foo.run.ga", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo.run.gb", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.foo.run.ga", f"{base}.beta.helper") not in calls, calls
+    assert (f"{base}.foo.run.gb", f"{base}.alpha.helper") not in calls, calls
