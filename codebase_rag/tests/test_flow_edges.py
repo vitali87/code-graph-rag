@@ -596,7 +596,7 @@ def test_param_taint_untainted_argument_emits_nothing(tmp_path: Path) -> None:
     )
 
 
-def _RESOURCE(edges: list[FlowEdge]) -> bool:
+def _has_env_k_to_stdout_flow(edges: list[FlowEdge]) -> bool:
     return _has(
         edges,
         "resource::ENV::K",
@@ -618,7 +618,7 @@ def test_param_taint_passthrough_return_positional(tmp_path: Path) -> None:
             "    secret = os.getenv('K')\n    y = redact(secret)\n    print(y)\n"
         )
     }
-    assert _RESOURCE(_run_flow(tmp_path, files))
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
 
 
 def test_param_taint_passthrough_return_transitive(tmp_path: Path) -> None:
@@ -632,7 +632,7 @@ def test_param_taint_passthrough_return_transitive(tmp_path: Path) -> None:
             "def caller():\n    y = wrap(os.getenv('K'))\n    print(y)\n"
         )
     }
-    assert _RESOURCE(_run_flow(tmp_path, files))
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
 
 
 def test_param_taint_passthrough_across_files(tmp_path: Path) -> None:
@@ -647,7 +647,7 @@ def test_param_taint_passthrough_across_files(tmp_path: Path) -> None:
             "    secret = os.getenv('K')\n    y = redact(secret)\n    print(y)\n"
         ),
     }
-    assert _RESOURCE(_run_flow(tmp_path, files))
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
 
 
 def test_param_taint_passthrough_defined_after_caller(tmp_path: Path) -> None:
@@ -661,7 +661,7 @@ def test_param_taint_passthrough_defined_after_caller(tmp_path: Path) -> None:
             "def redact(v):\n    return v\n"
         )
     }
-    assert _RESOURCE(_run_flow(tmp_path, files))
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
 
 
 def test_param_taint_passthrough_keyword_argument(tmp_path: Path) -> None:
@@ -673,7 +673,7 @@ def test_param_taint_passthrough_keyword_argument(tmp_path: Path) -> None:
             "def caller():\n    y = redact(v=os.getenv('K'))\n    print(y)\n"
         )
     }
-    assert _RESOURCE(_run_flow(tmp_path, files))
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
 
 
 def test_param_taint_passthrough_pending_argument(tmp_path: Path) -> None:
@@ -687,7 +687,7 @@ def test_param_taint_passthrough_pending_argument(tmp_path: Path) -> None:
             "def caller():\n    y = redact(build())\n    print(y)\n"
         )
     }
-    assert _RESOURCE(_run_flow(tmp_path, files))
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
 
 
 def test_param_taint_passthrough_returned_not_sunk(tmp_path: Path) -> None:
@@ -700,7 +700,96 @@ def test_param_taint_passthrough_returned_not_sunk(tmp_path: Path) -> None:
             "def caller():\n    secret = os.getenv('K')\n    y = redact(secret)\n"
         )
     }
-    assert not _RESOURCE(_run_flow(tmp_path, files))
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_return_chain_resolves_through_fixpoint(tmp_path: Path) -> None:
+    # A three-deep return chain (a -> b -> c, c reads the source) resolves only
+    # by re-queueing callers as each callee's origins land — exercises the return
+    # summary worklist fixpoint end to end.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def c():\n    return os.getenv('K')\n\n"
+            "def b():\n    return c()\n\n"
+            "def a():\n    return b()\n\n"
+            "def caller():\n    x = a()\n    print(x)\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_return_keyword_handoff(tmp_path: Path) -> None:
+    # The transitive hand-off passes the parameter by keyword: `return redact(v=x)`.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def redact(v):\n    return v\n\n"
+            "def wrap(x):\n    return redact(v=x)\n\n"
+            "def caller():\n    y = wrap(os.getenv('K'))\n    print(y)\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_return_parenthesized_param(tmp_path: Path) -> None:
+    # The returned call's argument wraps the parameter in parentheses.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def redact(v):\n    return v\n\n"
+            "def wrap(x):\n    return redact((x))\n\n"
+            "def caller():\n    y = wrap(os.getenv('K'))\n    print(y)\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_return_conditional_param(tmp_path: Path) -> None:
+    # A conditional argument unions both branch params; the tainted one reaches
+    # the callee's parameter and composes.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def redact(v):\n    return v\n\n"
+            "def wrap(x, y, flag):\n    return redact(x if flag else y)\n\n"
+            "def caller():\n"
+            "    y = wrap(os.getenv('K'), 'clean', True)\n    print(y)\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_return_boolean_param(tmp_path: Path) -> None:
+    # A short-circuit `x or default` argument carries the parameter's taint.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def redact(v):\n    return v\n\n"
+            "def wrap(x):\n    return redact(x or 'd')\n\n"
+            "def caller():\n    y = wrap(os.getenv('K'))\n    print(y)\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_passthrough_calls_do_not_cross_contaminate(
+    tmp_path: Path,
+) -> None:
+    # A pass-through helper invoked once with a secret must NOT taint a separate
+    # call of the same helper with a clean argument: the composition is per call
+    # site, not aggregated by callee (Greptile P1 on PR #1170). Here only the
+    # clean call is sunk, so no ENV->STDOUT flow may appear.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def passthrough(v):\n    return v\n\n"
+            "def caller():\n"
+            "    passthrough(os.getenv('K'))\n"
+            "    print(passthrough('clean'))\n"
+        )
+    }
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
 
 
 def test_param_taint_passthrough_returns_fresh_value_no_flow(tmp_path: Path) -> None:
@@ -715,4 +804,4 @@ def test_param_taint_passthrough_returns_fresh_value_no_flow(tmp_path: Path) -> 
             "    secret = os.getenv('K')\n    y = redact(secret)\n    print(y)\n"
         )
     }
-    assert not _RESOURCE(_run_flow(tmp_path, files))
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))

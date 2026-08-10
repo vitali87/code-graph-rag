@@ -58,6 +58,18 @@ _VIA_SEPARATOR = ":"
 _VIA_ARG_KIND = VIA_ARG_FORMAT.split(_VIA_SEPARATOR, 1)[0]
 _VIA_KW_KIND = VIA_KW_FORMAT.split(_VIA_SEPARATOR, 1)[0]
 
+# A per-call-site pending key for the pass-through taint a call's RESULT carries
+# (issue #1168). Folding an argument's taint into this token, rather than into
+# the shared callee summary, keeps the composition specific to THIS call so a
+# sibling call of the same helper with a clean argument is never contaminated.
+# The NUL bytes keep it distinct from any real dotted qualified name.
+_PASSTHROUGH_TOKEN_PREFIX = "\x00passthrough\x00"
+
+
+def _passthrough_result_token(caller_qn: str, call_node: Node) -> str:
+    return f"{_PASSTHROUGH_TOKEN_PREFIX}{caller_qn}\x00{call_node.start_byte}"
+
+
 # Python parameter node types a positional argument can bind to, in order.
 _PY_POSITIONAL_PARAM_TYPES = frozenset(
     {
@@ -452,9 +464,10 @@ class FlowProcessor:
         # P reaches F's return too. The return analog of _param_flow_edges.
         self._return_param_edges: list[tuple[str, str, str, str]] = []
         # Concrete call sites: an argument carrying resolved origins or pending
-        # callee returns enters resolved callee C as argument `via`. Composed
+        # callee returns enters resolved callee C as argument `via`; the fourth
+        # element is the per-call-site pass-through token (issue #1168). Composed
         # against the parameter-sink closure in finalize to emit origin -> sink.
-        self._param_call_sites: list[tuple[Taint, str, str]] = []
+        self._param_call_sites: list[tuple[Taint, str, str, str]] = []
         # Per-function positional parameter names (self/cls dropped, truncated at
         # the first variadic/keyword-only boundary) so a call site's arg:<index>
         # resolves to the right callee parameter without binding a positional
@@ -1886,7 +1899,13 @@ class FlowProcessor:
                 self._return_edge_candidates.append(
                     (callee[0], callee[1], ctx.caller_spec)
                 )
-                return Taint(frozenset(), frozenset({callee[1]}))
+                # The result also carries a per-call-site pass-through token so a
+                # tainted argument to a return-parameter reaches THIS call's
+                # consumers only (issue #1168); it resolves to nothing when the
+                # callee is not a pass-through, so non-pass-through calls are
+                # unaffected.
+                token = _passthrough_result_token(ctx.caller_qn, node)
+                return Taint(frozenset(), frozenset({callee[1], token}))
         return None
 
     def _py_value_taint_field(
@@ -1955,9 +1974,11 @@ class FlowProcessor:
             # a concrete argument records a call site to compose against the
             # callee's parameter-sink closure; an argument that IS one of this
             # function's parameters records a transitive hand-off so a wrapper of
-            # a wrapper still resolves.
+            # a wrapper still resolves. The token ties a pass-through composition
+            # to this exact call so it is not shared across calls (issue #1168).
             if taint.origins or taint.pending:
-                self._param_call_sites.append((taint, callee_qn, via))
+                token = _passthrough_result_token(ctx.caller_qn, node)
+                self._param_call_sites.append((taint, callee_qn, via, token))
             for pname in taint.params:
                 self._param_flow_edges.append((ctx.caller_qn, pname, callee_qn, via))
 
@@ -2138,12 +2159,14 @@ class FlowProcessor:
         return_params = self._resolve_return_params()
         extra_origins: dict[str, set[HandleBinding]] = defaultdict(set)
         extra_pending: dict[str, set[str]] = defaultdict(set)
-        for arg_taint, callee_qn, via in self._param_call_sites:
+        for arg_taint, callee_qn, via, token in self._param_call_sites:
             pname = self._param_name_for_via(callee_qn, via)
             if pname is None or (callee_qn, pname) not in return_params:
                 continue
-            extra_origins[callee_qn] |= arg_taint.origins
-            extra_pending[callee_qn] |= arg_taint.pending
+            # Keyed by the per-call token (not the callee) so this call's result
+            # carries only its own argument's taint (issue #1168).
+            extra_origins[token] |= arg_taint.origins
+            extra_pending[token] |= arg_taint.pending
         resolved, is_tainted = self._resolve_summaries(extra_origins, extra_pending)
         for callee_type, callee_qn, caller_spec in self._return_edge_candidates:
             if is_tainted.get(callee_qn):
@@ -2176,7 +2199,7 @@ class FlowProcessor:
         # any pending callee's return origins) into every sink the matched
         # parameter reaches.
         param_sink_closure = self._resolve_param_sinks()
-        for arg_taint, callee_qn, via in self._param_call_sites:
+        for arg_taint, callee_qn, via, _token in self._param_call_sites:
             pname = self._param_name_for_via(callee_qn, via)
             if pname is None:
                 continue
