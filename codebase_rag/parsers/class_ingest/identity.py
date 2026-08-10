@@ -117,12 +117,18 @@ def build_nested_qualified_name_for_class(
     module_qn: str,
     class_name: str,
     lang_config: LanguageSpec,
+    include_impl_targets: bool = False,
 ) -> str | None:
     if not isinstance(class_node.parent, Node):
         return None
 
+    # An inline mod under an `impl Type` body keys under that target
+    # (foo.S.inner), exactly as the items inside it do, so their DEFINES chain
+    # agrees with the Module node (issue #1018). Class/struct qns keep the
+    # default (impl targets excluded) so this stays opt-in.
     path_parts = rs_utils.build_module_path(
         class_node,
+        include_impl_targets=include_impl_targets,
         include_classes=True,
         class_node_types=lang_config.class_node_types,
     )

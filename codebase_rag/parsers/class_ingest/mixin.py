@@ -1700,7 +1700,11 @@ class ClassIngestMixin:
 
             module_name = safe_decode_text(module_name_node)
             nested_qn = id_.build_nested_qualified_name_for_class(
-                module_node, module_qn, module_name or "", lang_config
+                module_node,
+                module_qn,
+                module_name or "",
+                lang_config,
+                include_impl_targets=True,
             )
             inline_module_qn = nested_qn or f"{module_qn}.{module_name}"
 
@@ -1739,8 +1743,36 @@ class ClassIngestMixin:
 
             # Link the inline module into the containment tree: its enclosing
             # module (file module, or an outer mod) DEFINES it. Without this the
-            # inline Module node is an orphan defining nothing.
-            parent_module_qn = inline_module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            # inline Module node is an orphan defining nothing. The parent is
+            # the nearest enclosing MODULE node, whose qn is rebuilt with the
+            # same scoped construction used to register it. Neither the qn's
+            # rsplit prefix nor a mods-only re-walk works: under a trait/impl
+            # body a mod keeps the class scope in its qn (foo.T.outer), so the
+            # prefix foo.T is the TRAIT node (not a module), and a mods-only
+            # walk drops that scope to foo.outer (which does not exist) — either
+            # way the Module->Module DEFINES dangles (issues #1018, nested #1166).
+            enclosing_module_node = module_node.parent
+            while (
+                enclosing_module_node is not None
+                and enclosing_module_node.type != cs.TS_RS_MOD_ITEM
+            ):
+                enclosing_module_node = enclosing_module_node.parent
+            if enclosing_module_node is not None:
+                enclosing_name = safe_decode_text(
+                    enclosing_module_node.child_by_field_name(cs.FIELD_NAME)
+                )
+                parent_module_qn = (
+                    id_.build_nested_qualified_name_for_class(
+                        enclosing_module_node,
+                        module_qn,
+                        enclosing_name or "",
+                        lang_config,
+                        include_impl_targets=True,
+                    )
+                    or f"{module_qn}{cs.SEPARATOR_DOT}{enclosing_name}"
+                )
+            else:
+                parent_module_qn = module_qn
             if parent_module_qn and parent_module_qn != inline_module_qn:
                 self.ingestor.ensure_relationship_batch(
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, parent_module_qn),
