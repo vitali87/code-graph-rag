@@ -1983,6 +1983,8 @@ def test_assoc_const_block_use_does_not_pollute_file_map(
     base = "rs_const_block_use.src"
     assert (f"{base}.foo.other", f"{base}.beta.helper") in calls, calls
     assert (f"{base}.foo.other", f"{base}.alpha.helper") not in calls, calls
+    assert (f"{base}.foo", f"{base}.alpha.helper") in calls, calls
+    assert (f"{base}.foo", f"{base}.beta.helper") not in calls, calls
     imports = _pairs(mock_ingestor, RelationshipType.IMPORTS.value)
     assert (f"{base}.foo", f"{base}.alpha") in imports, imports
     assert (f"{base}.foo", f"{base}.beta") in imports, imports
@@ -3716,6 +3718,44 @@ def test_initializer_block_use_binds_the_blocks_own_call_at_file_level(
     assert (f"{base}.a", f"{base}.gamma.helper") in calls, calls
     mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
     assert not mapping or "helper" not in mapping, mapping
+
+
+def test_enum_discriminant_block_use_binds_the_blocks_own_call(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An enum discriminant is an expression block outside any function or
+    # const/static item. A use inside it is scoped to that block alone: the
+    # discriminant's own call must bind through it, while a sibling fn keeps
+    # the file-level use and the file import map stays unpolluted (#1016).
+    project = temp_repo / "rs_enum_disc_block"
+    _write(
+        project,
+        {
+            "Cargo.toml": '[package]\nname = "rs_enum_disc_block"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod beta;\npub mod gamma;\npub mod a;\n",
+            "src/beta.rs": "pub const fn helper() -> u32 {\n    2\n}\n",
+            "src/gamma.rs": "pub const fn helper() -> u32 {\n    3\n}\n",
+            "src/a.rs": (
+                "use crate::beta::helper;\n\n"
+                "#[repr(u32)]\n"
+                "pub enum E {\n"
+                "    A = { use crate::gamma::helper; helper() },\n"
+                "}\n\n"
+                "pub fn f() -> u32 {\n"
+                "    helper()\n"
+                "}\n"
+            ),
+        },
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+
+    calls = _calls(mock_ingestor)
+    base = "rs_enum_disc_block.src"
+    assert (f"{base}.a", f"{base}.gamma.helper") in calls, calls
+    assert (f"{base}.a.f", f"{base}.beta.helper") in calls, calls
+    assert (f"{base}.a.f", f"{base}.gamma.helper") not in calls, calls
+    mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
+    assert mapping and mapping.get("helper") == f"{base}.beta.helper", mapping
 
 
 def test_initializer_block_use_binds_the_blocks_own_call_in_a_fn(
