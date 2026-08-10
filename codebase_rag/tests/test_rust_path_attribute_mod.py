@@ -708,8 +708,10 @@ def test_impl_of_a_trait_through_unrepresentable_redirect_binds_nothing(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     # `impl crate::helpers::T for S` where helpers is unrepresentable: the
-    # trait path has no referent, so it must not bind an IMPLEMENTS edge to a
-    # same-named decoy trait the name-anchored fallback would find (#1082).
+    # trait path has no referent, so it binds no IMPLEMENTS edge to a
+    # same-named decoy trait the name-anchored fallback would find, and its
+    # methods must not misbind as OVERRIDES of another trait S implements
+    # whose method shares the name (#1082).
     project = temp_repo / "rs_unrep_trait"
     _write(
         project,
@@ -717,20 +719,25 @@ def test_impl_of_a_trait_through_unrepresentable_redirect_binds_nothing(
             "Cargo.toml": ('[package]\nname = "rs_unrep_trait"\nversion = "0.1.0"\n'),
             "src/lib.rs": (
                 '#[path = "/nowhere/helpers.rs"]\nmod helpers;\n\n'
-                "pub mod decoy;\npub mod a;\n"
+                "pub mod decoy;\npub mod other;\npub mod a;\n"
             ),
             "src/decoy.rs": "pub trait T {\n    fn go(&self) -> i32;\n}\n",
+            "src/other.rs": "pub trait Other {\n    fn go(&self) -> i32;\n}\n",
             "src/a.rs": (
                 "pub struct S;\n\n"
                 "impl crate::helpers::T for S {\n"
-                "    fn go(&self) -> i32 {\n        1\n    }\n}\n"
+                "    fn go(&self) -> i32 {\n        1\n    }\n}\n\n"
+                "impl crate::other::Other for S {\n"
+                "    fn go(&self) -> i32 {\n        2\n    }\n}\n"
             ),
         },
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
-    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     base = "rs_unrep_trait.src"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
     assert (f"{base}.a.S", f"{base}.decoy.T") not in implements, implements
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    assert (f"{base}.a.S.go", f"{base}.decoy.T.go") not in overrides, overrides
 
 
 def _scan_cost_per_char(source: str) -> tuple[float, RustEntryDecls]:

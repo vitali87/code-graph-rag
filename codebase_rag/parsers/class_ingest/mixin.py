@@ -1270,6 +1270,7 @@ class ClassIngestMixin:
         # from the trait map as no information and guesses (issue #1078).
         impl_method_qns: list[str] = []
         trait_impl_method_qns: list[str] | None = None
+        trait_unrepresentable = False
         if trait_name := rs_utils.extract_impl_trait(class_node):
             trait_qn, alt_trait_qn = self._resolve_rust_trait_qn(
                 rs_utils.extract_impl_trait_path(class_node) or trait_name,
@@ -1313,6 +1314,12 @@ class ClassIngestMixin:
                 # concrete impl redirects, matching the class-declaration
                 # IMPLEMENTS path.
                 self.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
+            else:
+                # The trait path has no referent, so no OVERRIDES target is
+                # knowable: classify these methods as inherent (below) so the
+                # generic override pass never matches them by name against a
+                # DIFFERENT same-named trait the type also implements (#1082).
+                trait_unrepresentable = True
 
         body_node = class_node.child_by_field_name("body")
 
@@ -1397,7 +1404,10 @@ class ClassIngestMixin:
         # The PATH decides, not the name: `extract_impl_trait` reads no name
         # off `impl std::ops::Add<u32> for S`, and calling that inherent would
         # bar a real trait impl's methods from ever overriding.
-        if rs_utils.extract_impl_trait_path(class_node) is None:
+        if (
+            rs_utils.extract_impl_trait_path(class_node) is None
+            or trait_unrepresentable
+        ):
             self.rust_inherent_impl_methods.update(impl_method_qns)
 
     def _ingest_class_methods(
