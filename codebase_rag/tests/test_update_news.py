@@ -54,9 +54,14 @@ class TestIsFeatureTheme:
             "Developer Experience",
             "Tooling",
             "Refactor",
+            "Refactors",
             "Bug Fix",
+            "Bug-Fix",
             "Release Notes",
             "Dependency Bumps",
+            "Documentation",
+            "Tests",
+            "Performance",
         ):
             assert not is_feature_theme(theme), theme
 
@@ -67,6 +72,8 @@ class TestIsFeatureTheme:
             "Structural Search & Replace",
             "Web Search",
             "Dependency Graph",
+            "Pipeline Analysis",
+            "Workflow Visualisation",
         ):
             assert is_feature_theme(theme), theme
 

@@ -31,13 +31,14 @@ MAX_ENTRIES = 3
 # README, independent of what the AI generator emits (issue: news must be
 # features, not devx).
 NON_FEATURE_THEME = re.compile(
-    r"\b("
-    r"automation|release|releases|ci|cd|devx|tooling|toolchain|changelog|"
-    r"refactor|refactoring|chore|workflow|workflows|pipeline|packaging|"
-    r"lint|linting|formatting|scaffolding|maintenance|benchmark|benchmarks|"
-    r"coverage|hotfix|bugfix|bugfixes|bump|bumps"
+    r"\b(?:"
+    r"automation|releases?|ci|cd|devx|tooling|changelog|"
+    r"refactor(?:s|ing|ed)?|chore|packaging|"
+    r"lint(?:ing|ers?)?|formatting|scaffolding|maintenance|"
+    r"benchmarks?|coverage|hotfix(?:es)?|bumps?|"
+    r"docs?|documentation|tests?|testing|perf|performance|deprecations?"
     r")\b"
-    r"|developer experience|release notes|bug fix",
+    r"|bug[- ]?fix(?:es)?|developer experience|release notes",
     re.IGNORECASE,
 )
 
