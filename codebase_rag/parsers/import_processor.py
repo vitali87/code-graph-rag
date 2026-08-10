@@ -895,6 +895,11 @@ class ImportProcessor:
                 for full_name in self.import_mapping[module_qn].values():
                     if (module_qn, full_name) in self._cpp_declaration_mappings:
                         continue
+                    if full_name == cs.RUST_UNRESOLVABLE_QN:
+                        # The unrepresentable-#[path] sentinel stays in the map
+                        # for name binding but names no module, so it must never
+                        # become a phantom IMPORTS edge (issue #1082).
+                        continue
                     self._deferred_import_edges.append(
                         DeferredImportEdge(
                             module_qn=module_qn,
@@ -912,6 +917,11 @@ class ImportProcessor:
         # Entry point for import shapes discovered outside parse_imports (the
         # CommonJS destructuring fallback); every IMPORTS edge goes through the same
         # deferred verification.
+        if full_name == cs.RUST_UNRESOLVABLE_QN:
+            # The sentinel names a module the qn scheme cannot key (an
+            # unrepresentable #[path] target): it has no referent, so it must
+            # never become a phantom ExternalModule IMPORTS edge (issue #1082).
+            return
         self._deferred_import_edges.append(
             DeferredImportEdge(
                 module_qn=module_qn, full_name=full_name, language=language

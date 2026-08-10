@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
+from codebase_rag.constants import RelationshipType
 from codebase_rag.parsers.import_processor import (
     RustEntryDecls,
     _rs_entry_decls_of,
@@ -21,6 +22,7 @@ from codebase_rag.parsers.import_processor import (
 from codebase_rag.tests.test_rust_cfg_test_mod_declarations import _declared_gates
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _calls,
+    _pairs,
     _write,
     create_and_run_updater,
 )
@@ -638,6 +640,37 @@ def test_an_absolute_redirect_binds_no_crate_path(
     calls = _calls(mock_ingestor)
     base = "rs_path_attr_abs_call.src"
     assert (f"{base}.a.run", f"{base}.helpers.fixture") not in calls, calls
+
+
+def test_use_import_through_unrepresentable_redirect_emits_no_phantom(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `use` of an item from an unrepresentable-#[path] module must not bind
+    # the name-derived shadow src/helpers.rs, and the unresolvable sentinel
+    # must never leak out as a phantom IMPORTS edge (issue #1082).
+    project = temp_repo / "rs_unrep_use"
+    _write(
+        project,
+        {
+            "Cargo.toml": ('[package]\nname = "rs_unrep_use"\nversion = "0.1.0"\n'),
+            "src/lib.rs": (
+                '#[path = "/nowhere/helpers.rs"]\nmod helpers;\n\npub mod a;\n'
+            ),
+            "src/helpers.rs": "pub fn fixture() -> i32 {\n    1\n}\n",
+            "src/a.rs": (
+                "use crate::helpers::fixture;\n\npub fn run() -> i32 {\n"
+                "    fixture()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    base = "rs_unrep_use.src"
+    assert (f"{base}.a.run", f"{base}.helpers.fixture") not in calls, calls
+    imports = _pairs(mock_ingestor, RelationshipType.IMPORTS.value)
+    assert not any(
+        "\x00" in target or "unrepresentable" in target for _src, target in imports
+    ), imports
 
 
 def _scan_cost_per_char(source: str) -> tuple[float, RustEntryDecls]:

@@ -1006,10 +1006,32 @@ class CallResolver:
                 self._simple_resolution_cache[cache_key] = result
             return result
 
+        # A bare name imported from an unrepresentable #[path] module is
+        # spoken for by that (unresolvable) import: the precise probes above
+        # already declined, so drop it rather than let the trie rebind it to
+        # a name-derived shadow file that merely shares the name (issue #1082).
+        if (
+            language == cs.SupportedLanguage.RUST
+            and cs.SEPARATOR_DOT not in call_name
+            and self._rust_name_maps_unresolvable(call_name, module_qn, caller_qn)
+        ):
+            if use_cache:
+                self._simple_resolution_cache[cache_key] = None
+            return None
+
         result = self._try_resolve_via_trie(call_name, module_qn, language, call_point)
         if use_cache:
             self._simple_resolution_cache[cache_key] = result
         return result
+
+    def _rust_name_maps_unresolvable(
+        self, call_name: str, module_qn: str, caller_qn: str | None
+    ) -> bool:
+        import_mapping = self.import_processor.import_mapping
+        for scope in (*self._rust_enclosing_scopes(module_qn, caller_qn), module_qn):
+            if import_mapping.get(scope, {}).get(call_name) == cs.RUST_UNRESOLVABLE_QN:
+                return True
+        return False
 
     def _resolve_dart_external_base_arg_member(
         self,
@@ -1442,11 +1464,13 @@ class CallResolver:
                 )
             ) and not self._rust_block_item_hidden(local[1], module_qn, call_point):
                 return local, None
-            target = (
-                weak
-                if weak is not None
-                else import_mapping.get(scope, {}).get(call_name)
-            )
+            raw = import_mapping.get(scope, {}).get(call_name)
+            if raw == cs.RUST_UNRESOLVABLE_QN:
+                # An unrepresentable #[path] import binds no scope: keep
+                # walking rather than surfacing the sentinel as a target
+                # (issue #1082).
+                raw = None
+            target = weak if weak is not None else raw
             if target is not None:
                 return None, target
             scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
@@ -1645,6 +1669,11 @@ class CallResolver:
     def _decide_rust_module_item(
         self, mapped: str, rest: list[str], item: str, owner: str
     ) -> tuple[tuple[str, str] | None, bool]:
+        if mapped == cs.RUST_UNRESOLVABLE_QN:
+            # A name imported from an unrepresentable #[path] module has no
+            # referent: decided drop so no fallback binds a name-derived
+            # shadow file (issue #1082).
+            return None, True
         resolved = self._rust_local_qn(mapped, owner)
         if resolved is None:
             head = mapped.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
