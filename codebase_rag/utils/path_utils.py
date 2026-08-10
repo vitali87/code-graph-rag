@@ -42,6 +42,20 @@ def cached_resolve_posix(file_path: Path) -> str:
     return file_path.resolve().as_posix()
 
 
+@lru_cache(maxsize=4096)
+def cached_file_identity_posix(file_path: Path) -> str:
+    """Absolute POSIX identity that survives the file's own deletion.
+
+    ``resolve()`` dereferences a leaf symlink to its target, but once the link
+    is deleted that target can no longer be recovered, so a node keyed on it can
+    never be matched for deletion and leaks (GHSA-85gg aside, issue #1154).
+    Resolving only the parent (which outlives the leaf) and keeping the leaf
+    name yields a key that ingestion and deletion agree on, and one that stays
+    inside the repository for a link whose target points outside it.
+    """
+    return (file_path.parent.resolve() / file_path.name).as_posix()
+
+
 # #495: .cgrignore lines and --exclude values are interpreted with
 # .gitignore (gitwildmatch) semantics: bare names match at any depth (as
 # before), and globs / anchoring / dir-only trailing slash now work. The

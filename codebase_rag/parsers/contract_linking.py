@@ -19,7 +19,7 @@ from .. import constants as cs
 from .. import logs as ls
 from ..services import IngestorProtocol, QueryProtocol
 from ..types_defs import PropertyDict
-from ..utils.path_utils import cached_resolve_posix
+from ..utils.path_utils import cached_file_identity_posix, cached_resolve_posix
 from .contracts import ContractOperation, discover_contract_operations
 from .endpoints import _has_literal_segment, url_matches_template
 from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
@@ -119,13 +119,13 @@ def _indexed_only(
     # Only a contract file the graph holds can anchor its operations; a file
     # the walk skipped has no File node to hang them off, and a Resource that
     # reaches nothing but Resources is pruned as unanchored anyway.
-    paths = sorted({cached_resolve_posix(op.source) for op in operations})
+    paths = sorted({cached_file_identity_posix(op.source) for op in operations})
     rows = ingestor.fetch_all(CYPHER_INDEXED_CONTRACT_FILES, {"paths": paths})
     indexed = {str(row.get(cs.KEY_ABSOLUTE_PATH)) for row in rows}
     return [
         operation
         for operation in operations
-        if cached_resolve_posix(operation.source) in indexed
+        if cached_file_identity_posix(operation.source) in indexed
     ]
 
 
@@ -165,7 +165,7 @@ def _emit_contract(
         (
             cs.NodeLabel.FILE,
             cs.KEY_ABSOLUTE_PATH,
-            cached_resolve_posix(operation.source),
+            cached_file_identity_posix(operation.source),
         ),
         cs.RelationshipType.EXPOSES,
         (

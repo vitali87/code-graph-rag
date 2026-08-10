@@ -9,6 +9,7 @@ from ..language_spec import LANGUAGE_SPECS
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeIdentifier
 from ..utils.path_utils import (
+    cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
     should_skip_path,
@@ -148,18 +149,19 @@ class StructureProcessor:
             relative_root, parent_container_qn
         )
 
+        file_identity = cached_file_identity_posix(file_path)
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.FILE,
             {
                 cs.KEY_PATH: relative_filepath,
                 cs.KEY_NAME: file_name,
                 cs.KEY_EXTENSION: file_path.suffix,
-                cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
+                cs.KEY_ABSOLUTE_PATH: file_identity,
             },
         )
 
         self.ingestor.ensure_relationship_batch(
             parent_identifier,
             cs.RelationshipType.CONTAINS_FILE,
-            (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, cached_resolve_posix(file_path)),
+            (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, file_identity),
         )
