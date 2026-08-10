@@ -9,6 +9,10 @@
   <img src="assets/logo-light-any.png" alt="Code-Graph-RAG Logo" width="480">
 
   <p>
+    <a href="https://trendshift.io/repositories/99619" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/99619" alt="vitali87/code-graph-rag | Trendshift" width="250" height="55"/></a>
+  </p>
+
+  <p>
   <!-- Badges below are commented out while the GitHub account is suspended. Restore them when the account is reinstated.
        Stars/Forks: shields.io hits GitHub's API (returns "repo not found" for suspended accounts).
        gitcgr: indexes from GitHub (shows "not indexed" while unavailable).
