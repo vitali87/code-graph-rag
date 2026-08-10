@@ -276,6 +276,12 @@ class ClassIngestMixin:
             rewritten = self.import_processor._rewrite_rust_local_use_path(
                 path, module_qn
             )
+            if rewritten == cs.RUST_UNRESOLVABLE_QN:
+                # The trait path traverses an unrepresentable #[path] module:
+                # it has no referent. Surface the sentinel so the caller drops
+                # the relationship entirely, rather than the name-anchored qn,
+                # which would rebind to a same-named trait shadow (issue #1082).
+                return cs.RUST_UNRESOLVABLE_QN, None
             return (rewritten, anchored) if rewritten != path else (anchored, None)
         # The head is itself a name a `use` may have bound (`use std::io;`
         # then `impl io::Read`), and only the expanded crate says who speaks
@@ -1264,42 +1270,56 @@ class ClassIngestMixin:
         # from the trait map as no information and guesses (issue #1078).
         impl_method_qns: list[str] = []
         trait_impl_method_qns: list[str] | None = None
+        trait_unrepresentable = False
         if trait_name := rs_utils.extract_impl_trait(class_node):
             trait_qn, alt_trait_qn = self._resolve_rust_trait_qn(
                 rs_utils.extract_impl_trait_path(class_node) or trait_name,
                 trait_name,
                 owner_module_qn,
             )
-            # The trait (or the impl target) may live in a file not yet
-            # parsed; hold the IMPLEMENTS edge back for
-            # resolve_deferred_inherits so an unresolvable trait
-            # (std::fmt::Display) emits no phantom edge.
-            trait_entry = DeferredInherit(
-                rel_type=cs.RelationshipType.IMPLEMENTS,
-                child_qn=class_qn,
-                parent_qn=trait_qn,
-                module_qn=owner_module_qn,
-                base_index=0,
-                language=cs.SupportedLanguage.RUST,
-                alt_parent_qn=alt_trait_qn,
-            )
-            self._deferred_inherits.append(trait_entry)
-            # Collect this block's methods against the trait AS WRITTEN: if the
-            # trait belongs to another crate, its dispatch is the only caller
-            # they can ever have (issue #1048). The decision waits for
-            # resolve_deferred_inherits, when every first-party trait is
-            # registered.
-            trait_impl_method_qns = impl_method_qns
-            self._rust_trait_impls.append(
-                RustTraitImpl(
-                    entry=trait_entry,
-                    spelling=rs_utils.extract_impl_trait_path(class_node) or trait_name,
-                    method_qns=trait_impl_method_qns,
+            if trait_qn != cs.RUST_UNRESOLVABLE_QN:
+                # The trait (or the impl target) may live in a file not yet
+                # parsed; hold the IMPLEMENTS edge back for
+                # resolve_deferred_inherits so an unresolvable trait
+                # (std::fmt::Display) emits no phantom edge. A trait path
+                # through an unrepresentable #[path] module has no referent at
+                # all, so it is skipped entirely rather than bound to a
+                # name-derived shadow trait (issue #1082).
+                trait_entry = DeferredInherit(
+                    rel_type=cs.RelationshipType.IMPLEMENTS,
+                    child_qn=class_qn,
+                    parent_qn=trait_qn,
+                    module_qn=owner_module_qn,
+                    base_index=0,
+                    language=cs.SupportedLanguage.RUST,
+                    alt_parent_qn=alt_trait_qn,
                 )
-            )
-            # Record the implementer so a Rust trait call to the sole concrete
-            # impl redirects, matching the class-declaration IMPLEMENTS path.
-            self.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
+                self._deferred_inherits.append(trait_entry)
+                # Collect this block's methods against the trait AS WRITTEN: if
+                # the trait belongs to another crate, its dispatch is the only
+                # caller they can ever have (issue #1048). The decision waits
+                # for resolve_deferred_inherits, when every first-party trait
+                # is registered.
+                trait_impl_method_qns = impl_method_qns
+                self._rust_trait_impls.append(
+                    RustTraitImpl(
+                        entry=trait_entry,
+                        spelling=(
+                            rs_utils.extract_impl_trait_path(class_node) or trait_name
+                        ),
+                        method_qns=trait_impl_method_qns,
+                    )
+                )
+                # Record the implementer so a Rust trait call to the sole
+                # concrete impl redirects, matching the class-declaration
+                # IMPLEMENTS path.
+                self.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
+            else:
+                # The trait path has no referent, so no OVERRIDES target is
+                # knowable: classify these methods as inherent (below) so the
+                # generic override pass never matches them by name against a
+                # DIFFERENT same-named trait the type also implements (#1082).
+                trait_unrepresentable = True
 
         body_node = class_node.child_by_field_name("body")
 
@@ -1384,7 +1404,10 @@ class ClassIngestMixin:
         # The PATH decides, not the name: `extract_impl_trait` reads no name
         # off `impl std::ops::Add<u32> for S`, and calling that inherent would
         # bar a real trait impl's methods from ever overriding.
-        if rs_utils.extract_impl_trait_path(class_node) is None:
+        if (
+            rs_utils.extract_impl_trait_path(class_node) is None
+            or trait_unrepresentable
+        ):
             self.rust_inherent_impl_methods.update(impl_method_qns)
 
     def _ingest_class_methods(
@@ -1759,11 +1782,16 @@ class ClassIngestMixin:
             # where the qn scheme keys the module, so the name-derived
             # spellings below back nothing at all here (issue #1035).
             return {redirect}
-        candidates = {
-            self.import_processor._rust_resolve_relative(
-                module_qn, [*chain, module_name], module_qn
-            )
-        }
+        resolved_candidate = self.import_processor._rust_resolve_relative(
+            module_qn, [*chain, module_name], module_qn
+        )
+        # An unrepresentable #[path] target yields no candidate qn (issue
+        # #1082); the file-derived spelling below still applies for a chain.
+        candidates = (
+            set()
+            if resolved_candidate == cs.RUST_UNRESOLVABLE_QN
+            else {resolved_candidate}
+        )
         if chain:
             # A chain declaration's target FILE lives under the declaring
             # file's directory tree regardless of the inline qn nesting

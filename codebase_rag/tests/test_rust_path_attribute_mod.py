@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
+from codebase_rag.constants import RelationshipType
 from codebase_rag.parsers.import_processor import (
     RustEntryDecls,
     _rs_entry_decls_of,
@@ -21,6 +22,7 @@ from codebase_rag.parsers.import_processor import (
 from codebase_rag.tests.test_rust_cfg_test_mod_declarations import _declared_gates
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _calls,
+    _pairs,
     _write,
     create_and_run_updater,
 )
@@ -611,6 +613,131 @@ def test_an_absolute_redirect_claims_nothing(
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     gates = _declared_gates(mock_ingestor, "rs_path_attr_abs.src.lib")
     assert not any("nowhere" in gate for gate in gates), gates
+
+
+def test_an_absolute_redirect_binds_no_crate_path(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The crate-path side must stand down like the gate: a #[path] naming a
+    # file outside the indexed tree has no referent, so crate::helpers must
+    # resolve to nothing rather than fall back to the name-derived sibling
+    # src/helpers.rs, an undeclared shadow the mod never backs (issue #1082).
+    project = temp_repo / "rs_path_attr_abs_call"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_path_attr_abs_call"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": (
+                '#[path = "/nowhere/helpers.rs"]\nmod helpers;\n\npub mod a;\n'
+            ),
+            "src/helpers.rs": "pub fn fixture() -> i32 {\n    1\n}\n",
+            "src/a.rs": ("pub fn run() -> i32 {\n    crate::helpers::fixture()\n}\n"),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    base = "rs_path_attr_abs_call.src"
+    assert (f"{base}.a.run", f"{base}.helpers.fixture") not in calls, calls
+
+
+def test_use_import_through_unrepresentable_redirect_emits_no_phantom(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `use` of an item from an unrepresentable-#[path] module must not bind
+    # the name-derived shadow src/helpers.rs, and the unresolvable sentinel
+    # must never leak out as a phantom IMPORTS edge (issue #1082).
+    project = temp_repo / "rs_unrep_use"
+    _write(
+        project,
+        {
+            "Cargo.toml": ('[package]\nname = "rs_unrep_use"\nversion = "0.1.0"\n'),
+            "src/lib.rs": (
+                '#[path = "/nowhere/helpers.rs"]\nmod helpers;\n\npub mod a;\n'
+            ),
+            "src/helpers.rs": "pub fn fixture() -> i32 {\n    1\n}\n",
+            "src/a.rs": (
+                "use crate::helpers::fixture;\n\npub fn run() -> i32 {\n"
+                "    fixture()\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    base = "rs_unrep_use.src"
+    assert (f"{base}.a.run", f"{base}.helpers.fixture") not in calls, calls
+    # The only import in the crate names an unrepresentable module, so no
+    # IMPORTS edge is valid: not the sentinel, and not a shadow fallback.
+    imports = _pairs(mock_ingestor, RelationshipType.IMPORTS.value)
+    assert not imports, imports
+
+
+def test_inner_unrepresentable_use_shadows_an_outer_same_named_item(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An inner inline mod's `use` of a name through an unrepresentable #[path]
+    # still OWNS that name inside the mod, shadowing an outer same-named item:
+    # the inner call must drop, not bind the outer fixture (issue #1082).
+    project = temp_repo / "rs_unrep_shadow"
+    _write(
+        project,
+        {
+            "Cargo.toml": ('[package]\nname = "rs_unrep_shadow"\nversion = "0.1.0"\n'),
+            "src/lib.rs": "pub mod a;\n",
+            "src/a.rs": (
+                "pub fn fixture() -> i32 {\n    9\n}\n\n"
+                "pub mod inner {\n"
+                '    #[path = "/nowhere/helpers.rs"]\n'
+                "    mod helpers;\n\n"
+                "    use crate::a::inner::helpers::fixture;\n\n"
+                "    pub fn run() -> i32 {\n"
+                "        fixture()\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    calls = _calls(mock_ingestor)
+    base = "rs_unrep_shadow.src"
+    assert (f"{base}.a.inner.run", f"{base}.a.fixture") not in calls, calls
+
+
+def test_impl_of_a_trait_through_unrepresentable_redirect_binds_nothing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `impl crate::helpers::T for S` where helpers is unrepresentable: the
+    # trait path has no referent, so it binds no IMPLEMENTS edge to a
+    # same-named decoy trait the name-anchored fallback would find, and its
+    # methods must not misbind as OVERRIDES of another trait S implements
+    # whose method shares the name (#1082).
+    project = temp_repo / "rs_unrep_trait"
+    _write(
+        project,
+        {
+            "Cargo.toml": ('[package]\nname = "rs_unrep_trait"\nversion = "0.1.0"\n'),
+            "src/lib.rs": (
+                '#[path = "/nowhere/helpers.rs"]\nmod helpers;\n\n'
+                "pub mod decoy;\npub mod other;\npub mod a;\n"
+            ),
+            "src/decoy.rs": "pub trait T {\n    fn go(&self) -> i32;\n}\n",
+            "src/other.rs": "pub trait Other {\n    fn go(&self) -> i32;\n}\n",
+            "src/a.rs": (
+                "pub struct S;\n\n"
+                "impl crate::helpers::T for S {\n"
+                "    fn go(&self) -> i32 {\n        1\n    }\n}\n\n"
+                "impl crate::other::Other for S {\n"
+                "    fn go(&self) -> i32 {\n        2\n    }\n}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_unrep_trait.src"
+    implements = _pairs(mock_ingestor, RelationshipType.IMPLEMENTS.value)
+    assert (f"{base}.a.S", f"{base}.decoy.T") not in implements, implements
+    overrides = _pairs(mock_ingestor, RelationshipType.OVERRIDES.value)
+    assert (f"{base}.a.S.go", f"{base}.decoy.T.go") not in overrides, overrides
 
 
 def _scan_cost_per_char(source: str) -> tuple[float, RustEntryDecls]:
