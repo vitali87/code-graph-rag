@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Node
+
+if TYPE_CHECKING:
+    from ...types_defs import FunctionLocation, FunctionSpanKey
 
 from ... import constants as cs
 from ...capture import CaptureSelection
@@ -45,6 +48,7 @@ from ..utils import (
     c_positional_parameter_slots,
     cpp_positional_parameter_slots,
     csharp_positional_parameter_slots,
+    function_span_key,
     go_positional_parameter_slots,
     java_positional_parameter_slots,
     js_ts_positional_parameter_slots,
@@ -444,11 +448,17 @@ class FlowProcessor:
         import_processor: ImportProcessor,
         resolver: CallResolver,
         selection: CaptureSelection,
+        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self._import_processor = import_processor
         self._resolver = resolver
         self._selection = selection
+        # Span-key -> registered FunctionLocation, so a nested def's capture record
+        # uses the SAME (suffix-aware) qn the definition pass assigned, matching the
+        # qn its own walk is keyed under; without it a duplicate-named nested def
+        # would record under a reconstructed unsuffixed qn that never composes.
+        self._function_locations = function_locations or {}
         self._enabled = selection.rel_enabled(cs.RelationshipType.FLOWS_TO)
         # Per-function return-taint SUMMARY collected during the walk: caller QN
         # -> the Taint it returns (resolved origins + pending callee QNs whose
@@ -2463,7 +2473,15 @@ class FlowProcessor:
         if resolved is None:
             return
         name, inner = resolved
-        nested_qn = f"{ctx.caller_qn}{cs.SEPARATOR_DOT}{name}"
+        # Use the qn the definition pass registered for this exact node (it carries
+        # the duplicate-name suffix a manual reconstruction would miss); fall back to
+        # the reconstructed name only when the node was not registered.
+        loc = self._function_locations.get(function_span_key(ctx.module_qn, inner))
+        nested_qn = (
+            loc.qualified_name
+            if loc is not None
+            else f"{ctx.caller_qn}{cs.SEPARATOR_DOT}{name}"
+        )
         for fv in python_free_variable_names(inner):
             taint = state.get(fv)
             if taint is None:

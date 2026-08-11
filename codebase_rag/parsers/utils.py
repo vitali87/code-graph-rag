@@ -598,6 +598,26 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
                 left = child.child_by_field_name(cs.TS_FIELD_LEFT)
                 if left is not None:
                     _python_collect_target_identifiers(left, out)
+            elif child_type == cs.TS_PY_FOR_STATEMENT:
+                left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+                if left is not None:
+                    _python_collect_target_identifiers(left, out)
+            elif child_type == cs.TS_PY_AS_PATTERN_TARGET:
+                # `with ... as x` and `except ... as x` bind x here.
+                _python_collect_target_identifiers(child, out)
+            elif child_type in _PY_IMPORT_STATEMENTS:
+                _python_collect_import_bound_names(child, out)
+            elif child_type == cs.TS_PY_GLOBAL_STATEMENT:
+                # `global x` rebinds x to module scope: it is not a capture of the
+                # enclosing function, so exclude it like a local binding.
+                for c in child.named_children:
+                    if c.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(c)):
+                        out.add(name)
+            elif child_type == cs.TS_PY_CASE_PATTERN:
+                # A `match` case binds its capture names; collect every identifier
+                # in the pattern (over-approximating value patterns is harmless --
+                # it only excludes a rare captured name used in a value position).
+                _python_collect_target_identifiers(child, out)
             stack.append(child)
 
 
@@ -608,6 +628,30 @@ def _python_collect_target_identifiers(node: Node, out: set[str]) -> None:
         return
     for child in node.children:
         _python_collect_target_identifiers(child, out)
+
+
+_PY_IMPORT_STATEMENTS = frozenset(
+    {cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT}
+)
+
+
+def _python_collect_import_bound_names(node: Node, out: set[str]) -> None:
+    # `import a.b` binds `a`; `import a.b as c` binds `c`; `from m import x` binds
+    # `x`; `from m import x as y` binds `y`. The imported items live under the
+    # `name` field; the from-module (`module_name` field) is the source, not a
+    # local binding, so it is skipped by keying off `name` only.
+    for item in node.children_by_field_name(cs.FIELD_NAME):
+        if item.type == cs.TS_ALIASED_IMPORT:
+            alias = item.child_by_field_name(cs.FIELD_ALIAS)
+            if alias is not None and (name := safe_decode_text(alias)):
+                out.add(name)
+        elif item.type == cs.TS_PY_DOTTED_NAME:
+            first = next(
+                (c for c in item.named_children if c.type == cs.TS_PY_IDENTIFIER),
+                None,
+            )
+            if first is not None and (name := safe_decode_text(first)):
+                out.add(name)
 
 
 def _python_collect_identifier_reads(node: Node, out: set[str]) -> None:

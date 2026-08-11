@@ -1136,9 +1136,12 @@ def test_capture_taint_reaches_sink_in_nested_function(tmp_path: Path) -> None:
 
 
 def test_capture_taint_survives_reassignment_after_the_def(tmp_path: Path) -> None:
-    # MAY semantics: the capture is recorded from the def-site state, where `token`
-    # is tainted; a later reassignment to a clean value cannot retroactively erase
-    # the taint that was live when the closure was defined.
+    # MAY semantics (issue #1197): the capture is recorded from the def-site state,
+    # where `token` is tainted. A closure captures a cell, and the walk does not model
+    # call order, so the tool cannot assume the later reassignment precedes every
+    # invocation -- the closure may run with the tainted value. Reporting the flow is
+    # the safe over-approximation (no false negative); precise call-relative cell
+    # tracking is a separate follow-up.
     files = {
         "m.py": (
             "import os\n\n"
@@ -1181,3 +1184,69 @@ def test_untainted_captured_variable_emits_no_flow(tmp_path: Path) -> None:
         )
     }
     assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_for_loop_local_binding_is_not_a_capture(tmp_path: Path) -> None:
+    # `token` is bound by the nested `for`, so it is the closure's own local, not a
+    # capture of the enclosing tainted `token`; no flow (CodeRabbit review, #1197).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n"
+            "        for token in ('clean',):\n            print(token)\n"
+            "    send()\n"
+        )
+    }
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_import_local_binding_is_not_a_capture(tmp_path: Path) -> None:
+    # A nested `import token` binds `token` locally; it must not be classified as a
+    # capture of the enclosing tainted `token`.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        import token\n        print(token)\n"
+            "    send()\n"
+        )
+    }
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_with_and_except_as_bindings_are_not_captures(tmp_path: Path) -> None:
+    # `with ... as token` and `except ... as token` both bind `token` locally.
+    for body in (
+        "        with open('x') as token:\n            print(token)\n",
+        "        try:\n            pass\n"
+        "        except Exception as token:\n            print(token)\n",
+    ):
+        files = {
+            "m.py": (
+                "import os\n\n"
+                "def handler():\n"
+                "    token = os.getenv('K')\n"
+                "    def send():\n" + body + "    send()\n"
+            )
+        }
+        assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_capture_composes_for_duplicate_named_nested_defs(tmp_path: Path) -> None:
+    # Two nested defs share the name `send`; the definition pass suffixes their qns.
+    # The capture must be recorded under the SAME registered qn the redefined `send`
+    # is walked with, or its flow is lost (Greptile review, #1197).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def factory():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print('safe')\n"
+            "    def send():\n        print(token)\n"
+            "    send()\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
