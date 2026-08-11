@@ -792,6 +792,163 @@ def test_param_taint_passthrough_calls_do_not_cross_contaminate(
     assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
 
 
+def _has_go_secret_to_stdout_flow(edges: list[FlowEdge]) -> bool:
+    return _has(
+        edges,
+        "resource::ENV::SECRET",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_go_through_logging_wrapper(tmp_path: Path) -> None:
+    # The canonical case (issue #1142) in a lean-walk language (issue #1169):
+    # Go forward parameter taint. The source and the STDOUT sink live in
+    # different function bodies, so without seeding the parameter as a
+    # pseudo-origin the ENV read never connects to fmt.Println.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import (\n\t"fmt"\n\t"os"\n)\n\n'
+            "func logIt(msg string) {\n\tfmt.Println(msg)\n}\n\n"
+            "func caller() {\n"
+            '\tsecret := os.Getenv("SECRET")\n'
+            "\tlogIt(secret)\n}\n"
+        )
+    }
+    assert _has_go_secret_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_go_two_wrapper_hops(tmp_path: Path) -> None:
+    # A wrapper of a wrapper: the parameter-to-sink summary must compose
+    # transitively through _param_flow_edges so the secret still reaches STDOUT.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import (\n\t"fmt"\n\t"os"\n)\n\n'
+            "func inner(x string) {\n\tfmt.Println(x)\n}\n\n"
+            "func logIt(msg string) {\n\tinner(msg)\n}\n\n"
+            "func caller() {\n"
+            '\tsecret := os.Getenv("SECRET")\n'
+            "\tlogIt(secret)\n}\n"
+        )
+    }
+    assert _has_go_secret_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_go_wrapper_defined_after_caller(tmp_path: Path) -> None:
+    # The wrapper is defined AFTER its caller: composition happens at finalize,
+    # once every body's parameter-sink summary is known, so source order is
+    # irrelevant.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import (\n\t"fmt"\n\t"os"\n)\n\n'
+            "func caller() {\n"
+            '\tsecret := os.Getenv("SECRET")\n'
+            "\tlogIt(secret)\n}\n\n"
+            "func logIt(msg string) {\n\tfmt.Println(msg)\n}\n"
+        )
+    }
+    assert _has_go_secret_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_go_wrapper_across_files(tmp_path: Path) -> None:
+    # The wrapper and the caller live in different files of the same package;
+    # the parameter-sink summary is keyed by qualified name, so it crosses the
+    # file boundary at finalize.
+    files = {
+        "log.go": (
+            "package main\n\n"
+            'import "fmt"\n\n'
+            "func logIt(msg string) {\n\tfmt.Println(msg)\n}\n"
+        ),
+        "caller.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func caller() {\n"
+            '\tsecret := os.Getenv("SECRET")\n'
+            "\tlogIt(secret)\n}\n"
+        ),
+    }
+    assert _has_go_secret_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_go_negative_control_param_never_sinks(tmp_path: Path) -> None:
+    # The wrapper ignores its parameter and logs a constant, so no
+    # parameter-to-sink summary exists and the secret must not reach STDOUT.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import (\n\t"fmt"\n\t"os"\n)\n\n'
+            'func logIt(msg string) {\n\tfmt.Println("static")\n}\n\n'
+            "func caller() {\n"
+            '\tsecret := os.Getenv("SECRET")\n'
+            "\tlogIt(secret)\n}\n"
+        )
+    }
+    assert not _has_go_secret_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_go_untainted_argument_emits_nothing(tmp_path: Path) -> None:
+    # A clean literal handed to a sinking wrapper must not invent an ENV origin:
+    # the parameter is seeded, but no call site folds a tainted argument in.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "fmt"\n\n'
+            "func logIt(msg string) {\n\tfmt.Println(msg)\n}\n\n"
+            'func caller() {\n\tlogIt("clean")\n}\n'
+        )
+    }
+    assert not _has_go_secret_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_param_taint_js_through_logging_wrapper(tmp_path: Path) -> None:
+    # The lean forward-taint path in JavaScript (issue #1169), exercising the
+    # js_ts parameter-name extractor: a file read handed to a console.log
+    # wrapper must connect FILE to STDOUT across the two bodies.
+    files = {
+        "m.js": (
+            'const fs = require("fs");\n\n'
+            "function logIt(msg) {\n  console.log(msg);\n}\n\n"
+            "function caller() {\n"
+            '  const secret = fs.readFileSync("cfg.txt");\n'
+            "  logIt(secret);\n}\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::FILE::cfg.txt",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_param_taint_cpp_through_cout_stream_wrapper(tmp_path: Path) -> None:
+    # C++ forward taint through a std::cout stream sink (issue #1169). This
+    # exercises the cpp parameter-name extractor AND the _emit_taint_to_sink
+    # stream path, which records the parameter-sink for the stream branch.
+    files = {
+        "main.cpp": (
+            "#include <cstdlib>\n"
+            "#include <iostream>\n"
+            "void logIt(const char* msg) {\n    std::cout << msg;\n}\n\n"
+            "void caller() {\n"
+            '    const char* secret = getenv("SECRET");\n'
+            "    logIt(secret);\n}\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::SECRET",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_param_taint_passthrough_returns_fresh_value_no_flow(tmp_path: Path) -> None:
     # Negative control: the helper returns a fresh value, not its parameter, so
     # no parameter-to-return relationship exists and the secret does not reach
