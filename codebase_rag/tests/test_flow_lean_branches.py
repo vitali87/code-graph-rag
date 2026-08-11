@@ -432,5 +432,36 @@ def test_ts_untainted_param_decorator_no_edge(tmp_path: Path) -> None:
     assert _ENV_STDOUT not in _run_flow(tmp_path, files)
 
 
+def test_ts_decorator_inside_default_value_class_does_not_leak(tmp_path: Path) -> None:
+    # A decorator on a class nested in a parameter's DEFAULT value runs when that
+    # default class is evaluated (call time, in the callee), not in the enclosing
+    # scope. Header discovery must not reach into the default value, or the module
+    # local `t` would produce a false enclosing-scope flow.
+    files = {
+        "a.ts": (
+            "const t = process.env.SECRET;\n"
+            "class C { m(x: any = class { n(@inject(t) y: any) {} }) {} }\n"
+            "function inject(x: any) { console.log(x); "
+            "return (a: any, b: any, c: any) => {}; }\n"
+        )
+    }
+    assert _ENV_STDOUT not in _run_flow(tmp_path, files)
+
+
+def test_ts_decorator_inside_concise_arrow_body_does_not_leak(tmp_path: Path) -> None:
+    # A decorator on a class returned from a concise arrow body belongs to the
+    # arrow's own call-time scope, not the enclosing definer. Header discovery must
+    # stop at the arrow's body, or `t` leaks a false enclosing-scope flow.
+    files = {
+        "a.ts": (
+            "const t = process.env.SECRET;\n"
+            "const f = () => class { n(@inject(t) y: any) {} };\n"
+            "function inject(x: any) { console.log(x); "
+            "return (a: any, b: any, c: any) => {}; }\n"
+        )
+    }
+    assert _ENV_STDOUT not in _run_flow(tmp_path, files)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
