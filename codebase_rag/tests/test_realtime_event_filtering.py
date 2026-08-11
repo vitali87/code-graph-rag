@@ -132,7 +132,7 @@ class TestNonCodeFileHandling:
         ]
         assert len(delete_file_calls) == 1
         assert delete_file_calls[0].args[1] == {
-            cs.KEY_PATH: "notes.md",
+            cs.KEY_PATH: f.resolve().as_posix(),
         }
         mock_updater.factory.structure_processor.process_generic_file.assert_not_called()
 
@@ -199,7 +199,7 @@ class TestCypherDeleteFileQuery:
             if c.args[0] == cs.CYPHER_DELETE_FILE
         ]
         assert len(delete_file_calls) == 1
-        assert delete_file_calls[0].args[1] == {cs.KEY_PATH: "remove.py"}
+        assert delete_file_calls[0].args[1] == {cs.KEY_PATH: f2.resolve().as_posix()}
 
         delete_module_calls = [
             c
