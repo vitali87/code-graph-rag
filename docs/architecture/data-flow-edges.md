@@ -386,6 +386,33 @@ module is re-exported under its own name. A project that does
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
 
+## Language coverage
+
+`FLOWS_TO` covers **10 of the 14 supported languages** — every language whose
+source/sink table is registered in `FLOW_REGISTERED_LANGUAGES`
+(`codebase_rag/parsers/io_access/registry.py`). Python uses the deep,
+path-sensitive walk; the rest use the descriptor-driven lean walk. A language
+outside this set is still parsed into the graph — it simply emits no `FLOWS_TO`
+edges, so a reachability question over it returns `UNKNOWN` rather than
+`NO_FLOW` (see the three-verdict query below).
+
+| Language | `FLOWS_TO` | Walk |
+| --- | --- | --- |
+| Python | ✅ | deep, path-sensitive |
+| JavaScript | ✅ | lean descriptor |
+| TypeScript | ✅ | lean descriptor |
+| TSX | ✅ | lean descriptor |
+| Go | ✅ | lean descriptor |
+| Java | ✅ | lean descriptor |
+| Rust | ✅ | lean descriptor |
+| C++ | ✅ | lean descriptor |
+| C | ✅ | lean descriptor |
+| C# | ✅ | lean descriptor |
+| Lua | ❌ | not covered — no sink table |
+| PHP | ❌ | not covered — no sink table |
+| Scala | ❌ | not covered — no sink table |
+| Dart | ❌ | not covered — no sink table |
+
 ## Coverage metadata and the three-verdict query
 
 An empty flow result is ambiguous on its own: "no flow exists" and "the flow
