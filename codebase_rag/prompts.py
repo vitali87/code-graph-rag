@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from .cypher_queries import (
     CYPHER_EXAMPLE_CLASS_METHODS,
     CYPHER_EXAMPLE_CODE_SMELLS,
@@ -17,6 +19,7 @@ from .cypher_queries import (
     CYPHER_EXAMPLE_TASKS,
 )
 from .schema_builder import GRAPH_SCHEMA_DEFINITION
+from .tools.tool_descriptions import AgenticToolName
 from .types_defs import ToolNames
 
 if TYPE_CHECKING:
@@ -24,16 +27,23 @@ if TYPE_CHECKING:
 
 
 def extract_tool_names(tools: list["Tool"]) -> ToolNames:
-    tool_map = {t.name: t.name for t in tools}
+    registered = {t.name for t in tools}
+
+    def resolve_tool_name(canonical: AgenticToolName) -> str:
+        if canonical not in registered:
+            logger.warning(
+                f"Tool '{canonical}' is not registered on the agent; "
+                "the orchestrator prompt references it anyway"
+            )
+        return str(canonical)
+
     return ToolNames(
-        query_graph=tool_map.get(
-            "query_codebase_knowledge_graph", "query_codebase_knowledge_graph"
-        ),
-        read_file=tool_map.get("read_file_content", "read_file_content"),
-        semantic_search=tool_map.get("semantic_code_search", "semantic_code_search"),
-        create_file=tool_map.get("create_new_file", "create_new_file"),
-        edit_file=tool_map.get("replace_code_surgically", "replace_code_surgically"),
-        shell_command=tool_map.get("execute_shell_command", "execute_shell_command"),
+        query_graph=resolve_tool_name(AgenticToolName.QUERY_GRAPH),
+        read_file=resolve_tool_name(AgenticToolName.READ_FILE),
+        semantic_search=resolve_tool_name(AgenticToolName.SEMANTIC_SEARCH),
+        create_file=resolve_tool_name(AgenticToolName.CREATE_FILE),
+        edit_file=resolve_tool_name(AgenticToolName.REPLACE_CODE),
+        shell_command=resolve_tool_name(AgenticToolName.EXECUTE_SHELL),
     )
 
 
