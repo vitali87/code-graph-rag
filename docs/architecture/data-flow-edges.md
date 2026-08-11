@@ -391,8 +391,8 @@ module is re-exported under its own name. A project that does
   `io.open(p):write(x)`, `File::create(p).write(x)`) emits no flow edge, uniformly
   across every lean language — the handle-tracking tables feed the `READS_FROM`/
   `WRITES_TO` walk, not the flow walk. So a handle-only write leak reads as `NO_FLOW`
-  rather than `UNKNOWN` under `flow_covered`; teaching the flow walk to track handle
-  bindings (cross-language) is tracked in #1204. This bites Lua hardest, since Lua has
+  rather than `UNKNOWN` in a fully covered project; teaching the flow walk to track
+  handle bindings (cross-language) is tracked in #1204. This bites Lua hardest, since Lua has
   no direct file-write sink at all.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
