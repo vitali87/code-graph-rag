@@ -1079,6 +1079,30 @@ def test_param_taint_ts_this_parameter_does_not_shift(tmp_path: Path) -> None:
     )
 
 
+def test_param_taint_ts_typed_rest_binds_trailing_args(tmp_path: Path) -> None:
+    # End-to-end: a TypeScript typed rest parameter (`...vals: string[]`) must
+    # keep its name and variadic position after the typed-pattern unwrap, so a
+    # trailing tainted argument binds to `vals` and the wrapper's sink emits the
+    # flow (Greptile review on PR #1193). The file read is the third argument,
+    # past the variadic slot at index 1.
+    files = {
+        "m.ts": (
+            'const fs = require("fs");\n\n'
+            "function logIt(prefix: string, ...vals: string[]) {\n"
+            "  console.log(vals);\n}\n\n"
+            "function caller() {\n"
+            '  const secret = fs.readFileSync("cfg.txt");\n'
+            '  logIt("p", secret);\n}\n'
+        )
+    }
+    assert _has(
+        _run_flow(tmp_path, files),
+        "resource::FILE::cfg.txt",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_param_taint_passthrough_returns_fresh_value_no_flow(tmp_path: Path) -> None:
     # Negative control: the helper returns a fresh value, not its parameter, so
     # no parameter-to-return relationship exists and the secret does not reach
