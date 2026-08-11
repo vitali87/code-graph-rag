@@ -63,6 +63,32 @@ def definition_header_nodes(node: Node) -> list[Node]:
     return []
 
 
+def lean_definition_header_nodes(
+    node: Node, descriptor: LanguageDescriptor
+) -> list[Node]:
+    # Definition-time header expressions of a lean (non-Python) nested-scope node
+    # that execute in the ENCLOSING scope: TS parameter decorators (`m(@inject(t) x)`).
+    # A pre-order scan collects nodes whose type is in nested_header_types, PRUNED at
+    # the body block so a decorator on a class nested in the body stays with its own
+    # inner caller, and STOPPED at each header node so its subtree is not re-scanned.
+    # The default parameter VALUE is a sibling of the decorator, not a header-typed
+    # node, so it is never collected -- preserving "default values run in the callee".
+    header_types = descriptor.nested_header_types
+    if not header_types:
+        return []
+    out: list[Node] = []
+    stack = list(reversed(node.named_children))
+    while stack:
+        cur = stack.pop()
+        if cur.type == descriptor.block_scope_type:
+            continue
+        if cur.type in header_types:
+            out.append(cur)
+            continue
+        stack.extend(reversed(cur.named_children))
+    return out
+
+
 def call_name(call_node: Node) -> str | None:
     fn = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
     if fn is not None:

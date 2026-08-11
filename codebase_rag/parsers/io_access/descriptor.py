@@ -142,6 +142,18 @@ class LanguageDescriptor:
     binding_target_container_type: str | None = None
     binding_value_container_type: str | None = None
 
+    # Definition-time header expressions of a NESTED-scope node that execute in the
+    # ENCLOSING scope, mirroring Python's definition_header_nodes. A TS parameter
+    # decorator (`m(@inject(t) x)`): the `@inject(t)` call runs when the class is
+    # defined, in the enclosing scope, so its taint belongs to that scope -- unlike
+    # the default parameter VALUE `x = f()`, a sibling of the decorator, which runs
+    # at call time in the callee and stays skipped. On hitting a nested-scope node
+    # the lean walk collects header-typed children (pruned at block_scope_type) and
+    # walks them in the current state. Class/method/field decorators and heritage
+    # calls need no entry: their owning nodes are not nested scopes, so the walk
+    # already descends into them. Empty = today's whole-node skip (Go/C/Rust/Java/C#).
+    nested_header_types: frozenset[str] = frozenset()
+
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
     call_type=cs.TS_CALL_EXPRESSION,
@@ -162,6 +174,7 @@ _JS_TS_DESCRIPTOR = LanguageDescriptor(
             cs.TS_METHOD_DEFINITION,
         }
     ),
+    nested_header_types=frozenset({cs.TS_DECORATOR}),
     identifier_type=cs.TS_PY_IDENTIFIER,
     declarator_type=cs.TS_VARIABLE_DECLARATOR,
     params_field=cs.TS_FIELD_PARAMETERS,
