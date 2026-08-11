@@ -582,8 +582,10 @@ class FlowProcessor:
         else:
             # Flat-language path-sensitive MAY walk (issue #714 follow-up):
             # if/loop/try/switch/match nodes branch-and-merge like the JS walk
-            # (loops union the skip path and re-walk once for loop-carried
-            # taint, try seeds each handler with union(pre, body_exit)), and
+            # (zero-or-more loops union the skip path and re-walk once for
+            # loop-carried taint -- do-while/Rust `loop` bodies always run, so
+            # their pre-state stays out of the merge -- and try seeds each
+            # handler with union(pre, body_exit)), and
             # the live shadow set is snapshotted per branch and restored at the
             # merge, so a block-scoped Go/Java declaration inside a branch does
             # not leak its shadow past the join.
