@@ -548,7 +548,7 @@ class FlowProcessor:
         if self._acc_returns_taint:
             self._summaries[caller_qn] = self._acc_return_taint
 
-    # Lean non-Python (JS/TS) straight-line flow (issue #714) below.
+    # Lean non-Python path-sensitive flow (issue #714) below.
     def _process_lean_flow(
         self,
         caller_node: Node,
@@ -580,14 +580,13 @@ class FlowProcessor:
             for node in statements:
                 tainted = self._walk_js_stmt(node, tainted, jc)
         else:
-            # Go/Java path-sensitive MAY walk (issue #714 follow-up): an
-            # if_statement branches-and-merges like the JS walk (its condition/
-            # consequence/alternative fields are shared across the grammars), and
+            # Flat-language path-sensitive MAY walk (issue #714 follow-up):
+            # if/loop/try/switch/match nodes branch-and-merge like the JS walk
+            # (loops union the skip path and re-walk once for loop-carried
+            # taint, try seeds each handler with union(pre, body_exit)), and
             # the live shadow set is snapshotted per branch and restored at the
-            # merge, so a block-scoped Go/Java declaration inside a branch does not
-            # leak its shadow past the join. Loops and try are walked straight-line
-            # (one source-order pass), matching the previous flat behaviour --
-            # loop-carried and per-branch try taint stay a follow-up.
+            # merge, so a block-scoped Go/Java declaration inside a branch does
+            # not leak its shadow past the join.
             for node in statements:
                 tainted = self._walk_flat_stmt(node, tainted, jc)
         if self._acc_returns_taint:
