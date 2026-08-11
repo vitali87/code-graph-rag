@@ -33,6 +33,7 @@ from ..io_access import (
     is_require_alias,
     iter_token_tree_calls,
     lean_binding_targets,
+    lean_definition_header_nodes,
     literal_target,
     match_normalised,
     registry_match,
@@ -660,6 +661,10 @@ class FlowProcessor:
         # children in source order (so a nested call in an argument is seen).
         node_type = node.type
         if node_type in jc.descriptor.nested_scope_types:
+            # Definition-time header expressions (TS parameter decorators) run in
+            # THIS scope; walk them, then leave the body to its own caller pass.
+            for header in lean_definition_header_nodes(node, jc.descriptor):
+                state = self._walk_flat_stmt(header, state, jc)
             return state
         if node_type == cs.TS_BREAK_STATEMENT:
             self._record_break_exit(state)
@@ -1005,6 +1010,10 @@ class FlowProcessor:
         # in source order (so a nested call in an argument is still seen).
         node_type = node.type
         if node_type in jc.descriptor.nested_scope_types:
+            # Definition-time header expressions (TS parameter decorators) run in
+            # THIS scope; walk them, then leave the body to its own caller pass.
+            for header in lean_definition_header_nodes(node, jc.descriptor):
+                state = self._walk_js_stmt(header, state, jc)
             return state
         if node_type == cs.TS_BREAK_STATEMENT:
             self._record_break_exit(state)
