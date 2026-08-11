@@ -426,6 +426,22 @@ def binding_targets_values(
         return targets, lean_binding_values(
             node.child_by_field_name(cs.FIELD_VALUE), descriptor
         )
+    if (
+        descriptor.binding_target_container_type is not None
+        and node.type == descriptor.declarator_type
+    ):
+        # Lua's `assignment_statement` wraps its targets in a `variable_list`
+        # (each a `name` field) and its values in an `expression_list` (each a
+        # `value` field); a multi-assign `a, b = f(), g()` pairs them by position.
+        container_targets: list[str | None] = []
+        container_values: list[Node] = []
+        for child in node.named_children:
+            if child.type == descriptor.binding_target_container_type:
+                for name in child.children_by_field_name(cs.TS_FIELD_NAME):
+                    container_targets.extend(lean_binding_targets(name, descriptor))
+            elif child.type == descriptor.binding_value_container_type:
+                container_values.extend(child.children_by_field_name(cs.FIELD_VALUE))
+        return container_targets, container_values
     targets = []
     for name in node.children_by_field_name(cs.TS_FIELD_NAME):
         targets.extend(lean_binding_targets(name, descriptor))

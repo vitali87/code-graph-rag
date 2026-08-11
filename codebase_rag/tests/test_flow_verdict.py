@@ -35,7 +35,7 @@ def test_found_returns_the_path() -> None:
     result = flow_reachability_verdict(
         _query_fn(
             [("p.a.src", "p.a.mid"), ("p.a.mid", "p.a.sink"), ("p.a.mid", "p.a.x")],
-            ["uncovered.lua"],
+            ["uncovered.php"],
         ),
         "p",
         "p.a.src",
@@ -60,13 +60,13 @@ def test_no_flow_requires_full_coverage() -> None:
 
 def test_unknown_names_the_gaps() -> None:
     result = flow_reachability_verdict(
-        _query_fn([], ["legacy/script.lua", "legacy/tool.php"]),
+        _query_fn([], ["legacy/script.scala", "legacy/tool.php"]),
         "p",
         "p.a.src",
         "p.a.sink",
     )
     assert result.verdict == FLOW_VERDICT_UNKNOWN
-    assert result.gaps == ("legacy/script.lua", "legacy/tool.php")
+    assert result.gaps == ("legacy/script.scala", "legacy/tool.php")
 
 
 def test_equal_names_without_an_edge_are_not_a_path() -> None:
@@ -114,10 +114,12 @@ def test_indexing_records_flow_coverage_per_module(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     (temp_repo / "covered.py").write_text("def f():\n    return 1\n")
-    (temp_repo / "uncovered.lua").write_text("local function f() return 1 end\n")
+    # Lua joined FLOW_REGISTERED_LANGUAGES in #1175; PHP is still outside it.
+    (temp_repo / "lua_covered.lua").write_text("local function f() return 1 end\n")
+    (temp_repo / "uncovered.php").write_text("<?php\nfunction f() { return 1; }\n")
     parsers, queries = load_parsers()
-    if "lua" not in parsers:
-        pytest.skip("lua parser not available")
+    if "php" not in parsers or "lua" not in parsers:
+        pytest.skip("php/lua parser not available")
     updater = GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=temp_repo,
@@ -129,6 +131,7 @@ def test_indexing_records_flow_coverage_per_module(
     modules = _module_props(mock_ingestor)
     project = temp_repo.name
     assert modules[f"{project}.covered"]["flow_covered"] is True
+    assert modules[f"{project}.lua_covered"]["flow_covered"] is True
     assert modules[f"{project}.uncovered"]["flow_covered"] is False
 
 

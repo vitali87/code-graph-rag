@@ -445,6 +445,20 @@ _CPP_SINKS: tuple[IOSink, ...] = tuple(
     for prefix in _CPP_SINK_PREFIXES
 )
 
+# Lua direct-call I/O sinks (issue #1175). Keyed by the callee text
+# reconstructed from `function_call` (`print`, `os.getenv`, `io.write`): `os`/`io`
+# are globals, `print` is a builtin, so the table is not import-gated. Lua has no
+# keyword args, so the env key is positional arg 0. Handle-based file I/O
+# (`io.open(path)` + `f:write`) writes through a method call on a handle, which
+# the flow walk does not track, so it stays a follow-up (io.open is not a direct
+# sink -- its args are a path and mode, never the tainted data).
+_LUA_SINKS: tuple[IOSink, ...] = (
+    IOSink("os.getenv", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink("print", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("io.write", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("io.read", ResourceKind.STDIN, IODirection.READ),
+)
+
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.PYTHON: _PYTHON_SINKS,
     cs.SupportedLanguage.JS: _JS_TS_SINKS,
@@ -460,6 +474,7 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
         IOSink(fn, kind, direction, target_arg=arg)
         for fn, kind, direction, arg in _CPP_CALL_METHODS
     ),
+    cs.SupportedLanguage.LUA: _LUA_SINKS,
 }
 
 # The languages the flow/I-O analysis covers at all: a Module in any other
