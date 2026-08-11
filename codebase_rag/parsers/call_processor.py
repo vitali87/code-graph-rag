@@ -1052,6 +1052,7 @@ class CallProcessor:
             import_processor,
             self._resolver,
             selection=selection,
+            function_locations=self.function_locations,
         )
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:

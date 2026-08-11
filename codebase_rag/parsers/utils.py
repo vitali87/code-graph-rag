@@ -598,6 +598,24 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
                 left = child.child_by_field_name(cs.TS_FIELD_LEFT)
                 if left is not None:
                     _python_collect_target_identifiers(left, out)
+            elif child_type == cs.TS_PY_FOR_STATEMENT:
+                left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+                if left is not None:
+                    _python_collect_target_identifiers(left, out)
+            elif child_type == cs.TS_PY_AS_PATTERN_TARGET:
+                # `with ... as x` and `except ... as x` bind x here.
+                _python_collect_target_identifiers(child, out)
+            elif child_type in _PY_IMPORT_STATEMENTS:
+                _python_collect_import_bound_names(child, out)
+            elif child_type == cs.TS_PY_GLOBAL_STATEMENT:
+                # `global x` rebinds x to module scope: it is not a capture of the
+                # enclosing function, so exclude it like a local binding.
+                for c in child.named_children:
+                    if c.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(c)):
+                        out.add(name)
+            elif child_type == cs.TS_PY_CASE_PATTERN:
+                # A `match` case binds only its CAPTURE names, not value patterns.
+                _python_collect_case_pattern_bindings(child, out)
             stack.append(child)
 
 
@@ -608,6 +626,79 @@ def _python_collect_target_identifiers(node: Node, out: set[str]) -> None:
         return
     for child in node.children:
         _python_collect_target_identifiers(child, out)
+
+
+def _python_collect_case_pattern_bindings(node: Node, out: set[str]) -> None:
+    # A `match` case binds its CAPTURE patterns and nothing else. A bare name
+    # (`case token:`, `case [token]:`) parses as a single-identifier dotted_name and
+    # binds; a multi-part dotted_name (`case sentinel.token:`) is a VALUE pattern
+    # that compares and binds nothing -- collecting its identifiers would wrongly
+    # exclude a captured name used in a value position. `as` aliases are collected
+    # by the general as_pattern_target branch. Only single-identifier dotted_names
+    # (and their `_` wildcard, which decodes to nothing) are captured here.
+    stack: list[Node] = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_DOTTED_NAME:
+            idents = [
+                c for c in current.named_children if c.type == cs.TS_PY_IDENTIFIER
+            ]
+            if len(idents) == 1 and (name := safe_decode_text(idents[0])):
+                out.add(name)
+            continue
+        stack.extend(current.children)
+
+
+_PY_IMPORT_STATEMENTS = frozenset(
+    {cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT}
+)
+
+
+def _python_collect_import_bound_names(node: Node, out: set[str]) -> None:
+    # `import a.b` binds `a`; `import a.b as c` binds `c`; `from m import x` binds
+    # `x`; `from m import x as y` binds `y`. The imported items live under the
+    # `name` field; the from-module (`module_name` field) is the source, not a
+    # local binding, so it is skipped by keying off `name` only.
+    for item in node.children_by_field_name(cs.FIELD_NAME):
+        if item.type == cs.TS_ALIASED_IMPORT:
+            alias = item.child_by_field_name(cs.FIELD_ALIAS)
+            if alias is not None and (name := safe_decode_text(alias)):
+                out.add(name)
+        elif item.type == cs.TS_PY_DOTTED_NAME:
+            first = next(
+                (c for c in item.named_children if c.type == cs.TS_PY_IDENTIFIER),
+                None,
+            )
+            if first is not None and (name := safe_decode_text(first)):
+                out.add(name)
+
+
+def _python_collect_identifier_reads(node: Node, out: set[str]) -> None:
+    stack: list[Node] = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_IDENTIFIER:
+            if name := safe_decode_text(current):
+                out.add(name)
+            continue
+        stack.extend(current.children)
+
+
+def python_free_variable_names(func_node: Node) -> set[str]:
+    # Names READ in a nested function's body that it does not bind itself (its
+    # parameters, local assignment targets, and nested def/class names). Descends
+    # into inner nested scopes so a variable used only in a doubly-nested body is
+    # still free for this function -- needed so a capture composes transitively.
+    # Conservative: over-approximates (globals, builtins, and attribute names are
+    # swept in), but a capture only composes when a bare-name read reaches a sink
+    # AND that name is tainted at the definition site, so the extras record
+    # summaries that never compose -- sound and inert (issue #1197).
+    body = func_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return set()
+    reads: set[str] = set()
+    _python_collect_identifier_reads(body, reads)
+    return reads - _python_scope_bound_names(func_node)
 
 
 def python_parameter_names(func_node: Node) -> list[str]:

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Node
+
+if TYPE_CHECKING:
+    from ...types_defs import FunctionLocation, FunctionSpanKey
 
 from ... import constants as cs
 from ...capture import CaptureSelection
@@ -45,9 +48,11 @@ from ..utils import (
     c_positional_parameter_slots,
     cpp_positional_parameter_slots,
     csharp_positional_parameter_slots,
+    function_span_key,
     go_positional_parameter_slots,
     java_positional_parameter_slots,
     js_ts_positional_parameter_slots,
+    python_free_variable_names,
     python_parameter_names,
     rust_positional_parameter_slots,
     safe_decode_text,
@@ -443,11 +448,17 @@ class FlowProcessor:
         import_processor: ImportProcessor,
         resolver: CallResolver,
         selection: CaptureSelection,
+        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self._import_processor = import_processor
         self._resolver = resolver
         self._selection = selection
+        # Span-key -> registered FunctionLocation, so a nested def's capture record
+        # uses the SAME (suffix-aware) qn the definition pass assigned, matching the
+        # qn its own walk is keyed under; without it a duplicate-named nested def
+        # would record under a reconstructed unsuffixed qn that never composes.
+        self._function_locations = function_locations or {}
         self._enabled = selection.rel_enabled(cs.RelationshipType.FLOWS_TO)
         # Per-function return-taint SUMMARY collected during the walk: caller QN
         # -> the Taint it returns (resolved origins + pending callee QNs whose
@@ -588,6 +599,14 @@ class FlowProcessor:
         positional = _py_positional_param_names(caller_node)
         if positional:
             self._positional_params[caller_qn] = positional
+        # Seed each free variable as a capture pseudo-origin so a sink it reaches
+        # becomes a capture summary composed at finalize against the enclosing
+        # definition site (issue #1197). A free var matches only kw:<name>, so it
+        # records no positional slot; a free var that is never a tainted capture
+        # records a summary no call site composes, so it stays inert.
+        for fv in python_free_variable_names(caller_node):
+            if fv not in tainted:
+                tainted[fv] = Taint(frozenset(), frozenset(), frozenset({fv}))
         for node in scope_seed_nodes(caller_node):
             tainted = self._walk_stmt(node, tainted, ctx)
 
@@ -1782,7 +1801,10 @@ class FlowProcessor:
     def _walk_stmt(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
         node_type = node.type
         if node_type in PY_SCOPE_BOUNDARIES:
-            # Nested def/class: only its header executes in this scope.
+            # Nested def/class: only its header executes in this scope. Record any
+            # enclosing taint its body captures BEFORE walking the header, using
+            # the def-site state (issue #1197); the body is left to its own pass.
+            self._record_captures(node, state, ctx)
             for header in definition_header_nodes(node):
                 state = self._walk_stmt(header, state, ctx)
             return state
@@ -2415,6 +2437,61 @@ class FlowProcessor:
                     dst |= src
                     changed = True
         return closure
+
+    @staticmethod
+    def _nested_def_name(def_node: Node) -> tuple[str, Node] | None:
+        # The bound name and function_definition node of a nested def, unwrapping a
+        # decorated_definition. None for a nested CLASS (its methods' qns are
+        # class-nested, out of scope) or an unnamed def.
+        inner = def_node
+        if def_node.type == cs.TS_PY_DECORATED_DEFINITION:
+            inner = next(
+                (
+                    c
+                    for c in def_node.children
+                    if c.type
+                    in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
+                ),
+                def_node,
+            )
+        if inner.type != cs.TS_PY_FUNCTION_DEFINITION:
+            return None
+        name_node = inner.child_by_field_name(cs.FIELD_NAME)
+        name = safe_decode_text(name_node) if name_node is not None else None
+        return (name, inner) if name else None
+
+    def _record_captures(self, def_node: Node, state: _TaintMap, ctx: _FlowCtx) -> None:
+        # A nested function may capture tainted enclosing-scope variables through
+        # its environment. For each free variable tainted at the definition site,
+        # record a capture keyed by the nested function's qn and via kw:<name>, so
+        # the existing parameter-summary finalize composes it exactly as a keyword
+        # argument would (issue #1197). A capture carrying concrete origins/pending
+        # is a resolvable call site; one carrying only the enclosing function's own
+        # parameters records a transitive flow edge, so a variable captured through
+        # two nested levels still composes.
+        resolved = self._nested_def_name(def_node)
+        if resolved is None:
+            return
+        name, inner = resolved
+        # Use the qn the definition pass registered for this exact node (it carries
+        # the duplicate-name suffix a manual reconstruction would miss); fall back to
+        # the reconstructed name only when the node was not registered.
+        loc = self._function_locations.get(function_span_key(ctx.module_qn, inner))
+        nested_qn = (
+            loc.qualified_name
+            if loc is not None
+            else f"{ctx.caller_qn}{cs.SEPARATOR_DOT}{name}"
+        )
+        for fv in python_free_variable_names(inner):
+            taint = state.get(fv)
+            if taint is None:
+                continue
+            via = VIA_KW_FORMAT.format(name=fv)
+            if taint.origins or taint.pending:
+                token = _passthrough_result_token(ctx.caller_qn, def_node)
+                self._param_call_sites.append((taint, nested_qn, via, token))
+            for pname in taint.params:
+                self._param_flow_edges.append((ctx.caller_qn, pname, nested_qn, via))
 
     def _param_name_for_via(self, callee_qn: str, via: str) -> str | None:
         # Map an argument's `via` tag to the callee's parameter name: `kw:<name>`
