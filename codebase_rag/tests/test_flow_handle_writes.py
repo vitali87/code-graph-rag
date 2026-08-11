@@ -123,3 +123,87 @@ def test_go_read_method_is_not_a_write_sink(tmp_path: Path) -> None:
         )
     }
     assert _ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_go_read_only_open_handle_write_emits_no_flow(tmp_path: Path) -> None:
+    # `os.Open` is read-only, so `f.Write` on it is not a real write sink and must
+    # emit no edge (constructor access mode gates write emission).
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func leak() {\n"
+            '\ts := os.Getenv("K")\n'
+            '\tf, _ := os.Open("out.txt")\n'
+            "\tf.Write([]byte(s))\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_go_conditional_rebind_emits_to_both_files(tmp_path: Path) -> None:
+    # `f` may hold either handle after the if, so the write must reach BOTH files
+    # (path-sensitive MAY merge of the handle bindings).
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func leak(cond bool) {\n"
+            '\ts := os.Getenv("K")\n'
+            '\tf, _ := os.Create("first.txt")\n'
+            "\tif cond {\n"
+            '\t\tf, _ = os.Create("second.txt")\n'
+            "\t}\n"
+            "\tf.WriteString(s)\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::FILE::first.txt") in flows
+    assert ("resource::ENV::K", "resource::FILE::second.txt") in flows
+
+
+def test_go_for_rebind_preserves_outer_flow(tmp_path: Path) -> None:
+    # A rebind inside a for body may or may not run; the outer handle's flow must
+    # survive the loop join alongside the loop-body handle.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func leak(items []int) {\n"
+            '\ts := os.Getenv("K")\n'
+            '\tf, _ := os.Create("first.txt")\n'
+            "\tfor range items {\n"
+            '\t\tf, _ = os.Create("loop.txt")\n'
+            "\t}\n"
+            "\tf.WriteString(s)\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::FILE::first.txt") in flows
+    assert ("resource::ENV::K", "resource::FILE::loop.txt") in flows
+
+
+def test_go_switch_rebind_preserves_outer_flow(tmp_path: Path) -> None:
+    # A rebind in one switch arm (no default) leaves the outer handle live on the
+    # implicit no-match path; the write must reach both.
+    files = {
+        "main.go": (
+            "package main\n\n"
+            'import "os"\n\n'
+            "func leak(n int) {\n"
+            '\ts := os.Getenv("K")\n'
+            '\tf, _ := os.Create("first.txt")\n'
+            "\tswitch n {\n"
+            "\tcase 1:\n"
+            '\t\tf, _ = os.Create("case1.txt")\n'
+            "\t}\n"
+            "\tf.WriteString(s)\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::FILE::first.txt") in flows
+    assert ("resource::ENV::K", "resource::FILE::case1.txt") in flows

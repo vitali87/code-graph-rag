@@ -50,6 +50,12 @@ class HandleConstructor:
     # identity (C# `new SqlCommand(sql, conn)` inherits conn's DB identity from
     # arg1). None where the identity is a literal target_arg.
     handle_arg: int | None = None
+    # Access capability of the constructed handle. The lean write-flow walk
+    # (issue #1204) suppresses write emission for a READ-only handle: `os.Open` is
+    # read-only, so `f.Write` on it is not a real sink. Defaults to READ_WRITE so
+    # io_access -- which never inspects this field -- is unchanged, and a
+    # flag-dependent ctor (`os.OpenFile`) stays a sound may-write.
+    direction: IODirection = IODirection.READ_WRITE
 
 
 @dataclass(frozen=True)
