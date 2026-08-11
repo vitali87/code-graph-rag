@@ -645,8 +645,14 @@ _JS_TS_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
 # os.Open / os.Create are ALSO direct sinks (the construction touches the path);
 # os.OpenFile is a handle only, because its direction depends on flags.
 _GO_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
-    HandleConstructor("os.Open", ResourceKind.FILE, target_arg=0),
-    HandleConstructor("os.Create", ResourceKind.FILE, target_arg=0),
+    HandleConstructor(
+        "os.Open", ResourceKind.FILE, target_arg=0, direction=IODirection.READ
+    ),
+    HandleConstructor(
+        "os.Create", ResourceKind.FILE, target_arg=0, direction=IODirection.WRITE
+    ),
+    # Flag-dependent (O_RDONLY/O_WRONLY/O_RDWR); may-write is the sound
+    # over-approximation for a taint tool -- never silently drop a real write.
     HandleConstructor("os.OpenFile", ResourceKind.FILE, target_arg=0),
     HandleConstructor("database/sql.Open", ResourceKind.DATABASE, target_arg=1),
     HandleConstructor("net.Dial", ResourceKind.SOCKET, target_arg=1),

@@ -24,6 +24,7 @@ from ..io_access import (
     PY_SCOPE_BOUNDARIES,
     RESOURCE_QN_FORMAT,
     HandleBinding,
+    HandleConstructor,
     IODirection,
     IOSink,
     LanguageDescriptor,
@@ -43,6 +44,10 @@ from ..io_access import (
     scope_seed_nodes,
     string_literal,
     unwrap_argument,
+)
+from ..io_access.registry import (
+    IO_LEAN_HANDLE_CONSTRUCTORS,
+    IO_LEAN_HANDLE_METHODS,
 )
 from ..utils import (
     c_positional_parameter_slots,
@@ -191,6 +196,24 @@ def _merge_taint(a: Taint, b: Taint) -> Taint:
 
 # Live taint state threaded through the walk: variable -> its Taint.
 type _TaintMap = dict[str, Taint]
+# Live handle bindings threaded through the lean walk: variable -> the resource
+# handles it may hold. Set-valued so a name bound to different handles on
+# different branches writes to ALL of them at a later method call (issue #1204).
+type _HandleMap = dict[str, frozenset[HandleBinding]]
+
+
+class _LeanState(NamedTuple):
+    # Path-sensitive state threaded through the lean (non-Python) walk: the taint
+    # map plus the resource-handle map, copied at branch entry and MAY-unioned at
+    # the join exactly as the taint map alone was (issue #1204). Bundling the two
+    # keeps every `state = self._walk_x(...)` call site unchanged.
+    taint: _TaintMap
+    handles: _HandleMap
+
+    def copy(self) -> _LeanState:
+        # frozensets are immutable, so a shallow copy of each dict is a full copy.
+        return _LeanState(dict(self.taint), dict(self.handles))
+
 
 # Return wrappers whose taint lives in their elements: `return (x)`,
 # `return a, b`, `return [x]`. Unwrapped so a tainted identifier/call inside
@@ -434,6 +457,13 @@ class _JsCtx(NamedTuple):
     # declarations for JS/TS) and grown with each Go binding as the walk reaches
     # it, so a later Go shadow never suppresses an earlier valid source read.
     local_names: set[str]
+    # Handle-based writes (issue #1204): a local bound to a resource handle
+    # (`f := os.Create("out")`) so a tainted write through it (`f.Write(secret)`)
+    # emits a flow edge to the handle's resource. The live bindings ride the
+    # path-sensitive _LeanState (branch-merged like taint); these are the constant
+    # per-language registry views. Empty tables (no handle support) => inert.
+    handle_ctors: dict[str, HandleConstructor]
+    handle_methods: dict[ResourceKind, dict[str, IODirection]]
 
 
 class FlowProcessor:
@@ -481,7 +511,7 @@ class FlowProcessor:
         # the switch with the state it saw THEN, not the arm's end state).
         # Loop walkers push None to shield the collector: a break in a
         # nested loop targets that loop, not the enclosing switch.
-        self._break_exit_stack: list[list[_TaintMap] | None] = []
+        self._break_exit_stack: list[list[_LeanState] | None] = []
         self._deferred_resource_flows: list[
             tuple[frozenset[str], ResourceKind, str]
         ] = []
@@ -628,6 +658,10 @@ class FlowProcessor:
             descriptor=descriptor,
             member_reads=member_reads,
             local_names=self._js_local_names(caller_node, descriptor, ctx.language),
+            handle_ctors={
+                c.callee: c for c in IO_LEAN_HANDLE_CONSTRUCTORS.get(ctx.language, ())
+            },
+            handle_methods=IO_LEAN_HANDLE_METHODS.get(ctx.language, {}),
         )
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
@@ -636,7 +670,7 @@ class FlowProcessor:
             statements = list(body.named_children)
         else:
             statements = [body]
-        tainted: _TaintMap = {}
+        state = _LeanState(taint={}, handles={})
         # Seed each parameter as a pseudo-origin so a sink or callee hand-off it
         # reaches becomes a parameter-taint summary composed at finalize, exactly
         # as the Python walk does (issue #1169 extends #1142/#1168 to the lean
@@ -646,7 +680,7 @@ class FlowProcessor:
         lean_names, lean_variadic = _lean_parameter_slots(caller_node, ctx.language)
         for pname in lean_names:
             if pname is not None:
-                tainted[pname] = Taint(frozenset(), frozenset(), frozenset({pname}))
+                state.taint[pname] = Taint(frozenset(), frozenset(), frozenset({pname}))
         if lean_names:
             self._positional_params[ctx.caller_qn] = lean_names
             if lean_variadic is not None:
@@ -657,7 +691,7 @@ class FlowProcessor:
             # state and unioned at the merge, so taint surviving on ANY path
             # survives and a kill counts only when it happens on EVERY path.
             for node in statements:
-                tainted = self._walk_js_stmt(node, tainted, jc)
+                state = self._walk_js_stmt(node, state, jc)
         else:
             # Flat-language path-sensitive MAY walk (issue #714 follow-up):
             # if/loop/try/switch/match nodes branch-and-merge like the JS walk
@@ -669,11 +703,11 @@ class FlowProcessor:
             # merge, so a block-scoped Go/Java declaration inside a branch does
             # not leak its shadow past the join.
             for node in statements:
-                tainted = self._walk_flat_stmt(node, tainted, jc)
+                state = self._walk_flat_stmt(node, state, jc)
         if self._acc_returns_taint:
             self._summaries[ctx.caller_qn] = self._acc_return_taint
 
-    def _walk_flat_stmt(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_flat_stmt(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Structured walk for the non-hoisted flat languages (Go, Java, Rust,
         # C++): if/loop/try/match nodes branch-and-merge (issue #714 follow-up);
         # every other node applies its leaf effect and threads state through its
@@ -700,12 +734,12 @@ class FlowProcessor:
             return self._walk_switch(node, state, jc, self._walk_flat_stmt)
         if node_type == cs.TS_RS_MATCH_EXPRESSION:
             return self._walk_flat_match(node, state, jc)
-        self._apply_js_leaf(node, state, jc)
+        self._apply_js_leaf(node, state.taint, state.handles, jc)
         for child in node.named_children:
             state = self._walk_flat_stmt(child, state, jc)
         return state
 
-    def _walk_flat_loop(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_flat_loop(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Loop shield: a break inside the body targets THIS loop, never an
         # enclosing switch arm's collector.
         self._shield_breaks()
@@ -715,8 +749,8 @@ class FlowProcessor:
             self._unshield_breaks()
 
     def _walk_flat_loop_inner(
-        self, node: Node, state: _TaintMap, jc: _JsCtx
-    ) -> _TaintMap:
+        self, node: Node, state: _LeanState, jc: _JsCtx
+    ) -> _LeanState:
         # The body runs zero or more times: union the skip path with one pass,
         # then re-walk once from that merge so taint carried from a later
         # iteration into an earlier statement is caught (same two-pass
@@ -729,27 +763,27 @@ class FlowProcessor:
         # the loop var to the iterable's taint) runs before the body.
         pre_loop_shadows = set(jc.local_names)
         if node.type in jc.descriptor.extra_declarator_types:
-            self._apply_js_leaf(node, state, jc)
+            self._apply_js_leaf(node, state.taint, state.handles, jc)
         body = node.child_by_field_name(cs.FIELD_BODY)
         state, update = self._walk_loop_header(node, state, jc, body)
         if body is None:
             self._restore_shadows(pre_loop_shadows, jc)
             return state
         header_shadows = set(jc.local_names)
-        once = self._walk_flat_stmt(body, dict(state), jc)
+        once = self._walk_flat_stmt(body, state.copy(), jc)
         if update is not None:
             once = self._walk_flat_stmt(update, once, jc)
         self._restore_shadows(header_shadows, jc)
-        merged = self._merge([state, once])
-        twice = self._walk_flat_stmt(body, dict(merged), jc)
+        merged = self._merge_lean([state, once])
+        twice = self._walk_flat_stmt(body, merged.copy(), jc)
         if update is not None:
             twice = self._walk_flat_stmt(update, twice, jc)
         self._restore_shadows(pre_loop_shadows, jc)
-        return self._merge([state, twice])
+        return self._merge_lean([state, twice])
 
     def _walk_loop_header(
-        self, node: Node, state: _TaintMap, jc: _JsCtx, body: Node | None
-    ) -> tuple[_TaintMap, Node | None]:
+        self, node: Node, state: _LeanState, jc: _JsCtx, body: Node | None
+    ) -> tuple[_LeanState, Node | None]:
         # Walk the pre-body header children and return the update clause
         # unwalked: a C-style for's update runs only AFTER a completed body
         # iteration, never on the zero-iteration path and never before the
@@ -770,8 +804,8 @@ class FlowProcessor:
         return state, update
 
     def _walk_go_for_clause(
-        self, clause: Node, update: Node | None, state: _TaintMap, jc: _JsCtx
-    ) -> _TaintMap:
+        self, clause: Node, update: Node | None, state: _LeanState, jc: _JsCtx
+    ) -> _LeanState:
         # Go's init;cond;post for_clause: walk everything but the post
         # (update) statement, which the loop walk defers past the body.
         for part in clause.named_children:
@@ -780,8 +814,8 @@ class FlowProcessor:
         return state
 
     def _walk_flat_mandatory_loop(
-        self, node: Node, state: _TaintMap, jc: _JsCtx
-    ) -> _TaintMap:
+        self, node: Node, state: _LeanState, jc: _JsCtx
+    ) -> _LeanState:
         # A do-while / Rust `loop` body ALWAYS runs at least once, so the
         # pre-loop state is NOT part of the exit merge (a kill in the body
         # kills on every straight-line path), and a do-while condition runs
@@ -796,10 +830,10 @@ class FlowProcessor:
     def _walk_mandatory_loop(
         self,
         node: Node,
-        state: _TaintMap,
+        state: _LeanState,
         jc: _JsCtx,
-        walk: Callable[[Node, _TaintMap, _JsCtx], _TaintMap],
-    ) -> _TaintMap:
+        walk: Callable[[Node, _LeanState, _JsCtx], _LeanState],
+    ) -> _LeanState:
         # Loop shield: a break inside the body targets THIS loop, never an
         # enclosing switch arm's collector.
         self._shield_breaks()
@@ -811,28 +845,28 @@ class FlowProcessor:
     def _walk_mandatory_loop_inner(
         self,
         node: Node,
-        state: _TaintMap,
+        state: _LeanState,
         jc: _JsCtx,
-        walk: Callable[[Node, _TaintMap, _JsCtx], _TaintMap],
-    ) -> _TaintMap:
+        walk: Callable[[Node, _LeanState, _JsCtx], _LeanState],
+    ) -> _LeanState:
         body = node.child_by_field_name(cs.FIELD_BODY)
         condition = node.child_by_field_name(cs.TS_FIELD_CONDITION)
         pre_shadows = set(jc.local_names)
-        once = dict(state)
+        once = state.copy()
         if body is not None:
             once = walk(body, once, jc)
         if condition is not None:
             once = walk(condition, once, jc)
         self._restore_shadows(pre_shadows, jc)
-        twice = dict(once)
+        twice = once.copy()
         if body is not None:
             twice = walk(body, twice, jc)
         if condition is not None:
             twice = walk(condition, twice, jc)
         self._restore_shadows(pre_shadows, jc)
-        return self._merge([once, twice])
+        return self._merge_lean([once, twice])
 
-    def _walk_flat_try(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_flat_try(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # The try body may run fully (no-throw path) or partially before a
         # catch, so each handler is seeded with union(pre, body_exit): taint
         # killed inside the body still reaches the handler, since the throw
@@ -851,22 +885,24 @@ class FlowProcessor:
                 continue
             state = self._walk_flat_stmt(child, state, jc)
         body_exit = (
-            self._walk_flat_stmt(body, dict(state), jc)
+            self._walk_flat_stmt(body, state.copy(), jc)
             if body is not None
-            else dict(state)
+            else state.copy()
         )
         self._restore_shadows(pre_shadows, jc)
-        branch_exits: list[_TaintMap] = [body_exit]
+        branch_exits: list[_LeanState] = [body_exit]
         finally_clause: Node | None = None
         for child in node.named_children:
             if child.type == cs.TS_JS_CATCH_CLAUSE:
                 branch_exits.append(
-                    self._walk_flat_stmt(child, self._merge([state, body_exit]), jc)
+                    self._walk_flat_stmt(
+                        child, self._merge_lean([state, body_exit]), jc
+                    )
                 )
                 self._restore_shadows(pre_shadows, jc)
             elif child.type == cs.TS_JS_FINALLY_CLAUSE:
                 finally_clause = child
-        merged = self._merge(branch_exits)
+        merged = self._merge_lean(branch_exits)
         if finally_clause is not None:
             merged = self._walk_flat_stmt(finally_clause, merged, jc)
             self._restore_shadows(pre_shadows, jc)
@@ -875,10 +911,10 @@ class FlowProcessor:
     def _walk_switch(
         self,
         node: Node,
-        state: _TaintMap,
+        state: _LeanState,
         jc: _JsCtx,
-        walk: Callable[[Node, _TaintMap, _JsCtx], _TaintMap],
-    ) -> _TaintMap:
+        walk: Callable[[Node, _LeanState, _JsCtx], _LeanState],
+    ) -> _LeanState:
         # Shared switch-family branch-and-merge (Go switch/type-switch/
         # select, Java switch, C++ switch, JS/TS switch). The header
         # (initializer, switched value, condition) runs on all paths; each
@@ -907,29 +943,29 @@ class FlowProcessor:
             return state
         exits, has_default = self._walk_switch_arms(arms, state, jc, walk)
         if not has_default:
-            exits.append(dict(state))
+            exits.append(state.copy())
         self._restore_shadows(pre_switch_shadows, jc)
-        return self._merge(exits)
+        return self._merge_lean(exits)
 
     def _walk_switch_arms(
         self,
         arms: list[Node],
-        state: _TaintMap,
+        state: _LeanState,
         jc: _JsCtx,
-        walk: Callable[[Node, _TaintMap, _JsCtx], _TaintMap],
-    ) -> tuple[list[_TaintMap], bool]:
+        walk: Callable[[Node, _LeanState, _JsCtx], _LeanState],
+    ) -> tuple[list[_LeanState], bool]:
         pre_arm_shadows = set(jc.local_names)
-        exits: list[_TaintMap] = []
-        fall_in: _TaintMap | None = None
+        exits: list[_LeanState] = []
+        fall_in: _LeanState | None = None
         has_default = False
         for index, arm in enumerate(arms):
             has_default = has_default or _switch_arm_is_default(arm)
-            entry = dict(state)
+            entry = state.copy()
             # fall_in is non-None exactly when the PREVIOUS arm can fall
             # into this one (C-family arm without a trailing break, or a Go
             # arm ending in the explicit `fallthrough` keyword).
             if fall_in is not None:
-                entry = self._merge([entry, fall_in])
+                entry = self._merge_lean([entry, fall_in])
             # Each break inside the arm exits the switch with the state it
             # saw THEN (a conditional break before a later kill carries the
             # live taint out), captured by the arm's own collector.
@@ -951,7 +987,7 @@ class FlowProcessor:
             fall_in = arm_exit if falls else None
         return exits, has_default
 
-    def _walk_flat_match(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_flat_match(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Rust match: the scrutinee runs on all paths; each arm is walked
         # against a copy and unioned (MAY join). Arms are exhaustive, so the
         # merge is over the arms only (no implicit skip path).
@@ -962,15 +998,15 @@ class FlowProcessor:
         if body is None:
             return state
         pre_shadows = set(jc.local_names)
-        arm_exits: list[_TaintMap] = []
+        arm_exits: list[_LeanState] = []
         for arm in body.named_children:
             if arm.type != cs.TS_RS_MATCH_ARM:
                 continue
-            arm_exits.append(self._walk_flat_stmt(arm, dict(state), jc))
+            arm_exits.append(self._walk_flat_stmt(arm, state.copy(), jc))
             self._restore_shadows(pre_shadows, jc)
-        return self._merge(arm_exits) if arm_exits else state
+        return self._merge_lean(arm_exits) if arm_exits else state
 
-    def _walk_flat_if(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_flat_if(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # The header (any initializer + condition) runs on all paths; each of the
         # then / else(-if) / implicit skip paths is walked against a copy and
         # unioned (MAY join). Two shadow scopes are restored: a branch grows the
@@ -986,29 +1022,29 @@ class FlowProcessor:
             if child.id not in skip:
                 state = self._walk_flat_stmt(child, state, jc)
         pre_shadows = set(jc.local_names)
-        branch_exits: list[_TaintMap] = []
+        branch_exits: list[_LeanState] = []
         if consequence is not None:
-            branch_exits.append(self._walk_flat_stmt(consequence, dict(state), jc))
+            branch_exits.append(self._walk_flat_stmt(consequence, state.copy(), jc))
             self._restore_shadows(pre_shadows, jc)
         if alternative is not None:
             # else_clause holds either a block or a nested if (else-if chain); the
             # recursion handles both and merges within.
-            branch_exits.append(self._walk_flat_stmt(alternative, dict(state), jc))
+            branch_exits.append(self._walk_flat_stmt(alternative, state.copy(), jc))
             self._restore_shadows(pre_shadows, jc)
         else:
             # No else: the skip path preserves the incoming state.
-            branch_exits.append(dict(state))
+            branch_exits.append(state.copy())
         self._restore_shadows(pre_if_shadows, jc)
-        return self._merge(branch_exits)
+        return self._merge_lean(branch_exits)
 
-    def _record_break_exit(self, state: _TaintMap) -> None:
+    def _record_break_exit(self, state: _LeanState) -> None:
         # Snapshot the live state at a `break` for the enclosing switch
         # arm's collector. None on top = a loop shield (the break targets
         # that loop); empty stack = no enclosing switch at all. A labeled
         # break targeting a farther construct still records here: the
         # extra state only widens the MAY join, the sound direction.
         if self._break_exit_stack and self._break_exit_stack[-1] is not None:
-            self._break_exit_stack[-1].append(dict(state))
+            self._break_exit_stack[-1].append(state.copy())
 
     def _shield_breaks(self) -> None:
         self._break_exit_stack.append(None)
@@ -1023,7 +1059,7 @@ class FlowProcessor:
         jc.local_names.clear()
         jc.local_names.update(pre_shadows)
 
-    def _walk_js_stmt(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_js_stmt(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Path-sensitive walk for JS/TS: control-flow nodes branch-and-merge, every
         # other node applies its leaf effect and threads state through its children
         # in source order (so a nested call in an argument is still seen).
@@ -1054,32 +1090,32 @@ class FlowProcessor:
             # AFTER it, so this is the mandatory-loop shape, not the
             # zero-or-more loop walk.
             return self._walk_mandatory_loop(node, state, jc, self._walk_js_stmt)
-        self._apply_js_leaf(node, state, jc)
+        self._apply_js_leaf(node, state.taint, state.handles, jc)
         for child in node.named_children:
             state = self._walk_js_stmt(child, state, jc)
         return state
 
-    def _walk_js_if(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_js_if(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # The condition runs on all paths; each of the then / else(-if) / implicit
         # skip paths is walked against a copy and unioned (MAY join).
         cond = node.child_by_field_name(cs.TS_FIELD_CONDITION)
         if cond is not None:
             state = self._walk_js_stmt(cond, state, jc)
-        branch_exits: list[_TaintMap] = []
+        branch_exits: list[_LeanState] = []
         consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
         if consequence is not None:
-            branch_exits.append(self._walk_js_stmt(consequence, dict(state), jc))
+            branch_exits.append(self._walk_js_stmt(consequence, state.copy(), jc))
         alternative = node.child_by_field_name(cs.FIELD_ALTERNATIVE)
         if alternative is not None:
             # else_clause holds either a block or a nested if (else-if chain); the
             # recursion handles both and merges within.
-            branch_exits.append(self._walk_js_stmt(alternative, dict(state), jc))
+            branch_exits.append(self._walk_js_stmt(alternative, state.copy(), jc))
         else:
             # No else: the skip path preserves the incoming state.
-            branch_exits.append(dict(state))
-        return self._merge(branch_exits)
+            branch_exits.append(state.copy())
+        return self._merge_lean(branch_exits)
 
-    def _walk_js_loop(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_js_loop(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Loop shield: a break inside the body targets THIS loop, never an
         # enclosing switch arm's collector.
         self._shield_breaks()
@@ -1089,8 +1125,8 @@ class FlowProcessor:
             self._unshield_breaks()
 
     def _walk_js_loop_inner(
-        self, node: Node, state: _TaintMap, jc: _JsCtx
-    ) -> _TaintMap:
+        self, node: Node, state: _LeanState, jc: _JsCtx
+    ) -> _LeanState:
         # The initializer/condition/iterable runs before the body; the body runs
         # zero or more times, so union the skip path with one pass, then re-walk
         # once from that merge to catch taint carried from a later iteration into
@@ -1110,39 +1146,41 @@ class FlowProcessor:
                 continue
             state = self._walk_js_stmt(child, state, jc)
         if body is not None:
-            once = self._walk_js_stmt(body, dict(state), jc)
+            once = self._walk_js_stmt(body, state.copy(), jc)
             if increment is not None:
                 once = self._walk_js_stmt(increment, once, jc)
-            merged = self._merge([state, once])
-            twice = self._walk_js_stmt(body, dict(merged), jc)
+            merged = self._merge_lean([state, once])
+            twice = self._walk_js_stmt(body, merged.copy(), jc)
             if increment is not None:
                 twice = self._walk_js_stmt(increment, twice, jc)
-            state = self._merge([state, twice])
+            state = self._merge_lean([state, twice])
         return state
 
-    def _walk_js_try(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_js_try(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # The try body may run fully (no-throw path) or partially before a catch;
         # seed the handler with union(pre, body_exit) so taint introduced before a
         # throw still reaches it. A finally runs on the merged state of both.
         body = node.child_by_field_name(cs.FIELD_BODY)
         body_exit = (
-            self._walk_js_stmt(body, dict(state), jc)
+            self._walk_js_stmt(body, state.copy(), jc)
             if body is not None
-            else dict(state)
+            else state.copy()
         )
-        branch_exits: list[_TaintMap] = [body_exit]
+        branch_exits: list[_LeanState] = [body_exit]
         handler = node.child_by_field_name(cs.FIELD_HANDLER)
         if handler is not None:
             branch_exits.append(
-                self._walk_js_stmt(handler, self._merge([state, body_exit]), jc)
+                self._walk_js_stmt(handler, self._merge_lean([state, body_exit]), jc)
             )
-        merged = self._merge(branch_exits)
+        merged = self._merge_lean(branch_exits)
         finalizer = node.child_by_field_name(cs.FIELD_FINALIZER)
         if finalizer is not None:
             merged = self._walk_js_stmt(finalizer, merged, jc)
         return merged
 
-    def _apply_js_leaf(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+    def _apply_js_leaf(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
         # The leaf effect of one node on the taint map: bind (JS/Go), Go range
         # kill, a call's sink/arg edges, or a return's contribution to the summary.
         node_type = node.type
@@ -1151,14 +1189,14 @@ class FlowProcessor:
             cs.TS_ASSIGNMENT_EXPRESSION,
             cs.TS_GO_ASSIGNMENT_STATEMENT,
         ):
-            self._lean_bind(node, tainted, jc)
+            self._lean_bind(node, tainted, handles, jc)
         elif node_type in d.extra_declarator_types:
             if node_type == cs.TS_GO_RANGE_CLAUSE:
-                self._lean_kill(node, tainted, jc)
+                self._lean_kill(node, tainted, handles, jc)
             else:
-                self._lean_bind(node, tainted, jc)
+                self._lean_bind(node, tainted, handles, jc)
         elif node_type == d.call_type:
-            self._js_call(node, tainted, jc)
+            self._js_call(node, tainted, handles, jc)
         elif d.macro_type is not None and node_type == d.macro_type:
             self._flow_macro(node, tainted, jc)
         elif d.stream_sink_type is not None and node_type == d.stream_sink_type:
@@ -1169,7 +1207,9 @@ class FlowProcessor:
                 self._acc_returns_taint = True
                 self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
 
-    def _lean_bind(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+    def _lean_bind(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
         # Bind LHS name(s) to their RHS taint across the grammars: JS uses a single
         # `name`/`value` (declarator) or `left`/`right` (assignment); Go uses `left`/
         # `right` expression_lists (`:=`, `=`) or `name`/`value` (`var`/`const`).
@@ -1182,7 +1222,7 @@ class FlowProcessor:
         # map before any LHS is updated, so `a, b = b, a` swaps correctly. Compute
         # all taints first, then apply, or an earlier LHS update would corrupt a
         # later RHS read of the same name.
-        computed: list[tuple[str, Taint | None]] = []
+        computed: list[tuple[str, Taint | None, Node | None]] = []
         for index, name in enumerate(targets):
             if name is None:
                 continue
@@ -1191,17 +1231,29 @@ class FlowProcessor:
                 if spread
                 else (values[index] if index < len(values) else None)
             )
-            computed.append((name, self._js_expr_taint(rhs, tainted, jc)))
-        for name, taint in computed:
+            computed.append((name, self._js_expr_taint(rhs, tainted, jc), rhs))
+        for name, taint, rhs in computed:
             if taint is not None:
                 tainted[name] = taint
             else:
                 tainted.pop(name, None)
+            # Track (or kill) the resource handle bound to this name, so a later
+            # tainted write through it emits a flow edge (issue #1204). A binding is
+            # a STRONG update (replaces the set), so straight-line reassignment
+            # redirects the handle; only a branch join widens a name to multiple.
+            if jc.handle_ctors:
+                binding = self._lean_handle_binding(rhs, jc)
+                if binding is not None:
+                    handles[name] = frozenset({binding})
+                else:
+                    handles.pop(name, None)
         # Register the bound names AFTER reading the RHS (which still saw the
         # pre-declaration scope): a Go shadow applies only from here forward.
         self._register_shadows(targets, jc)
 
-    def _lean_kill(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+    def _lean_kill(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
         left = node.child_by_field_name(cs.FIELD_LEFT)
         if left is None:
             return
@@ -1209,6 +1261,7 @@ class FlowProcessor:
         for name in names:
             if name is not None:
                 tainted.pop(name, None)
+                handles.pop(name, None)
         self._register_shadows(names, jc)
 
     @staticmethod
@@ -1312,7 +1365,9 @@ class FlowProcessor:
                     return self._js_expr_taint(receiver, tainted, jc)
         return None
 
-    def _js_call(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+    def _js_call(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
         raw = call_name(node)
         if raw is None:
             return
@@ -1347,6 +1402,9 @@ class FlowProcessor:
                     self._param_sinks[(jc.flow.caller_qn, pname)].add(
                         (sink.kind, dst_identity)
                     )
+            return
+        # A tainted write through a bound resource handle (issue #1204).
+        if handles and self._emit_handle_write(raw, args, handles, jc):
             return
         callee = self._resolve(
             raw,
@@ -1386,6 +1444,68 @@ class FlowProcessor:
                 self._param_flow_edges.append(
                     (jc.flow.caller_qn, pname, callee_qn, via)
                 )
+
+    def _lean_handle_binding(
+        self, rhs: Node | None, jc: _JsCtx
+    ) -> HandleBinding | None:
+        # Resolve a RHS handle-constructor call (`os.Create("out")`) to a
+        # HandleBinding, shadow-aware and import-normalised exactly like sink
+        # matching. None when the RHS is not a registered handle constructor
+        # (issue #1204).
+        if rhs is None or rhs.type != jc.descriptor.call_type:
+            return None
+        raw = call_name(rhs)
+        if raw is None:
+            return None
+        ctor = self._js_match_sink(raw, jc.handle_ctors, jc)
+        if ctor is None or ctor.direction == IODirection.READ:
+            # A READ-only handle (`os.Open`) is never a write sink; do not bind it,
+            # so a later `f.Write(...)` through it emits nothing (issue #1204).
+            return None
+        identity = literal_target(
+            rhs,
+            ctor.target_arg,
+            ctor.target_kw,
+            string_type=jc.descriptor.string_type,
+            content_type=jc.descriptor.string_content_type,
+            keyword_arg_type=jc.descriptor.keyword_arg_type,
+            wrapper_type=jc.descriptor.argument_wrapper_type,
+            template_type=jc.descriptor.template_string_type,
+            substitution_type=jc.descriptor.template_substitution_type,
+        )
+        return HandleBinding(ctor.kind, identity)
+
+    def _emit_handle_write(
+        self,
+        raw: str,
+        args: list[tuple[str, Taint | None]],
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> bool:
+        # A tainted write through a bound handle (`f.Write(secret)`) is a flow to
+        # the handle's resource (issue #1204). Split the callee into receiver +
+        # method; for EACH handle the receiver may hold (a name can hold different
+        # handles on different branches), if the method WRITES (or is read/write
+        # like a DB execute), route each tainted arg to that resource. Pure READ
+        # methods are not sinks; untainted args emit nothing.
+        recv, sep, method = raw.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return False
+        bindings = handles.get(recv)
+        if not bindings:
+            return False
+        emitted = False
+        for binding in bindings:
+            direction = jc.handle_methods.get(binding.kind, {}).get(method)
+            if direction is None or direction == IODirection.READ:
+                continue
+            emitted = True
+            for _via, taint in args:
+                if taint is not None:
+                    self._emit_taint_to_sink(
+                        taint, binding.kind, binding.identity, jc.flow.caller_qn
+                    )
+        return emitted
 
     def _emit_taint_to_sink(
         self, taint: Taint, kind: ResourceKind, identity: str, caller_qn: str
@@ -1678,9 +1798,7 @@ class FlowProcessor:
         return HandleBinding(kind=sink.kind, identity=identity)
 
     @staticmethod
-    def _js_match_sink(
-        raw: str, sink_map: dict[str, IOSink], jc: _JsCtx
-    ) -> IOSink | None:
+    def _js_match_sink[T](raw: str, sink_map: dict[str, T], jc: _JsCtx) -> T | None:
         # Same shadow-aware matching as io_access: a locally-bound name is not
         # the builtin; the import-normalised name matches first (so an aliased
         # builtin resolves), then the raw dotted name only when its head resolves
@@ -1797,6 +1915,18 @@ class FlowProcessor:
                 existing = out.get(var)
                 out[var] = _merge_taint(existing, taint) if existing else taint
         return out
+
+    @staticmethod
+    def _merge_lean(states: list[_LeanState]) -> _LeanState:
+        # MAY union of both maps across branches (issue #1204). Taint reuses
+        # _merge; handles union per name, so a variable that may hold either of
+        # two handles on different paths writes to BOTH at a later method call.
+        handles: _HandleMap = {}
+        for s in states:
+            for name, bindings in s.handles.items():
+                existing = handles.get(name)
+                handles[name] = existing | bindings if existing else bindings
+        return _LeanState(FlowProcessor._merge([s.taint for s in states]), handles)
 
     def _walk_stmt(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
         node_type = node.type

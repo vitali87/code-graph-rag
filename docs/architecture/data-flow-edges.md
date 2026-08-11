@@ -386,14 +386,16 @@ module is re-exported under its own name. A project that does
 - The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
   Go, Java, Rust, C, C++, C#, and Lua; a language not in the registry emits no I/O
   or flow edges until its table is added.
-- The lean (non-Python) `FLOWS_TO` walk matches **direct call sinks only**; a taint
-  that reaches a resource through a handle method (`os.Create(p).Write(x)`,
-  `io.open(p):write(x)`, `File::create(p).write(x)`) emits no flow edge, uniformly
-  across every lean language — the handle-tracking tables feed the `READS_FROM`/
-  `WRITES_TO` walk, not the flow walk. So a handle-only write leak reads as `NO_FLOW`
-  rather than `UNKNOWN` in a fully covered project; teaching the flow walk to track
-  handle bindings (cross-language) is tracked in #1204. This bites Lua hardest, since Lua has
-  no direct file-write sink at all.
+- Handle-based writes in the lean (non-Python) `FLOWS_TO` walk are being taught
+  incrementally (issue #1204). **Go** now tracks handle bindings, so a taint written
+  through a file/socket/db handle (`f := os.Create(p); f.Write(x)`) emits a flow edge
+  to the handle's resource. The remaining lean languages (Rust, Java, C#, JS/TS, C,
+  C++, Lua) still match **direct call sinks only** — a handle-method write there
+  (`io.open(p):write(x)`, `File::create(p).write(x)`) emits no flow edge, so such a
+  leak reads as `NO_FLOW` rather than `UNKNOWN` in a fully covered project. The
+  handle-tracking tables that feed the `READS_FROM`/`WRITES_TO` walk are the reuse
+  target as each language lands. This bites Lua hardest, since Lua has no direct
+  file-write sink at all (and no handle tables in either walk yet).
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
