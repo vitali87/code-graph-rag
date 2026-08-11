@@ -30,12 +30,17 @@ def extract_tool_names(tools: list["Tool"]) -> ToolNames:
     registered = {t.name for t in tools}
 
     def resolve_tool_name(canonical: AgenticToolName) -> str:
-        if canonical not in registered:
+        canonical_str = str(canonical)
+        if canonical_str not in registered:
+            # This warning indicates a discrepancy between the expected set of tools
+            # (as defined in AgenticToolName) and the tools actually provided to the agent.
+            # While the prompt generation logic now checks tool availability,
+            # this warning is still useful for debugging agent configuration.
             logger.warning(
-                f"Tool '{canonical}' is not registered on the agent; "
-                "the orchestrator prompt references it anyway"
+                f"Tool '{canonical_str}' is defined in `AgenticToolName` but not registered on the agent. "
+                "The orchestrator prompt will adapt its instructions, but this may indicate a configuration issue."
             )
-        return str(canonical)
+        return canonical_str
 
     return ToolNames(
         query_graph=resolve_tool_name(AgenticToolName.QUERY_GRAPH),
@@ -135,25 +140,65 @@ def build_rag_orchestrator_prompt(
     active_projects: list[str] | None = None,
 ) -> str:
     t = extract_tool_names(tools)
-    base = f"""You are an expert AI assistant for analyzing codebases. Your answers are based **EXCLUSIVELY** on information retrieved using your tools.
+    registered_tool_names = {tool.name for tool in tools}
 
-**CRITICAL RULES:**
-1.  **TOOL-ONLY ANSWERS**: You must ONLY use information from the tools provided. Do not use external knowledge.
-2.  **NATURAL LANGUAGE QUERIES**: When using the `{t.query_graph}` tool, ALWAYS use natural language questions. NEVER write Cypher queries directly - the tool will translate your natural language into the appropriate database query.
-3.  **HONESTY**: If a tool fails or returns no results, you MUST state that clearly and report any error messages. Do not invent answers.
-4.  **CHOOSE THE RIGHT TOOL FOR THE FILE TYPE**:
-    - For source code files (.py, .ts, etc.), use `{t.read_file}`.
-    - Images and PDFs the user references are attached inline to the message; read them directly from your own multimodal input.
+    def tool_available(tool_canonical_name: AgenticToolName) -> bool:
+        return str(tool_canonical_name) in registered_tool_names
 
-**Your General Approach:**
-1.  **Inspect Attached Media Directly**: When the user attaches an image or PDF, analyze it from the inline content of the message. Do not call a tool for it.
-2.  **Deep Dive into Code**: When you identify a relevant component (e.g., a folder), you must go beyond documentation.
-    a. First, check if documentation files like `README.md` exist and read them for context. For configuration, look for files appropriate to the language (e.g., `pyproject.toml` for Python, `package.json` for Node.js).
-    b. **Then, you MUST dive into the source code.** Explore the `src` directory (or equivalent). Identify and read key files (e.g., `main.py`, `index.ts`, `app.ts`) to understand the implementation details, logic, and functionality.
-    c. Synthesize all this information—from documentation, configuration, and the code itself—to provide a comprehensive, factual answer. Do not just describe the files; explain what the code *does*.
-    d. Only ask for clarification if, after a thorough investigation, the user's intent is still unclear.
-3.  **Choose the Right Search Strategy - SEMANTIC FIRST for Intent**:
-    a. **WHEN TO USE SEMANTIC SEARCH FIRST**: Always start with `{t.semantic_search}` for ANY of these patterns:
+    base_parts = [
+        "You are an expert AI assistant for analyzing codebases. Your answers are based **EXCLUSIVELY** on information retrieved using your tools."
+    ]
+
+    # --- CRITICAL RULES (Dynamic Numbering) ---
+    critical_rules_list = []
+    critical_rules_list.append("TOOL-ONLY ANSWERS**: You must ONLY use information from the tools provided. Do not use external knowledge.")
+
+    if tool_available(AgenticToolName.QUERY_GRAPH):
+        critical_rules_list.append(
+            f"NATURAL LANGUAGE QUERIES**: When using the `{t.query_graph}` tool, ALWAYS use natural language questions. NEVER write Cypher queries directly - the tool will translate your natural language into the appropriate database query."
+        )
+
+    critical_rules_list.append("HONESTY**: If a tool fails or returns no results, you MUST state that clearly and report any error messages. Do not invent answers.")
+
+    file_type_rule_bullets = []
+    if tool_available(AgenticToolName.READ_FILE):
+        file_type_rule_bullets.append(f"- For source code files (.py, .ts, etc.), use `{t.read_file}`.")
+    file_type_rule_bullets.append("- Images and PDFs the user references are attached inline to the message; read them directly from your own multimodal input.")
+
+    if file_type_rule_bullets:
+        critical_rules_list.append(
+            "CHOOSE THE RIGHT TOOL FOR THE FILE TYPE**:\n" + "\n".join(file_type_rule_bullets)
+        )
+
+    formatted_critical_rules = "\n".join(
+        f"{idx + 1}.  **{rule}" for idx, rule in enumerate(critical_rules_list)
+    )
+    base_parts.append(f"**CRITICAL RULES:**\n{formatted_critical_rules}")
+
+    base_parts.append("\n**Your General Approach:**")
+    base_parts.append("1.  **Inspect Attached Media Directly**: When the user attaches an image or PDF, analyze it from the inline content of the message. Do not call a tool for it.")
+
+    # --- 2. Deep Dive into Code ---
+    deep_dive_instructions = ["2.  **Deep Dive into Code**: When you identify a relevant component (e.g., a folder), you must go beyond documentation."]
+    deep_dive_instructions.append("    a. First, check if documentation files like `README.md` exist and read them for context. For configuration, look for files appropriate to the language (e.g., `pyproject.toml` for Python, `package.json` for Node.js).")
+
+    if tool_available(AgenticToolName.READ_FILE):
+        deep_dive_instructions.append(
+            "    b. **Then, you MUST dive into the source code.** Explore the `src` directory (or equivalent). Identify and read key files (e.g., `main.py`, `index.ts`, `app.ts`) to understand the implementation details, logic, and functionality."
+        )
+    else:
+        deep_dive_instructions.append(
+            "    b. **Then, you MUST dive into the source code.** Explore the `src` directory (or equivalent). Identify key files (e.g., `main.py`, `index.ts`, `app.ts`) and use your other retrieval tools (e.g., semantic search or graph queries) to gather information about their contents, understanding that direct file reading is not available."
+        )
+    deep_dive_instructions.append("    c. Synthesize all this information—from documentation, configuration, and the code itself—to provide a comprehensive, factual answer. Do not just describe the files; explain what the code *does*.")
+    deep_dive_instructions.append("    d. Only ask for clarification if, after a thorough investigation, the user's intent is still unclear.")
+    base_parts.append("\n".join(deep_dive_instructions))
+
+    # --- 3. Choose the Right Search Strategy - SEMANTIC FIRST for Intent ---
+    search_strategy_parts = ["3.  **Choose the Right Search Strategy - SEMANTIC FIRST for Intent**:"]
+
+    if tool_available(AgenticToolName.SEMANTIC_SEARCH):
+        search_strategy_parts.append(f"""    a. **WHEN TO USE SEMANTIC SEARCH FIRST**: Always start with `{t.semantic_search}` for ANY of these patterns:
        - "main entry point", "startup", "initialization", "bootstrap", "launcher"
        - "error handling", "validation", "authentication"
        - "where is X done", "how does Y work", "find Z logic"
@@ -164,45 +209,120 @@ def build_rag_orchestrator_prompt(
        - JavaScript/TypeScript: `index.js`, `main.ts`, `app.js`, `server.js`, package.json scripts
        - Java: `public static void main`, `@SpringBootApplication`
        - C/C++: `int main()`, `WinMain`
-       - Web: `index.html`, routing configurations, startup middleware
+       - Web: `index.html`, routing configurations, startup middleware""")
+    else:
+        search_strategy_parts.append("    a. **WHEN TO USE SEMANTIC SEARCH FIRST**: The semantic search tool is not available. Rely on graph queries and direct file reading (if available) to understand intent and functionality.")
 
-    b. **WHEN TO USE GRAPH DIRECTLY**: Only use `{t.query_graph}` directly for pure structural queries:
+
+    if tool_available(AgenticToolName.QUERY_GRAPH):
+        search_strategy_parts.append(f"""    b. **WHEN TO USE GRAPH DIRECTLY**: Only use `{t.query_graph}` directly for pure structural queries:
        - "What does function X call?" (when you already know X's name)
        - "List methods of User class" (when you know the exact class name)
-       - "Show files in folder Y" (when you know the exact folder path)
+       - "Show files in folder Y" (when you know the exact folder path)""")
+    else:
+        search_strategy_parts.append("    b. **WHEN TO USE GRAPH DIRECTLY**: The graph query tool is not available. You cannot directly perform structural queries.")
 
-    c. **HYBRID APPROACH (RECOMMENDED)**: For most queries, use this sequence:
-       1. Use `{t.semantic_search}` to find relevant code elements by intent/meaning
-       2. Then use `{t.query_graph}` to explore structural relationships
-       3. **CRITICAL**: Always read the actual files using `{t.read_file}` to examine source code
-       4. For entry points specifically: Look for `if __name__ == "__main__"`, `main()` functions, or CLI entry points
+    hybrid_steps = []
+    if tool_available(AgenticToolName.SEMANTIC_SEARCH):
+        hybrid_steps.append(f"       1. Use `{t.semantic_search}` to find relevant code elements by intent/meaning")
+    if tool_available(AgenticToolName.QUERY_GRAPH):
+        hybrid_steps.append(f"       2. Then use `{t.query_graph}` to explore structural relationships")
+    if tool_available(AgenticToolName.READ_FILE):
+        hybrid_steps.append(f"       3. **CRITICAL**: Always read the actual files using `{t.read_file}` to examine source code")
+    else:
+        hybrid_steps.append("       3. **CRITICAL**: Direct file reading is not available. Gather information about file contents using other available tools (e.g., semantic search or graph queries).")
 
-    d. **Tool Chaining Example**: For "main entry point and what it calls":
-       1. `{t.semantic_search}` for focused terms like "main entry startup" (not overly broad)
-       2. `{t.query_graph}` to find specific function relationships
-       3. `{t.read_file}` for main.py with targeted sections (use offset/limit for large files)
-       4. Look for the true application entry point (main function, __main__ block, CLI commands)
-       5. If you find CLI frameworks (typer, click, argparse), read relevant command sections only
-       6. Summarize execution flow concisely rather than showing all details
-4.  **Plan Before Writing or Modifying**:
-    a. Before using `{t.create_file}`, `{t.edit_file}`, or modifying files, you MUST explore the codebase to find the correct location and file structure.
-    b. For shell commands: If `{t.shell_command}` returns a confirmation message (return code -2), immediately return that exact message to the user. When they respond "yes", call the tool again with `user_confirmed=True`.
-5.  **Execute Shell Commands**: The `{t.shell_command}` tool handles dangerous command confirmations automatically. If it returns a confirmation prompt, pass it directly to the user.
-6.  **Complete the Investigation Cycle**: For entry point queries, you MUST:
-    a. Find candidate functions via semantic search
-    b. Explore their relationships via graph queries
-    c. **AUTOMATICALLY read main.py** (or main entry file) - NEVER ask the user for permission
-    d. Look for the ACTUAL startup code: `if __name__ == "__main__"`, CLI commands, `main()` functions
-    e. If CLI framework detected (typer, click, argparse), examine command functions
-    f. Distinguish between helper functions and the real application entry point
-    g. Show the complete execution flow from the true entry point through initialization
-7.  **Token Management**: Be efficient with context usage:
-    a. For semantic search, use focused queries (not overly broad terms)
-    b. For file reading, read specific sections when possible using offset/limit
-    c. Summarize large results rather than including full content
-    d. Prioritize most relevant findings over comprehensive coverage
-8.  **Synthesize Answer**: Analyze and explain the retrieved content. Cite your sources (file paths or qualified names). Report any errors gracefully.
-"""
+    hybrid_steps.append("       4. For entry points specifically: Look for `if __name__ == \"__main__\"`, `main()` functions, or CLI entry points")
+
+    if hybrid_steps:
+        search_strategy_parts.append("    c. **HYBRID APPROACH (RECOMMENDED)**: For most queries, use this sequence:\n" + "\n".join(hybrid_steps))
+    else:
+        search_strategy_parts.append("    c. **HYBRID APPROACH (RECOMMENDED)**: No suitable tools for a hybrid approach are available. Rely on manual inspection or limited single-tool usage based on available tools.")
+
+    tool_chaining_bullets = []
+    if tool_available(AgenticToolName.SEMANTIC_SEARCH):
+        tool_chaining_bullets.append(f"       1. `{t.semantic_search}` for focused terms like \"main entry startup\" (not overly broad)")
+    if tool_available(AgenticToolName.QUERY_GRAPH):
+        tool_chaining_bullets.append(f"       2. `{t.query_graph}` to find specific function relationships")
+    if tool_available(AgenticToolName.READ_FILE):
+        tool_chaining_bullets.append(f"       3. `{t.read_file}` for main.py with targeted sections (use offset/limit for large files)")
+    else:
+        tool_chaining_bullets.append("       3. Direct file reading is not available. Consider using other tools or inferring content for main.py.")
+
+    tool_chaining_bullets.append("       4. Look for the true application entry point (main function, __main__ block, CLI commands)")
+    tool_chaining_bullets.append("       5. If you find CLI frameworks (typer, click, argparse), read relevant command sections only")
+    tool_chaining_bullets.append("       6. Summarize execution flow concisely rather than showing all details")
+
+    if tool_chaining_bullets:
+        search_strategy_parts.append("    d. **Tool Chaining Example**: For \"main entry point and what it calls\":\n" + "\n".join(tool_chaining_bullets))
+
+    base_parts.append("\n".join(search_strategy_parts))
+
+    # --- 4. Plan Before Writing or Modifying ---
+    plan_writing_parts = ["4.  **Plan Before Writing or Modifying**:"]
+    create_edit_tools_available = False
+    create_edit_list = []
+    if tool_available(AgenticToolName.CREATE_FILE):
+        create_edit_list.append(f"`{t.create_file}`")
+        create_edit_tools_available = True
+    if tool_available(AgenticToolName.REPLACE_CODE):
+        create_edit_list.append(f"`{t.edit_file}`")
+        create_edit_tools_available = True
+
+    if create_edit_tools_available:
+        plan_writing_parts.append(
+            f"    a. Before using {', '.join(create_edit_list)} or modifying files, you MUST explore the codebase to find the correct location and file structure."
+        )
+    else:
+        plan_writing_parts.append(
+            "    a. File creation/modification tools are not available. Skip planning for writing or modifying."
+        )
+
+    if tool_available(AgenticToolName.EXECUTE_SHELL):
+        plan_writing_parts.append(
+            f"    b. For shell commands: If `{t.shell_command}` returns a confirmation message (return code -2), immediately return that exact message to the user. When they respond \"yes\", call the tool again with `user_confirmed=True`."
+        )
+    base_parts.append("\n".join(plan_writing_parts))
+
+    # --- 5. Execute Shell Commands ---
+    if tool_available(AgenticToolName.EXECUTE_SHELL):
+        base_parts.append(f"5.  **Execute Shell Commands**: The `{t.shell_command}` tool handles dangerous command confirmations automatically. If it returns a confirmation prompt, pass it directly to the user.")
+    else:
+        base_parts.append("5.  **Execute Shell Commands**: The shell command tool is not available.")
+
+    # --- 6. Complete the Investigation Cycle ---
+    investigation_cycle_bullets = ["6.  **Complete the Investigation Cycle**: For entry point queries, you MUST:"]
+    if tool_available(AgenticToolName.SEMANTIC_SEARCH):
+        investigation_cycle_bullets.append("    a. Find candidate functions via semantic search")
+    if tool_available(AgenticToolName.QUERY_GRAPH):
+        investigation_cycle_bullets.append("    b. Explore their relationships via graph queries")
+    if tool_available(AgenticToolName.READ_FILE):
+        investigation_cycle_bullets.append("    c. **AUTOMATICALLY read main.py** (or main entry file) - NEVER ask the user for permission")
+    else:
+        investigation_cycle_bullets.append("    c. Direct file reading is not available. Gather information about main.py (or main entry file) using other tools.")
+
+    investigation_cycle_bullets.append("    d. Look for the ACTUAL startup code: `if __name__ == \"__main__\"`, CLI commands, `main()` functions")
+    investigation_cycle_bullets.append("    e. If CLI framework detected (typer, click, argparse), examine command functions")
+    investigation_cycle_bullets.append("    f. Distinguish between helper functions and the real application entry point")
+    investigation_cycle_bullets.append("    g. Show the complete execution flow from the true entry point through initialization")
+
+    base_parts.append("\n".join(investigation_cycle_bullets))
+
+
+    # --- 7. Token Management ---
+    token_management_bullets = ["7.  **Token Management**: Be efficient with context usage:"]
+    if tool_available(AgenticToolName.SEMANTIC_SEARCH):
+        token_management_bullets.append("    a. For semantic search, use focused queries (not overly broad terms)")
+    if tool_available(AgenticToolName.READ_FILE):
+        token_management_bullets.append("    b. For file reading, read specific sections when possible using offset/limit")
+    token_management_bullets.append("    c. Summarize large results rather than including full content")
+    token_management_bullets.append("    d. Prioritize most relevant findings over comprehensive coverage")
+
+    base_parts.append("\n".join(token_management_bullets))
+    base_parts.append("8.  **Synthesize Answer**: Analyze and explain the retrieved content. Cite your sources (file paths or qualified names). Report any errors gracefully.")
+
+    # Join all parts
+    base = "\n".join(base_parts)
     base += _format_active_projects_block(active_projects)
     extra = (project_instructions or "").strip()
     if not extra:
