@@ -109,6 +109,8 @@ def test_go_handle_reassignment_tracks_the_new_resource(tmp_path: Path) -> None:
 
 def test_go_read_method_is_not_a_write_sink(tmp_path: Path) -> None:
     # A read through the handle is not a taint sink; only writes emit flow edges.
+    # The arg is genuinely tainted (`[]byte(s)` preserves taint), so this validates
+    # that `Read` is classified as a READ method, not merely that the arg is clean.
     files = {
         "main.go": (
             "package main\n\n"
@@ -116,8 +118,7 @@ def test_go_read_method_is_not_a_write_sink(tmp_path: Path) -> None:
             "func leak() {\n"
             '\ts := os.Getenv("K")\n'
             '\tf, _ := os.Create("out.txt")\n'
-            "\tbuf := make([]byte, len(s))\n"
-            "\tf.Read(buf)\n"
+            "\tf.Read([]byte(s))\n"
             "}\n"
         )
     }
