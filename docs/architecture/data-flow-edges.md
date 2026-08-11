@@ -386,6 +386,14 @@ module is re-exported under its own name. A project that does
 - The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
   Go, Java, Rust, C, C++, C#, and Lua; a language not in the registry emits no I/O
   or flow edges until its table is added.
+- The lean (non-Python) `FLOWS_TO` walk matches **direct call sinks only**; a taint
+  that reaches a resource through a handle method (`os.Create(p).Write(x)`,
+  `io.open(p):write(x)`, `File::create(p).write(x)`) emits no flow edge, uniformly
+  across every lean language — the handle-tracking tables feed the `READS_FROM`/
+  `WRITES_TO` walk, not the flow walk. So a handle-only write leak reads as `NO_FLOW`
+  rather than `UNKNOWN` under `flow_covered`; teaching the flow walk to track handle
+  bindings (cross-language) is tracked in #1204. This bites Lua hardest, since Lua has
+  no direct file-write sink at all.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
