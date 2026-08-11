@@ -18,6 +18,7 @@ class CppNodeType(StrEnum):
     TEMPLATE_DECLARATION = "template_declaration"
     CLASS_SPECIFIER = "class_specifier"
     FUNCTION_DECLARATOR = "function_declarator"
+    VARIADIC_PARAMETER = "variadic_parameter"
     POINTER_DECLARATOR = "pointer_declarator"
     REFERENCE_DECLARATOR = "reference_declarator"
     # An attribute MACRO before a definition (`JSON_HEDLEY_NON_NULL(3)

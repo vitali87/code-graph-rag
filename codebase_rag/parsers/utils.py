@@ -358,6 +358,16 @@ _CPP_PARAMETER_DECLARATIONS = frozenset(
     }
 )
 
+# Rust parameter patterns that wrap the bound identifier (`&c`, `&mut a`, `ref b`,
+# `mut b`); unwrap past them (and any mutable_specifier) to the name.
+_RUST_REF_PATTERNS = frozenset(
+    {
+        cs.TS_RS_REFERENCE_PATTERN,
+        cs.TS_RS_REF_PATTERN,
+        cs.TS_RS_MUT_PATTERN,
+    }
+)
+
 
 def _python_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
     invoked: set[str] = set()
@@ -774,6 +784,143 @@ def cpp_positional_parameter_slots(
         param_declarator = declaration.child_by_field_name(cs.FIELD_DECLARATOR)
         names.append(cpp_declarator_name(param_declarator))
     return names, None
+
+
+def java_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Java `formal_parameters` -> `formal_parameter` (name field) plus a trailing
+    # `spread_parameter` for varargs (`String... xs`), whose name lives in a nested
+    # variable_declarator rather than a `name` field. A `receiver_parameter`
+    # (`A this`) occupies no runtime slot and is dropped by handling only the two
+    # real shapes.
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for param in params.named_children:
+        if param.type == cs.TS_FORMAL_PARAMETER:
+            name = param.child_by_field_name(cs.FIELD_NAME)
+            names.append(safe_decode_text(name) if name is not None else None)
+        elif param.type == cs.TS_SPREAD_PARAMETER:
+            if variadic_index is None:
+                variadic_index = len(names)
+            declarator = next(
+                (
+                    c
+                    for c in param.named_children
+                    if c.type == cs.TS_VARIABLE_DECLARATOR
+                ),
+                None,
+            )
+            name = (
+                declarator.child_by_field_name(cs.FIELD_NAME)
+                if declarator is not None
+                else None
+            )
+            names.append(safe_decode_text(name) if name is not None else None)
+    return names, variadic_index
+
+
+def csharp_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # C# `parameter_list` -> `parameter` (its `name` field survives this/ref/out
+    # modifiers). A `params T[] tail` is NOT wrapped in a `parameter`: the hidden
+    # _parameter_array rule inlines it as a bare `array_type` followed by a bare
+    # `identifier` sibling (grammar quirk, mirrored in csharp/utils). A bare
+    # array_type therefore opens the single trailing variadic slot and the next
+    # identifier carries its name; a normal `int[] arr` stays a `parameter`.
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    pending_variadic = False
+    for param in params.named_children:
+        if param.type == cs.TS_CSHARP_PARAMETER:
+            name = param.child_by_field_name(cs.FIELD_NAME)
+            names.append(safe_decode_text(name) if name is not None else None)
+            pending_variadic = False
+        elif param.type == cs.TS_CSHARP_ARRAY_TYPE:
+            if variadic_index is None:
+                variadic_index = len(names)
+            names.append(None)
+            pending_variadic = True
+        elif param.type == cs.TS_IDENTIFIER and pending_variadic:
+            names[-1] = safe_decode_text(param)
+            pending_variadic = False
+    return names, variadic_index
+
+
+def _rust_parameter_name(pattern: Node | None) -> str | None:
+    # A Rust parameter's `pattern` is usually an identifier but may be wrapped in a
+    # reference/ref/mut pattern (`&c`, `&mut a`, `ref b`); unwrap past any
+    # mutable_specifier to the bound identifier. A destructuring pattern
+    # (tuple/struct/slice) or `_` binds no single positional name -> None slot.
+    if pattern is None:
+        return None
+    if pattern.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(pattern)
+    if pattern.type in _RUST_REF_PATTERNS:
+        inner = next(
+            (c for c in pattern.named_children if c.type != cs.TS_RS_MUTABLE_SPECIFIER),
+            None,
+        )
+        return _rust_parameter_name(inner)
+    return None
+
+
+def rust_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Rust `parameters` -> `parameter` (pattern field). A `self_parameter` is the
+    # receiver, occupies no positional slot, and is dropped (like a TS `this`).
+    # Normal Rust fns have no varargs, so variadic_index stays None (extern `...`
+    # is out of scope).
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for param in params.named_children:
+        if param.type == cs.TS_RS_SELF_PARAMETER:
+            continue
+        if param.type == cs.TS_RS_PARAMETER:
+            names.append(
+                _rust_parameter_name(param.child_by_field_name(cs.TS_FIELD_PATTERN))
+            )
+    return names, None
+
+
+def c_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # C shares C++'s declarator grammar, so the C++ helpers apply unchanged: descend
+    # declarator -> function_declarator -> parameters, unwrapping each
+    # parameter_declaration's declarator to its identifier (None for an abstract
+    # prototype declarator). Unlike C++, a trailing `...` is a well-formed
+    # `variadic_parameter`, recorded as the variadic slot (printf-style sinks).
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    func_declarator = _find_descendant(declarator, cs.CppNodeType.FUNCTION_DECLARATOR)
+    if func_declarator is None:
+        return [], None
+    params = func_declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for declaration in params.named_children:
+        if declaration.type == cs.CppNodeType.VARIADIC_PARAMETER:
+            if variadic_index is None:
+                variadic_index = len(names)
+            names.append(None)
+            continue
+        if declaration.type not in _CPP_PARAMETER_DECLARATIONS:
+            continue
+        param_declarator = declaration.child_by_field_name(cs.FIELD_DECLARATOR)
+        names.append(cpp_declarator_name(param_declarator))
+    return names, variadic_index
 
 
 def _js_ts_field_member_name(
