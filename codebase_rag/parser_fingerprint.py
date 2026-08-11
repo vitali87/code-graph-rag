@@ -34,10 +34,12 @@ def _frontend_settings() -> list[str]:
     # graph built with dotnet present carries hybrid edges and one without
     # does not, so the two must not share a fingerprint. Imported lazily to
     # keep this module free of the parsers package at import time.
+    from .parsers.cpp_frontend import resolve_cpp_frontend
     from .parsers.csharp_frontend import resolve_csharp_frontend
 
     return [
         f"CPP_FRONTEND={settings.CPP_FRONTEND.value}",
+        f"CPP_FRONTEND_RESOLVED={resolve_cpp_frontend().value}",
         f"CSHARP_FRONTEND={resolve_csharp_frontend().value}",
     ]
 

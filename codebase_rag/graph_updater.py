@@ -278,6 +278,7 @@ class GraphUpdater:
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
+        self._cpp_frontend_warnings: set[str] = set()
         # Hybrid-mode macro uses awaiting a caller: attribution needs the
         # tree-sitter definition spans, which exist only after Pass 2.
         self._pending_cpp_macro_calls: list[PendingMacroCall] = []
@@ -321,6 +322,12 @@ class GraphUpdater:
             self._sink, self.repo_path, self.capture
         )
 
+    def _warn_cpp_frontend_once(self, message: str) -> None:
+        if message in self._cpp_frontend_warnings:
+            return
+        self._cpp_frontend_warnings.add(message)
+        logger.warning(message)
+
     def _run_cpp_frontend(self) -> None:
         # Optional libclang C++ pre-pass when a compile_commands.json is
         # discoverable. LIBCLANG: emit macro-accurate C/C++ nodes/edges
@@ -343,11 +350,11 @@ class GraphUpdater:
             # compile_commands.json on every index of a Python/Go project.
             return
         if not cpp_frontend_available():
-            logger.warning(ls.CPP_FRONTEND_UNAVAILABLE)
+            self._warn_cpp_frontend_once(ls.CPP_FRONTEND_UNAVAILABLE)
             return
         compdb_dir = find_compile_commands(self.repo_path)
         if compdb_dir is None:
-            logger.warning(ls.CPP_FRONTEND_NO_COMPDB)
+            self._warn_cpp_frontend_once(ls.CPP_FRONTEND_NO_COMPDB)
             return
         logger.info(ls.CPP_FRONTEND_RUNNING.format(path=compdb_dir))
         if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:

@@ -128,6 +128,30 @@ class TestComputeParserFingerprint:
         monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
         assert compute_parser_fingerprint() != before
 
+    def test_changes_when_cpp_frontend_becomes_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from codebase_rag.config import settings as cfg
+        from codebase_rag.parsers.cpp_frontend import frontend
+
+        monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: False)
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
+        assert compute_parser_fingerprint() != before
+
+    def test_ignores_cpp_frontend_availability_when_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from codebase_rag.config import settings as cfg
+        from codebase_rag.parsers.cpp_frontend import frontend
+
+        monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.TREESITTER)
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: False)
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
+        assert compute_parser_fingerprint() == before
+
 
 class TestFingerprintStamping:
     def test_full_sync_stamps_current_fingerprint(

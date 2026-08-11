@@ -1,6 +1,7 @@
 from .frontend import (
     cpp_frontend_available,
     find_compile_commands,
+    resolve_cpp_frontend,
     run_cpp_frontend,
     run_cpp_frontend_hybrid,
 )
@@ -11,6 +12,7 @@ __all__ = [
     "build_module_qn_map",
     "cpp_frontend_available",
     "find_compile_commands",
+    "resolve_cpp_frontend",
     "run_cpp_frontend",
     "run_cpp_frontend_hybrid",
 ]

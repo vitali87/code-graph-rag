@@ -404,7 +404,7 @@ wheels = [
 
 [[package]]
 name = "code-graph-rag"
-version = "0.0.566"
+version = "0.0.605"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -433,6 +433,9 @@ dependencies = [
 ast-grep = [
     { name = "ast-grep-py" },
     { name = "pyyaml" },
+]
+cpp = [
+    { name = "libclang" },
 ]
 milvus = [
     { name = "pymilvus", extra = ["milvus-lite"] },
@@ -504,6 +507,7 @@ requires-dist = [
     { name = "diff-match-patch", specifier = ">=20241021" },
     { name = "filelock", marker = "extra == 'test'", specifier = ">=3.12" },
     { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=1.7.2" },
+    { name = "libclang", marker = "extra == 'cpp'", specifier = ">=18.1.1" },
     { name = "libclang", marker = "extra == 'test'", specifier = ">=18.1.1" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mcp", specifier = ">=1.28.1" },
@@ -546,7 +550,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.21.1" },
     { name = "watchdog", specifier = ">=6.0.0" },
 ]
-provides-extras = ["test", "treesitter-full", "semantic", "milvus", "ast-grep"]
+provides-extras = ["cpp", "test", "treesitter-full", "semantic", "milvus", "ast-grep"]
 
 [package.metadata.requires-dev]
 dev = [

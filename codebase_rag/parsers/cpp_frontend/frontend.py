@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import constants as cs
+from ...config import settings
 from ...services import IngestorProtocol
 from ...types_defs import (
     FunctionRegistryTrieProtocol,
@@ -36,6 +37,13 @@ def cpp_frontend_available() -> bool:
     except Exception:
         return False
     return True
+
+
+def resolve_cpp_frontend() -> cs.CppFrontend:
+    mode = settings.CPP_FRONTEND
+    if mode == cs.CppFrontend.TREESITTER or cpp_frontend_available():
+        return mode
+    return cs.CppFrontend.TREESITTER
 
 
 def find_compile_commands(start: Path) -> Path | None:

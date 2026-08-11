@@ -160,6 +160,7 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 - [Dead Code Detection](docs/guide/dead-code.md)
 - [Graph Export](docs/guide/graph-export.md)
 - [Real-Time Updates](docs/guide/realtime-updates.md)
+- [C/C++ Semantic Mode](docs/guide/cpp-semantic-mode.md)
 - [MCP Server](docs/guide/mcp-server.md)
 
 **Architecture**
