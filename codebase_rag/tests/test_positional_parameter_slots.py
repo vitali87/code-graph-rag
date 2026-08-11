@@ -5,9 +5,13 @@ from tree_sitter import Node
 
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.utils import (
+    c_positional_parameter_slots,
     cpp_positional_parameter_slots,
+    csharp_positional_parameter_slots,
     go_positional_parameter_slots,
+    java_positional_parameter_slots,
     js_ts_positional_parameter_slots,
+    rust_positional_parameter_slots,
 )
 
 
@@ -117,3 +121,95 @@ def test_cpp_slots_unnamed_and_named() -> None:
 
 def test_cpp_slots_no_parameters() -> None:
     assert cpp_positional_parameter_slots(_cpp_func("void f() {}")) == ([], None)
+
+
+def _java_method(code: str) -> Node:
+    return _first_node("java", code, "method_declaration")
+
+
+def _csharp_method(code: str) -> Node:
+    return _first_node("c_sharp", code, "method_declaration")
+
+
+def _rust_func(code: str) -> Node:
+    return _first_node("rust", code, "function_item")
+
+
+def _c_func(code: str) -> Node:
+    return _first_node("c", code, "function_definition")
+
+
+def test_java_slots_named_and_varargs() -> None:
+    assert java_positional_parameter_slots(
+        _java_method("class A{void m(String a, int b, String... xs){}}")
+    ) == (["a", "b", "xs"], 2)
+
+
+def test_java_slots_receiver_takes_no_slot() -> None:
+    assert java_positional_parameter_slots(
+        _java_method("class A{void m(A this, int b){}}")
+    ) == (["b"], None)
+
+
+def test_java_slots_no_parameters() -> None:
+    assert java_positional_parameter_slots(_java_method("class A{void m(){}}")) == (
+        [],
+        None,
+    )
+
+
+def test_csharp_slots_named_and_params_variadic() -> None:
+    # `params string[] xs` is not wrapped in a `parameter`; the name is recovered
+    # from the trailing identifier and the slot index is marked variadic.
+    assert csharp_positional_parameter_slots(
+        _csharp_method("class A{void M(string a, int b, params string[] xs){}}")
+    ) == (["a", "b", "xs"], 2)
+
+
+def test_csharp_slots_modifiers_preserve_names() -> None:
+    assert csharp_positional_parameter_slots(
+        _csharp_method(
+            "static class A{static void M(this string a, ref int b, out int c){}}"
+        )
+    ) == (["a", "b", "c"], None)
+
+
+def test_csharp_slots_normal_array_is_not_variadic() -> None:
+    assert csharp_positional_parameter_slots(
+        _csharp_method("class A{void M(int[] arr, int b){}}")
+    ) == (["arr", "b"], None)
+
+
+def test_rust_slots_identifier_mut_reference_and_wildcard() -> None:
+    # `&c` is a reference_pattern (unwrap to c); `_` binds no name -> None slot.
+    assert rust_positional_parameter_slots(
+        _rust_func("fn m(a: i32, mut b: i32, &c: &i32, _: i32) {}")
+    ) == (["a", "b", "c", None], None)
+
+
+def test_rust_slots_self_takes_no_slot() -> None:
+    assert rust_positional_parameter_slots(
+        _rust_func("impl A { fn m(&self, a: i32) {} }")
+    ) == (["a"], None)
+
+
+def test_rust_slots_ref_mut_and_tuple_destructure() -> None:
+    # `&mut a` unwraps past mutable_specifier to a; `ref b` -> b; a tuple_pattern
+    # `(x, y)` binds no single positional name -> None slot.
+    assert rust_positional_parameter_slots(
+        _rust_func("fn m(&mut a: &mut i32, ref b: i32, (x, y): (i32, i32)) {}")
+    ) == (["a", "b", None], None)
+
+
+def test_c_slots_pointer_and_abstract_declarator() -> None:
+    assert c_positional_parameter_slots(_c_func("void m(int a, char *b, int) {}")) == (
+        ["a", "b", None],
+        None,
+    )
+
+
+def test_c_slots_variadic_records_index() -> None:
+    assert c_positional_parameter_slots(_c_func("int m(int a, ...) { return 0; }")) == (
+        ["a", None],
+        1,
+    )

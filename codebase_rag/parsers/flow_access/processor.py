@@ -41,10 +41,14 @@ from ..io_access import (
     unwrap_argument,
 )
 from ..utils import (
+    c_positional_parameter_slots,
     cpp_positional_parameter_slots,
+    csharp_positional_parameter_slots,
     go_positional_parameter_slots,
+    java_positional_parameter_slots,
     js_ts_positional_parameter_slots,
     python_parameter_names,
+    rust_positional_parameter_slots,
     safe_decode_text,
 )
 from .constants import (
@@ -140,13 +144,20 @@ def _lean_parameter_slots(
     # a compacting extractor would cause is what produces false source-to-sink
     # edges. Lean languages have no keyword-call syntax, so this table is the
     # only mapping needed (mirrors the Python _py_positional_param_names role).
-    # Java/C#/Rust have no extractor yet -- composition stays inert for them.
     if language == cs.SupportedLanguage.GO:
         return go_positional_parameter_slots(func_node)
     if language in cs.JS_TS_LANGUAGES:
         return js_ts_positional_parameter_slots(func_node)
     if language == cs.SupportedLanguage.CPP:
         return cpp_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.JAVA:
+        return java_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.CSHARP:
+        return csharp_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.RUST:
+        return rust_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.C:
+        return c_positional_parameter_slots(func_node)
     return [], None
 
 
@@ -610,8 +621,8 @@ class FlowProcessor:
         # reaches becomes a parameter-taint summary composed at finalize, exactly
         # as the Python walk does (issue #1169 extends #1142/#1168 to the lean
         # walk). The composition machinery in finalize is language-agnostic; only
-        # languages with a parameter-name extractor (Go/JS/TS/C++) get names, so
-        # the rest are seeded with nothing and are unaffected.
+        # languages with a parameter-name extractor (Go/JS/TS/C++/Java/C#/Rust/C)
+        # get names, so the rest are seeded with nothing and are unaffected.
         lean_names, lean_variadic = _lean_parameter_slots(caller_node, ctx.language)
         for pname in lean_names:
             if pname is not None:
