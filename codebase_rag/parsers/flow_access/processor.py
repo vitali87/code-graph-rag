@@ -24,6 +24,7 @@ from ..io_access import (
     PY_SCOPE_BOUNDARIES,
     RESOURCE_QN_FORMAT,
     HandleBinding,
+    HandleConstructor,
     IODirection,
     IOSink,
     LanguageDescriptor,
@@ -43,6 +44,10 @@ from ..io_access import (
     scope_seed_nodes,
     string_literal,
     unwrap_argument,
+)
+from ..io_access.registry import (
+    IO_LEAN_HANDLE_CONSTRUCTORS,
+    IO_LEAN_HANDLE_METHODS,
 )
 from ..utils import (
     c_positional_parameter_slots,
@@ -434,6 +439,14 @@ class _JsCtx(NamedTuple):
     # declarations for JS/TS) and grown with each Go binding as the walk reaches
     # it, so a later Go shadow never suppresses an earlier valid source read.
     local_names: set[str]
+    # Handle-based writes (issue #1204): a local bound to a resource handle
+    # (`f := os.Create("out")`) so a tainted write through it (`f.Write(secret)`)
+    # emits a flow edge to the handle's resource. MUTABLE, flat/last-write-wins
+    # like io_access's handle walk; the ctor/method tables are the per-language
+    # registry views. Empty tables (no handle support for the language) => inert.
+    handles: dict[str, HandleBinding]
+    handle_ctors: dict[str, HandleConstructor]
+    handle_methods: dict[ResourceKind, dict[str, IODirection]]
 
 
 class FlowProcessor:
@@ -628,6 +641,11 @@ class FlowProcessor:
             descriptor=descriptor,
             member_reads=member_reads,
             local_names=self._js_local_names(caller_node, descriptor, ctx.language),
+            handles={},
+            handle_ctors={
+                c.callee: c for c in IO_LEAN_HANDLE_CONSTRUCTORS.get(ctx.language, ())
+            },
+            handle_methods=IO_LEAN_HANDLE_METHODS.get(ctx.language, {}),
         )
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
@@ -1182,7 +1200,7 @@ class FlowProcessor:
         # map before any LHS is updated, so `a, b = b, a` swaps correctly. Compute
         # all taints first, then apply, or an earlier LHS update would corrupt a
         # later RHS read of the same name.
-        computed: list[tuple[str, Taint | None]] = []
+        computed: list[tuple[str, Taint | None, Node | None]] = []
         for index, name in enumerate(targets):
             if name is None:
                 continue
@@ -1191,12 +1209,20 @@ class FlowProcessor:
                 if spread
                 else (values[index] if index < len(values) else None)
             )
-            computed.append((name, self._js_expr_taint(rhs, tainted, jc)))
-        for name, taint in computed:
+            computed.append((name, self._js_expr_taint(rhs, tainted, jc), rhs))
+        for name, taint, rhs in computed:
             if taint is not None:
                 tainted[name] = taint
             else:
                 tainted.pop(name, None)
+            # Track (or kill) the resource handle bound to this name, so a later
+            # tainted write through it emits a flow edge (issue #1204).
+            if jc.handle_ctors:
+                binding = self._lean_handle_binding(rhs, jc)
+                if binding is not None:
+                    jc.handles[name] = binding
+                else:
+                    jc.handles.pop(name, None)
         # Register the bound names AFTER reading the RHS (which still saw the
         # pre-declaration scope): a Go shadow applies only from here forward.
         self._register_shadows(targets, jc)
@@ -1348,6 +1374,9 @@ class FlowProcessor:
                         (sink.kind, dst_identity)
                     )
             return
+        # A tainted write through a bound resource handle (issue #1204).
+        if jc.handles and self._emit_handle_write(raw, args, jc):
+            return
         callee = self._resolve(
             raw,
             jc.flow.module_qn,
@@ -1386,6 +1415,58 @@ class FlowProcessor:
                 self._param_flow_edges.append(
                     (jc.flow.caller_qn, pname, callee_qn, via)
                 )
+
+    def _lean_handle_binding(
+        self, rhs: Node | None, jc: _JsCtx
+    ) -> HandleBinding | None:
+        # Resolve a RHS handle-constructor call (`os.Create("out")`) to a
+        # HandleBinding, shadow-aware and import-normalised exactly like sink
+        # matching. None when the RHS is not a registered handle constructor
+        # (issue #1204).
+        if rhs is None or rhs.type != jc.descriptor.call_type:
+            return None
+        raw = call_name(rhs)
+        if raw is None:
+            return None
+        ctor = self._js_match_sink(raw, jc.handle_ctors, jc)
+        if ctor is None:
+            return None
+        identity = literal_target(
+            rhs,
+            ctor.target_arg,
+            ctor.target_kw,
+            string_type=jc.descriptor.string_type,
+            content_type=jc.descriptor.string_content_type,
+            keyword_arg_type=jc.descriptor.keyword_arg_type,
+            wrapper_type=jc.descriptor.argument_wrapper_type,
+            template_type=jc.descriptor.template_string_type,
+            substitution_type=jc.descriptor.template_substitution_type,
+        )
+        return HandleBinding(ctor.kind, identity)
+
+    def _emit_handle_write(
+        self, raw: str, args: list[tuple[str, Taint | None]], jc: _JsCtx
+    ) -> bool:
+        # A tainted write through a bound handle (`f.Write(secret)`) is a flow to
+        # the handle's resource (issue #1204). Split the callee into receiver +
+        # method; if the receiver is a bound handle and the method WRITES (or is a
+        # read/write like a DB execute), route each tainted arg to the resource.
+        # Pure READ methods are not sinks. Untainted args emit nothing.
+        recv, sep, method = raw.rpartition(cs.SEPARATOR_DOT)
+        if not sep:
+            return False
+        binding = jc.handles.get(recv)
+        if binding is None:
+            return False
+        direction = jc.handle_methods.get(binding.kind, {}).get(method)
+        if direction is None or direction == IODirection.READ:
+            return False
+        for _via, taint in args:
+            if taint is not None:
+                self._emit_taint_to_sink(
+                    taint, binding.kind, binding.identity, jc.flow.caller_qn
+                )
+        return True
 
     def _emit_taint_to_sink(
         self, taint: Taint, kind: ResourceKind, identity: str, caller_qn: str
@@ -1678,9 +1759,7 @@ class FlowProcessor:
         return HandleBinding(kind=sink.kind, identity=identity)
 
     @staticmethod
-    def _js_match_sink(
-        raw: str, sink_map: dict[str, IOSink], jc: _JsCtx
-    ) -> IOSink | None:
+    def _js_match_sink[T](raw: str, sink_map: dict[str, T], jc: _JsCtx) -> T | None:
         # Same shadow-aware matching as io_access: a locally-bound name is not
         # the builtin; the import-normalised name matches first (so an aliased
         # builtin resolves), then the raw dotted name only when its head resolves
