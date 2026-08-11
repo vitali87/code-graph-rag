@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 def extract_tool_names(tools: list["Tool"]) -> ToolNames:
     registered = {t.name for t in tools}
 
-    def pick(canonical: AgenticToolName) -> str:
+    def resolve_tool_name(canonical: AgenticToolName) -> str:
         if canonical not in registered:
             logger.warning(
                 f"Tool '{canonical}' is not registered on the agent; "
@@ -38,12 +38,12 @@ def extract_tool_names(tools: list["Tool"]) -> ToolNames:
         return str(canonical)
 
     return ToolNames(
-        query_graph=pick(AgenticToolName.QUERY_GRAPH),
-        read_file=pick(AgenticToolName.READ_FILE),
-        semantic_search=pick(AgenticToolName.SEMANTIC_SEARCH),
-        create_file=pick(AgenticToolName.CREATE_FILE),
-        edit_file=pick(AgenticToolName.REPLACE_CODE),
-        shell_command=pick(AgenticToolName.EXECUTE_SHELL),
+        query_graph=resolve_tool_name(AgenticToolName.QUERY_GRAPH),
+        read_file=resolve_tool_name(AgenticToolName.READ_FILE),
+        semantic_search=resolve_tool_name(AgenticToolName.SEMANTIC_SEARCH),
+        create_file=resolve_tool_name(AgenticToolName.CREATE_FILE),
+        edit_file=resolve_tool_name(AgenticToolName.REPLACE_CODE),
+        shell_command=resolve_tool_name(AgenticToolName.EXECUTE_SHELL),
     )
 
 
