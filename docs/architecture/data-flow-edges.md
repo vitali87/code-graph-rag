@@ -361,21 +361,25 @@ module is re-exported under its own name. A project that does
   summaries are resolved by a worklist fixpoint once every file has been walked, so
   a callee defined after (or in a different file from) its caller is still known to
   return a tainted value at the caller's site.
-- Forward argument taint composes into callee **sinks** for Python: a parameter that
-  reaches a write sink inside its body is recorded as a per-function parameter-sink
-  summary (closed over transitive parameter hand-offs by the same finalize fixpoint),
-  so a tainted argument passed at a call site emits the full `resource -> resource`
-  flow even when the source and the sink live in different bodies — the logging-wrapper
-  case `secret = getenv('K'); log_it(secret)` with `log_it(m): logger.info(m)` connects
-  ENV to STDOUT. Only resolved callees participate; there are still no `Parameter` nodes
-  and no SSA-level precision.
+- Forward argument taint composes into callee **sinks** for Python and the lean-walk
+  languages with a parameter-name extractor (Go, JavaScript, TypeScript/TSX, C++): a
+  parameter that reaches a write sink inside its body is recorded as a per-function
+  parameter-sink summary (closed over transitive parameter hand-offs by the same
+  finalize fixpoint), so a tainted argument passed at a call site emits the full
+  `resource -> resource` flow even when the source and the sink live in different
+  bodies — the logging-wrapper case `secret = getenv('K'); log_it(secret)` with
+  `log_it(m): logger.info(m)` connects ENV to STDOUT. Only resolved callees participate;
+  there are still no `Parameter` nodes and no SSA-level precision. Java and C# parse
+  into the graph but have no parameter-name extractor yet, so their positional
+  composition stays inert until one is added.
 - Forward argument taint also composes through a callee's **return** value for Python
   (pass-through helpers such as `def redact(v): return v`): a parameter that reaches the
   function's return — directly or transitively through `return other(p)` and pass-through
   chains — is closed over by the same finalize fixpoint, and a call site passing a tainted
   argument into such a parameter folds that argument's origins into the callee's return
   summary, so a caller consuming the return (`y = redact(secret); print(y)`) resolves the
-  secret to the sink. The non-Python walks remain one level for now.
+  secret to the sink. This return composition is Python-only; the lean walks forward
+  taint into callee sinks (above) but not yet through a callee's return.
 - The `kind = arg` edge itself is still recorded one level deep — it marks that a
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.

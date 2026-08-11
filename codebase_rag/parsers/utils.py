@@ -660,6 +660,122 @@ def go_parameter_names(func_node: Node) -> list[str]:
     return names
 
 
+# Position-aligned parameter slots for forward parameter-taint (issue #1169).
+# Unlike the *_parameter_names helpers above -- which compact the list, dropping
+# unnamed/destructured slots and so shifting every later index -- these return
+# ONE entry per formal positional slot, with None for a slot that binds no simple
+# name (unnamed C++/Go parameter, JS/TS destructuring pattern). The second tuple
+# element is the index of a variadic/rest slot, if any, so a caller can map every
+# argument at or after it to that parameter. Keeping indices aligned is what
+# prevents arg:<index> from binding to the wrong parameter (false source-to-sink
+# edges), the failure the compacting helpers would cause here.
+def go_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for declaration in params.named_children:
+        if declaration.type == cs.TS_GO_PARAMETER_DECLARATION:
+            # Go groups names sharing a type (`a, b int`) into one declaration
+            # with several identifiers; each identifier is its own slot. A
+            # type-only declaration (`func f(int)`) has no identifier child and
+            # is a single unnamed slot.
+            idents = [
+                safe_decode_text(child)
+                for child in declaration.children
+                if child.type == cs.TS_IDENTIFIER
+            ]
+            if idents:
+                names.extend(idents)
+            else:
+                names.append(None)
+        elif declaration.type == cs.TS_GO_VARIADIC_PARAMETER_DECLARATION:
+            if variadic_index is None:
+                variadic_index = len(names)
+            ident = next(
+                (c for c in declaration.children if c.type == cs.TS_IDENTIFIER),
+                None,
+            )
+            names.append(safe_decode_text(ident) if ident is not None else None)
+    return names, variadic_index
+
+
+def _js_ts_parameter_slot(child: Node) -> tuple[str | None, bool] | None:
+    # A single formal parameter -> (name_or_None, is_variadic), or None when the
+    # node occupies NO runtime positional slot (a TypeScript `this` parameter).
+    # A TS typed parameter (required_parameter / optional_parameter) wraps the
+    # real pattern -- an identifier, a `this`, a rest_pattern, or a destructuring
+    # pattern -- so it is unwrapped recursively; that is what makes a typed rest
+    # (`...args: string[]`) mark variadic and a typed `this` drop its slot.
+    node_type = child.type
+    if node_type == cs.TS_THIS_PARAMETER:
+        return None
+    if node_type == cs.TS_IDENTIFIER:
+        return safe_decode_text(child), False
+    if node_type in _JS_TS_TYPED_PARAMETERS:
+        pattern = child.child_by_field_name(cs.TS_FIELD_PATTERN)
+        if pattern is None:
+            return None, False
+        return _js_ts_parameter_slot(pattern)
+    if node_type == cs.TS_ASSIGNMENT_PATTERN:
+        left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+        if left is not None and left.type == cs.TS_IDENTIFIER:
+            return safe_decode_text(left), False
+        return None, False
+    if node_type == cs.TS_REST_PATTERN:
+        ident = next(
+            (c for c in child.named_children if c.type == cs.TS_IDENTIFIER), None
+        )
+        return (safe_decode_text(ident) if ident is not None else None), True
+    return None, False
+
+
+def js_ts_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is not None:
+        for child in params.named_children:
+            slot = _js_ts_parameter_slot(child)
+            if slot is None:
+                # A TypeScript `this` parameter is not a runtime argument, so it
+                # takes no slot and must not shift the parameters after it.
+                continue
+            name, is_variadic = slot
+            if is_variadic and variadic_index is None:
+                variadic_index = len(names)
+            names.append(name)
+        return names, variadic_index
+    single = func_node.child_by_field_name(cs.TS_FIELD_PARAMETER)
+    if single is not None and single.type == cs.TS_IDENTIFIER:
+        names.append(safe_decode_text(single))
+    return names, variadic_index
+
+
+def cpp_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    func_declarator = _find_descendant(declarator, cs.CppNodeType.FUNCTION_DECLARATOR)
+    if func_declarator is None:
+        return [], None
+    params = func_declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for declaration in params.named_children:
+        if declaration.type not in _CPP_PARAMETER_DECLARATIONS:
+            continue
+        param_declarator = declaration.child_by_field_name(cs.FIELD_DECLARATOR)
+        names.append(cpp_declarator_name(param_declarator))
+    return names, None
+
+
 def _js_ts_field_member_name(
     node: ASTNode, language: cs.SupportedLanguage | None
 ) -> str | None:

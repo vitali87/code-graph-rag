@@ -40,7 +40,13 @@ from ..io_access import (
     string_literal,
     unwrap_argument,
 )
-from ..utils import python_parameter_names, safe_decode_text
+from ..utils import (
+    cpp_positional_parameter_slots,
+    go_positional_parameter_slots,
+    js_ts_positional_parameter_slots,
+    python_parameter_names,
+    safe_decode_text,
+)
 from .constants import (
     KEY_KIND,
     KEY_VIA,
@@ -94,7 +100,7 @@ def _py_positional_param_name(node: Node) -> str | None:
     return None
 
 
-def _py_positional_param_names(func_node: Node) -> list[str]:
+def _py_positional_param_names(func_node: Node) -> list[str | None]:
     # Parameter names a positional argument can bind to, in order, STOPPING at
     # the first `*args`/`**kwargs`/bare-`*` boundary: positional arguments past
     # that point are absorbed by the variadic or are keyword-only, so mapping
@@ -104,7 +110,7 @@ def _py_positional_param_names(func_node: Node) -> list[str]:
     params_node = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params_node is None:
         return []
-    names: list[str] = []
+    names: list[str | None] = []
     for child in params_node.named_children:
         # A comment or the `/` positional-only marker sits between parameters
         # without consuming a position; skip them and keep collecting.
@@ -121,6 +127,27 @@ def _py_positional_param_names(func_node: Node) -> list[str]:
     if names and names[0] in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
         names = names[1:]
     return names
+
+
+def _lean_parameter_slots(
+    func_node: Node, language: str
+) -> tuple[list[str | None], int | None]:
+    # Position-aligned parameter slots for a lean-walk function, used to seed
+    # parameter-taint summaries (issue #1169). Returns one entry per formal
+    # positional slot (None where the slot binds no simple name) plus the index
+    # of a variadic/rest slot, so arg:<index> maps to the right parameter even
+    # when some parameters are unnamed, destructured, or variadic -- the shift
+    # a compacting extractor would cause is what produces false source-to-sink
+    # edges. Lean languages have no keyword-call syntax, so this table is the
+    # only mapping needed (mirrors the Python _py_positional_param_names role).
+    # Java/C#/Rust have no extractor yet -- composition stays inert for them.
+    if language == cs.SupportedLanguage.GO:
+        return go_positional_parameter_slots(func_node)
+    if language in cs.JS_TS_LANGUAGES:
+        return js_ts_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.CPP:
+        return cpp_positional_parameter_slots(func_node)
+    return [], None
 
 
 class Taint(NamedTuple):
@@ -468,11 +495,18 @@ class FlowProcessor:
         # element is the per-call-site pass-through token (issue #1168). Composed
         # against the parameter-sink closure in finalize to emit origin -> sink.
         self._param_call_sites: list[tuple[Taint, str, str, str]] = []
-        # Per-function positional parameter names (self/cls dropped, truncated at
-        # the first variadic/keyword-only boundary) so a call site's arg:<index>
-        # resolves to the right callee parameter without binding a positional
-        # argument to a keyword-only parameter.
-        self._positional_params: dict[str, list[str]] = {}
+        # Per-function positional parameter slots so a call site's arg:<index>
+        # resolves to the right callee parameter. The Python path truncates at
+        # the first variadic/keyword-only boundary (self/cls dropped) and has no
+        # None entries; the lean path (issue #1169) keeps one entry per formal
+        # slot, using None where a slot binds no simple name, so unnamed or
+        # destructured parameters do not shift later indices.
+        self._positional_params: dict[str, list[str | None]] = {}
+        # Index of a lean callee's variadic/rest slot, if any: every argument at
+        # or after it maps to that parameter (issue #1169). The Python path
+        # never records this because it truncates positional names at the first
+        # variadic boundary.
+        self._variadic_params: dict[str, int] = {}
 
     def process_flow_for_caller(
         self,
@@ -572,6 +606,20 @@ class FlowProcessor:
         else:
             statements = [body]
         tainted: _TaintMap = {}
+        # Seed each parameter as a pseudo-origin so a sink or callee hand-off it
+        # reaches becomes a parameter-taint summary composed at finalize, exactly
+        # as the Python walk does (issue #1169 extends #1142/#1168 to the lean
+        # walk). The composition machinery in finalize is language-agnostic; only
+        # languages with a parameter-name extractor (Go/JS/TS/C++) get names, so
+        # the rest are seeded with nothing and are unaffected.
+        lean_names, lean_variadic = _lean_parameter_slots(caller_node, ctx.language)
+        for pname in lean_names:
+            if pname is not None:
+                tainted[pname] = Taint(frozenset(), frozenset(), frozenset({pname}))
+        if lean_names:
+            self._positional_params[ctx.caller_qn] = lean_names
+            if lean_variadic is not None:
+                self._variadic_params[ctx.caller_qn] = lean_variadic
         if ctx.language in _HOISTED_DECL_LANGS:
             # Path-sensitive MAY walk (issue #714 follow-up): each JS/TS if/else,
             # loop, and try branch is evaluated against a COPY of the incoming
@@ -1253,6 +1301,13 @@ class FlowProcessor:
                     self._deferred_resource_flows.append(
                         (taint.pending, sink.kind, dst_identity)
                     )
+                # A parameter reaching this sink is a parameter-to-sink summary
+                # (issue #1169), composed at finalize against every call site
+                # passing a tainted argument into this parameter.
+                for pname in taint.params:
+                    self._param_sinks[(jc.flow.caller_qn, pname)].add(
+                        (sink.kind, dst_identity)
+                    )
             return
         callee = self._resolve(
             raw,
@@ -1279,9 +1334,22 @@ class FlowProcessor:
                 self._deferred_arg_edges.append(
                     (taint.pending, jc.flow.caller_spec, callee_type, callee_qn, via)
                 )
+            # Forward parameter-taint (issue #1169), orthogonal to the arg edge:
+            # a concrete argument records a call site to compose against the
+            # callee's parameter-sink closure; an argument that IS one of this
+            # function's parameters records a transitive hand-off so a wrapper of
+            # a wrapper still resolves. The token ties a pass-through composition
+            # to this exact call so it is not shared across calls (issue #1168).
+            if taint.origins or taint.pending:
+                token = _passthrough_result_token(jc.flow.caller_qn, node)
+                self._param_call_sites.append((taint, callee_qn, via, token))
+            for pname in taint.params:
+                self._param_flow_edges.append(
+                    (jc.flow.caller_qn, pname, callee_qn, via)
+                )
 
     def _emit_taint_to_sink(
-        self, taint: Taint, kind: ResourceKind, identity: str
+        self, taint: Taint, kind: ResourceKind, identity: str, caller_qn: str
     ) -> None:
         # A tainted value reaching a write sink: emit resolved origins now, defer
         # pending callee returns to the fixpoint (mirrors the _js_call write branch).
@@ -1289,6 +1357,10 @@ class FlowProcessor:
             self._emit_resource_flow(origin, kind, identity)
         if taint.pending:
             self._deferred_resource_flows.append((taint.pending, kind, identity))
+        # A parameter reaching this macro/stream sink is a parameter-to-sink
+        # summary (issue #1169), composed at finalize like the _js_call branch.
+        for pname in taint.params:
+            self._param_sinks[(caller_qn, pname)].add((kind, identity))
 
     def _flow_macro(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
         # A Rust macro sink (`println!(secret)`) writes STDOUT (identity <dynamic>,
@@ -1306,7 +1378,9 @@ class FlowProcessor:
         for child in node.named_children:
             if child.type == cs.TS_RS_TOKEN_TREE:
                 for taint in self._macro_arg_taints(child, tainted, jc):
-                    self._emit_taint_to_sink(taint, sink.kind, DYNAMIC_TARGET)
+                    self._emit_taint_to_sink(
+                        taint, sink.kind, DYNAMIC_TARGET, jc.flow.caller_qn
+                    )
 
     def _macro_arg_taints(
         self, token_tree: Node, tainted: _TaintMap, jc: _JsCtx
@@ -1444,7 +1518,9 @@ class FlowProcessor:
         for operand in operands:
             taint = self._js_expr_taint(operand, tainted, jc)
             if taint is not None:
-                self._emit_taint_to_sink(taint, sink.kind, DYNAMIC_TARGET)
+                self._emit_taint_to_sink(
+                    taint, sink.kind, DYNAMIC_TARGET, jc.flow.caller_qn
+                )
 
     @staticmethod
     def _is_stream_insertion(node: Node, descriptor: LanguageDescriptor) -> bool:
@@ -2222,6 +2298,7 @@ class FlowProcessor:
         self._return_param_edges.clear()
         self._param_call_sites.clear()
         self._positional_params.clear()
+        self._variadic_params.clear()
 
     def _resolve_summaries(
         self,
@@ -2337,7 +2414,15 @@ class FlowProcessor:
                 index = int(rest)
             except ValueError:
                 return None
+            # Every argument at or after a variadic/rest slot binds to that one
+            # parameter (issue #1169); the Python path records no variadic index.
+            variadic = self._variadic_params.get(callee_qn)
+            if variadic is not None and index >= variadic:
+                index = variadic
             if 0 <= index < len(names):
+                # None marks a slot that binds no simple name (unnamed C++/Go
+                # parameter, JS/TS destructuring): no parameter to compose, so
+                # no edge -- never a shifted (wrong) name.
                 return names[index]
         return None
 
