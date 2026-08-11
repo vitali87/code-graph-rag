@@ -610,6 +610,34 @@ def _python_collect_target_identifiers(node: Node, out: set[str]) -> None:
         _python_collect_target_identifiers(child, out)
 
 
+def _python_collect_identifier_reads(node: Node, out: set[str]) -> None:
+    stack: list[Node] = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_IDENTIFIER:
+            if name := safe_decode_text(current):
+                out.add(name)
+            continue
+        stack.extend(current.children)
+
+
+def python_free_variable_names(func_node: Node) -> set[str]:
+    # Names READ in a nested function's body that it does not bind itself (its
+    # parameters, local assignment targets, and nested def/class names). Descends
+    # into inner nested scopes so a variable used only in a doubly-nested body is
+    # still free for this function -- needed so a capture composes transitively.
+    # Conservative: over-approximates (globals, builtins, and attribute names are
+    # swept in), but a capture only composes when a bare-name read reaches a sink
+    # AND that name is tainted at the definition site, so the extras record
+    # summaries that never compose -- sound and inert (issue #1197).
+    body = func_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return set()
+    reads: set[str] = set()
+    _python_collect_identifier_reads(body, reads)
+    return reads - _python_scope_bound_names(func_node)
+
+
 def python_parameter_names(func_node: Node) -> list[str]:
     # Ordered parameter names with a leading self/cls dropped, so positions line
     # up with how call-site arguments map to parameters for bound methods.

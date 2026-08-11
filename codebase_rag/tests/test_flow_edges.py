@@ -1116,3 +1116,68 @@ def test_param_taint_passthrough_returns_fresh_value_no_flow(tmp_path: Path) -> 
         )
     }
     assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_capture_taint_reaches_sink_in_nested_function(tmp_path: Path) -> None:
+    # Closure capture (issue #1197): the nested `send` closes over the tainted
+    # `token`, which is neither its parameter nor its local. Its body is walked as
+    # its own caller, so without capture seeding the ENV read never connects to the
+    # STDOUT sink -- the "secrets captured into a callback" false negative.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    send()\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_capture_taint_survives_reassignment_after_the_def(tmp_path: Path) -> None:
+    # MAY semantics: the capture is recorded from the def-site state, where `token`
+    # is tainted; a later reassignment to a clean value cannot retroactively erase
+    # the taint that was live when the closure was defined.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    send()\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_capture_taint_composes_through_two_nested_levels(tmp_path: Path) -> None:
+    # `token` is captured by `middle` and again by `inner`; the qn-keyed capture
+    # summaries compose transitively, exactly like a two-hop parameter wrapper.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def middle():\n"
+            "        def inner():\n            print(token)\n"
+            "        inner()\n"
+            "    middle()\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_untainted_captured_variable_emits_no_flow(tmp_path: Path) -> None:
+    # Negative control: the captured `token` holds a literal, so the free-variable
+    # seed is never a real capture and no flow is emitted.
+    files = {
+        "m.py": (
+            "def handler():\n"
+            "    token = 'literal'\n"
+            "    def send():\n        print(token)\n"
+            "    send()\n"
+        )
+    }
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
