@@ -1057,6 +1057,28 @@ def test_param_taint_js_destructured_slot_does_not_shift(tmp_path: Path) -> None
     )
 
 
+def test_param_taint_ts_this_parameter_does_not_shift(tmp_path: Path) -> None:
+    # A TypeScript `this` pseudo-parameter is type-only, not a runtime argument
+    # (CodeRabbit review on PR #1193). The first real argument must map to `msg`
+    # (index 0 after `this` is skipped), so the file read reaches the sink; a
+    # helper that counted `this` as a slot would shift `msg` and drop the flow.
+    files = {
+        "m.ts": (
+            'const fs = require("fs");\n\n'
+            "function logIt(this: Ctx, msg: string) {\n  console.log(msg);\n}\n\n"
+            "function caller() {\n"
+            '  const secret = fs.readFileSync("cfg.txt");\n'
+            "  logIt(secret);\n}\n"
+        )
+    }
+    assert _has(
+        _run_flow(tmp_path, files),
+        "resource::FILE::cfg.txt",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_param_taint_passthrough_returns_fresh_value_no_flow(tmp_path: Path) -> None:
     # Negative control: the helper returns a fresh value, not its parameter, so
     # no parameter-to-return relationship exists and the secret does not reach

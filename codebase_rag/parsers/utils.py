@@ -703,15 +703,23 @@ def go_positional_parameter_slots(
     return names, variadic_index
 
 
-def _js_ts_parameter_slot(child: Node) -> tuple[str | None, bool]:
+def _js_ts_parameter_slot(child: Node) -> tuple[str | None, bool] | None:
+    # A single formal parameter -> (name_or_None, is_variadic), or None when the
+    # node occupies NO runtime positional slot (a TypeScript `this` parameter).
+    # A TS typed parameter (required_parameter / optional_parameter) wraps the
+    # real pattern -- an identifier, a `this`, a rest_pattern, or a destructuring
+    # pattern -- so it is unwrapped recursively; that is what makes a typed rest
+    # (`...args: string[]`) mark variadic and a typed `this` drop its slot.
     node_type = child.type
+    if node_type == cs.TS_THIS_PARAMETER:
+        return None
     if node_type == cs.TS_IDENTIFIER:
         return safe_decode_text(child), False
     if node_type in _JS_TS_TYPED_PARAMETERS:
         pattern = child.child_by_field_name(cs.TS_FIELD_PATTERN)
-        if pattern is not None and pattern.type == cs.TS_IDENTIFIER:
-            return safe_decode_text(pattern), False
-        return None, False
+        if pattern is None:
+            return None, False
+        return _js_ts_parameter_slot(pattern)
     if node_type == cs.TS_ASSIGNMENT_PATTERN:
         left = child.child_by_field_name(cs.TS_FIELD_LEFT)
         if left is not None and left.type == cs.TS_IDENTIFIER:
@@ -733,7 +741,12 @@ def js_ts_positional_parameter_slots(
     params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is not None:
         for child in params.named_children:
-            name, is_variadic = _js_ts_parameter_slot(child)
+            slot = _js_ts_parameter_slot(child)
+            if slot is None:
+                # A TypeScript `this` parameter is not a runtime argument, so it
+                # takes no slot and must not shift the parameters after it.
+                continue
+            name, is_variadic = slot
             if is_variadic and variadic_index is None:
                 variadic_index = len(names)
             names.append(name)

@@ -91,6 +91,24 @@ def test_ts_slots_typed_and_destructured_parameters() -> None:
     assert js_ts_positional_parameter_slots(fn) == (["a", None, "c"], None)
 
 
+def test_ts_slots_typed_rest_parameter_is_variadic() -> None:
+    fn = _first_node(
+        "typescript", "function f(...args: string[]) {}", "function_declaration"
+    )
+    assert js_ts_positional_parameter_slots(fn) == (["args"], 0)
+
+
+def test_ts_slots_this_parameter_takes_no_slot() -> None:
+    # `this` is a type-only annotation, not a runtime argument: `input` must keep
+    # index 0 so a first-argument taint maps to it, not shift onto a phantom slot.
+    fn = _first_node(
+        "typescript",
+        "function f(this: Context, input: string) {}",
+        "function_declaration",
+    )
+    assert js_ts_positional_parameter_slots(fn) == (["input"], None)
+
+
 def test_cpp_slots_unnamed_and_named() -> None:
     assert cpp_positional_parameter_slots(
         _cpp_func("void f(int, const char* msg) {}")

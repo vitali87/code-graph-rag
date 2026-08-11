@@ -84,6 +84,9 @@ TS_GET_ACCESSOR_KEYWORD = "get"
 TS_ARROW_FUNCTION = "arrow_function"
 TS_REQUIRED_PARAMETER = "required_parameter"
 TS_OPTIONAL_PARAMETER = "optional_parameter"
+# TypeScript `this` pseudo-parameter (`function f(this: T, ...)`): a type-only
+# annotation, not a runtime argument, so it occupies no positional slot.
+TS_THIS_PARAMETER = "this"
 TS_ASSIGNMENT_PATTERN = "assignment_pattern"
 TS_JS_ASSIGNMENT_EXPRESSION = "assignment_expression"
 # A class field holding a value (`log = noop`); `name` is the property, `value`
