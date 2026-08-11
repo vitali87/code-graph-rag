@@ -384,8 +384,8 @@ module is re-exported under its own name. A project that does
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.
 - The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
-  Go, Java, Rust, C, C++, and C#; a language not in the registry emits no I/O or
-  flow edges until its table is added.
+  Go, Java, Rust, C, C++, C#, and Lua; a language not in the registry emits no I/O
+  or flow edges until its table is added.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
