@@ -29,13 +29,15 @@ if TYPE_CHECKING:
 def extract_tool_names(tools: list["Tool"]) -> ToolNames:
     registered = {t.name for t in tools}
 
-    def resolve_tool_name(canonical: AgenticToolName) -> str:
-        if canonical not in registered:
+    def resolve_tool_name(canonical: AgenticToolName) -> str | None:
+        name = str(canonical)
+        if name not in registered:
             logger.warning(
                 f"Tool '{canonical}' is not registered on the agent; "
                 "the orchestrator prompt references it anyway"
             )
-        return str(canonical)
+            return None
+        return name
 
     return ToolNames(
         query_graph=resolve_tool_name(AgenticToolName.QUERY_GRAPH),
@@ -135,25 +137,26 @@ def build_rag_orchestrator_prompt(
     active_projects: list[str] | None = None,
 ) -> str:
     t = extract_tool_names(tools)
-    base = f"""You are an expert AI assistant for analyzing codebases. Your answers are based **EXCLUSIVELY** on information retrieved using your tools.
+    has_query = t.query_graph is not None
+    has_read = t.read_file is not None
+    has_semantic = t.semantic_search is not None
+    has_create = t.create_file is not None
+    has_edit = t.edit_file is not None
+    has_shell = t.shell_command is not None
 
-**CRITICAL RULES:**
-1.  **TOOL-ONLY ANSWERS**: You must ONLY use information from the tools provided. Do not use external knowledge.
-2.  **NATURAL LANGUAGE QUERIES**: When using the `{t.query_graph}` tool, ALWAYS use natural language questions. NEVER write Cypher queries directly - the tool will translate your natural language into the appropriate database query.
-3.  **HONESTY**: If a tool fails or returns no results, you MUST state that clearly and report any error messages. Do not invent answers.
-4.  **CHOOSE THE RIGHT TOOL FOR THE FILE TYPE**:
-    - For source code files (.py, .ts, etc.), use `{t.read_file}`.
-    - Images and PDFs the user references are attached inline to the message; read them directly from your own multimodal input.
+    query_graph_ref = f"`{t.query_graph}`" if has_query else "`query_graph`"
+    read_file_ref = f"`{t.read_file}`" if has_read else "read files directly"
+    semantic_ref = f"`{t.semantic_search}`" if has_semantic else ""
 
-**Your General Approach:**
-1.  **Inspect Attached Media Directly**: When the user attaches an image or PDF, analyze it from the inline content of the message. Do not call a tool for it.
-2.  **Deep Dive into Code**: When you identify a relevant component (e.g., a folder), you must go beyond documentation.
-    a. First, check if documentation files like `README.md` exist and read them for context. For configuration, look for files appropriate to the language (e.g., `pyproject.toml` for Python, `package.json` for Node.js).
-    b. **Then, you MUST dive into the source code.** Explore the `src` directory (or equivalent). Identify and read key files (e.g., `main.py`, `index.ts`, `app.ts`) to understand the implementation details, logic, and functionality.
-    c. Synthesize all this information—from documentation, configuration, and the code itself—to provide a comprehensive, factual answer. Do not just describe the files; explain what the code *does*.
-    d. Only ask for clarification if, after a thorough investigation, the user's intent is still unclear.
-3.  **Choose the Right Search Strategy - SEMANTIC FIRST for Intent**:
-    a. **WHEN TO USE SEMANTIC SEARCH FIRST**: Always start with `{t.semantic_search}` for ANY of these patterns:
+    file_type_section = (
+        f"    - For source code files (.py, .ts, etc.), use {read_file_ref}.\n"
+        if has_read
+        else "    - For source code files (.py, .ts, etc.), read them directly from context.\n"
+    )
+
+    if has_semantic:
+        search_strategy = f"""3.  **Choose the Right Search Strategy - SEMANTIC FIRST for Intent**:
+    a. **WHEN TO USE SEMANTIC SEARCH FIRST**: Always start with {semantic_ref} for ANY of these patterns:
        - "main entry point", "startup", "initialization", "bootstrap", "launcher"
        - "error handling", "validation", "authentication"
        - "where is X done", "how does Y work", "find Z logic"
@@ -166,38 +169,87 @@ def build_rag_orchestrator_prompt(
        - C/C++: `int main()`, `WinMain`
        - Web: `index.html`, routing configurations, startup middleware
 
-    b. **WHEN TO USE GRAPH DIRECTLY**: Only use `{t.query_graph}` directly for pure structural queries:
+    b. **WHEN TO USE GRAPH DIRECTLY**: Only use {query_graph_ref} directly for pure structural queries:
        - "What does function X call?" (when you already know X's name)
        - "List methods of User class" (when you know the exact class name)
        - "Show files in folder Y" (when you know the exact folder path)
 
     c. **HYBRID APPROACH (RECOMMENDED)**: For most queries, use this sequence:
-       1. Use `{t.semantic_search}` to find relevant code elements by intent/meaning
-       2. Then use `{t.query_graph}` to explore structural relationships
-       3. **CRITICAL**: Always read the actual files using `{t.read_file}` to examine source code
+       1. Use {semantic_ref} to find relevant code elements by intent/meaning
+       2. Then use {query_graph_ref} to explore structural relationships
+       3. **CRITICAL**: Always read the actual files using {read_file_ref} to examine source code
        4. For entry points specifically: Look for `if __name__ == "__main__"`, `main()` functions, or CLI entry points
 
     d. **Tool Chaining Example**: For "main entry point and what it calls":
-       1. `{t.semantic_search}` for focused terms like "main entry startup" (not overly broad)
-       2. `{t.query_graph}` to find specific function relationships
-       3. `{t.read_file}` for main.py with targeted sections (use offset/limit for large files)
+       1. {semantic_ref} for focused terms like "main entry startup" (not overly broad)
+       2. {query_graph_ref} to find specific function relationships
+       3. {read_file_ref} for main.py with targeted sections (use offset/limit for large files)
        4. Look for the true application entry point (main function, __main__ block, CLI commands)
        5. If you find CLI frameworks (typer, click, argparse), read relevant command sections only
        6. Summarize execution flow concisely rather than showing all details
-4.  **Plan Before Writing or Modifying**:
-    a. Before using `{t.create_file}`, `{t.edit_file}`, or modifying files, you MUST explore the codebase to find the correct location and file structure.
-    b. For shell commands: If `{t.shell_command}` returns a confirmation message (return code -2), immediately return that exact message to the user. When they respond "yes", call the tool again with `user_confirmed=True`.
-5.  **Execute Shell Commands**: The `{t.shell_command}` tool handles dangerous command confirmations automatically. If it returns a confirmation prompt, pass it directly to the user.
-6.  **Complete the Investigation Cycle**: For entry point queries, you MUST:
-    a. Find candidate functions via semantic search
+"""
+    else:
+        search_strategy = f"""3.  **Choose the Right Search Strategy - GRAPH FIRST**:
+    a. **WHEN TO USE GRAPH DIRECTLY**: Always use {query_graph_ref} for structural and intent queries:
+       - "What does function X call?" (when you already know X's name)
+       - "List methods of User class" (when you know the exact class name)
+       - "Show files in folder Y" (when you know the exact folder path)
+       - Questions about purpose/intent should be answered by reading the retrieved files directly.
+
+    b. **HYBRID APPROACH**: For most queries, use this sequence:
+       1. Use {query_graph_ref} to find relevant code elements by structure/name
+       2. **CRITICAL**: Always read the actual files using {read_file_ref} to examine source code and determine purpose/intent
+       3. Summarize findings from code content
+"""
+
+    plan_section = ""
+    if has_create or has_edit:
+        create_ref = f"`{t.create_file}`" if has_create else ""
+        edit_ref = f"`{t.edit_file}`" if has_edit else ""
+        refs = ", ".join(r for r in [create_ref, edit_ref] if r)
+        plan_section = f"""4.  **Plan Before Writing or Modifying**:
+    a. Before using {refs}, or modifying files, you MUST explore the codebase to find the correct location and file structure.
+"""
+    else:
+        plan_section = """4.  **Plan Before Writing or Modifying**:
+    a. Explore the codebase to find the correct location and file structure before any modifications.
+"""
+
+    shell_section = ""
+    if has_shell:
+        shell_ref = f"`{t.shell_command}`"
+        shell_section = f"""5.  **Execute Shell Commands**: The {shell_ref} tool handles dangerous command confirmations automatically. If it returns a confirmation prompt, pass it directly to the user.
+"""
+    else:
+        shell_section = ""
+
+    base = f"""You are an expert AI assistant for analyzing codebases. Your answers are based **EXCLUSIVELY** on information retrieved using your tools.
+
+**CRITICAL RULES:**
+1.  **TOOL-ONLY ANSWERS**: You must ONLY use information from the tools provided. Do not use external knowledge.
+2.  **NATURAL LANGUAGE QUERIES**: When using the {query_graph_ref} tool, ALWAYS use natural language questions. NEVER write Cypher queries directly - the tool will translate your natural language into the appropriate database query.
+3.  **HONESTY**: If a tool fails or returns no results, you MUST state that clearly and report any error messages. Do not invent answers.
+4.  **CHOOSE THE RIGHT TOOL FOR THE FILE TYPE**:
+{file_type_section}    - Images and PDFs the user references are attached inline to the message; read them directly from your own multimodal input.
+
+**Your General Approach:**
+1.  **Inspect Attached Media Directly**: When the user attaches an image or PDF, analyze it from the inline content of the message. Do not call a tool for it.
+2.  **Deep Dive into Code**: When you identify a relevant component (e.g., a folder), you must go beyond documentation.
+    a. First, check if documentation files like `README.md` exist and read them for context. For configuration, look for files appropriate to the language (e.g., `pyproject.toml` for Python, `package.json` for Node.js).
+    b. **Then, you MUST dive into the source code.** Explore the `src` directory (or equivalent). Identify and read key files (e.g., `main.py`, `index.ts`, `app.ts`) to understand the implementation details, logic, and functionality.
+    c. Synthesize all this information—from documentation, configuration, and the code itself—to provide a comprehensive, factual answer. Do not just describe the files; explain what the code *does*.
+    d. Only ask for clarification if, after a thorough investigation, the user's intent is still unclear.
+{search_strategy}
+{plan_section}{shell_section}6.  **Complete the Investigation Cycle**: For entry point queries, you MUST:
+    a. Find candidate functions via graph queries
     b. Explore their relationships via graph queries
-    c. **AUTOMATICALLY read main.py** (or main entry file) - NEVER ask the user for permission
+    c. **AUTOMATICALLY read main entry files** - NEVER ask the user for permission
     d. Look for the ACTUAL startup code: `if __name__ == "__main__"`, CLI commands, `main()` functions
     e. If CLI framework detected (typer, click, argparse), examine command functions
     f. Distinguish between helper functions and the real application entry point
     g. Show the complete execution flow from the true entry point through initialization
 7.  **Token Management**: Be efficient with context usage:
-    a. For semantic search, use focused queries (not overly broad terms)
+    a. For searches, use focused queries (not overly broad terms)
     b. For file reading, read specific sections when possible using offset/limit
     c. Summarize large results rather than including full content
     d. Prioritize most relevant findings over comprehensive coverage
@@ -314,11 +366,9 @@ Provide only the Cypher query.
 """
 
 
-# Backwards-compatible default (no project scope injected)
 CYPHER_SYSTEM_PROMPT = build_cypher_system_prompt()
 
 
-# Stricter prompt for less capable open-source/local models (e.g., Ollama)
 def build_local_cypher_system_prompt(active_projects: list[str] | None = None) -> str:
     return f"""
 You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher query. Do not add explanations or markdown.
@@ -398,7 +448,6 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
 """
 
 
-# Backwards-compatible default (no project scope injected)
 LOCAL_CYPHER_SYSTEM_PROMPT = build_local_cypher_system_prompt()
 
 
