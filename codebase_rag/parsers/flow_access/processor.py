@@ -41,9 +41,9 @@ from ..io_access import (
     unwrap_argument,
 )
 from ..utils import (
-    cpp_parameter_names,
-    go_parameter_names,
-    js_ts_parameter_names,
+    cpp_positional_parameter_slots,
+    go_positional_parameter_slots,
+    js_ts_positional_parameter_slots,
     python_parameter_names,
     safe_decode_text,
 )
@@ -100,7 +100,7 @@ def _py_positional_param_name(node: Node) -> str | None:
     return None
 
 
-def _py_positional_param_names(func_node: Node) -> list[str]:
+def _py_positional_param_names(func_node: Node) -> list[str | None]:
     # Parameter names a positional argument can bind to, in order, STOPPING at
     # the first `*args`/`**kwargs`/bare-`*` boundary: positional arguments past
     # that point are absorbed by the variadic or are keyword-only, so mapping
@@ -110,7 +110,7 @@ def _py_positional_param_names(func_node: Node) -> list[str]:
     params_node = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params_node is None:
         return []
-    names: list[str] = []
+    names: list[str | None] = []
     for child in params_node.named_children:
         # A comment or the `/` positional-only marker sits between parameters
         # without consuming a position; skip them and keep collecting.
@@ -129,21 +129,25 @@ def _py_positional_param_names(func_node: Node) -> list[str]:
     return names
 
 
-def _lean_parameter_names(func_node: Node, language: str) -> list[str]:
-    # Positional parameter names for a lean-walk function, used to seed
-    # parameter-taint summaries (issue #1169). Only languages with a name
-    # extractor participate; the rest return [] and get no seeding. Lean
-    # languages have no keyword-call syntax, so every parameter is positional
-    # and this list doubles as the positional-mapping table (mirrors the
-    # Python _py_positional_param_names role). Java/C#/Rust have no extractor
-    # yet -- positional composition stays inert for them until one is added.
+def _lean_parameter_slots(
+    func_node: Node, language: str
+) -> tuple[list[str | None], int | None]:
+    # Position-aligned parameter slots for a lean-walk function, used to seed
+    # parameter-taint summaries (issue #1169). Returns one entry per formal
+    # positional slot (None where the slot binds no simple name) plus the index
+    # of a variadic/rest slot, so arg:<index> maps to the right parameter even
+    # when some parameters are unnamed, destructured, or variadic -- the shift
+    # a compacting extractor would cause is what produces false source-to-sink
+    # edges. Lean languages have no keyword-call syntax, so this table is the
+    # only mapping needed (mirrors the Python _py_positional_param_names role).
+    # Java/C#/Rust have no extractor yet -- composition stays inert for them.
     if language == cs.SupportedLanguage.GO:
-        return go_parameter_names(func_node)
+        return go_positional_parameter_slots(func_node)
     if language in cs.JS_TS_LANGUAGES:
-        return js_ts_parameter_names(func_node)
+        return js_ts_positional_parameter_slots(func_node)
     if language == cs.SupportedLanguage.CPP:
-        return cpp_parameter_names(func_node)
-    return []
+        return cpp_positional_parameter_slots(func_node)
+    return [], None
 
 
 class Taint(NamedTuple):
@@ -491,11 +495,18 @@ class FlowProcessor:
         # element is the per-call-site pass-through token (issue #1168). Composed
         # against the parameter-sink closure in finalize to emit origin -> sink.
         self._param_call_sites: list[tuple[Taint, str, str, str]] = []
-        # Per-function positional parameter names (self/cls dropped, truncated at
-        # the first variadic/keyword-only boundary) so a call site's arg:<index>
-        # resolves to the right callee parameter without binding a positional
-        # argument to a keyword-only parameter.
-        self._positional_params: dict[str, list[str]] = {}
+        # Per-function positional parameter slots so a call site's arg:<index>
+        # resolves to the right callee parameter. The Python path truncates at
+        # the first variadic/keyword-only boundary (self/cls dropped) and has no
+        # None entries; the lean path (issue #1169) keeps one entry per formal
+        # slot, using None where a slot binds no simple name, so unnamed or
+        # destructured parameters do not shift later indices.
+        self._positional_params: dict[str, list[str | None]] = {}
+        # Index of a lean callee's variadic/rest slot, if any: every argument at
+        # or after it maps to that parameter (issue #1169). The Python path
+        # never records this because it truncates positional names at the first
+        # variadic boundary.
+        self._variadic_params: dict[str, int] = {}
 
     def process_flow_for_caller(
         self,
@@ -601,11 +612,14 @@ class FlowProcessor:
         # walk). The composition machinery in finalize is language-agnostic; only
         # languages with a parameter-name extractor (Go/JS/TS/C++) get names, so
         # the rest are seeded with nothing and are unaffected.
-        lean_params = _lean_parameter_names(caller_node, ctx.language)
-        for pname in lean_params:
-            tainted[pname] = Taint(frozenset(), frozenset(), frozenset({pname}))
-        if lean_params:
-            self._positional_params[ctx.caller_qn] = lean_params
+        lean_names, lean_variadic = _lean_parameter_slots(caller_node, ctx.language)
+        for pname in lean_names:
+            if pname is not None:
+                tainted[pname] = Taint(frozenset(), frozenset(), frozenset({pname}))
+        if lean_names:
+            self._positional_params[ctx.caller_qn] = lean_names
+            if lean_variadic is not None:
+                self._variadic_params[ctx.caller_qn] = lean_variadic
         if ctx.language in _HOISTED_DECL_LANGS:
             # Path-sensitive MAY walk (issue #714 follow-up): each JS/TS if/else,
             # loop, and try branch is evaluated against a COPY of the incoming
@@ -2283,6 +2297,7 @@ class FlowProcessor:
         self._return_param_edges.clear()
         self._param_call_sites.clear()
         self._positional_params.clear()
+        self._variadic_params.clear()
 
     def _resolve_summaries(
         self,
@@ -2398,7 +2413,15 @@ class FlowProcessor:
                 index = int(rest)
             except ValueError:
                 return None
+            # Every argument at or after a variadic/rest slot binds to that one
+            # parameter (issue #1169); the Python path records no variadic index.
+            variadic = self._variadic_params.get(callee_qn)
+            if variadic is not None and index >= variadic:
+                index = variadic
             if 0 <= index < len(names):
+                # None marks a slot that binds no simple name (unnamed C++/Go
+                # parameter, JS/TS destructuring): no parameter to compose, so
+                # no edge -- never a shifted (wrong) name.
                 return names[index]
         return None
 
