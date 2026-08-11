@@ -1235,6 +1235,43 @@ def test_with_and_except_as_bindings_are_not_captures(tmp_path: Path) -> None:
         assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
 
 
+def test_match_value_pattern_does_not_hide_a_capture(tmp_path: Path) -> None:
+    # `case sentinel.token:` is a value pattern (multi-part dotted name) that binds
+    # nothing; the `token` read in the case body is the enclosing capture, so the
+    # flow must survive -- collecting value-pattern identifiers would hide it
+    # (CodeRabbit review, #1197).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "sentinel = object()\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send(x):\n"
+            "        match x:\n            case sentinel.token:\n"
+            "                print(token)\n"
+            "    send(1)\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_match_capture_pattern_binds_locally_no_flow(tmp_path: Path) -> None:
+    # `case token:` is a capture pattern binding `token` locally, so it is the
+    # closure's own binding, not a capture of the enclosing tainted `token`.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send(x):\n"
+            "        match x:\n            case token:\n"
+            "                print(token)\n"
+            "    send(1)\n"
+        )
+    }
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
 def test_capture_composes_for_duplicate_named_nested_defs(tmp_path: Path) -> None:
     # Two nested defs share the name `send`; the definition pass suffixes their qns.
     # The capture must be recorded under the SAME registered qn the redefined `send`

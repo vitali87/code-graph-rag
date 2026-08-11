@@ -614,10 +614,8 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
                     if c.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(c)):
                         out.add(name)
             elif child_type == cs.TS_PY_CASE_PATTERN:
-                # A `match` case binds its capture names; collect every identifier
-                # in the pattern (over-approximating value patterns is harmless --
-                # it only excludes a rare captured name used in a value position).
-                _python_collect_target_identifiers(child, out)
+                # A `match` case binds only its CAPTURE names, not value patterns.
+                _python_collect_case_pattern_bindings(child, out)
             stack.append(child)
 
 
@@ -628,6 +626,27 @@ def _python_collect_target_identifiers(node: Node, out: set[str]) -> None:
         return
     for child in node.children:
         _python_collect_target_identifiers(child, out)
+
+
+def _python_collect_case_pattern_bindings(node: Node, out: set[str]) -> None:
+    # A `match` case binds its CAPTURE patterns and nothing else. A bare name
+    # (`case token:`, `case [token]:`) parses as a single-identifier dotted_name and
+    # binds; a multi-part dotted_name (`case sentinel.token:`) is a VALUE pattern
+    # that compares and binds nothing -- collecting its identifiers would wrongly
+    # exclude a captured name used in a value position. `as` aliases are collected
+    # by the general as_pattern_target branch. Only single-identifier dotted_names
+    # (and their `_` wildcard, which decodes to nothing) are captured here.
+    stack: list[Node] = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_DOTTED_NAME:
+            idents = [
+                c for c in current.named_children if c.type == cs.TS_PY_IDENTIFIER
+            ]
+            if len(idents) == 1 and (name := safe_decode_text(idents[0])):
+                out.add(name)
+            continue
+        stack.extend(current.children)
 
 
 _PY_IMPORT_STATEMENTS = frozenset(
