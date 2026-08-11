@@ -133,6 +133,14 @@ class LanguageDescriptor:
     object_url_client_calls: bool = False
     object_literal_type: str | None = None
     pair_type: str | None = None
+    # Container nodes that wrap a binding's targets and values when they are NOT
+    # direct `left`/`right` or `name`/`value` fields on the binding node. Lua's
+    # `assignment_statement` holds its LHS names under a `variable_list` (each a
+    # `name` field) and its RHS values under an `expression_list` (each a `value`
+    # field), so the binding walk descends through these containers. None for the
+    # grammars whose binding node exposes targets/values directly.
+    binding_target_container_type: str | None = None
+    binding_value_container_type: str | None = None
 
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
@@ -397,6 +405,41 @@ _CSHARP_DESCRIPTOR = LanguageDescriptor(
     declarator_value_is_last_child=True,
 )
 
+_LUA_DESCRIPTOR = LanguageDescriptor(
+    call_type=cs.TS_LUA_FUNCTION_CALL,
+    string_type=cs.TS_STRING,
+    string_content_type=cs.TS_LUA_STRING_CONTENT,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset(
+        {cs.TS_LUA_FUNCTION_DECLARATION, cs.TS_LUA_FUNCTION_DEFINITION}
+    ),
+    # Lua is declare-at-point (`local x = ...`); a local shadows only later uses.
+    # Sink heads (`os`/`io`/`print`) are globals, not imports, so no import gate.
+    identifier_type=cs.TS_LUA_IDENTIFIER,
+    declarator_type=cs.TS_LUA_ASSIGNMENT_STATEMENT,
+    params_field=cs.FIELD_PARAMETERS,
+    block_scope_type=cs.TS_LUA_BLOCK,
+    extra_declarator_types=frozenset(),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
+    sinks_require_import=False,
+    hoisted_declarations=False,
+    decl_in_own_initializer=False,
+    declaration_statement_type=None,
+    macro_type=None,
+    # Inert (no IO_MEMBER_READS for Lua): env access is a call (`os.getenv`).
+    # Wired with Lua's dot/bracket index shapes so a future value-level sink is
+    # right (`table`/`field` fields).
+    member_expression_type=cs.TS_DOT_INDEX_EXPRESSION,
+    subscript_type=cs.TS_LUA_BRACKET_INDEX_EXPRESSION,
+    object_field=cs.TS_LUA_FIELD_TABLE,
+    property_field=cs.FIELD_FIELD,
+    subscript_index_field=cs.FIELD_FIELD,
+    # `local x = os.getenv(..)` binds through list containers (issue #1175).
+    binding_target_container_type=cs.TS_LUA_VARIABLE_LIST,
+    binding_value_container_type=cs.TS_LUA_EXPRESSION_LIST,
+)
+
 # Non-Python languages with a direct-sink descriptor. Python keeps its own
 # handle-aware walk; each new language lands one entry (plus registry rows).
 LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
@@ -412,4 +455,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     # reuses it verbatim.
     cs.SupportedLanguage.C: _CPP_DESCRIPTOR,
     cs.SupportedLanguage.CSHARP: _CSHARP_DESCRIPTOR,
+    cs.SupportedLanguage.LUA: _LUA_DESCRIPTOR,
 }

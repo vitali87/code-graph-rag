@@ -332,5 +332,46 @@ def test_rust_loop_kill_has_no_skip_path(tmp_path: Path) -> None:
     assert ("resource::ENV::SECRET", "resource::FILE::out.txt") not in flows
 
 
+def test_lua_env_to_stdout_via_print(tmp_path: Path) -> None:
+    # Lua joins FLOWS_TO coverage (issue #1175): a source read nested directly in
+    # a print sink emits the resource-to-resource edge.
+    files = {"m.lua": ('function leak()\n  print(os.getenv("SECRET"))\nend\n')}
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_lua_env_to_stdout_via_io_write(tmp_path: Path) -> None:
+    files = {"m.lua": ('function leak()\n  io.write(os.getenv("SECRET"))\nend\n')}
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_lua_env_to_stdout_bound_local(tmp_path: Path) -> None:
+    # The source is bound to a local first (`local s = os.getenv(..)`); the
+    # binding walk descends Lua's variable_list/expression_list so the taint
+    # attaches to `s` and reaches the sink (issue #1175).
+    files = {
+        "m.lua": ('function leak()\n  local s = os.getenv("SECRET")\n  print(s)\nend\n')
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_lua_kill_local_before_sink_no_flow(tmp_path: Path) -> None:
+    # Negative control: the local is reassigned to a clean value on every path
+    # before the sink, so the ENV taint is killed and no edge is emitted.
+    files = {
+        "m.lua": (
+            "function leak()\n"
+            '  local s = os.getenv("SECRET")\n'
+            '  s = "safe"\n'
+            "  print(s)\n"
+            "end\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
