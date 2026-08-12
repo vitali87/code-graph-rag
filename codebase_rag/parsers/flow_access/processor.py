@@ -622,9 +622,18 @@ class FlowProcessor:
             class_context=class_context,
             language=language,
             import_map=self._import_processor.import_mapping.get(module_qn, {}),
-            read_sinks={s.callee: s for s in sinks if s.direction == IODirection.READ},
+            # A READ_WRITE sink (PHP `curl_exec`/`fsockopen`, verb-agnostic like a DB
+            # execute) is BOTH a read source and a write sink, so it enters both maps
+            # -- otherwise it would fall out of both and emit nothing (CodeRabbit, #1174).
+            read_sinks={
+                s.callee: s
+                for s in sinks
+                if s.direction in (IODirection.READ, IODirection.READ_WRITE)
+            },
             write_sinks={
-                s.callee: s for s in sinks if s.direction == IODirection.WRITE
+                s.callee: s
+                for s in sinks
+                if s.direction in (IODirection.WRITE, IODirection.READ_WRITE)
             },
             macro_sinks=IO_MACRO_SINKS.get(language, {}),
             stream_sinks=IO_STREAM_SINKS.get(language, {}),
@@ -2155,6 +2164,10 @@ class FlowProcessor:
         # the head through the import map on `::` (`use std::env; env::var` ->
         # `std::env::var`; a fully-qualified `std::env::var` has an unimported `std`
         # head and stays as-is); a head bound to a local name is shadowed.
+        if jc.descriptor.case_insensitive_call_names:
+            # PHP function names are case-insensitive (`GETENV` == `getenv`); the
+            # registry keys are lowercase (issue #1174).
+            raw = raw.lower()
         scope_sep = jc.descriptor.scope_separator
         if scope_sep is not None:
             scoped_head, _, scoped_rest = raw.partition(scope_sep)

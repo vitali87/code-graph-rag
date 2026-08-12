@@ -427,7 +427,7 @@ it applies rather than broad and noisy.
 
 ## Language coverage
 
-`FLOWS_TO` covers **11 of the 14 supported languages** — every language whose
+`FLOWS_TO` covers **12 of the 14 supported languages** — every language whose
 source/sink table is registered in `FLOW_REGISTERED_LANGUAGES`
 (`codebase_rag/parsers/io_access/registry.py`). Python uses the deep,
 path-sensitive walk; the rest use the descriptor-driven lean walk. A language

@@ -136,6 +136,28 @@ def test_php_tainted_write_through_fopen_handle(tmp_path: Path) -> None:
     )
 
 
+def test_php_builtin_names_are_case_insensitive(tmp_path: Path) -> None:
+    # PHP function names are case-insensitive, so `GETENV`/`FILE_PUT_CONTENTS`
+    # resolve to the same sinks as their lowercase spellings (CodeRabbit review).
+    source = (
+        "<?php\nfunction leak() {\n"
+        '  $s = GETENV("K");\n'
+        '  FILE_PUT_CONTENTS("out.txt", $s);\n'
+        "}\n"
+    )
+    assert ("resource::ENV::K", "resource::FILE::out.txt") in _run_flow(
+        tmp_path, source
+    )
+
+
+def test_php_curl_exec_response_is_a_network_read_source(tmp_path: Path) -> None:
+    # `curl_exec` is a READ_WRITE sink; its response is an untrusted NETWORK read
+    # source, so echoing it flows NETWORK -> STDOUT (validates READ_WRITE entering
+    # the read-sink map, CodeRabbit review).
+    source = "<?php\nfunction leak($ch) {\n  $r = curl_exec($ch);\n  echo $r;\n}\n"
+    assert ("resource::NETWORK::<dynamic>", _STDOUT) in _run_flow(tmp_path, source)
+
+
 def test_php_untainted_io_emits_no_flow(tmp_path: Path) -> None:
     source = (
         "<?php\nfunction leak() {\n"

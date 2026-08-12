@@ -180,6 +180,12 @@ class LanguageDescriptor:
     # the consequence via this field and gathers every `alternative`.
     if_consequence_field: str = cs.TS_FIELD_CONSEQUENCE
 
+    # True when the language's FUNCTION names are case-insensitive (PHP: `GETENV`
+    # == `getenv`). The registry keys are lowercase, so the callee is lowercased
+    # before sink/handle matching. Variable names and superglobals stay
+    # case-sensitive -- they are matched elsewhere, not through this path. Issue #1174.
+    case_insensitive_call_names: bool = False
+
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
     call_type=cs.TS_CALL_EXPRESSION,
@@ -525,6 +531,7 @@ _PHP_DESCRIPTOR = LanguageDescriptor(
         {cs.TS_PHP_ECHO_STATEMENT, cs.TS_PHP_PRINT_INTRINSIC}
     ),
     if_consequence_field=cs.FIELD_BODY,
+    case_insensitive_call_names=True,
 )
 
 # Non-Python languages with a direct-sink descriptor. Python keeps its own
