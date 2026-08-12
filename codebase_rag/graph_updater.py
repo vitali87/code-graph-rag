@@ -404,10 +404,10 @@ class GraphUpdater:
         if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
             return
         frontend = FRONTENDS.get(cs.SupportedLanguage.CSHARP)
-        project = find_csharp_project(self.repo_path)
-        if frontend is None or project is None:
-            # Skip silently when there is no C# project: nothing to augment,
-            # and building the net tool for a non-C# repo would be wasteful.
+        if frontend is None or not frontend.applies(self.repo_path):
+            # Skip silently when the frontend has nothing to augment (no C#
+            # project): applicability is the frontend's own rule (issue #1178), so
+            # a registered replacement can define its own.
             return
         if not frontend.available():
             # AUTO promises hybrid only where the toolchain exists, so a
@@ -418,7 +418,9 @@ class GraphUpdater:
             else:
                 logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
             return
-        logger.info(ls.CSHARP_FRONTEND_RUNNING.format(path=project))
+        logger.info(
+            ls.CSHARP_FRONTEND_RUNNING.format(path=find_csharp_project(self.repo_path))
+        )
         facts = frontend.run(self.repo_path, ())
         self._apply_semantic_facts(facts)
         logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
