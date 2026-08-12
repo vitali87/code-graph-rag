@@ -464,6 +464,22 @@ _LUA_SINKS: tuple[IOSink, ...] = (
     IOSink("io.read", ResourceKind.STDIN, IODirection.READ),
 )
 
+# PHP direct-call I/O sinks (issue #1174). Keyed by the bare callee text from
+# `function_call_expression` (`getenv`, `file_put_contents`): PHP builtins are
+# global, so the catalogue is not import-gated, and a `$`-prefixed local can never
+# shadow a bare builtin name. `file_put_contents(path, data)` carries the tainted
+# data at arg 1 and the target path at arg 0. `echo`/`print` are keyword sinks
+# (handled by the walk, not this table); handle-based `fwrite` is an arg sink below.
+_PHP_SINKS: tuple[IOSink, ...] = (
+    IOSink("file_get_contents", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("readfile", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("file_put_contents", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("getenv", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    # curl_exec's handle carries no literal target; fsockopen's hostname is arg 0.
+    IOSink("curl_exec", ResourceKind.NETWORK, IODirection.READ_WRITE),
+    IOSink("fsockopen", ResourceKind.NETWORK, IODirection.READ_WRITE, target_arg=0),
+)
+
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.PYTHON: _PYTHON_SINKS,
     cs.SupportedLanguage.JS: _JS_TS_SINKS,
@@ -480,6 +496,7 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
         for fn, kind, direction, arg in _CPP_CALL_METHODS
     ),
     cs.SupportedLanguage.LUA: _LUA_SINKS,
+    cs.SupportedLanguage.PHP: _PHP_SINKS,
 }
 
 # The languages the flow/I-O analysis covers at all: a Module in any other
@@ -499,6 +516,12 @@ IO_ARG_HANDLE_SINKS: dict[cs.SupportedLanguage, dict[str, ArgHandleSink]] = {
         f"{prefix}{fn}": ArgHandleSink(f"{prefix}{fn}", arg, direction, data)
         for fn, arg, direction, data in _LIBC_ARG_HANDLE_METHODS
         for prefix in _CPP_SINK_PREFIXES
+    },
+    # PHP `fwrite($handle, $data)` REVERSES the libc order: the handle is arg 0 and
+    # the payload arg 1 (issue #1174). fputs is an alias; fputcsv writes a row array.
+    cs.SupportedLanguage.PHP: {
+        fn: ArgHandleSink(fn, 0, IODirection.WRITE, (1,))
+        for fn in ("fwrite", "fputs", "fputcsv")
     },
 }
 
@@ -542,10 +565,24 @@ _JS_TS_MEMBER_READS: tuple[tuple[str, ResourceKind], ...] = (
     ("process.env", ResourceKind.ENV),
 )
 
+# PHP superglobal taint sources (issue #1174): `$_GET["q"]` etc. are subscripts on
+# a superglobal `variable_name`. HTTP-controlled input ($_GET/$_POST/$_REQUEST/
+# $_COOKIE) is untrusted NETWORK; $_ENV/$_SERVER are process ENV. Prefix strings
+# include the `$` (matched against the superglobal's `variable_name.text`).
+_PHP_MEMBER_READS: tuple[tuple[str, ResourceKind], ...] = (
+    ("$_GET", ResourceKind.NETWORK),
+    ("$_POST", ResourceKind.NETWORK),
+    ("$_REQUEST", ResourceKind.NETWORK),
+    ("$_COOKIE", ResourceKind.NETWORK),
+    ("$_ENV", ResourceKind.ENV),
+    ("$_SERVER", ResourceKind.ENV),
+)
+
 IO_MEMBER_READS: dict[cs.SupportedLanguage, tuple[tuple[str, ResourceKind], ...]] = {
     cs.SupportedLanguage.JS: _JS_TS_MEMBER_READS,
     cs.SupportedLanguage.TS: _JS_TS_MEMBER_READS,
     cs.SupportedLanguage.TSX: _JS_TS_MEMBER_READS,
+    cs.SupportedLanguage.PHP: _PHP_MEMBER_READS,
 }
 
 # Calls whose result is a resource handle; later method calls on the bound variable
@@ -750,6 +787,11 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
         for prefix in _CPP_SINK_PREFIXES
     ),
     cs.SupportedLanguage.LUA: _LUA_LEAN_HANDLE_CONSTRUCTORS,
+    # `$f = fopen($path, "w")` returns a FILE handle used via `fwrite($f, $data)`
+    # (arg-shaped, below). The mode (arg 1) is not inspected, so may-write (#1174).
+    cs.SupportedLanguage.PHP: (
+        HandleConstructor("fopen", ResourceKind.FILE, target_arg=0),
+    ),
 }
 
 # `new`-shaped handle constructors keyed by the written type name (Java

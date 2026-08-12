@@ -168,6 +168,18 @@ class LanguageDescriptor:
     # separately). Issue #1204.
     taint_transparent_methods: frozenset[str] = frozenset()
 
+    # Statement/expression node types that write their operand(s) to STDOUT with no
+    # callee name (PHP `echo $x, $y;` / `print $x`), handled like a keyword sink:
+    # every operand's taint (a `sequence_expression` unwrapped to its elements) flows
+    # to STDOUT. Empty for languages whose output is call- or macro-shaped. Issue #1174.
+    keyword_stdout_write_types: frozenset[str] = frozenset()
+
+    # Field on an `if` node holding the then-branch. Most grammars use `consequence`;
+    # PHP's `if_statement` uses `body` and emits the whole elseif/else chain as
+    # MULTIPLE sibling `alternative` children (issue #1174). The flat if-walker reads
+    # the consequence via this field and gathers every `alternative`.
+    if_consequence_field: str = cs.TS_FIELD_CONSEQUENCE
+
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
     call_type=cs.TS_CALL_EXPRESSION,
@@ -470,6 +482,51 @@ _LUA_DESCRIPTOR = LanguageDescriptor(
     handle_method_separator=cs.CHAR_COLON,
 )
 
+_PHP_DESCRIPTOR = LanguageDescriptor(
+    call_type=cs.TS_PHP_FUNCTION_CALL_EXPRESSION,
+    string_type=cs.TS_PHP_ENCAPSED_STRING,
+    string_content_type=cs.TS_PHP_STRING_CONTENT,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset(
+        {
+            cs.TS_PHP_FUNCTION_DEFINITION,
+            cs.TS_PHP_METHOD_DECLARATION,
+            cs.TS_PHP_ANONYMOUS_FUNCTION,
+            cs.TS_PHP_ARROW_FUNCTION,
+        }
+    ),
+    # PHP variables are `$name`; a local can never shadow a builtin sink (which has
+    # no `$`), so the shadow machinery is inert like C++/C#/Rust. The fields below
+    # are wired to real PHP nodes but never suppress a genuine sink.
+    identifier_type=cs.TS_PHP_VARIABLE_NAME,
+    declarator_type=cs.TS_ASSIGNMENT_EXPRESSION,
+    params_field=cs.FIELD_PARAMETERS,
+    block_scope_type=cs.TS_PHP_COMPOUND_STATEMENT,
+    extra_declarator_types=frozenset(),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
+    sinks_require_import=False,
+    hoisted_declarations=False,
+    decl_in_own_initializer=False,
+    declaration_statement_type=None,
+    macro_type=None,
+    # Superglobal reads are subscripts (`$_GET["q"]`); member access (`$o->p`) is
+    # wired but unused by any PHP member-read row.
+    member_expression_type=cs.TS_PHP_MEMBER_ACCESS_EXPRESSION,
+    subscript_type=cs.TS_PHP_SUBSCRIPT_EXPRESSION,
+    object_field=cs.FIELD_OBJECT,
+    property_field=cs.TS_FIELD_NAME,
+    subscript_index_field=cs.TS_FIELD_INDEX,
+    # Each call argument wraps in an `argument` node, like C#.
+    argument_wrapper_type=cs.TS_PHP_ARGUMENT,
+    # `echo`/`print` write STDOUT; PHP `if` uses a `body` field + multiple
+    # `alternative` children (issue #1174).
+    keyword_stdout_write_types=frozenset(
+        {cs.TS_PHP_ECHO_STATEMENT, cs.TS_PHP_PRINT_INTRINSIC}
+    ),
+    if_consequence_field=cs.FIELD_BODY,
+)
+
 # Non-Python languages with a direct-sink descriptor. Python keeps its own
 # handle-aware walk; each new language lands one entry (plus registry rows).
 LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
@@ -486,4 +543,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.C: _CPP_DESCRIPTOR,
     cs.SupportedLanguage.CSHARP: _CSHARP_DESCRIPTOR,
     cs.SupportedLanguage.LUA: _LUA_DESCRIPTOR,
+    cs.SupportedLanguage.PHP: _PHP_DESCRIPTOR,
 }

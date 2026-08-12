@@ -1014,6 +1014,31 @@ def c_positional_parameter_slots(
     return names, variadic_index
 
 
+def php_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # PHP formal parameters: each `simple_parameter` binds a `name` field whose
+    # `variable_name` text carries the `$` prefix (`$m`), matching how the callee
+    # body references the parameter -- so a seeded parameter pseudo-origin and its
+    # in-body uses key identically. Variadic (`...$args`) and constructor
+    # property-promotion parameters are a follow-up (issue #1174).
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for param in params.named_children:
+        if param.type != cs.TS_PHP_SIMPLE_PARAMETER:
+            names.append(None)
+            continue
+        name_node = param.child_by_field_name(cs.TS_FIELD_NAME)
+        names.append(
+            name_node.text.decode(cs.ENCODING_UTF8)
+            if name_node is not None and name_node.text is not None
+            else None
+        )
+    return names, None
+
+
 def _js_ts_field_member_name(
     node: ASTNode, language: cs.SupportedLanguage | None
 ) -> str | None:
