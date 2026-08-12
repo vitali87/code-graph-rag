@@ -66,6 +66,13 @@ class ArgHandleSink:
     callee: str
     handle_arg: int
     direction: IODirection
+    # Argument indices that carry the DATA payload written to / read from the
+    # handle. None means "every non-handle argument" (fprintf's format + varargs are
+    # all payload). An explicit tuple pins the payload position so control metadata is
+    # not mistaken for data: `fwrite(buffer, size, count, stream)` writes only arg 0,
+    # so a tainted `size`/`count` is not a leak (issue #1204, flow walk only; io_access
+    # ignores this field). Used by the taint-tracking FLOWS_TO walk.
+    data_args: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)

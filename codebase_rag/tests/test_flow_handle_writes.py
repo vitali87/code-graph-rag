@@ -27,6 +27,8 @@ _LANG_BY_EXT = {
     ".js": "javascript",
     ".ts": "typescript",
     ".lua": "lua",
+    ".c": "c",
+    ".cpp": "cpp",
 }
 
 
@@ -673,6 +675,144 @@ def test_js_untainted_write_stream_emits_no_flow(tmp_path: Path) -> None:
         )
     }
     assert _run_flow(tmp_path, files) == set()
+
+
+# --- C / C++ (issue #1204; arg-shaped libc FILE* writes) ---
+
+
+def test_c_tainted_write_through_fwrite_handle(tmp_path: Path) -> None:
+    # `fwrite(s, 1, n, f)` carries the handle at arg 3 and the tainted data at arg 0;
+    # the data flows to the bound `fopen` handle's file.
+    files = {
+        "c.c": (
+            "#include <stdio.h>\n"
+            "#include <stdlib.h>\n"
+            "#include <string.h>\n"
+            "void leak() {\n"
+            '  const char* s = getenv("K");\n'
+            '  FILE* f = fopen("out.txt", "w");\n'
+            "  fwrite(s, 1, strlen(s), f);\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_c_tainted_write_through_fprintf_handle(tmp_path: Path) -> None:
+    # `fprintf(f, fmt, s)` carries the handle at arg 0 and the tainted data at arg 2.
+    files = {
+        "c.c": (
+            "#include <stdio.h>\n"
+            "#include <stdlib.h>\n"
+            "void leak() {\n"
+            '  const char* s = getenv("K");\n'
+            '  FILE* f = fopen("out.txt", "w");\n'
+            '  fprintf(f, "%s", s);\n'
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_c_fprintf_to_stderr_stream(tmp_path: Path) -> None:
+    # `fprintf(stderr, fmt, s)` targets the pre-bound stderr stream, no fopen needed.
+    files = {
+        "c.c": (
+            "#include <stdio.h>\n"
+            "#include <stdlib.h>\n"
+            "void leak() {\n"
+            '  const char* s = getenv("K");\n'
+            '  fprintf(stderr, "%s", s);\n'
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::STDERR::<dynamic>") in flows
+
+
+def test_cpp_tainted_write_through_fwrite_handle(tmp_path: Path) -> None:
+    # `std::fwrite` resolves under the `std::`-qualified spelling too.
+    files = {
+        "a.cpp": (
+            "#include <cstdio>\n"
+            "#include <cstdlib>\n"
+            "#include <cstring>\n"
+            "void leak() {\n"
+            '  const char* s = std::getenv("K");\n'
+            '  FILE* f = std::fopen("out.txt", "w");\n'
+            "  std::fwrite(s, 1, std::strlen(s), f);\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_c_untainted_fwrite_emits_no_flow(tmp_path: Path) -> None:
+    files = {
+        "c.c": (
+            "#include <stdio.h>\n"
+            "void leak() {\n"
+            '  FILE* f = fopen("out.txt", "w");\n'
+            '  fwrite("literal", 1, 7, f);\n'
+            "}\n"
+        )
+    }
+    assert _run_flow(tmp_path, files) == set()
+
+
+def test_c_fwrite_metadata_arg_is_not_payload(tmp_path: Path) -> None:
+    # `fwrite(buffer, size, count, stream)` writes only arg 0. `getenv("K")` sits at
+    # the `count` position (arg 2) as a directly-modeled ENV source, with a literal
+    # buffer: it is control metadata, not exfiltrated data, so it must emit no flow to
+    # the file (Greptile + CodeRabbit review, #1204).
+    files = {
+        "c.c": (
+            "#include <stdio.h>\n"
+            "#include <stdlib.h>\n"
+            "void leak() {\n"
+            '  FILE* f = fopen("out.txt", "w");\n'
+            '  fwrite("literal", 1, getenv("K"), f);\n'
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert not any(src == "resource::ENV::K" and "FILE" in dst for src, dst in flows)
+
+
+def test_c_project_defined_fwrite_is_not_treated_as_libc(tmp_path: Path) -> None:
+    # A project function named `fwrite` resolves to that definition and is analysed
+    # as an ordinary callee; it must NOT be swallowed by the libc arg-handle model
+    # (no spurious `FILE:<dynamic>` write), so interprocedural analysis is preserved
+    # (Greptile review, #1204).
+    files = {
+        "c.c": (
+            "#include <stdlib.h>\n"
+            "void fwrite(const char* data, int a, int b, void* f) { }\n"
+            "void leak() {\n"
+            '  const char* s = getenv("K");\n'
+            "  fwrite(s, 1, 2, 0);\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::FILE::<dynamic>") not in flows
+
+
+def test_c_fread_is_not_a_write_sink(tmp_path: Path) -> None:
+    # `fread` reads FROM the file into a buffer; it is a READ arg-sink, not a write
+    # destination, so a tainted argument routes no flow to the file.
+    files = {
+        "c.c": (
+            "#include <stdio.h>\n"
+            "#include <stdlib.h>\n"
+            "void leak() {\n"
+            '  char* s = getenv("K");\n'
+            '  FILE* f = fopen("out.txt", "w");\n'
+            "  fread(s, 1, 10, f);\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE not in _run_flow(tmp_path, files)
 
 
 # --- Lua (issue #1204; `io.open` handle + `:` method-call writes) ---
