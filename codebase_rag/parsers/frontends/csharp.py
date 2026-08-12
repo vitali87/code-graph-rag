@@ -18,7 +18,7 @@ from .protocol import QueryCall, ResolvedCallSite, SemanticFacts
 from .registry import register_frontend
 
 
-def _adapt(facts: CSharpSemanticFacts) -> SemanticFacts:
+def _adapt_csharp_semantic_facts(facts: CSharpSemanticFacts) -> SemanticFacts:
     # CSharpCallSite and ResolvedCallSite are structurally identical (name +
     # target_file/line/col); QueryCall likewise. The remaining families copy across.
     return SemanticFacts(
@@ -57,7 +57,7 @@ class CSharpFrontend:
         return find_csharp_project(repo_path) is not None
 
     def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts:
-        return _adapt(run_csharp_frontend(repo_path))
+        return _adapt_csharp_semantic_facts(run_csharp_frontend(repo_path))
 
 
 register_frontend(CSharpFrontend())
