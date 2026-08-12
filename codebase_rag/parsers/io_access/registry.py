@@ -480,6 +480,19 @@ _PHP_SINKS: tuple[IOSink, ...] = (
     IOSink("fsockopen", ResourceKind.NETWORK, IODirection.READ_WRITE, target_arg=0),
 )
 
+# Dart direct-call I/O sinks (issue #1173). Keyed by the callee text `dart_call_name`
+# reconstructs from the selector chain (`print`, `stdout.write`, `stderr.writeln`).
+# Dart file writes go through the `File` handle (below), not a direct sink.
+_DART_SINKS: tuple[IOSink, ...] = (
+    IOSink("print", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("stdout.write", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("stdout.writeln", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("stderr.write", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("stderr.writeln", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("http.get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("http.post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+)
+
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.PYTHON: _PYTHON_SINKS,
     cs.SupportedLanguage.JS: _JS_TS_SINKS,
@@ -497,6 +510,7 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     ),
     cs.SupportedLanguage.LUA: _LUA_SINKS,
     cs.SupportedLanguage.PHP: _PHP_SINKS,
+    cs.SupportedLanguage.DART: _DART_SINKS,
 }
 
 # The languages the flow/I-O analysis covers at all: a Module in any other
@@ -583,6 +597,9 @@ IO_MEMBER_READS: dict[cs.SupportedLanguage, tuple[tuple[str, ResourceKind], ...]
     cs.SupportedLanguage.TS: _JS_TS_MEMBER_READS,
     cs.SupportedLanguage.TSX: _JS_TS_MEMBER_READS,
     cs.SupportedLanguage.PHP: _PHP_MEMBER_READS,
+    # Dart `Platform.environment['K']` is a process-env read (issue #1173); the
+    # sibling-chain shape is resolved by the Dart-specific member-source path.
+    cs.SupportedLanguage.DART: (("Platform.environment", ResourceKind.ENV),),
 }
 
 # Calls whose result is a resource handle; later method calls on the bound variable
@@ -791,6 +808,11 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
     # (arg-shaped, below). The mode (arg 1) is not inspected, so may-write (#1174).
     cs.SupportedLanguage.PHP: (
         HandleConstructor("fopen", ResourceKind.FILE, target_arg=0),
+    ),
+    # Dart `var f = File(path)` binds a FILE handle used via `f.writeAsString(data)`
+    # (issue #1173). The read/write mode is per-method, so may-write by default.
+    cs.SupportedLanguage.DART: (
+        HandleConstructor("File", ResourceKind.FILE, target_arg=0),
     ),
 }
 
@@ -1152,6 +1174,20 @@ IO_LEAN_HANDLE_METHODS: dict[
             "write": IODirection.WRITE,
             "read": IODirection.READ,
             "lines": IODirection.READ,
+        },
+    },
+    # Dart `File` handle methods (issue #1173): the async and *Sync forms both count.
+    cs.SupportedLanguage.DART: {
+        ResourceKind.FILE: {
+            "readAsString": IODirection.READ,
+            "readAsStringSync": IODirection.READ,
+            "readAsBytes": IODirection.READ,
+            "readAsBytesSync": IODirection.READ,
+            "readAsLines": IODirection.READ,
+            "writeAsString": IODirection.WRITE,
+            "writeAsStringSync": IODirection.WRITE,
+            "writeAsBytes": IODirection.WRITE,
+            "writeAsBytesSync": IODirection.WRITE,
         },
     },
 }

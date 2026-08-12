@@ -13,6 +13,7 @@ from ... import constants as cs
 from ...capture import CaptureSelection
 from ...services import IngestorProtocol
 from ..call_resolver import CallResolver
+from ..dart.utils import dart_body_node, dart_call_name, dart_member_read_name
 from ..import_processor import ImportProcessor
 from ..io_access import (
     DYNAMIC_TARGET,
@@ -64,6 +65,7 @@ from ..utils import (
     cpp_declarator_name,
     cpp_positional_parameter_slots,
     csharp_positional_parameter_slots,
+    dart_positional_parameter_slots,
     function_span_key,
     go_positional_parameter_slots,
     java_positional_parameter_slots,
@@ -84,6 +86,22 @@ from .constants import (
 )
 
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
+# The Dart `=` assignment token node type (no dedicated constant); the flow walk
+# splits a Dart binding on it (issue #1173).
+_DART_ASSIGN_OP = "="
+
+
+def _dart_name(node: Node | None) -> str | None:
+    # The identifier text of a simple Dart argument (`sink(k)` -> "k"); None for a
+    # non-identifier argument, so a taint-map lookup on it misses.
+    if (
+        node is not None
+        and node.type == cs.TS_DART_IDENTIFIER
+        and node.text is not None
+    ):
+        return node.text.decode(cs.ENCODING_UTF8)
+    return None
+
 
 # The `kind` half of an argument `via` tag (VIA_ARG_FORMAT / VIA_KW_FORMAT),
 # used to map a call-site argument back to the callee's parameter (issue #1142).
@@ -183,6 +201,8 @@ def _lean_parameter_slots(
         return c_positional_parameter_slots(func_node)
     if language == cs.SupportedLanguage.PHP:
         return php_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.DART:
+        return dart_positional_parameter_slots(func_node)
     return [], None
 
 
@@ -332,12 +352,14 @@ _SWITCH_ARM_TYPES = frozenset(
         cs.TS_JS_SWITCH_CASE,
         cs.TS_JS_SWITCH_DEFAULT,
         cs.TS_PHP_DEFAULT_STATEMENT,
+        cs.TS_DART_SWITCH_STATEMENT_CASE,
+        cs.TS_DART_SWITCH_STATEMENT_DEFAULT,
     }
 )
 # Arms a previous case can fall INTO (no break modeling: the entry unions
 # the previous arm's exit). Go cases and Java arrow rules never fall
 # through, so they enter only from the header state. PHP `case`/`default`
-# fall through C-style (`case_statement` shares the C++ spelling).
+# and Dart `switch_statement_case`/`_default` fall through C-style.
 _FALLTHROUGH_ARM_TYPES = frozenset(
     {
         cs.TS_JAVA_SWITCH_BLOCK_STATEMENT_GROUP,
@@ -345,14 +367,21 @@ _FALLTHROUGH_ARM_TYPES = frozenset(
         cs.TS_JS_SWITCH_CASE,
         cs.TS_JS_SWITCH_DEFAULT,
         cs.TS_PHP_DEFAULT_STATEMENT,
+        cs.TS_DART_SWITCH_STATEMENT_CASE,
+        cs.TS_DART_SWITCH_STATEMENT_DEFAULT,
     }
 )
 
 # Arm node types spelled `default` explicitly (Go default_case, JS
-# switch_default, PHP default_statement); the other grammars mark default
-# structurally.
+# switch_default, PHP default_statement, Dart switch_statement_default); the
+# other grammars mark default structurally.
 _EXPLICIT_DEFAULT_ARM_TYPES = frozenset(
-    {cs.TS_GO_DEFAULT_CASE, cs.TS_JS_SWITCH_DEFAULT, cs.TS_PHP_DEFAULT_STATEMENT}
+    {
+        cs.TS_GO_DEFAULT_CASE,
+        cs.TS_JS_SWITCH_DEFAULT,
+        cs.TS_PHP_DEFAULT_STATEMENT,
+        cs.TS_DART_SWITCH_STATEMENT_DEFAULT,
+    }
 )
 
 
@@ -717,13 +746,18 @@ class FlowProcessor:
             arg_handle_sinks=IO_ARG_HANDLE_SINKS.get(ctx.language, {}),
             type_ctors=IO_TYPE_HANDLE_CONSTRUCTORS.get(ctx.language, {}),
         )
-        body = caller_node.child_by_field_name(cs.FIELD_BODY)
-        if body is None:
-            statements = list(caller_node.named_children)
-        elif body.type == descriptor.block_scope_type:
-            statements = list(body.named_children)
+        if ctx.language == cs.SupportedLanguage.DART:
+            # Dart's body is a SIBLING `function_body` of the captured signature,
+            # not a `body` field (issue #1173).
+            statements = self._dart_body_statements(caller_node)
         else:
-            statements = [body]
+            body = caller_node.child_by_field_name(cs.FIELD_BODY)
+            if body is None:
+                statements = list(caller_node.named_children)
+            elif body.type == descriptor.block_scope_type:
+                statements = list(body.named_children)
+            else:
+                statements = [body]
         state = _LeanState(taint={}, handles={})
         # Seed each parameter as a pseudo-origin so a sink or callee hand-off it
         # reaches becomes a parameter-taint summary composed at finalize, exactly
@@ -1244,6 +1278,10 @@ class FlowProcessor:
     ) -> None:
         # The leaf effect of one node on the taint map: bind (JS/Go), Go range
         # kill, a call's sink/arg edges, or a return's contribution to the summary.
+        if jc.flow.language == cs.SupportedLanguage.DART:
+            # Dart's sibling-chain grammar takes a dedicated leaf path (issue #1173).
+            self._apply_dart_leaf(node, tainted, handles, jc)
+            return
         node_type = node.type
         d = jc.descriptor
         if jc.type_ctors and node_type == cs.TS_CPP_DECLARATION:
@@ -1822,6 +1860,307 @@ class FlowProcessor:
             if child.type == d.string_type:
                 return string_literal(child, d.string_type, d.string_content_type)
         return DYNAMIC_TARGET
+
+    # --- Dart lean walk (issue #1173). Dart has no call-expression node: calls,
+    # member reads and bindings are flat sibling `selector` chains, so it takes a
+    # dedicated leaf path reusing the dart/utils.py reconstructors. ---
+
+    def _dart_body_statements(self, caller_node: Node) -> list[Node]:
+        # The captured Dart signature's sibling `function_body` -> its `block`'s
+        # statements. A `program` (module-level) caller has no function body.
+        body = dart_body_node(caller_node)
+        if body is None:
+            return []
+        block = next(
+            (c for c in body.named_children if c.type == cs.TS_DART_BLOCK), None
+        )
+        return list(block.named_children) if block is not None else []
+
+    @staticmethod
+    def _dart_selector_is_call(node: Node) -> bool:
+        return node.type == cs.TS_DART_SELECTOR and any(
+            c.type == cs.TS_DART_ARGUMENT_PART for c in node.named_children
+        )
+
+    def _apply_dart_leaf(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
+        # Dart leaf effects: a `var x = <chain>` / `x = <chain>` binding, a call
+        # (a `selector` holding an `argument_part`), or a return.
+        node_type = node.type
+        if node_type in (
+            cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION,
+            cs.TS_DART_ASSIGNMENT_EXPRESSION,
+        ):
+            self._dart_bind(node, tainted, handles, jc)
+        elif self._dart_selector_is_call(node):
+            self._dart_call(node, tainted, handles, jc)
+        elif node_type == cs.TS_RETURN_STATEMENT:
+            returned = self._dart_return_taint(node, tainted, jc)
+            if returned is not None:
+                self._acc_returns_taint = True
+                self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
+
+    @staticmethod
+    def _dart_binding_name_and_rhs(node: Node) -> tuple[str | None, list[Node]]:
+        # `var k = <rhs...>` / `k = <rhs...>`: the name is the last identifier before
+        # `=` (unwrapping an `assignable_expression` LHS), the RHS is the named
+        # children after `=` (a spread selector chain).
+        eq_index = next(
+            (i for i, c in enumerate(node.children) if c.type == _DART_ASSIGN_OP),
+            None,
+        )
+        if eq_index is None:
+            return None, []
+        name: str | None = None
+        for child in node.children[:eq_index]:
+            target = child
+            if target.type == cs.TS_DART_ASSIGNABLE_EXPRESSION:
+                target = next(
+                    (
+                        c
+                        for c in target.named_children
+                        if c.type == cs.TS_DART_IDENTIFIER
+                    ),
+                    target,
+                )
+            if target.type == cs.TS_DART_IDENTIFIER and target.text is not None:
+                name = target.text.decode(cs.ENCODING_UTF8)
+        rhs = [c for c in node.children[eq_index + 1 :] if c.is_named]
+        return name, rhs
+
+    def _dart_bind(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
+        name, rhs = self._dart_binding_name_and_rhs(node)
+        if name is None:
+            return
+        taint, bindings = self._dart_rhs(rhs, tainted, handles, jc)
+        if taint is not None:
+            tainted[name] = taint
+        else:
+            tainted.pop(name, None)
+        if bindings:
+            handles[name] = bindings
+        else:
+            handles.pop(name, None)
+
+    def _dart_rhs(
+        self,
+        rhs: list[Node],
+        tainted: _TaintMap,
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> tuple[Taint | None, frozenset[HandleBinding]]:
+        # The taint and/or handle a Dart binding RHS yields: a `Platform.environment`
+        # member source, a `File(path)` handle constructor, a read-source call, a
+        # project-callee return (pending), or a plain identifier alias.
+        if not rhs:
+            return None, frozenset()
+        source = self._dart_member_source(rhs, jc)
+        if source is not None:
+            return Taint(frozenset({source}), frozenset()), frozenset()
+        call_sel = next((n for n in rhs if self._dart_selector_is_call(n)), None)
+        if call_sel is not None:
+            raw = dart_call_name(call_sel)
+            if raw is not None:
+                ctor = self._js_match_sink(raw, jc.handle_ctors, jc)
+                if ctor is not None and ctor.direction != IODirection.READ:
+                    identity = self._dart_first_string_arg(call_sel)
+                    return None, frozenset({HandleBinding(ctor.kind, identity)})
+                read = self._js_match_sink(raw, jc.flow.read_sinks, jc)
+                if read is not None:
+                    identity = (
+                        self._dart_first_string_arg(call_sel)
+                        if read.target_arg == 0
+                        else DYNAMIC_TARGET
+                    )
+                    return (
+                        Taint(
+                            frozenset({HandleBinding(read.kind, identity)}), frozenset()
+                        ),
+                        frozenset(),
+                    )
+                callee = self._resolve(
+                    raw,
+                    jc.flow.module_qn,
+                    jc.flow.class_context,
+                    jc.flow.caller_qn,
+                    jc.flow.language,
+                    jc.flow.local_var_types,
+                )
+                if callee is not None:
+                    self._return_edge_candidates.append(
+                        (callee[0], callee[1], jc.flow.caller_spec)
+                    )
+                    return Taint(frozenset(), frozenset({callee[1]})), frozenset()
+            return None, frozenset()
+        if len(rhs) == 1 and rhs[0].type == cs.TS_DART_IDENTIFIER and rhs[0].text:
+            alias = rhs[0].text.decode(cs.ENCODING_UTF8)
+            return tainted.get(alias), handles.get(alias, frozenset())
+        return None, frozenset()
+
+    def _dart_member_source(
+        self, nodes: list[Node], jc: _JsCtx
+    ) -> HandleBinding | None:
+        # `Platform.environment['K']`: a bound member read. `dart_member_read_name`
+        # on the `.environment` selector yields the prefix; the key comes from a
+        # trailing `index_selector`'s string literal.
+        for index, node in enumerate(nodes):
+            if node.type != cs.TS_DART_SELECTOR:
+                continue
+            name = dart_member_read_name(node)
+            if name is None:
+                continue
+            for prefix, kind in jc.member_reads:
+                if name == prefix:
+                    identity = self._dart_index_key(nodes[index + 1 :])
+                    return HandleBinding(kind=kind, identity=identity)
+        return None
+
+    def _dart_index_key(self, following: list[Node]) -> str:
+        # The string key inside a trailing `index_selector` (`['K']` -> `K`).
+        for node in following:
+            index_sel = self._find_dart_index_selector(node)
+            if index_sel is not None:
+                for child in index_sel.named_children:
+                    if child.type == cs.TS_DART_STRING_LITERAL:
+                        return self._dart_string_literal(child)
+        return DYNAMIC_TARGET
+
+    @staticmethod
+    def _find_dart_index_selector(node: Node) -> Node | None:
+        if node.type == cs.TS_DART_INDEX_SELECTOR:
+            return node
+        for child in node.named_children:
+            if child.type == cs.TS_DART_INDEX_SELECTOR:
+                return child
+            nested = FlowProcessor._find_dart_index_selector(child)
+            if nested is not None:
+                return nested
+        return None
+
+    def _dart_call(
+        self, selector: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
+        raw = dart_call_name(selector)
+        if raw is None:
+            return
+        args = self._dart_arg_taints(selector, tainted, jc)
+        if (sink := self._js_match_sink(raw, jc.flow.write_sinks, jc)) is not None:
+            dst = (
+                self._dart_first_string_arg(selector)
+                if sink.target_arg == 0
+                else DYNAMIC_TARGET
+            )
+            for _via, taint in args:
+                if taint is not None:
+                    self._emit_taint_to_sink(taint, sink.kind, dst, jc.flow.caller_qn)
+            return
+        if handles and self._emit_handle_write(raw, args, handles, jc):
+            return
+        callee = self._resolve(
+            raw,
+            jc.flow.module_qn,
+            jc.flow.class_context,
+            jc.flow.caller_qn,
+            jc.flow.language,
+            jc.flow.local_var_types,
+        )
+        if callee is None:
+            return
+        callee_type, callee_qn = callee
+        for via, taint in args:
+            if taint is None:
+                continue
+            if taint.origins:
+                self.ingestor.ensure_relationship_batch(
+                    jc.flow.caller_spec,
+                    cs.RelationshipType.FLOWS_TO,
+                    (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+                    properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
+                )
+            elif taint.pending:
+                self._deferred_arg_edges.append(
+                    (taint.pending, jc.flow.caller_spec, callee_type, callee_qn, via)
+                )
+            if taint.origins or taint.pending:
+                token = _passthrough_result_token(jc.flow.caller_qn, selector)
+                self._param_call_sites.append((taint, callee_qn, via, token))
+            for pname in taint.params:
+                self._param_flow_edges.append(
+                    (jc.flow.caller_qn, pname, callee_qn, via)
+                )
+
+    def _dart_arg_taints(
+        self, selector: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> list[tuple[str, Taint | None]]:
+        # The positional arguments of a Dart call, taken from the selector's
+        # `argument_part` -> `arguments` -> `argument` wrappers.
+        argpart = next(
+            (c for c in selector.named_children if c.type == cs.TS_DART_ARGUMENT_PART),
+            None,
+        )
+        if argpart is None:
+            return []
+        arguments = next(
+            (c for c in argpart.named_children if c.type == cs.TS_DART_ARGUMENTS), None
+        )
+        if arguments is None:
+            return []
+        out: list[tuple[str, Taint | None]] = []
+        index = 0
+        for arg in arguments.named_children:
+            if arg.type != cs.TS_DART_ARGUMENT:
+                continue
+            inner = next(
+                (c for c in arg.named_children if c.type != cs.TS_COMMENT), None
+            )
+            arg_name = _dart_name(inner)
+            taint = tainted.get(arg_name) if arg_name is not None else None
+            out.append((VIA_ARG_FORMAT.format(index=index), taint))
+            index += 1
+        return out
+
+    def _dart_return_taint(
+        self, node: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        # A Dart `return <chain>;` contributes the chain's taint to the summary.
+        rhs = [c for c in node.named_children if c.type != cs.TS_COMMENT]
+        taint, _ = self._dart_rhs(rhs, tainted, {}, jc)
+        return taint
+
+    def _dart_first_string_arg(self, selector: Node) -> str:
+        argpart = next(
+            (c for c in selector.named_children if c.type == cs.TS_DART_ARGUMENT_PART),
+            None,
+        )
+        if argpart is None:
+            return DYNAMIC_TARGET
+        arguments = next(
+            (c for c in argpart.named_children if c.type == cs.TS_DART_ARGUMENTS), None
+        )
+        if arguments is None:
+            return DYNAMIC_TARGET
+        for arg in arguments.named_children:
+            if arg.type != cs.TS_DART_ARGUMENT:
+                continue
+            inner = next(
+                (c for c in arg.named_children if c.type != cs.TS_COMMENT), None
+            )
+            if inner is not None and inner.type == cs.TS_DART_STRING_LITERAL:
+                return self._dart_string_literal(inner)
+        return DYNAMIC_TARGET
+
+    @staticmethod
+    def _dart_string_literal(node: Node) -> str:
+        # A Dart string_literal has no content child; the text (with quotes) is
+        # inline. Interpolation (`'$x'`) collapses to <dynamic>.
+        if node.text is None:
+            return DYNAMIC_TARGET
+        if any(c.type == cs.TS_DART_TEMPLATE_SUBSTITUTION for c in node.named_children):
+            return DYNAMIC_TARGET
+        return node.text.decode(cs.ENCODING_UTF8).strip(cs.DART_QUOTE_CHARS)
 
     def _emit_taint_to_sink(
         self, taint: Taint, kind: ResourceKind, identity: str, caller_qn: str

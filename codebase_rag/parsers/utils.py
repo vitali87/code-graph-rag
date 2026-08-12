@@ -1039,6 +1039,38 @@ def php_positional_parameter_slots(
     return names, None
 
 
+def dart_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Dart parameters live in a `formal_parameter_list` child of the signature (not
+    # a field); each `formal_parameter` binds a `name` identifier. Optional/named/
+    # field-formal shapes without a simple `name` field append None so later slots
+    # do not shift. Dart has no variadic parameter (issue #1173).
+    params = next(
+        (
+            c
+            for c in func_node.named_children
+            if c.type == cs.TS_DART_FORMAL_PARAMETER_LIST
+        ),
+        None,
+    )
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for param in params.named_children:
+        name_node = (
+            param.child_by_field_name(cs.TS_FIELD_NAME)
+            if param.type == cs.TS_DART_FORMAL_PARAMETER
+            else None
+        )
+        names.append(
+            name_node.text.decode(cs.ENCODING_UTF8)
+            if name_node is not None and name_node.text is not None
+            else None
+        )
+    return names, None
+
+
 def _js_ts_field_member_name(
     node: ASTNode, language: cs.SupportedLanguage | None
 ) -> str | None:
