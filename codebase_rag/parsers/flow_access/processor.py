@@ -23,6 +23,7 @@ from ..io_access import (
     LANGUAGE_DESCRIPTORS,
     PY_SCOPE_BOUNDARIES,
     RESOURCE_QN_FORMAT,
+    ArgHandleSink,
     HandleBinding,
     HandleConstructor,
     IODirection,
@@ -48,12 +49,14 @@ from ..io_access import (
     unwrap_argument,
 )
 from ..io_access.registry import (
+    IO_ARG_HANDLE_SINKS,
     IO_IDENTITY_UNWRAP_CALLS,
     IO_IDENTITY_UNWRAP_NEW_TYPES,
     IO_LEAN_HANDLE_CONSTRUCTORS,
     IO_LEAN_HANDLE_METHODS,
     IO_NEW_HANDLE_CONSTRUCTORS,
     IO_NEW_HANDLE_WRAPPERS,
+    LIBC_STD_STREAMS,
 )
 from ..utils import (
     c_positional_parameter_slots,
@@ -480,6 +483,11 @@ class _JsCtx(NamedTuple):
     new_wrappers: frozenset[str]
     identity_calls: frozenset[str]
     identity_new_types: dict[str, ResourceKind]
+    # Arg-shaped handle sinks (C/C++ libc `fwrite(data, 1, n, f)`,
+    # `fprintf(f, fmt, x)`): the handle rides an ARGUMENT, not a receiver, so a
+    # tainted non-handle arg flows to the handle's resource (issue #1204). Empty for
+    # languages without the libc FILE* API.
+    arg_handle_sinks: dict[str, ArgHandleSink]
 
 
 class FlowProcessor:
@@ -682,6 +690,7 @@ class FlowProcessor:
             new_wrappers=IO_NEW_HANDLE_WRAPPERS.get(ctx.language, frozenset()),
             identity_calls=IO_IDENTITY_UNWRAP_CALLS.get(ctx.language, frozenset()),
             identity_new_types=IO_IDENTITY_UNWRAP_NEW_TYPES.get(ctx.language, {}),
+            arg_handle_sinks=IO_ARG_HANDLE_SINKS.get(ctx.language, {}),
         )
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
@@ -1439,6 +1448,11 @@ class FlowProcessor:
         # A tainted write through a bound resource handle (issue #1204).
         if handles and self._emit_handle_write(raw, args, handles, jc):
             return
+        # A tainted write through an arg-shaped handle sink (C/C++ `fwrite(x,1,n,f)`).
+        if jc.arg_handle_sinks and self._emit_arg_handle_write(
+            raw, node, args, handles, jc
+        ):
+            return
         callee = self._resolve(
             raw,
             jc.flow.module_qn,
@@ -1658,6 +1672,45 @@ class FlowProcessor:
                         taint, binding.kind, binding.identity, jc.flow.caller_qn
                     )
         return emitted
+
+    def _emit_arg_handle_write(
+        self,
+        raw: str,
+        node: Node,
+        args: list[tuple[str, Taint | None]],
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> bool:
+        # libc FILE* write: the handle rides an ARGUMENT (`fwrite(data, 1, n, f)`,
+        # `fprintf(f, fmt, secret)`), not a receiver. Route the taint of every
+        # NON-handle arg to the handle's resource. Only WRITE arg sinks are taint
+        # destinations -- fread/fgets READ into a buffer, not a resource write.
+        sink = jc.arg_handle_sinks.get(raw)
+        if sink is None or sink.direction == IODirection.READ:
+            return False
+        arguments = node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+        arg_nodes = self._named_no_comments(arguments) if arguments is not None else []
+        handle_text = (
+            safe_decode_text(arg_nodes[sink.handle_arg])
+            if sink.handle_arg < len(arg_nodes)
+            else None
+        )
+        # The handle argument resolves to its resource(s): a bound handle (possibly
+        # several after a branch merge), a pre-bound std stream (`fprintf(stderr,..)`),
+        # or an untracked FILE* known only by signature (<dynamic>).
+        bindings = handles.get(handle_text) if handle_text is not None else None
+        if bindings:
+            targets = [(b.kind, b.identity) for b in bindings]
+        elif handle_text in LIBC_STD_STREAMS:
+            targets = [(LIBC_STD_STREAMS[handle_text], DYNAMIC_TARGET)]
+        else:
+            targets = [(ResourceKind.FILE, DYNAMIC_TARGET)]
+        for index, (_via, taint) in enumerate(args):
+            if index == sink.handle_arg or taint is None:
+                continue
+            for kind, identity in targets:
+                self._emit_taint_to_sink(taint, kind, identity, jc.flow.caller_qn)
+        return True
 
     def _emit_taint_to_sink(
         self, taint: Taint, kind: ResourceKind, identity: str, caller_qn: str

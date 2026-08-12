@@ -400,14 +400,18 @@ module is re-exported under its own name. A project that does
   resource — path-sensitively (a rebind on one branch writes to all feasible
   resources) and mode-aware (a read-only `os.Open`/`File::open`/`new FileReader`/
   `new StreamReader` handle is not a write sink; Lua's `io.open` mode is unknowable
-  to the binder, so it stays a sound may-write gated by the method table). Both
-  `new`-shaped constructors and their wrapper / identity-carrier
-  (`new PrintWriter(new File(p))`) forms resolve, reusing the same registry tables
-  the `READS_FROM`/`WRITES_TO` walk uses. The remaining lean languages (**C**,
-  **C++**) still match **direct call sinks only** for handle writes: they bind
-  `fopen`/`ofstream` handles in the `READS_FROM`/`WRITES_TO` walk, but the flow walk
-  does not yet cover their arg-shaped `fwrite(f, x)` / type-declaration stream forms,
-  so such a leak reads as `NO_FLOW` rather than `UNKNOWN` in a fully covered project.
+  to the binder, so it stays a sound may-write gated by the method table). **C** and
+  **C++** cover the arg-shaped libc `FILE*` API, where the handle rides an
+  *argument* rather than a receiver (`FILE *f = fopen(p, "w"); fwrite(x, 1, n, f)`,
+  `fprintf(f, fmt, x)`, or `fprintf(stderr, fmt, x)` to a pre-bound std stream): the
+  tainted non-handle arguments flow to the handle's resource, an untracked `FILE*`
+  degrading to `FILE:<dynamic>`. Both `new`-shaped constructors and their wrapper /
+  identity-carrier (`new PrintWriter(new File(p))`) forms resolve, reusing the same
+  registry tables the `READS_FROM`/`WRITES_TO` walk uses. The one handle-write shape
+  the flow walk does **not** yet cover is C++ type-declaration streams
+  (`std::ofstream out(p); out << x` / `out.write(..)`), which bind in the
+  `READS_FROM`/`WRITES_TO` walk but not here — so that specific leak reads as
+  `NO_FLOW` rather than `UNKNOWN` in a fully covered project.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
