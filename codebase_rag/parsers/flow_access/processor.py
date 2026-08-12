@@ -1448,11 +1448,6 @@ class FlowProcessor:
         # A tainted write through a bound resource handle (issue #1204).
         if handles and self._emit_handle_write(raw, args, handles, jc):
             return
-        # A tainted write through an arg-shaped handle sink (C/C++ `fwrite(x,1,n,f)`).
-        if jc.arg_handle_sinks and self._emit_arg_handle_write(
-            raw, node, args, handles, jc
-        ):
-            return
         callee = self._resolve(
             raw,
             jc.flow.module_qn,
@@ -1462,6 +1457,12 @@ class FlowProcessor:
             jc.flow.local_var_types,
         )
         if callee is None:
+            # An UNRESOLVED call may still be a libc arg-shaped handle write
+            # (`fwrite(x, 1, n, f)`, `fprintf(f, fmt, x)`). A call that DOES resolve to
+            # a project function of the same name is analysed as that function above
+            # -- not assumed to be libc (Greptile review, #1204).
+            if jc.arg_handle_sinks:
+                self._emit_arg_handle_write(raw, node, args, handles, jc)
             return
         callee_type, callee_qn = callee
         for via, taint in args:
@@ -1706,7 +1707,16 @@ class FlowProcessor:
         else:
             targets = [(ResourceKind.FILE, DYNAMIC_TARGET)]
         for index, (_via, taint) in enumerate(args):
-            if index == sink.handle_arg or taint is None:
+            # Only the DATA payload flows to the file: `fwrite(buf, size, n, f)`
+            # writes arg 0, so a tainted `size`/`n` is control metadata, not a leak.
+            # data_args=None means every non-handle arg is payload (fprintf's format +
+            # varargs).
+            is_payload = (
+                index in sink.data_args
+                if sink.data_args is not None
+                else index != sink.handle_arg
+            )
+            if not is_payload or taint is None:
                 continue
             for kind, identity in targets:
                 self._emit_taint_to_sink(taint, kind, identity, jc.flow.caller_qn)

@@ -760,6 +760,44 @@ def test_c_untainted_fwrite_emits_no_flow(tmp_path: Path) -> None:
     assert _run_flow(tmp_path, files) == set()
 
 
+def test_c_fwrite_metadata_arg_is_not_payload(tmp_path: Path) -> None:
+    # `fwrite(buffer, size, count, stream)` writes only arg 0. A tainted `count`
+    # (arg 2) with a literal buffer is control metadata, not exfiltrated data, so it
+    # must emit no flow to the file (Greptile review, #1204).
+    files = {
+        "c.c": (
+            "#include <stdio.h>\n"
+            "#include <stdlib.h>\n"
+            "void leak() {\n"
+            '  int n = atoi(getenv("K"));\n'
+            '  FILE* f = fopen("out.txt", "w");\n'
+            '  fwrite("literal", 1, n, f);\n'
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert not any(src == "resource::ENV::K" and "FILE" in dst for src, dst in flows)
+
+
+def test_c_project_defined_fwrite_is_not_treated_as_libc(tmp_path: Path) -> None:
+    # A project function named `fwrite` resolves to that definition and is analysed
+    # as an ordinary callee; it must NOT be swallowed by the libc arg-handle model
+    # (no spurious `FILE:<dynamic>` write), so interprocedural analysis is preserved
+    # (Greptile review, #1204).
+    files = {
+        "c.c": (
+            "#include <stdlib.h>\n"
+            "void fwrite(const char* data, int a, int b, void* f) { }\n"
+            "void leak() {\n"
+            '  const char* s = getenv("K");\n'
+            "  fwrite(s, 1, 2, 0);\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::FILE::<dynamic>") not in flows
+
+
 def test_c_fread_is_not_a_write_sink(tmp_path: Path) -> None:
     # `fread` reads FROM the file into a buffer; it is a READ arg-sink, not a write
     # destination, so a tainted argument routes no flow to the file.

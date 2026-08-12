@@ -413,21 +413,26 @@ _CPP_CALL_METHODS: tuple[tuple[str, ResourceKind, IODirection, int | None], ...]
 
 # The libc FILE* API passes the handle as an ARGUMENT (fprintf's stream is arg 0,
 # fgets's arg 2, fread/fwrite's arg 3), unlike every method-shaped handle API.
-# snprintf/sprintf write to a BUFFER, not a resource: excluded.
-_LIBC_ARG_HANDLE_METHODS: tuple[tuple[str, int, IODirection], ...] = (
-    ("fprintf", 0, IODirection.WRITE),
-    ("vfprintf", 0, IODirection.WRITE),
-    ("vfscanf", 0, IODirection.READ),
-    ("fputs", 1, IODirection.WRITE),
-    ("fputc", 1, IODirection.WRITE),
-    ("putc", 1, IODirection.WRITE),
-    ("fwrite", 3, IODirection.WRITE),
-    ("fgets", 2, IODirection.READ),
-    ("fgetc", 0, IODirection.READ),
-    ("getc", 0, IODirection.READ),
-    ("fread", 3, IODirection.READ),
-    ("fscanf", 0, IODirection.READ),
-    ("getline", 2, IODirection.READ),
+# snprintf/sprintf write to a BUFFER, not a resource: excluded. The 4th field pins
+# the DATA-payload argument(s); None means every non-handle argument. `fwrite`/
+# `fread` take `(buffer, size, count, stream)`, so only arg 0 is the payload -- a
+# tainted `size`/`count` is control metadata, not data written to the file (#1204).
+_LIBC_ARG_HANDLE_METHODS: tuple[
+    tuple[str, int, IODirection, tuple[int, ...] | None], ...
+] = (
+    ("fprintf", 0, IODirection.WRITE, None),
+    ("vfprintf", 0, IODirection.WRITE, None),
+    ("vfscanf", 0, IODirection.READ, None),
+    ("fputs", 1, IODirection.WRITE, None),
+    ("fputc", 1, IODirection.WRITE, None),
+    ("putc", 1, IODirection.WRITE, None),
+    ("fwrite", 3, IODirection.WRITE, (0,)),
+    ("fgets", 2, IODirection.READ, (0,)),
+    ("fgetc", 0, IODirection.READ, None),
+    ("getc", 0, IODirection.READ, None),
+    ("fread", 3, IODirection.READ, (0,)),
+    ("fscanf", 0, IODirection.READ, None),
+    ("getline", 2, IODirection.READ, None),
 )
 
 # Pre-bound libc stream globals: `fprintf(stderr, ...)` needs no fopen.
@@ -487,12 +492,12 @@ FLOW_REGISTERED_LANGUAGES: frozenset[cs.SupportedLanguage] = frozenset(IO_SINKS)
 # the bare and std:: spellings.
 IO_ARG_HANDLE_SINKS: dict[cs.SupportedLanguage, dict[str, ArgHandleSink]] = {
     cs.SupportedLanguage.C: {
-        fn: ArgHandleSink(fn, arg, direction)
-        for fn, arg, direction in _LIBC_ARG_HANDLE_METHODS
+        fn: ArgHandleSink(fn, arg, direction, data)
+        for fn, arg, direction, data in _LIBC_ARG_HANDLE_METHODS
     },
     cs.SupportedLanguage.CPP: {
-        f"{prefix}{fn}": ArgHandleSink(f"{prefix}{fn}", arg, direction)
-        for fn, arg, direction in _LIBC_ARG_HANDLE_METHODS
+        f"{prefix}{fn}": ArgHandleSink(f"{prefix}{fn}", arg, direction, data)
+        for fn, arg, direction, data in _LIBC_ARG_HANDLE_METHODS
         for prefix in _CPP_SINK_PREFIXES
     },
 }
