@@ -19,7 +19,14 @@ FLOWS_TO = cs.RelationshipType.FLOWS_TO.value
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 
 
-_LANG_BY_EXT = {".go": "go", ".rs": "rust", ".java": "java", ".cs": "c_sharp"}
+_LANG_BY_EXT = {
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".cs": "c_sharp",
+    ".js": "javascript",
+    ".ts": "typescript",
+}
 
 
 def _run_flow(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
@@ -621,6 +628,44 @@ def test_csharp_untainted_new_handle_write_emits_no_flow(tmp_path: Path) -> None
             '    var w = new StreamWriter("out.txt");\n'
             '    w.Write("literal");\n'
             "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def _js_ts_write_stream(rel: str) -> dict[str, str]:
+    return {
+        rel: (
+            "function leak() {\n"
+            "  const s = process.env.K;\n"
+            "  const ws = fs.createWriteStream('out.txt');\n"
+            "  ws.write(s);\n"
+            "}\n"
+        )
+    }
+
+
+# --- JS/TS (issue #1204; coverage predates the Go/Rust/Java/C# increments via the
+# call-shaped `fs.createWriteStream` handle table, but was previously untested). ---
+
+
+def test_js_tainted_write_through_write_stream(tmp_path: Path) -> None:
+    # `fs.createWriteStream('out.txt')` is a WRITE handle; `ws.write(process.env.K)`
+    # reaches the file. `process.env.K` is the ENV read source.
+    assert _ENV_FILE in _run_flow(tmp_path, _js_ts_write_stream("a.js"))
+
+
+def test_ts_tainted_write_through_write_stream(tmp_path: Path) -> None:
+    assert _ENV_FILE in _run_flow(tmp_path, _js_ts_write_stream("a.ts"))
+
+
+def test_js_untainted_write_stream_emits_no_flow(tmp_path: Path) -> None:
+    files = {
+        "a.js": (
+            "function leak() {\n"
+            "  const ws = fs.createWriteStream('out.txt');\n"
+            "  ws.write('literal');\n"
             "}\n"
         )
     }
