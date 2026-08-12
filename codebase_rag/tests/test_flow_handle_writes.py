@@ -849,6 +849,25 @@ def test_cpp_tainted_write_through_ofstream_method(tmp_path: Path) -> None:
     assert _ENV_FILE in _run_flow(tmp_path, files)
 
 
+def test_cpp_ofstream_move_assignment_rebind(tmp_path: Path) -> None:
+    # `out = std::ofstream("out.txt")` is a call-shaped move-assignment rebind (not a
+    # type declaration); the ofstream call constructor binds the handle so a later
+    # `out << s` still reaches the file (CodeRabbit review, #1220).
+    files = {
+        "a.cpp": (
+            "#include <fstream>\n"
+            "#include <cstdlib>\n"
+            "void leak() {\n"
+            '  const char* s = std::getenv("K");\n'
+            "  std::ofstream out;\n"
+            '  out = std::ofstream("out.txt");\n'
+            "  out << s;\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
 def test_cpp_cout_insertion_still_writes_stdout(tmp_path: Path) -> None:
     # The bound-handle branch must not regress the cout/cerr stream sinks: `cout << s`
     # still flows to STDOUT (its base is a stream sink, not a bound handle).
