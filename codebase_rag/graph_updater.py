@@ -35,12 +35,7 @@ from .parsers.cpp_frontend import (
     run_cpp_frontend,
     run_cpp_frontend_hybrid,
 )
-from .parsers.csharp_frontend import (
-    CSharpQueryCall,
-    csharp_frontend_available,
-    find_csharp_project,
-    run_csharp_frontend,
-)
+from .parsers.csharp_frontend import find_csharp_project
 from .parsers.endpoint_prefixes import (
     CYPHER_DELETE_HANDLER_EXPOSES,
     CYPHER_PROJECT_PY_MODULES,
@@ -62,6 +57,8 @@ from .parsers.endpoints import (
     parse_route_decorator,
 )
 from .parsers.factory import ProcessorFactory
+from .parsers.frontends import FRONTENDS, SemanticFacts
+from .parsers.frontends.protocol import QueryCall
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -292,7 +289,7 @@ class GraphUpdater:
         # declaration groups join to Class qns after Pass 2, and LINQ
         # query-operator calls join to function locations after Pass 3.
         self._csharp_partial_decls: list[list[tuple[str, int]]] = []
-        self._csharp_query_calls: list[CSharpQueryCall] = []
+        self._csharp_query_calls: list[QueryCall] = []
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
@@ -403,20 +400,16 @@ class GraphUpdater:
         # keep applying stale facts on a later run with the frontend off.
         # csharp_call_sites is mutated in place because the type-inference
         # engine holds a reference.
-        dp = self.factory.definition_processor
-        dp.csharp_base_kinds = {}
-        dp.csharp_call_sites.clear()
-        dp.csharp_external_sites.clear()
-        self._csharp_partial_decls = []
-        self._csharp_query_calls = []
+        self._reset_semantic_facts()
         if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
             return
-        project = find_csharp_project(self.repo_path)
-        if project is None:
-            # Skip silently when there is no C# project: nothing to augment,
-            # and building the net tool for a non-C# repo would be wasteful.
+        frontend = FRONTENDS.get(cs.SupportedLanguage.CSHARP)
+        if frontend is None or not frontend.applies(self.repo_path):
+            # Skip silently when the frontend has nothing to augment (no C#
+            # project): applicability is the frontend's own rule (issue #1178), so
+            # a registered replacement can define its own.
             return
-        if not csharp_frontend_available():
+        if not frontend.available():
             # AUTO promises hybrid only where the toolchain exists, so a
             # missing dotnet is the expected fallback (info); an EXPLICIT
             # hybrid/roslyn request that cannot run stays a warning.
@@ -425,22 +418,41 @@ class GraphUpdater:
             else:
                 logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
             return
-        logger.info(ls.CSHARP_FRONTEND_RUNNING.format(path=project))
-        facts = run_csharp_frontend(self.repo_path)
-        dp.csharp_base_kinds = facts.base_kinds
-        dp.csharp_call_sites.update(facts.call_sites)
-        dp.csharp_external_sites.update(facts.external_sites)
-        self._csharp_partial_decls = facts.partial_groups
-        self._csharp_query_calls = facts.query_calls
+        logger.info(
+            ls.CSHARP_FRONTEND_RUNNING.format(path=find_csharp_project(self.repo_path))
+        )
+        facts = frontend.run(self.repo_path, ())
+        self._apply_semantic_facts(facts)
         logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
         logger.info(
             ls.CSHARP_FRONTEND_FACTS.format(
-                calls=len(facts.call_sites),
+                calls=len(facts.resolved_call_sites),
                 partials=len(facts.partial_groups),
                 queries=len(facts.query_calls),
                 externals=len(facts.external_sites),
             )
         )
+
+    def _reset_semantic_facts(self) -> None:
+        # A reused updater (watch mode) that previously ran a frontend must not
+        # keep applying stale facts on a later run with it off. csharp_call_sites
+        # is mutated in place because the type-inference engine holds a reference.
+        dp = self.factory.definition_processor
+        dp.csharp_base_kinds = {}
+        dp.csharp_call_sites.clear()
+        dp.csharp_external_sites.clear()
+        self._csharp_partial_decls = []
+        self._csharp_query_calls = []
+
+    def _apply_semantic_facts(self, facts: SemanticFacts) -> None:
+        # Copy each fact family into the processor state the existing consumers
+        # read, with per-miss fallback to the tree-sitter heuristics (issue #1178).
+        dp = self.factory.definition_processor
+        dp.csharp_base_kinds = facts.base_kinds
+        dp.csharp_call_sites.update(facts.resolved_call_sites)
+        dp.csharp_external_sites.update(facts.external_sites)
+        self._csharp_partial_decls = facts.partial_groups
+        self._csharp_query_calls = facts.query_calls
 
     def _join_csharp_partials(self) -> None:
         # Replace the directory-keyed syntactic partial grouping with the

@@ -25,8 +25,9 @@ from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
-from .csharp_frontend import CallSiteKey, CSharpCallSite
+from .csharp_frontend import CallSiteKey
 from .dependency_parser import parse_dependencies
+from .frontends.protocol import ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .handlers import get_handler
@@ -151,7 +152,7 @@ class DefinitionProcessor(
         # targets keyed on the callee NAME token location. The C# resolver
         # consults this before any heuristic; MUTATED IN PLACE across runs
         # because the type-inference engine holds a reference.
-        self.csharp_call_sites: dict[CallSiteKey, CSharpCallSite] = {}
+        self.csharp_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
         # Sites Roslyn resolved to METADATA (external) methods: the resolver
         # returns the external sentinel there instead of letting the
         # name-trie fabricate a first-party edge. Same in-place mutation
