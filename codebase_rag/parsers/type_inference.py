@@ -14,8 +14,9 @@ from ..types_defs import (
 )
 from .cpp import CppTypeInferenceEngine
 from .csharp.type_inference import CSharpTypeInferenceEngine
-from .csharp_frontend import CallSiteKey, CSharpCallSite
+from .csharp_frontend import CallSiteKey
 from .dart.type_inference import DartTypeInferenceEngine
+from .frontends.protocol import ResolvedCallSite
 from .go import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine
@@ -87,7 +88,7 @@ class TypeInferenceEngine:
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
         | None = None,
-        csharp_call_sites: dict[CallSiteKey, CSharpCallSite] | None = None,
+        csharp_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
         csharp_external_sites: set[CallSiteKey] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,

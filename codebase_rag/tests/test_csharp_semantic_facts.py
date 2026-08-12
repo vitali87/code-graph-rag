@@ -53,9 +53,13 @@ def _has(pairs: set[tuple[str, str]], caller_suffix: str, callee_suffix: str) ->
 
 
 def _hybrid(monkeypatch: pytest.MonkeyPatch, facts: CSharpSemanticFacts) -> None:
+    # The C# frontend now runs behind the LanguageFrontend registry (issue #1178),
+    # so patch the toolchain gate and the Roslyn runner where the ADAPTER binds them.
+    from codebase_rag.parsers.frontends import csharp as csharp_fe
+
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
-    monkeypatch.setattr(gu, "csharp_frontend_available", lambda: True)
-    monkeypatch.setattr(gu, "run_csharp_frontend", lambda repo_path: facts)
+    monkeypatch.setattr(csharp_fe, "csharp_frontend_available", lambda: True)
+    monkeypatch.setattr(csharp_fe, "run_csharp_frontend", lambda repo_path: facts)
 
 
 def test_parse_payload_reads_semantic_fact_sections() -> None:
