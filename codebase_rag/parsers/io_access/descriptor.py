@@ -488,6 +488,39 @@ _LUA_DESCRIPTOR = LanguageDescriptor(
     handle_method_separator=cs.CHAR_COLON,
 )
 
+_DART_DESCRIPTOR = LanguageDescriptor(
+    # Dart has NO call-expression node: calls/members/bindings are flat sibling
+    # `selector` chains reconstructed by the dart/utils.py helpers, so the flow walk
+    # takes a Dart-specific leaf path (issue #1173). Most call/member/binding FIELDS
+    # here are inert; the ones that matter are the node TYPES the walk dispatches on.
+    call_type=cs.TS_DART_SELECTOR,
+    string_type=cs.TS_DART_STRING_LITERAL,
+    # A Dart string_literal has no content child; its content is read inline from
+    # node.text (quote-stripped) by a Dart branch in string_literal().
+    string_content_type=cs.TS_DART_STRING_LITERAL,
+    keyword_arg_type=None,
+    nested_scope_types=cs.DART_NESTED_SCOPE_NODE_TYPES,
+    identifier_type=cs.TS_DART_IDENTIFIER,
+    declarator_type=cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION,
+    params_field=cs.FIELD_PARAMETERS,
+    block_scope_type=cs.TS_DART_BLOCK,
+    extra_declarator_types=frozenset(),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
+    sinks_require_import=False,
+    hoisted_declarations=False,
+    decl_in_own_initializer=False,
+    declaration_statement_type=None,
+    macro_type=None,
+    # Inert: Dart member/subscript reads use the sibling-chain path, not these fields.
+    member_expression_type=cs.TS_DART_SELECTOR,
+    subscript_type=cs.TS_DART_INDEX_SELECTOR,
+    object_field=cs.FIELD_OBJECT,
+    property_field=cs.TS_FIELD_NAME,
+    subscript_index_field=cs.TS_FIELD_INDEX,
+    argument_wrapper_type=cs.TS_DART_ARGUMENT,
+)
+
 _PHP_DESCRIPTOR = LanguageDescriptor(
     call_type=cs.TS_PHP_FUNCTION_CALL_EXPRESSION,
     string_type=cs.TS_PHP_ENCAPSED_STRING,
@@ -551,4 +584,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.CSHARP: _CSHARP_DESCRIPTOR,
     cs.SupportedLanguage.LUA: _LUA_DESCRIPTOR,
     cs.SupportedLanguage.PHP: _PHP_DESCRIPTOR,
+    cs.SupportedLanguage.DART: _DART_DESCRIPTOR,
 }

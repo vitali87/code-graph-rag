@@ -1039,6 +1039,47 @@ def php_positional_parameter_slots(
     return names, None
 
 
+def dart_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Dart parameters live in a `formal_parameter_list` child of the signature (not
+    # a field); each `formal_parameter` binds a `name` identifier. Optional-positional
+    # `[a, b]` and named `{a, b}` params wrap their formal_parameters in an
+    # `optional_formal_parameters` node, which is flattened. Dart requires those to
+    # come LAST, so appending them keeps every positional index correct while still
+    # seeding named params for `kw:<name>` composition. No variadic slot (#1173).
+    params = next(
+        (
+            c
+            for c in func_node.named_children
+            if c.type == cs.TS_DART_FORMAL_PARAMETER_LIST
+        ),
+        None,
+    )
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for param in params.named_children:
+        if param.type == cs.TS_DART_FORMAL_PARAMETER:
+            names.append(_dart_parameter_name(param))
+        elif param.type == cs.TS_DART_OPTIONAL_FORMAL_PARAMETERS:
+            names.extend(
+                _dart_parameter_name(inner)
+                for inner in param.named_children
+                if inner.type == cs.TS_DART_FORMAL_PARAMETER
+            )
+    return names, None
+
+
+def _dart_parameter_name(param: Node) -> str | None:
+    name_node = param.child_by_field_name(cs.TS_FIELD_NAME)
+    return (
+        name_node.text.decode(cs.ENCODING_UTF8)
+        if name_node is not None and name_node.text is not None
+        else None
+    )
+
+
 def _js_ts_field_member_name(
     node: ASTNode, language: cs.SupportedLanguage | None
 ) -> str | None:
