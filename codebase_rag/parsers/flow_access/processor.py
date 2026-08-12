@@ -1546,8 +1546,12 @@ class FlowProcessor:
         if ctor.handle_arg is not None:
             inner = positional_arg_node(node, ctor.handle_arg, d.argument_wrapper_type)
             parent = self._lean_handle_binding(inner, handles, jc)
-            identity = next(iter(parent)).identity if parent else DYNAMIC_TARGET
-            return frozenset({HandleBinding(ctor.kind, identity)})
+            # The bound handle at handle_arg may itself hold several resources after a
+            # branch merge; inherit ALL of their identities (one edge each), not an
+            # order-dependent single pick. <dynamic> when the argument is untracked.
+            if not parent:
+                return frozenset({HandleBinding(ctor.kind, DYNAMIC_TARGET)})
+            return frozenset(HandleBinding(ctor.kind, p.identity) for p in parent)
         return frozenset(
             {HandleBinding(ctor.kind, self._lean_ctor_identity(node, ctor, jc))}
         )

@@ -459,6 +459,8 @@ def test_java_files_factory_pathof_identity(tmp_path: Path) -> None:
 
 def test_java_read_only_filereader_emits_no_flow(tmp_path: Path) -> None:
     # `new FileReader` is a READ-only handle, so it never binds as a write sink.
+    # The write-named `.write(s)` carries genuine taint, so this fails if the
+    # `IODirection.READ` gate is removed (not merely because the arg is clean).
     files = {
         "A.java": (
             "import java.io.FileReader;\n"
@@ -466,7 +468,7 @@ def test_java_read_only_filereader_emits_no_flow(tmp_path: Path) -> None:
             "  void leak() throws Exception {\n"
             '    String s = System.getenv("K");\n'
             '    FileReader r = new FileReader("out.txt");\n'
-            "    r.read();\n"
+            "    r.write(s);\n"
             "  }\n"
             "}\n"
         )
@@ -569,7 +571,9 @@ def test_csharp_write_through_filestream(tmp_path: Path) -> None:
 
 
 def test_csharp_read_only_streamreader_emits_no_flow(tmp_path: Path) -> None:
-    # `new StreamReader` is READ-only, so a read through it is not a write sink.
+    # `new StreamReader` is READ-only, so it never binds as a write sink. The
+    # write-named `.Write(s)` carries genuine taint, so this fails if the
+    # `IODirection.READ` gate is removed (not merely because the arg is clean).
     files = {
         "A.cs": (
             "using System;\n"
@@ -578,7 +582,7 @@ def test_csharp_read_only_streamreader_emits_no_flow(tmp_path: Path) -> None:
             "  void Leak() {\n"
             '    var s = Environment.GetEnvironmentVariable("K");\n'
             '    var r = new StreamReader("out.txt");\n'
-            "    r.ReadToEnd();\n"
+            "    r.Write(s);\n"
             "  }\n"
             "}\n"
         )
@@ -600,3 +604,27 @@ def test_csharp_untainted_new_handle_write_emits_no_flow(tmp_path: Path) -> None
         )
     }
     assert _ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_csharp_sqlcommand_inherits_every_merged_connection(tmp_path: Path) -> None:
+    # `new SqlCommand(sql, conn)` inherits the connection's identity from arg1. When
+    # `conn` was branch-merged over two connections, the command must inherit BOTH,
+    # so a tainted execute reaches both databases (CodeRabbit review, #1204).
+    files = {
+        "A.cs": (
+            "using System;\n"
+            "using Microsoft.Data.SqlClient;\n"
+            "class A {\n"
+            "  void Leak(bool c) {\n"
+            '    var s = Environment.GetEnvironmentVariable("K");\n'
+            '    var conn = new SqlConnection("db1");\n'
+            '    if (c) { conn = new SqlConnection("db2"); }\n'
+            '    var cmd = new SqlCommand("q", conn);\n'
+            "    cmd.ExecuteNonQuery(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::DATABASE::db1") in flows
+    assert ("resource::ENV::K", "resource::DATABASE::db2") in flows
