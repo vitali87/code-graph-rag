@@ -380,13 +380,13 @@ jobs:
           uv sync --extra treesitter-full --extra test --group dev
 
       # Build the bundled tool explicitly so a Go compile error is an
-      # attributable failure here, not a mysterious skip inside pytest. The
-      # vendored deps make it hermetic (-mod=vendor, no network).
+      # attributable failure here, not a mysterious skip inside pytest. Deps
+      # resolve from the module cache, pinned by go.sum.
       - name: Build the bundled gotypes tool
         working-directory: codebase_rag/parsers/go_frontend/gotypes
         env:
           GOTOOLCHAIN: local
-        run: go build -mod=vendor ./...
+        run: go build ./...
 
       - name: Run Go frontend tests
         run: |
