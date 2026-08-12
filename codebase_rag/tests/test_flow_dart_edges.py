@@ -75,7 +75,7 @@ def test_dart_tainted_argument_into_callee(tmp_path: Path) -> None:
     # A tainted value passed as an argument reaches a sink inside the callee: the
     # parameter-to-sink summary composes across function bodies.
     source = (
-        "void sink(String m) { print(m); }\n"
+        "void sink(String? m) { print(m); }\n"
         "void leak() {\n"
         "  var k = Platform.environment['K'];\n"
         "  sink(k);\n"
@@ -88,7 +88,7 @@ def test_dart_return_taint_fixpoint(tmp_path: Path) -> None:
     # A callee returning a tainted value taints the caller's binding through the
     # return-taint fixpoint.
     source = (
-        "String src() { return Platform.environment['K']; }\n"
+        "String? src() { return Platform.environment['K']; }\n"
         "void leak() {\n"
         "  var v = src();\n"
         "  print(v);\n"
@@ -112,7 +112,7 @@ def test_dart_branch_merge_preserves_taint(tmp_path: Path) -> None:
 def test_dart_expression_bodied_callee(tmp_path: Path) -> None:
     # An arrow-bodied `=> print(v)` sink is walked (Greptile/CodeRabbit review).
     source = (
-        "void sink(String v) => print(v);\n"
+        "void sink(String? v) => print(v);\n"
         "void leak() {\n"
         "  var k = Platform.environment['K'];\n"
         "  sink(k);\n"
@@ -124,7 +124,7 @@ def test_dart_expression_bodied_callee(tmp_path: Path) -> None:
 def test_dart_expression_bodied_source_return(tmp_path: Path) -> None:
     # An arrow body `=> expr` is the implicit return value, feeding the fixpoint.
     source = (
-        "String src() => Platform.environment['K'];\n"
+        "String? src() => Platform.environment['K'];\n"
         "void leak() {\n"
         "  var v = src();\n"
         "  print(v);\n"
