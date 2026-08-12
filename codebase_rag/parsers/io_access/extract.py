@@ -63,6 +63,37 @@ def definition_header_nodes(node: Node) -> list[Node]:
     return []
 
 
+def rust_unwrap_result(node: Node) -> Node:
+    # Rust Result unwrapping: `File::open(p)?` (try_expression) and
+    # `File::create(p).unwrap()` / `.expect(..)` all yield the inner handle. The
+    # node shapes are Rust-specific, so this is inert elsewhere (issue #1204).
+    while True:
+        if node.type in (cs.TS_RS_TRY_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION):
+            # `File::create(p)?` (try) and `(File::create(p).unwrap())` (parens)
+            # both wrap the inner handle expression; peel to it.
+            inner = next(
+                (c for c in node.named_children if c.type != cs.TS_COMMENT), None
+            )
+            if inner is None:
+                return node
+            node = inner
+            continue
+        fn = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if fn is not None and fn.type == cs.TS_RS_FIELD_EXPRESSION:
+            field = fn.child_by_field_name(cs.RS_FIELD_FIELD)
+            receiver = fn.child_by_field_name(cs.FIELD_VALUE)
+            if (
+                field is not None
+                and field.text is not None
+                and field.text.decode(cs.ENCODING_UTF8) in cs.RS_RESULT_UNWRAP_METHODS
+                and receiver is not None
+                and receiver.type == cs.TS_RS_CALL_EXPRESSION
+            ):
+                node = receiver
+                continue
+        return node
+
+
 def lean_definition_header_nodes(
     node: Node, descriptor: LanguageDescriptor
 ) -> list[Node]:

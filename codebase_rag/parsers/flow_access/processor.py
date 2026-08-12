@@ -41,6 +41,7 @@ from ..io_access import (
     literal_target,
     match_normalised,
     registry_match,
+    rust_unwrap_result,
     scope_seed_nodes,
     string_literal,
     unwrap_argument,
@@ -1354,14 +1355,27 @@ class FlowProcessor:
                     (callee[0], callee[1], jc.flow.caller_spec)
                 )
                 return Taint(frozenset(), frozenset({callee[1]}))
-            # A method chain (`std::env::var("X").unwrap()`): the callee itself is
-            # not a source, but its receiver call may be, so recurse the left spine.
-            # Gated on the receiver being a call (not a bare identifier) so plain
-            # variable taint is never propagated through an arbitrary method.
+            # A method chain: recurse the receiver ONLY through a taint-transparent
+            # method -- Rust Result unwrapping (`std::env::var("X").unwrap()`) or a
+            # value-preserving conversion (`s.as_bytes()`). A terminal method that
+            # returns an unrelated value (`s.as_bytes().len()`, `.count()`) must not
+            # propagate the receiver's taint (issue #1204). Languages with no such
+            # methods (empty set) never recurse a chain here.
             func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            if func is not None and func.type == d.member_expression_type:
+            if (
+                func is not None
+                and func.type == d.member_expression_type
+                and d.taint_transparent_methods
+            ):
+                method = func.child_by_field_name(d.property_field)
                 receiver = func.child_by_field_name(d.object_field)
-                if receiver is not None and receiver.type == d.call_type:
+                if (
+                    receiver is not None
+                    and method is not None
+                    and method.text is not None
+                    and method.text.decode(cs.ENCODING_UTF8)
+                    in d.taint_transparent_methods
+                ):
                     return self._js_expr_taint(receiver, tainted, jc)
         return None
 
@@ -1451,8 +1465,13 @@ class FlowProcessor:
         # Resolve a RHS handle-constructor call (`os.Create("out")`) to a
         # HandleBinding, shadow-aware and import-normalised exactly like sink
         # matching. None when the RHS is not a registered handle constructor
-        # (issue #1204).
-        if rhs is None or rhs.type != jc.descriptor.call_type:
+        # (issue #1204). A Rust ctor arrives Result-wrapped
+        # (`File::create(p)?`, `File::create(p).unwrap()`); peel those value-
+        # preserving wrappers to the inner call (inert for other languages).
+        if rhs is None:
+            return None
+        rhs = rust_unwrap_result(rhs)
+        if rhs.type != jc.descriptor.call_type:
             return None
         raw = call_name(rhs)
         if raw is None:

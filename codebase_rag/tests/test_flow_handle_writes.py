@@ -19,10 +19,19 @@ FLOWS_TO = cs.RelationshipType.FLOWS_TO.value
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 
 
+_LANG_BY_EXT = {".go": "go", ".rs": "rust"}
+
+
 def _run_flow(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
     parsers, queries = load_parsers()
-    if "go" not in parsers:
-        pytest.skip("go parser not available")
+    needed = {
+        _LANG_BY_EXT[Path(rel).suffix]
+        for rel in files
+        if Path(rel).suffix in _LANG_BY_EXT
+    }
+    missing = [lang for lang in needed if lang not in parsers]
+    if missing:
+        pytest.skip(f"parser(s) not available: {missing}")
     for rel, content in files.items():
         (tmp_path / rel).write_text(content, encoding="utf-8")
     mock = MagicMock()
@@ -207,3 +216,131 @@ def test_go_switch_rebind_preserves_outer_flow(tmp_path: Path) -> None:
     flows = _run_flow(tmp_path, files)
     assert ("resource::ENV::K", "resource::FILE::first.txt") in flows
     assert ("resource::ENV::K", "resource::FILE::case1.txt") in flows
+
+
+# --- Rust (issue #1204, second language) ---
+_RUST_ENV_FILE = ("resource::ENV::K", "resource::FILE::out.txt")
+
+
+def test_rust_tainted_write_through_file_handle_unwrap(tmp_path: Path) -> None:
+    # `File::create(p).unwrap()` yields the handle; `s.as_bytes()` carries s's
+    # taint (value-preserving conversion), so the write reaches the file.
+    files = {
+        "m.rs": (
+            "fn leak() {\n"
+            '    let s = std::env::var("K").unwrap();\n'
+            '    let mut f = std::fs::File::create("out.txt").unwrap();\n'
+            "    f.write_all(s.as_bytes()).unwrap();\n"
+            "}\n"
+        )
+    }
+    assert _RUST_ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_rust_tainted_write_through_file_handle_try(tmp_path: Path) -> None:
+    # The `?` operator unwraps the Result to the inner handle just like `.unwrap()`.
+    files = {
+        "m.rs": (
+            "use std::io::Write;\n"
+            "fn leak() -> std::io::Result<()> {\n"
+            '    let s = std::env::var("K").unwrap();\n'
+            '    let mut f = std::fs::File::create("out.txt")?;\n'
+            "    f.write_all(s.as_bytes())?;\n"
+            "    Ok(())\n"
+            "}\n"
+        )
+    }
+    assert _RUST_ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_rust_imported_file_create(tmp_path: Path) -> None:
+    # `use std::fs::File;` + `File::create(..)` resolves through the import map to
+    # the registered `std::fs::File::create` constructor.
+    files = {
+        "m.rs": (
+            "use std::fs::File;\n"
+            "fn leak() {\n"
+            '    let s = std::env::var("K").unwrap();\n'
+            '    let mut f = File::create("out.txt").unwrap();\n'
+            "    f.write_all(s.as_bytes()).unwrap();\n"
+            "}\n"
+        )
+    }
+    assert _RUST_ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_rust_read_only_open_handle_write_emits_no_flow(tmp_path: Path) -> None:
+    # `File::open` is read-only, so a write through it is not a real sink.
+    files = {
+        "m.rs": (
+            "fn leak() {\n"
+            '    let s = std::env::var("K").unwrap();\n'
+            '    let mut f = std::fs::File::open("out.txt").unwrap();\n'
+            "    f.write_all(s.as_bytes()).unwrap();\n"
+            "}\n"
+        )
+    }
+    assert _RUST_ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_rust_untainted_handle_write_emits_no_flow(tmp_path: Path) -> None:
+    files = {
+        "m.rs": (
+            "fn leak() {\n"
+            '    let mut f = std::fs::File::create("out.txt").unwrap();\n'
+            '    f.write_all("literal".as_bytes()).unwrap();\n'
+            "}\n"
+        )
+    }
+    assert _RUST_ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_rust_conditional_rebind_emits_to_both_files(tmp_path: Path) -> None:
+    # Path-sensitive handle bindings apply to Rust too: a rebind in the if arm
+    # leaves both handles live, so the write reaches both files.
+    files = {
+        "m.rs": (
+            "fn leak(cond: bool) {\n"
+            '    let s = std::env::var("K").unwrap();\n'
+            '    let mut f = std::fs::File::create("first.txt").unwrap();\n'
+            "    if cond {\n"
+            '        f = std::fs::File::create("second.txt").unwrap();\n'
+            "    }\n"
+            "    f.write_all(s.as_bytes()).unwrap();\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::FILE::first.txt") in flows
+    assert ("resource::ENV::K", "resource::FILE::second.txt") in flows
+
+
+def test_rust_taint_does_not_cross_a_terminal_method(tmp_path: Path) -> None:
+    # `s.as_bytes().len()` is a usize, not the secret: the value-preserving
+    # recursion must stop at `.len()` (a terminal method) and not propagate s's
+    # taint to the write (CodeRabbit review, #1204).
+    files = {
+        "m.rs": (
+            "fn leak() {\n"
+            '    let s = std::env::var("K").unwrap();\n'
+            '    let mut f = std::fs::File::create("out.txt").unwrap();\n'
+            "    f.write_all(&[s.as_bytes().len() as u8]).unwrap();\n"
+            "}\n"
+        )
+    }
+    assert _RUST_ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_rust_parenthesized_constructor_is_unwrapped(tmp_path: Path) -> None:
+    # A parenthesized constructor `(File::create(p).unwrap())` wraps the handle
+    # expression; the binder peels the parens (and the Result) to reach it.
+    files = {
+        "m.rs": (
+            "fn leak() {\n"
+            '    let s = std::env::var("K").unwrap();\n'
+            '    let mut f = (std::fs::File::create("out.txt").unwrap());\n'
+            "    f.write_all(s.as_bytes()).unwrap();\n"
+            "}\n"
+        )
+    }
+    assert _RUST_ENV_FILE in _run_flow(tmp_path, files)

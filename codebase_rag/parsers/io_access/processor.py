@@ -41,6 +41,7 @@ from .extract import (
     match_normalised,
     positional_arg_node,
     registry_match,
+    rust_unwrap_result,
     scope_seed_nodes,
     string_literal,
 )
@@ -1710,35 +1711,7 @@ class IOAccessProcessor:
             return lean_handles.bindings.get(node.text.decode(cs.ENCODING_UTF8))
         return None
 
-    @staticmethod
-    def _unwrap_result(node: Node) -> Node:
-        # Rust Result unwrapping: `File::open(p)?` (try_expression) and
-        # `File::create(p).unwrap()` / `.expect(..)` all yield the inner handle. The
-        # node shapes are Rust-specific, so this is inert elsewhere.
-        while True:
-            if node.type == cs.TS_RS_TRY_EXPRESSION:
-                inner = next(
-                    (c for c in node.named_children if c.type != cs.TS_COMMENT), None
-                )
-                if inner is None:
-                    return node
-                node = inner
-                continue
-            fn = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            if fn is not None and fn.type == cs.TS_RS_FIELD_EXPRESSION:
-                field = fn.child_by_field_name(cs.RS_FIELD_FIELD)
-                receiver = fn.child_by_field_name(cs.FIELD_VALUE)
-                if (
-                    field is not None
-                    and field.text is not None
-                    and field.text.decode(cs.ENCODING_UTF8)
-                    in cs.RS_RESULT_UNWRAP_METHODS
-                    and receiver is not None
-                    and receiver.type == cs.TS_RS_CALL_EXPRESSION
-                ):
-                    node = receiver
-                    continue
-            return node
+    _unwrap_result = staticmethod(rust_unwrap_result)
 
     def _handle_from_call(
         self,
