@@ -384,8 +384,12 @@ module is re-exported under its own name. A project that does
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.
 - The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
-  Go, Java, Rust, C, C++, C#, and Lua; a language not in the registry emits no I/O
-  or flow edges until its table is added.
+  Go, Java, Rust, C, C++, C#, Lua, and PHP; a language not in the registry emits no
+  I/O or flow edges until its table is added. PHP models `$_GET`/`$_POST`/
+  `$_REQUEST`/`$_COOKIE` (untrusted HTTP input → NETWORK) and `$_ENV`/`$_SERVER`
+  (→ ENV) superglobal sources, `getenv`/`file_get_contents` reads,
+  `file_put_contents` and `echo`/`print` (keyword STDOUT sinks) writes, and
+  `fopen` + arg-shaped `fwrite`/`fputs` handle writes.
 - Handle-based writes in the lean (non-Python) `FLOWS_TO` walk are being taught
   incrementally (issue #1204). **Go**, **Rust**, **Java**, **C#**, **JS/TS**, and
   **Lua** now track handle bindings, so a taint written through a file/socket handle
@@ -423,7 +427,7 @@ it applies rather than broad and noisy.
 
 ## Language coverage
 
-`FLOWS_TO` covers **11 of the 14 supported languages** — every language whose
+`FLOWS_TO` covers **12 of the 14 supported languages** — every language whose
 source/sink table is registered in `FLOW_REGISTERED_LANGUAGES`
 (`codebase_rag/parsers/io_access/registry.py`). Python uses the deep,
 path-sensitive walk; the rest use the descriptor-driven lean walk. A language
@@ -444,7 +448,7 @@ edges, so a reachability question over it returns `UNKNOWN` rather than
 | C | ✅ | lean descriptor |
 | C# | ✅ | lean descriptor |
 | Lua | ✅ | lean descriptor |
-| PHP | ❌ | not covered — no sink table |
+| PHP | ✅ | lean descriptor |
 | Scala | ❌ | not covered — no sink table |
 | Dart | ❌ | not covered — no sink table |
 

@@ -68,6 +68,7 @@ from ..utils import (
     go_positional_parameter_slots,
     java_positional_parameter_slots,
     js_ts_positional_parameter_slots,
+    php_positional_parameter_slots,
     python_free_variable_names,
     python_parameter_names,
     rust_positional_parameter_slots,
@@ -180,6 +181,8 @@ def _lean_parameter_slots(
         return rust_positional_parameter_slots(func_node)
     if language == cs.SupportedLanguage.C:
         return c_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.PHP:
+        return php_positional_parameter_slots(func_node)
     return [], None
 
 
@@ -294,6 +297,7 @@ _FLAT_LOOP_TYPES = frozenset(
         cs.TS_CPP_FOR_RANGE_LOOP,
         cs.TS_RS_FOR_EXPRESSION,
         cs.TS_RS_WHILE_EXPRESSION,
+        cs.TS_PHP_FOREACH_STATEMENT,
     }
 )
 # Loops whose body ALWAYS runs at least once (do-while, Rust `loop`): no
@@ -327,24 +331,28 @@ _SWITCH_ARM_TYPES = frozenset(
         cs.TS_CPP_CASE_STATEMENT,
         cs.TS_JS_SWITCH_CASE,
         cs.TS_JS_SWITCH_DEFAULT,
+        cs.TS_PHP_DEFAULT_STATEMENT,
     }
 )
 # Arms a previous case can fall INTO (no break modeling: the entry unions
 # the previous arm's exit). Go cases and Java arrow rules never fall
-# through, so they enter only from the header state.
+# through, so they enter only from the header state. PHP `case`/`default`
+# fall through C-style (`case_statement` shares the C++ spelling).
 _FALLTHROUGH_ARM_TYPES = frozenset(
     {
         cs.TS_JAVA_SWITCH_BLOCK_STATEMENT_GROUP,
         cs.TS_CPP_CASE_STATEMENT,
         cs.TS_JS_SWITCH_CASE,
         cs.TS_JS_SWITCH_DEFAULT,
+        cs.TS_PHP_DEFAULT_STATEMENT,
     }
 )
 
 # Arm node types spelled `default` explicitly (Go default_case, JS
-# switch_default); the other grammars mark default structurally.
+# switch_default, PHP default_statement); the other grammars mark default
+# structurally.
 _EXPLICIT_DEFAULT_ARM_TYPES = frozenset(
-    {cs.TS_GO_DEFAULT_CASE, cs.TS_JS_SWITCH_DEFAULT}
+    {cs.TS_GO_DEFAULT_CASE, cs.TS_JS_SWITCH_DEFAULT, cs.TS_PHP_DEFAULT_STATEMENT}
 )
 
 
@@ -614,9 +622,18 @@ class FlowProcessor:
             class_context=class_context,
             language=language,
             import_map=self._import_processor.import_mapping.get(module_qn, {}),
-            read_sinks={s.callee: s for s in sinks if s.direction == IODirection.READ},
+            # A READ_WRITE sink (PHP `curl_exec`/`fsockopen`, verb-agnostic like a DB
+            # execute) is BOTH a read source and a write sink, so it enters both maps
+            # -- otherwise it would fall out of both and emit nothing (CodeRabbit, #1174).
+            read_sinks={
+                s.callee: s
+                for s in sinks
+                if s.direction in (IODirection.READ, IODirection.READ_WRITE)
+            },
             write_sinks={
-                s.callee: s for s in sinks if s.direction == IODirection.WRITE
+                s.callee: s
+                for s in sinks
+                if s.direction in (IODirection.WRITE, IODirection.READ_WRITE)
             },
             macro_sinks=IO_MACRO_SINKS.get(language, {}),
             stream_sinks=IO_STREAM_SINKS.get(language, {}),
@@ -1052,9 +1069,13 @@ class FlowProcessor:
         # to the whole if statement (restored on exit), so neither shadows a
         # source/sink past its scope.
         pre_if_shadows = set(jc.local_names)
-        consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
-        alternative = node.child_by_field_name(cs.FIELD_ALTERNATIVE)
-        skip = {n.id for n in (consequence, alternative) if n is not None}
+        consequence = node.child_by_field_name(jc.descriptor.if_consequence_field)
+        # Most grammars carry a single `alternative` (else block or nested else-if);
+        # PHP emits the whole chain as several sibling `alternative` children
+        # (`else_if_clause`* then an optional `else_clause`), so gather them all
+        # (issue #1174). For Go/Java/C++/Rust this list is 0 or 1 element -> unchanged.
+        alternatives = node.children_by_field_name(cs.FIELD_ALTERNATIVE)
+        skip = {n.id for n in (consequence, *alternatives) if n is not None}
         for child in node.named_children:
             if child.id not in skip:
                 state = self._walk_flat_stmt(child, state, jc)
@@ -1063,13 +1084,16 @@ class FlowProcessor:
         if consequence is not None:
             branch_exits.append(self._walk_flat_stmt(consequence, state.copy(), jc))
             self._restore_shadows(pre_shadows, jc)
-        if alternative is not None:
-            # else_clause holds either a block or a nested if (else-if chain); the
-            # recursion handles both and merges within.
+        for alternative in alternatives:
+            # A block/nested-if (Go/Java/…) or a PHP else-if/else clause; the
+            # recursion walks each in its own branch copy and merges (a MAY
+            # over-approximation for the mutually-exclusive elseif arms).
             branch_exits.append(self._walk_flat_stmt(alternative, state.copy(), jc))
             self._restore_shadows(pre_shadows, jc)
-        else:
-            # No else: the skip path preserves the incoming state.
+        # An implicit skip path (condition false, nothing runs) survives unless the
+        # chain ends in a TERMINAL else: one plain alternative (else block / nested
+        # if) is terminal; a PHP chain ending in `else_if_clause` is not.
+        if not alternatives or alternatives[-1].type == cs.TS_PHP_ELSE_IF_CLAUSE:
             branch_exits.append(state.copy())
         self._restore_shadows(pre_if_shadows, jc)
         return self._merge_lean(branch_exits)
@@ -1246,6 +1270,8 @@ class FlowProcessor:
             self._flow_macro(node, tainted, jc)
         elif d.stream_sink_type is not None and node_type == d.stream_sink_type:
             self._flow_stream(node, tainted, handles, jc)
+        elif d.keyword_stdout_write_types and node_type in d.keyword_stdout_write_types:
+            self._flow_keyword_write(node, tainted, jc)
         elif node_type == cs.TS_RETURN_STATEMENT:
             returned = self._js_return_taint(node, tainted, jc)
             if returned is not None:
@@ -1936,6 +1962,25 @@ class FlowProcessor:
                     stack.append(child)
         return out
 
+    def _flow_keyword_write(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+        # A keyword output construct (PHP `echo $a, $b;` / `print $x`) writes each
+        # operand to STDOUT with no callee name (issue #1174). `echo` takes several
+        # operands wrapped in a `sequence_expression`; `print` a single operand.
+        for child in node.named_children:
+            if child.type == cs.TS_COMMENT:
+                continue
+            operands = (
+                child.named_children
+                if child.type == cs.TS_PHP_SEQUENCE_EXPRESSION
+                else (child,)
+            )
+            for operand in operands:
+                taint = self._js_expr_taint(operand, tainted, jc)
+                if taint is not None:
+                    self._emit_taint_to_sink(
+                        taint, ResourceKind.STDOUT, DYNAMIC_TARGET, jc.flow.caller_qn
+                    )
+
     def _flow_stream(
         self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
     ) -> None:
@@ -2055,6 +2100,13 @@ class FlowProcessor:
 
     def _js_member_source(self, node: Node, jc: _JsCtx) -> HandleBinding | None:
         obj = node.child_by_field_name(jc.descriptor.object_field)
+        if obj is None and node.type == jc.descriptor.subscript_type:
+            # PHP `$_ENV["K"]` is a FIELDLESS subscript: the indexed object is the
+            # first named child (issue #1174). Guarded so field-based grammars
+            # (JS/Java/…) never take this path.
+            obj = next(
+                (c for c in node.named_children if c.type != cs.TS_COMMENT), None
+            )
         if obj is None or obj.text is None:
             return None
         obj_text = obj.text.decode(cs.ENCODING_UTF8)
@@ -2075,6 +2127,12 @@ class FlowProcessor:
                 return prop.text.decode(cs.ENCODING_UTF8)
             return DYNAMIC_TARGET
         index = node.child_by_field_name(d.subscript_index_field)
+        if index is None:
+            # Fieldless subscript (PHP `$_ENV["K"]`): the key is the first
+            # string-literal child.
+            index = next(
+                (c for c in node.named_children if c.type == d.string_type), None
+            )
         if index is not None and index.type == d.string_type:
             return string_literal(index, d.string_type, d.string_content_type)
         return DYNAMIC_TARGET
@@ -2106,6 +2164,10 @@ class FlowProcessor:
         # the head through the import map on `::` (`use std::env; env::var` ->
         # `std::env::var`; a fully-qualified `std::env::var` has an unimported `std`
         # head and stays as-is); a head bound to a local name is shadowed.
+        if jc.descriptor.case_insensitive_call_names:
+            # PHP function names are case-insensitive (`GETENV` == `getenv`); the
+            # registry keys are lowercase (issue #1174).
+            raw = raw.lower()
         scope_sep = jc.descriptor.scope_separator
         if scope_sep is not None:
             scoped_head, _, scoped_rest = raw.partition(scope_sep)
