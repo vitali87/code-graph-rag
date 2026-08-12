@@ -313,3 +313,34 @@ def test_rust_conditional_rebind_emits_to_both_files(tmp_path: Path) -> None:
     flows = _run_flow(tmp_path, files)
     assert ("resource::ENV::K", "resource::FILE::first.txt") in flows
     assert ("resource::ENV::K", "resource::FILE::second.txt") in flows
+
+
+def test_rust_taint_does_not_cross_a_terminal_method(tmp_path: Path) -> None:
+    # `s.as_bytes().len()` is a usize, not the secret: the value-preserving
+    # recursion must stop at `.len()` (a terminal method) and not propagate s's
+    # taint to the write (CodeRabbit review, #1204).
+    files = {
+        "m.rs": (
+            "fn leak() {\n"
+            '    let s = std::env::var("K").unwrap();\n'
+            '    let mut f = std::fs::File::create("out.txt").unwrap();\n'
+            "    f.write_all(&[s.as_bytes().len() as u8]).unwrap();\n"
+            "}\n"
+        )
+    }
+    assert _RUST_ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_rust_parenthesized_constructor_is_unwrapped(tmp_path: Path) -> None:
+    # A parenthesized constructor `(File::create(p).unwrap())` wraps the handle
+    # expression; the binder peels the parens (and the Result) to reach it.
+    files = {
+        "m.rs": (
+            "fn leak() {\n"
+            '    let s = std::env::var("K").unwrap();\n'
+            '    let mut f = (std::fs::File::create("out.txt").unwrap());\n'
+            "    f.write_all(s.as_bytes()).unwrap();\n"
+            "}\n"
+        )
+    }
+    assert _RUST_ENV_FILE in _run_flow(tmp_path, files)

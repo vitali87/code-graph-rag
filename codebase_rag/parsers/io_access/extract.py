@@ -68,7 +68,9 @@ def rust_unwrap_result(node: Node) -> Node:
     # `File::create(p).unwrap()` / `.expect(..)` all yield the inner handle. The
     # node shapes are Rust-specific, so this is inert elsewhere (issue #1204).
     while True:
-        if node.type == cs.TS_RS_TRY_EXPRESSION:
+        if node.type in (cs.TS_RS_TRY_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION):
+            # `File::create(p)?` (try) and `(File::create(p).unwrap())` (parens)
+            # both wrap the inner handle expression; peel to it.
             inner = next(
                 (c for c in node.named_children if c.type != cs.TS_COMMENT), None
             )

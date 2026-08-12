@@ -122,6 +122,11 @@ RS_VALUE_PRESERVING_METHODS = frozenset(
         "clone",
     }
 )
+# Methods a tainted value passes through unchanged: Result unwrapping AND
+# value-preserving conversions. The flow walk recurses a method receiver ONLY
+# through these, so a terminal method returning an unrelated value (`.len()`,
+# `.count()`) never propagates the receiver's taint (issue #1204).
+RS_TAINT_TRANSPARENT_METHODS = RS_RESULT_UNWRAP_METHODS | RS_VALUE_PRESERVING_METHODS
 TS_RS_FIELD_PATH = "path"
 TS_RS_TOKEN_DOT = "."
 # A receiver/chain base that is a plain identifier or the `self` keyword (used

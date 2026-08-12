@@ -1355,28 +1355,28 @@ class FlowProcessor:
                     (callee[0], callee[1], jc.flow.caller_spec)
                 )
                 return Taint(frozenset(), frozenset({callee[1]}))
-            # A method chain (`std::env::var("X").unwrap()`): the callee itself is
-            # not a source, but its receiver call may be, so recurse the left spine.
-            # Gated on the receiver being a call (not a bare identifier) so plain
-            # variable taint is never propagated through an arbitrary method.
+            # A method chain: recurse the receiver ONLY through a taint-transparent
+            # method -- Rust Result unwrapping (`std::env::var("X").unwrap()`) or a
+            # value-preserving conversion (`s.as_bytes()`). A terminal method that
+            # returns an unrelated value (`s.as_bytes().len()`, `.count()`) must not
+            # propagate the receiver's taint (issue #1204). Languages with no such
+            # methods (empty set) never recurse a chain here.
             func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            if func is not None and func.type == d.member_expression_type:
+            if (
+                func is not None
+                and func.type == d.member_expression_type
+                and d.taint_transparent_methods
+            ):
+                method = func.child_by_field_name(d.property_field)
                 receiver = func.child_by_field_name(d.object_field)
-                if receiver is not None and receiver.type == d.call_type:
+                if (
+                    receiver is not None
+                    and method is not None
+                    and method.text is not None
+                    and method.text.decode(cs.ENCODING_UTF8)
+                    in d.taint_transparent_methods
+                ):
                     return self._js_expr_taint(receiver, tainted, jc)
-                # A value-preserving conversion (`s.as_bytes()`, `.clone()`, ...):
-                # the receiver's taint carries through, so `f.write_all(s.as_bytes())`
-                # writes the secret (issue #1204). Gated on a curated per-language
-                # method set so an unrelated-value method (`.len()`) never taints.
-                if receiver is not None and d.value_preserving_methods:
-                    method = func.child_by_field_name(d.property_field)
-                    if (
-                        method is not None
-                        and method.text is not None
-                        and method.text.decode(cs.ENCODING_UTF8)
-                        in d.value_preserving_methods
-                    ):
-                        return self._js_expr_taint(receiver, tainted, jc)
         return None
 
     def _js_call(
