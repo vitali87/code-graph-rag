@@ -1,15 +1,19 @@
 // Go semantic frontend for cgr's hybrid mode (issue #1179). Loads the target
 // module with go/packages (NeedTypes|NeedTypesInfo|NeedSyntax) and emits
 // location-keyed call facts the tree-sitter name trie cannot derive: the exact
-// first-party callee of every call expression (from types.Info.Uses, so method
-// values, embedded-struct promotion and scope shadowing resolve by the real
-// type rules), and the call sites whose callee resolves OUTSIDE the module
-// (stdlib, deps) so the fallback must not fabricate a first-party edge there.
+// first-party callee of every call expression (from types.Info.Uses, so
+// embedded-struct method promotion and scope shadowing resolve by the real type
+// rules), and the call sites whose callee resolves OUTSIDE the module (stdlib,
+// deps) so the fallback must not fabricate a first-party edge there. A call
+// through a variable (a method-value or func-value binding) resolves to a
+// *types.Var, not a *types.Func, so it is left to tree-sitter -- never a wrong
+// edge.
 //
 // Columns are 0-based BYTE offsets on both the call-site and target sides, to
 // match tree-sitter's start_point: go/token reports 1-based byte columns, so
-// every emitted column is Column-1. A missing toolchain, no go.mod, a load
-// error or an empty result all leave cgr on pure tree-sitter.
+// every emitted column is Column-1. Facts are emitted only from packages that
+// type-check cleanly; a missing toolchain, no go.mod, a load error, an
+// ill-typed package or an empty result all leave cgr on pure tree-sitter.
 //
 // Run: gotypes <repo-root>   (honours CGR_IGNORE_DIRS, comma-separated)
 package main
@@ -94,7 +98,10 @@ func main() {
 }
 
 func (c *collector) collectPackage(pkg *packages.Package) {
-	if pkg.TypesInfo == nil {
+	// packages.Load returns a nil error while recording parse/type errors on
+	// the package itself; its resolutions are then untrustworthy, so skip it
+	// and let tree-sitter own its calls. Cleanly-typed packages still emit.
+	if pkg.TypesInfo == nil || len(pkg.Errors) > 0 {
 		return
 	}
 	for _, file := range pkg.Syntax {

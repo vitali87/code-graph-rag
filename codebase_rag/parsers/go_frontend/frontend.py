@@ -1,8 +1,8 @@
 # Go semantic frontend for cgr's hybrid mode (issue #1179). Runs a bundled Go
 # tool (`gotypes/`) that loads the target module via go/packages + go/types and
 # emits location-keyed call facts the tree-sitter name trie cannot derive: the
-# exact first-party callee of every call expression (embedded-struct promotion,
-# method values and scope shadowing resolved by the real type rules), and the
+# exact first-party callee of every call expression (embedded-struct method
+# promotion and scope shadowing resolved by the real type rules), and the
 # sites whose callee resolves OUTSIDE the module (stdlib, deps) so the fallback
 # must not fabricate a first-party edge there. Every join key that misses falls
 # back to the heuristics, and no go toolchain, no go.mod, or a build failure all
@@ -171,23 +171,34 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts:
     except json.JSONDecodeError:
         logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
         return _empty_facts()
-    facts = GoSemanticFacts(
-        call_sites={
-            (
-                site["file"],
-                int(site["line"]),
-                int(site["col"]),
-                site["name"],
-            ): GoCallSite(
-                site["name"], site["tfile"], int(site["tline"]), int(site["tcol"])
-            )
-            for site in payload.get("calls", [])
-        },
-        external_sites={
-            (site["file"], int(site["line"]), int(site["col"]), site["name"])
-            for site in payload.get("externals", [])
-        },
-    )
+    if not isinstance(payload, dict):
+        # Well-formed JSON of the wrong shape (a list or scalar): treat as a
+        # tool contract violation and fall back rather than crash indexing.
+        logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
+        return _empty_facts()
+    try:
+        facts = GoSemanticFacts(
+            call_sites={
+                (
+                    site["file"],
+                    int(site["line"]),
+                    int(site["col"]),
+                    site["name"],
+                ): GoCallSite(
+                    site["name"], site["tfile"], int(site["tline"]), int(site["tcol"])
+                )
+                for site in payload.get("calls", [])
+            },
+            external_sites={
+                (site["file"], int(site["line"]), int(site["col"]), site["name"])
+                for site in payload.get("externals", [])
+            },
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        # A malformed fact entry (missing key, non-int position, non-object
+        # row) must degrade to tree-sitter, never abort the whole index run.
+        logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
+        return _empty_facts()
     if not facts.call_sites and not facts.external_sites and stderr.strip():
         # A well-formed but entirely empty payload with diagnostics means the
         # load went wrong (build tag, unresolved import); surface the tool's

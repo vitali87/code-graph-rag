@@ -1,10 +1,11 @@
 # Go semantic frontend (issue #1179): a bundled go/packages tool that emits
-# exact first-party call targets (embedded-struct promotion, method values and
-# scope shadowing resolved by the real type rules) and external-site facts for
-# callees that leave the module. The parse/registry/adapter tests drive the
-# wiring with synthetic facts and need no go toolchain; the end-to-end test
-# runs the real bundled tool and skips when `go` is absent.
+# exact first-party call targets (embedded-struct method promotion and scope
+# shadowing resolved by the real type rules) and external-site facts for callees
+# that leave the module. The parse/registry/adapter tests drive the wiring with
+# synthetic facts and need no go toolchain; the end-to-end test runs the real
+# bundled tool and skips when `go` is absent.
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -17,10 +18,9 @@ from codebase_rag.parsers.go_frontend import (
     GoCallSite,
     GoSemanticFacts,
     find_go_module,
-    go_frontend_available,
     run_go_frontend,
 )
-from codebase_rag.parsers.go_frontend.frontend import _parse_payload
+from codebase_rag.parsers.go_frontend.frontend import _build_tool, _parse_payload
 
 _FIXTURE = """package main
 
@@ -144,14 +144,18 @@ def test_gotypes_tool_emits_call_and_external_facts(tmp_path: Path) -> None:
     # declaration (a bind the name trie cannot make), report a stdlib call as
     # an external site (never a first-party fact), and emit 0-based BYTE
     # columns even past a multibyte prefix on the call line.
-    if not go_frontend_available():
+    go = shutil.which("go")
+    if go is None:
         pytest.skip("go toolchain not available")
+    # Probe the build explicitly: an offline/deps-missing failure is a legitimate
+    # environment skip, but once the tool builds the fixture ALWAYS contains
+    # Hello and Println, so empty facts below are a real regression, not a skip.
+    if _build_tool(go) is None:
+        pytest.skip("gotypes tool could not build in this environment")
     (tmp_path / "go.mod").write_text("module example.com/fix\n\ngo 1.23\n")
     (tmp_path / "main.go").write_text(_FIXTURE, encoding="utf-8")
 
     facts = run_go_frontend(tmp_path)
-    if facts.call_sites == {} and facts.external_sites == set():
-        pytest.skip("gotypes frontend could not build in this environment")
 
     # The call site is on the unique multibyte ("café") line; the target is the
     # method declaration ("Hello() string" appears only there).

@@ -443,4 +443,8 @@ jobs:
             echo "❌ Wheel smoke test (unlocked resolution) failed"
             exit 1
           fi
+          if [[ "${{ needs.go-frontend.result }}" != "success" ]]; then
+            echo "❌ Go frontend job failed"
+            exit 1
+          fi
           echo "✅ All checks passed!"
