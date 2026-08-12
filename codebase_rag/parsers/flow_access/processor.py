@@ -40,6 +40,7 @@ from ..io_access import (
     lean_definition_header_nodes,
     literal_target,
     match_normalised,
+    positional_arg_node,
     registry_match,
     rust_unwrap_result,
     scope_seed_nodes,
@@ -47,8 +48,12 @@ from ..io_access import (
     unwrap_argument,
 )
 from ..io_access.registry import (
+    IO_IDENTITY_UNWRAP_CALLS,
+    IO_IDENTITY_UNWRAP_NEW_TYPES,
     IO_LEAN_HANDLE_CONSTRUCTORS,
     IO_LEAN_HANDLE_METHODS,
+    IO_NEW_HANDLE_CONSTRUCTORS,
+    IO_NEW_HANDLE_WRAPPERS,
 )
 from ..utils import (
     c_positional_parameter_slots,
@@ -465,6 +470,16 @@ class _JsCtx(NamedTuple):
     # per-language registry views. Empty tables (no handle support) => inert.
     handle_ctors: dict[str, HandleConstructor]
     handle_methods: dict[ResourceKind, dict[str, IODirection]]
+    # `new`-shaped handle constructors (Java `new FileWriter("x")`, C#
+    # `new StreamWriter("x")`) plus the wrapper types that delegate their resource
+    # to arg0 (`new BufferedWriter(new FileWriter(..))`) and the identity-carrier
+    # types/calls reached at a target position (`new PrintWriter(new File("x"))`,
+    # `Files.newBufferedWriter(Path.of("cfg"))`). Empty for languages whose handles
+    # are only call-shaped (issue #1204).
+    new_handle_ctors: dict[str, HandleConstructor]
+    new_wrappers: frozenset[str]
+    identity_calls: frozenset[str]
+    identity_new_types: dict[str, ResourceKind]
 
 
 class FlowProcessor:
@@ -663,6 +678,10 @@ class FlowProcessor:
                 c.callee: c for c in IO_LEAN_HANDLE_CONSTRUCTORS.get(ctx.language, ())
             },
             handle_methods=IO_LEAN_HANDLE_METHODS.get(ctx.language, {}),
+            new_handle_ctors=IO_NEW_HANDLE_CONSTRUCTORS.get(ctx.language, {}),
+            new_wrappers=IO_NEW_HANDLE_WRAPPERS.get(ctx.language, frozenset()),
+            identity_calls=IO_IDENTITY_UNWRAP_CALLS.get(ctx.language, frozenset()),
+            identity_new_types=IO_IDENTITY_UNWRAP_NEW_TYPES.get(ctx.language, {}),
         )
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
@@ -1242,10 +1261,10 @@ class FlowProcessor:
             # tainted write through it emits a flow edge (issue #1204). A binding is
             # a STRONG update (replaces the set), so straight-line reassignment
             # redirects the handle; only a branch join widens a name to multiple.
-            if jc.handle_ctors:
-                binding = self._lean_handle_binding(rhs, jc)
-                if binding is not None:
-                    handles[name] = frozenset({binding})
+            if jc.handle_ctors or jc.new_handle_ctors:
+                bindings = self._lean_handle_binding(rhs, handles, jc)
+                if bindings:
+                    handles[name] = bindings
                 else:
                     handles.pop(name, None)
         # Register the bound names AFTER reading the RHS (which still saw the
@@ -1460,39 +1479,153 @@ class FlowProcessor:
                 )
 
     def _lean_handle_binding(
-        self, rhs: Node | None, jc: _JsCtx
-    ) -> HandleBinding | None:
-        # Resolve a RHS handle-constructor call (`os.Create("out")`) to a
-        # HandleBinding, shadow-aware and import-normalised exactly like sink
-        # matching. None when the RHS is not a registered handle constructor
-        # (issue #1204). A Rust ctor arrives Result-wrapped
-        # (`File::create(p)?`, `File::create(p).unwrap()`); peel those value-
-        # preserving wrappers to the inner call (inert for other languages).
+        self, rhs: Node | None, handles: _HandleMap, jc: _JsCtx
+    ) -> frozenset[HandleBinding]:
+        # The resource handle(s) an RHS expression binds (issue #1204), threaded
+        # set-valued so a wrapper around a branch-merged variable inherits every
+        # handle it may hold. A Rust ctor arrives Result-wrapped (`File::create(p)?`,
+        # `.unwrap()`); peel those (inert elsewhere). Resolves call-shaped ctors
+        # (`os.Create`, `Files.newBufferedWriter`), `new`-shaped ctors with their
+        # wrappers/identity-carriers (Java/C#), and a plain handle alias (`g = f`).
         if rhs is None:
-            return None
-        rhs = rust_unwrap_result(rhs)
-        if rhs.type != jc.descriptor.call_type:
-            return None
-        raw = call_name(rhs)
+            return frozenset()
+        node = rust_unwrap_result(rhs)
+        d = jc.descriptor
+        if node.type == d.call_type:
+            return self._lean_handle_from_call(node, jc)
+        if d.new_expression_type is not None and node.type == d.new_expression_type:
+            return self._lean_handle_from_new(node, handles, jc)
+        if node.type == d.identifier_type and node.text is not None:
+            # `g = f` aliases f's handle(s).
+            return handles.get(node.text.decode(cs.ENCODING_UTF8), frozenset())
+        return frozenset()
+
+    def _lean_handle_from_call(
+        self, node: Node, jc: _JsCtx
+    ) -> frozenset[HandleBinding]:
+        # A call-shaped ctor (`os.Create("out")`), shadow-aware and import-
+        # normalised exactly like sink matching. A READ-only handle (`os.Open`) is
+        # never a write sink, so it does not bind and a later `f.Write` emits nothing.
+        raw = call_name(node)
         if raw is None:
-            return None
+            return frozenset()
         ctor = self._js_match_sink(raw, jc.handle_ctors, jc)
         if ctor is None or ctor.direction == IODirection.READ:
-            # A READ-only handle (`os.Open`) is never a write sink; do not bind it,
-            # so a later `f.Write(...)` through it emits nothing (issue #1204).
-            return None
+            return frozenset()
+        return frozenset(
+            {HandleBinding(ctor.kind, self._lean_ctor_identity(node, ctor, jc))}
+        )
+
+    def _lean_handle_from_new(
+        self, node: Node, handles: _HandleMap, jc: _JsCtx
+    ) -> frozenset[HandleBinding]:
+        # A `new`-shaped handle (Java `new FileWriter("x")`, C# `new StreamWriter`).
+        # A wrapper type delegates to arg0 (a nested ctor or a bound handle var);
+        # a non-ctor identity-carrier (`new File("x")`) designates the resource under
+        # a wrapper; a `handle_arg` ctor (`new SqlCommand(sql, conn)`) inherits the
+        # bound handle at that argument. A READ-only handle never binds as a sink.
+        d = jc.descriptor
+        type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
+        if type_node is None or type_node.text is None:
+            return frozenset()
+        type_name = type_node.text.decode(cs.ENCODING_UTF8)
+        if type_name in jc.new_wrappers:
+            inner = self._lean_handle_binding(
+                self._first_positional_arg(node), handles, jc
+            )
+            if inner:
+                return inner
+        ctor = jc.new_handle_ctors.get(type_name)
+        if ctor is None:
+            kind = jc.identity_new_types.get(type_name)
+            if kind is None:
+                return frozenset()
+            return frozenset({HandleBinding(kind, self._lean_literal_arg0(node, jc))})
+        if ctor.direction == IODirection.READ:
+            return frozenset()
+        if ctor.handle_arg is not None:
+            inner = positional_arg_node(node, ctor.handle_arg, d.argument_wrapper_type)
+            parent = self._lean_handle_binding(inner, handles, jc)
+            # The bound handle at handle_arg may itself hold several resources after a
+            # branch merge; inherit ALL of their identities (one edge each), not an
+            # order-dependent single pick. <dynamic> when the argument is untracked.
+            if not parent:
+                return frozenset({HandleBinding(ctor.kind, DYNAMIC_TARGET)})
+            return frozenset(HandleBinding(ctor.kind, p.identity) for p in parent)
+        return frozenset(
+            {HandleBinding(ctor.kind, self._lean_ctor_identity(node, ctor, jc))}
+        )
+
+    def _lean_ctor_identity(
+        self, node: Node, ctor: HandleConstructor, jc: _JsCtx
+    ) -> str:
+        # The handle's resource identity: the constructor's literal target, or -- when
+        # that is a factory call / `new` identity-carrier one level down
+        # (`Files.newBufferedWriter(Path.of("cfg"))`, `new PrintWriter(new File("x"))`)
+        # -- the literal it carries.
+        d = jc.descriptor
         identity = literal_target(
-            rhs,
+            node,
             ctor.target_arg,
             ctor.target_kw,
-            string_type=jc.descriptor.string_type,
-            content_type=jc.descriptor.string_content_type,
-            keyword_arg_type=jc.descriptor.keyword_arg_type,
-            wrapper_type=jc.descriptor.argument_wrapper_type,
-            template_type=jc.descriptor.template_string_type,
-            substitution_type=jc.descriptor.template_substitution_type,
+            string_type=d.string_type,
+            content_type=d.string_content_type,
+            keyword_arg_type=d.keyword_arg_type,
+            wrapper_type=d.argument_wrapper_type,
+            template_type=d.template_string_type,
+            substitution_type=d.template_substitution_type,
         )
-        return HandleBinding(ctor.kind, identity)
+        if identity != DYNAMIC_TARGET or ctor.target_arg != 0:
+            return identity
+        arg = self._first_positional_arg(node)
+        if arg is None:
+            return identity
+        if jc.identity_calls and arg.type == d.call_type:
+            raw = call_name(arg)
+            # A static import (`import static java.nio.file.Path.of`) spells the
+            # factory bare (`of("cfg")`); resolve it through the import map to its
+            # qualified form before the identity-call check, so the literal is still
+            # recovered (Greptile review, #1204).
+            if raw is not None and (
+                raw in jc.identity_calls
+                or jc.flow.import_map.get(raw) in jc.identity_calls
+            ):
+                return self._lean_literal_arg0(arg, jc)
+        if (
+            jc.identity_new_types
+            and d.new_expression_type is not None
+            and arg.type == d.new_expression_type
+        ):
+            inner_type = arg.child_by_field_name(cs.TS_FIELD_TYPE)
+            if (
+                inner_type is not None
+                and inner_type.text is not None
+                and inner_type.text.decode(cs.ENCODING_UTF8) in jc.identity_new_types
+            ):
+                return self._lean_literal_arg0(arg, jc)
+        return identity
+
+    @staticmethod
+    def _first_positional_arg(call_node: Node) -> Node | None:
+        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+        if args is None:
+            return None
+        return next((c for c in args.named_children if c.type != cs.TS_COMMENT), None)
+
+    @staticmethod
+    def _lean_literal_arg0(node: Node, jc: _JsCtx) -> str:
+        d = jc.descriptor
+        return literal_target(
+            node,
+            0,
+            None,
+            string_type=d.string_type,
+            content_type=d.string_content_type,
+            keyword_arg_type=d.keyword_arg_type,
+            wrapper_type=d.argument_wrapper_type,
+            template_type=d.template_string_type,
+            substitution_type=d.template_substitution_type,
+        )
 
     def _emit_handle_write(
         self,

@@ -19,7 +19,7 @@ FLOWS_TO = cs.RelationshipType.FLOWS_TO.value
 _CAPTURE_IO = resolve_capture([cs.CaptureGroup.IO.value])
 
 
-_LANG_BY_EXT = {".go": "go", ".rs": "rust"}
+_LANG_BY_EXT = {".go": "go", ".rs": "rust", ".java": "java", ".cs": "c_sharp"}
 
 
 def _run_flow(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str]]:
@@ -344,3 +344,308 @@ def test_rust_parenthesized_constructor_is_unwrapped(tmp_path: Path) -> None:
         )
     }
     assert _RUST_ENV_FILE in _run_flow(tmp_path, files)
+
+
+# --- Java (issue #1204, third language; `new`-shaped handles) ---
+
+
+def test_java_tainted_write_through_new_filewriter(tmp_path: Path) -> None:
+    # `new FileWriter("out.txt")` is a WRITE handle; a tainted `.write(s)` through
+    # it reaches the file (the common `new`-shaped idiom the call-shaped walk missed).
+    files = {
+        "A.java": (
+            "import java.io.FileWriter;\n"
+            "class A {\n"
+            "  void leak() throws Exception {\n"
+            '    String s = System.getenv("K");\n'
+            '    FileWriter w = new FileWriter("out.txt");\n'
+            "    w.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_java_write_through_printwriter_println(tmp_path: Path) -> None:
+    files = {
+        "A.java": (
+            "import java.io.PrintWriter;\n"
+            "class A {\n"
+            "  void leak() throws Exception {\n"
+            '    String s = System.getenv("K");\n'
+            '    PrintWriter w = new PrintWriter("out.txt");\n'
+            "    w.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_java_wrapper_around_nested_constructor(tmp_path: Path) -> None:
+    # `new BufferedWriter(new FileWriter("out.txt"))`: the wrapper delegates its
+    # resource to the nested constructor at arg0.
+    files = {
+        "A.java": (
+            "import java.io.*;\n"
+            "class A {\n"
+            "  void leak() throws Exception {\n"
+            '    String s = System.getenv("K");\n'
+            '    BufferedWriter w = new BufferedWriter(new FileWriter("out.txt"));\n'
+            "    w.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_java_wrapper_around_bound_variable(tmp_path: Path) -> None:
+    # `new BufferedWriter(fw)`: the wrapper inherits the handle already bound to the
+    # variable `fw`, so the write reaches its file.
+    files = {
+        "A.java": (
+            "import java.io.*;\n"
+            "class A {\n"
+            "  void leak() throws Exception {\n"
+            '    String s = System.getenv("K");\n'
+            '    FileWriter fw = new FileWriter("out.txt");\n'
+            "    BufferedWriter w = new BufferedWriter(fw);\n"
+            "    w.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_java_printwriter_around_new_file_identity(tmp_path: Path) -> None:
+    # `new PrintWriter(new File("out.txt"))`: `new File` is not a handle but carries
+    # the resource identity, resolved through the wrapper.
+    files = {
+        "A.java": (
+            "import java.io.*;\n"
+            "class A {\n"
+            "  void leak() throws Exception {\n"
+            '    String s = System.getenv("K");\n'
+            '    PrintWriter w = new PrintWriter(new File("out.txt"));\n'
+            "    w.println(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_java_files_factory_pathof_identity(tmp_path: Path) -> None:
+    # The call-shaped `Files.newBufferedWriter(Path.of("out.txt"))` carries its
+    # identity one level down in the `Path.of` factory call.
+    files = {
+        "A.java": (
+            "import java.nio.file.*;\n"
+            "import java.io.*;\n"
+            "class A {\n"
+            "  void leak() throws Exception {\n"
+            '    String s = System.getenv("K");\n'
+            '    BufferedWriter w = Files.newBufferedWriter(Path.of("out.txt"));\n'
+            "    w.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_java_files_factory_static_import_identity(tmp_path: Path) -> None:
+    # A static-imported factory (`import static java.nio.file.Path.of`) spells the
+    # call bare (`of("out.txt")`); the identity lookup resolves it through the import
+    # map to `Path.of`, so the concrete path is still recovered (Greptile review).
+    files = {
+        "A.java": (
+            "import static java.nio.file.Path.of;\n"
+            "import java.nio.file.Files;\n"
+            "import java.io.BufferedWriter;\n"
+            "class A {\n"
+            "  void leak() throws Exception {\n"
+            '    String s = System.getenv("K");\n'
+            '    BufferedWriter w = Files.newBufferedWriter(of("out.txt"));\n'
+            "    w.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_java_read_only_filereader_emits_no_flow(tmp_path: Path) -> None:
+    # `new FileReader` is a READ-only handle, so it never binds as a write sink.
+    # The write-named `.write(s)` carries genuine taint, so this fails if the
+    # `IODirection.READ` gate is removed (not merely because the arg is clean).
+    files = {
+        "A.java": (
+            "import java.io.FileReader;\n"
+            "class A {\n"
+            "  void leak() throws Exception {\n"
+            '    String s = System.getenv("K");\n'
+            '    FileReader r = new FileReader("out.txt");\n'
+            "    r.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_java_untainted_new_handle_write_emits_no_flow(tmp_path: Path) -> None:
+    files = {
+        "A.java": (
+            "import java.io.FileWriter;\n"
+            "class A {\n"
+            "  void leak() throws Exception {\n"
+            '    FileWriter w = new FileWriter("out.txt");\n'
+            '    w.write("literal");\n'
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_java_conditional_rebind_emits_to_both_files(tmp_path: Path) -> None:
+    # A rebind in the if arm leaves both `new`-shaped handles live at the write, so
+    # the taint reaches both files (path-sensitive MAY merge, as for Go/Rust).
+    files = {
+        "A.java": (
+            "import java.io.FileWriter;\n"
+            "class A {\n"
+            "  void leak(boolean cond) throws Exception {\n"
+            '    String s = System.getenv("K");\n'
+            '    FileWriter w = new FileWriter("first.txt");\n'
+            '    if (cond) { w = new FileWriter("second.txt"); }\n'
+            "    w.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::FILE::first.txt") in flows
+    assert ("resource::ENV::K", "resource::FILE::second.txt") in flows
+
+
+# --- C# (issue #1204, fourth language; `new`-shaped handles only) ---
+
+
+def test_csharp_tainted_write_through_new_streamwriter(tmp_path: Path) -> None:
+    # C# has no call-shaped lean handle constructors; every handle is `new`-shaped.
+    files = {
+        "A.cs": (
+            "using System;\n"
+            "using System.IO;\n"
+            "class A {\n"
+            "  void Leak() {\n"
+            '    var s = Environment.GetEnvironmentVariable("K");\n'
+            '    var w = new StreamWriter("out.txt");\n'
+            "    w.Write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_csharp_write_through_streamwriter_async(tmp_path: Path) -> None:
+    # The async sibling `WriteLineAsync` is a WRITE method too; the call sits inside
+    # an `await`, which the walk descends into.
+    files = {
+        "A.cs": (
+            "using System;\n"
+            "using System.IO;\n"
+            "class A {\n"
+            "  async void Leak() {\n"
+            '    var s = Environment.GetEnvironmentVariable("K");\n'
+            '    var w = new StreamWriter("out.txt");\n'
+            "    await w.WriteLineAsync(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_csharp_write_through_filestream(tmp_path: Path) -> None:
+    # `new FileStream` is a mode-flexible READ_WRITE handle (a sound may-write).
+    files = {
+        "A.cs": (
+            "using System;\n"
+            "using System.IO;\n"
+            "class A {\n"
+            "  async void Leak() {\n"
+            '    var s = Environment.GetEnvironmentVariable("K");\n'
+            '    var w = new FileStream("out.txt", FileMode.Create);\n'
+            "    await w.WriteAsync(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_csharp_read_only_streamreader_emits_no_flow(tmp_path: Path) -> None:
+    # `new StreamReader` is READ-only, so it never binds as a write sink. The
+    # write-named `.Write(s)` carries genuine taint, so this fails if the
+    # `IODirection.READ` gate is removed (not merely because the arg is clean).
+    files = {
+        "A.cs": (
+            "using System;\n"
+            "using System.IO;\n"
+            "class A {\n"
+            "  void Leak() {\n"
+            '    var s = Environment.GetEnvironmentVariable("K");\n'
+            '    var r = new StreamReader("out.txt");\n'
+            "    r.Write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_csharp_untainted_new_handle_write_emits_no_flow(tmp_path: Path) -> None:
+    files = {
+        "A.cs": (
+            "using System;\n"
+            "using System.IO;\n"
+            "class A {\n"
+            "  void Leak() {\n"
+            '    var w = new StreamWriter("out.txt");\n'
+            '    w.Write("literal");\n'
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_csharp_sqlcommand_inherits_every_merged_connection(tmp_path: Path) -> None:
+    # `new SqlCommand(sql, conn)` inherits the connection's identity from arg1. When
+    # `conn` was branch-merged over two connections, the command must inherit BOTH,
+    # so a tainted execute reaches both databases (CodeRabbit review, #1204).
+    files = {
+        "A.cs": (
+            "using System;\n"
+            "using Microsoft.Data.SqlClient;\n"
+            "class A {\n"
+            "  void Leak(bool c) {\n"
+            '    var s = Environment.GetEnvironmentVariable("K");\n'
+            '    var conn = new SqlConnection("db1");\n'
+            '    if (c) { conn = new SqlConnection("db2"); }\n'
+            '    var cmd = new SqlCommand("q", conn);\n'
+            "    cmd.ExecuteNonQuery(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::DATABASE::db1") in flows
+    assert ("resource::ENV::K", "resource::DATABASE::db2") in flows

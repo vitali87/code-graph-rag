@@ -734,19 +734,23 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
 # (`new FileWriter(..)` / `new java.io.FileWriter(..)`).
 _JAVA_IO_PACKAGE = "java.io"
 
-_JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
-    ("FileReader", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("FileInputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("FileWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("FileOutputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("PrintWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("RandomAccessFile", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("Socket", "java.net", ResourceKind.SOCKET),
+# The direction gates lean write-flow emission (issue #1204): a READ-only handle
+# (`new FileReader`) never binds as a write sink, so a `.read()` through it emits
+# nothing; a mode-flexible handle (`new RandomAccessFile`, whose "r"/"rw" mode the
+# constructor arg does not resolve here) stays a sound may-write.
+_JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind, IODirection], ...] = (
+    ("FileReader", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.READ),
+    ("FileInputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.READ),
+    ("FileWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.WRITE),
+    ("FileOutputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.WRITE),
+    ("PrintWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.WRITE),
+    ("RandomAccessFile", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.READ_WRITE),
+    ("Socket", "java.net", ResourceKind.SOCKET, IODirection.READ_WRITE),
     # `new URL("http://..")` is a NETWORK handle: the URL literal is the resource
     # identity, and a later `.openStream()` reads it. URL parsing itself does no
     # I/O, but construction emits no edge (only the handle methods do), so keying it
     # as a NETWORK handle is behaviourally exact.
-    ("URL", "java.net", ResourceKind.NETWORK),
+    ("URL", "java.net", ResourceKind.NETWORK, IODirection.READ_WRITE),
 )
 
 # C# `new`-shaped handle constructors (issue #102 follow-up). Keyed by the
@@ -763,32 +767,84 @@ _CSHARP_IO_PACKAGE = "System.IO"
 # System.Data.SqlClient (legacy); both spellings are keyed.
 _CSHARP_SQL_PACKAGES = ("Microsoft.Data.SqlClient", "System.Data.SqlClient")
 
+# The trailing direction gates lean write-flow emission (issue #1204): a
+# StreamReader is READ-only (never a write sink), a StreamWriter is WRITE, and a
+# FileStream / DB / network handle stays a may-write READ_WRITE.
 _CSHARP_NEW_HANDLE_TYPES: tuple[
-    tuple[str, tuple[str, ...], ResourceKind, int | None, int | None], ...
+    tuple[str, tuple[str, ...], ResourceKind, int | None, int | None, IODirection],
+    ...,
 ] = (
-    ("StreamReader", (_CSHARP_IO_PACKAGE,), ResourceKind.FILE, 0, None),
-    ("StreamWriter", (_CSHARP_IO_PACKAGE,), ResourceKind.FILE, 0, None),
-    ("FileStream", (_CSHARP_IO_PACKAGE,), ResourceKind.FILE, 0, None),
-    ("HttpClient", ("System.Net.Http",), ResourceKind.NETWORK, None, None),
+    (
+        "StreamReader",
+        (_CSHARP_IO_PACKAGE,),
+        ResourceKind.FILE,
+        0,
+        None,
+        IODirection.READ,
+    ),
+    (
+        "StreamWriter",
+        (_CSHARP_IO_PACKAGE,),
+        ResourceKind.FILE,
+        0,
+        None,
+        IODirection.WRITE,
+    ),
+    (
+        "FileStream",
+        (_CSHARP_IO_PACKAGE,),
+        ResourceKind.FILE,
+        0,
+        None,
+        IODirection.READ_WRITE,
+    ),
+    (
+        "HttpClient",
+        ("System.Net.Http",),
+        ResourceKind.NETWORK,
+        None,
+        None,
+        IODirection.READ_WRITE,
+    ),
     # The DB connection string is the resource identity.
-    ("SqlConnection", _CSHARP_SQL_PACKAGES, ResourceKind.DATABASE, 0, None),
+    (
+        "SqlConnection",
+        _CSHARP_SQL_PACKAGES,
+        ResourceKind.DATABASE,
+        0,
+        None,
+        IODirection.READ_WRITE,
+    ),
     # `new SqlCommand(sql, conn)` is a DATABASE handle whose resource is the
     # connection (arg1), not the SQL text (arg0): inherit conn's identity when it is
     # a bound handle, else <dynamic>.
-    ("SqlCommand", _CSHARP_SQL_PACKAGES, ResourceKind.DATABASE, None, 1),
+    (
+        "SqlCommand",
+        _CSHARP_SQL_PACKAGES,
+        ResourceKind.DATABASE,
+        None,
+        1,
+        IODirection.READ_WRITE,
+    ),
 )
 
 IO_NEW_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, HandleConstructor]] = {
     cs.SupportedLanguage.JAVA: {
-        written: HandleConstructor(written, kind, target_arg=0)
-        for name, package, kind in _JAVA_NEW_HANDLE_TYPES
+        written: HandleConstructor(written, kind, target_arg=0, direction=direction)
+        for name, package, kind, direction in _JAVA_NEW_HANDLE_TYPES
         for written in (name, f"{package}.{name}")
     },
     cs.SupportedLanguage.CSHARP: {
         written: HandleConstructor(
-            written, kind, target_arg=target_arg, handle_arg=handle_arg
+            written,
+            kind,
+            target_arg=target_arg,
+            handle_arg=handle_arg,
+            direction=direction,
         )
-        for name, packages, kind, target_arg, handle_arg in _CSHARP_NEW_HANDLE_TYPES
+        for name, packages, kind, target_arg, handle_arg, direction in (
+            _CSHARP_NEW_HANDLE_TYPES
+        )
         for written in (name, *(f"{package}.{name}" for package in packages))
     },
 }
