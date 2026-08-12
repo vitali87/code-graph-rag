@@ -661,6 +661,8 @@ def test_ts_tainted_write_through_write_stream(tmp_path: Path) -> None:
 
 
 def test_js_untainted_write_stream_emits_no_flow(tmp_path: Path) -> None:
+    # A literal write through the handle taints nothing, so the walk emits no
+    # FLOWS_TO edge at all (not merely "not the ENV->FILE one").
     files = {
         "a.js": (
             "function leak() {\n"
@@ -669,7 +671,7 @@ def test_js_untainted_write_stream_emits_no_flow(tmp_path: Path) -> None:
             "}\n"
         )
     }
-    assert _ENV_FILE not in _run_flow(tmp_path, files)
+    assert _run_flow(tmp_path, files) == set()
 
 
 def test_csharp_sqlcommand_inherits_every_merged_connection(tmp_path: Path) -> None:
