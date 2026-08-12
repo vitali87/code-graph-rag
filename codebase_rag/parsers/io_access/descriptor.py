@@ -81,6 +81,11 @@ class LanguageDescriptor:
     # std::fs; fs::write` -> `std::fs::write`) not the default `.`, so a bare short
     # path matches std only when its head is genuinely imported. None = `.`.
     scope_separator: str | None = None
+    # Separator between a bound handle's receiver and its method in the callee text
+    # (`recv.method`). Lua spells handle-method calls with `:` (`f:write(x)`), every
+    # other lean grammar with `.`; the handle-write emission splits the callee on
+    # this to recover the receiver (issue #1204).
+    handle_method_separator: str = cs.SEPARATOR_DOT
     # Stream-insertion sink (C++ `std::cout << x`): a binary_expression whose
     # `operator` field equals stream_sink_operator and whose left-spine base
     # (cout/cerr) is a stream sink. None where the language has no such operator I/O.
@@ -461,6 +466,8 @@ _LUA_DESCRIPTOR = LanguageDescriptor(
     # `local x = os.getenv(..)` binds through list containers (issue #1175).
     binding_target_container_type=cs.TS_LUA_VARIABLE_LIST,
     binding_value_container_type=cs.TS_LUA_EXPRESSION_LIST,
+    # Lua handle methods are called with `:` (`f:write(secret)`), not `.` (#1204).
+    handle_method_separator=cs.CHAR_COLON,
 )
 
 # Non-Python languages with a direct-sink descriptor. Python keeps its own

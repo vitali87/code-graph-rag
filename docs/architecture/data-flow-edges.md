@@ -387,27 +387,27 @@ module is re-exported under its own name. A project that does
   Go, Java, Rust, C, C++, C#, and Lua; a language not in the registry emits no I/O
   or flow edges until its table is added.
 - Handle-based writes in the lean (non-Python) `FLOWS_TO` walk are being taught
-  incrementally (issue #1204). **Go**, **Rust**, **Java**, **C#**, and **JS/TS**
-  now track handle bindings, so a taint written through a file/socket handle
+  incrementally (issue #1204). **Go**, **Rust**, **Java**, **C#**, **JS/TS**, and
+  **Lua** now track handle bindings, so a taint written through a file/socket handle
   (`f := os.Create(p); f.Write(x)`, Rust
   `let mut f = File::create(p)?; f.write_all(s.as_bytes())?`, Java
   `new FileWriter(p).write(s)` — including the wrapper
   `new BufferedWriter(new FileWriter(p))` and factory
   `Files.newBufferedWriter(Path.of(p))` forms — C#
-  `new StreamWriter(p).Write(s)`, or JS/TS
-  `fs.createWriteStream(p).write(s)`) emits a flow edge to the handle's resource —
-  path-sensitively (a rebind on one branch writes to all feasible resources) and
-  mode-aware (a read-only `os.Open`/`File::open`/`new FileReader`/`new StreamReader`
-  handle is not a write sink). Both `new`-shaped constructors and their wrapper /
-  identity-carrier (`new PrintWriter(new File(p))`) forms resolve, reusing the same
-  registry tables the `READS_FROM`/`WRITES_TO` walk uses. The remaining lean
-  languages (C, C++, Lua) still match **direct call sinks only** for handle writes —
-  a handle-method write there (`io.open(p):write(x)`) emits no flow edge, so such a
-  leak reads as `NO_FLOW` rather than `UNKNOWN` in a fully covered project. (C/C++
-  bind `fopen`/`ofstream` handles in the `READS_FROM`/`WRITES_TO` walk, but the
-  flow walk does not yet cover their arg-shaped `fwrite(f, x)` / type-declaration
-  stream forms.) This bites Lua hardest, since Lua has no direct file-write sink at
-  all (and no handle tables in either walk yet).
+  `new StreamWriter(p).Write(s)`, JS/TS
+  `fs.createWriteStream(p).write(s)`, or Lua
+  `local f = io.open(p, "w"); f:write(s)`) emits a flow edge to the handle's
+  resource — path-sensitively (a rebind on one branch writes to all feasible
+  resources) and mode-aware (a read-only `os.Open`/`File::open`/`new FileReader`/
+  `new StreamReader` handle is not a write sink; Lua's `io.open` mode is unknowable
+  to the binder, so it stays a sound may-write gated by the method table). Both
+  `new`-shaped constructors and their wrapper / identity-carrier
+  (`new PrintWriter(new File(p))`) forms resolve, reusing the same registry tables
+  the `READS_FROM`/`WRITES_TO` walk uses. The remaining lean languages (**C**,
+  **C++**) still match **direct call sinks only** for handle writes: they bind
+  `fopen`/`ofstream` handles in the `READS_FROM`/`WRITES_TO` walk, but the flow walk
+  does not yet cover their arg-shaped `fwrite(f, x)` / type-declaration stream forms,
+  so such a leak reads as `NO_FLOW` rather than `UNKNOWN` in a fully covered project.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
