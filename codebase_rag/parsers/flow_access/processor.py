@@ -1686,7 +1686,10 @@ class FlowProcessor:
         # `fprintf(f, fmt, secret)`), not a receiver. Route the taint of every
         # NON-handle arg to the handle's resource. Only WRITE arg sinks are taint
         # destinations -- fread/fgets READ into a buffer, not a resource write.
-        sink = jc.arg_handle_sinks.get(raw)
+        # Match through _js_match_sink so this path honours the SAME shadowing /
+        # import rules as every other sink -- a local named `fwrite` is not the libc
+        # symbol (CodeRabbit review, #1204).
+        sink = self._js_match_sink(raw, jc.arg_handle_sinks, jc)
         if sink is None or sink.direction == IODirection.READ:
             return False
         arguments = node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)

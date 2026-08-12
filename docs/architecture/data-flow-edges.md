@@ -404,8 +404,13 @@ module is re-exported under its own name. A project that does
   **C++** cover the arg-shaped libc `FILE*` API, where the handle rides an
   *argument* rather than a receiver (`FILE *f = fopen(p, "w"); fwrite(x, 1, n, f)`,
   `fprintf(f, fmt, x)`, or `fprintf(stderr, fmt, x)` to a pre-bound std stream): the
-  tainted non-handle arguments flow to the handle's resource, an untracked `FILE*`
-  degrading to `FILE:<dynamic>`. Both `new`-shaped constructors and their wrapper /
+  tainted **payload** arguments flow to the handle's resource, an untracked `FILE*`
+  degrading to `FILE:<dynamic>`. Each arg sink pins its payload position — `fprintf`
+  forwards every non-handle argument (format + varargs), but `fwrite(buffer, size,
+  count, stream)` forwards only `buffer` (arg 0), so a tainted `size`/`count` is
+  control metadata, not a leak. The libc model applies only to *unresolved* calls, so
+  a project-defined function that happens to be named `fwrite`/`fprintf` is analysed
+  as itself. Both `new`-shaped constructors and their wrapper /
   identity-carrier (`new PrintWriter(new File(p))`) forms resolve, reusing the same
   registry tables the `READS_FROM`/`WRITES_TO` walk uses. The one handle-write shape
   the flow walk does **not** yet cover is C++ type-declaration streams

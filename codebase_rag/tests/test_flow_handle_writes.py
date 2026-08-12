@@ -761,17 +761,17 @@ def test_c_untainted_fwrite_emits_no_flow(tmp_path: Path) -> None:
 
 
 def test_c_fwrite_metadata_arg_is_not_payload(tmp_path: Path) -> None:
-    # `fwrite(buffer, size, count, stream)` writes only arg 0. A tainted `count`
-    # (arg 2) with a literal buffer is control metadata, not exfiltrated data, so it
-    # must emit no flow to the file (Greptile review, #1204).
+    # `fwrite(buffer, size, count, stream)` writes only arg 0. `getenv("K")` sits at
+    # the `count` position (arg 2) as a directly-modeled ENV source, with a literal
+    # buffer: it is control metadata, not exfiltrated data, so it must emit no flow to
+    # the file (Greptile + CodeRabbit review, #1204).
     files = {
         "c.c": (
             "#include <stdio.h>\n"
             "#include <stdlib.h>\n"
             "void leak() {\n"
-            '  int n = atoi(getenv("K"));\n'
             '  FILE* f = fopen("out.txt", "w");\n'
-            '  fwrite("literal", 1, n, f);\n'
+            '  fwrite("literal", 1, getenv("K"), f);\n'
             "}\n"
         )
     }
