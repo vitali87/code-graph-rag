@@ -109,6 +109,63 @@ def test_dart_branch_merge_preserves_taint(tmp_path: Path) -> None:
     assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, source)
 
 
+def test_dart_expression_bodied_callee(tmp_path: Path) -> None:
+    # An arrow-bodied `=> print(v)` sink is walked (Greptile/CodeRabbit review).
+    source = (
+        "void sink(String v) => print(v);\n"
+        "void leak() {\n"
+        "  var k = Platform.environment['K'];\n"
+        "  sink(k);\n"
+        "}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, source)
+
+
+def test_dart_expression_bodied_source_return(tmp_path: Path) -> None:
+    # An arrow body `=> expr` is the implicit return value, feeding the fixpoint.
+    source = (
+        "String src() => Platform.environment['K'];\n"
+        "void leak() {\n"
+        "  var v = src();\n"
+        "  print(v);\n"
+        "}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, source)
+
+
+def test_dart_inline_source_argument(tmp_path: Path) -> None:
+    # A non-identifier argument is a full chain: `print(Platform.environment['K'])`
+    # evaluates the inline source (Greptile/CodeRabbit review).
+    source = "void leak() {\n  print(Platform.environment['K']);\n}\n"
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, source)
+
+
+def test_dart_named_argument_flows_to_sink(tmp_path: Path) -> None:
+    # A named argument `sink(message: k)` propagates via `kw:message` to the named
+    # parameter (which is flattened out of `optional_formal_parameters` and seeded).
+    source = (
+        "void sink({String? message}) { print(message); }\n"
+        "void leak() {\n"
+        "  var k = Platform.environment['K'];\n"
+        "  sink(message: k);\n"
+        "}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, source)
+
+
+def test_dart_optional_positional_parameter(tmp_path: Path) -> None:
+    # An optional-positional parameter `[String? m]` is flattened into slot 0, so a
+    # positional argument still composes to the sink.
+    source = (
+        "void sink([String? m]) { print(m); }\n"
+        "void leak() {\n"
+        "  var k = Platform.environment['K'];\n"
+        "  sink(k);\n"
+        "}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, source)
+
+
 def test_dart_untainted_io_emits_no_flow(tmp_path: Path) -> None:
     source = (
         "void leak() {\n"

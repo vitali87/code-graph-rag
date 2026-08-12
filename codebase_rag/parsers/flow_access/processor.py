@@ -91,18 +91,6 @@ _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
 _DART_ASSIGN_OP = "="
 
 
-def _dart_name(node: Node | None) -> str | None:
-    # The identifier text of a simple Dart argument (`sink(k)` -> "k"); None for a
-    # non-identifier argument, so a taint-map lookup on it misses.
-    if (
-        node is not None
-        and node.type == cs.TS_DART_IDENTIFIER
-        and node.text is not None
-    ):
-        return node.text.decode(cs.ENCODING_UTF8)
-    return None
-
-
 # The `kind` half of an argument `via` tag (VIA_ARG_FORMAT / VIA_KW_FORMAT),
 # used to map a call-site argument back to the callee's parameter (issue #1142).
 _VIA_SEPARATOR = ":"
@@ -1874,7 +1862,12 @@ class FlowProcessor:
         block = next(
             (c for c in body.named_children if c.type == cs.TS_DART_BLOCK), None
         )
-        return list(block.named_children) if block is not None else []
+        if block is not None:
+            return list(block.named_children)
+        # An expression-bodied declaration `=> expr` (function/method/getter) has no
+        # block: the whole `function_body` is walked for the expression's call
+        # effects and evaluated as the implicit return value (Greptile review, #1173).
+        return [body]
 
     @staticmethod
     def _dart_selector_is_call(node: Node) -> bool:
@@ -1895,7 +1888,9 @@ class FlowProcessor:
             self._dart_bind(node, tainted, handles, jc)
         elif self._dart_selector_is_call(node):
             self._dart_call(node, tainted, handles, jc)
-        elif node_type == cs.TS_RETURN_STATEMENT:
+        elif node_type in (cs.TS_RETURN_STATEMENT, cs.TS_DART_FUNCTION_BODY):
+            # `return expr;` and an arrow body `=> expr` both contribute the
+            # expression's taint to the return summary (issue #1173).
             returned = self._dart_return_taint(node, tainted, jc)
             if returned is not None:
                 self._acc_returns_taint = True
@@ -2092,34 +2087,68 @@ class FlowProcessor:
                     (jc.flow.caller_qn, pname, callee_qn, via)
                 )
 
-    def _dart_arg_taints(
-        self, selector: Node, tainted: _TaintMap, jc: _JsCtx
-    ) -> list[tuple[str, Taint | None]]:
-        # The positional arguments of a Dart call, taken from the selector's
-        # `argument_part` -> `arguments` -> `argument` wrappers.
+    @staticmethod
+    def _dart_arguments(selector: Node) -> Node | None:
+        # The `arguments` node inside a call selector's `argument_part`.
         argpart = next(
             (c for c in selector.named_children if c.type == cs.TS_DART_ARGUMENT_PART),
             None,
         )
         if argpart is None:
-            return []
-        arguments = next(
+            return None
+        return next(
             (c for c in argpart.named_children if c.type == cs.TS_DART_ARGUMENTS), None
         )
+
+    @staticmethod
+    def _dart_named_arg(arg: Node) -> tuple[str | None, list[Node]]:
+        # `named_argument` -> `label`(identifier `:`) + the value CHAIN (which may be
+        # a selector chain such as `message: Platform.environment['K']`).
+        name: str | None = None
+        value: list[Node] = []
+        for child in arg.named_children:
+            if child.type == cs.TS_DART_LABEL:
+                ident = next(
+                    (
+                        c
+                        for c in child.named_children
+                        if c.type == cs.TS_DART_IDENTIFIER
+                    ),
+                    None,
+                )
+                if ident is not None and ident.text is not None:
+                    name = ident.text.decode(cs.ENCODING_UTF8)
+            elif child.type != cs.TS_COMMENT:
+                value.append(child)
+        return name, value
+
+    def _dart_arg_taints(
+        self, selector: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> list[tuple[str, Taint | None]]:
+        # A Dart call's arguments: positional `argument` wrappers (via `arg:<index>`)
+        # and `named_argument` values (`sink(message: x)`, via `kw:<name>`). Each
+        # argument is a full expression CHAIN (a bare identifier, a
+        # `Platform.environment['K']` source, or a `src()` call), evaluated via
+        # `_dart_rhs` so inline sources reach the sink too (issue #1173).
+        arguments = self._dart_arguments(selector)
         if arguments is None:
             return []
         out: list[tuple[str, Taint | None]] = []
-        index = 0
+        positional = 0
         for arg in arguments.named_children:
-            if arg.type != cs.TS_DART_ARGUMENT:
+            if arg.type == cs.TS_DART_ARGUMENT:
+                chain = [c for c in arg.named_children if c.type != cs.TS_COMMENT]
+                via = VIA_ARG_FORMAT.format(index=positional)
+                positional += 1
+            elif arg.type == cs.TS_DART_NAMED_ARGUMENT:
+                name, chain = self._dart_named_arg(arg)
+                if name is None:
+                    continue
+                via = VIA_KW_FORMAT.format(name=name)
+            else:
                 continue
-            inner = next(
-                (c for c in arg.named_children if c.type != cs.TS_COMMENT), None
-            )
-            arg_name = _dart_name(inner)
-            taint = tainted.get(arg_name) if arg_name is not None else None
-            out.append((VIA_ARG_FORMAT.format(index=index), taint))
-            index += 1
+            taint, _ = self._dart_rhs(chain, tainted, {}, jc)
+            out.append((via, taint))
         return out
 
     def _dart_return_taint(
@@ -2131,25 +2160,19 @@ class FlowProcessor:
         return taint
 
     def _dart_first_string_arg(self, selector: Node) -> str:
-        argpart = next(
-            (c for c in selector.named_children if c.type == cs.TS_DART_ARGUMENT_PART),
-            None,
-        )
-        if argpart is None:
-            return DYNAMIC_TARGET
-        arguments = next(
-            (c for c in argpart.named_children if c.type == cs.TS_DART_ARGUMENTS), None
-        )
+        arguments = self._dart_arguments(selector)
         if arguments is None:
             return DYNAMIC_TARGET
         for arg in arguments.named_children:
-            if arg.type != cs.TS_DART_ARGUMENT:
+            if arg.type == cs.TS_DART_ARGUMENT:
+                chain = [c for c in arg.named_children if c.type != cs.TS_COMMENT]
+            elif arg.type == cs.TS_DART_NAMED_ARGUMENT:
+                _, chain = self._dart_named_arg(arg)
+            else:
                 continue
-            inner = next(
-                (c for c in arg.named_children if c.type != cs.TS_COMMENT), None
-            )
-            if inner is not None and inner.type == cs.TS_DART_STRING_LITERAL:
-                return self._dart_string_literal(inner)
+            first = chain[0] if chain else None
+            if first is not None and first.type == cs.TS_DART_STRING_LITERAL:
+                return self._dart_string_literal(first)
         return DYNAMIC_TARGET
 
     @staticmethod
