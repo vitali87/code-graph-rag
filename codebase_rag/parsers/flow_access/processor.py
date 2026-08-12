@@ -1582,7 +1582,14 @@ class FlowProcessor:
             return identity
         if jc.identity_calls and arg.type == d.call_type:
             raw = call_name(arg)
-            if raw is not None and raw in jc.identity_calls:
+            # A static import (`import static java.nio.file.Path.of`) spells the
+            # factory bare (`of("cfg")`); resolve it through the import map to its
+            # qualified form before the identity-call check, so the literal is still
+            # recovered (Greptile review, #1204).
+            if raw is not None and (
+                raw in jc.identity_calls
+                or jc.flow.import_map.get(raw) in jc.identity_calls
+            ):
                 return self._lean_literal_arg0(arg, jc)
         if (
             jc.identity_new_types

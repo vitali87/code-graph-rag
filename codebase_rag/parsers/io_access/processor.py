@@ -1769,7 +1769,9 @@ class IOAccessProcessor:
             return None
         return HandleBinding(
             kind=ctor.kind,
-            identity=self._ctor_identity(node, ctor, descriptor, lean_handles),
+            identity=self._ctor_identity(
+                node, ctor, descriptor, lean_handles, import_map
+            ),
         )
 
     def _handle_from_new(
@@ -1822,7 +1824,9 @@ class IOAccessProcessor:
             return HandleBinding(kind=ctor.kind, identity=identity)
         return HandleBinding(
             kind=ctor.kind,
-            identity=self._ctor_identity(node, ctor, descriptor, lean_handles),
+            identity=self._ctor_identity(
+                node, ctor, descriptor, lean_handles, import_map
+            ),
         )
 
     def _bind_type_decl_handle(
@@ -1888,6 +1892,7 @@ class IOAccessProcessor:
         ctor: HandleConstructor,
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles,
+        import_map: dict[str, str],
     ) -> str:
         identity = literal_target(
             call_node,
@@ -1910,7 +1915,13 @@ class IOAccessProcessor:
             return identity
         if lean_handles.identity_calls and arg.type == descriptor.call_type:
             raw = call_name(arg)
-            if raw is not None and raw in lean_handles.identity_calls:
+            # A static import (`import static java.nio.file.Path.of`) spells the
+            # factory bare (`of("cfg")`); resolve it through the import map to its
+            # qualified form so the literal is still recovered (Greptile review, #1204).
+            if raw is not None and (
+                raw in lean_handles.identity_calls
+                or import_map.get(raw) in lean_handles.identity_calls
+            ):
                 return self._literal_arg0(arg, descriptor)
         if (
             lean_handles.identity_new_types

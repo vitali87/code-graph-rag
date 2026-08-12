@@ -457,6 +457,27 @@ def test_java_files_factory_pathof_identity(tmp_path: Path) -> None:
     assert _ENV_FILE in _run_flow(tmp_path, files)
 
 
+def test_java_files_factory_static_import_identity(tmp_path: Path) -> None:
+    # A static-imported factory (`import static java.nio.file.Path.of`) spells the
+    # call bare (`of("out.txt")`); the identity lookup resolves it through the import
+    # map to `Path.of`, so the concrete path is still recovered (Greptile review).
+    files = {
+        "A.java": (
+            "import static java.nio.file.Path.of;\n"
+            "import java.nio.file.Files;\n"
+            "import java.io.BufferedWriter;\n"
+            "class A {\n"
+            "  void leak() throws Exception {\n"
+            '    String s = System.getenv("K");\n'
+            '    BufferedWriter w = Files.newBufferedWriter(of("out.txt"));\n'
+            "    w.write(s);\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
 def test_java_read_only_filereader_emits_no_flow(tmp_path: Path) -> None:
     # `new FileReader` is a READ-only handle, so it never binds as a write sink.
     # The write-named `.write(s)` carries genuine taint, so this fails if the
