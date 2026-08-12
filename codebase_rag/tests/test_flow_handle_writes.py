@@ -798,6 +798,106 @@ def test_c_project_defined_fwrite_is_not_treated_as_libc(tmp_path: Path) -> None
     assert ("resource::ENV::K", "resource::FILE::<dynamic>") not in flows
 
 
+def test_cpp_tainted_write_through_ofstream_insertion(tmp_path: Path) -> None:
+    # `std::ofstream out("out.txt")` binds a FILE handle via its type declaration;
+    # `out << s` inserts the ENV-tainted `s` into that file (issue #1220).
+    files = {
+        "a.cpp": (
+            "#include <fstream>\n"
+            "#include <cstdlib>\n"
+            "void leak() {\n"
+            '  const char* s = std::getenv("K");\n'
+            '  std::ofstream out("out.txt");\n'
+            "  out << s;\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_cpp_tainted_write_through_ofstream_chain(tmp_path: Path) -> None:
+    # A chained insertion `out << a << s << b` routes every operand; the tainted one
+    # still reaches the file.
+    files = {
+        "a.cpp": (
+            "#include <fstream>\n"
+            "#include <cstdlib>\n"
+            "void leak() {\n"
+            '  const char* s = std::getenv("K");\n'
+            '  std::ofstream out("out.txt");\n'
+            '  out << "prefix" << s << "\\n";\n'
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_cpp_tainted_write_through_ofstream_method(tmp_path: Path) -> None:
+    # `out.write(s, n)` is a method write on the bound ofstream handle.
+    files = {
+        "a.cpp": (
+            "#include <fstream>\n"
+            "#include <cstdlib>\n"
+            "#include <cstring>\n"
+            "void leak() {\n"
+            '  const char* s = std::getenv("K");\n'
+            '  std::ofstream out("out.txt");\n'
+            "  out.write(s, strlen(s));\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_cpp_ofstream_move_assignment_rebind(tmp_path: Path) -> None:
+    # `out = std::ofstream("out.txt")` is a call-shaped move-assignment rebind (not a
+    # type declaration); the ofstream call constructor binds the handle so a later
+    # `out << s` still reaches the file (CodeRabbit review, #1220).
+    files = {
+        "a.cpp": (
+            "#include <fstream>\n"
+            "#include <cstdlib>\n"
+            "void leak() {\n"
+            '  const char* s = std::getenv("K");\n'
+            "  std::ofstream out;\n"
+            '  out = std::ofstream("out.txt");\n'
+            "  out << s;\n"
+            "}\n"
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_cpp_cout_insertion_still_writes_stdout(tmp_path: Path) -> None:
+    # The bound-handle branch must not regress the cout/cerr stream sinks: `cout << s`
+    # still flows to STDOUT (its base is a stream sink, not a bound handle).
+    files = {
+        "a.cpp": (
+            "#include <iostream>\n"
+            "#include <cstdlib>\n"
+            "void leak() {\n"
+            '  const char* s = std::getenv("K");\n'
+            "  std::cout << s;\n"
+            "}\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_cpp_untainted_ofstream_emits_no_flow(tmp_path: Path) -> None:
+    files = {
+        "a.cpp": (
+            "#include <fstream>\n"
+            "void leak() {\n"
+            '  std::ofstream out("out.txt");\n'
+            '  out << "literal";\n'
+            "}\n"
+        )
+    }
+    assert _run_flow(tmp_path, files) == set()
+
+
 def test_c_fread_is_not_a_write_sink(tmp_path: Path) -> None:
     # `fread` reads FROM the file into a buffer; it is a READ arg-sink, not a write
     # destination, so a tainted argument routes no flow to the file.

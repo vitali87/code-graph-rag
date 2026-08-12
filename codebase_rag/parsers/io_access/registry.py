@@ -734,9 +734,19 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
         HandleConstructor("fopen", ResourceKind.FILE, target_arg=0),
         HandleConstructor("freopen", ResourceKind.FILE, target_arg=0),
     ),
+    # fopen/freopen are the libc FILE* constructors; ofstream/fstream cover the
+    # move-ASSIGNMENT rebind form (`out = std::ofstream(p)`, a call-shaped
+    # construction) -- the declaration form (`std::ofstream out(p)`) binds via
+    # IO_TYPE_HANDLE_CONSTRUCTORS instead. ifstream is read-only, so it is not a
+    # write handle here (issue #1220).
     cs.SupportedLanguage.CPP: tuple(
-        HandleConstructor(f"{prefix}{fn}", ResourceKind.FILE, target_arg=0)
-        for fn in ("fopen", "freopen")
+        HandleConstructor(f"{prefix}{fn}", ResourceKind.FILE, target_arg=0, direction=d)
+        for fn, d in (
+            ("fopen", IODirection.READ_WRITE),
+            ("freopen", IODirection.READ_WRITE),
+            ("ofstream", IODirection.WRITE),
+            ("fstream", IODirection.READ_WRITE),
+        )
         for prefix in _CPP_SINK_PREFIXES
     ),
     cs.SupportedLanguage.LUA: _LUA_LEAN_HANDLE_CONSTRUCTORS,

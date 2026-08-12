@@ -56,10 +56,12 @@ from ..io_access.registry import (
     IO_LEAN_HANDLE_METHODS,
     IO_NEW_HANDLE_CONSTRUCTORS,
     IO_NEW_HANDLE_WRAPPERS,
+    IO_TYPE_HANDLE_CONSTRUCTORS,
     LIBC_STD_STREAMS,
 )
 from ..utils import (
     c_positional_parameter_slots,
+    cpp_declarator_name,
     cpp_positional_parameter_slots,
     csharp_positional_parameter_slots,
     function_span_key,
@@ -488,6 +490,11 @@ class _JsCtx(NamedTuple):
     # tainted non-handle arg flows to the handle's resource (issue #1204). Empty for
     # languages without the libc FILE* API.
     arg_handle_sinks: dict[str, ArgHandleSink]
+    # Type-declaration handle constructors (C++ `std::ofstream out("x")`): a
+    # declaration whose written type is one of these binds a FILE handle on its
+    # declarator, so a later `out << x` / `out.write(..)` routes to that file
+    # (issue #1220). Empty for languages without type-declaration stream handles.
+    type_ctors: dict[str, ResourceKind]
 
 
 class FlowProcessor:
@@ -691,6 +698,7 @@ class FlowProcessor:
             identity_calls=IO_IDENTITY_UNWRAP_CALLS.get(ctx.language, frozenset()),
             identity_new_types=IO_IDENTITY_UNWRAP_NEW_TYPES.get(ctx.language, {}),
             arg_handle_sinks=IO_ARG_HANDLE_SINKS.get(ctx.language, {}),
+            type_ctors=IO_TYPE_HANDLE_CONSTRUCTORS.get(ctx.language, {}),
         )
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is None:
@@ -1214,10 +1222,18 @@ class FlowProcessor:
         # kill, a call's sink/arg edges, or a return's contribution to the summary.
         node_type = node.type
         d = jc.descriptor
+        if jc.type_ctors and node_type == cs.TS_CPP_DECLARATION:
+            # C++ `std::ofstream out("x")`: bind the declarator as a FILE handle. The
+            # walk still recurses into the child init_declarator, which the guard
+            # below skips so it is not re-bound to no handle (issue #1220).
+            self._bind_lean_type_decl(node, handles, jc)
+            return
         if node_type == d.declarator_type or node_type in (
             cs.TS_ASSIGNMENT_EXPRESSION,
             cs.TS_GO_ASSIGNMENT_STATEMENT,
         ):
+            if jc.type_ctors and self._decl_type_is_handle(node.parent, jc):
+                return
             self._lean_bind(node, tainted, handles, jc)
         elif node_type in d.extra_declarator_types:
             if node_type == cs.TS_GO_RANGE_CLAUSE:
@@ -1229,7 +1245,7 @@ class FlowProcessor:
         elif d.macro_type is not None and node_type == d.macro_type:
             self._flow_macro(node, tainted, jc)
         elif d.stream_sink_type is not None and node_type == d.stream_sink_type:
-            self._flow_stream(node, tainted, jc)
+            self._flow_stream(node, tainted, handles, jc)
         elif node_type == cs.TS_RETURN_STATEMENT:
             returned = self._js_return_taint(node, tainted, jc)
             if returned is not None:
@@ -1725,6 +1741,62 @@ class FlowProcessor:
                 self._emit_taint_to_sink(taint, kind, identity, jc.flow.caller_qn)
         return True
 
+    def _bind_lean_type_decl(self, node: Node, handles: _HandleMap, jc: _JsCtx) -> None:
+        # C++ type-declaration handles: `std::ofstream out("x.txt")` (init_declarator
+        # with an argument_list value) and the most-vexing-parse `std::ofstream
+        # dyn(path)` (a function_declarator), each binding a FILE handle -- <dynamic>
+        # when the identity is not a string literal (issue #1220). Mirrors io_access's
+        # _bind_type_decl_handle, but writes the set-valued path-sensitive map.
+        type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
+        if type_node is None or type_node.text is None:
+            return
+        kind = jc.type_ctors.get(type_node.text.decode(cs.ENCODING_UTF8))
+        if kind is None:
+            return
+        for child in node.named_children:
+            if child.type == cs.TS_CPP_INIT_DECLARATOR:
+                name = cpp_declarator_name(
+                    child.child_by_field_name(cs.FIELD_DECLARATOR)
+                )
+                identity = self._first_string_arg(
+                    child.child_by_field_name(cs.FIELD_VALUE), jc
+                )
+            elif child.type == cs.TS_CPP_FUNCTION_DECLARATOR:
+                name = cpp_declarator_name(
+                    child.child_by_field_name(cs.FIELD_DECLARATOR)
+                )
+                identity = DYNAMIC_TARGET
+            else:
+                continue
+            if name is not None:
+                handles[name] = frozenset({HandleBinding(kind, identity)})
+
+    @staticmethod
+    def _decl_type_is_handle(decl: Node | None, jc: _JsCtx) -> bool:
+        # True when `decl` is a C++ declaration whose written type is a stream handle
+        # constructor -- its init_declarator is bound by _bind_lean_type_decl, so the
+        # normal declarator binding must skip it rather than pop the handle (#1220).
+        if decl is None or decl.type != cs.TS_CPP_DECLARATION:
+            return False
+        type_node = decl.child_by_field_name(cs.TS_FIELD_TYPE)
+        return (
+            type_node is not None
+            and type_node.text is not None
+            and type_node.text.decode(cs.ENCODING_UTF8) in jc.type_ctors
+        )
+
+    @staticmethod
+    def _first_string_arg(args: Node | None, jc: _JsCtx) -> str:
+        # The first string-literal argument of a constructor's argument_list
+        # (`std::ofstream in("x.txt", std::ios::binary)` -> x.txt).
+        if args is None:
+            return DYNAMIC_TARGET
+        d = jc.descriptor
+        for child in args.named_children:
+            if child.type == d.string_type:
+                return string_literal(child, d.string_type, d.string_content_type)
+        return DYNAMIC_TARGET
+
     def _emit_taint_to_sink(
         self, taint: Taint, kind: ResourceKind, identity: str, caller_qn: str
     ) -> None:
@@ -1864,11 +1936,15 @@ class FlowProcessor:
                     stack.append(child)
         return out
 
-    def _flow_stream(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+    def _flow_stream(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
         # A C++ stream sink (`std::cout << a << b`) nests left-associatively. Act
         # only at the TOP of the `<<` chain, walk the `left` spine to the base
-        # operand; if it is a stream sink (cout/cerr), flow the taint of every
-        # inserted operand to STDOUT. A non-stream base (arithmetic `x << 2`) misses.
+        # operand; if it is a stream sink (cout/cerr) OR a bound file handle
+        # (`out << x` on a std::ofstream, issue #1220), flow the taint of every
+        # inserted operand to that resource. A non-stream base (arithmetic `x << 2`)
+        # misses.
         d = jc.descriptor
         if not self._is_stream_insertion(node, d):
             return
@@ -1887,17 +1963,22 @@ class FlowProcessor:
             base = left
         if base.text is None:
             return
-        sink = self._js_match_sink(
-            base.text.decode(cs.ENCODING_UTF8), jc.flow.stream_sinks, jc
-        )
-        if sink is None:
+        base_text = base.text.decode(cs.ENCODING_UTF8)
+        sink = self._js_match_sink(base_text, jc.flow.stream_sinks, jc)
+        # cout/cerr write STDOUT/STDERR with no concrete resource; a bound handle
+        # base carries its file's identity (possibly several after a branch merge).
+        targets: list[tuple[ResourceKind, str]]
+        if sink is not None:
+            targets = [(sink.kind, DYNAMIC_TARGET)]
+        elif bindings := handles.get(base_text):
+            targets = [(b.kind, b.identity) for b in bindings]
+        else:
             return
         for operand in operands:
             taint = self._js_expr_taint(operand, tainted, jc)
             if taint is not None:
-                self._emit_taint_to_sink(
-                    taint, sink.kind, DYNAMIC_TARGET, jc.flow.caller_qn
-                )
+                for kind, identity in targets:
+                    self._emit_taint_to_sink(taint, kind, identity, jc.flow.caller_qn)
 
     @staticmethod
     def _is_stream_insertion(node: Node, descriptor: LanguageDescriptor) -> bool:

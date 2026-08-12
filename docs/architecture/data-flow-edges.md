@@ -410,13 +410,13 @@ module is re-exported under its own name. A project that does
   count, stream)` forwards only `buffer` (arg 0), so a tainted `size`/`count` is
   control metadata, not a leak. The libc model applies only to *unresolved* calls, so
   a project-defined function that happens to be named `fwrite`/`fprintf` is analysed
-  as itself. Both `new`-shaped constructors and their wrapper /
-  identity-carrier (`new PrintWriter(new File(p))`) forms resolve, reusing the same
-  registry tables the `READS_FROM`/`WRITES_TO` walk uses. The one handle-write shape
-  the flow walk does **not** yet cover is C++ type-declaration streams
-  (`std::ofstream out(p); out << x` / `out.write(..)`), which bind in the
-  `READS_FROM`/`WRITES_TO` walk but not here — so that specific leak reads as
-  `NO_FLOW` rather than `UNKNOWN` in a fully covered project.
+  as itself. C++ also binds **type-declaration** stream handles
+  (`std::ofstream out(p)`), so a tainted `out << x` (stream insertion) or
+  `out.write(..)` reaches the file. Both `new`-shaped constructors and their wrapper
+  / identity-carrier (`new PrintWriter(new File(p))`) forms resolve, reusing the same
+  registry tables the `READS_FROM`/`WRITES_TO` walk uses. Every catalogued
+  handle-write shape across the lean languages now emits a flow edge rather than a
+  false `NO_FLOW`.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
