@@ -1134,7 +1134,7 @@ class FunctionIngestMixin:
                 if container_type is not None
                 else cs.NodeLabel.CLASS
             )
-            ingest_method(
+            method_qn = ingest_method(
                 method_node=entry.method_node,
                 container_qn=container_qn,
                 container_type=container_label,
@@ -1151,6 +1151,16 @@ class FunctionIngestMixin:
                 defer_containment=self._deferred_parent_links,
                 module_qn=entry.module_qn,
             )
+            if method_qn is not None:
+                self._register_go_name_alias(
+                    entry.module_qn,
+                    entry.method_node,
+                    FunctionLocation(
+                        label=cs.NodeLabel.METHOD.value,
+                        qualified_name=method_qn,
+                        container_qn=container_qn,
+                    ),
+                )
             # Record the method's return type so a chained call `c.Root().Run()`
             # resolves `Run` on the type `Root()` returns.
             method_name = self._extract_function_name(entry.method_node)
@@ -1163,6 +1173,22 @@ class FunctionIngestMixin:
         ingested = len(deferred)
         self._deferred_go_methods = []
         return ingested
+
+    def _register_go_name_alias(
+        self, module_qn: str, decl_node: Node, location: FunctionLocation
+    ) -> None:
+        # The go/types frontend (issue #1179) keys a call target at the callee
+        # NAME identifier, but function_span_key keys at the `func` keyword
+        # (col 0); register a SECOND location at the name token so the semantic
+        # join resolves. The name col is never 0, so this never collides with the
+        # span-key entry, and FunctionLocations.drop_module forgets it on an
+        # incremental re-parse.
+        name_node = decl_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None:
+            return
+        self.function_locations[
+            (module_qn, name_node.start_point[0] + 1, name_node.start_point[1])
+        ] = location
 
     def _resolve_cpp_function(
         self, func_node: Node, module_qn: str
@@ -1292,6 +1318,8 @@ class FunctionIngestMixin:
             is_named=not resolution.is_anonymous,
         )
         self.function_locations[function_span_key(module_qn, func_node)] = location
+        if language == cs.SupportedLanguage.GO:
+            self._register_go_name_alias(module_qn, func_node, location)
         # Pin a C# local function to its HOST scope (method/ctor/enclosing local
         # fn) by span, plus its declared parameter count, so bare-name call
         # resolution honours C# scoping and arity (the host's signatured identity

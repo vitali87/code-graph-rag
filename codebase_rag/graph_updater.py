@@ -59,6 +59,7 @@ from .parsers.endpoints import (
 from .parsers.factory import ProcessorFactory
 from .parsers.frontends import FRONTENDS, SemanticFacts
 from .parsers.frontends.protocol import QueryCall
+from .parsers.go_frontend import find_go_module
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -454,6 +455,47 @@ class GraphUpdater:
         self._csharp_partial_decls = facts.partial_groups
         self._csharp_query_calls = facts.query_calls
 
+    def _run_go_frontend(self) -> None:
+        # Optional go/types semantic pre-pass (issue #1179). GOTYPES/AUTO: load
+        # the module with go/packages and collect exact first-party call targets
+        # (Pass 3) and external sites the tree-sitter name trie cannot derive.
+        # Missing go, no go.mod, or a build failure all fall back to pure
+        # tree-sitter (empty facts). Reset first so a reused updater (watch mode)
+        # that previously ran the frontend does not keep applying stale facts on
+        # a later run with it off; the maps are mutated in place because the
+        # type-inference engine holds a reference.
+        self._reset_go_semantic_facts()
+        if settings.GO_FRONTEND == cs.GoFrontend.TREESITTER:
+            return
+        frontend = FRONTENDS.get(cs.SupportedLanguage.GO)
+        if frontend is None or not frontend.applies(self.repo_path):
+            return
+        if not frontend.available():
+            if settings.GO_FRONTEND == cs.GoFrontend.AUTO:
+                logger.info(ls.GO_FRONTEND_AUTO_FALLBACK)
+            else:
+                logger.warning(ls.GO_FRONTEND_UNAVAILABLE)
+            return
+        logger.info(ls.GO_FRONTEND_RUNNING.format(path=find_go_module(self.repo_path)))
+        facts = frontend.run(self.repo_path, ())
+        self._apply_go_semantic_facts(facts)
+        logger.info(
+            ls.GO_FRONTEND_FACTS.format(
+                calls=len(facts.resolved_call_sites),
+                externals=len(facts.external_sites),
+            )
+        )
+
+    def _reset_go_semantic_facts(self) -> None:
+        dp = self.factory.definition_processor
+        dp.go_call_sites.clear()
+        dp.go_external_sites.clear()
+
+    def _apply_go_semantic_facts(self, facts: SemanticFacts) -> None:
+        dp = self.factory.definition_processor
+        dp.go_call_sites.update(facts.resolved_call_sites)
+        dp.go_external_sites.update(facts.external_sites)
+
     def _join_csharp_partials(self) -> None:
         # Replace the directory-keyed syntactic partial grouping with the
         # Roslyn symbol-identity groups wherever Roslyn saw the type: parts
@@ -670,6 +712,9 @@ class GraphUpdater:
         # base-classification oracle that split_csharp_bases consults while
         # ingesting each type's INHERITS/IMPLEMENTS edges during Pass 2.
         self._run_csharp_frontend()
+        # Go facts are read at Pass 3 and the name-alias target index is filled
+        # during Pass 2, so loading them here (before Pass 2) is correct.
+        self._run_go_frontend()
 
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)

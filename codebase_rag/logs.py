@@ -62,6 +62,14 @@ CSHARP_FRONTEND_NO_FACTS = (
     "C# Roslyn frontend produced no facts; every join falls back to "
     "tree-sitter. Tool diagnostics:\n{stderr}"
 )
+GO_FRONTEND_RUNNING = "--- Go go/types frontend: {path} ---"
+GO_FRONTEND_UNAVAILABLE = (
+    "Go frontend enabled but the go toolchain is unavailable; using tree-sitter"
+)
+GO_FRONTEND_AUTO_FALLBACK = "Go frontend AUTO: go not found; using tree-sitter only"
+GO_FRONTEND_FACTS = (
+    "Go go/types frontend facts: {calls} call site(s), {externals} external site(s)"
+)
 GO_FRONTEND_BUILD_FAILED = (
     "Go frontend tool failed to build; using tree-sitter.\nstderr: {stderr}"
 )

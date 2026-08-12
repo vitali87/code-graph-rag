@@ -78,6 +78,22 @@ def go_frontend_available() -> bool:
     return shutil.which(_GO) is not None
 
 
+def resolve_go_frontend() -> cs.GoFrontend:
+    # The single source of truth for the EFFECTIVE frontend: without a go
+    # toolchain every gotypes-backed mode (AUTO, and an explicit GOTYPES, which
+    # the graph build degrades to tree-sitter with a warning) resolves to
+    # TREESITTER; with one, AUTO means GOTYPES. The parser fingerprint resolves
+    # through here so a graph's recorded identity matches the frontend that ran.
+    mode = settings.GO_FRONTEND
+    if mode == cs.GoFrontend.TREESITTER:
+        return mode
+    if not go_frontend_available():
+        return cs.GoFrontend.TREESITTER
+    if mode == cs.GoFrontend.AUTO:
+        return cs.GoFrontend.GOTYPES
+    return mode
+
+
 def find_go_module(repo_path: Path) -> Path | None:
     # The root-most module's go.mod (shortest anchor path), or None when the
     # repo has no non-ignored go.mod. Applicability only needs its presence;

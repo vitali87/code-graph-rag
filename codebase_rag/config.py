@@ -201,6 +201,11 @@ class AppConfig(BaseSettings):
     # them. HYBRID augments (base-vs-interface, overload and extension binding,
     # partial-class identity); tree-sitter stays the standalone-correct backbone.
     CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.AUTO
+    # Opt-in go/packages semantic layer for Go (issue #1179). AUTO uses it where a
+    # go toolchain is on PATH and degrades to pure tree-sitter otherwise. GOTYPES
+    # augments exact first-party call binding and external-site suppression;
+    # tree-sitter stays the standalone-correct backbone.
+    GO_FRONTEND: cs.GoFrontend = cs.GoFrontend.AUTO
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )

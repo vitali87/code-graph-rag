@@ -35,10 +35,12 @@ def _frontend_settings() -> list[str]:
     # does not, so the two must not share a fingerprint. Imported lazily to
     # keep this module free of the parsers package at import time.
     from .parsers.csharp_frontend import resolve_csharp_frontend
+    from .parsers.go_frontend import resolve_go_frontend
 
     return [
         f"CPP_FRONTEND={settings.CPP_FRONTEND.value}",
         f"CSHARP_FRONTEND={resolve_csharp_frontend().value}",
+        f"GO_FRONTEND={resolve_go_frontend().value}",
     ]
 
 
@@ -53,12 +55,13 @@ def _fingerprint_sources(root: Path) -> list[Path]:
         for name in cs.PARSER_FINGERPRINT_SOURCE_FILES
         if (path := root / name).is_file()
     )
-    # The bundled Roslyn frontend tool (.cs/.csproj) is parser code though not
-    # Python; an edit changes the semantic edges produced, so a tool change
-    # must trip the staleness warning.
-    tool_dir = root / cs.PARSER_FINGERPRINT_TOOL_DIR
-    for pattern in cs.PARSER_FINGERPRINT_TOOL_GLOBS:
-        sources.extend(path for path in tool_dir.glob(pattern) if path.is_file())
+    # The bundled semantic-frontend tools (Roslyn .cs/.csproj, gotypes
+    # .go/.mod/.sum) are parser code though not Python; an edit changes the
+    # semantic edges produced, so a tool change must trip the staleness warning.
+    for dirname, globs in cs.PARSER_FINGERPRINT_TOOL_SOURCES:
+        tool_dir = root / dirname
+        for pattern in globs:
+            sources.extend(path for path in tool_dir.glob(pattern) if path.is_file())
     return sorted(sources)
 
 
