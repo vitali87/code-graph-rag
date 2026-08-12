@@ -346,6 +346,52 @@ jobs:
           validateSingleCommit: false
           validateSingleCommitMatchesPrTitle: false
 
+  go-frontend:
+    name: Go Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.23"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@f98e06938123ccabd21905ea5d0069192241f9f1 # v8.3.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra treesitter-full --extra test --group dev
+
+      # Build the bundled tool explicitly so a Go compile error is an
+      # attributable failure here, not a mysterious skip inside pytest. Deps
+      # resolve from the module cache, pinned by go.sum.
+      - name: Build the bundled gotypes tool
+        working-directory: codebase_rag/parsers/go_frontend/gotypes
+        env:
+          GOTOOLCHAIN: local
+        run: go build ./...
+
+      - name: Run Go frontend tests
+        run: |
+          uv run --no-sync pytest codebase_rag/tests/test_go_frontend.py -v --tb=short
+
   all-checks-pass:
     name: All Checks Pass
     runs-on: ubuntu-latest
@@ -358,6 +404,7 @@ jobs:
         test-integration,
         binary-smoke,
         wheel-fresh-resolution,
+        go-frontend,
       ]
     timeout-minutes: 5
 
@@ -370,6 +417,7 @@ jobs:
           echo "Integration Tests: ${{ needs.test-integration.result }}"
           echo "Binary Smoke: ${{ needs.binary-smoke.result }}"
           echo "Wheel Smoke: ${{ needs.wheel-fresh-resolution.result }}"
+          echo "Go Frontend: ${{ needs.go-frontend.result }}"
 
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
             echo "❌ Lint failed"
@@ -393,6 +441,10 @@ jobs:
           fi
           if [[ "${{ needs.wheel-fresh-resolution.result }}" != "success" ]]; then
             echo "❌ Wheel smoke test (unlocked resolution) failed"
+            exit 1
+          fi
+          if [[ "${{ needs.go-frontend.result }}" != "success" ]]; then
+            echo "❌ Go frontend job failed"
             exit 1
           fi
           echo "✅ All checks passed!"
