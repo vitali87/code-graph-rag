@@ -16,10 +16,10 @@ from ...types_defs import (
     NodeType,
     SimpleNameLookup,
 )
-from ...utils.path_utils import cached_relative_path
 from ..csharp_frontend import CallSiteKey
 from ..frontends.protocol import ResolvedCallSite
 from ..import_processor import ImportProcessor
+from ..semantic_call_join import call_site_key, declared_location
 from ..utils import safe_decode_text
 from .utils import (
     _normalize_type_name,
@@ -668,8 +668,14 @@ class CSharpTypeInferenceEngine:
             return None
         fact = self.csharp_call_sites.get(key)
         if fact is not None:
-            return self._declared_location(
-                fact.target_file, fact.target_line, fact.target_col
+            return declared_location(
+                fact.target_file,
+                fact.target_line,
+                fact.target_col,
+                self.function_locations,
+                self.module_qn_to_file_path,
+                self.repo_path,
+                self._rel_to_module,
             )
         if key in self.csharp_external_sites:
             # Roslyn resolved this site to a METADATA method: the call
@@ -686,18 +692,13 @@ class CSharpTypeInferenceEngine:
         name = safe_decode_text(name_node)
         if not name:
             return None
-        file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is None:
-            return None
-        rel = cached_relative_path(file_path, self.repo_path).as_posix()
-        # Keyed on the callee NAME token (nested invocations share an
-        # expression start, never a name token), with generic arguments
-        # stripped to match Roslyn's symbol name.
-        return (
-            rel,
-            name_node.start_point[0] + 1,
-            name_node.start_point[1],
+        # Generic arguments stripped to match Roslyn's symbol name.
+        return call_site_key(
+            name_node,
             name.split(cs.CHAR_ANGLE_OPEN, 1)[0],
+            module_qn,
+            self.module_qn_to_file_path,
+            self.repo_path,
         )
 
     def _callee_name_node(self, call_node: Node) -> Node | None:
@@ -723,30 +724,6 @@ class CSharpTypeInferenceEngine:
             if binding is not None:
                 return binding.child_by_field_name(cs.FIELD_NAME)
         return None
-
-    def _declared_location(
-        self, rel_file: str, line: int, col: int
-    ) -> tuple[str, str] | None:
-        # The fact's target declaration location resolves through the exact
-        # (module_qn, start_line, start_col) record Pass 2 registered, so the
-        # returned label/qn are the ingested node's, signature included.
-        target_module = self._module_qn_for_rel_file(rel_file)
-        if target_module is None:
-            return None
-        location = self.function_locations.get((target_module, line, col))
-        if location is None:
-            return None
-        return location.label, location.qualified_name
-
-    def _module_qn_for_rel_file(self, rel_file: str) -> str | None:
-        # Lazy inverse of module_qn_to_file_path (which Pass 2 fills after
-        # this engine is constructed); rebuilt when new modules appeared.
-        if len(self._rel_to_module) != len(self.module_qn_to_file_path):
-            self._rel_to_module = {
-                cached_relative_path(path, self.repo_path).as_posix(): qn
-                for qn, path in self.module_qn_to_file_path.items()
-            }
-        return self._rel_to_module.get(rel_file)
 
     def _try_extension_call(
         self,

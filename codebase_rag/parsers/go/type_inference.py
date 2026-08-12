@@ -6,9 +6,9 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import FunctionLocation, FunctionSpanKey
-from ...utils.path_utils import cached_relative_path
 from ..csharp_frontend import CallSiteKey
 from ..frontends.protocol import ResolvedCallSite
+from ..semantic_call_join import call_site_key, declared_location
 from ..utils import safe_decode_text
 from .utils import type_identifier_text
 
@@ -74,8 +74,14 @@ class GoTypeInferenceEngine:
             return None
         fact = self.go_call_sites.get(key)
         if fact is not None:
-            return self._declared_location(
-                fact.target_file, fact.target_line, fact.target_col
+            return declared_location(
+                fact.target_file,
+                fact.target_line,
+                fact.target_col,
+                self.function_locations,
+                self.module_qn_to_file_path,
+                self.repo_path,
+                self._rel_to_module,
             )
         if key in self.go_external_sites:
             return GO_EXTERNAL_TARGET
@@ -88,11 +94,9 @@ class GoTypeInferenceEngine:
         name = safe_decode_text(name_node)
         if not name:
             return None
-        file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is None:
-            return None
-        rel = cached_relative_path(file_path, self.repo_path).as_posix()
-        return (rel, name_node.start_point[0] + 1, name_node.start_point[1], name)
+        return call_site_key(
+            name_node, name, module_qn, self.module_qn_to_file_path, self.repo_path
+        )
 
     def _callee_name_node(self, call_node: Node) -> Node | None:
         # The callee NAME token, matching the gotypes tool's `calleeName`: a bare
@@ -114,29 +118,6 @@ class GoTypeInferenceEngine:
             inner = next((c for c in node.named_children), None)
             return self._name_from_callee(inner)
         return None
-
-    def _declared_location(
-        self, rel_file: str, line: int, col: int
-    ) -> tuple[str, str] | None:
-        # The fact's target position joins the (module_qn, name_line, name_col)
-        # alias Pass 2 registered for every Go decl (the func/method NAME token,
-        # NOT the func-keyword span key), so the returned label/qn are the
-        # ingested node's.
-        target_module = self._module_qn_for_rel_file(rel_file)
-        if target_module is None:
-            return None
-        location = self.function_locations.get((target_module, line, col))
-        if location is None:
-            return None
-        return location.label, location.qualified_name
-
-    def _module_qn_for_rel_file(self, rel_file: str) -> str | None:
-        if len(self._rel_to_module) != len(self.module_qn_to_file_path):
-            self._rel_to_module = {
-                cached_relative_path(path, self.repo_path).as_posix(): qn
-                for qn, path in self.module_qn_to_file_path.items()
-            }
-        return self._rel_to_module.get(rel_file)
 
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str
