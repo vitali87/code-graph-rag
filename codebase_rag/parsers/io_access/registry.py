@@ -704,6 +704,15 @@ _RUST_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
     ),
 )
 
+# `io.open(path [, mode])` returns a FILE handle used via `:` methods
+# (`f:write(x)`, `f:read()`). The mode (arg 1) decides read vs write, but the lean
+# binder does not inspect it, so this stays a sound may-write READ_WRITE (like Go's
+# `os.OpenFile`): a real write is never dropped, and the method table gates emission
+# (a `f:read()` on it emits nothing).
+_LUA_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
+    HandleConstructor("io.open", ResourceKind.FILE, target_arg=0),
+)
+
 IO_LEAN_HANDLE_CONSTRUCTORS: dict[
     cs.SupportedLanguage, tuple[HandleConstructor, ...]
 ] = {
@@ -725,6 +734,7 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
         for fn in ("fopen", "freopen")
         for prefix in _CPP_SINK_PREFIXES
     ),
+    cs.SupportedLanguage.LUA: _LUA_LEAN_HANDLE_CONSTRUCTORS,
 }
 
 # `new`-shaped handle constructors keyed by the written type name (Java
@@ -1076,6 +1086,15 @@ IO_LEAN_HANDLE_METHODS: dict[
             "ExecuteScalarAsync": IODirection.READ,
             "ExecuteNonQuery": IODirection.WRITE,
             "ExecuteNonQueryAsync": IODirection.WRITE,
+        },
+    },
+    # Lua file-handle methods, called with `:` (`f:write(x)`, `f:read()`). The
+    # handle-method split uses the descriptor's `:` separator (issue #1204).
+    cs.SupportedLanguage.LUA: {
+        ResourceKind.FILE: {
+            "write": IODirection.WRITE,
+            "read": IODirection.READ,
+            "lines": IODirection.READ,
         },
     },
 }

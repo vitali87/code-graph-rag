@@ -1640,7 +1640,7 @@ class FlowProcessor:
         # handles on different branches), if the method WRITES (or is read/write
         # like a DB execute), route each tainted arg to that resource. Pure READ
         # methods are not sinks; untainted args emit nothing.
-        recv, sep, method = raw.rpartition(cs.SEPARATOR_DOT)
+        recv, sep, method = raw.rpartition(jc.descriptor.handle_method_separator)
         if not sep:
             return False
         bindings = handles.get(recv)

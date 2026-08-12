@@ -26,6 +26,7 @@ _LANG_BY_EXT = {
     ".cs": "c_sharp",
     ".js": "javascript",
     ".ts": "typescript",
+    ".lua": "lua",
 }
 
 
@@ -672,6 +673,54 @@ def test_js_untainted_write_stream_emits_no_flow(tmp_path: Path) -> None:
         )
     }
     assert _run_flow(tmp_path, files) == set()
+
+
+# --- Lua (issue #1204; `io.open` handle + `:` method-call writes) ---
+
+
+def test_lua_tainted_write_through_file_handle(tmp_path: Path) -> None:
+    # `io.open("out.txt", "w")` binds a FILE handle; `f:write(s)` (a `:` method call)
+    # writes the ENV-tainted `s` to the file.
+    files = {
+        "a.lua": (
+            'local s = os.getenv("K")\nlocal f = io.open("out.txt", "w")\nf:write(s)\n'
+        )
+    }
+    assert _ENV_FILE in _run_flow(tmp_path, files)
+
+
+def test_lua_untainted_handle_write_emits_no_flow(tmp_path: Path) -> None:
+    files = {"a.lua": ('local f = io.open("out.txt", "w")\nf:write("literal")\n')}
+    assert _run_flow(tmp_path, files) == set()
+
+
+def test_lua_read_method_is_not_a_write_sink(tmp_path: Path) -> None:
+    # `f:read(...)` is a READ method, so even a tainted argument emits no flow edge;
+    # only writes through the handle are sinks.
+    files = {
+        "a.lua": (
+            'local s = os.getenv("K")\nlocal f = io.open("out.txt", "w")\nf:read(s)\n'
+        )
+    }
+    assert _ENV_FILE not in _run_flow(tmp_path, files)
+
+
+def test_lua_conditional_rebind_emits_to_both_files(tmp_path: Path) -> None:
+    # A rebind of the handle in the if arm leaves both handles live at the write, so
+    # the taint reaches both files (path-sensitive MAY merge, as for Go/Rust/Java).
+    files = {
+        "a.lua": (
+            'local s = os.getenv("K")\n'
+            'local f = io.open("first.txt", "w")\n'
+            "if cond then\n"
+            '  f = io.open("second.txt", "w")\n'
+            "end\n"
+            "f:write(s)\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::K", "resource::FILE::first.txt") in flows
+    assert ("resource::ENV::K", "resource::FILE::second.txt") in flows
 
 
 def test_csharp_sqlcommand_inherits_every_merged_connection(tmp_path: Path) -> None:

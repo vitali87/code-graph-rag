@@ -1580,10 +1580,11 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles,
     ) -> bool:
         # `f.WriteString(s)` / `br.readLine()` / `out.write(..)`: a method call whose
-        # receiver is a bound handle variable is I/O on that handle's resource. Every
-        # lean grammar spells the receiver `recv.method` in the callee text (Rust
-        # field_expression methods included), so one dotted split covers them all.
-        receiver, sep, method = raw_name.rpartition(cs.SEPARATOR_DOT)
+        # receiver is a bound handle variable is I/O on that handle's resource. Most
+        # lean grammars spell the receiver `recv.method` in the callee text (Rust
+        # field_expression methods included); Lua spells it `recv:method` (`f:write`),
+        # so the split uses the descriptor's handle-method separator (issue #1204).
+        receiver, sep, method = raw_name.rpartition(descriptor.handle_method_separator)
         if not sep:
             return False
         binding = lean_handles.bindings.get(receiver)
