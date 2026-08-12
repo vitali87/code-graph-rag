@@ -154,6 +154,13 @@ class LanguageDescriptor:
     # already descends into them. Empty = today's whole-node skip (Go/C/Rust/Java/C#).
     nested_header_types: frozenset[str] = frozenset()
 
+    # Method names that return a taint-preserving view/copy of their receiver
+    # (Rust `s.as_bytes()`, `.as_str()`, `.clone()`, ...), so a tainted receiver
+    # stays tainted through the call. Empty for languages that need no such
+    # unwrapping (their value-preserving conversions are syntax, e.g. Go's
+    # `[]byte(s)`, handled separately). Issue #1204.
+    value_preserving_methods: frozenset[str] = frozenset()
+
 
 _JS_TS_DESCRIPTOR = LanguageDescriptor(
     call_type=cs.TS_CALL_EXPRESSION,
@@ -317,6 +324,7 @@ _RUST_DESCRIPTOR = LanguageDescriptor(
     subscript_type=cs.TS_RS_INDEX_EXPRESSION,
     object_field=cs.FIELD_VALUE,
     property_field=cs.RS_FIELD_FIELD,
+    value_preserving_methods=cs.RS_VALUE_PRESERVING_METHODS,
     subscript_index_field=cs.RS_FIELD_INDEX,
     scope_separator=cs.TS_RS_TOKEN_SCOPE,
     # `let x = env::var(..)` binds via the `pattern` field (a plain identifier for

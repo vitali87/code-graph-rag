@@ -687,8 +687,18 @@ _JAVA_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = tuple(
 )
 
 _RUST_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
-    HandleConstructor("std::fs::File::open", ResourceKind.FILE, target_arg=0),
-    HandleConstructor("std::fs::File::create", ResourceKind.FILE, target_arg=0),
+    HandleConstructor(
+        "std::fs::File::open",
+        ResourceKind.FILE,
+        target_arg=0,
+        direction=IODirection.READ,
+    ),
+    HandleConstructor(
+        "std::fs::File::create",
+        ResourceKind.FILE,
+        target_arg=0,
+        direction=IODirection.WRITE,
+    ),
     HandleConstructor(
         "std::net::TcpStream::connect", ResourceKind.SOCKET, target_arg=0
     ),
