@@ -589,7 +589,10 @@ class GraphUpdater:
             target = located(fact.target_file, fact.target_line, fact.target_col)
             if caller is None or target is None:
                 continue
-            self.ingestor.ensure_relationship_batch(
+            # Through _sink (the capture-filtering wrapper), not the raw
+            # ingestor, so a capture that disables CALLS suppresses these
+            # synthesized LINQ query-operator edges too (issue #1236).
+            self._sink.ensure_relationship_batch(
                 (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
                 cs.RelationshipType.CALLS,
                 (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),

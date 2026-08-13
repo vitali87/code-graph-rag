@@ -15,6 +15,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import graph_audit
+from codebase_rag.capture import CaptureSelection
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
@@ -259,6 +260,7 @@ def create_and_run_updater(
     skip_if_missing: str | None = None,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
+    capture: CaptureSelection | None = None,
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     if skip_if_missing and skip_if_missing not in parsers:
@@ -270,6 +272,7 @@ def create_and_run_updater(
         queries=queries,
         exclude_paths=exclude_paths,
         unignore_paths=unignore_paths,
+        capture=capture,
     )
     updater.run()
     _audit_recorded_graph(mock_ingestor)
