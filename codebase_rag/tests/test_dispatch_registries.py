@@ -50,16 +50,22 @@ def _run(
     }
 
 
-def test_dict_registry_exposes_each_entry(tmp_path: Path) -> None:
+def test_dict_registry_exposes_producer_corroborated_entries(tmp_path: Path) -> None:
+    # A `{str: func}` dict registers a handler ONLY for keys a producer
+    # actually dispatches to (issue #1241): both keys here are produced.
     files = {
         "handlers.py": (
-            "from celery import shared_task\n\n"
             "def plain(ctx):\n    return 1\n\n"
             "def with_factoid(ctx):\n    return 2\n\n"
             "handlers = {\n"
             '    "plain": plain,\n'
             '    "with_factoid": with_factoid,\n'
             "}\n"
+        ),
+        "producer.py": (
+            "def schedule(client):\n"
+            '    client.deploy(workflow_name="plain")\n'
+            '    client.deploy(workflow_name="with_factoid")\n'
         ),
     }
     rels = _run(tmp_path, files)
@@ -80,11 +86,13 @@ def test_annotated_dict_registry_exposes(tmp_path: Path) -> None:
     # The verified production shape carries a type annotation.
     files = {
         "registry.py": (
-            "import celery\n\n"
             "def plain(ctx):\n    return 1\n\n"
             "handlers: dict = {\n"
             '    "plain": plain,\n'
             "}\n"
+        ),
+        "producer.py": (
+            'def schedule(client):\n    client.deploy(workflow_name="plain")\n'
         ),
     }
     rels = _run(tmp_path, files)
@@ -98,27 +106,27 @@ def test_annotated_dict_registry_exposes(tmp_path: Path) -> None:
 
 def test_mixed_dict_is_not_a_registry(tmp_path: Path) -> None:
     # The all-entries gate: one non-string key or non-function value keeps
-    # arbitrary config dicts out entirely.
+    # arbitrary config dicts out even when a producer names the key.
     files = {
         "config.py": (
-            "import celery\n\n"
             "def plain(ctx):\n    return 1\n\n"
             "settings = {\n"
             '    "plain": plain,\n'
             '    "retries": 3,\n'
             "}\n"
         ),
+        "producer.py": (
+            'def schedule(client):\n    client.deploy(workflow_name="plain")\n'
+        ),
     }
     rels = _run(tmp_path, files)
-    assert not any("resource::DISPATCH::" in b for _a, _r, b in rels), rels
+    assert not any(EXPOSES == r for _a, r, _b in rels), rels
 
 
-def test_dict_registry_without_framework_import_is_not_a_registry(
-    tmp_path: Path,
-) -> None:
+def test_dict_registry_without_producer_stays_out(tmp_path: Path) -> None:
     # Issue #1241: click's stream tables map string keys to module functions
-    # but are plain lookup tables, not workflow dispatch. Without a task-queue /
-    # workflow framework import the dict must NOT emit DISPATCH resources.
+    # but nothing dispatches to those keys -- they are plain lookup tables, not
+    # workflow dispatch, so no DISPATCH resource or EXPOSES edge is emitted.
     files = {
         "_compat.py": (
             "def get_binary_stdin():\n    return 1\n\n"
@@ -135,22 +143,57 @@ def test_dict_registry_without_framework_import_is_not_a_registry(
     assert not any("resource::DISPATCH::" in b for _a, _r, b in rels), rels
 
 
-def test_relative_import_does_not_enable_dict_registry(tmp_path: Path) -> None:
-    # A relative import is first-party; its leading component is empty, so it
-    # never corroborates dispatch (issue #1241).
+def test_dict_registry_exposes_only_produced_keys(tmp_path: Path) -> None:
+    # Selective corroboration (issue #1241): a producer dispatches to only one
+    # of the dict's two keys, so only that entry registers; the unproduced key
+    # stays out.
     files = {
-        "pkg/__init__.py": "",
-        "pkg/handlers.py": "def plain(ctx):\n    return 1\n",
-        "pkg/registry.py": (
-            "from . import handlers\n\n"
-            "from .handlers import plain\n\n"
-            "table = {\n"
-            '    "plain": plain,\n'
+        "handlers.py": (
+            "def used(ctx):\n    return 1\n\n"
+            "def unused(ctx):\n    return 2\n\n"
+            "handlers = {\n"
+            '    "used": used,\n'
+            '    "unused": unused,\n'
             "}\n"
+        ),
+        "producer.py": (
+            'def schedule(client):\n    client.deploy(workflow_name="used")\n'
         ),
     }
     rels = _run(tmp_path, files)
-    assert not any("resource::DISPATCH::" in b for _a, _r, b in rels), rels
+    project = tmp_path.name
+    assert (
+        f"{project}.handlers.used",
+        EXPOSES,
+        "resource::DISPATCH::used",
+    ) in rels, rels
+    assert not any("resource::DISPATCH::unused" in b for _a, _r, b in rels), rels
+
+
+def test_dict_registry_corroborated_by_deployment_suffix_producer(
+    tmp_path: Path,
+) -> None:
+    # A producer dispatching `run-things/dev` corroborates the bare `run-things`
+    # dict registration it resolves onto (issue #1241), mirroring the
+    # deployment-suffix join.
+    files = {
+        "handlers.py": (
+            "def run_things(ctx):\n    return 1\n\n"
+            "handlers = {\n"
+            '    "run-things": run_things,\n'
+            "}\n"
+        ),
+        "producer.py": (
+            'def schedule(client):\n    client.deploy(workflow_name="run-things/dev")\n'
+        ),
+    }
+    rels = _run(tmp_path, files)
+    project = tmp_path.name
+    assert (
+        f"{project}.handlers.run_things",
+        EXPOSES,
+        "resource::DISPATCH::run-things",
+    ) in rels, rels
 
 
 def test_flow_decorator_with_name_exposes(tmp_path: Path) -> None:
@@ -272,11 +315,13 @@ def test_imported_handler_values_expose(tmp_path: Path) -> None:
         "pkg/__init__.py": "",
         "pkg/handlers.py": ("def execute_turn(ctx):\n    return 1\n"),
         "pkg/registry.py": (
-            "import celery\n\n"
             "from pkg.handlers import execute_turn\n\n"
             "handlers = {\n"
             '    "execute_turn": execute_turn,\n'
             "}\n"
+        ),
+        "pkg/producer.py": (
+            'def schedule(client):\n    client.deploy(workflow_name="execute_turn")\n'
         ),
     }
     rels = _run(tmp_path, files)
@@ -421,6 +466,116 @@ def test_finalize_seeds_registrations_from_database(tmp_path: Path) -> None:
         if str(c.args[1]) == RESOLVES_TO
     ]
     assert resolves, ingestor.ensure_relationship_batch.call_args_list
+
+
+def test_dict_registry_corroborated_by_database_producer(tmp_path: Path) -> None:
+    # Incremental runs reprocess only changed files: a dict registry in a
+    # changed file whose only producer lives in an untouched file must still be
+    # corroborated, seeded from the live graph's WRITES_TO edges (issue #1241).
+    from codebase_rag import constants as cs2
+    from codebase_rag.capture import ALL_ENABLED
+    from codebase_rag.parsers.dispatch_registry import DispatchRegistryProcessor
+    from codebase_rag.types_defs import NodeType
+
+    parsers, _ = load_parsers()
+
+    class _QueryIngestor(MagicMock):
+        def fetch_all(self, query, params=None):  # noqa: ANN001, ANN201
+            # WRITES_TO producers exist only in the DB; EXPOSES query is empty.
+            return [{"name": "execute_turn"}] if "WRITES_TO" in query else []
+
+        def execute_write(self, query, params=None):  # noqa: ANN001, ANN201
+            return None
+
+    class _Registry:
+        def get(self, qn: str):  # noqa: ANN201
+            return NodeType.FUNCTION if qn.endswith(".execute_turn") else None
+
+    class _Imports:
+        import_mapping: dict = {}
+
+    ingestor = _QueryIngestor()
+    processor = DispatchRegistryProcessor(
+        ingestor=ingestor,
+        selection=ALL_ENABLED,
+        function_registry=_Registry(),
+        import_processor=_Imports(),
+    )
+    registry = parsers["python"].parse(
+        b'def execute_turn(ctx):\n    return 1\n\nhandlers = {\n    "execute_turn": execute_turn,\n}\n'
+    )
+    processor.process_file(
+        registry.root_node, "proj.registry", cs2.SupportedLanguage.PYTHON
+    )
+    processor.finalize()
+    exposes = [
+        c
+        for c in ingestor.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == EXPOSES
+    ]
+    assert any(c.args[2][2] == "resource::DISPATCH::execute_turn" for c in exposes), (
+        exposes
+    )
+
+
+def test_dict_registry_corroboration_without_query_protocol(tmp_path: Path) -> None:
+    # A non-QueryProtocol ingestor cannot seed producers from the graph, so
+    # corroboration rests solely on producers found in the processed files
+    # (issue #1241): the in-module producer is enough.
+    from codebase_rag import constants as cs2
+    from codebase_rag.capture import ALL_ENABLED
+    from codebase_rag.parsers.dispatch_registry import DispatchRegistryProcessor
+    from codebase_rag.types_defs import NodeType, PropertyDict
+
+    parsers, _ = load_parsers()
+
+    class _PlainIngestor:
+        # Deliberately lacks fetch_all / execute_write -> not a QueryProtocol.
+        def __init__(self) -> None:
+            self.rels: list[tuple[object, object, object]] = []
+
+        def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
+            return None
+
+        def ensure_relationship_batch(
+            self, from_spec: object, rel_type: object, to_spec: object, **_: object
+        ) -> None:
+            self.rels.append((from_spec, rel_type, to_spec))
+
+        def flush_all(self) -> None:
+            return None
+
+    class _Registry:
+        def get(self, qn: str):  # noqa: ANN201
+            return NodeType.FUNCTION if qn.endswith((".handle", ".schedule")) else None
+
+    class _Imports:
+        import_mapping: dict = {}
+
+    ingestor = _PlainIngestor()
+    processor = DispatchRegistryProcessor(
+        ingestor=ingestor,
+        selection=ALL_ENABLED,
+        function_registry=_Registry(),
+        import_processor=_Imports(),
+    )
+    registry = parsers["python"].parse(
+        b'def handle(ctx):\n    return 1\n\nhandlers = {\n    "handle": handle,\n}\n'
+    )
+    producer = parsers["python"].parse(
+        b'def schedule(client):\n    client.deploy(workflow_name="handle")\n'
+    )
+    processor.process_file(
+        registry.root_node, "proj.registry", cs2.SupportedLanguage.PYTHON
+    )
+    processor.process_file(
+        producer.root_node, "proj.producer", cs2.SupportedLanguage.PYTHON
+    )
+    processor.finalize()
+    assert any(
+        str(rel) == EXPOSES and to[2] == "resource::DISPATCH::handle"
+        for _frm, rel, to in ingestor.rels
+    ), ingestor.rels
 
 
 def test_resolves_only_capture_still_links_suffix(tmp_path: Path) -> None:

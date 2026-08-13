@@ -42,28 +42,6 @@ class ResourceKind(StrEnum):
 # Dispatch registrar decorators (`@flow(name=...)`, `@task`) and the producer
 # keywords whose literal value names the dispatched key (issue #913).
 DISPATCH_REGISTRARS = frozenset({"flow", "task"})
-# Task-queue / workflow frameworks whose presence corroborates that a
-# `{str: function}` module-level dict is a genuine dispatch registry rather
-# than an ordinary lookup table (issue #1241). A bare name->function dict is a
-# common Python idiom (stream tables, command maps, plugin registries); only a
-# module that imports one of these frameworks may treat such a dict as DISPATCH.
-DISPATCH_FRAMEWORK_MODULES = frozenset(
-    {
-        "celery",
-        "prefect",
-        "dramatiq",
-        "rq",
-        "huey",
-        "taskiq",
-        "arq",
-        "faust",
-        "luigi",
-        "airflow",
-        "temporalio",
-        "nameko",
-        "kombu",
-    }
-)
 DISPATCH_PRODUCER_KEYWORDS = frozenset({"workflow_name"})
 DISPATCH_NAME_KEYWORD = "name"
 DISPATCH_DEPLOYMENT_SEPARATOR = "/"
