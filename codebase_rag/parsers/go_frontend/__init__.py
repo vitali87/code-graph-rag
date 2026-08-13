@@ -10,6 +10,7 @@ from .frontend import (
     GoSemanticFacts,
     find_go_module,
     go_frontend_available,
+    resolve_go_frontend,
     run_go_frontend,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "GoSemanticFacts",
     "find_go_module",
     "go_frontend_available",
+    "resolve_go_frontend",
     "run_go_frontend",
 ]

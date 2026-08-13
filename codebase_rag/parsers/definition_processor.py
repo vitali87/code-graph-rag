@@ -158,6 +158,13 @@ class DefinitionProcessor(
         # name-trie fabricate a first-party edge. Same in-place mutation
         # discipline as csharp_call_sites.
         self.csharp_external_sites: set[CallSiteKey] = set()
+        # Go go/types frontend (issue #1179): the same two call families as C#
+        # -- per-invocation exact first-party call targets keyed on the callee
+        # NAME token location, and sites the compiler resolved OUTSIDE the module
+        # (stdlib, deps). Same in-place mutation discipline; the Go type-inference
+        # engine holds the reference.
+        self.go_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
+        self.go_external_sites: set[CallSiteKey] = set()
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.

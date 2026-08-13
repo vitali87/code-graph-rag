@@ -116,6 +116,15 @@ class CSharpFrontend(StrEnum):
     HYBRID = "hybrid"
 
 
+class GoFrontend(StrEnum):
+    # AUTO resolves at run time: GOTYPES where a go toolchain is on PATH,
+    # TREESITTER otherwise (resolve_go_frontend). The parser fingerprint records
+    # the RESOLVED mode, so go and non-go graphs never share an identity.
+    AUTO = "auto"
+    TREESITTER = "treesitter"
+    GOTYPES = "gotypes"
+
+
 # JS/TS import specifier schemes naming genuinely external code (node
 # builtins, registries, URLs). Any OTHER scheme (`ext:` deno aliases,
 # bundler virtual modules) points at first-party code under a non-file-path

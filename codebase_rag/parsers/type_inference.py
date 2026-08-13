@@ -46,6 +46,8 @@ class TypeInferenceEngine:
         "class_field_element_types",
         "method_return_types",
         "go_function_return_types",
+        "go_call_sites",
+        "go_external_sites",
         "csharp_partial_groups",
         "csharp_extension_methods",
         "csharp_call_sites",
@@ -85,6 +87,8 @@ class TypeInferenceEngine:
         class_field_element_types: dict[str, dict[str, str]] | None = None,
         method_return_types: dict[str, str] | None = None,
         go_function_return_types: dict[str, str] | None = None,
+        go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
+        go_external_sites: set[CallSiteKey] | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
         | None = None,
@@ -136,6 +140,13 @@ class TypeInferenceEngine:
         # FIRST return type, read only by the single-segment binding path.
         self.go_function_return_types = (
             go_function_return_types if go_function_return_types is not None else {}
+        )
+        # Shared references (as with csharp_call_sites): the go/types call-site
+        # facts and external sites, populated after construction and read by the
+        # Go resolver's semantic path (issue #1179).
+        self.go_call_sites = go_call_sites if go_call_sites is not None else {}
+        self.go_external_sites = (
+            go_external_sites if go_external_sites is not None else set()
         )
         self._go_free_fn_index: dict[tuple[str, str], str] = {}
         self._go_free_fn_index_size = -1
@@ -200,7 +211,13 @@ class TypeInferenceEngine:
     @property
     def go_type_inference(self) -> GoTypeInferenceEngine:
         if self._go_type_inference is None:
-            self._go_type_inference = GoTypeInferenceEngine()
+            self._go_type_inference = GoTypeInferenceEngine(
+                go_call_sites=self.go_call_sites,
+                go_external_sites=self.go_external_sites,
+                function_locations=self.function_locations,
+                module_qn_to_file_path=self.module_qn_to_file_path,
+                repo_path=self.repo_path,
+            )
         return self._go_type_inference
 
     @property

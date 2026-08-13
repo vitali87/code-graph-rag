@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...types_defs import FunctionLocation, FunctionSpanKey
+from ..csharp_frontend import CallSiteKey
+from ..frontends.protocol import ResolvedCallSite
+from ..semantic_call_join import call_site_key, declared_location
 from ..utils import safe_decode_text
 from .utils import type_identifier_text
+
+# Sentinel returned when the go/types frontend resolved a call OUTSIDE the module
+# (stdlib, deps): the resolver suppresses the name-trie fallback there rather than
+# fabricating a first-party edge (mirrors CSHARP_EXTERNAL_TARGET).
+GO_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 
 class GoTypeInferenceEngine:
@@ -14,7 +25,99 @@ class GoTypeInferenceEngine:
     # resolver turns a name into a class qn via the same _resolve_class_name path the
     # definition pass uses, so pointer/generic wrappers are stripped here down to the
     # underlying type identifier.
-    __slots__ = ()
+    #
+    # The go/types semantic frontend (issue #1179) adds an exact-callee join on top:
+    # the shared go_call_sites / go_external_sites facts (populated after
+    # construction) resolve a call to its declared target or suppress a fabricated
+    # first-party edge, with per-miss fallback to the stateless walker below.
+    __slots__ = (
+        "go_call_sites",
+        "go_external_sites",
+        "function_locations",
+        "module_qn_to_file_path",
+        "repo_path",
+        "_rel_to_module",
+    )
+
+    def __init__(
+        self,
+        go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
+        go_external_sites: set[CallSiteKey] | None = None,
+        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
+        module_qn_to_file_path: dict[str, Path] | None = None,
+        repo_path: Path | None = None,
+    ) -> None:
+        self.go_call_sites = go_call_sites if go_call_sites is not None else {}
+        self.go_external_sites = (
+            go_external_sites if go_external_sites is not None else set()
+        )
+        self.function_locations = (
+            function_locations if function_locations is not None else {}
+        )
+        self.module_qn_to_file_path = (
+            module_qn_to_file_path if module_qn_to_file_path is not None else {}
+        )
+        self.repo_path = repo_path if repo_path is not None else Path()
+        self._rel_to_module: dict[str, str] = {}
+
+    def resolve_go_call_site(
+        self, call_node: Node, module_qn: str
+    ) -> tuple[str, str] | None:
+        # The go/types semantic path: an exact first-party callee (embedded-struct
+        # promotion, scope shadowing) the walker cannot type, or the external
+        # sentinel for a call the compiler proved leaves the module. Any miss
+        # returns None so the caller falls back to the tree-sitter heuristics.
+        if not (self.go_call_sites or self.go_external_sites):
+            return None
+        key = self._call_site_key(call_node, module_qn)
+        if key is None:
+            return None
+        fact = self.go_call_sites.get(key)
+        if fact is not None:
+            return declared_location(
+                fact.target_file,
+                fact.target_line,
+                fact.target_col,
+                self.function_locations,
+                self.module_qn_to_file_path,
+                self.repo_path,
+                self._rel_to_module,
+            )
+        if key in self.go_external_sites:
+            return GO_EXTERNAL_TARGET
+        return None
+
+    def _call_site_key(self, call_node: Node, module_qn: str) -> CallSiteKey | None:
+        name_node = self._callee_name_node(call_node)
+        if name_node is None:
+            return None
+        name = safe_decode_text(name_node)
+        if not name:
+            return None
+        return call_site_key(
+            name_node, name, module_qn, self.module_qn_to_file_path, self.repo_path
+        )
+
+    def _callee_name_node(self, call_node: Node) -> Node | None:
+        # The callee NAME token, matching the gotypes tool's `calleeName`: a bare
+        # identifier for `Foo()`, the `field` child for `x.M()` / `pkg.F()`, and
+        # the inner name for generic (`Gen[T]()`) and parenthesised callees.
+        func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        return self._name_from_callee(func)
+
+    def _name_from_callee(self, node: Node | None) -> Node | None:
+        if node is None:
+            return None
+        if node.type == cs.TS_GO_IDENTIFIER:
+            return node
+        if node.type == cs.TS_GO_SELECTOR_EXPRESSION:
+            return node.child_by_field_name(cs.FIELD_FIELD)
+        if node.type == cs.TS_GO_INDEX_EXPRESSION:
+            return self._name_from_callee(node.child_by_field_name(cs.FIELD_OPERAND))
+        if node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+            inner = next((c for c in node.named_children), None)
+            return self._name_from_callee(inner)
+        return None
 
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str
