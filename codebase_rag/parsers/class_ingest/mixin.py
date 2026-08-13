@@ -173,6 +173,7 @@ class ClassIngestMixin:
     csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
     csharp_base_kinds: dict[tuple[str, int], dict[str, str]]
     csharp_type_locations: dict[tuple[str, int], str]
+    go_type_locations: dict[tuple[str, int, int], tuple[str, str]]
     class_field_guard_inner: dict[str, dict[str, str]]
     class_field_element_types: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
@@ -1115,6 +1116,17 @@ class ClassIngestMixin:
                 csharp_base_kinds = self.csharp_base_kinds.get(
                     (rel_path, class_start_line)
                 )
+        elif language == cs.SupportedLanguage.GO and file_path is not None:
+            # Reverse index for the go/types frontend's implements facts: each
+            # ImplementsPair end (a declaring identifier position) joins back to
+            # this type's qn + node label after Pass 2. A Go type_spec's
+            # start_point IS the name token, so the position matches directly --
+            # no name alias (unlike Go funcs, keyed at the func keyword).
+            rel_path = cached_relative_path(file_path, self.repo_path).as_posix()
+            self.go_type_locations[(rel_path, class_start_line, class_start_col)] = (
+                class_qn,
+                str(node_type),
+            )
         rel.create_class_relationships(
             member_node,
             class_qn,

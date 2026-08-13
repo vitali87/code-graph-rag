@@ -27,7 +27,7 @@ from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey
 from .dependency_parser import parse_dependencies
-from .frontends.protocol import ResolvedCallSite
+from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .handlers import get_handler
@@ -165,6 +165,14 @@ class DefinitionProcessor(
         # engine holds the reference.
         self.go_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
         self.go_external_sites: set[CallSiteKey] = set()
+        # go/types-proven implementer->interface pairs (each end a declaring
+        # identifier position), stashed here at frontend time and resolved to
+        # IMPLEMENTS edges after Pass 2 fills go_type_locations below.
+        self.go_implements: list[ImplementsPair] = []
+        # (rel_file, type_start_line, type_start_col) -> (class qn, node label)
+        # for every ingested Go type. Go's type_spec start_point IS the name
+        # token, so the frontend's pair positions join here directly (no alias).
+        self.go_type_locations: dict[tuple[str, int, int], tuple[str, str]] = {}
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.
