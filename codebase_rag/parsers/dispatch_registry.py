@@ -1,24 +1,30 @@
 # String-keyed dispatch registries (issue #913). A handler registered under a
 # string key serves work scheduled elsewhere by that same string, invisibly to
-# call resolution. Registrations (module-level dict registries mapping string
-# literals to module functions, and `@flow`/`@task` registrar decorators)
-# EXPOSE `resource::DISPATCH::<key>`; producers passing the key through a
-# recognised keyword emit WRITES_TO on the same node, so the two sides meet
-# without a resolution pass. A produced `name/deployment` key additionally
-# RESOLVES_TO the bare registered `name` when no exact registration exists.
-# Dynamic keys stay out: a ceiling yields nothing, never a wrong link.
+# call resolution. A `@flow`/`@task` registrar decorator EXPOSES
+# `resource::DISPATCH::<key>`; a producer passing the key through a recognised
+# keyword emits WRITES_TO on the same node, so the two sides meet without a
+# resolution pass. A produced `name/deployment` key additionally RESOLVES_TO the
+# bare registered `name` when no exact registration exists. Dynamic keys stay
+# out: a ceiling yields nothing, never a wrong link.
+#
+# Only an explicit `@flow`/`@task` decorator registers a handler. A module-level
+# `{str: function}` dict is NOT treated as a registry (issue #1241): it is
+# indistinguishable from an ordinary lookup table (click's stream tables,
+# command maps, plugin registries), and a DISPATCH resource keyed only by a bare
+# string cannot be tied back to a specific dict -- any corroboration by key text
+# alone manufactures false registries on coincidental collisions.
 from __future__ import annotations
 
 import ast
 from typing import NamedTuple
 
+from loguru import logger
 from tree_sitter import Node
 
 from .. import constants as cs
 from ..capture import CaptureSelection
 from ..services import IngestorProtocol, QueryProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
-from .import_processor import ImportProcessor
 from .io_access.constants import (
     DISPATCH_DEPLOYMENT_SEPARATOR,
     DISPATCH_NAME_KEYWORD,
@@ -52,7 +58,6 @@ class DispatchRegistryProcessor:
 
     __slots__ = (
         "_ingestor",
-        "_import_processor",
         "_function_registry",
         "_exposes_enabled",
         "_writes_enabled",
@@ -68,10 +73,8 @@ class DispatchRegistryProcessor:
         ingestor: IngestorProtocol,
         selection: CaptureSelection,
         function_registry: FunctionRegistryTrieProtocol,
-        import_processor: ImportProcessor,
     ) -> None:
         self._ingestor = ingestor
-        self._import_processor = import_processor
         self._function_registry = function_registry
         self._exposes_enabled = selection.rel_enabled(cs.RelationshipType.EXPOSES)
         self._writes_enabled = selection.rel_enabled(cs.RelationshipType.WRITES_TO)
@@ -115,14 +118,14 @@ class DispatchRegistryProcessor:
                     resolved_deferred.add(key)
         if not self._resolves_enabled:
             return
+        produced = {
+            key for entries in self._module_producers.values() for _spec, key in entries
+        } | resolved_deferred
         registered = {
             key
             for entries in self._module_registrations.values()
             for _qn, _type, key in entries
         } | self._db_registered_keys()
-        produced = {
-            key for entries in self._module_producers.values() for _spec, key in entries
-        } | resolved_deferred
         for key in sorted(produced):
             if DISPATCH_DEPLOYMENT_SEPARATOR not in key or key in registered:
                 continue
@@ -141,13 +144,19 @@ class DispatchRegistryProcessor:
 
     def _db_registered_keys(self) -> set[str]:
         # An incremental run reprocesses only changed files; registrations in
-        # untouched files exist solely in the database.
+        # untouched files exist solely in the database. A read failure (the
+        # graph briefly down mid-rebuild) degrades to no seeds rather than
+        # aborting finalize -- the rebuild has to complete regardless.
         if not isinstance(self._ingestor, QueryProtocol):
             return set()
-        rows = self._ingestor.fetch_all(
-            "MATCH (h:Resource {kind: 'DISPATCH'})<-[:EXPOSES]-() "
-            "RETURN DISTINCT h.name AS name"
-        )
+        try:
+            rows = self._ingestor.fetch_all(
+                "MATCH (h:Resource {kind: 'DISPATCH'})<-[:EXPOSES]-() "
+                "RETURN DISTINCT h.name AS name"
+            )
+        except Exception:  # noqa: BLE001 - any read failure degrades to no seeds
+            logger.debug("DISPATCH registration seed read failed; no seeds")
+            return set()
         return {name for row in rows if isinstance(name := row.get("name"), str)}
 
     def _process_module_scope(self, root: Node, module_qn: str) -> None:
@@ -173,50 +182,6 @@ class DispatchRegistryProcessor:
             name = safe_decode_text(target)
             if name is not None and (text := _plain_string(value)) is not None:
                 constants[name] = text
-        elif value.type == cs.TS_PY_DICTIONARY:
-            self._process_dict_registry(value, module_qn)
-
-    def _process_dict_registry(self, dictionary: Node, module_qn: str) -> None:
-        # A registry ONLY when every entry maps a plain string literal to a
-        # module-declared function; one exception keeps config dicts out.
-        entries: list[tuple[str, str, NodeType]] = []
-        for pair in dictionary.named_children:
-            if pair.type != cs.TS_PY_PAIR:
-                return
-            key_node = pair.child_by_field_name(cs.FIELD_KEY)
-            value_node = pair.child_by_field_name(cs.FIELD_VALUE)
-            key = _plain_string(key_node) if key_node is not None else None
-            if key is None or value_node is None:
-                return
-            if value_node.type != cs.TS_PY_IDENTIFIER:
-                return
-            handler = safe_decode_text(value_node)
-            if handler is None:
-                return
-            resolved = self._resolve_handler(module_qn, handler)
-            if resolved is None:
-                return
-            entries.append((key, *resolved))
-        for key, handler_qn, node_type in entries:
-            self._emit_registration(module_qn, handler_qn, node_type, key)
-
-    def _resolve_handler(
-        self, module_qn: str, handler: str
-    ) -> tuple[str, NodeType] | None:
-        # A handler declared in the registry module itself, or imported into
-        # it (the production registries import from sibling modules; Python
-        # import mappings hold full project-prefixed qns).
-        import_map = self._import_processor.import_mapping.get(module_qn, {})
-        for handler_qn in (
-            f"{module_qn}{cs.SEPARATOR_DOT}{handler}",
-            import_map.get(handler),
-        ):
-            if handler_qn is None:
-                continue
-            node_type = self._function_registry.get(handler_qn)
-            if node_type in _HANDLER_NODE_LABELS:
-                return handler_qn, node_type
-        return None
 
     def _process_decorated(self, node: Node, module_qn: str) -> None:
         definition = node.child_by_field_name(cs.FIELD_DEFINITION)
