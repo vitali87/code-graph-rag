@@ -521,7 +521,10 @@ class GraphUpdater:
                 continue
             impl_qn, impl_label = impl
             iface_qn, iface_label = iface
-            self.ingestor.ensure_relationship_batch(
+            # Through _sink (the capture-filtering wrapper), not the raw
+            # ingestor, so a capture that disables IMPLEMENTS suppresses this
+            # edge too -- graph-element emission must honour the capture contract.
+            self._sink.ensure_relationship_batch(
                 (impl_label, cs.KEY_QUALIFIED_NAME, impl_qn),
                 cs.RelationshipType.IMPLEMENTS,
                 (iface_label, cs.KEY_QUALIFIED_NAME, iface_qn),
