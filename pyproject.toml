@@ -50,11 +50,12 @@ dependencies = [
     "rich>=14.2.0",
     "prompt-toolkit>=3.0.52",
     "diff-match-patch>=20241021",
-    "click>=8.3.1",
+    "click>=8.3.3",
     "protobuf>=6.33.5",
     "defusedxml>=0.7.1",
     "huggingface-hub[hf-xet]>=1.7.2",
     "pathspec>=1.0.4",
+    "pygments>=2.20.0",
 ]
 
 [project.scripts]

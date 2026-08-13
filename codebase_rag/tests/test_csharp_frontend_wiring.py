@@ -268,13 +268,15 @@ def _button_facts() -> object:
     )
 
 
-def test_default_csharp_frontend_is_auto() -> None:
-    # The shipped default: hybrid wherever a dotnet toolchain exists,
-    # pure tree-sitter otherwise. Read from the FIELD default because the
-    # test suite pins the live settings instance to tree-sitter.
+def test_default_csharp_frontend_is_treesitter() -> None:
+    # Indexing must not execute repository-controlled MSBuild targets or source
+    # generators unless the user explicitly opts into the Roslyn frontend.
     from codebase_rag.config import AppConfig
 
-    assert AppConfig.model_fields["CSHARP_FRONTEND"].default == cs.CSharpFrontend.AUTO
+    assert (
+        AppConfig.model_fields["CSHARP_FRONTEND"].default
+        == cs.CSharpFrontend.TREESITTER
+    )
 
 
 def test_auto_mode_runs_frontend_when_dotnet_available(

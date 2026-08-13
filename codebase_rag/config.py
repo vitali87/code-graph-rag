@@ -17,7 +17,11 @@ from . import exceptions as ex
 from . import logs
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
-load_dotenv()
+# Load only the configuration file in the invocation directory.  The default
+# python-dotenv discovery walks parent directories, which can silently import
+# credentials from an unrelated workspace (and makes tests depend on the
+# caller's directory layout).
+load_dotenv(dotenv_path=Path.cwd() / ".env")
 
 
 class ApiKeyInfoEntry(TypedDict):
@@ -200,7 +204,7 @@ class AppConfig(BaseSettings):
     # HYBRID needs a dotnet SDK + a restorable .csproj/.sln and degrades without
     # them. HYBRID augments (base-vs-interface, overload and extension binding,
     # partial-class identity); tree-sitter stays the standalone-correct backbone.
-    CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.AUTO
+    CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.TREESITTER
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )
@@ -263,8 +267,6 @@ class AppConfig(BaseSettings):
             "show",
             "ls-files",
             "remote",
-            "config",
-            "branch",
         }
     )
 

@@ -102,6 +102,12 @@ class TestRequiresApproval:
         assert _requires_approval("git push") is True
         assert _requires_approval("git commit -m 'msg'") is True
         assert _requires_approval("git reset --hard") is True
+        assert _requires_approval("git branch -D topic") is True
+        assert _requires_approval("git config core.sshCommand malicious") is True
+
+    def test_mutating_find_forms_require_approval(self) -> None:
+        assert _requires_approval("find . -delete") is True
+        assert _requires_approval("find . -exec rm {} +") is True
 
     def test_write_commands_require_approval(self) -> None:
         assert _requires_approval("rm file.txt") is True
