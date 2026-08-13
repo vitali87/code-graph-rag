@@ -195,3 +195,48 @@ def test_gotypes_tool_emits_call_and_external_facts(tmp_path: Path) -> None:
     println_line, println_col = _byte_loc(_FIXTURE, "Println")
     assert ("main.go", println_line, println_col, "Println") in facts.external_sites
     assert not any(key[3] == "Println" for key in facts.call_sites)
+
+
+_IMPLEMENTS_FIXTURE = """package main
+
+type Speaker interface{ Speak() string }
+
+type Dog struct{}
+
+func (d Dog) Speak() string { return "woof" }
+
+type Box[T any] struct{ v T }
+
+func (b Box[T]) Speak() string { return "box" }
+
+func main() {
+\t_ = Dog{}
+\t_ = Box[int]{}
+}
+"""
+
+
+def test_gotypes_tool_emits_implements_and_skips_generics(tmp_path: Path) -> None:
+    # End-to-end: the tool must emit the Dog -> Speaker pair proven by
+    # types.Implements, keyed on both declaring NAME tokens, AND must SKIP the
+    # generic Box[T] even though it structurally satisfies Speaker --
+    # types.Implements is not contractually specified for uninstantiated
+    # generics, so the frontend degrades to tree-sitter there rather than emit a
+    # version-dependent edge (must not crash on the generic, either).
+    go = shutil.which("go")
+    if go is None:
+        pytest.skip("go toolchain not available")
+    if _build_tool(go) is None:
+        pytest.skip("gotypes tool could not build in this environment")
+    (tmp_path / "go.mod").write_text("module example.com/impl\n\ngo 1.23\n")
+    (tmp_path / "main.go").write_text(_IMPLEMENTS_FIXTURE, encoding="utf-8")
+
+    facts = run_go_frontend(tmp_path)
+
+    dog_line, dog_col = _byte_loc(_IMPLEMENTS_FIXTURE, "Dog struct")
+    iface_line, iface_col = _byte_loc(_IMPLEMENTS_FIXTURE, "Speaker interface")
+    # Exactly one pair: Dog -> Speaker. The generic Box[T] structurally
+    # satisfies Speaker too, so its absence here proves the generic skip.
+    assert facts.implements == [
+        GoImplements("main.go", dog_line, dog_col, "main.go", iface_line, iface_col)
+    ]

@@ -170,6 +170,14 @@ func (c *collector) gatherTypes(pkg *packages.Package) {
 		if !ok {
 			continue
 		}
+		// Uninstantiated generic types: types.Implements is not contractually
+		// specified for a type with live type parameters (it happens not to
+		// panic on go1.23, but the result is not part of the API guarantee), so
+		// skip them on BOTH the implementer and the interface side rather than
+		// emit a version-dependent edge -- the frontend degrades to tree-sitter.
+		if named.TypeParams().Len() > 0 {
+			continue
+		}
 		rel, line, col, ok := c.position(pkg.Fset, obj.Pos())
 		if !ok {
 			continue
