@@ -1035,7 +1035,6 @@ class CallProcessor:
             ingestor=ingestor,
             selection=selection,
             function_registry=function_registry,
-            import_processor=import_processor,
         )
         self._rpc_exposure = GoRpcExposureProcessor(
             ingestor=ingestor,
