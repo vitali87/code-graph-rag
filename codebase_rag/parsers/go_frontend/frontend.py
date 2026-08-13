@@ -40,6 +40,20 @@ class GoCallSite(NamedTuple):
     target_col: int
 
 
+class GoImplements(NamedTuple):
+    """A types.Implements-proven IMPLEMENTS edge: the implementer and the
+    interface each as the declaring identifier's (file, line, col). A pure
+    position-join -- Go reuses simple type names across packages, so the
+    consumer resolves both ends by location, never by name."""
+
+    impl_file: str
+    impl_line: int
+    impl_col: int
+    iface_file: str
+    iface_line: int
+    iface_col: int
+
+
 class GoSemanticFacts(NamedTuple):
     """Everything one gotypes run learned about the module."""
 
@@ -48,12 +62,15 @@ class GoSemanticFacts(NamedTuple):
     # compiler proof the call leaves the repo, so the name-trie fallback must
     # not fabricate a first-party edge there.
     external_sites: set[CallSiteKey]
+    # First-party concrete-type -> first-party interface pairs the compiler
+    # proved; the only source of Go IMPLEMENTS edges (no syntactic base list).
+    implements: list[GoImplements]
 
 
 def _empty_facts() -> GoSemanticFacts:
     # A fresh instance per failure path: the maps are handed to mutable
     # processor state, so a shared constant would alias across runs.
-    return GoSemanticFacts({}, set())
+    return GoSemanticFacts({}, set(), [])
 
 
 _GO = "go"
@@ -209,13 +226,29 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts:
                 (site["file"], int(site["line"]), int(site["col"]), site["name"])
                 for site in payload.get("externals", [])
             },
+            implements=[
+                GoImplements(
+                    pair["file"],
+                    int(pair["line"]),
+                    int(pair["col"]),
+                    pair["ifile"],
+                    int(pair["iline"]),
+                    int(pair["icol"]),
+                )
+                for pair in payload.get("implements", [])
+            ],
         )
     except (KeyError, TypeError, ValueError, AttributeError):
         # A malformed fact entry (missing key, non-int position, non-object
         # row) must degrade to tree-sitter, never abort the whole index run.
         logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
         return _empty_facts()
-    if not facts.call_sites and not facts.external_sites and stderr.strip():
+    if (
+        not facts.call_sites
+        and not facts.external_sites
+        and not facts.implements
+        and stderr.strip()
+    ):
         # A well-formed but entirely empty payload with diagnostics means the
         # load went wrong (build tag, unresolved import); surface the tool's
         # stderr instead of looking identical to a genuinely call-free module.

@@ -7,6 +7,7 @@ from __future__ import annotations
 from .frontend import (
     CallSiteKey,
     GoCallSite,
+    GoImplements,
     GoSemanticFacts,
     find_go_module,
     go_frontend_available,
@@ -17,6 +18,7 @@ from .frontend import (
 __all__ = [
     "CallSiteKey",
     "GoCallSite",
+    "GoImplements",
     "GoSemanticFacts",
     "find_go_module",
     "go_frontend_available",

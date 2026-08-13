@@ -13,9 +13,14 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.parsers.frontends import FRONTENDS, SemanticFacts
 from codebase_rag.parsers.frontends.go import GoFrontend, _adapt_go_semantic_facts
-from codebase_rag.parsers.frontends.protocol import LanguageFrontend, ResolvedCallSite
+from codebase_rag.parsers.frontends.protocol import (
+    ImplementsPair,
+    LanguageFrontend,
+    ResolvedCallSite,
+)
 from codebase_rag.parsers.go_frontend import (
     GoCallSite,
+    GoImplements,
     GoSemanticFacts,
     find_go_module,
     run_go_frontend,
@@ -72,6 +77,18 @@ def test_parse_payload_reads_call_and_external_sections() -> None:
                 }
             ],
             "externals": [{"file": "a.go", "line": 11, "col": 8, "name": "Println"}],
+            "implements": [
+                {
+                    "file": "a.go",
+                    "line": 9,
+                    "col": 5,
+                    "name": "Loud",
+                    "ifile": "b.go",
+                    "iline": 5,
+                    "icol": 5,
+                    "iname": "Greeter",
+                }
+            ],
         }
     )
     facts = _parse_payload(payload)
@@ -79,20 +96,23 @@ def test_parse_payload_reads_call_and_external_sections() -> None:
         "Handle", "b.go", 3, 4
     )
     assert facts.external_sites == {("a.go", 11, 8, "Println")}
+    assert facts.implements == [GoImplements("a.go", 9, 5, "b.go", 5, 5)]
 
 
 def test_parse_payload_without_sections_yields_empty_facts() -> None:
-    # An older tool build (stale cached binary) may emit neither section; both
-    # must default to empty instead of raising.
+    # An older tool build (stale cached binary) may emit no section; all three
+    # families must default to empty instead of raising.
     facts = _parse_payload(json.dumps({}))
     assert facts.call_sites == {}
     assert facts.external_sites == set()
+    assert facts.implements == []
 
 
 def test_parse_payload_non_json_yields_empty_facts() -> None:
     facts = _parse_payload("panic: boom\n")
     assert facts.call_sites == {}
     assert facts.external_sites == set()
+    assert facts.implements == []
 
 
 def test_go_frontend_is_registered() -> None:
@@ -121,6 +141,7 @@ def test_adapter_maps_go_facts_to_semantic_facts() -> None:
     facts = GoSemanticFacts(
         call_sites={("a.go", 5, 8, "Handle"): GoCallSite("Handle", "b.go", 3, 4)},
         external_sites={("a.go", 11, 8, "Println")},
+        implements=[GoImplements("a.go", 9, 5, "b.go", 5, 5)],
     )
     adapted = _adapt_go_semantic_facts(facts)
     assert isinstance(adapted, SemanticFacts)
@@ -128,14 +149,16 @@ def test_adapter_maps_go_facts_to_semantic_facts() -> None:
         "Handle", "b.go", 3, 4
     )
     assert adapted.external_sites == {("a.go", 11, 8, "Println")}
-    # The Go frontend fills only the two call families; the rest stay empty.
+    # GoImplements maps 1:1 onto the generic implements_pairs family.
+    assert adapted.implements_pairs == [ImplementsPair("a.go", 9, 5, "b.go", 5, 5)]
+    # The Go frontend leaves the C#-specific families empty.
     assert adapted.base_kinds == {}
     assert adapted.partial_groups == []
     assert adapted.query_calls == []
 
 
 def test_adapter_of_empty_facts_is_empty() -> None:
-    assert _adapt_go_semantic_facts(GoSemanticFacts({}, set())).is_empty()
+    assert _adapt_go_semantic_facts(GoSemanticFacts({}, set(), [])).is_empty()
 
 
 def test_gotypes_tool_emits_call_and_external_facts(tmp_path: Path) -> None:

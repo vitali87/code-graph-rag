@@ -93,6 +93,7 @@ def test_call_fact_overrides_heuristic_to_exact_implementation(
             )
         },
         external_sites=set(),
+        implements=[],
     )
     _gotypes(monkeypatch, facts)
 
@@ -137,6 +138,7 @@ def test_external_site_fact_suppresses_name_trie_fallback(
     facts = GoSemanticFacts(
         call_sites={},
         external_sites={("sample.go", close_line, close_col, "Close")},
+        implements=[],
     )
     _gotypes(monkeypatch, facts)
 

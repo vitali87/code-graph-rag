@@ -49,6 +49,23 @@ class QueryCall:
     target_col: int
 
 
+@dataclass(frozen=True)
+class ImplementsPair:
+    """A compiler-proven IMPLEMENTS edge for a structurally-typed language, where
+    there is no syntactic base list to read (Go today). A pure position-join like
+    QueryCall: both the implementer and the interface carry their declaring
+    identifier's (file, line, col), which the consumer resolves to graph nodes
+    through the type-location map -- never by simple name, which Go reuses across
+    packages. Languages with a syntactic base list use `base_kinds` instead."""
+
+    impl_file: str
+    impl_line: int
+    impl_col: int
+    iface_file: str
+    iface_line: int
+    iface_col: int
+
+
 @dataclass
 class SemanticFacts:
     """Everything one frontend run learned about the repo. Every family is OPTIONAL
@@ -68,6 +85,9 @@ class SemanticFacts:
     base_kinds: BaseKindMap = field(default_factory=dict)
     partial_groups: list[list[tuple[str, int]]] = field(default_factory=list)
     query_calls: list[QueryCall] = field(default_factory=list)
+    # IMPLEMENTS edges for a structurally-typed language with no syntactic base
+    # list (Go #1179); languages with a base list use `base_kinds` instead.
+    implements_pairs: list[ImplementsPair] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not (
@@ -76,6 +96,7 @@ class SemanticFacts:
             or self.base_kinds
             or self.partial_groups
             or self.query_calls
+            or self.implements_pairs
         )
 
 
