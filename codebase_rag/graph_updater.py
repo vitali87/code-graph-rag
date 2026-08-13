@@ -763,8 +763,10 @@ class GraphUpdater:
         # Before the partial join on an incremental run: rebuild the type
         # locations for unchanged .cs files so a partial part living in one
         # still joins its group (issue #1229). Pass-2 entries for re-parsed
-        # files are already present and take precedence.
-        if not force:
+        # files are already present and take precedence. A cacheless full build
+        # (force=False but _is_full_build) already re-parsed every file, so the
+        # project-wide query would be wasted work -- skip it.
+        if not force and not self._is_full_build:
             self._rehydrate_csharp_type_locations()
 
         # Partial groups join AFTER Pass 2: the Roslyn declaration
