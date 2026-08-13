@@ -254,6 +254,11 @@ FIELD_FINALIZER = "finalizer"
 # body each iteration, so taint the body carries into it reaches the next one.
 FIELD_INCREMENT = "increment"
 
+# Generic container type names whose sole type argument is the element type,
+# so `Array<User>` annotates the variable as `User`, not `Array`.
+JS_ARRAY_TYPE_NAME = "Array"
+JS_READONLY_ARRAY_TYPE_NAME = "ReadonlyArray"
+
 # JS/TS module system node types
 TS_TYPE_ANNOTATION = "type_annotation"
 TS_IMPORT_ALIAS = "import_alias"

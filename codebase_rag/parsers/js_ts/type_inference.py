@@ -43,6 +43,13 @@ if TYPE_CHECKING:
 
 _JS_DECLARATOR_QUERY = "(variable_declarator) @declarator"
 
+# Generic containers whose sole type argument IS the variable's element type,
+# so `Array<User>` infers `User` rather than the container `Array`. Every other
+# generic (`Map<string, User>`, `Promise<User>`) infers the container itself.
+_JS_ELEMENT_GENERICS = frozenset(
+    {cs.JS_ARRAY_TYPE_NAME, cs.JS_READONLY_ARRAY_TYPE_NAME}
+)
+
 
 class JsTypeInferenceEngine:
     __slots__ = (
@@ -100,60 +107,14 @@ class JsTypeInferenceEngine:
         if declarator_nodes is not None:
             for current in declarator_nodes:
                 declarator_count += 1
-                name_node = current.child_by_field_name("name")
-                value_node = current.child_by_field_name("value")
-                if name_node and value_node:
-                    var_name_text = name_node.text
-                    if var_name_text:
-                        var_name = safe_decode_text(name_node)
-                        if var_name is not None:
-                            logger.debug(
-                                ls.JS_VAR_DECLARATOR_FOUND,
-                                var_name=var_name,
-                                module_qn=module_qn,
-                            )
-                            if var_type := self._infer_js_variable_type_from_value(
-                                value_node, module_qn
-                            ):
-                                local_var_types[var_name] = var_type
-                                logger.debug(
-                                    ls.JS_VAR_INFERRED,
-                                    var_name=var_name,
-                                    var_type=var_type,
-                                )
-                            else:
-                                logger.debug(ls.JS_VAR_INFER_FAILED, var_name=var_name)
+                self._record_declarator_type(current, module_qn, local_var_types)
         else:
             stack: list[ASTNode] = [caller_node]
             while stack:
                 current = stack.pop()
                 if current.type == cs.TS_VARIABLE_DECLARATOR:
                     declarator_count += 1
-                    name_node = current.child_by_field_name("name")
-                    value_node = current.child_by_field_name("value")
-                    if name_node and value_node:
-                        var_name_text = name_node.text
-                        if var_name_text:
-                            var_name = safe_decode_text(name_node)
-                            if var_name is not None:
-                                logger.debug(
-                                    ls.JS_VAR_DECLARATOR_FOUND,
-                                    var_name=var_name,
-                                    module_qn=module_qn,
-                                )
-                                if var_type := self._infer_js_variable_type_from_value(
-                                    value_node, module_qn
-                                ):
-                                    local_var_types[var_name] = var_type
-                                    logger.debug(
-                                        ls.JS_VAR_INFERRED,
-                                        var_name=var_name,
-                                        var_type=var_type,
-                                    )
-                                else:
-                                    logger.debug(
-                                        ls.JS_VAR_INFER_FAILED, var_name=var_name
-                                    )
+                    self._record_declarator_type(current, module_qn, local_var_types)
                 stack.extend(reversed(current.children))
 
         logger.debug(
@@ -162,6 +123,102 @@ class JsTypeInferenceEngine:
             declarator_count=declarator_count,
         )
         return local_var_types
+
+    def _record_declarator_type(
+        self, declarator: ASTNode, module_qn: str, local_var_types: dict[str, str]
+    ) -> None:
+        name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None or not name_node.text:
+            return
+        var_name = safe_decode_text(name_node)
+        if var_name is None:
+            return
+        logger.debug(ls.JS_VAR_DECLARATOR_FOUND, var_name=var_name, module_qn=module_qn)
+
+        var_type: str | None = None
+        value_node = declarator.child_by_field_name(cs.FIELD_VALUE)
+        if value_node is not None:
+            var_type = self._infer_js_variable_type_from_value(value_node, module_qn)
+        # The explicit annotation is the fallback: `const u: User = maybe()`
+        # types `u` even when the initialiser's own type cannot be inferred,
+        # and `let u: User;` has no initialiser to read at all.
+        if var_type is None:
+            type_node = declarator.child_by_field_name(cs.FIELD_TYPE)
+            if type_node is not None:
+                var_type = self._infer_js_variable_type_from_annotation(
+                    type_node, module_qn
+                )
+
+        if var_type is not None:
+            local_var_types[var_name] = var_type
+            logger.debug(ls.JS_VAR_INFERRED, var_name=var_name, var_type=var_type)
+        else:
+            logger.debug(ls.JS_VAR_INFER_FAILED, var_name=var_name)
+
+    def _infer_js_variable_type_from_annotation(
+        self, type_annotation_node: ASTNode, module_qn: str
+    ) -> str | None:
+        type_node = self._annotation_type_node(type_annotation_node)
+        if type_node is None:
+            return None
+        element_name = self._annotation_element_name(type_node)
+        if element_name is None:
+            return None
+        class_qn = self._resolve_js_class_name(element_name, module_qn)
+        return class_qn or element_name
+
+    @staticmethod
+    def _annotation_type_node(type_annotation_node: ASTNode) -> ASTNode | None:
+        # A `type_annotation` is `: <type>`; the type is its first child that is
+        # itself a type node (skipping the `:` token).
+        for child in type_annotation_node.children:
+            if child.type in (
+                cs.TS_TYPE_IDENTIFIER,
+                cs.TS_ARRAY_TYPE,
+                cs.TS_GENERIC_TYPE,
+            ):
+                return child
+        return None
+
+    def _annotation_element_name(self, type_node: ASTNode) -> str | None:
+        node_type = type_node.type
+        if node_type == cs.TS_TYPE_IDENTIFIER:
+            return safe_decode_text(type_node)
+        if node_type == cs.TS_ARRAY_TYPE:
+            # `User[]` -> `User`; a primitive element (`string[]`) has no
+            # class to resolve, so it is left uninferred.
+            return self._first_type_identifier(type_node)
+        if node_type == cs.TS_GENERIC_TYPE:
+            return self._generic_element_name(type_node)
+        return None
+
+    def _generic_element_name(self, generic_node: ASTNode) -> str | None:
+        container: ASTNode | None = None
+        type_arguments: ASTNode | None = None
+        for child in generic_node.children:
+            if child.type == cs.TS_TYPE_IDENTIFIER and container is None:
+                container = child
+            elif child.type == cs.TS_TYPE_ARGUMENTS:
+                type_arguments = child
+        if container is None:
+            return None
+        container_name = safe_decode_text(container)
+        if container_name in _JS_ELEMENT_GENERICS and type_arguments is not None:
+            arguments = [
+                child
+                for child in type_arguments.children
+                if child.type == cs.TS_TYPE_IDENTIFIER
+            ]
+            if len(arguments) == 1:
+                return safe_decode_text(arguments[0])
+        return container_name
+
+    @staticmethod
+    def _first_type_identifier(node: ASTNode) -> str | None:
+        for child in node.children:
+            if child.type == cs.TS_TYPE_IDENTIFIER:
+                return safe_decode_text(child)
+        return None
 
     def _infer_js_variable_type_from_value(
         self, value_node: ASTNode, module_qn: str

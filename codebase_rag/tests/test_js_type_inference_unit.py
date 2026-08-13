@@ -58,6 +58,46 @@ def create_call_expression_with_member(object_name: str, method_name: str) -> Mo
     )
 
 
+def create_type_identifier(name: str) -> MockNode:
+    return create_mock_node(cs.TS_TYPE_IDENTIFIER, name)
+
+
+def create_type_annotation(type_node: MockNode) -> MockNode:
+    colon = create_mock_node(":", ":")
+    return create_mock_node(cs.TS_TYPE_ANNOTATION, children=[colon, type_node])
+
+
+def create_array_type(element_node: MockNode) -> MockNode:
+    open_bracket = create_mock_node("[", "[")
+    close_bracket = create_mock_node("]", "]")
+    return create_mock_node(
+        cs.TS_ARRAY_TYPE, children=[element_node, open_bracket, close_bracket]
+    )
+
+
+def create_generic_type(container_name: str, arg_nodes: list[MockNode]) -> MockNode:
+    container = create_type_identifier(container_name)
+    type_arguments = create_mock_node(cs.TS_TYPE_ARGUMENTS, children=arg_nodes)
+    return create_mock_node(cs.TS_GENERIC_TYPE, children=[container, type_arguments])
+
+
+def create_declarator_with_annotation(
+    var_name: str,
+    type_node: MockNode,
+    value_node: MockNode | None = None,
+) -> MockNode:
+    name_node = create_mock_node(cs.TS_IDENTIFIER, var_name)
+    annotation = create_type_annotation(type_node)
+    children = [name_node, annotation]
+    if value_node is not None:
+        children.append(value_node)
+    return create_mock_node(
+        cs.TS_VARIABLE_DECLARATOR,
+        fields={"name": name_node, "type": annotation, "value": value_node},
+        children=children,
+    )
+
+
 @pytest.fixture
 def mock_import_processor() -> MagicMock:
     processor = MagicMock(spec=ImportProcessor)
@@ -428,6 +468,161 @@ class TestBuildLocalVariableTypeMap:
         )
 
         assert result == {}
+
+
+class TestInferJsVariableTypeFromAnnotation:
+    def test_plain_type_identifier_returns_name(
+        self,
+        js_type_engine: JsTypeInferenceEngine,
+    ) -> None:
+        annotation = create_type_annotation(create_type_identifier("User"))
+
+        result = js_type_engine._infer_js_variable_type_from_annotation(
+            annotation,  # ty: ignore[invalid-argument-type]  # MockNode not Node
+            "myapp.main",
+        )
+
+        assert result == "User"
+
+    def test_array_type_returns_element_name(
+        self,
+        js_type_engine: JsTypeInferenceEngine,
+    ) -> None:
+        annotation = create_type_annotation(
+            create_array_type(create_type_identifier("User"))
+        )
+
+        result = js_type_engine._infer_js_variable_type_from_annotation(
+            annotation,  # ty: ignore[invalid-argument-type]  # MockNode not Node
+            "myapp.main",
+        )
+
+        assert result == "User"
+
+    def test_array_element_resolves_class_qn(
+        self,
+        js_type_engine: JsTypeInferenceEngine,
+        mock_function_registry: MagicMock,
+    ) -> None:
+        mock_function_registry.__contains__ = MagicMock(
+            side_effect=lambda x: x == "myapp.main.User"
+        )
+        mock_function_registry.__getitem__ = MagicMock(return_value=NodeType.CLASS)
+        annotation = create_type_annotation(
+            create_array_type(create_type_identifier("User"))
+        )
+
+        result = js_type_engine._infer_js_variable_type_from_annotation(
+            annotation,  # ty: ignore[invalid-argument-type]  # MockNode not Node
+            "myapp.main",
+        )
+
+        assert result == "myapp.main.User"
+
+    def test_generic_array_returns_element_name(
+        self,
+        js_type_engine: JsTypeInferenceEngine,
+    ) -> None:
+        annotation = create_type_annotation(
+            create_generic_type("Array", [create_type_identifier("User")])
+        )
+
+        result = js_type_engine._infer_js_variable_type_from_annotation(
+            annotation,  # ty: ignore[invalid-argument-type]  # MockNode not Node
+            "myapp.main",
+        )
+
+        assert result == "User"
+
+    def test_non_element_generic_returns_container_name(
+        self,
+        js_type_engine: JsTypeInferenceEngine,
+    ) -> None:
+        annotation = create_type_annotation(
+            create_generic_type(
+                "Map",
+                [create_type_identifier("string"), create_type_identifier("User")],
+            )
+        )
+
+        result = js_type_engine._infer_js_variable_type_from_annotation(
+            annotation,  # ty: ignore[invalid-argument-type]  # MockNode not Node
+            "myapp.main",
+        )
+
+        assert result == "Map"
+
+    def test_primitive_array_element_is_uninferrable(
+        self,
+        js_type_engine: JsTypeInferenceEngine,
+    ) -> None:
+        annotation = create_type_annotation(
+            create_array_type(create_mock_node("predefined_type", "string"))
+        )
+
+        result = js_type_engine._infer_js_variable_type_from_annotation(
+            annotation,  # ty: ignore[invalid-argument-type]  # MockNode not Node
+            "myapp.main",
+        )
+
+        assert result is None
+
+
+class TestBuildLocalVariableTypeMapFromAnnotations:
+    def test_annotation_types_variable_without_value(
+        self,
+        js_type_engine: JsTypeInferenceEngine,
+    ) -> None:
+        var_decl = create_declarator_with_annotation(
+            "names", create_array_type(create_type_identifier("User"))
+        )
+        root_node = create_mock_node("program", children=[var_decl])
+
+        result = js_type_engine.build_local_variable_type_map(
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
+            "myapp.main",
+        )
+
+        assert result == {"names": "User"}
+
+    def test_value_inference_takes_precedence_over_annotation(
+        self,
+        js_type_engine: JsTypeInferenceEngine,
+    ) -> None:
+        # `const x: Base = new Derived()` — the constructed type is more
+        # specific than the declared one, so the value wins.
+        var_decl = create_declarator_with_annotation(
+            "instance",
+            create_type_identifier("Base"),
+            value_node=create_new_expression("Derived"),
+        )
+        root_node = create_mock_node("program", children=[var_decl])
+
+        result = js_type_engine.build_local_variable_type_map(
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
+            "myapp.main",
+        )
+
+        assert result == {"instance": "Derived"}
+
+    def test_annotation_is_fallback_when_value_uninferrable(
+        self,
+        js_type_engine: JsTypeInferenceEngine,
+    ) -> None:
+        string_literal = create_mock_node("string_literal", "hello")
+        var_decl = create_declarator_with_annotation(
+            "user",
+            create_type_identifier("User"),
+            value_node=string_literal,
+        )
+        root_node = create_mock_node("program", children=[var_decl])
+
+        result = js_type_engine.build_local_variable_type_map(
+            root_node,  # ty: ignore[invalid-argument-type]  # MockNode not Node
+            "myapp.main",
+        )
+
+        assert result == {"user": "User"}
 
 
 class TestGetDeclaratorsViaQueryException:

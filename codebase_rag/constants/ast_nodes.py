@@ -242,6 +242,10 @@ TS_DO_STATEMENT = "do_statement"
 TS_BREAK_STATEMENT = "break_statement"
 TS_TYPE_DESCRIPTOR = "type_descriptor"
 TS_TYPE_IDENTIFIER = "type_identifier"
+# `User[]` in a type annotation: an element type followed by `[` `]`.
+TS_ARRAY_TYPE = "array_type"
+# The `<...>` argument list of a generic type (`Array<User>` -> `<User>`).
+TS_TYPE_ARGUMENTS = "type_arguments"
 
 TS_RETURN_STATEMENT = "return_statement"
 TS_RETURN = "return"
