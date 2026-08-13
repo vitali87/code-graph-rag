@@ -578,6 +578,46 @@ def test_dict_registry_corroboration_without_query_protocol(tmp_path: Path) -> N
     ), ingestor.rels
 
 
+def test_dict_corroboration_tolerates_unreadable_graph(tmp_path: Path) -> None:
+    # A graph whose every read raises (briefly down mid-rebuild) must not abort
+    # finalize: the DB producer seed degrades to nothing and the dict registry
+    # simply goes uncorroborated (issue #1241).
+    from codebase_rag import constants as cs2
+    from codebase_rag.capture import ALL_ENABLED
+    from codebase_rag.parsers.dispatch_registry import DispatchRegistryProcessor
+    from codebase_rag.types_defs import NodeType
+
+    parsers, _ = load_parsers()
+
+    class _DownIngestor(MagicMock):
+        def fetch_all(self, query, params=None):  # noqa: ANN001, ANN201
+            raise RuntimeError("graph down")
+
+        def execute_write(self, query, params=None):  # noqa: ANN001, ANN201
+            return None
+
+    class _Registry:
+        def get(self, qn: str):  # noqa: ANN201
+            return NodeType.FUNCTION if qn.endswith(".handle") else None
+
+    class _Imports:
+        import_mapping: dict = {}
+
+    processor = DispatchRegistryProcessor(
+        ingestor=_DownIngestor(),
+        selection=ALL_ENABLED,
+        function_registry=_Registry(),
+        import_processor=_Imports(),
+    )
+    registry = parsers["python"].parse(
+        b'def handle(ctx):\n    return 1\n\nhandlers = {\n    "handle": handle,\n}\n'
+    )
+    processor.process_file(
+        registry.root_node, "proj.registry", cs2.SupportedLanguage.PYTHON
+    )
+    processor.finalize()  # must not raise
+
+
 def test_resolves_only_capture_still_links_suffix(tmp_path: Path) -> None:
     # With only RESOLVES_TO enabled, the suffix link (and its endpoint
     # nodes) must still emit; the audit inside _run guards the structure.

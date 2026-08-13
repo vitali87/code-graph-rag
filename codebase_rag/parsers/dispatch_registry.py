@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 from typing import NamedTuple
 
+from loguru import logger
 from tree_sitter import Node
 
 from .. import constants as cs
@@ -128,7 +129,10 @@ class DispatchRegistryProcessor:
         produced = {
             key for entries in self._module_producers.values() for _spec, key in entries
         } | resolved_deferred
-        self._emit_corroborated_dict_registrations(produced | self._db_produced_keys())
+        if any(self._module_dict_candidates.values()):
+            self._emit_corroborated_dict_registrations(
+                produced | self._db_produced_keys()
+            )
         if not self._resolves_enabled:
             return
         registered = {
@@ -155,24 +159,28 @@ class DispatchRegistryProcessor:
     def _db_registered_keys(self) -> set[str]:
         # An incremental run reprocesses only changed files; registrations in
         # untouched files exist solely in the database.
-        if not isinstance(self._ingestor, QueryProtocol):
-            return set()
-        rows = self._ingestor.fetch_all(
-            "MATCH (h:Resource {kind: 'DISPATCH'})<-[:EXPOSES]-() "
-            "RETURN DISTINCT h.name AS name"
-        )
-        return {name for row in rows if isinstance(name := row.get("name"), str)}
+        return self._db_dispatch_keys(cs.RelationshipType.EXPOSES.value)
 
     def _db_produced_keys(self) -> set[str]:
         # An incremental run reprocesses only changed files; a producer that
         # corroborates a dict registry may live in an untouched file, so its
         # WRITES_TO target persists only in the database (issue #1241).
+        return self._db_dispatch_keys(cs.RelationshipType.WRITES_TO.value)
+
+    def _db_dispatch_keys(self, relationship: str) -> set[str]:
+        # DISPATCH keys reachable over `relationship` in the live graph. A read
+        # failure (the graph briefly down mid-rebuild) must degrade to no seeds,
+        # never abort finalize -- the rebuild has to complete regardless.
         if not isinstance(self._ingestor, QueryProtocol):
             return set()
-        rows = self._ingestor.fetch_all(
-            "MATCH (h:Resource {kind: 'DISPATCH'})<-[:WRITES_TO]-() "
-            "RETURN DISTINCT h.name AS name"
-        )
+        try:
+            rows = self._ingestor.fetch_all(
+                f"MATCH (h:Resource {{kind: 'DISPATCH'}})<-[:{relationship}]-() "
+                "RETURN DISTINCT h.name AS name"
+            )
+        except Exception:  # noqa: BLE001 - any read failure degrades to no seeds
+            logger.debug("DISPATCH {} seed read failed; no seeds", relationship)
+            return set()
         return {name for row in rows if isinstance(name := row.get("name"), str)}
 
     def _emit_corroborated_dict_registrations(self, produced: set[str]) -> None:
