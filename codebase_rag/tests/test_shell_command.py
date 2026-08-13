@@ -90,13 +90,25 @@ class TestRequiresApproval:
             assert _requires_approval(cmd) is False
 
     def test_read_only_with_args_no_approval(self) -> None:
-        assert _requires_approval("ls -la") is False
-        assert _requires_approval("cat file.txt") is False
-        assert _requires_approval("find . -name '*.py'") is False
+        assert _requires_approval("pwd") is False
+        assert _requires_approval("echo hello") is False
+
+    def test_filesystem_reads_require_approval(self) -> None:
+        assert _requires_approval("ls -la") is True
+        assert _requires_approval("cat file.txt") is True
+        assert _requires_approval("cat /etc/passwd") is True
+        assert _requires_approval("cat ../outside.txt") is True
+        assert _requires_approval("find . -name '*.py'") is True
+        assert _requires_approval("rg secret ~/.config") is True
+        assert _requires_approval("head -10 /tmp/outside.txt") is True
 
     def test_safe_git_subcommands_no_approval(self) -> None:
-        for subcmd in settings.SHELL_SAFE_GIT_SUBCOMMANDS:
-            assert _requires_approval(f"git {subcmd}") is False
+        assert not settings.SHELL_SAFE_GIT_SUBCOMMANDS
+
+    def test_git_reads_require_approval_because_git_can_escape_project(self) -> None:
+        assert _requires_approval("git status") is True
+        assert _requires_approval("git -C ../other log") is True
+        assert _requires_approval("git --git-dir=../other/.git show HEAD:secret") is True
 
     def test_unsafe_git_subcommands_require_approval(self) -> None:
         assert _requires_approval("git push") is True
@@ -238,14 +250,23 @@ class TestCreateShellCommandTool:
 
 
 class TestToolApprovalBehavior:
-    async def test_read_only_command_no_approval_needed(
+    async def test_pathless_command_no_approval_needed(
         self, shell_commander: ShellCommander
     ) -> None:
         tool = create_shell_command_tool(shell_commander)
         mock_ctx = MagicMock()
         mock_ctx.tool_call_approved = False
-        result = await tool.function(mock_ctx, "ls")
+        result = await tool.function(mock_ctx, "pwd")
         assert result.return_code == 0, result.stderr
+
+    async def test_filesystem_read_requires_approval(
+        self, shell_commander: ShellCommander
+    ) -> None:
+        tool = create_shell_command_tool(shell_commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        with pytest.raises(ApprovalRequired):
+            await tool.function(mock_ctx, "ls")
 
     async def test_write_command_requires_approval(
         self, shell_commander: ShellCommander
@@ -396,9 +417,9 @@ class TestRequiresApprovalWithRedirects:
     def test_heredoc_requires_approval(self) -> None:
         assert _requires_approval("cat << EOF") is True
 
-    def test_read_only_without_redirect_no_approval(self) -> None:
-        assert _requires_approval("ls -la") is False
-        assert _requires_approval("cat file.txt") is False
+    def test_pathless_command_without_redirect_no_approval(self) -> None:
+        assert _requires_approval("pwd") is False
+        assert _requires_approval("echo hello") is False
 
 
 class TestHasSubshell:
@@ -623,10 +644,10 @@ class TestShellOperators:
 
 
 class TestPipedCommandApproval:
-    def test_all_read_only_no_approval(self) -> None:
-        assert _requires_approval("ls | wc -l") is False
-        assert _requires_approval("find . -name '*.py' | head -10") is False
-        assert _requires_approval("cat file.txt | rg pattern | wc -l") is False
+    def test_filesystem_read_in_pipeline_requires_approval(self) -> None:
+        assert _requires_approval("ls | wc -l") is True
+        assert _requires_approval("find . -name '*.py' | head -10") is True
+        assert _requires_approval("cat file.txt | rg pattern | wc -l") is True
 
     def test_write_command_in_pipe_requires_approval(self) -> None:
         assert _requires_approval("ls | tee output.txt") is True

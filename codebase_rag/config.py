@@ -242,33 +242,18 @@ class AppConfig(BaseSettings):
             "tee",
         }
     )
+    # Only commands that cannot accept filesystem paths are approval-free.
+    # Filesystem and Git reads require approval because their path syntaxes can
+    # escape the project root (absolute paths, traversal, symlinks, git -C, and
+    # --git-dir). Project-confined read/search tools should be preferred instead.
     SHELL_READ_ONLY_COMMANDS: frozenset[str] = frozenset(
         {
-            "ls",
-            "cat",
-            "find",
             "pwd",
-            "rg",
             "echo",
-            "wc",
-            "head",
-            "tail",
-            "sort",
-            "uniq",
-            "cut",
             "tr",
         }
     )
-    SHELL_SAFE_GIT_SUBCOMMANDS: frozenset[str] = frozenset(
-        {
-            "status",
-            "log",
-            "diff",
-            "show",
-            "ls-files",
-            "remote",
-        }
-    )
+    SHELL_SAFE_GIT_SUBCOMMANDS: frozenset[str] = frozenset()
 
     QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
     QDRANT_URL: str | None = None
