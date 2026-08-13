@@ -13,9 +13,14 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.parsers.frontends import FRONTENDS, SemanticFacts
 from codebase_rag.parsers.frontends.go import GoFrontend, _adapt_go_semantic_facts
-from codebase_rag.parsers.frontends.protocol import LanguageFrontend, ResolvedCallSite
+from codebase_rag.parsers.frontends.protocol import (
+    ImplementsPair,
+    LanguageFrontend,
+    ResolvedCallSite,
+)
 from codebase_rag.parsers.go_frontend import (
     GoCallSite,
+    GoImplements,
     GoSemanticFacts,
     find_go_module,
     run_go_frontend,
@@ -72,6 +77,18 @@ def test_parse_payload_reads_call_and_external_sections() -> None:
                 }
             ],
             "externals": [{"file": "a.go", "line": 11, "col": 8, "name": "Println"}],
+            "implements": [
+                {
+                    "file": "a.go",
+                    "line": 9,
+                    "col": 5,
+                    "name": "Loud",
+                    "ifile": "b.go",
+                    "iline": 5,
+                    "icol": 5,
+                    "iname": "Greeter",
+                }
+            ],
         }
     )
     facts = _parse_payload(payload)
@@ -79,20 +96,23 @@ def test_parse_payload_reads_call_and_external_sections() -> None:
         "Handle", "b.go", 3, 4
     )
     assert facts.external_sites == {("a.go", 11, 8, "Println")}
+    assert facts.implements == [GoImplements("a.go", 9, 5, "b.go", 5, 5)]
 
 
 def test_parse_payload_without_sections_yields_empty_facts() -> None:
-    # An older tool build (stale cached binary) may emit neither section; both
-    # must default to empty instead of raising.
+    # An older tool build (stale cached binary) may emit no section; all three
+    # families must default to empty instead of raising.
     facts = _parse_payload(json.dumps({}))
     assert facts.call_sites == {}
     assert facts.external_sites == set()
+    assert facts.implements == []
 
 
 def test_parse_payload_non_json_yields_empty_facts() -> None:
     facts = _parse_payload("panic: boom\n")
     assert facts.call_sites == {}
     assert facts.external_sites == set()
+    assert facts.implements == []
 
 
 def test_go_frontend_is_registered() -> None:
@@ -121,6 +141,7 @@ def test_adapter_maps_go_facts_to_semantic_facts() -> None:
     facts = GoSemanticFacts(
         call_sites={("a.go", 5, 8, "Handle"): GoCallSite("Handle", "b.go", 3, 4)},
         external_sites={("a.go", 11, 8, "Println")},
+        implements=[GoImplements("a.go", 9, 5, "b.go", 5, 5)],
     )
     adapted = _adapt_go_semantic_facts(facts)
     assert isinstance(adapted, SemanticFacts)
@@ -128,14 +149,16 @@ def test_adapter_maps_go_facts_to_semantic_facts() -> None:
         "Handle", "b.go", 3, 4
     )
     assert adapted.external_sites == {("a.go", 11, 8, "Println")}
-    # The Go frontend fills only the two call families; the rest stay empty.
+    # GoImplements maps 1:1 onto the generic implements_pairs family.
+    assert adapted.implements_pairs == [ImplementsPair("a.go", 9, 5, "b.go", 5, 5)]
+    # The Go frontend leaves the C#-specific families empty.
     assert adapted.base_kinds == {}
     assert adapted.partial_groups == []
     assert adapted.query_calls == []
 
 
 def test_adapter_of_empty_facts_is_empty() -> None:
-    assert _adapt_go_semantic_facts(GoSemanticFacts({}, set())).is_empty()
+    assert _adapt_go_semantic_facts(GoSemanticFacts({}, set(), [])).is_empty()
 
 
 def test_gotypes_tool_emits_call_and_external_facts(tmp_path: Path) -> None:
@@ -172,3 +195,48 @@ def test_gotypes_tool_emits_call_and_external_facts(tmp_path: Path) -> None:
     println_line, println_col = _byte_loc(_FIXTURE, "Println")
     assert ("main.go", println_line, println_col, "Println") in facts.external_sites
     assert not any(key[3] == "Println" for key in facts.call_sites)
+
+
+_IMPLEMENTS_FIXTURE = """package main
+
+type Speaker interface{ Speak() string }
+
+type Dog struct{}
+
+func (d Dog) Speak() string { return "woof" }
+
+type Box[T any] struct{ v T }
+
+func (b Box[T]) Speak() string { return "box" }
+
+func main() {
+\t_ = Dog{}
+\t_ = Box[int]{}
+}
+"""
+
+
+def test_gotypes_tool_emits_implements_and_skips_generics(tmp_path: Path) -> None:
+    # End-to-end: the tool must emit the Dog -> Speaker pair proven by
+    # types.Implements, keyed on both declaring NAME tokens, AND must SKIP the
+    # generic Box[T] even though it structurally satisfies Speaker --
+    # types.Implements is not contractually specified for uninstantiated
+    # generics, so the frontend degrades to tree-sitter there rather than emit a
+    # version-dependent edge (must not crash on the generic, either).
+    go = shutil.which("go")
+    if go is None:
+        pytest.skip("go toolchain not available")
+    if _build_tool(go) is None:
+        pytest.skip("gotypes tool could not build in this environment")
+    (tmp_path / "go.mod").write_text("module example.com/impl\n\ngo 1.23\n")
+    (tmp_path / "main.go").write_text(_IMPLEMENTS_FIXTURE, encoding="utf-8")
+
+    facts = run_go_frontend(tmp_path)
+
+    dog_line, dog_col = _byte_loc(_IMPLEMENTS_FIXTURE, "Dog struct")
+    iface_line, iface_col = _byte_loc(_IMPLEMENTS_FIXTURE, "Speaker interface")
+    # Exactly one pair: Dog -> Speaker. The generic Box[T] structurally
+    # satisfies Speaker too, so its absence here proves the generic skip.
+    assert facts.implements == [
+        GoImplements("main.go", dog_line, dog_col, "main.go", iface_line, iface_col)
+    ]

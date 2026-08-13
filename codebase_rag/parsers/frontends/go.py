@@ -14,13 +14,14 @@ from ..go_frontend import (
     go_frontend_available,
     run_go_frontend,
 )
-from .protocol import ResolvedCallSite, SemanticFacts
+from .protocol import ImplementsPair, ResolvedCallSite, SemanticFacts
 from .registry import register_frontend
 
 
 def _adapt_go_semantic_facts(facts: GoSemanticFacts) -> SemanticFacts:
     # GoCallSite and ResolvedCallSite are structurally identical (name +
-    # target_file/line/col). The Go frontend fills only the two call families;
+    # target_file/line/col), and GoImplements maps 1:1 onto ImplementsPair. The
+    # Go frontend fills the two call families plus implements_pairs;
     # base_kinds/partial_groups/query_calls stay at their empty defaults.
     return SemanticFacts(
         resolved_call_sites={
@@ -30,6 +31,17 @@ def _adapt_go_semantic_facts(facts: GoSemanticFacts) -> SemanticFacts:
             for key, site in facts.call_sites.items()
         },
         external_sites=set(facts.external_sites),
+        implements_pairs=[
+            ImplementsPair(
+                pair.impl_file,
+                pair.impl_line,
+                pair.impl_col,
+                pair.iface_file,
+                pair.iface_line,
+                pair.iface_col,
+            )
+            for pair in facts.implements
+        ],
     )
 
 
