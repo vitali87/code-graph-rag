@@ -208,6 +208,11 @@ def test_rehydration_skips_malformed_rows(tmp_path: Path) -> None:
                 cs.KEY_PATH: "c.cs",
                 cs.KEY_START_LINE: "x",  # non-int line
             },
+            {
+                cs.KEY_QUALIFIED_NAME: "proj.BoolLine",
+                cs.KEY_PATH: "d.cs",
+                cs.KEY_START_LINE: True,  # bool is an int subclass -> reject
+            },
             _persisted_type("proj.", "good.cs", 4, "Good"),
         ],
     )

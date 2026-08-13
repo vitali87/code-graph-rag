@@ -1379,8 +1379,11 @@ class GraphUpdater:
             if not (
                 isinstance(path, str)
                 and isinstance(start_line, int)
+                and not isinstance(start_line, bool)
                 and isinstance(qn, str)
             ):
+                # bool is an int subclass; a stray True would key as line 1 and
+                # shadow a real line-1 type, so reject it explicitly.
                 continue
             key = (path, start_line)
             if key not in locations:
