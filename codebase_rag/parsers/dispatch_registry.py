@@ -21,6 +21,7 @@ from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from .import_processor import ImportProcessor
 from .io_access.constants import (
     DISPATCH_DEPLOYMENT_SEPARATOR,
+    DISPATCH_FRAMEWORK_MODULES,
     DISPATCH_NAME_KEYWORD,
     DISPATCH_PRODUCER_KEYWORDS,
     DISPATCH_REGISTRARS,
@@ -152,16 +153,24 @@ class DispatchRegistryProcessor:
 
     def _process_module_scope(self, root: Node, module_qn: str) -> None:
         constants = self._module_constants.setdefault(module_qn, {})
+        # A `{str: func}` dict is only a dispatch registry when the module
+        # imports a task-queue / workflow framework (issue #1241): a bare
+        # name->function lookup table alone is not evidence of dispatch.
+        dict_registries = _module_imports_dispatch_framework(root)
         for stmt in root.named_children:
             if stmt.type == cs.TS_PY_EXPRESSION_STATEMENT and stmt.named_children:
                 self._process_module_assignment(
-                    stmt.named_children[0], module_qn, constants
+                    stmt.named_children[0], module_qn, constants, dict_registries
                 )
             elif stmt.type == cs.TS_PY_DECORATED_DEFINITION:
                 self._process_decorated(stmt, module_qn)
 
     def _process_module_assignment(
-        self, node: Node, module_qn: str, constants: dict[str, str]
+        self,
+        node: Node,
+        module_qn: str,
+        constants: dict[str, str],
+        dict_registries: bool,
     ) -> None:
         if node.type != cs.TS_PY_ASSIGNMENT:
             return
@@ -173,7 +182,7 @@ class DispatchRegistryProcessor:
             name = safe_decode_text(target)
             if name is not None and (text := _plain_string(value)) is not None:
                 constants[name] = text
-        elif value.type == cs.TS_PY_DICTIONARY:
+        elif value.type == cs.TS_PY_DICTIONARY and dict_registries:
             self._process_dict_registry(value, module_qn)
 
     def _process_dict_registry(self, dictionary: Node, module_qn: str) -> None:
@@ -351,6 +360,37 @@ class DispatchRegistryProcessor:
                 KEY_KIND: ResourceKind.DISPATCH.value,
             },
         )
+
+
+def _module_imports_dispatch_framework(root: Node) -> bool:
+    # True when any top-level import names a known task-queue / workflow
+    # framework (issue #1241). Relative imports are first-party and never
+    # match; only the leading dotted component is checked (`celery.result`
+    # -> `celery`).
+    for stmt in root.named_children:
+        if stmt.type == cs.TS_PY_IMPORT_STATEMENT:
+            targets = stmt.named_children
+        elif stmt.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
+            module = stmt.child_by_field_name(cs.FIELD_MODULE_NAME)
+            targets = [module] if module is not None else []
+        else:
+            continue
+        for target in targets:
+            if _import_head(target) in DISPATCH_FRAMEWORK_MODULES:
+                return True
+    return False
+
+
+def _import_head(node: Node | None) -> str | None:
+    # Leading dotted component of an import target: `celery.app` -> `celery`.
+    # `celery.app as ca` unwraps the alias first; a relative import yields None.
+    if node is None:
+        return None
+    if node.type == cs.TS_ALIASED_IMPORT:
+        node = node.child_by_field_name(cs.FIELD_NAME)
+    if node is None or node.type != cs.TS_PY_DOTTED_NAME or not node.named_children:
+        return None
+    return safe_decode_text(node.named_children[0])
 
 
 def _resource_qn(key: str) -> str:

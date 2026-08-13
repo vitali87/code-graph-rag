@@ -53,6 +53,7 @@ def _run(
 def test_dict_registry_exposes_each_entry(tmp_path: Path) -> None:
     files = {
         "handlers.py": (
+            "from celery import shared_task\n\n"
             "def plain(ctx):\n    return 1\n\n"
             "def with_factoid(ctx):\n    return 2\n\n"
             "handlers = {\n"
@@ -79,6 +80,7 @@ def test_annotated_dict_registry_exposes(tmp_path: Path) -> None:
     # The verified production shape carries a type annotation.
     files = {
         "registry.py": (
+            "import celery\n\n"
             "def plain(ctx):\n    return 1\n\n"
             "handlers: dict = {\n"
             '    "plain": plain,\n'
@@ -99,10 +101,51 @@ def test_mixed_dict_is_not_a_registry(tmp_path: Path) -> None:
     # arbitrary config dicts out entirely.
     files = {
         "config.py": (
+            "import celery\n\n"
             "def plain(ctx):\n    return 1\n\n"
             "settings = {\n"
             '    "plain": plain,\n'
             '    "retries": 3,\n'
+            "}\n"
+        ),
+    }
+    rels = _run(tmp_path, files)
+    assert not any("resource::DISPATCH::" in b for _a, _r, b in rels), rels
+
+
+def test_dict_registry_without_framework_import_is_not_a_registry(
+    tmp_path: Path,
+) -> None:
+    # Issue #1241: click's stream tables map string keys to module functions
+    # but are plain lookup tables, not workflow dispatch. Without a task-queue /
+    # workflow framework import the dict must NOT emit DISPATCH resources.
+    files = {
+        "_compat.py": (
+            "def get_binary_stdin():\n    return 1\n\n"
+            "def get_binary_stdout():\n    return 2\n\n"
+            "def get_binary_stderr():\n    return 3\n\n"
+            "binary_streams = {\n"
+            '    "stdin": get_binary_stdin,\n'
+            '    "stdout": get_binary_stdout,\n'
+            '    "stderr": get_binary_stderr,\n'
+            "}\n"
+        ),
+    }
+    rels = _run(tmp_path, files)
+    assert not any("resource::DISPATCH::" in b for _a, _r, b in rels), rels
+
+
+def test_relative_import_does_not_enable_dict_registry(tmp_path: Path) -> None:
+    # A relative import is first-party; its leading component is empty, so it
+    # never corroborates dispatch (issue #1241).
+    files = {
+        "pkg/__init__.py": "",
+        "pkg/handlers.py": "def plain(ctx):\n    return 1\n",
+        "pkg/registry.py": (
+            "from . import handlers\n\n"
+            "from .handlers import plain\n\n"
+            "table = {\n"
+            '    "plain": plain,\n'
             "}\n"
         ),
     }
@@ -229,6 +272,7 @@ def test_imported_handler_values_expose(tmp_path: Path) -> None:
         "pkg/__init__.py": "",
         "pkg/handlers.py": ("def execute_turn(ctx):\n    return 1\n"),
         "pkg/registry.py": (
+            "import celery\n\n"
             "from pkg.handlers import execute_turn\n\n"
             "handlers = {\n"
             '    "execute_turn": execute_turn,\n'
