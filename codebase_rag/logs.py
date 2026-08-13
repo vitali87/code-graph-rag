@@ -836,6 +836,9 @@ REHYDRATE_QUERY_FAILED = (
     "Could not read persisted definitions from the graph; continuing with "
     "only this run's freshly parsed registry."
 )
+CSHARP_TYPE_LOCATIONS_REHYDRATED = (
+    "Rehydrated {count} C# type location(s) from the graph for the partial join"
+)
 INBOUND_CAPTURE_FAILED = (
     "Could not read inbound edges from the graph; this full rebuild "
     "re-parses every caller, so the edges are re-resolved from source."
