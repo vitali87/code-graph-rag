@@ -453,6 +453,19 @@ CYPHER_ALL_INHERITS = (
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
 )
+
+# C# type declaration locations for incremental runs: _join_csharp_partials
+# resolves each Roslyn partial-declaration location against csharp_type_locations,
+# which Pass 2 fills only for RE-PARSED files. Rebuild the (path, start_line) ->
+# qn entries for types in UNCHANGED .cs files from the persisted graph so a
+# partial part in an unchanged file still joins its group (issue #1229).
+CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
+    "MATCH (n) WHERE (n:Class OR n:Interface OR n:Enum) "
+    "AND n.qualified_name STARTS WITH $project_prefix "
+    "AND n.path ENDS WITH '.cs' "
+    "RETURN n.qualified_name AS qualified_name, n.path AS path, "
+    "n.start_line AS start_line"
+)
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"
 KEY_BASE_INDEX = "base_index"

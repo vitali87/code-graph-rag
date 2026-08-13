@@ -760,6 +760,13 @@ class GraphUpdater:
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
 
+        # Before the partial join on an incremental run: rebuild the type
+        # locations for unchanged .cs files so a partial part living in one
+        # still joins its group (issue #1229). Pass-2 entries for re-parsed
+        # files are already present and take precedence.
+        if not force:
+            self._rehydrate_csharp_type_locations()
+
         # Partial groups join AFTER Pass 2: the Roslyn declaration
         # locations resolve against the Class qns Pass 2 just registered.
         self._join_csharp_partials()
@@ -1340,6 +1347,45 @@ class GraphUpdater:
             pairs.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
             result[child] = [base for _index, base in pairs]
         return result
+
+    def _rehydrate_csharp_type_locations(self) -> None:
+        # Incremental runs fill csharp_type_locations only from re-parsed files,
+        # but _join_csharp_partials resolves every partial-declaration location
+        # against it. Restore the (path, start_line) -> qn entries for types in
+        # UNCHANGED .cs files from the persisted graph so a partial part in an
+        # unchanged file still joins its group (issue #1229). A re-parsed file's
+        # fresh Pass-2 entry is kept (not overwritten); a stale rehydrated
+        # position for a type that moved is simply never queried by the join.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        locations = self.factory.definition_processor.csharp_type_locations
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        restored = 0
+        for row in rows:
+            path = row.get(cs.KEY_PATH)
+            start_line = row.get(cs.KEY_START_LINE)
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not (
+                isinstance(path, str)
+                and isinstance(start_line, int)
+                and isinstance(qn, str)
+            ):
+                continue
+            key = (path, start_line)
+            if key not in locations:
+                locations[key] = qn
+                restored += 1
+        if restored:
+            logger.info(ls.CSHARP_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
 
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # Record the reference edges unchanged files point at the re-indexed
