@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.parser_loader import load_parsers
@@ -123,3 +125,94 @@ def test_rehydration_keeps_the_fresh_pass2_entry(tmp_path: Path) -> None:
     # The fresh Pass-2 line survives; the join keys off the current fact
     # position, so the stale rehydrated (path, 5) entry is simply never queried.
     assert dp.csharp_type_locations[("dirA/W.cs", 9)] == "proj.dirA.W"
+
+
+class _NonQueryGraph:
+    """An ingestor that does NOT satisfy QueryProtocol (no fetch_all /
+    execute_write), so rehydration must no-op rather than crash."""
+
+    def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
+        return None
+
+    def ensure_relationship_batch(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def flush_all(self) -> None:
+        return None
+
+
+class _RaisingGraph(_TypeLocGraph):
+    def __init__(self) -> None:
+        super().__init__([])
+
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        raise RuntimeError("graph read failed")
+
+
+def test_rehydration_noops_without_query_protocol(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    parsers, queries = load_parsers()
+    updater = gu.GraphUpdater(
+        ingestor=_NonQueryGraph(), repo_path=repo, parsers=parsers, queries=queries
+    )
+    dp = updater.factory.definition_processor
+
+    updater._rehydrate_csharp_type_locations()  # must not raise
+
+    assert dp.csharp_type_locations == {}
+
+
+def test_rehydration_reraises_query_error_on_incremental(tmp_path: Path) -> None:
+    # A genuine incremental run (not a full build) cannot silently proceed on a
+    # degraded read -- it would drop real partial groups -- so the error raises.
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    parsers, queries = load_parsers()
+    updater = gu.GraphUpdater(
+        ingestor=_RaisingGraph(), repo_path=repo, parsers=parsers, queries=queries
+    )
+    updater._is_full_build = False
+
+    with pytest.raises(RuntimeError):
+        updater._rehydrate_csharp_type_locations()
+
+
+def test_rehydration_tolerates_query_error_on_full_build(tmp_path: Path) -> None:
+    # A full build has every location from Pass 2 already, so a failed read is
+    # only a warning -- rehydration returns without touching the map.
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    parsers, queries = load_parsers()
+    updater = gu.GraphUpdater(
+        ingestor=_RaisingGraph(), repo_path=repo, parsers=parsers, queries=queries
+    )
+    updater._is_full_build = True
+
+    updater._rehydrate_csharp_type_locations()  # must not raise
+
+    assert updater.factory.definition_processor.csharp_type_locations == {}
+
+
+def test_rehydration_skips_malformed_rows(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    updater = _updater(
+        repo,
+        [
+            {cs.KEY_QUALIFIED_NAME: "proj.Bad", cs.KEY_PATH: "b.cs"},  # no start_line
+            {
+                cs.KEY_QUALIFIED_NAME: "proj.NotInt",
+                cs.KEY_PATH: "c.cs",
+                cs.KEY_START_LINE: "x",  # non-int line
+            },
+            _persisted_type("proj.", "good.cs", 4, "Good"),
+        ],
+    )
+    dp = updater.factory.definition_processor
+
+    updater._rehydrate_csharp_type_locations()
+
+    assert dp.csharp_type_locations == {("good.cs", 4): "proj.Good"}
