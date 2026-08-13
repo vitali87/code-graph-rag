@@ -13,13 +13,18 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
+from codebase_rag.capture import ALL_ENABLED, CaptureSelection
 from codebase_rag.parsers.csharp_frontend import (
     CSharpCallSite,
     CSharpQueryCall,
     CSharpSemanticFacts,
 )
 from codebase_rag.parsers.csharp_frontend.frontend import _parse_payload
-from codebase_rag.tests.conftest import get_relationships, run_updater
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_relationships,
+    run_updater,
+)
 
 SKIP = "c_sharp"
 
@@ -455,6 +460,46 @@ def test_query_fact_emits_calls_edge_for_linq_operator(
 
     calls = _pairs(ingestor, "CALLS")
     assert _has(calls, "N.Q.Go(Src)", "N.Ops.Select(Src, object)"), calls
+
+
+def test_query_fact_edge_respects_capture_excluding_calls(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The synthesized LINQ query-operator edge must honour the capture contract:
+    # with CALLS disabled it is suppressed, because the join emits through the
+    # capture-filtering sink, not the raw ingestor (issue #1236). Same fixture
+    # and fact as the edge test above; only the capture differs.
+    root = temp_repo / "linqcapture"
+    root.mkdir()
+    (root / "Ops.cs").write_text(_LINQ_OPS, encoding="utf-8")
+    (root / "Src.cs").write_text(_LINQ_SRC_TYPE, encoding="utf-8")
+    (root / "Q.cs").write_text(_LINQ_QUERY, encoding="utf-8")
+    (root / "Sample.csproj").write_text(_CSPROJ, encoding="utf-8")
+
+    caller_line, caller_col = _loc(_LINQ_QUERY, "public object Go(Src s)")
+    target_line, target_col = _loc(_LINQ_OPS, "public static object Select")
+    facts = CSharpSemanticFacts(
+        base_kinds={},
+        call_sites={},
+        partial_groups=[],
+        query_calls=[
+            CSharpQueryCall(
+                "Q.cs", caller_line, caller_col, "Ops.cs", target_line, target_col
+            )
+        ],
+        external_sites=set(),
+    )
+    _hybrid(monkeypatch, facts)
+
+    no_calls = CaptureSelection(
+        enabled_rels=ALL_ENABLED.enabled_rels - {cs.RelationshipType.CALLS},
+        enabled_node_labels=ALL_ENABLED.enabled_node_labels,
+    )
+    ingestor = MagicMock()
+    create_and_run_updater(root, ingestor, skip_if_missing=SKIP, capture=no_calls)
+
+    calls = _pairs(ingestor, "CALLS")
+    assert not _has(calls, "N.Q.Go(Src)", "N.Ops.Select(Src, object)"), calls
 
 
 _E2E_CODE = """namespace N;
