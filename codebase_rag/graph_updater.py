@@ -490,11 +490,46 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         dp.go_call_sites.clear()
         dp.go_external_sites.clear()
+        dp.go_implements.clear()
 
     def _apply_go_semantic_facts(self, facts: SemanticFacts) -> None:
         dp = self.factory.definition_processor
         dp.go_call_sites.update(facts.resolved_call_sites)
         dp.go_external_sites.update(facts.external_sites)
+        dp.go_implements.extend(facts.implements_pairs)
+
+    def _join_go_implements(self) -> None:
+        # go/types proved each implementer->interface pair structurally; both
+        # ends carry a declaring-identifier position that resolves to the Pass-2
+        # type node through go_type_locations. On a two-sided hit, emit the
+        # IMPLEMENTS edge and record the implementer so a call through the
+        # interface with a SOLE implementer also edges to the concrete method
+        # (resolver.interface_sole_impl_targets, no extra wiring). A miss on
+        # either end drops the pair rather than risk a dangling edge.
+        dp = self.factory.definition_processor
+        if not dp.go_implements:
+            return
+        emitted = 0
+        for pair in dp.go_implements:
+            impl = dp.go_type_locations.get(
+                (pair.impl_file, pair.impl_line, pair.impl_col)
+            )
+            iface = dp.go_type_locations.get(
+                (pair.iface_file, pair.iface_line, pair.iface_col)
+            )
+            if impl is None or iface is None:
+                continue
+            impl_qn, impl_label = impl
+            iface_qn, iface_label = iface
+            self.ingestor.ensure_relationship_batch(
+                (impl_label, cs.KEY_QUALIFIED_NAME, impl_qn),
+                cs.RelationshipType.IMPLEMENTS,
+                (iface_label, cs.KEY_QUALIFIED_NAME, iface_qn),
+            )
+            dp.interface_implementers.setdefault(iface_qn, set()).add(impl_qn)
+            emitted += 1
+        if emitted:
+            logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=emitted))
 
     def _join_csharp_partials(self) -> None:
         # Replace the directory-keyed syntactic partial grouping with the
@@ -722,6 +757,10 @@ class GraphUpdater:
         # Partial groups join AFTER Pass 2: the Roslyn declaration
         # locations resolve against the Class qns Pass 2 just registered.
         self._join_csharp_partials()
+
+        # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
+        # resolve against the go_type_locations index Pass 2 just registered.
+        self._join_go_implements()
 
         # HYBRID must run after Pass 2: an incremental run deletes each
         # changed file's Module subtree before re-parsing it, so macro

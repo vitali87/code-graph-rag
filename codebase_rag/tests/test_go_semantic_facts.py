@@ -13,7 +13,8 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
-from codebase_rag.parsers.go_frontend import GoCallSite, GoSemanticFacts
+from codebase_rag.parsers.frontends.protocol import ImplementsPair
+from codebase_rag.parsers.go_frontend import GoCallSite, GoImplements, GoSemanticFacts
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 SKIP = "go"
@@ -167,12 +168,14 @@ def test_frontend_off_clears_stale_go_facts(
         "Old", "stale.go", 2, 0
     )
     dp.go_external_sites.add(("stale.go", 3, 0, "Ext"))
+    dp.go_implements.append(ImplementsPair("stale.go", 4, 0, "stale.go", 5, 0))
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
 
     updater._run_go_frontend()
 
     assert dp.go_call_sites == {}
     assert dp.go_external_sites == set()
+    assert dp.go_implements == []
 
 
 def test_auto_without_toolchain_matches_frontend_off(
@@ -268,3 +271,106 @@ def test_gotypes_end_to_end_binds_promoted_call_through_real_facts(
     calls = _pairs(ingestor, "CALLS")
     assert _has(calls, "Run", "Base.Do"), calls
     assert not any(ce.endswith("Println") for _, ce in calls), calls
+
+
+_IMPLEMENTS_SRC = """package sample
+
+type Speaker interface{ Speak() string }
+
+type Dog struct{}
+
+func (d Dog) Speak() string { return "woof" }
+
+func Run(s Speaker) {
+\t_ = s.Speak()
+}
+"""
+
+
+def _impl_facts(implements: list[GoImplements]) -> GoSemanticFacts:
+    return GoSemanticFacts(call_sites={}, external_sites=set(), implements=implements)
+
+
+def test_implements_fact_emits_edge_to_the_pass2_type_nodes(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A go/types implements pair joins to the Pass-2 type nodes (positions match
+    # the ingested type_spec start, which is the NAME token for Go types) and
+    # emits an IMPLEMENTS edge from the struct to the interface it satisfies.
+    root = temp_repo / "goimpl"
+    root.mkdir()
+    (root / "go.mod").write_text("module example.com/impl\n\ngo 1.23\n")
+    (root / "sample.go").write_text(_IMPLEMENTS_SRC, encoding="utf-8")
+
+    dog_line, dog_col = _byte_loc(_IMPLEMENTS_SRC, "Dog struct")
+    spk_line, spk_col = _byte_loc(_IMPLEMENTS_SRC, "Speaker interface")
+    facts = _impl_facts(
+        [GoImplements("sample.go", dog_line, dog_col, "sample.go", spk_line, spk_col)]
+    )
+    _gotypes(monkeypatch, facts)
+
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    assert _has(_pairs(ingestor, "IMPLEMENTS"), "Dog", "Speaker"), _pairs(
+        ingestor, "IMPLEMENTS"
+    )
+    # The payoff comes free: populating interface_implementers makes the
+    # `s.Speak()` call through the interface ALSO edge to the sole concrete
+    # implementer's method (resolver.interface_sole_impl_targets).
+    assert _has(_pairs(ingestor, "CALLS"), "Run", "Dog.Speak"), _pairs(
+        ingestor, "CALLS"
+    )
+
+
+def test_implements_position_miss_drops_the_edge(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pair whose implementer position matches no ingested type node is dropped
+    # rather than emitted as a dangling IMPLEMENTS edge.
+    root = temp_repo / "goimplmiss"
+    root.mkdir()
+    (root / "go.mod").write_text("module example.com/miss\n\ngo 1.23\n")
+    (root / "sample.go").write_text(_IMPLEMENTS_SRC, encoding="utf-8")
+
+    spk_line, spk_col = _byte_loc(_IMPLEMENTS_SRC, "Speaker interface")
+    facts = _impl_facts(
+        [GoImplements("sample.go", 999, 0, "sample.go", spk_line, spk_col)]
+    )
+    _gotypes(monkeypatch, facts)
+
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    assert not _has(_pairs(ingestor, "IMPLEMENTS"), "Dog", "Speaker")
+
+
+def test_gotypes_end_to_end_emits_implements_from_real_facts(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # End-to-end with REAL facts: the tool's emitted implements positions match
+    # the ingested Go type nodes, so the Dog -> Speaker IMPLEMENTS edge lands
+    # with no synthetic maps.
+    from codebase_rag.parsers.go_frontend import (
+        go_frontend_available,
+        run_go_frontend,
+    )
+
+    go = shutil.which("go")
+    if go is None or not go_frontend_available():
+        pytest.skip("go toolchain not available")
+    root = temp_repo / "goimple2e"
+    root.mkdir()
+    (root / "go.mod").write_text("module example.com/imple2e\n\ngo 1.23\n")
+    (root / "sample.go").write_text(_IMPLEMENTS_SRC, encoding="utf-8")
+
+    if not run_go_frontend(root).implements:
+        pytest.skip("gotypes frontend could not build in this environment")
+
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing=SKIP)
+
+    assert _has(_pairs(ingestor, "IMPLEMENTS"), "Dog", "Speaker"), _pairs(
+        ingestor, "IMPLEMENTS"
+    )
