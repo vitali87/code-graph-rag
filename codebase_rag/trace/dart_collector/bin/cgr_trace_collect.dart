@@ -106,108 +106,67 @@ Future<void> main(List<String> argv) async {
   final service = await vmServiceConnectUri(wsUri);
 
   await service.streamListen(EventStreams.kDebug);
-  final pausedIsolates = <String>{};
-  final allPaused = Completer<void>();
-  final vm = await service.getVM();
-  final isolateIds =
-      vm.isolates!.map((isolate) => isolate.id!).toSet();
+  final edges = <String, (Frame, Frame, int)>{};
+  final lineCache = <String, List<List<int>>?>{};
+  final sampledIsolates = <String>{};
 
-  Future<void> noteIfExitPaused(String isolateId) async {
-    final isolate = await service.getIsolate(isolateId);
-    if (isolate.pauseEvent?.kind == EventKind.kPauseExit) {
-      pausedIsolates.add(isolateId);
-      if (pausedIsolates.containsAll(isolateIds) && !allPaused.isCompleted) {
-        allPaused.complete();
-      }
+  // Each isolate is sampled at its own pause-at-exit and then resumed, so
+  // programs whose workers must finish for main to proceed (Isolate.run)
+  // never deadlock, and every isolate's samples are captured regardless of
+  // when it was spawned.
+  Future<void> sampleAndResume(String isolateId) async {
+    if (!sampledIsolates.add(isolateId)) {
+      return;
+    }
+    try {
+      await sampleIsolate(service, isolateId, repo, edges, lineCache);
+    } on RPCError {
+      // The isolate died before it could be sampled.
+    } on SentinelException {
+      // Likewise.
+    }
+    try {
+      await service.resume(isolateId);
+    } on RPCError {
+      // Already gone.
+    } on SentinelException {
+      // Likewise.
     }
   }
 
   service.onDebugEvent.listen((event) {
     if (event.kind == EventKind.kPauseExit) {
-      pausedIsolates.add(event.isolate!.id!);
-      if (pausedIsolates.containsAll(isolateIds) && !allPaused.isCompleted) {
-        allPaused.complete();
+      final isolateId = event.isolate?.id;
+      if (isolateId != null) {
+        unawaited(sampleAndResume(isolateId));
       }
     }
   });
-  for (final isolateId in isolateIds) {
-    await noteIfExitPaused(isolateId);
-  }
-  await allPaused.future.timeout(const Duration(minutes: 10));
 
-  final edges = <String, (Frame, Frame, int)>{};
-  final lineCache = <String, List<List<int>>?>{};
-
-  for (final isolateId in isolateIds) {
-    final samples = await service.getCpuSamples(isolateId, 0, 1 << 62);
-    final functions = samples.functions ?? [];
-    final frames = <int, Frame?>{};
-
-    Future<Frame?> frameOf(int functionIndex) async {
-      if (frames.containsKey(functionIndex)) {
-        return frames[functionIndex];
-      }
-      Frame? built;
-      final profileFunction = functions[functionIndex];
-      final ref = profileFunction.function;
-      if (ref is FuncRef) {
-        final location = ref.location;
-        final scriptUri = location?.script?.uri;
-        if (location != null &&
-            scriptUri != null &&
-            scriptUri.startsWith('file://')) {
-          final path = Uri.parse(scriptUri).toFilePath();
-          final inRepo = path == repo || path.startsWith('$repo/');
-          if (inRepo) {
-            final line = await lineFor(
-                service, isolateId, location, lineCache);
-            var name = ref.name ?? '';
-            // Extension methods compile to `Ext|method`; setters carry a
-            // trailing `=`; closures and other synthetics resolve by span.
-            final pipe = name.lastIndexOf('|');
-            if (pipe >= 0) {
-              name = name.substring(pipe + 1);
-            }
-            if (name.endsWith('=')) {
-              name = name.substring(0, name.length - 1);
-            }
-            if (name.isEmpty || name.contains('<')) {
-              name = '<anonymous>';
-            }
-            built = Frame(path, name, line);
-          }
-        }
-      }
-      frames[functionIndex] = built;
-      return built;
+  final vm = await service.getVM();
+  for (final isolate in vm.isolates ?? <IsolateRef>[]) {
+    final isolateId = isolate.id;
+    if (isolateId == null) {
+      continue;
     }
-
-    for (final sample in samples.samples ?? <CpuSample>[]) {
-      final stack = sample.stack;
-      if (stack == null) {
-        continue;
+    try {
+      final state = await service.getIsolate(isolateId);
+      if (state.pauseEvent?.kind == EventKind.kPauseExit) {
+        await sampleAndResume(isolateId);
       }
-      Frame? ancestor;
-      // Stacks arrive leaf-first; walk root-first.
-      for (final functionIndex in stack.reversed) {
-        if (functionIndex < 0 || functionIndex >= functions.length) {
-          continue;
-        }
-        final frame = await frameOf(functionIndex);
-        if (frame == null) {
-          continue;
-        }
-        if (ancestor != null) {
-          final key = '${ancestor.key}${frame.key}';
-          final existing = edges[key];
-          edges[key] = existing == null
-              ? (ancestor, frame, 1)
-              : (existing.$1, existing.$2, existing.$3 + 1);
-        }
-        ancestor = frame;
-      }
+    } on RPCError {
+      // Raced with isolate teardown.
+    } on SentinelException {
+      // Likewise.
     }
   }
+
+  final targetExit = await process.exitCode
+      .timeout(const Duration(minutes: 10), onTimeout: () {
+    stderr.writeln('cgr-trace-dart: target never exited; killing it');
+    process.kill();
+    return 1;
+  });
 
   final sink = File(output).openWrite();
   sink.writeln(jsonLine({
@@ -231,16 +190,86 @@ Future<void> main(List<String> argv) async {
   await sink.close();
   stderr.writeln('cgr-trace-dart: wrote ${edges.length} call records to $output');
 
-  for (final isolateId in pausedIsolates) {
-    try {
-      await service.resume(isolateId);
-    } on RPCError {
-      // The isolate may already be gone.
+  await service.dispose();
+  exitCode = targetExit;
+  await stdoutDone;
+}
+
+/// Pulls one isolate's CPU samples and accumulates project edges.
+Future<void> sampleIsolate(
+  VmService service,
+  String isolateId,
+  String repo,
+  Map<String, (Frame, Frame, int)> edges,
+  Map<String, List<List<int>>?> lineCache,
+) async {
+  final samples = await service.getCpuSamples(isolateId, 0, 1 << 62);
+  final functions = samples.functions ?? [];
+  final frames = <int, Frame?>{};
+
+  Future<Frame?> frameOf(int functionIndex) async {
+    if (frames.containsKey(functionIndex)) {
+      return frames[functionIndex];
+    }
+    Frame? built;
+    final profileFunction = functions[functionIndex];
+    final ref = profileFunction.function;
+    if (ref is FuncRef) {
+      final location = ref.location;
+      final scriptUri = location?.script?.uri;
+      if (location != null &&
+          scriptUri != null &&
+          scriptUri.startsWith('file://')) {
+        final path = Uri.parse(scriptUri).toFilePath();
+        final inRepo = path == repo || path.startsWith('$repo/');
+        if (inRepo) {
+          final line = await lineFor(service, isolateId, location, lineCache);
+          var name = ref.name ?? '';
+          // Extension methods compile to `Ext|method`; setters carry a
+          // trailing `=`; closures and other synthetics resolve by span.
+          final pipe = name.lastIndexOf('|');
+          if (pipe >= 0) {
+            name = name.substring(pipe + 1);
+          }
+          if (name.endsWith('=')) {
+            name = name.substring(0, name.length - 1);
+          }
+          if (name.isEmpty || name.contains('<')) {
+            name = '<anonymous>';
+          }
+          built = Frame(path, name, line);
+        }
+      }
+    }
+    frames[functionIndex] = built;
+    return built;
+  }
+
+  for (final sample in samples.samples ?? <CpuSample>[]) {
+    final stack = sample.stack;
+    if (stack == null) {
+      continue;
+    }
+    Frame? ancestor;
+    // Stacks arrive leaf-first; walk root-first.
+    for (final functionIndex in stack.reversed) {
+      if (functionIndex < 0 || functionIndex >= functions.length) {
+        continue;
+      }
+      final frame = await frameOf(functionIndex);
+      if (frame == null) {
+        continue;
+      }
+      if (ancestor != null) {
+        final key = '${ancestor.key}\u0001${frame.key}';
+        final existing = edges[key];
+        edges[key] = existing == null
+            ? (ancestor, frame, 1)
+            : (existing.$1, existing.$2, existing.$3 + 1);
+      }
+      ancestor = frame;
     }
   }
-  await service.dispose();
-  exitCode = await process.exitCode;
-  await stdoutDone;
 }
 
 /// 1-based line for a source location, via the script's token table.
