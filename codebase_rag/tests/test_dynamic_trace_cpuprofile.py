@@ -136,3 +136,63 @@ def test_malformed_profile_is_rejected(tmp_path):
         convert_cpuprofile(
             profile_path, repo_root=tmp_path, output=tmp_path / "out.jsonl"
         )
+
+
+def _convert_raw(tmp_path, profile):
+    profile_path = tmp_path / "raw.cpuprofile"
+    profile_path.write_text(json.dumps(profile))
+    return convert_cpuprofile(
+        profile_path, repo_root=tmp_path, output=tmp_path / "out.jsonl"
+    )
+
+
+def test_missing_child_reference_is_rejected_not_crashed(tmp_path):
+    profile = {
+        "nodes": [_node(1, _frame("(root)", "", 0), children=[99])],
+        "samples": [],
+        "timeDeltas": [],
+    }
+
+    with pytest.raises(ValueError):
+        _convert_raw(tmp_path, profile)
+
+
+def test_cyclic_or_shared_children_are_rejected_not_crashed(tmp_path):
+    url = f"file://{tmp_path.as_posix()}/main.js"
+    profile = {
+        "nodes": [
+            _node(1, _frame("a", url, 1), children=[2]),
+            _node(2, _frame("b", url, 2), children=[1]),
+        ],
+        "samples": [],
+        "timeDeltas": [],
+    }
+
+    with pytest.raises(ValueError):
+        _convert_raw(tmp_path, profile)
+
+
+def test_deep_profiles_do_not_hit_the_recursion_limit(tmp_path):
+    url = f"file://{tmp_path.as_posix()}/main.js"
+    depth = 5000
+    nodes = [
+        _node(i, _frame(f"f{i}", url, i), children=[i + 1], hit_count=1)
+        for i in range(1, depth)
+    ]
+    nodes.append(_node(depth, _frame(f"f{depth}", url, depth), hit_count=1))
+    profile = {"nodes": nodes, "samples": [], "timeDeltas": []}
+
+    count = _convert_raw(tmp_path, profile)
+
+    assert count == depth - 1
+
+
+def test_windows_drive_letter_urls_keep_project_frames(tmp_path):
+    from pathlib import Path as _Path
+
+    from codebase_rag.trace.cpuprofile import _url_to_path
+
+    assert _url_to_path("file:///C:/repo/main.js") == str(_Path("C:/repo/main.js"))
+    assert _url_to_path(f"file://{tmp_path.as_posix()}/main.js") == str(
+        tmp_path / "main.js"
+    )

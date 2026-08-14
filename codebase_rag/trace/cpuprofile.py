@@ -17,7 +17,9 @@ scheduled it.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -31,7 +33,7 @@ from .records import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,16 +43,61 @@ class _ProfileFrame:
     line: int
 
 
+def _aggregate_project_edges(
+    frames: dict[int, _ProfileFrame | None],
+    children: dict[int, list[int]],
+    subtree: dict[int, int],
+    roots: list[int],
+) -> dict[tuple[_ProfileFrame, _ProfileFrame], int]:
+    """Weighted caller/callee pairs between project frames.
+
+    Walks the forest keeping each node's nearest project ancestor, so
+    runtime-internal frames between two project frames are seen through;
+    each project node contributes its subtree's sample weight to the edge
+    from that ancestor.
+    """
+    edges: dict[tuple[_ProfileFrame, _ProfileFrame], int] = {}
+    stack: list[tuple[int, _ProfileFrame | None]] = [
+        (root, None) for root in roots
+    ]
+    while stack:
+        node_id, ancestor = stack.pop()
+        frame = frames[node_id]
+        if frame is not None:
+            if ancestor is not None:
+                key = (ancestor, frame)
+                edges[key] = edges.get(key, 0) + max(subtree[node_id], 1)
+            ancestor = frame
+        stack.extend((child, ancestor) for child in children[node_id])
+    return edges
+
+
+_DRIVE_LETTER = re.compile(r"^/[A-Za-z]:/")
+
+
+def _url_to_path(url: str) -> str:
+    """A ``file://`` URL as a native filesystem path.
+
+    Windows URLs carry the drive letter after the root slash
+    (``file:///C:/repo``); stripping that slash and normalising separators
+    keeps project frames matchable against the repo prefix on any platform.
+    """
+    path = urlparse(url).path
+    if _DRIVE_LETTER.match(path):
+        path = path[1:]
+    return str(Path(path))
+
+
 def _project_frame(
     call_frame: dict[str, object], root_prefix: str
 ) -> _ProfileFrame | None:
     url = call_frame.get("url")
     if not isinstance(url, str) or not url.startswith(cs.TRACE_JS_FILE_URL_PREFIX):
         return None
-    path = urlparse(url).path
+    path = _url_to_path(url)
     if not path.startswith(root_prefix):
         return None
-    if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(path.split("/")):
+    if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(path).parts):
         return None
     line = call_frame.get("lineNumber")
     if not isinstance(line, int) or isinstance(line, bool) or line < 0:
@@ -92,33 +139,33 @@ def convert_cpuprofile(
         hit_count = node.get("hitCount", 0)
         hits[node_id] = hit_count if isinstance(hit_count, int) else 0
 
-    child_ids = {c for kids in children.values() for c in kids}
+    # A well-formed profile is a forest: every child id exists and has
+    # exactly one parent. Anything else (dangling ids, shared children,
+    # cycles) is a malformed profile, not a crash.
+    all_children = [c for kids in children.values() for c in kids]
+    child_ids = set(all_children)
+    if len(all_children) != len(child_ids) or not child_ids.issubset(frames):
+        raise TraceFormatError(cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
     roots = [node_id for node_id in frames if node_id not in child_ids]
 
-    # Total samples in each subtree, bottom-up over the (acyclic) tree.
+    # Total samples in each subtree: children first, then parents, without
+    # recursing (V8 stacks can be deeper than the interpreter allows).
+    order: list[int] = []
+    stack = list(roots)
+    while stack:
+        node_id = stack.pop()
+        order.append(node_id)
+        stack.extend(children[node_id])
+    if len(order) != len(frames):
+        # Nodes unreachable from any root can only mean a cycle.
+        raise TraceFormatError(cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
     subtree: dict[int, int] = {}
+    for node_id in reversed(order):
+        subtree[node_id] = hits[node_id] + sum(
+            subtree[c] for c in children[node_id]
+        )
 
-    def _subtree(node_id: int) -> int:
-        cached = subtree.get(node_id)
-        if cached is None:
-            cached = hits[node_id] + sum(_subtree(c) for c in children[node_id])
-            subtree[node_id] = cached
-        return cached
-
-    edges: dict[tuple[_ProfileFrame, _ProfileFrame], int] = {}
-
-    def _walk(node_id: int, ancestor: _ProfileFrame | None) -> None:
-        frame = frames[node_id]
-        if frame is not None:
-            if ancestor is not None:
-                key = (ancestor, frame)
-                edges[key] = edges.get(key, 0) + max(_subtree(node_id), 1)
-            ancestor = frame
-        for child in children[node_id]:
-            _walk(child, ancestor)
-
-    for root in roots:
-        _walk(root, None)
+    edges = _aggregate_project_edges(frames, children, subtree, roots)
 
     workloads = (workload,) if workload else ()
     records = [
