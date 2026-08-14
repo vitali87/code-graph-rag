@@ -230,3 +230,17 @@ def test_duplicate_node_id_is_rejected_not_overwritten(tmp_path):
     }
     with pytest.raises(ValueError):
         _convert_raw(tmp_path, profile)
+
+
+def test_percent_escaped_url_is_decoded(tmp_path):
+    from codebase_rag.trace.cpuprofile import _url_to_path
+
+    # Spaces and other characters arrive percent-encoded; the decoded path must
+    # match the real repo prefix.
+    assert _url_to_path("file:///repo/my%20dir/main.js") == "/repo/my dir/main.js"
+
+
+def test_non_int_child_entry_is_rejected_not_dropped(tmp_path):
+    profile = {"nodes": [{"id": 1, "callFrame": _frame("a", "", 0), "children": ["x"]}]}
+    with pytest.raises(ValueError):
+        _convert_raw(tmp_path, profile)

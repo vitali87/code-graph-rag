@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .. import constants as cs
 from .records import (
@@ -80,7 +80,9 @@ def _url_to_path(url: str) -> str:
     (``file:///C:/repo``); stripping that slash and normalising separators
     keeps project frames matchable against the repo prefix on any platform.
     """
-    path = urlparse(url).path
+    # V8 URLs (and Path.as_uri) percent-encode spaces and other characters;
+    # decode so the path matches the real repo prefix.
+    path = unquote(urlparse(url).path)
     if _DRIVE_LETTER.match(path):
         path = path[1:]
     # Normalise to POSIX separators so a Windows drive path (`C:\repo\main.js`)
@@ -145,12 +147,15 @@ def convert_cpuprofile(
             or node_id in children
             or not isinstance(call_frame, dict)
             or not isinstance(raw_children, list)
+            or not all(
+                isinstance(c, int) and not isinstance(c, bool) for c in raw_children
+            )
         ):
             raise TraceFormatError(
                 cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
             )
         frames[node_id] = _project_frame(call_frame, root_prefix)
-        children[node_id] = [c for c in raw_children if isinstance(c, int)]
+        children[node_id] = list(raw_children)
         hit_count = node.get("hitCount", 0)
         hits[node_id] = hit_count if isinstance(hit_count, int) else 0
 
