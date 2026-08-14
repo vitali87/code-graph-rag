@@ -6,12 +6,11 @@ at runtime. Dynamic tracing runs your code (typically the test suite), records
 which functions actually called which, and merges those observations into the
 graph alongside the statically derived `CALLS` edges.
 
-Currently supported for **Python** codebases (Python 3.12+ at runtime, via
-`sys.monitoring`), **Java/Scala** codebases (via a zero-dependency
-`java.lang.instrument` agent, JDK 24+), and **JavaScript/TypeScript** codebases
-(by converting a V8 `--cpu-prof` profile with `cgr trace convert`). Other
-language runtimes are tracked in
-[issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
+Currently supported runtimes: **Python** (3.12+, via `sys.monitoring`),
+**Java/Scala** (zero-dependency `java.lang.instrument` agent, JDK 24+),
+**Node.js** (V8 cpuprofile conversion), **.NET** (dotnet-trace speedscope
+conversion), and **PHP** (Xdebug trace conversion). Remaining runtimes are
+tracked in [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
 
@@ -141,6 +140,34 @@ node, and nested-class `+` to dotted nesting. Two caveats:
 - **Overloads.** Runtime argument types (CLR names) cannot be matched to
   the graph's source-text signatures, so all overloads of a name collapse
   onto one deterministic node.
+
+## Recording a PHP trace
+
+Xdebug's function tracing records every call exactly (no sampling), with
+the concrete receiver class resolved through variable calls,
+`call_user_func`, and magic methods:
+
+```bash
+php -d xdebug.mode=trace -d xdebug.start_with_request=yes \
+    -d xdebug.trace_format=1 -d xdebug.output_dir=. \
+    -d xdebug.trace_output_name=run vendor/bin/phpunit
+cgr trace convert run.xt --workload phpunit
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+Counts are true invocation counts. Xdebug reports call sites rather than
+where functions are defined, so the converter recovers each function's
+defining file from its own calls' positions; PHP qualified names are
+path-derived (the namespace declaration is not part of them), and
+resolution is span-first on those recovered positions. Leaf functions that
+never call anything resolve by their `Class::method` name tail instead;
+when several declarations share that tail, the frame is counted as
+`unresolved[ambiguous]` rather than guessed.
+Closures resolve through the file and line range embedded in their runtime
+name. Calls through `__call` attribute to the magic method itself, since
+the graph has no notion of the proxied target. Expect significant tracing
+overhead (Xdebug instruments everything); it is meant for test runs, not
+production.
 
 ## Ingesting a trace
 

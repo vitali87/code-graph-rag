@@ -25,10 +25,12 @@ TRACE_LANGUAGE_PYTHON = "python"
 TRACE_LANGUAGE_JVM = "jvm"
 TRACE_LANGUAGE_JS = "javascript"
 TRACE_LANGUAGE_DOTNET = "dotnet"
+TRACE_LANGUAGE_PHP = "php"
 TRACE_TOOL_NAME = "cgr-trace"
 TRACE_TOOL_NAME_JVM = "cgr-trace-jvm"
 TRACE_TOOL_NAME_CPUPROFILE = "cgr-trace-cpuprofile"
 TRACE_TOOL_NAME_SPEEDSCOPE = "cgr-trace-speedscope"
+TRACE_TOOL_NAME_XDEBUG = "cgr-trace-xdebug"
 TRACE_DEFAULT_OUTPUT = "cgr-trace.jsonl"
 
 # Python runtime qualname markers.
@@ -50,6 +52,20 @@ TRACE_DOTNET_ASSEMBLY_SEPARATOR = "!"
 TRACE_DOTNET_CTOR = "..ctor"
 TRACE_DOTNET_CCTOR = "..cctor"
 TRACE_DOTNET_NESTED_MARKER = "+"
+
+# Xdebug computerized-trace markers (trace_format=1, file format 4).
+TRACE_ERR_BAD_XDEBUG = (
+    "{path} is not an Xdebug computerized trace (expected 'File format: 4')."
+)
+TRACE_XDEBUG_FORMAT_LINE = "File format: 4"
+TRACE_XDEBUG_MAIN = "{main}"
+TRACE_XDEBUG_GLUE_FUNCTIONS = frozenset(
+    {"require", "require_once", "include", "include_once", "eval"}
+)
+TRACE_PHP_INSTANCE_SEPARATOR = "->"
+TRACE_PHP_STATIC_SEPARATOR = "::"
+TRACE_PHP_NAMESPACE_SEPARATOR = "\\"
+TRACE_PHP_CLOSURE_PREFIX = "{closure:"
 
 # JVM runtime name markers.
 TRACE_JVM_CONSTRUCTOR = "<init>"
@@ -94,6 +110,7 @@ class TraceUnresolvedReason(StrEnum):
     SYNTHETIC = "synthetic"
     UNKNOWN_PATH = "unknown_path"
     NO_MATCH = "no_match"
+    AMBIGUOUS = "ambiguous"
 
 
 TRACE_ERR_BAD_HEADER = "Trace file {path} does not start with a valid cgr trace header."

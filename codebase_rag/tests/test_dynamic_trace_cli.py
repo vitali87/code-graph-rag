@@ -225,6 +225,20 @@ def test_convert_command_requires_repo_path_for_cpuprofiles(tmp_path):
     assert "--repo-path" in result.output
 
 
+def test_convert_command_fails_cleanly_on_unreadable_xt(tmp_path, monkeypatch):
+    trace_path = tmp_path / "run.xt"
+    trace_path.write_text("File format: 4\n")
+
+    def _deny(*args, **kwargs):
+        raise PermissionError(f"denied: {trace_path}")
+
+    monkeypatch.setattr("codebase_rag.trace.xdebug.convert_xdebug_trace", _deny)
+    result = CliRunner().invoke(cli, ["convert", str(trace_path)])
+
+    assert result.exit_code == 1
+    assert "denied" in result.output
+
+
 def test_ingest_command_fails_cleanly_on_malformed_trace(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()

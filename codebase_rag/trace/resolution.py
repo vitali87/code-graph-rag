@@ -223,6 +223,115 @@ class JsFrameResolver:
 
 
 _DOTNET_ARITY = re.compile(r"`\d+")
+_PHP_CLOSURE = re.compile(r"^\{closure:(?P<path>.+):(?P<start>\d+)-\d+\}$")
+
+
+class PhpFrameResolver:
+    """Maps Xdebug frames of one project to graph nodes.
+
+    PHP qualified names are path-derived (the namespace declaration is
+    ignored), so resolution is span-first: frames carrying a file position
+    (call sites, recovered defining positions, closure names embedding
+    their file and lines) resolve to the innermost containing node. Leaf
+    callees whose defining file could not be recovered fall back to the
+    runtime name's ``Class.method`` tail, which drops the namespace exactly
+    as the graph does.
+    """
+
+    def __init__(self, repo_root: Path, nodes: list[CallableNode]) -> None:
+        self._repo_root = repo_root.resolve()
+        self._root_prefix = str(self._repo_root) + os.sep
+        self._callables_by_path: dict[str, list[CallableNode]] = {}
+        self._modules_by_path: dict[str, CallableNode] = {}
+        for node in nodes:
+            if node.label == cs.NodeLabel.MODULE:
+                self._modules_by_path[node.path] = node
+            else:
+                self._callables_by_path.setdefault(node.path, []).append(node)
+
+    def resolve(
+        self, frame: FramePoint, stats: ResolutionStats
+    ) -> ResolvedFrame | None:
+        closure = _PHP_CLOSURE.match(frame.qualname)
+        if closure:
+            return self._resolve_position(
+                closure.group("path"), int(closure.group("start")), stats
+            )
+        if frame.path:
+            if frame.qualname == cs.TRACE_XDEBUG_MAIN:
+                return self._resolve_module(frame.path, stats)
+            return self._resolve_position(frame.path, frame.line, stats)
+        return self._resolve_by_name_tail(frame.qualname, stats)
+
+    def _relative(self, path: str) -> str | None:
+        if not path.startswith(self._root_prefix):
+            return None
+        return Path(path).relative_to(self._repo_root).as_posix()
+
+    def _resolve_module(
+        self, path: str, stats: ResolutionStats
+    ) -> ResolvedFrame | None:
+        rel_path = self._relative(path)
+        if rel_path is None:
+            stats.record(cs.TraceUnresolvedReason.OUTSIDE_REPO)
+            return None
+        module = self._modules_by_path.get(rel_path)
+        if module is None:
+            stats.record(cs.TraceUnresolvedReason.UNKNOWN_PATH)
+            return None
+        return ResolvedFrame(label=module.label, qualified_name=module.qualified_name)
+
+    def _resolve_position(
+        self, path: str, line: int, stats: ResolutionStats
+    ) -> ResolvedFrame | None:
+        rel_path = self._relative(path)
+        if rel_path is None:
+            stats.record(cs.TraceUnresolvedReason.OUTSIDE_REPO)
+            return None
+        candidates = self._callables_by_path.get(rel_path)
+        if not candidates:
+            stats.record(cs.TraceUnresolvedReason.UNKNOWN_PATH)
+            return None
+        chosen = _innermost_span_containing_line(candidates, line)
+        if chosen is None:
+            stats.record(cs.TraceUnresolvedReason.NO_MATCH)
+            return None
+        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+
+    def _resolve_by_name_tail(
+        self, qualname: str, stats: ResolutionStats
+    ) -> ResolvedFrame | None:
+        for separator in (
+            cs.TRACE_PHP_INSTANCE_SEPARATOR,
+            cs.TRACE_PHP_STATIC_SEPARATOR,
+        ):
+            if separator in qualname:
+                owner, _, method = qualname.partition(separator)
+                owner = owner.rsplit(cs.TRACE_PHP_NAMESPACE_SEPARATOR, 1)[-1]
+                tail = f"{cs.SEPARATOR_DOT}{owner}{cs.SEPARATOR_DOT}{method}"
+                break
+        else:
+            plain = qualname.rsplit(cs.TRACE_PHP_NAMESPACE_SEPARATOR, 1)[-1]
+            tail = f"{cs.SEPARATOR_DOT}{plain}"
+        matches = [
+            node
+            for nodes in self._callables_by_path.values()
+            for node in nodes
+            if _natural_qualified_name(node.qualified_name).endswith(tail)
+        ]
+        if not matches:
+            stats.record(cs.TraceUnresolvedReason.NO_MATCH)
+            return None
+        if len(matches) > 1:
+            # The tail dropped the namespace, so several unrelated classes
+            # can collide; guessing would attach the edge (and its static
+            # classification) to the wrong declaration.
+            stats.record(cs.TraceUnresolvedReason.AMBIGUOUS)
+            return None
+        chosen = matches[0]
+        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+
+
 _DOTNET_STATE_MACHINE = re.compile(r"^<(\w+)>d__\d+$")
 _DOTNET_LAMBDA_BODY = re.compile(r"^<(\w+)>b__\w+$")
 _DOTNET_DISPLAY_CLASS = re.compile(r"^<>c(__DisplayClass\w*)?$")
