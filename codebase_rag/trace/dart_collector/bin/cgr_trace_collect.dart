@@ -71,7 +71,6 @@ Future<void> main(List<String> argv) async {
   // VM flags go to the VM directly; `dart run` would reject them.
   final process = await Process.start(Platform.resolvedExecutable, [
     '--pause-isolates-on-exit',
-    '--disable-service-auth-codes',
     '--enable-vm-service=0',
     '--profiler',
     ...target,
@@ -124,13 +123,16 @@ Future<void> main(List<String> argv) async {
       // The isolate died before it could be sampled.
     } on SentinelException {
       // Likewise.
-    }
-    try {
-      await service.resume(isolateId);
-    } on RPCError {
-      // Already gone.
-    } on SentinelException {
-      // Likewise.
+    } finally {
+      // Always resume, even on an unexpected sampling error, so the paused
+      // isolate never leaves the target hung.
+      try {
+        await service.resume(isolateId);
+      } on RPCError {
+        // Already gone.
+      } on SentinelException {
+        // Likewise.
+      }
     }
   }
 
