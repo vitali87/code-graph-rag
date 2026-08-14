@@ -245,10 +245,19 @@ class JvmFrameResolver:
     def _candidates(self, frame_path: str) -> list[CallableNode]:
         paths = self._paths_by_suffix.get(frame_path)
         if paths is None:
-            paths = [
-                path
-                for path in self._callables_by_path
-                if path == frame_path or path.endswith("/" + frame_path)
-            ]
+            paths = self._resolve_paths(frame_path)
             self._paths_by_suffix[frame_path] = paths
         return [node for path in paths for node in self._callables_by_path[path]]
+
+    def _resolve_paths(self, frame_path: str) -> list[str]:
+        # An exact graph path is unambiguous. Otherwise the frame carries only a
+        # source-relative suffix (the JVM records the source file, not its
+        # root): match by suffix, but a suffix shared by two source roots cannot
+        # be attributed to either -- merging their callables would let line-span
+        # selection cross files and misattribute the call. A ceiling yields
+        # nothing, never a wrong link (issue #1246).
+        if frame_path in self._callables_by_path:
+            return [frame_path]
+        suffix = cs.SEPARATOR_SLASH + frame_path
+        matches = [path for path in self._callables_by_path if path.endswith(suffix)]
+        return matches if len(matches) == 1 else []

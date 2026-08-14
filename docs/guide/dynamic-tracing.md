@@ -58,7 +58,7 @@ make jvm-agent   # produces build/cgr-jvm-agent.jar
 Attach it to any JVM workload, most usefully a test run:
 
 ```bash
-java -javaagent:cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
+java -javaagent:build/cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
 # Maven:  MAVEN_OPTS='-javaagent:...' mvn test
 # Gradle: add the same -javaagent flag to test { jvmArgs ... }
 ```
@@ -130,9 +130,12 @@ does not know are counted per reason instead of being silently dropped.
   untraced). Test suites dominated by I/O see far less relative impact, but
   keep `include=` scoped to your own packages and avoid tracing
   compute-heavy inner loops.
-- **JVM resolution.** Lambdas and anonymous classes have no static nodes;
-  their frames resolve to the enclosing method by line span. Frames the
-  static graph cannot account for (implicit constructors, static
-  initializers) are counted as unresolved rather than guessed. Scala name
-  mangling (`Util$`, `$anonfun$`) is normalized, but Scala static parsing
-  is still in development, so expect lower resolution rates than Java.
+- **JVM resolution.** A lambda body has no static node of its own, so its
+  frame resolves to the enclosing method by line span. An anonymous-class
+  method resolves to its own node — the innermost source span containing the
+  frame line, threaded under the enclosing method — rather than to the
+  enclosing method itself. Frames the static graph cannot account for
+  (implicit constructors, static initializers) are counted as unresolved
+  rather than guessed. Scala name mangling (`Util$`, `$anonfun$`) is
+  normalized, but Scala static parsing is still in development, so expect
+  lower resolution rates than Java.

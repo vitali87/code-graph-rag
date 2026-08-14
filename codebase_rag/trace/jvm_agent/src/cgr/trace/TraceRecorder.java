@@ -152,12 +152,18 @@ public final class TraceRecorder {
     }
 
     static void write() {
-        try (Writer out = Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8)) {
-            out.write(header());
-            out.write('\n');
-            for (Map.Entry<PairKey, PairStats> entry : PAIRS.entrySet()) {
-                out.write(record(entry.getKey(), entry.getValue()));
+        try {
+            Path parent = outputPath.toAbsolutePath().getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            try (Writer out = Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8)) {
+                out.write(header());
                 out.write('\n');
+                for (Map.Entry<PairKey, PairStats> entry : PAIRS.entrySet()) {
+                    out.write(record(entry.getKey(), entry.getValue()));
+                    out.write('\n');
+                }
             }
         } catch (IOException e) {
             System.err.println("cgr-trace-jvm: failed to write trace: " + e);

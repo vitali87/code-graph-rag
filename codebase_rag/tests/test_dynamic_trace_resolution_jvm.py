@@ -189,3 +189,62 @@ def test_unknown_path_and_no_match_are_counted():
         cs.TraceUnresolvedReason.UNKNOWN_PATH.value: 1,
         cs.TraceUnresolvedReason.NO_MATCH.value: 1,
     }
+
+
+def test_ambiguous_source_suffix_does_not_misattribute():
+    # Two source roots hold the same relative path; a JVM frame carrying only
+    # that suffix cannot be attributed to either without risking a cross-file
+    # line-span match, so the resolver returns nothing rather than a wrong link.
+    nodes = [
+        _node(
+            cs.NodeLabel.METHOD,
+            f"{_P}.moduleA.com.example.Dup.Dup.run()",
+            "moduleA/com/example/Dup.java",
+            5,
+            9,
+        ),
+        _node(
+            cs.NodeLabel.METHOD,
+            f"{_P}.moduleB.com.example.Dup.Dup.run()",
+            "moduleB/com/example/Dup.java",
+            5,
+            9,
+        ),
+    ]
+    resolver = JvmFrameResolver(nodes)
+    stats = ResolutionStats()
+
+    assert resolver.resolve(_frame("com/example/Dup.java", "Dup.run", 6), stats) is None
+    # The ambiguous suffix locates no single file, so it counts as an
+    # unresolved path -- never a (wrong) match.
+    assert stats.unresolved == {cs.TraceUnresolvedReason.UNKNOWN_PATH.value: 1}
+
+
+def test_exact_path_frame_resolves_despite_a_suffix_collision():
+    # An exact graph path is unambiguous even when another root shares the
+    # suffix: the exact match wins, so a fully-qualified frame still resolves.
+    nodes = [
+        _node(
+            cs.NodeLabel.METHOD,
+            f"{_P}.moduleA.com.example.Dup.Dup.run()",
+            "moduleA/com/example/Dup.java",
+            5,
+            9,
+        ),
+        _node(
+            cs.NodeLabel.METHOD,
+            f"{_P}.moduleB.com.example.Dup.Dup.run()",
+            "moduleB/com/example/Dup.java",
+            5,
+            9,
+        ),
+    ]
+    resolver = JvmFrameResolver(nodes)
+    stats = ResolutionStats()
+
+    resolved = resolver.resolve(
+        _frame("moduleA/com/example/Dup.java", "Dup.run", 6), stats
+    )
+    assert resolved is not None
+    assert resolved.qualified_name.endswith("moduleA.com.example.Dup.Dup.run()")
+    assert stats.total == 0

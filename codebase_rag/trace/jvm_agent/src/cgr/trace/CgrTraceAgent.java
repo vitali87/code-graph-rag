@@ -44,7 +44,15 @@ public final class CgrTraceAgent {
                         }
                     }
                 }
-                case "output" -> output = Path.of(value);
+                case "output" -> {
+                    try {
+                        output = Path.of(value);
+                    } catch (java.nio.file.InvalidPathException e) {
+                        System.err.println(
+                                "cgr-trace-jvm: invalid output path, keeping default: "
+                                        + value + " (" + e + ")");
+                    }
+                }
                 case "repo" -> repo = value;
                 case "workload" -> workload = value;
                 default -> System.err.println("cgr-trace-jvm: unknown agent arg: " + key);

@@ -51,9 +51,10 @@ final class MethodEntryTransformer implements ClassFileTransformer {
         }
         try {
             return instrument(internalName, classfileBuffer);
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             // A malformed or unsupported class must load uninstrumented
-            // rather than break the application.
+            // rather than break the application -- including on Errors such as
+            // a LinkageError from an unparseable class file.
             System.err.println("cgr-trace-jvm: skipped " + internalName + ": " + e);
             return null;
         }
