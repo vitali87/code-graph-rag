@@ -178,19 +178,15 @@ def convert_cmd(
     workload: str | None,
 ) -> None:
     from .. import constants as cs
-    from .records import TraceFormatError
 
     resolved_output = output or Path(cs.TRACE_DEFAULT_OUTPUT)
     try:
         count = _convert_profile(
             profile_file, repo_path, resolved_output, include, workload
         )
-    except (
-        TraceFormatError,
-        OSError,
-        ValueError,
-        _ConvertUsageError,
-    ) as e:
+    # TraceFormatError subclasses ValueError, so ValueError covers it (and the
+    # malformed-number / non-UTF-8 cases) without listing it redundantly.
+    except (OSError, ValueError, _ConvertUsageError) as e:
         logger.error(str(e))
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
