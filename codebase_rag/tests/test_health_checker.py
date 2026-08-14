@@ -3,6 +3,7 @@ from __future__ import annotations
 import mgclient  # ty: ignore[unresolved-import]
 import pytest
 
+from codebase_rag.cypher_queries import CYPHER_AUDIT_ORPHANS
 from codebase_rag.tools.health_checker import HealthChecker
 
 
@@ -90,7 +91,9 @@ def test_check_graph_integrity_passes_on_clean_graph(
 def test_check_graph_integrity_reports_orphans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cursor = _FakeCursor({"NOT (n)--()": [("Method", 427)]}, ["label", "orphans"])
+    cursor = _FakeCursor(
+        {CYPHER_AUDIT_ORPHANS: [("Method", 427)]}, ["label", "orphans"]
+    )
     monkeypatch.setattr(mgclient, "connect", lambda **_: _FakeConnection(cursor))
 
     results = HealthChecker().check_graph_integrity()
