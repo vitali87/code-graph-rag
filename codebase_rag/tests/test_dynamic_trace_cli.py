@@ -226,15 +226,13 @@ def test_convert_command_requires_repo_path_for_cpuprofiles(tmp_path):
 
 
 def test_convert_command_fails_cleanly_on_unreadable_xt(tmp_path, monkeypatch):
-    from pathlib import Path as _Path
-
     trace_path = tmp_path / "run.xt"
     trace_path.write_text("File format: 4\n")
 
-    def _deny(self, *args, **kwargs):
-        raise PermissionError(f"denied: {self}")
+    def _deny(*args, **kwargs):
+        raise PermissionError(f"denied: {trace_path}")
 
-    monkeypatch.setattr(_Path, "read_text", _deny)
+    monkeypatch.setattr("codebase_rag.trace.xdebug.convert_xdebug_trace", _deny)
     result = CliRunner().invoke(cli, ["convert", str(trace_path)])
 
     assert result.exit_code == 1
