@@ -57,9 +57,7 @@ def _aggregate_project_edges(
     from that ancestor.
     """
     edges: dict[tuple[_ProfileFrame, _ProfileFrame], int] = {}
-    stack: list[tuple[int, _ProfileFrame | None]] = [
-        (root, None) for root in roots
-    ]
+    stack: list[tuple[int, _ProfileFrame | None]] = [(root, None) for root in roots]
     while stack:
         node_id, ancestor = stack.pop()
         frame = frames[node_id]
@@ -161,9 +159,7 @@ def convert_cpuprofile(
         raise TraceFormatError(cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
     subtree: dict[int, int] = {}
     for node_id in reversed(order):
-        subtree[node_id] = hits[node_id] + sum(
-            subtree[c] for c in children[node_id]
-        )
+        subtree[node_id] = hits[node_id] + sum(subtree[c] for c in children[node_id])
 
     edges = _aggregate_project_edges(frames, children, subtree, roots)
 
