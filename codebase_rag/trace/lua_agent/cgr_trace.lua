@@ -23,6 +23,10 @@
 local M = {}
 
 local root = os.getenv("CGR_TRACE_REPO") or ""
+-- Strip a trailing slash so the boundary check below stays exact.
+if root:sub(-1) == "/" then
+  root = root:sub(1, -2)
+end
 local output = os.getenv("CGR_TRACE_OUTPUT") or "cgr-trace.jsonl"
 local workload = os.getenv("CGR_TRACE_WORKLOAD")
 
@@ -48,7 +52,9 @@ local function frame_of(info, line)
       path = root .. "/" .. path
     end
   end
-  if root == "" or path:sub(1, #root) ~= root then
+  -- Boundary-aware: root /work/repo must not admit the sibling
+  -- /work/repo-private, only the root itself and paths under it.
+  if root == "" or (path ~= root and path:sub(1, #root + 1) ~= root .. "/") then
     return nil
   end
   local name

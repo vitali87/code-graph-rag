@@ -57,7 +57,7 @@ lua = shutil.which("lua")
 pytestmark = pytest.mark.skipif(lua is None, reason="lua interpreter not available")
 
 
-def _trace(tmp_path: Path) -> tuple:
+def _run_traced_lua(tmp_path: Path) -> tuple:
     script = tmp_path / "main.lua"
     script.write_text(textwrap.dedent(_SAMPLE))
     output = tmp_path / "cgr-trace.jsonl"
@@ -83,7 +83,7 @@ def _trace(tmp_path: Path) -> tuple:
 
 
 def test_agent_records_registry_dispatch_with_exact_counts(tmp_path):
-    header, records = _trace(tmp_path)
+    header, records = _run_traced_lua(tmp_path)
 
     assert header.language == "lua"
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
@@ -98,7 +98,7 @@ def test_agent_records_registry_dispatch_with_exact_counts(tmp_path):
 
 
 def test_agent_sees_through_c_function_glue(tmp_path):
-    _header, records = _trace(tmp_path)
+    _header, records = _run_traced_lua(tmp_path)
 
     # table.sort invokes the comparator; the edge must attribute to run_all.
     edges = {(r.caller.qualname, r.callee.qualname) for r in records}
@@ -106,7 +106,7 @@ def test_agent_sees_through_c_function_glue(tmp_path):
 
 
 def test_agent_scopes_to_repo_and_labels_workloads(tmp_path):
-    _header, records = _trace(tmp_path)
+    _header, records = _run_traced_lua(tmp_path)
 
     assert records
     root = str(tmp_path)
@@ -144,8 +144,42 @@ def test_relative_script_invocations_stay_in_scope(tmp_path):
     assert records
 
 
+def test_sibling_directories_sharing_the_root_prefix_stay_out_of_scope(tmp_path):
+    # /work/repo must not admit /work/repo-private frames.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    sibling = tmp_path / "repo-private"
+    sibling.mkdir()
+    (sibling / "helper.lua").write_text(
+        "local function secret()\n    return 1\nend\nsecret()\nreturn true\n"
+    )
+    script = repo / "main.lua"
+    script.write_text('dofile("' + str(sibling / "helper.lua") + '")\nprint("ok")\n')
+    output = repo / "cgr-trace.jsonl"
+    env = dict(
+        os.environ,
+        CGR_TRACE_REPO=str(repo),
+        CGR_TRACE_OUTPUT=str(output),
+        LUA_PATH=f"{_AGENT_DIR}/?.lua;;",
+    )
+    result = subprocess.run(
+        [str(lua), "-l", "cgr_trace", str(script)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        cwd=repo,
+    )
+    assert result.returncode == 0, result.stderr
+
+    _header, records = read_trace_file(output)
+    for record in records:
+        assert "repo-private" not in record.caller.path
+        assert "repo-private" not in record.callee.path
+
+
 def test_main_chunk_frames_use_module_marker(tmp_path):
-    _header, records = _trace(tmp_path)
+    _header, records = _run_traced_lua(tmp_path)
 
     toplevel = [r for r in records if r.caller.qualname == cs.TRACE_QUALNAME_MODULE]
     assert toplevel
