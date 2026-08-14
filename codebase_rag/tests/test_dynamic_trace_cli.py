@@ -154,6 +154,21 @@ def test_convert_command_fails_cleanly_on_malformed_profile(tmp_path):
     assert "cpuprofile" in result.output.lower()
 
 
+def test_convert_command_fails_cleanly_on_non_utf8_profile(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    profile_path = tmp_path / "invalid.profile"
+    profile_path.write_bytes(b"\xff\xfe\x00\x01")
+
+    result = CliRunner().invoke(
+        cli,
+        ["convert", str(profile_path), "--repo-path", str(repo)],
+    )
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
 def test_convert_command_sniffs_speedscope_and_requires_include(tmp_path):
     import json as jsonlib
 
@@ -237,6 +252,18 @@ def test_convert_command_fails_cleanly_on_unreadable_xt(tmp_path, monkeypatch):
 
     assert result.exit_code == 1
     assert "denied" in result.output
+
+
+def test_convert_command_sniffs_pprof_and_requires_repo_path(tmp_path):
+    import gzip as gziplib
+
+    profile_path = tmp_path / "cpu.out"
+    profile_path.write_bytes(gziplib.compress(b"\x00"))
+
+    result = CliRunner().invoke(cli, ["convert", str(profile_path)])
+
+    assert result.exit_code == 1
+    assert "--repo-path" in result.output
 
 
 def test_ingest_command_fails_cleanly_on_malformed_trace(tmp_path, monkeypatch):

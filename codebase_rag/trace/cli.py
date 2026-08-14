@@ -70,6 +70,71 @@ def ingest_cmd(trace_file: Path, repo_path: Path, project_name: str | None) -> N
         click.echo(f"  unresolved[{reason}]: {count}")
 
 
+class _ConvertUsageError(Exception):
+    """A convert invocation missing an option the detected format requires."""
+
+
+def _convert_profile(
+    profile_file: Path,
+    repo_path: Path | None,
+    resolved_output: Path,
+    include: str | None,
+    workload: str | None,
+) -> int:
+    """Dispatch by profile format and write records; returns the record count.
+
+    Raises ``_ConvertUsageError`` when the format needs an option the caller
+    did not supply, and ``TraceFormatError``/``OSError``/``JSONDecodeError``
+    for unreadable or malformed profiles.
+    """
+    import json
+
+    with profile_file.open("rb") as fh:
+        magic = fh.read(2)
+
+    if magic == b"\x1f\x8b" or profile_file.suffix == ".pprof":
+        # Go pprof CPU profiles are gzipped protobufs.
+        from .pprof import convert_pprof
+
+        if repo_path is None:
+            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
+        return convert_pprof(
+            profile_file, repo_root=repo_path, output=resolved_output, workload=workload
+        )
+
+    if profile_file.suffix == ".xt":
+        from .xdebug import convert_xdebug_trace
+
+        return convert_xdebug_trace(
+            profile_file, output=resolved_output, workload=workload
+        )
+
+    raw = json.loads(profile_file.read_text(encoding="utf-8"))
+    looks_like_cpuprofile = (isinstance(raw, dict) and "nodes" in raw) or (
+        profile_file.suffix == ".cpuprofile"
+    )
+    if looks_like_cpuprofile:
+        # V8 cpuprofile: frames carry file URLs, so scoping needs the repo.
+        from .cpuprofile import convert_cpuprofile
+
+        if repo_path is None:
+            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
+        return convert_cpuprofile(
+            profile_file, repo_root=repo_path, output=resolved_output, workload=workload
+        )
+
+    # dotnet-trace speedscope: frames carry no paths, so scoping needs
+    # namespace prefixes.
+    from .speedscope import convert_speedscope
+
+    prefixes = tuple(p.strip() for p in (include or "").split(",") if p.strip())
+    if not prefixes:
+        raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_INCLUDE)
+    return convert_speedscope(
+        profile_file, output=resolved_output, include=prefixes, workload=workload
+    )
+
+
 @cli.command(
     "convert",
     help=ch.CMD_TRACE_CONVERT,
@@ -108,63 +173,18 @@ def convert_cmd(
     from .records import TraceFormatError
 
     resolved_output = output or Path(cs.TRACE_DEFAULT_OUTPUT)
-
-    def _fail(message: str) -> None:
-        logger.error(message)
-        click.secho(message, fg="red", err=True)
+    try:
+        count = _convert_profile(
+            profile_file, repo_path, resolved_output, include, workload
+        )
+    except (
+        TraceFormatError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        _ConvertUsageError,
+    ) as e:
+        logger.error(str(e))
+        click.secho(str(e), fg="red", err=True)
         sys.exit(1)
-
-    from .xdebug import convert_xdebug_trace
-
-    if profile_file.suffix == ".xt":
-        try:
-            count = convert_xdebug_trace(
-                profile_file, output=resolved_output, workload=workload
-            )
-        except (TraceFormatError, OSError) as e:
-            _fail(str(e))
-            return
-        click.echo(f"call records written: {count} -> {resolved_output}")
-        return
-
-    try:
-        raw = json.loads(profile_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        _fail(str(e))
-        return
-    looks_like_cpuprofile = (isinstance(raw, dict) and "nodes" in raw) or (
-        profile_file.suffix == ".cpuprofile"
-    )
-    try:
-        if looks_like_cpuprofile:
-            # V8 cpuprofile: frames carry file URLs, so scoping needs the repo.
-            if repo_path is None:
-                _fail(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
-                return
-            from .cpuprofile import convert_cpuprofile
-
-            count = convert_cpuprofile(
-                profile_file,
-                repo_root=repo_path,
-                output=resolved_output,
-                workload=workload,
-            )
-        else:
-            # dotnet-trace speedscope: frames carry no paths, so scoping
-            # needs namespace prefixes.
-            prefixes = tuple(p.strip() for p in (include or "").split(",") if p.strip())
-            if not prefixes:
-                _fail(ch.ERR_TRACE_CONVERT_NEEDS_INCLUDE)
-                return
-            from .speedscope import convert_speedscope
-
-            count = convert_speedscope(
-                profile_file,
-                output=resolved_output,
-                include=prefixes,
-                workload=workload,
-            )
-    except TraceFormatError as e:
-        _fail(str(e))
-        return
     click.echo(f"call records written: {count} -> {resolved_output}")

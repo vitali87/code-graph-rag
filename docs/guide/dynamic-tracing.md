@@ -9,9 +9,9 @@ graph alongside the statically derived `CALLS` edges.
 Currently supported runtimes: **Python** (3.12+, via `sys.monitoring`),
 **Java/Scala** (zero-dependency `java.lang.instrument` agent, JDK 24+),
 **Node.js** (V8 cpuprofile conversion), **.NET** (dotnet-trace speedscope
-conversion), and **PHP** (Xdebug trace conversion), **Lua** (a pure-Lua `debug.sethook`
-agent), and **Dart** (a VM Service sample collector). Remaining runtimes
-are tracked in
+conversion), **PHP** (Xdebug trace conversion), **Lua** (a pure-Lua
+`debug.sethook` agent), **Dart** (a VM Service sample collector), and
+**Go** (pprof CPU-profile conversion). Remaining runtimes are tracked in
 [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
@@ -216,6 +216,33 @@ Closures and async continuations surface as `<anonymous>` frames and
 resolve to their enclosing declaration by line span (the static tier
 creates no closure nodes). Extension methods (`Ext|method`) and setter
 names (`value=`) are normalized to their source spellings.
+
+## Recording a Go trace
+
+Go's own profiler does the capture; `go test` exposes it directly, and the
+converter reads the pprof protobuf without dependencies:
+
+```bash
+go test -cpuprofile cpu.out -gcflags=all=-l ./mypkg
+cgr trace convert cpu.out --repo-path /path/to/your-repo --workload go-test
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+Name one package (`./mypkg`), not `./...`: `go test` runs each package's
+test binary from that package's own source directory, so `./...` scatters a
+separate relative `cpu.out` into every package and the converter reads only
+one. Trace a single package per run, or convert each generated profile.
+
+Sampled stacks make dispatch through interface values and function values
+visible; counts are sample counts, so give workloads enough CPU time.
+`-gcflags=all=-l` disables inlining for the traced build — without it,
+inlined callees vanish from the profile entirely; the flag costs some
+runtime speed but preserves edges, which is the right trade for a traced
+test run. Compiler-generated closure symbols (`runAll.func1`) resolve to
+their enclosing declaration by span; receivers and generic instantiations
+are stripped from names, with declaration-line spans carrying identity.
+Frames from the Go runtime, the standard library, and `vendor/` are seen
+through to the nearest project frame.
 
 ## Ingesting a trace
 
