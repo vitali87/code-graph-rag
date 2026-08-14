@@ -24,20 +24,34 @@ _PROJECT = "proj__deadbeef"
 
 
 class _FakeGraph:
-    """Duck-typed TraceGraphProtocol backed by canned query results."""
+    """Duck-typed TraceGraphProtocol modelling MERGE + existing-calls filtering.
+
+    Edges written via ``ensure_relationship_batch`` persist, and the
+    existing-calls query only reports edges without ``static_missed`` set, the
+    way ``CYPHER_TRACE_EXISTING_CALLS`` filters them, so re-ingestion tests
+    observe the state a prior ingestion left behind.
+    """
 
     def __init__(self, callable_rows, existing_rows):
         self._callable_rows = callable_rows
-        self._existing_rows = existing_rows
+        self._static_rows = existing_rows
         self.edges = []
         self.flushed = 0
+
+    def _existing_call_rows(self):
+        rows = list(self._static_rows)
+        for from_spec, _rel, to_spec, props in self.edges:
+            if props and props.get(cs.TRACE_PROP_STATIC_MISSED):
+                continue
+            rows.append({cs.KEY_FROM_QN: from_spec[2], cs.KEY_TO_QN: to_spec[2]})
+        return rows
 
     def fetch_all(self, query, params=None):
         assert params == {cs.KEY_PREFIX: f"{_PROJECT}."}
         if query == CYPHER_TRACE_CALLABLES:
             return self._callable_rows
         if query == CYPHER_TRACE_EXISTING_CALLS:
-            return self._existing_rows
+            return self._existing_call_rows()
         raise AssertionError(f"unexpected query: {query}")
 
     def execute_write(self, query, params=None):
@@ -199,15 +213,45 @@ def test_ingest_aggregates_same_edge_and_is_idempotent(tmp_path):
         ],
     )
 
-    first_graph = _graph()
-    first = ingest_trace(trace_path, first_graph, repo, _PROJECT)
-    second_graph = _graph()
-    second = ingest_trace(trace_path, second_graph, repo, _PROJECT)
+    graph = _graph()
+    first = ingest_trace(trace_path, graph, repo, _PROJECT)
+    second = ingest_trace(trace_path, graph, repo, _PROJECT)
 
     assert first.edges == second.edges == 1
-    assert first_graph.edges == second_graph.edges
-    (_frm, _rel, _to, props) = first_graph.edges[0]
+    assert graph.edges[0] == graph.edges[1]
+    (_frm, _rel, _to, props) = graph.edges[0]
     assert props[cs.TRACE_PROP_CALL_COUNT] == 5
+
+
+def test_reingest_preserves_runtime_only_classification(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    # Static analysis cannot see this registry dispatch, so the first
+    # ingestion creates the edge with static_missed. The second ingestion then
+    # observes that edge in the graph; it must not mistake it for static
+    # confirmation and flip static_missed off.
+    _write_trace(
+        repo,
+        trace_path,
+        [
+            _record(
+                repo,
+                ("pkg/registry.py", "handle", 5),
+                ("pkg/registry.py", "greet", 9),
+                4,
+            ),
+        ],
+    )
+
+    graph = _graph()
+    first = ingest_trace(trace_path, graph, repo, _PROJECT)
+    second = ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    assert first.static_missed == second.static_missed == 1
+    assert second.confirmed_static == 0
+    for _frm, _rel, _to, props in graph.edges:
+        assert props[cs.TRACE_PROP_STATIC_MISSED] is True
 
 
 def test_ingest_counts_unresolved_frames(tmp_path):

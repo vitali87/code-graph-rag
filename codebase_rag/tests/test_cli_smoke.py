@@ -145,3 +145,9 @@ def test_help_command_rejects_unknown_command() -> None:
 
 def test_command_summaries_are_single_line() -> None:
     assert all("\n" not in summary for summary in ch.CLI_COMMANDS.values())
+
+
+def test_every_command_name_has_a_registry_entry() -> None:
+    # CLI_COMMANDS feeds the generated command tables (README, help); a
+    # CLICommandName member missing from it silently drops the command there.
+    assert set(ch.CLI_COMMANDS) == set(ch.CLICommandName)

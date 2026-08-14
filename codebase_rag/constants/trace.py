@@ -31,9 +31,11 @@ TRACE_QUALNAME_MODULE = "<module>"
 TRACE_SYNTHETIC_PREFIX = "<"
 
 # Installed-dependency code frequently lives under the repo root (virtualenvs,
-# vendored packages); frames whose path contains any of these fragments are
-# not project code and are skipped at capture time.
-TRACE_EXCLUDED_PATH_PARTS = ("/site-packages/", "/.venv/", "/node_modules/")
+# vendored packages); frames whose path contains any of these directory names
+# are not project code and are skipped at capture time. Bare names, not
+# separator-delimited fragments, so matching works with both POSIX and Windows
+# separators in co_filename.
+TRACE_EXCLUDED_DIR_NAMES = frozenset({"site-packages", ".venv", "node_modules"})
 
 # Names whose first parameter marks a bound receiver worth sampling.
 TRACE_RECEIVER_PARAMS = ("self", "cls")

@@ -8,7 +8,7 @@ written once at session end.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pytest
 
@@ -63,12 +63,30 @@ def pytest_runtest_protocol(
             tracer.set_workload(None)
 
 
+class _TraceOutputConfig(Protocol):
+    """The slice of ``pytest.Config`` that output-path resolution reads."""
+
+    def getoption(self, name: str) -> object: ...
+
+
+def _output_path(config: _TraceOutputConfig) -> Path:
+    output = Path(str(config.getoption(_OPT_OUTPUT)))
+    # Under pytest-xdist every worker process traces its own interpreter and
+    # writes at session end; a shared name would leave only the last worker's
+    # trace. Ingest all per-worker files to cover the full run.
+    workerinput = getattr(config, "workerinput", None)
+    worker = workerinput.get("workerid") if isinstance(workerinput, dict) else None
+    if worker:
+        output = output.with_name(f"{output.stem}-{worker}{output.suffix}")
+    return output
+
+
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     tracer = session.config.stash.get(_STASH_KEY, None)
     if tracer is None or not tracer.active:
         return
     tracer.stop()
-    output = Path(str(session.config.getoption(_OPT_OUTPUT)))
+    output = _output_path(session.config)
     count = tracer.write(output)
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")
     if reporter is not None:

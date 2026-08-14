@@ -10,8 +10,21 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from codebase_rag.trace.records import read_trace_file
 from codebase_rag.trace.tracer import CallGraphTracer
+
+
+def _start_or_skip(tracer: CallGraphTracer) -> None:
+    # When this suite itself runs under `pytest --cgr-trace`, the session's
+    # plugin already holds sys.monitoring.PROFILER_ID and a second claim
+    # raises; these tests cannot share the slot, so they skip.
+    try:
+        tracer.start()
+    except ValueError:
+        pytest.skip("sys.monitoring PROFILER_ID already claimed in this session")
+
 
 _PKG_FILES = {
     "animals.py": """
@@ -71,7 +84,7 @@ def _trace_package(root: Path, package: str, workload: str | None) -> CallGraphT
     try:
         entry = importlib.import_module(f"{package}.entry")
         tracer = CallGraphTracer(root)
-        tracer.start()
+        _start_or_skip(tracer)
         try:
             if workload is not None:
                 tracer.set_workload(workload)
@@ -115,6 +128,40 @@ def test_tracer_scopes_to_repo_root_and_tags_workloads(tmp_path):
         assert record.caller.path.startswith(root)
         assert record.callee.path.startswith(root)
         assert record.workloads == ("tests/test_x.py::test_y",)
+
+
+def test_tracer_excludes_dependency_dirs_under_repo_root(tmp_path):
+    tracer = CallGraphTracer(tmp_path)
+
+    assert tracer._in_scope(str(tmp_path / "pkg" / "mod.py"))
+    assert not tracer._in_scope(str(tmp_path / ".venv" / "lib" / "dep.py"))
+    assert not tracer._in_scope(
+        str(tmp_path / ".venv" / "lib" / "site-packages" / "dep.py")
+    )
+    assert not tracer._in_scope(str(tmp_path / "web" / "node_modules" / "x.py"))
+
+
+def test_start_releases_tool_id_when_setup_fails(tmp_path, monkeypatch):
+    try:
+        sys.monitoring.use_tool_id(sys.monitoring.PROFILER_ID, "probe")
+    except ValueError:
+        pytest.skip("sys.monitoring PROFILER_ID already claimed in this session")
+    sys.monitoring.free_tool_id(sys.monitoring.PROFILER_ID)
+
+    tracer = CallGraphTracer(tmp_path)
+
+    def _boom(tool_id, events):
+        raise RuntimeError("setup failed")
+
+    monkeypatch.setattr(sys.monitoring, "set_events", _boom)
+    with pytest.raises(RuntimeError):
+        tracer.start()
+    monkeypatch.undo()
+
+    assert not tracer.active
+    # The profiler slot must be free again: claiming it succeeds.
+    sys.monitoring.use_tool_id(sys.monitoring.PROFILER_ID, "probe")
+    sys.monitoring.free_tool_id(sys.monitoring.PROFILER_ID)
 
 
 def test_tracer_write_read_roundtrip(tmp_path):

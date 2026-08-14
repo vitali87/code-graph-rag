@@ -36,6 +36,12 @@ class CallGraphTracer:
 
     Not reentrant: one instance may be started at a time per interpreter, since
     ``sys.monitoring`` allows a single profiler tool registration.
+
+    Call counts and workload attribution are best-effort under threads:
+    ``sys.monitoring`` callbacks fire on every thread, aggregation is unlocked
+    (locking the hot path is not worth it for provenance metadata), and the
+    current workload is interpreter-wide, so calls made by background threads
+    are attributed to the workload the main thread set last.
     """
 
     def __init__(self, repo_root: Path) -> None:
@@ -68,10 +74,16 @@ class CallGraphTracer:
     def start(self) -> None:
         monitoring = sys.monitoring
         monitoring.use_tool_id(monitoring.PROFILER_ID, cs.TRACE_TOOL_NAME)
-        monitoring.register_callback(
-            monitoring.PROFILER_ID, monitoring.events.PY_START, self._on_py_start
-        )
-        monitoring.set_events(monitoring.PROFILER_ID, monitoring.events.PY_START)
+        try:
+            monitoring.register_callback(
+                monitoring.PROFILER_ID, monitoring.events.PY_START, self._on_py_start
+            )
+            monitoring.set_events(monitoring.PROFILER_ID, monitoring.events.PY_START)
+        except BaseException:
+            # Without this, a failed setup leaves the profiler slot claimed
+            # while stop() skips cleanup because _active stayed False.
+            monitoring.free_tool_id(monitoring.PROFILER_ID)
+            raise
         self._active = True
 
     def stop(self) -> None:
@@ -88,9 +100,9 @@ class CallGraphTracer:
     def _in_scope(self, filename: str) -> bool:
         cached = self._scope_cache.get(filename)
         if cached is None:
-            cached = filename.startswith(self._root_prefix) and not any(
-                part in filename for part in cs.TRACE_EXCLUDED_PATH_PARTS
-            )
+            cached = filename.startswith(
+                self._root_prefix
+            ) and cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(filename).parts)
             self._scope_cache[filename] = cached
         return cached
 

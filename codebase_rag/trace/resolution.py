@@ -109,8 +109,14 @@ class FrameResolver:
             for n in candidates
             if _natural_qualified_name(n.qualified_name).endswith(suffix)
         ]
-        chosen = self._pick(by_name, frame.line) or self._pick(
-            candidates, frame.line, require_containment=True
+        # Prefer a name match whose span contains the runtime line; among name
+        # matches without span data, take the first by qualified name so
+        # resolution stays deterministic. Only when no candidate matches by
+        # name does the line span alone decide.
+        chosen = (
+            self._innermost_span_containing_line(by_name, frame.line)
+            or (min(by_name, key=lambda n: n.qualified_name) if by_name else None)
+            or self._innermost_span_containing_line(candidates, frame.line)
         )
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
@@ -118,13 +124,9 @@ class FrameResolver:
         return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
 
     @staticmethod
-    def _pick(
-        candidates: list[CallableNode],
-        line: int,
-        require_containment: bool = False,
+    def _innermost_span_containing_line(
+        candidates: list[CallableNode], line: int
     ) -> CallableNode | None:
-        if not candidates:
-            return None
         containing = [
             n
             for n in candidates
@@ -132,10 +134,8 @@ class FrameResolver:
             and n.end_line is not None
             and n.start_line <= line <= n.end_line
         ]
-        if containing:
-            # The innermost span wins: a nested function's span sits inside
-            # its parent's, and the runtime line points at the inner def.
-            return max(containing, key=lambda n: n.start_line or 0)
-        if require_containment:
+        if not containing:
             return None
-        return min(candidates, key=lambda n: n.qualified_name)
+        # The innermost span wins: a nested function's span sits inside
+        # its parent's, and the runtime line points at the inner def.
+        return max(containing, key=lambda n: n.start_line or 0)

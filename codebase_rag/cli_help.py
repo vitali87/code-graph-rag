@@ -253,6 +253,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DAEMON: CMD_DAEMON,
+    CLICommandName.TRACE: CMD_TRACE,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,

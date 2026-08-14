@@ -6,11 +6,39 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from codebase_rag.trace.pytest_plugin import _OPT_OUTPUT, _output_path
 from codebase_rag.trace.records import read_trace_file
 
 pytest_plugins = ["pytester"]
+
+
+class _StubConfig:
+    """Just enough of pytest.Config for output-path resolution."""
+
+    def __init__(self, output: str, workerid: str | None = None) -> None:
+        self._output = output
+        if workerid is not None:
+            self.workerinput = {"workerid": workerid}
+
+    def getoption(self, name: str) -> str:
+        assert name == _OPT_OUTPUT
+        return self._output
+
+
+def test_output_path_is_unchanged_without_xdist():
+    assert _output_path(_StubConfig("cgr-trace.jsonl")) == Path("cgr-trace.jsonl")
+
+
+def test_output_path_gets_worker_suffix_under_xdist():
+    # Under pytest-xdist every worker writes at session end; without a
+    # per-worker name they would all overwrite the same file.
+    assert _output_path(_StubConfig("cgr-trace.jsonl", workerid="gw1")) == Path(
+        "cgr-trace-gw1.jsonl"
+    )
 
 
 @pytest.mark.slow

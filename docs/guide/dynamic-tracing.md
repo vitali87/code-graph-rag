@@ -24,6 +24,12 @@ test's node id is attached to the calls it triggered, so an edge in the graph
 can tell you *which tests* exercise it. Tracing is scoped to files under the
 pytest root; pass `--cgr-trace-repo PATH` if your repository root differs.
 
+Under `pytest-xdist` each worker traces its own interpreter and writes its own
+file with the worker id in the name (`cgr-trace-gw0.jsonl`, ...); ingest each
+file to cover the whole run. Within one process, workload attribution is
+best-effort for multi-threaded code: calls made by background threads are
+attributed to the test the main thread was running.
+
 Any other workload can be traced programmatically:
 
 ```python
@@ -59,7 +65,7 @@ properties:
 | `dynamic_workloads` | Test ids that exercised the edge (capped list). |
 | `dynamic_workload_count` | Uncapped number of distinct workloads. |
 | `dynamic_receiver_types` | Concrete receiver types observed for method calls. |
-| `static_missed: true` | No static `CALLS` edge existed for this pair: the relationship was invisible to parsing (dynamic dispatch, reflection, registries). |
+| `static_missed: true` | No matching static `CALLS` edge existed in the graph at ingest time. Dynamic dispatch, reflection, and registries are the common causes; a stale or incomplete static graph produces the same flag. |
 
 An edge with `dynamic: true` and `static_missed: false` is a static edge
 confirmed at runtime. Re-ingesting a trace is idempotent: properties are set,

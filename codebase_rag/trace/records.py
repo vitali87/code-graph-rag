@@ -66,6 +66,8 @@ def _frame_from_json(raw: dict[str, object]) -> FramePoint:
         not isinstance(path, str)
         or not isinstance(qualname, str)
         or not isinstance(line, int)
+        or isinstance(line, bool)
+        or line < 0
     ):
         raise TraceFormatError(repr(raw))
     return FramePoint(path=path, qualname=qualname, line=line)
@@ -143,6 +145,8 @@ def _parse_record(trace_path: Path, line_no: int, line: str) -> CallRecord:
         not isinstance(caller, dict)
         or not isinstance(callee, dict)
         or not isinstance(count, int)
+        or isinstance(count, bool)
+        or count < 1
         or not isinstance(workloads, list)
         or not isinstance(receivers, list)
     ):
