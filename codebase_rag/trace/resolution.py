@@ -155,6 +155,72 @@ def _signatureless(qualified_name: str) -> str:
     return head if sep else qualified_name
 
 
+class JsFrameResolver:
+    """Maps V8 profile frames of one project to graph nodes.
+
+    V8 reports bare function names, never dotted scope chains, so the
+    suffix-matching the Python resolver uses cannot work. Resolution anchors
+    on the repo-relative path, narrows to nodes whose final qualified-name
+    part equals the frame's name, and picks the innermost span containing
+    the declaration line (the converter already made V8's 0-based lines
+    1-based, aligning them with node start lines). Anonymous frames resolve
+    by span alone; module toplevels map to the file's Module node.
+    """
+
+    def __init__(self, repo_root: Path, nodes: list[CallableNode]) -> None:
+        self._repo_root = repo_root.resolve()
+        self._root_prefix = str(self._repo_root) + os.sep
+        self._callables_by_path: dict[str, list[CallableNode]] = {}
+        self._modules_by_path: dict[str, CallableNode] = {}
+        for node in nodes:
+            if node.label == cs.NodeLabel.MODULE:
+                self._modules_by_path[node.path] = node
+            else:
+                self._callables_by_path.setdefault(node.path, []).append(node)
+
+    def resolve(
+        self, frame: FramePoint, stats: ResolutionStats
+    ) -> ResolvedFrame | None:
+        if not frame.path.startswith(self._root_prefix):
+            stats.record(cs.TraceUnresolvedReason.OUTSIDE_REPO)
+            return None
+        rel_path = Path(frame.path).relative_to(self._repo_root).as_posix()
+
+        if frame.qualname == cs.TRACE_QUALNAME_MODULE:
+            module = self._modules_by_path.get(rel_path)
+            if module is None:
+                stats.record(cs.TraceUnresolvedReason.UNKNOWN_PATH)
+                return None
+            return ResolvedFrame(
+                label=module.label, qualified_name=module.qualified_name
+            )
+
+        candidates = self._callables_by_path.get(rel_path)
+        if not candidates:
+            stats.record(cs.TraceUnresolvedReason.UNKNOWN_PATH)
+            return None
+
+        by_name: list[CallableNode] = []
+        if not frame.qualname.startswith(cs.TRACE_SYNTHETIC_PREFIX):
+            by_name = [
+                n
+                for n in candidates
+                if _natural_qualified_name(n.qualified_name).rsplit(
+                    cs.SEPARATOR_DOT, 1
+                )[-1]
+                == frame.qualname
+            ]
+        chosen = (
+            _innermost_span_containing_line(by_name, frame.line)
+            or (min(by_name, key=lambda n: n.qualified_name) if by_name else None)
+            or _innermost_span_containing_line(candidates, frame.line)
+        )
+        if chosen is None:
+            stats.record(cs.TraceUnresolvedReason.NO_MATCH)
+            return None
+        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+
+
 class JvmFrameResolver:
     """Maps JVM runtime frames of one project to graph nodes.
 

@@ -68,3 +68,52 @@ def ingest_cmd(trace_file: Path, repo_path: Path, project_name: str | None) -> N
     )
     for reason, count in sorted(summary.resolution.unresolved.items()):
         click.echo(f"  unresolved[{reason}]: {count}")
+
+
+@cli.command(
+    "convert",
+    help=ch.CMD_TRACE_CONVERT,
+    short_help=ch.CMD_TRACE_CONVERT,
+    epilog=ch.EXAMPLES_TRACE_CONVERT,
+)
+@click.argument(
+    "profile_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--repo-path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    required=True,
+    help=ch.HELP_TRACE_REPO_PATH,
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=ch.HELP_TRACE_OUTPUT,
+)
+@click.option("--workload", default=None, help=ch.HELP_TRACE_WORKLOAD)
+def convert_cmd(
+    profile_file: Path,
+    repo_path: Path,
+    output: Path | None,
+    workload: str | None,
+) -> None:
+    from .. import constants as cs
+    from .cpuprofile import convert_cpuprofile
+    from .records import TraceFormatError
+
+    resolved_output = output or Path(cs.TRACE_DEFAULT_OUTPUT)
+    try:
+        count = convert_cpuprofile(
+            profile_file,
+            repo_root=repo_path,
+            output=resolved_output,
+            workload=workload,
+        )
+    except TraceFormatError as e:
+        logger.error(str(e))
+        click.secho(str(e), fg="red", err=True)
+        sys.exit(1)
+    click.echo(f"call records written: {count} -> {resolved_output}")

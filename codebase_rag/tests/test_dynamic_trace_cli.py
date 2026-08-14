@@ -10,7 +10,11 @@ from click.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag.trace.cli import cli
-from codebase_rag.trace.records import TraceHeader, write_trace_file
+from codebase_rag.trace.records import (
+    TraceHeader,
+    read_trace_file,
+    write_trace_file,
+)
 
 
 class _RecordingGraph:
@@ -71,6 +75,83 @@ def test_ingest_command_prints_summary(tmp_path, monkeypatch):
     assert "records:          0" in result.output
     assert "edges written:    0" in result.output
     assert len(graph.queries) == 2
+
+
+def test_convert_command_writes_interchange_trace(tmp_path):
+    import json as jsonlib
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    profile = {
+        "nodes": [
+            {
+                "id": 1,
+                "callFrame": {
+                    "functionName": "runAll",
+                    "url": f"file://{repo.as_posix()}/main.js",
+                    "lineNumber": 2,
+                    "columnNumber": 0,
+                },
+                "hitCount": 1,
+                "children": [2],
+            },
+            {
+                "id": 2,
+                "callFrame": {
+                    "functionName": "helper",
+                    "url": f"file://{repo.as_posix()}/main.js",
+                    "lineNumber": 6,
+                    "columnNumber": 0,
+                },
+                "hitCount": 3,
+                "children": [],
+            },
+        ],
+        "startTime": 0,
+        "endTime": 1,
+        "samples": [],
+        "timeDeltas": [],
+    }
+    profile_path = tmp_path / "main.cpuprofile"
+    profile_path.write_text(jsonlib.dumps(profile))
+    output = tmp_path / "trace.jsonl"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "convert",
+            str(profile_path),
+            "--repo-path",
+            str(repo),
+            "--output",
+            str(output),
+            "--workload",
+            "suite",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    header, records = read_trace_file(output)
+    assert header.language == cs.TRACE_LANGUAGE_JS
+    (record,) = list(records)
+    assert (record.caller.qualname, record.callee.qualname) == ("runAll", "helper")
+    assert record.workloads == ("suite",)
+    assert "1" in result.output
+
+
+def test_convert_command_fails_cleanly_on_malformed_profile(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    profile_path = tmp_path / "broken.cpuprofile"
+    profile_path.write_text("{}")
+
+    result = CliRunner().invoke(
+        cli,
+        ["convert", str(profile_path), "--repo-path", str(repo)],
+    )
+
+    assert result.exit_code == 1
+    assert "cpuprofile" in result.output.lower()
 
 
 def test_ingest_command_fails_cleanly_on_malformed_trace(tmp_path, monkeypatch):

@@ -71,6 +71,7 @@ CMD_WORKSPACE_REMOVE_REPO = "Remove a repository from a workspace by path"
 CMD_TRACE = "Ingest runtime call traces as dynamic CALLS edges"
 CMD_TRACE_GROUP = CMD_TRACE
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
+CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
 CMD_STOP = "Stop the shared stack (alias for cgr daemon down)"
 CMD_STATUS = "Show stack state and the last sync time for each project"
@@ -110,6 +111,13 @@ HELP_TRACE_PROJECT_NAME = (
 )
 EXAMPLES_TRACE_INGEST = (
     "EXAMPLE\n\n  pytest --cgr-trace\n\n"
+    "  cgr trace ingest cgr-trace.jsonl --repo-path ./my-repo"
+)
+HELP_TRACE_OUTPUT = "Where to write the converted trace file."
+HELP_TRACE_WORKLOAD = "Workload label to attach to every converted record."
+EXAMPLES_TRACE_CONVERT = (
+    "EXAMPLE\n\n  node --cpu-prof --cpu-prof-name=run.cpuprofile app.js\n\n"
+    "  cgr trace convert run.cpuprofile --repo-path ./my-repo\n\n"
     "  cgr trace ingest cgr-trace.jsonl --repo-path ./my-repo"
 )
 
