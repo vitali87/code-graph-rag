@@ -6,12 +6,11 @@ at runtime. Dynamic tracing runs your code (typically the test suite), records
 which functions actually called which, and merges those observations into the
 graph alongside the statically derived `CALLS` edges.
 
-Currently supported for **Python** codebases (Python 3.12+ at runtime, via
-`sys.monitoring`), **Java/Scala** codebases (via a zero-dependency
-`java.lang.instrument` agent, JDK 24+), and **JavaScript/TypeScript** codebases
-(by converting a V8 `--cpu-prof` profile with `cgr trace convert`). Other
-language runtimes are tracked in
-[issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
+Currently supported runtimes: **Python** (3.12+, via `sys.monitoring`),
+**Java/Scala** (zero-dependency `java.lang.instrument` agent, JDK 24+),
+**Node.js** (V8 cpuprofile conversion), **.NET** (dotnet-trace speedscope
+conversion), and **PHP** (Xdebug trace conversion). Remaining runtimes are
+tracked in [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
 
