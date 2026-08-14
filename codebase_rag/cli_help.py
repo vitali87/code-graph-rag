@@ -115,6 +115,14 @@ EXAMPLES_TRACE_INGEST = (
 )
 HELP_TRACE_OUTPUT = "Where to write the converted trace file."
 HELP_TRACE_WORKLOAD = "Workload label to attach to every converted record."
+HELP_TRACE_INCLUDE = (
+    "Comma-separated namespace prefixes to keep (dotnet-trace speedscope "
+    "profiles carry no file paths, so scoping is by name)."
+)
+ERR_TRACE_CONVERT_NEEDS_REPO = "V8 cpuprofiles need --repo-path to scope frames."
+ERR_TRACE_CONVERT_NEEDS_INCLUDE = (
+    "speedscope profiles need --include namespace prefixes to scope frames."
+)
 EXAMPLES_TRACE_CONVERT = (
     "EXAMPLE\n\n  node --cpu-prof --cpu-prof-name=run.cpuprofile app.js\n\n"
     "  cgr trace convert run.cpuprofile --repo-path ./my-repo\n\n"

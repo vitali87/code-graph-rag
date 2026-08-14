@@ -24,9 +24,11 @@ TRACE_KEY_RECEIVER_TYPES = "receiver_types"
 TRACE_LANGUAGE_PYTHON = "python"
 TRACE_LANGUAGE_JVM = "jvm"
 TRACE_LANGUAGE_JS = "javascript"
+TRACE_LANGUAGE_DOTNET = "dotnet"
 TRACE_TOOL_NAME = "cgr-trace"
 TRACE_TOOL_NAME_JVM = "cgr-trace-jvm"
 TRACE_TOOL_NAME_CPUPROFILE = "cgr-trace-cpuprofile"
+TRACE_TOOL_NAME_SPEEDSCOPE = "cgr-trace-speedscope"
 TRACE_DEFAULT_OUTPUT = "cgr-trace.jsonl"
 
 # Python runtime qualname markers.
@@ -39,6 +41,15 @@ TRACE_QUALNAME_ANONYMOUS = "<anonymous>"
 TRACE_JS_FILE_URL_PREFIX = "file://"
 
 TRACE_ERR_BAD_CPUPROFILE = "{path} is not a V8 .cpuprofile (missing node tree)."
+
+# dotnet-trace speedscope markers.
+TRACE_ERR_BAD_SPEEDSCOPE = (
+    "{path} is not a speedscope profile (missing frames or sampled profiles)."
+)
+TRACE_DOTNET_ASSEMBLY_SEPARATOR = "!"
+TRACE_DOTNET_CTOR = "..ctor"
+TRACE_DOTNET_CCTOR = "..cctor"
+TRACE_DOTNET_NESTED_MARKER = "+"
 
 # JVM runtime name markers.
 TRACE_JVM_CONSTRUCTOR = "<init>"

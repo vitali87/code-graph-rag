@@ -9,6 +9,7 @@ line containment when names alone are ambiguous.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -219,6 +220,104 @@ class JsFrameResolver:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
         return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+
+
+_DOTNET_ARITY = re.compile(r"`\d+")
+_DOTNET_STATE_MACHINE = re.compile(r"^<(\w+)>d__\d+$")
+_DOTNET_LAMBDA_BODY = re.compile(r"^<(\w+)>b__[\w_]+$")
+_DOTNET_DISPLAY_CLASS = re.compile(r"^<>c(__DisplayClass[\w_]*)?$")
+_DOTNET_ACCESSOR = re.compile(r"^(?:get|set)_(\w+)$")
+
+
+def _demangle_clr_name(name: str) -> str | None:
+    """CLR runtime names as dotted source names, or None for pure synthetics.
+
+    ``Ns.Worker+<RunAsync>d__3.MoveNext`` names the compiler's async state
+    machine; the source declaration is ``Ns.Worker.RunAsync``. Display
+    classes host lambda bodies whose best source anchor is the enclosing
+    method. Constructors (``..ctor``) take the class's own name, matching
+    how the static tier names them; type initialisers have no source
+    declaration at all.
+    """
+    # dotnet-trace keeps CLR generic arity markers (``Dictionary`2``,
+    # ``Method`1``); the graph stores the source spelling, so strip them.
+    name = _DOTNET_ARITY.sub("", name)
+    if name.endswith(cs.TRACE_DOTNET_CCTOR):
+        return None
+    constructor = name.endswith(cs.TRACE_DOTNET_CTOR)
+    if constructor:
+        owner = name[: -len(cs.TRACE_DOTNET_CTOR)]
+        method = ""
+    else:
+        owner, separator, method = name.rpartition(cs.SEPARATOR_DOT)
+        if not separator:
+            return None
+    chain: list[str] = []
+    for part in owner.split(cs.TRACE_DOTNET_NESTED_MARKER):
+        machine = _DOTNET_STATE_MACHINE.match(part)
+        if machine:
+            method = machine.group(1)
+            continue
+        if _DOTNET_DISPLAY_CLASS.match(part):
+            continue
+        chain.append(part)
+    if not chain:
+        return None
+    if constructor:
+        method = chain[-1].rsplit(cs.SEPARATOR_DOT, 1)[-1]
+    lambda_body = _DOTNET_LAMBDA_BODY.match(method)
+    if lambda_body:
+        method = lambda_body.group(1)
+    if not method or "<" in method or any("<" in part for part in chain):
+        return None
+    return cs.SEPARATOR_DOT.join([*chain, method])
+
+
+class DotnetFrameResolver:
+    """Maps sampled .NET frames of one project to graph nodes.
+
+    dotnet-trace frames carry no file paths or lines, but C# qualified names
+    embed the declared namespace, so a demangled ``Namespace.Class.Method``
+    joins as a qualified-name suffix with the parameter signature stripped
+    (runtime argument types are CLR names that never match the graph's
+    source-text spellings, so overloads collapse onto one deterministic
+    node). Property accessors (``get_X``/``set_X``) fall back to the
+    property node when no literal match exists.
+    """
+
+    def __init__(self, nodes: list[CallableNode]) -> None:
+        self._nodes = [n for n in nodes if n.label != cs.NodeLabel.MODULE]
+
+    def resolve(
+        self, frame: FramePoint, stats: ResolutionStats
+    ) -> ResolvedFrame | None:
+        demangled = _demangle_clr_name(frame.qualname)
+        if demangled is None:
+            stats.record(cs.TraceUnresolvedReason.SYNTHETIC)
+            return None
+        chosen = self._match(demangled)
+        if chosen is None:
+            head, _, leaf = demangled.rpartition(cs.SEPARATOR_DOT)
+            accessor = _DOTNET_ACCESSOR.match(leaf)
+            if head and accessor:
+                chosen = self._match(f"{head}{cs.SEPARATOR_DOT}{accessor.group(1)}")
+        if chosen is None:
+            stats.record(cs.TraceUnresolvedReason.NO_MATCH)
+            return None
+        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+
+    def _match(self, demangled: str) -> CallableNode | None:
+        suffix = cs.SEPARATOR_DOT + demangled
+        matches = [
+            n
+            for n in self._nodes
+            if _signatureless(_natural_qualified_name(n.qualified_name)).endswith(
+                suffix
+            )
+        ]
+        if not matches:
+            return None
+        return min(matches, key=lambda n: n.qualified_name)
 
 
 class JvmFrameResolver:

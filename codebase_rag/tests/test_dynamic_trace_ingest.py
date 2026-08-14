@@ -313,6 +313,61 @@ def test_ingest_dispatches_jvm_traces_to_jvm_resolution(tmp_path):
     assert props[cs.TRACE_PROP_CALL_COUNT] == 3
 
 
+def test_ingest_dispatches_dotnet_traces_to_name_resolution(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    graph = _FakeGraph(
+        [
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.Worker.MyApp.Worker.RunAsync",
+                "Worker.cs",
+                3,
+                20,
+            ),
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.Worker.MyApp.Worker.Step",
+                "Worker.cs",
+                22,
+                30,
+            ),
+        ],
+        [],
+    )
+    header = TraceHeader(
+        version=cs.TRACE_FORMAT_VERSION,
+        language=cs.TRACE_LANGUAGE_DOTNET,
+        repo_root="",
+        tracer=cs.TRACE_TOOL_NAME_SPEEDSCOPE,
+    )
+    # .NET frames have no paths or lines; only CLR-name demangling can join.
+    write_trace_file(
+        trace_path,
+        header,
+        [
+            CallRecord(
+                caller=FramePoint(
+                    path="", qualname="MyApp.Worker+<RunAsync>d__3.MoveNext", line=0
+                ),
+                callee=FramePoint(path="", qualname="MyApp.Worker.Step", line=0),
+                count=4,
+                workloads=("dotnet-test",),
+                receiver_types=(),
+            )
+        ],
+    )
+
+    summary = ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    assert summary.edges == 1
+    assert summary.unresolved == 0
+    ((frm, _rel, to, _props),) = graph.edges
+    assert frm[2].endswith("MyApp.Worker.RunAsync")
+    assert to[2].endswith("MyApp.Worker.Step")
+
+
 def test_ingest_counts_unresolved_frames(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

@@ -111,6 +111,37 @@ distinguish this from the instrumented Python and JVM tracers:
   planned follow-up. Running TS directly (via a runner that keeps file
   paths) or indexing the built tree avoids the gap today.
 
+## Recording a .NET trace (C#)
+
+No agent is needed: the CLR's EventPipe sampler ships with the runtime, and
+`dotnet-trace` (a standard global tool) drives it:
+
+```bash
+dotnet tool install --global dotnet-trace
+dotnet-trace collect --output run.nettrace -- dotnet bin/Release/net10.0/MyApp.dll
+dotnet-trace convert run.nettrace --format speedscope --output run
+cgr trace convert run.speedscope.json --include MyApp --workload smoke
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+.NET frames carry no file paths, so scoping uses `--include` namespace
+prefixes instead of the repository root, and resolution joins on the
+namespace-bearing qualified names the static tier stores. CLR name mangling
+is handled: async state machines (`Worker+<RunAsync>d__3.MoveNext`) resolve
+to the source method, display-class lambdas to their enclosing method,
+`.ctor` to the constructor node, `get_`/`set_` accessors to the property
+node, and nested-class `+` to dotted nesting. Two caveats:
+
+- **Sampling.** Edge counts reflect observed activations in the flame
+  chart, not exact call counts; very short calls between samples can be
+  missed. Receiver types on interface dispatch are not observable from
+  samples; the dispatch itself still appears because the concrete
+  implementation's frames are recorded (an instrumented profiler-based
+  tracer is the planned follow-up for receiver capture).
+- **Overloads.** Runtime argument types (CLR names) cannot be matched to
+  the graph's source-text signatures, so all overloads of a name collapse
+  onto one deterministic node.
+
 ## Ingesting a trace
 
 Parse the repository into the graph first (`cgr start --repo-path ... --update-graph`),

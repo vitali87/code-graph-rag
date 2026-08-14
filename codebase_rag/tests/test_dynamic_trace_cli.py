@@ -154,6 +154,77 @@ def test_convert_command_fails_cleanly_on_malformed_profile(tmp_path):
     assert "cpuprofile" in result.output.lower()
 
 
+def test_convert_command_sniffs_speedscope_and_requires_include(tmp_path):
+    import json as jsonlib
+
+    speedscope = {
+        "shared": {
+            "frames": [
+                {"name": "MyApp!MyApp.Program.Main()"},
+                {"name": "MyApp!MyApp.Registry.Handle()"},
+            ]
+        },
+        "profiles": [
+            {
+                "type": "sampled",
+                "samples": [[0, 1]],
+                "weights": [3],
+            }
+        ],
+    }
+    profile_path = tmp_path / "trace.speedscope.json"
+    profile_path.write_text(jsonlib.dumps(speedscope))
+    output = tmp_path / "trace.jsonl"
+
+    missing_include = CliRunner().invoke(
+        cli, ["convert", str(profile_path), "--output", str(output)]
+    )
+    assert missing_include.exit_code == 1
+    assert "--include" in missing_include.output
+
+    # An include that normalises to nothing (commas/whitespace only) is
+    # rejected rather than silently producing an empty trace.
+    empty_include = CliRunner().invoke(
+        cli,
+        ["convert", str(profile_path), "--include", " , ", "--output", str(output)],
+    )
+    assert empty_include.exit_code == 1
+    assert "--include" in empty_include.output
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "convert",
+            str(profile_path),
+            "--include",
+            "MyApp",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    header, records = read_trace_file(output)
+    assert header.language == cs.TRACE_LANGUAGE_DOTNET
+    (record,) = list(records)
+    assert (record.caller.qualname, record.callee.qualname) == (
+        "MyApp.Program.Main",
+        "MyApp.Registry.Handle",
+    )
+
+
+def test_convert_command_requires_repo_path_for_cpuprofiles(tmp_path):
+    import json as jsonlib
+
+    profile_path = tmp_path / "main.cpuprofile"
+    profile_path.write_text(jsonlib.dumps({"nodes": [], "samples": []}))
+
+    result = CliRunner().invoke(cli, ["convert", str(profile_path)])
+
+    assert result.exit_code == 1
+    assert "--repo-path" in result.output
+
+
 def test_ingest_command_fails_cleanly_on_malformed_trace(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
