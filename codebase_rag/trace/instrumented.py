@@ -105,14 +105,12 @@ def _default_symbolizer() -> Symbolizer:
     raise TraceFormatError(cs.TRACE_ERR_NO_SYMBOLIZER)
 
 
-def convert_instrumented(
-    addrs_path: Path,
-    repo_root: Path,
-    output: Path,
-    workload: str | None = None,
-    symbolizer: Symbolizer | None = None,
-) -> int:
-    """Write ``addrs_path``'s symbolised call edges to ``output``."""
+def _parse_addrs(addrs_path: Path) -> tuple[str, int, list[tuple[int, int, int]]]:
+    """The executable path, load slide, and (caller, callee, count) edges.
+
+    Raises ``TraceFormatError`` for an unparseable trace or one the shim
+    marked ``dropped`` (its edge table overflowed, so counts are incomplete).
+    """
     exe = ""
     slide = 0
     dropped = False
@@ -138,6 +136,18 @@ def convert_instrumented(
         # the exact invocation-count contract can no longer hold. Refuse the
         # trace rather than pass off an incomplete call graph as exact.
         raise TraceFormatError(cs.TRACE_ERR_ADDRS_DROPPED.format(path=addrs_path))
+    return exe, slide, pairs
+
+
+def convert_instrumented(
+    addrs_path: Path,
+    repo_root: Path,
+    output: Path,
+    workload: str | None = None,
+    symbolizer: Symbolizer | None = None,
+) -> int:
+    """Write ``addrs_path``'s symbolised call edges to ``output``."""
+    exe, slide, pairs = _parse_addrs(addrs_path)
 
     addresses = sorted({a for pair in pairs for a in pair[:2]})
     resolve = symbolizer or _default_symbolizer()

@@ -30,7 +30,7 @@
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
-#else
+#elif defined(__linux__)
 #include <link.h>
 #include <unistd.h>
 #endif
@@ -82,7 +82,7 @@ CGR_ATTR static void cgr_record(void *caller, void *callee) {
   pthread_mutex_unlock(&cgr_lock);
 }
 
-#ifndef __APPLE__
+#ifdef __linux__
 /* The first object dl_iterate_phdr reports is the main program; its
  * dlpi_addr is the load bias (the ASLR slide for a PIE, 0 for -no-pie). */
 CGR_ATTR static int cgr_main_load_bias(struct dl_phdr_info *info, size_t size,
@@ -103,18 +103,20 @@ CGR_ATTR static void cgr_write(void) {
     return;
   }
   char exe[4096] = "";
+  long slide = 0;
 #ifdef __APPLE__
   uint32_t size = sizeof exe;
   _NSGetExecutablePath(exe, &size);
-  long slide = (long)_dyld_get_image_vmaddr_slide(0);
-#else
+  slide = (long)_dyld_get_image_vmaddr_slide(0);
+#elif defined(__linux__)
   ssize_t got = readlink("/proc/self/exe", exe, sizeof exe - 1);
   if (got > 0) {
     exe[got] = '\0';
   }
-  long slide = 0;
   dl_iterate_phdr(cgr_main_load_bias, &slide);
 #endif
+  /* On other platforms exe stays empty and the converter rejects the trace:
+   * symbolisation here targets ELF (addr2line) and Mach-O (atos) only. */
   fprintf(out, "exe %s\n", exe);
   fprintf(out, "slide %ld\n", slide);
   /* Serialize under the same lock cgr_record takes, so a thread still running

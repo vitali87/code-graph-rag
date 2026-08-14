@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -124,7 +125,8 @@ atos = shutil.which("atos") or shutil.which("addr2line")
 
 @pytest.mark.slow
 @pytest.mark.skipif(
-    cc is None or atos is None, reason="C toolchain or symboliser unavailable"
+    sys.platform == "win32" or cc is None or atos is None,
+    reason="C toolchain unavailable, or Windows/PE (the shim targets ELF/Mach-O)",
 )
 def test_live_instrumented_binary_produces_registry_dispatch(tmp_path):
     (tmp_path / "main.c").write_text(
