@@ -10,7 +10,7 @@
  * process exit it writes cgr-trace.addrs (override with CGR_TRACE_ADDRS):
  *
  *   exe <executable path>
- *   slide <ASLR slide of the main image, decimal>
+ *   slide <load bias of the main image, decimal; ASLR slide for a PIE>
  *   <caller addr hex> <callee addr hex> <count>
  *
  * `cgr trace convert` symbolises those addresses (atos on macOS, addr2line
@@ -18,6 +18,10 @@
  * no_instrument_function so the shim never traces itself; overhead is a
  * mutex-guarded table insert per call, acceptable for test workloads.
  */
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE /* dl_iterate_phdr on glibc */
+#endif
 
 #include <pthread.h>
 #include <stdint.h>
@@ -27,6 +31,7 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #else
+#include <link.h>
 #include <unistd.h>
 #endif
 
@@ -77,6 +82,17 @@ CGR_ATTR static void cgr_record(void *caller, void *callee) {
   pthread_mutex_unlock(&cgr_lock);
 }
 
+#ifndef __APPLE__
+/* The first object dl_iterate_phdr reports is the main program; its
+ * dlpi_addr is the load bias (the ASLR slide for a PIE, 0 for -no-pie). */
+CGR_ATTR static int cgr_main_load_bias(struct dl_phdr_info *info, size_t size,
+                                       void *data) {
+  (void)size;
+  *(long *)data = (long)info->dlpi_addr;
+  return 1;
+}
+#endif
+
 CGR_ATTR static void cgr_write(void) {
   const char *path = getenv("CGR_TRACE_ADDRS");
   if (path == NULL || path[0] == '\0') {
@@ -96,7 +112,8 @@ CGR_ATTR static void cgr_write(void) {
   if (got > 0) {
     exe[got] = '\0';
   }
-  long slide = 0; /* build with -no-pie, or symbolise with a load base */
+  long slide = 0;
+  dl_iterate_phdr(cgr_main_load_bias, &slide);
 #endif
   fprintf(out, "exe %s\n", exe);
   fprintf(out, "slide %ld\n", slide);
