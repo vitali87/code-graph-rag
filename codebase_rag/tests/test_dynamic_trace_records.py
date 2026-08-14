@@ -136,6 +136,12 @@ def test_blank_lines_are_skipped(tmp_path):
 
 
 def test_lua_language_tag_constant():
-    # The Lua tracer's subprocess tests skip without an interpreter, so this
-    # in-process check keeps the language-tag constant covered.
-    assert cs.TRACE_LANGUAGE_LUA == "lua"
+    # The Lua tracer's subprocess tests skip without an interpreter, and a
+    # module-level constant only executes at import (before this test runs), so
+    # reload the module here to record the definition line under coverage.
+    import importlib
+
+    from codebase_rag.constants import trace as trace_constants
+
+    importlib.reload(trace_constants)
+    assert trace_constants.TRACE_LANGUAGE_LUA == "lua"
