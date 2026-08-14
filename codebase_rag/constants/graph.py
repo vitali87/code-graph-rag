@@ -372,8 +372,15 @@ CYPHER_DELETE_FOLDER = "MATCH (f:Folder {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 # Removes external import-target Module nodes that no module imports anymore
 # (e.g. an imported name that was renamed/removed on an incremental rebuild).
+# OPTIONAL MATCH + count instead of `WHERE NOT (m)<--()`: Memgraph 3.x
+# rejects pattern expressions inside WHERE, and this form is accepted by
+# both 2.x and 3.x (issue #1257).
 CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
-    "MATCH (m:ExternalModule) WHERE NOT (m)<--() DETACH DELETE m"
+    "MATCH (m:ExternalModule) "
+    "OPTIONAL MATCH (x)-->(m) "
+    "WITH m, count(x) AS inbound "
+    "WHERE inbound = 0 "
+    "DETACH DELETE m"
 )
 CYPHER_PROJECT_MODULE_PATHS = (
     # The bare-name alternative covers the repository-root __init__.py,

@@ -3,9 +3,15 @@ from .constants import CYPHER_DEFAULT_LIMIT, NodeLabel, RelationshipType
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 
 # Graph structural integrity audit (issue #646). A zero-degree Project is a
-# valid empty-repo graph, so the orphan scan exempts it.
+# valid empty-repo graph, so the orphan scan exempts it. OPTIONAL MATCH +
+# count instead of `WHERE NOT (n)--()`: Memgraph 3.x rejects pattern
+# expressions inside WHERE, and this form is accepted by both 2.x and 3.x
+# (issue #1257).
 CYPHER_AUDIT_ORPHANS = (
-    "MATCH (n) WHERE NOT (n)--() AND NOT n:Project "
+    "MATCH (n) WHERE NOT n:Project "
+    "OPTIONAL MATCH (n)--(x) "
+    "WITH n, count(x) AS degree "
+    "WHERE degree = 0 "
     "RETURN labels(n)[0] AS label, count(n) AS orphans"
 )
 CYPHER_AUDIT_LABELS = "MATCH (n) UNWIND labels(n) AS label RETURN DISTINCT label"

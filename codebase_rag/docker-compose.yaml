@@ -4,7 +4,10 @@
 # #1012). Set CGR_STACK_BIND_HOST=0.0.0.0 to expose the stack deliberately.
 services:
   memgraph:
-    image: memgraph/memgraph-mage
+    # Pinned: engine upgrades change accepted Cypher syntax (issue #1257,
+    # Memgraph 3.x dropped pattern-in-WHERE), so `latest` must not float.
+    # Bump deliberately and run the integration suite against the new tag.
+    image: memgraph/memgraph-mage:3.3
     ports:
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${MEMGRAPH_PORT:-7687}:7687"
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${MEMGRAPH_HTTP_PORT:-7444}:7444"
