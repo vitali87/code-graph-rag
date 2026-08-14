@@ -117,6 +117,9 @@ CGR_ATTR static void cgr_write(void) {
 #endif
   fprintf(out, "exe %s\n", exe);
   fprintf(out, "slide %ld\n", slide);
+  /* Serialize under the same lock cgr_record takes, so a thread still running
+   * at exit cannot mutate the table or dropped flag mid-write. */
+  pthread_mutex_lock(&cgr_lock);
   if (cgr_dropped) {
     fprintf(out, "dropped 1\n");
   }
@@ -128,6 +131,7 @@ CGR_ATTR static void cgr_write(void) {
               (unsigned long long)cgr_table[index].count);
     }
   }
+  pthread_mutex_unlock(&cgr_lock);
   fclose(out);
 }
 

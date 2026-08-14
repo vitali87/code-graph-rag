@@ -63,9 +63,9 @@ TRACE_DOTNET_NESTED_MARKER = "+"
 TRACE_ERR_BAD_PPROF = "{path} is not a pprof CPU profile."
 TRACE_ERR_BAD_ADDRS = "{path} is not a cgr instrumented address trace."
 TRACE_ERR_NO_SYMBOLIZER = "Neither atos nor addr2line is available to symbolise."
-TRACE_WARN_ADDRS_DROPPED = (
-    "{path} overflowed the shim's edge table: some call edges were dropped, so "
-    "this trace is incomplete."
+TRACE_ERR_ADDRS_DROPPED = (
+    "{path} overflowed the shim's edge table: call edges were dropped, so the "
+    "trace is incomplete and cannot honour exact invocation counts."
 )
 TRACE_ERR_BAD_XDEBUG = (
     "{path} is not an Xdebug computerized trace (expected 'File format: 4')."

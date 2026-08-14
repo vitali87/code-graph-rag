@@ -276,6 +276,20 @@ def test_convert_command_sniffs_addrs_and_requires_repo_path(tmp_path):
     assert "--repo-path" in result.output
 
 
+def test_convert_command_fails_cleanly_on_bad_addrs_number(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    addrs_path = tmp_path / "cgr-trace.addrs"
+    addrs_path.write_text("exe /bin/app\nslide 0\nZZZZ 2000 1\n")
+
+    result = CliRunner().invoke(
+        cli, ["convert", str(addrs_path), "--repo-path", str(repo)]
+    )
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
 def test_ingest_command_fails_cleanly_on_malformed_trace(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()

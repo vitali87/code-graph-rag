@@ -177,8 +177,6 @@ def convert_cmd(
     include: str | None,
     workload: str | None,
 ) -> None:
-    import json
-
     from .. import constants as cs
     from .records import TraceFormatError
 
@@ -190,8 +188,7 @@ def convert_cmd(
     except (
         TraceFormatError,
         OSError,
-        UnicodeDecodeError,
-        json.JSONDecodeError,
+        ValueError,
         _ConvertUsageError,
     ) as e:
         logger.error(str(e))

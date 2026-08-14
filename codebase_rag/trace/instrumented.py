@@ -21,8 +21,6 @@ import subprocess
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
-from loguru import logger
-
 from .. import constants as cs
 from .records import (
     CallRecord,
@@ -136,7 +134,10 @@ def convert_instrumented(
     if not exe or not pairs:
         raise TraceFormatError(cs.TRACE_ERR_BAD_ADDRS.format(path=addrs_path))
     if dropped:
-        logger.warning(cs.TRACE_WARN_ADDRS_DROPPED.format(path=addrs_path))
+        # The shim's fixed table overflowed and lost caller/callee pairs, so
+        # the exact invocation-count contract can no longer hold. Refuse the
+        # trace rather than pass off an incomplete call graph as exact.
+        raise TraceFormatError(cs.TRACE_ERR_ADDRS_DROPPED.format(path=addrs_path))
 
     addresses = sorted({a for pair in pairs for a in pair[:2]})
     resolve = symbolizer or _default_symbolizer()

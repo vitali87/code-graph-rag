@@ -252,23 +252,26 @@ dependencies beyond pthreads) rides the compiler's own instrumentation and
 records **every call exactly**:
 
 ```bash
-cc -finstrument-functions -g -O0 your_sources... \
+cc -pthread -finstrument-functions -g -O0 your_sources... \
    codebase_rag/trace/c_agent/cgr_trace_shim.c -o app
 ./app        # writes cgr-trace.addrs (override with CGR_TRACE_ADDRS)
 cgr trace convert cgr-trace.addrs --repo-path /path/to/your-repo --workload smoke
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
-The shim records function-address pairs; conversion symbolises them with
-`atos` (macOS) or `addr2line` (ELF; build with `-no-pie` there so the
-recorded addresses match the symbol table). Calls through function
-pointers and virtual dispatch land with true invocation counts; C++ names
-demangle and normalise to their bare member form, with source positions
-carrying identity. Frames that symbolise outside the repository (libc, the
-C++ runtime) drop their edges rather than being guessed. Overhead is one
-mutex-guarded table insert per call — fine for test workloads, not for
-production; the edge table holds 65k distinct pairs and marks the trace
-`dropped` if exceeded.
+The shim records function-address pairs and the main image's load bias;
+conversion symbolises them with `atos` (macOS) or `addr2line` (ELF). PIE
+binaries need no special build flag — the shim records the ASLR slide and
+the converter subtracts it before symbolising, so the default hardened
+(PIE) build works. Calls through function pointers and virtual dispatch
+land with true invocation counts; C++ names demangle and normalise to their
+bare member form, with source positions carrying identity. Frames that
+symbolise outside the repository (libc, the C++ runtime) drop their edges
+rather than being guessed. Overhead is one mutex-guarded table insert per
+call — fine for test workloads, not for production; the edge table holds
+65k distinct pairs, and conversion **rejects** a trace the shim marked
+`dropped` (table overflowed) rather than pass off an incomplete call graph
+as exact.
 
 ## Ingesting a trace
 
