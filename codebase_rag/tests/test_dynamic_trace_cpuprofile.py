@@ -35,10 +35,11 @@ def _node(node_id, frame, children=(), hit_count=0):
 
 def _profile(tmp_path):
     """(root)->(main toplevel)->runAll->[handle->greet, forEach->callback]."""
-    repo = tmp_path.as_posix()
-    main = f"file://{repo}/main.js"
-    registry = f"file://{repo}/src/registry.js"
-    vendored = f"file://{repo}/node_modules/lib/index.js"
+    # Build file URLs with as_uri() so a Windows drive path yields a valid
+    # `file:///C:/...` URI (drive kept out of the authority) on any platform.
+    main = (tmp_path / "main.js").as_uri()
+    registry = (tmp_path / "src" / "registry.js").as_uri()
+    vendored = (tmp_path / "node_modules" / "lib" / "index.js").as_uri()
     return {
         "nodes": [
             _node(1, _frame("(root)", "", 0), children=[2]),
@@ -188,11 +189,44 @@ def test_deep_profiles_do_not_hit_the_recursion_limit(tmp_path):
 
 
 def test_windows_drive_letter_urls_keep_project_frames(tmp_path):
-    from pathlib import Path as _Path
-
     from codebase_rag.trace.cpuprofile import _url_to_path
 
-    assert _url_to_path("file:///C:/repo/main.js") == str(_Path("C:/repo/main.js"))
-    assert _url_to_path(f"file://{tmp_path.as_posix()}/main.js") == str(
-        tmp_path / "main.js"
+    # A Windows drive URL keeps its drive and normalises to POSIX separators so
+    # it matches the POSIX root_prefix on any platform.
+    assert _url_to_path("file:///C:/repo/main.js") == "C:/repo/main.js"
+    assert (
+        _url_to_path((tmp_path / "main.js").as_uri())
+        == (tmp_path / "main.js").as_posix()
     )
+
+
+def test_invalid_json_is_rejected_as_trace_format_error(tmp_path):
+    profile_path = tmp_path / "bad.cpuprofile"
+    profile_path.write_text("{invalid")
+
+    with pytest.raises(ValueError):
+        convert_cpuprofile(
+            profile_path, repo_root=tmp_path, output=tmp_path / "out.jsonl"
+        )
+
+
+def test_non_object_node_is_rejected_not_crashed(tmp_path):
+    with pytest.raises(ValueError):
+        _convert_raw(tmp_path, {"nodes": ["not-an-object"]})
+
+
+def test_non_list_children_is_rejected_not_crashed(tmp_path):
+    profile = {"nodes": [{"id": 1, "callFrame": _frame("a", "", 0), "children": 3}]}
+    with pytest.raises(ValueError):
+        _convert_raw(tmp_path, profile)
+
+
+def test_duplicate_node_id_is_rejected_not_overwritten(tmp_path):
+    profile = {
+        "nodes": [
+            _node(1, _frame("(root)", "", 0)),
+            _node(1, _frame("dup", "", 0)),
+        ]
+    }
+    with pytest.raises(ValueError):
+        _convert_raw(tmp_path, profile)

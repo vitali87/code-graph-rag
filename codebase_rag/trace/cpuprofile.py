@@ -83,7 +83,9 @@ def _url_to_path(url: str) -> str:
     path = urlparse(url).path
     if _DRIVE_LETTER.match(path):
         path = path[1:]
-    return str(Path(path))
+    # Normalise to POSIX separators so a Windows drive path (`C:\repo\main.js`)
+    # matches the POSIX `root_prefix`; the graph stores POSIX paths too.
+    return Path(path).as_posix()
 
 
 def _project_frame(
@@ -115,7 +117,12 @@ def convert_cpuprofile(
     workload: str | None = None,
 ) -> int:
     """Write ``profile_path``'s project call edges to ``output``; returns count."""
-    raw = json.loads(profile_path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(profile_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise TraceFormatError(
+            cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
+        ) from e
     nodes = raw.get("nodes") if isinstance(raw, dict) else None
     if not isinstance(nodes, list) or not nodes:
         raise TraceFormatError(cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
@@ -125,14 +132,24 @@ def convert_cpuprofile(
     children: dict[int, list[int]] = {}
     hits: dict[int, int] = {}
     for node in nodes:
+        if not isinstance(node, dict):
+            raise TraceFormatError(
+                cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
+            )
         node_id = node.get("id")
         call_frame = node.get("callFrame")
-        if not isinstance(node_id, int) or not isinstance(call_frame, dict):
+        raw_children = node.get("children", [])
+        if (
+            not isinstance(node_id, int)
+            or isinstance(node_id, bool)
+            or node_id in children
+            or not isinstance(call_frame, dict)
+            or not isinstance(raw_children, list)
+        ):
             raise TraceFormatError(
                 cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
             )
         frames[node_id] = _project_frame(call_frame, root_prefix)
-        raw_children = node.get("children", [])
         children[node_id] = [c for c in raw_children if isinstance(c, int)]
         hit_count = node.get("hitCount", 0)
         hits[node_id] = hit_count if isinstance(hit_count, int) else 0
