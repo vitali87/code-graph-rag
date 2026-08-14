@@ -158,9 +158,26 @@ def _bare_name(symbol: str) -> str:
     drop. Compiler-generated closure segments mark the frame anonymous.
     """
     tail = symbol.rsplit("/", 1)[-1]
-    bracket = tail.find("[")
-    if bracket >= 0:
-        tail = tail[:bracket]
+    # Remove generic instantiations without discarding what follows them:
+    # `(*Cache[go.shape.string]).Get` must keep `.Get`. Brackets nest in
+    # shape types, so strip balanced groups, not up to the first `]`.
+    while True:
+        start = tail.find("[")
+        if start < 0:
+            break
+        depth = 0
+        end = start
+        for end in range(start, len(tail)):
+            if tail[end] == "[":
+                depth += 1
+            elif tail[end] == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+        if depth != 0:
+            tail = tail[:start]
+            break
+        tail = tail[:start] + tail[end + 1 :]
     segments = [s for s in tail.split(".") if s and not s.startswith("(")]
     if not segments:
         return cs.TRACE_QUALNAME_ANONYMOUS

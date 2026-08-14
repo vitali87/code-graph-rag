@@ -153,6 +153,15 @@ def test_closures_and_methods_normalise(tmp_path):
     assert method.callee.line == 38
 
 
+def test_generic_receiver_methods_keep_their_member_name():
+    from codebase_rag.trace.pprof import _bare_name
+
+    assert _bare_name("example.com/pkg.(*Cache[go.shape.string]).Get") == "Get"
+    assert _bare_name("main.Map[go.shape.int]") == "Map"
+    assert _bare_name("main.(*Box[go.shape.[]uint8]).Put") == "Put"
+    assert _bare_name("main.runAll.func1") == "<anonymous>"
+
+
 def test_workload_label_lands_on_every_record(tmp_path):
     _count, _header, records = _convert(tmp_path, workload="go-test")
 
