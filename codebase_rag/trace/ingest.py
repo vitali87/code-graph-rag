@@ -49,9 +49,14 @@ def _resolver_for(
 ) -> FrameResolverProtocol:
     if header.language == cs.TRACE_LANGUAGE_JVM:
         return JvmFrameResolver(nodes)
-    if header.language in (cs.TRACE_LANGUAGE_JS, cs.TRACE_LANGUAGE_LUA):
-        # Lua agent frames share V8's shape: repo paths, bare runtime names,
-        # 1-based definition lines, <module>/<anonymous> markers.
+    if header.language in (
+        cs.TRACE_LANGUAGE_JS,
+        cs.TRACE_LANGUAGE_LUA,
+        cs.TRACE_LANGUAGE_DART,
+    ):
+        # Lua-agent and Dart-collector frames share V8's shape: repo paths,
+        # bare runtime names, 1-based definition lines, <module>/<anonymous>
+        # markers.
         return JsFrameResolver(repo_root, nodes)
     if header.language == cs.TRACE_LANGUAGE_DOTNET:
         return DotnetFrameResolver(nodes)
