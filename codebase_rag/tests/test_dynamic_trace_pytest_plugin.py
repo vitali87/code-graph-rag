@@ -1,0 +1,58 @@
+# End-to-end: `pytest --cgr-trace` must trace the session, tag records with
+# the test's node id as workload provenance, and write a readable trace file
+# at session end (issue #1246). Runs pytest in a subprocess so the inner
+# session's sys.monitoring profiler registration cannot collide with the
+# outer session's tooling.
+
+from __future__ import annotations
+
+import pytest
+
+from codebase_rag.trace.records import read_trace_file
+
+pytest_plugins = ["pytester"]
+
+
+@pytest.mark.slow
+def test_plugin_traces_session_and_tags_workloads(pytester: pytest.Pytester):
+    pytester.makepyfile(
+        app_under_trace=(
+            "def helper():\n    return 1\n\n\ndef entry():\n    return helper()\n"
+        )
+    )
+    pytester.makepyfile(
+        test_traced=(
+            "import app_under_trace\n"
+            "\n"
+            "\n"
+            "def test_entry():\n"
+            "    assert app_under_trace.entry() == 1\n"
+        )
+    )
+
+    # The plugin auto-loads through the pytest11 entry point; passing -p as
+    # well would register the module twice and abort the session.
+    result = pytester.runpytest_subprocess("--cgr-trace")
+
+    result.assert_outcomes(passed=1)
+    trace_file = pytester.path / "cgr-trace.jsonl"
+    assert trace_file.exists()
+
+    header, records_iter = read_trace_file(trace_file)
+    records = list(records_iter)
+    assert header.repo_root == str(pytester.path)
+
+    by_pair = {(r.caller.qualname, r.callee.qualname): r for r in records}
+    edge = by_pair.get(("entry", "helper"))
+    assert edge is not None, sorted(by_pair)
+    assert edge.count == 1
+    assert edge.workloads == ("test_traced.py::test_entry",)
+
+
+def test_plugin_is_inert_without_flag(pytester: pytest.Pytester):
+    pytester.makepyfile(test_noop="def test_ok():\n    assert True\n")
+
+    result = pytester.runpytest_subprocess()
+
+    result.assert_outcomes(passed=1)
+    assert not (pytester.path / "cgr-trace.jsonl").exists()

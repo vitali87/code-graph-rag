@@ -86,6 +86,7 @@ nav:
     - Interactive Querying: guide/interactive-querying.md
     - Code Optimization: guide/code-optimization.md
     - Dead Code Detection: guide/dead-code.md
+    - Dynamic Call Tracing: guide/dynamic-tracing.md
     - Graph Export: guide/graph-export.md
     - Real-Time Updates: guide/realtime-updates.md
     - MCP Server: guide/mcp-server.md
