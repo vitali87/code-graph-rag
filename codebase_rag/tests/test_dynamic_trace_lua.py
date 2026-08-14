@@ -51,6 +51,9 @@ _SAMPLE = """
     end
 
     print(run_all())
+    -- Write explicitly so the workload produces a trace under LuaJIT too,
+    -- where the __gc-at-shutdown fallback does not run.
+    require("cgr_trace").write()
 """
 
 lua = shutil.which("lua")
@@ -141,7 +144,7 @@ def test_relative_script_invocations_stay_in_scope(tmp_path):
     assert result.returncode == 0, result.stderr
 
     _header, records = read_trace_file(output)
-    assert records
+    assert list(records)
 
 
 def test_sibling_directories_sharing_the_root_prefix_stay_out_of_scope(tmp_path):
@@ -154,7 +157,11 @@ def test_sibling_directories_sharing_the_root_prefix_stay_out_of_scope(tmp_path)
         "local function secret()\n    return 1\nend\nsecret()\nreturn true\n"
     )
     script = repo / "main.lua"
-    script.write_text('dofile("' + str(sibling / "helper.lua") + '")\nprint("ok")\n')
+    script.write_text(
+        'dofile("'
+        + str(sibling / "helper.lua")
+        + '")\nprint("ok")\nrequire("cgr_trace").write()\n'
+    )
     output = repo / "cgr-trace.jsonl"
     env = dict(
         os.environ,

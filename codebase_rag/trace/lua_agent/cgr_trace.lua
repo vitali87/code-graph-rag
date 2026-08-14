@@ -23,10 +23,9 @@
 local M = {}
 
 local root = os.getenv("CGR_TRACE_REPO") or ""
--- Strip a trailing slash so the boundary check below stays exact.
-if root:sub(-1) == "/" then
-  root = root:sub(1, -2)
-end
+-- Strip every trailing slash (`/repo`, `/repo/`, `/repo//` all normalise to
+-- the same root) so the boundary check below stays exact.
+root = (root:gsub("/+$", ""))
 local output = os.getenv("CGR_TRACE_OUTPUT") or "cgr-trace.jsonl"
 local workload = os.getenv("CGR_TRACE_WORKLOAD")
 
