@@ -134,3 +134,15 @@ def test_static_initializer_and_unknown_are_categorised():
         cs.TraceUnresolvedReason.SYNTHETIC.value: 1,
         cs.TraceUnresolvedReason.NO_MATCH.value: 1,
     }
+
+
+def test_resolves_generic_arity_names_to_source_nodes():
+    # dotnet-trace keeps CLR arity markers (`Cache`1`, `Get`1`); the graph
+    # stores the source spelling, so they must be stripped before matching.
+    nodes = [_node(cs.NodeLabel.METHOD, f"{_P}.Cache.MyApp.Cache.Get(string)")]
+    resolver = DotnetFrameResolver(nodes)
+
+    resolved = resolver.resolve(_frame("MyApp.Cache`1.Get`1"), ResolutionStats())
+
+    assert resolved is not None
+    assert resolved.qualified_name.endswith("MyApp.Cache.Get(string)")

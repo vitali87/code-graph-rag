@@ -205,6 +205,31 @@ def test_fractional_weights_accumulate_before_rounding(tmp_path):
             "shared": {"frames": [{"name": n} for n in _FRAMES]},
             "profiles": [{"type": "evented", "events": {"not": "a list"}}],
         },
+        # A sampled stack that is not a list.
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "sampled", "samples": ["nope"], "weights": [1]}],
+        },
+        # A frame index outside the frame table.
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "sampled", "samples": [[999]], "weights": [1]}],
+        },
+        # A non-object event entry.
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "evented", "events": ["nope"]}],
+        },
+        # An unknown event type.
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "evented", "events": [{"type": "X", "frame": 0}]}],
+        },
+        # A close event with nothing open (stack underflow).
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "evented", "events": [{"type": "C"}]}],
+        },
     ],
 )
 def test_recognised_profiles_with_malformed_payloads_are_rejected(tmp_path, profile):

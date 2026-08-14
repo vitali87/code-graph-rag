@@ -222,6 +222,7 @@ class JsFrameResolver:
         return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
 
 
+_DOTNET_ARITY = re.compile(r"`\d+")
 _DOTNET_STATE_MACHINE = re.compile(r"^<(\w+)>d__\d+$")
 _DOTNET_LAMBDA_BODY = re.compile(r"^<(\w+)>b__[\w_]+$")
 _DOTNET_DISPLAY_CLASS = re.compile(r"^<>c(__DisplayClass[\w_]*)?$")
@@ -238,6 +239,9 @@ def _demangle_clr_name(name: str) -> str | None:
     how the static tier names them; type initialisers have no source
     declaration at all.
     """
+    # dotnet-trace keeps CLR generic arity markers (``Dictionary`2``,
+    # ``Method`1``); the graph stores the source spelling, so strip them.
+    name = _DOTNET_ARITY.sub("", name)
     if name.endswith(cs.TRACE_DOTNET_CCTOR):
         return None
     constructor = name.endswith(cs.TRACE_DOTNET_CTOR)

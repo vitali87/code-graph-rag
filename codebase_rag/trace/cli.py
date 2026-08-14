@@ -139,12 +139,12 @@ def convert_cmd(
         else:
             # dotnet-trace speedscope: frames carry no paths, so scoping
             # needs namespace prefixes.
-            if not include:
+            prefixes = tuple(p.strip() for p in (include or "").split(",") if p.strip())
+            if not prefixes:
                 _fail(ch.ERR_TRACE_CONVERT_NEEDS_INCLUDE)
                 return
             from .speedscope import convert_speedscope
 
-            prefixes = tuple(p.strip() for p in include.split(",") if p.strip())
             count = convert_speedscope(
                 profile_file,
                 output=resolved_output,

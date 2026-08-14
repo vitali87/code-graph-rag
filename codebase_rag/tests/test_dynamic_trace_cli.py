@@ -182,6 +182,15 @@ def test_convert_command_sniffs_speedscope_and_requires_include(tmp_path):
     assert missing_include.exit_code == 1
     assert "--include" in missing_include.output
 
+    # An include that normalises to nothing (commas/whitespace only) is
+    # rejected rather than silently producing an empty trace.
+    empty_include = CliRunner().invoke(
+        cli,
+        ["convert", str(profile_path), "--include", " , ", "--output", str(output)],
+    )
+    assert empty_include.exit_code == 1
+    assert "--include" in empty_include.output
+
     result = CliRunner().invoke(
         cli,
         [

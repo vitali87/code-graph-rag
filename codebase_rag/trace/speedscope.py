@@ -61,14 +61,22 @@ def _accumulate_sampled(
         return False
     for position, stack in enumerate(samples):
         if not isinstance(stack, list):
-            continue
+            return False
         weight = weights[position] if position < len(weights) else 1
-        if not isinstance(weight, int | float) or weight <= 0:
+        if (
+            not isinstance(weight, int | float)
+            or isinstance(weight, bool)
+            or weight <= 0
+        ):
             weight = 1
         ancestor: str | None = None
         for frame_index in stack:
-            if not isinstance(frame_index, int) or not 0 <= frame_index < len(names):
-                continue
+            if (
+                not isinstance(frame_index, int)
+                or isinstance(frame_index, bool)
+                or not 0 <= frame_index < len(names)
+            ):
+                return False
             current = names[frame_index]
             if current is None:
                 continue
@@ -92,16 +100,18 @@ def _accumulate_evented(
     stack: list[str | None] = []
     for raw_event in cast("list[object]", events):
         if not isinstance(raw_event, dict):
-            continue
+            return False
         event = cast("dict[str, object]", raw_event)
         kind = event.get("type")
         if kind == "O":
             frame_index = event.get("frame")
-            current = (
-                names[frame_index]
-                if isinstance(frame_index, int) and 0 <= frame_index < len(names)
-                else None
-            )
+            if (
+                not isinstance(frame_index, int)
+                or isinstance(frame_index, bool)
+                or not 0 <= frame_index < len(names)
+            ):
+                return False
+            current = names[frame_index]
             if current is not None:
                 ancestor = next(
                     (name for name in reversed(stack) if name is not None), None
@@ -110,8 +120,12 @@ def _accumulate_evented(
                     key = (ancestor, current)
                     edges[key] = edges.get(key, 0) + 1
             stack.append(current)
-        elif kind == "C" and stack:
+        elif kind == "C":
+            if not stack:
+                return False
             stack.pop()
+        else:
+            return False
     return True
 
 
