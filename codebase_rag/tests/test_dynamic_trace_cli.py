@@ -239,6 +239,18 @@ def test_convert_command_fails_cleanly_on_unreadable_xt(tmp_path, monkeypatch):
     assert "denied" in result.output
 
 
+def test_convert_command_sniffs_pprof_and_requires_repo_path(tmp_path):
+    import gzip as gziplib
+
+    profile_path = tmp_path / "cpu.out"
+    profile_path.write_bytes(gziplib.compress(b"\x00"))
+
+    result = CliRunner().invoke(cli, ["convert", str(profile_path)])
+
+    assert result.exit_code == 1
+    assert "--repo-path" in result.output
+
+
 def test_ingest_command_fails_cleanly_on_malformed_trace(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()

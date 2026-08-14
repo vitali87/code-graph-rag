@@ -114,7 +114,33 @@ def convert_cmd(
         click.secho(message, fg="red", err=True)
         sys.exit(1)
 
+    from .pprof import convert_pprof
     from .xdebug import convert_xdebug_trace
+
+    magic = b""
+    try:
+        with profile_file.open("rb") as fh:
+            magic = fh.read(2)
+    except OSError as e:
+        _fail(str(e))
+        return
+    if magic == b"\x1f\x8b" or profile_file.suffix == ".pprof":
+        # Go pprof CPU profiles are gzipped protobufs.
+        if repo_path is None:
+            _fail(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
+            return
+        try:
+            count = convert_pprof(
+                profile_file,
+                repo_root=repo_path,
+                output=resolved_output,
+                workload=workload,
+            )
+        except (TraceFormatError, OSError) as e:
+            _fail(str(e))
+            return
+        click.echo(f"call records written: {count} -> {resolved_output}")
+        return
 
     if profile_file.suffix == ".xt":
         try:
