@@ -115,6 +115,29 @@ def test_resolves_closure_frames_by_embedded_position(tmp_path):
     assert resolved.qualified_name == f"{_P}.src.Shapes.outer.anonymous_9_10"
 
 
+def test_ambiguous_name_tails_are_unresolved_not_guessed(tmp_path):
+    # Two unrelated classes named Dog in different files: a pathless frame
+    # must not attach the edge to whichever sorts first.
+    nodes = [
+        *_NODES,
+        _node(
+            cs.NodeLabel.METHOD,
+            f"{_P}.src.Alpha.Dog.sound",
+            "src/Alpha.php",
+            3,
+            6,
+        ),
+    ]
+    stats = ResolutionStats()
+
+    resolved = PhpFrameResolver(tmp_path, nodes).resolve(
+        _frame(tmp_path, "", r"App\Services\Dog->sound", 0), stats
+    )
+
+    assert resolved is None
+    assert stats.unresolved == {cs.TraceUnresolvedReason.AMBIGUOUS.value: 1}
+
+
 def test_unresolved_reasons_are_categorised(tmp_path):
     resolver = _resolver(tmp_path)
     stats = ResolutionStats()

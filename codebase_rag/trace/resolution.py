@@ -322,7 +322,13 @@ class PhpFrameResolver:
         if not matches:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
-        chosen = min(matches, key=lambda n: n.qualified_name)
+        if len(matches) > 1:
+            # The tail dropped the namespace, so several unrelated classes
+            # can collide; guessing would attach the edge (and its static
+            # classification) to the wrong declaration.
+            stats.record(cs.TraceUnresolvedReason.AMBIGUOUS)
+            return None
+        chosen = matches[0]
         return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
 
 

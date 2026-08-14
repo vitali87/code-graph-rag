@@ -121,7 +121,7 @@ def convert_cmd(
             count = convert_xdebug_trace(
                 profile_file, output=resolved_output, workload=workload
             )
-        except TraceFormatError as e:
+        except (TraceFormatError, OSError) as e:
             _fail(str(e))
             return
         click.echo(f"call records written: {count} -> {resolved_output}")

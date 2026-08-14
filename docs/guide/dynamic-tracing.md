@@ -161,7 +161,9 @@ where functions are defined, so the converter recovers each function's
 defining file from its own calls' positions; PHP qualified names are
 path-derived (the namespace declaration is not part of them), and
 resolution is span-first on those recovered positions. Leaf functions that
-never call anything resolve by their `Class::method` name tail instead.
+never call anything resolve by their `Class::method` name tail instead;
+when several declarations share that tail, the frame is counted as
+`unresolved[ambiguous]` rather than guessed.
 Closures resolve through the file and line range embedded in their runtime
 name. Calls through `__call` attribute to the magic method itself, since
 the graph has no notion of the proxied target. Expect significant tracing

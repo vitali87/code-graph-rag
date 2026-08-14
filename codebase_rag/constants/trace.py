@@ -110,6 +110,7 @@ class TraceUnresolvedReason(StrEnum):
     SYNTHETIC = "synthetic"
     UNKNOWN_PATH = "unknown_path"
     NO_MATCH = "no_match"
+    AMBIGUOUS = "ambiguous"
 
 
 TRACE_ERR_BAD_HEADER = "Trace file {path} does not start with a valid cgr trace header."
