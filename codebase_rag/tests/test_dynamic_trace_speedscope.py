@@ -177,3 +177,41 @@ def test_malformed_speedscope_is_rejected(tmp_path):
 
     with pytest.raises(ValueError):
         convert_speedscope(profile_path, output=tmp_path / "out.jsonl", include=("X",))
+
+
+def test_fractional_weights_accumulate_before_rounding(tmp_path):
+    # Speedscope permits fractional weights; truncating each sample would
+    # lose their combined contribution (0.5 + 2.0 must round to 3, not 2).
+    profile = _speedscope(
+        _FRAMES,
+        samples=[[0, 1, 3], [0, 1, 3]],
+        weights=[0.5, 2.0],
+    )
+
+    _count, _header, records = _convert(tmp_path, profile)
+
+    edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
+    assert edges[("MyApp.Program.Main", "MyApp.Services.Registry.Handle")].count == 3
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "sampled", "samples": "nope", "weights": []}],
+        },
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "evented", "events": {"not": "a list"}}],
+        },
+    ],
+)
+def test_recognised_profiles_with_malformed_payloads_are_rejected(tmp_path, profile):
+    profile_path = tmp_path / "trace.speedscope.json"
+    profile_path.write_text(json.dumps(profile))
+
+    with pytest.raises(ValueError):
+        convert_speedscope(
+            profile_path, output=tmp_path / "out.jsonl", include=("MyApp",)
+        )

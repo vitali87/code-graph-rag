@@ -52,13 +52,13 @@ def _scoped_name(name: object, include: Sequence[str]) -> str | None:
 def _accumulate_sampled(
     profile: dict[str, object],
     names: list[str | None],
-    edges: dict[tuple[str, str], int],
-) -> None:
+    edges: dict[tuple[str, str], float],
+) -> bool:
     """Adjacent in-scope frames in each sampled stack, weighted by sample."""
     samples = profile.get("samples", [])
     weights = profile.get("weights", [])
     if not isinstance(samples, list) or not isinstance(weights, list):
-        return
+        return False
     for position, stack in enumerate(samples):
         if not isinstance(stack, list):
             continue
@@ -74,20 +74,21 @@ def _accumulate_sampled(
                 continue
             if ancestor is not None:
                 key = (ancestor, current)
-                edges[key] = edges.get(key, 0) + int(weight)
+                edges[key] = edges.get(key, 0) + float(weight)
             ancestor = current
+    return True
 
 
 def _accumulate_evented(
     profile: dict[str, object],
     names: list[str | None],
-    edges: dict[tuple[str, str], int],
-) -> None:
+    edges: dict[tuple[str, str], float],
+) -> bool:
     """Frame open/close events replayed as a stack; each in-scope open under
     an in-scope ancestor counts one observed activation."""
     events = profile.get("events", [])
     if not isinstance(events, list):
-        return
+        return False
     stack: list[str | None] = []
     for event in events:
         if not isinstance(event, dict):
@@ -110,6 +111,7 @@ def _accumulate_evented(
             stack.append(current)
         elif kind == "C" and stack:
             stack.pop()
+    return True
 
 
 def convert_speedscope(
@@ -131,17 +133,25 @@ def convert_speedscope(
         for f in frames
     ]
 
-    edges: dict[tuple[str, str], int] = {}
+    # Fractional sample weights accumulate as-is and round half-up only at
+    # emission, so their combined contribution is never truncated away.
+    edges: dict[tuple[str, str], float] = {}
     converted = False
     for profile in profiles:
         if not isinstance(profile, dict):
             continue
         if profile.get("type") == "sampled":
+            if not _accumulate_sampled(profile, names, edges):
+                raise TraceFormatError(
+                    cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path)
+                )
             converted = True
-            _accumulate_sampled(profile, names, edges)
         elif profile.get("type") == "evented":
+            if not _accumulate_evented(profile, names, edges):
+                raise TraceFormatError(
+                    cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path)
+                )
             converted = True
-            _accumulate_evented(profile, names, edges)
     if not converted:
         raise TraceFormatError(cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path))
 
@@ -150,7 +160,7 @@ def convert_speedscope(
         CallRecord(
             caller=FramePoint(path="", qualname=caller, line=0),
             callee=FramePoint(path="", qualname=callee, line=0),
-            count=max(count, 1),
+            count=max(int(count + 0.5), 1),
             workloads=workloads,
             receiver_types=(),
         )
