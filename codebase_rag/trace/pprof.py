@@ -39,8 +39,10 @@ from .records import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
+
+_Sample = tuple[list[int], int]
 
 _WIRE_VARINT = 0
 _WIRE_FIXED64 = 1
@@ -150,6 +152,36 @@ def _parse_sample(payload: bytes) -> tuple[list[int], int]:
     return location_ids, max(weight, 1)
 
 
+def _matching_bracket(text: str, start: int) -> int:
+    """Index of the ``]`` closing the ``[`` at ``start``, or -1 if unbalanced."""
+    depth = 0
+    for index in range(start, len(text)):
+        if text[index] == "[":
+            depth += 1
+        elif text[index] == "]":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def _strip_generics(tail: str) -> str:
+    """Drop ``[...]`` generic instantiations, keeping what follows them.
+
+    `(*Cache[go.shape.string]).Get` must keep `.Get`. Brackets nest in
+    shape types, so remove balanced groups rather than up to the first `]`;
+    an unbalanced group truncates the remainder.
+    """
+    while True:
+        start = tail.find("[")
+        if start < 0:
+            return tail
+        end = _matching_bracket(tail, start)
+        if end < 0:
+            return tail[:start]
+        tail = tail[:start] + tail[end + 1 :]
+
+
 def _bare_name(symbol: str) -> str:
     """``example.com/pkg.(*Dog).Sound`` as the member name ``Sound``.
 
@@ -157,27 +189,7 @@ def _bare_name(symbol: str) -> str:
     a tiebreak, so package paths, receivers, and generic instantiations
     drop. Compiler-generated closure segments mark the frame anonymous.
     """
-    tail = symbol.rsplit("/", 1)[-1]
-    # Remove generic instantiations without discarding what follows them:
-    # `(*Cache[go.shape.string]).Get` must keep `.Get`. Brackets nest in
-    # shape types, so strip balanced groups, not up to the first `]`.
-    while True:
-        start = tail.find("[")
-        if start < 0:
-            break
-        depth = 0
-        end = start
-        for end in range(start, len(tail)):
-            if tail[end] == "[":
-                depth += 1
-            elif tail[end] == "]":
-                depth -= 1
-                if depth == 0:
-                    break
-        if depth != 0:
-            tail = tail[:start]
-            break
-        tail = tail[:start] + tail[end + 1 :]
+    tail = _strip_generics(symbol.rsplit("/", 1)[-1])
     segments = [s for s in tail.split(".") if s and not s.startswith("(")]
     if not segments:
         return cs.TRACE_QUALNAME_ANONYMOUS
@@ -191,31 +203,25 @@ def _bare_name(symbol: str) -> str:
     return segments[-1]
 
 
-def convert_pprof(
-    profile_path: Path,
-    repo_root: Path,
-    output: Path,
-    workload: str | None = None,
-) -> int:
-    """Write ``profile_path``'s project call edges to ``output``; returns count."""
-    raw = profile_path.read_bytes()
-    if raw[:2] == b"\x1f\x8b":
-        try:
-            raw = gzip.decompress(raw)
-        except (OSError, EOFError) as e:
-            raise TraceFormatError(
-                cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)
-            ) from e
+def _decompress(raw: bytes, profile_path: Path) -> bytes:
+    """Gunzip a gzipped profile; malformed input becomes a TraceFormatError."""
+    if raw[:2] != b"\x1f\x8b":
+        return raw
     try:
-        parsed = list(_fields(raw))
-    except TraceFormatError as e:
+        return gzip.decompress(raw)
+    except (OSError, EOFError) as e:
         raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
 
+
+def _decode_profile(
+    raw: bytes,
+) -> tuple[list[str], dict[int, _Function], dict[int, list[int]], list[_Sample]]:
+    """The pprof message's string, function, location, and sample tables."""
     strings: list[str] = []
     functions: dict[int, _Function] = {}
     locations: dict[int, list[int]] = {}
-    samples: list[tuple[list[int], int]] = []
-    for field, _wire, value in parsed:
+    samples: list[_Sample] = []
+    for field, _wire, value in _fields(raw):
         if not isinstance(value, bytes):
             continue
         if field == 2:
@@ -228,6 +234,65 @@ def convert_pprof(
             functions[function_id] = function
         elif field == 6:
             strings.append(value.decode("utf-8", errors="replace"))
+    return strings, functions, locations, samples
+
+
+def _build_frame(
+    function: _Function | None, strings: list[str], root_prefix: str
+) -> FramePoint | None:
+    """A project FramePoint for the function, or None if out of scope."""
+    if function is None or not (0 < function.filename_index < len(strings)):
+        return None
+    path = strings[function.filename_index]
+    if not path.startswith(root_prefix):
+        return None
+    if _GO_EXCLUDED_DIR in path[len(root_prefix) :].split("/"):
+        return None
+    name = (
+        strings[function.name_index] if 0 < function.name_index < len(strings) else ""
+    )
+    return FramePoint(
+        path=path, qualname=_bare_name(name), line=max(function.start_line, 0)
+    )
+
+
+def _accumulate_edges(
+    samples: list[_Sample],
+    locations: dict[int, list[int]],
+    resolve: Callable[[int], FramePoint | None],
+) -> dict[tuple[FramePoint, FramePoint], int]:
+    """Adjacent in-project frames across each leaf-first sampled stack.
+
+    Samples are leaf-first; walk root-first, expanding inline frames
+    outermost-first within each location.
+    """
+    edges: dict[tuple[FramePoint, FramePoint], int] = {}
+    for location_ids, weight in samples:
+        ancestor: FramePoint | None = None
+        for location_id in reversed(location_ids):
+            for function_id in reversed(locations.get(location_id, [])):
+                frame = resolve(function_id)
+                if frame is None:
+                    continue
+                if ancestor is not None:
+                    key = (ancestor, frame)
+                    edges[key] = edges.get(key, 0) + weight
+                ancestor = frame
+    return edges
+
+
+def convert_pprof(
+    profile_path: Path,
+    repo_root: Path,
+    output: Path,
+    workload: str | None = None,
+) -> int:
+    """Write ``profile_path``'s project call edges to ``output``; returns count."""
+    raw = _decompress(profile_path.read_bytes(), profile_path)
+    try:
+        strings, functions, locations, samples = _decode_profile(raw)
+    except TraceFormatError as e:
+        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
     if not strings or not functions or not samples:
         raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
 
@@ -235,42 +300,13 @@ def convert_pprof(
     frames: dict[int, FramePoint | None] = {}
 
     def _frame(function_id: int) -> FramePoint | None:
-        if function_id in frames:
-            return frames[function_id]
-        built = None
-        function = functions.get(function_id)
-        if function is not None and 0 < function.filename_index < len(strings):
-            path = strings[function.filename_index]
-            in_repo = path.startswith(root_prefix)
-            parts = path[len(root_prefix) :].split("/") if in_repo else []
-            if in_repo and _GO_EXCLUDED_DIR not in parts:
-                name = (
-                    strings[function.name_index]
-                    if 0 < function.name_index < len(strings)
-                    else ""
-                )
-                built = FramePoint(
-                    path=path,
-                    qualname=_bare_name(name),
-                    line=max(function.start_line, 0),
-                )
-        frames[function_id] = built
-        return built
+        if function_id not in frames:
+            frames[function_id] = _build_frame(
+                functions.get(function_id), strings, root_prefix
+            )
+        return frames[function_id]
 
-    edges: dict[tuple[FramePoint, FramePoint], int] = {}
-    for location_ids, weight in samples:
-        ancestor: FramePoint | None = None
-        # Samples are leaf-first; walk root-first, expanding inline frames
-        # outermost-first within each location.
-        for location_id in reversed(location_ids):
-            for function_id in reversed(locations.get(location_id, [])):
-                frame = _frame(function_id)
-                if frame is None:
-                    continue
-                if ancestor is not None:
-                    key = (ancestor, frame)
-                    edges[key] = edges.get(key, 0) + weight
-                ancestor = frame
+    edges = _accumulate_edges(samples, locations, _frame)
 
     workloads = (workload,) if workload else ()
     records = [
