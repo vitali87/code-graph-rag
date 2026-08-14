@@ -9,8 +9,9 @@ graph alongside the statically derived `CALLS` edges.
 Currently supported runtimes: **Python** (3.12+, via `sys.monitoring`),
 **Java/Scala** (zero-dependency `java.lang.instrument` agent, JDK 24+),
 **Node.js** (V8 cpuprofile conversion), **.NET** (dotnet-trace speedscope
-conversion), and **PHP** (Xdebug trace conversion). Remaining runtimes are
-tracked in [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
+conversion), and **PHP** (Xdebug trace conversion), and **Lua** (a pure-Lua `debug.sethook`
+agent). Remaining runtimes are tracked in
+[issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
 
@@ -168,6 +169,29 @@ name. Calls through `__call` attribute to the magic method itself, since
 the graph has no notion of the proxied target. Expect significant tracing
 overhead (Xdebug instruments everything); it is meant for test runs, not
 production.
+
+## Recording a Lua trace
+
+The agent is a single dependency-free Lua module
+(`codebase_rag/trace/lua_agent/cgr_trace.lua`) built on `debug.sethook`;
+it records every call exactly and writes the interchange format directly,
+so no `cgr trace convert` step is needed:
+
+```bash
+export CGR_TRACE_REPO=/path/to/your-repo CGR_TRACE_WORKLOAD=busted
+lua -l cgr_trace main.lua      # with the module on LUA_PATH
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+`CGR_TRACE_OUTPUT` overrides the output path. Functions dispatched through
+tables or metatables have no runtime name; they are recorded by definition
+site and resolved by line span, which is exactly how Lua's dynamic dispatch
+becomes visible in the graph. Caveats: tail calls (`return f()`) replace
+the calling frame, so the edge attributes to the tail-caller's parent;
+C-function boundaries (`pcall`, `table.sort` comparators) are seen through
+to the nearest Lua caller; under LuaJIT the hook disables JIT compilation
+on traced paths and the module's `write()` must be called explicitly at
+exit (plain tables have no `__gc` there).
 
 ## Ingesting a trace
 
