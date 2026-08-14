@@ -7,9 +7,11 @@ which functions actually called which, and merges those observations into the
 graph alongside the statically derived `CALLS` edges.
 
 Currently supported for **Python** codebases (Python 3.12+ at runtime, via
-`sys.monitoring`) and **Java/Scala** codebases (via a zero-dependency
-`java.lang.instrument` agent, JDK 24+). Other language runtimes are tracked
-in [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
+`sys.monitoring`), **Java/Scala** codebases (via a zero-dependency
+`java.lang.instrument` agent, JDK 24+), and **JavaScript/TypeScript** codebases
+(by converting a V8 `--cpu-prof` profile with `cgr trace convert`). Other
+language runtimes are tracked in
+[issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
 
@@ -80,6 +82,34 @@ attributed to the code that initiated it, which is exactly the relationship
 static analysis cannot see. Concrete receiver classes are sampled on
 virtual and interface calls, so the graph records which implementation
 actually handled a dispatch.
+
+## Recording a Node.js trace (JavaScript, TypeScript)
+
+No agent is needed: V8's built-in sampling profiler already records observed
+call stacks, and Node ships it behind one flag. Run any workload (a test
+run, a server under load, a script) with profiling on, then convert the
+profile:
+
+```bash
+node --cpu-prof --cpu-prof-name=run.cpuprofile app.js
+cgr trace convert run.cpuprofile --repo-path /path/to/your-repo --workload smoke
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+Parent/child links in the profile are caller/callee relationships the
+sampler actually observed, so dispatch through registries, event emitters,
+and dynamic `import()` shows up whenever samples landed there. Two caveats
+distinguish this from the instrumented Python and JVM tracers:
+
+- **Sampling.** Short-lived calls can be missed entirely, and
+  `dynamic_call_count` holds sample counts (relative weight), not call
+  counts. Lower `--cpu-prof-interval` (microseconds, default 1000) to
+  tighten coverage at the cost of larger profiles.
+- **Transpiled output.** Frames point at the JavaScript that executed. If
+  you index `.ts` sources but run transpiled output from `dist/`, those
+  frames count as `unresolved[unknown_path]`; source-map translation is a
+  planned follow-up. Running TS directly (via a runner that keeps file
+  paths) or indexing the built tree avoids the gap today.
 
 ## Ingesting a trace
 

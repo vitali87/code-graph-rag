@@ -23,14 +23,22 @@ TRACE_KEY_RECEIVER_TYPES = "receiver_types"
 
 TRACE_LANGUAGE_PYTHON = "python"
 TRACE_LANGUAGE_JVM = "jvm"
+TRACE_LANGUAGE_JS = "javascript"
 TRACE_TOOL_NAME = "cgr-trace"
 TRACE_TOOL_NAME_JVM = "cgr-trace-jvm"
+TRACE_TOOL_NAME_CPUPROFILE = "cgr-trace-cpuprofile"
 TRACE_DEFAULT_OUTPUT = "cgr-trace.jsonl"
 
 # Python runtime qualname markers.
 TRACE_QUALNAME_LOCALS = "<locals>"
 TRACE_QUALNAME_MODULE = "<module>"
 TRACE_SYNTHETIC_PREFIX = "<"
+
+# V8 cpuprofile markers.
+TRACE_QUALNAME_ANONYMOUS = "<anonymous>"
+TRACE_JS_FILE_URL_PREFIX = "file://"
+
+TRACE_ERR_BAD_CPUPROFILE = "{path} is not a V8 .cpuprofile (missing node tree)."
 
 # JVM runtime name markers.
 TRACE_JVM_CONSTRUCTOR = "<init>"

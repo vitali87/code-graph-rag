@@ -23,6 +23,7 @@ from .records import read_trace_file
 from .resolution import (
     CallableNode,
     FrameResolver,
+    JsFrameResolver,
     JvmFrameResolver,
     ResolutionStats,
 )
@@ -46,6 +47,8 @@ def _resolver_for(
 ) -> FrameResolverProtocol:
     if header.language == cs.TRACE_LANGUAGE_JVM:
         return JvmFrameResolver(nodes)
+    if header.language == cs.TRACE_LANGUAGE_JS:
+        return JsFrameResolver(repo_root, nodes)
     return FrameResolver(repo_root, nodes)
 
 
