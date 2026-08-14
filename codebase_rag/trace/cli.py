@@ -89,6 +89,16 @@ def _convert_profile(
     """
     import json
 
+    if profile_file.suffix == ".addrs":
+        # C/C++ instrumented address traces need symbolisation plus the repo.
+        from .instrumented import convert_instrumented
+
+        if repo_path is None:
+            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
+        return convert_instrumented(
+            profile_file, repo_root=repo_path, output=resolved_output, workload=workload
+        )
+
     with profile_file.open("rb") as fh:
         magic = fh.read(2)
 

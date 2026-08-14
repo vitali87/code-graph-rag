@@ -29,12 +29,14 @@ TRACE_LANGUAGE_PHP = "php"
 TRACE_LANGUAGE_LUA = "lua"
 TRACE_LANGUAGE_DART = "dart"
 TRACE_LANGUAGE_GO = "go"
+TRACE_LANGUAGE_CPP = "cpp"
 TRACE_TOOL_NAME = "cgr-trace"
 TRACE_TOOL_NAME_JVM = "cgr-trace-jvm"
 TRACE_TOOL_NAME_CPUPROFILE = "cgr-trace-cpuprofile"
 TRACE_TOOL_NAME_SPEEDSCOPE = "cgr-trace-speedscope"
 TRACE_TOOL_NAME_XDEBUG = "cgr-trace-xdebug"
 TRACE_TOOL_NAME_PPROF = "cgr-trace-pprof"
+TRACE_TOOL_NAME_INSTRUMENTED = "cgr-trace-instrumented"
 TRACE_DEFAULT_OUTPUT = "cgr-trace.jsonl"
 
 # Python runtime qualname markers.
@@ -59,6 +61,8 @@ TRACE_DOTNET_NESTED_MARKER = "+"
 
 # Xdebug computerized-trace markers (trace_format=1, file format 4).
 TRACE_ERR_BAD_PPROF = "{path} is not a pprof CPU profile."
+TRACE_ERR_BAD_ADDRS = "{path} is not a cgr instrumented address trace."
+TRACE_ERR_NO_SYMBOLIZER = "Neither atos nor addr2line is available to symbolise."
 TRACE_ERR_BAD_XDEBUG = (
     "{path} is not an Xdebug computerized trace (expected 'File format: 4')."
 )
