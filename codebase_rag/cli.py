@@ -45,6 +45,7 @@ from .stack.constants import StackState
 from .stack.manager import StackError
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
+from .trace.cli import cli as trace_cli
 from .types_defs import DeadCodeConfig, DeadCodeRow, ResultRow
 from .utils.path_utils import derive_project_name, resolve_repo_path
 from .vector_store import clear_all_embeddings, delete_project_embeddings
@@ -950,6 +951,18 @@ def daemon_command(ctx: typer.Context) -> None:
 )
 def workspace_command(ctx: typer.Context) -> None:
     _run_delegated_group(workspace_cli, ctx)
+
+
+@app.command(
+    name=ch.CLICommandName.TRACE,
+    help=ch.CMD_TRACE,
+    short_help=ch.CMD_TRACE,
+    add_help_option=False,
+    context_settings=_DELEGATED_GROUP_CONTEXT,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
+def trace_command(ctx: typer.Context) -> None:
+    _run_delegated_group(trace_cli, ctx)
 
 
 @app.command(

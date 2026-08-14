@@ -68,6 +68,8 @@ The knowledge graph uses a unified schema across all supported languages.
 
 `REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict). `INSTANTIATES` records a class being constructed. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
 
+`CALLS` edges are created by static analysis and carry no properties by default. [Dynamic call tracing](../guide/dynamic-tracing.md) decorates them with runtime provenance (`dynamic`, `dynamic_call_count`, `dynamic_workloads`, `dynamic_workload_count`, `dynamic_receiver_types`) and creates runtime-only edges flagged `static_missed: true` when no matching static edge existed in the graph at ingest time. Dynamic dispatch, reflection, and registries are the common causes.
+
 ## I/O and Data-Flow Edges
 
 The `io` capture group (opt-in; excluded from the default capture set) adds three relationships that model how code touches external resources and how values move between them.

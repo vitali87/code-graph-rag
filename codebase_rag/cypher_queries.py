@@ -168,6 +168,29 @@ LIMIT 1
 """
 
 
+# Trace-ingestion fetches: every callable (plus Module, for module-level
+# callers) of one project, and the statically discovered CALLS pairs so
+# runtime-only edges can be flagged as static_missed. Edges a previous trace
+# ingestion created (static_missed = true) are excluded, otherwise
+# re-ingesting a trace would reclassify its own runtime-only edges as
+# statically confirmed.
+CYPHER_TRACE_CALLABLES = """
+MATCH (n)
+WHERE (n:Function OR n:Method OR n:Module)
+  AND n.qualified_name STARTS WITH $prefix
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
+       n.path AS path, n.start_line AS start_line, n.end_line AS end_line
+"""
+
+CYPHER_TRACE_EXISTING_CALLS = """
+MATCH (a)-[r:CALLS]->(b)
+WHERE a.qualified_name STARTS WITH $prefix
+  AND b.qualified_name STARTS WITH $prefix
+  AND coalesce(r.static_missed, false) = false
+RETURN a.qualified_name AS from_qn, b.qualified_name AS to_qn
+"""
+
+
 CYPHER_STATS_NODE_COUNTS = """
 MATCH (n)
 RETURN labels(n) AS labels, count(*) AS count

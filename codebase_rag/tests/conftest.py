@@ -25,6 +25,9 @@ if TYPE_CHECKING:
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
+# pytester drives the cgr-trace pytest plugin end-to-end in its own sessions.
+pytest_plugins = ["pytester"]
+
 
 class NodeProtocol(Protocol):
     @property

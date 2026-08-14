@@ -15,6 +15,7 @@ class CLICommandName(StrEnum):
     DELETE_PROJECT = "delete-project"
     DAEMON = "daemon"
     WORKSPACE = "workspace"
+    TRACE = "trace"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -67,6 +68,10 @@ CMD_WORKSPACE_SHOW = "Show the repositories and project names in a workspace"
 CMD_WORKSPACE_ADD_REPO = "Add a repository to a workspace"
 CMD_WORKSPACE_REMOVE_REPO = "Remove a repository from a workspace by path"
 
+CMD_TRACE = "Ingest runtime call traces as dynamic CALLS edges"
+CMD_TRACE_GROUP = CMD_TRACE
+CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
+
 CMD_STOP = "Stop the shared stack (alias for cgr daemon down)"
 CMD_STATUS = "Show stack state and the last sync time for each project"
 
@@ -94,6 +99,19 @@ EXAMPLES_HELP = "EXAMPLES\n\n  cgr help start\n\n  cgr help daemon logs"
 EPILOG_LANGUAGE = "Run 'cgr help language COMMAND' for command-specific help."
 EPILOG_DAEMON = "Run 'cgr help daemon COMMAND' for command-specific help."
 EPILOG_WORKSPACE = "Run 'cgr help workspace COMMAND' for command-specific help."
+EPILOG_TRACE = "Run 'cgr help trace COMMAND' for command-specific help."
+
+HELP_TRACE_REPO_PATH = (
+    "Repository the trace was recorded against. Used to derive the project "
+    "name and re-anchor traced file paths."
+)
+HELP_TRACE_PROJECT_NAME = (
+    "Project name to ingest into. Defaults to the name derived from --repo-path."
+)
+EXAMPLES_TRACE_INGEST = (
+    "EXAMPLE\n\n  pytest --cgr-trace\n\n"
+    "  cgr trace ingest cgr-trace.jsonl --repo-path ./my-repo"
+)
 
 HELP_WORKSPACE_DESCRIPTION = "Optional short description for the workspace."
 HELP_WORKSPACE_FORCE = "Overwrite an existing workspace with the same name."
@@ -235,6 +253,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DAEMON: CMD_DAEMON,
+    CLICommandName.TRACE: CMD_TRACE,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,
