@@ -127,15 +127,128 @@ class FrameResolver:
     def _innermost_span_containing_line(
         candidates: list[CallableNode], line: int
     ) -> CallableNode | None:
-        containing = [
-            n
-            for n in candidates
-            if n.start_line is not None
-            and n.end_line is not None
-            and n.start_line <= line <= n.end_line
-        ]
-        if not containing:
+        return _innermost_span_containing_line(candidates, line)
+
+
+def _innermost_span_containing_line(
+    candidates: list[CallableNode], line: int
+) -> CallableNode | None:
+    containing = [
+        n
+        for n in candidates
+        if n.start_line is not None
+        and n.end_line is not None
+        and n.start_line <= line <= n.end_line
+    ]
+    if not containing:
+        return None
+    # The innermost span wins: a nested function's span sits inside
+    # its parent's, and the runtime line points at the inner def.
+    return max(containing, key=lambda n: n.start_line or 0)
+
+
+def _signatureless(qualified_name: str) -> str:
+    """Strip a Java/C#-style trailing parameter signature, e.g. ``bar(String)``."""
+    if not qualified_name.endswith(")"):
+        return qualified_name
+    head, sep, _ = qualified_name.rpartition("(")
+    return head if sep else qualified_name
+
+
+class JvmFrameResolver:
+    """Maps JVM runtime frames of one project to graph nodes.
+
+    Runtime paths are package-derived (``com/example/Foo.java``) while node
+    paths are repo-relative and may carry a build-tool source root
+    (``src/main/java/com/example/Foo.java``), so paths join by suffix. Java
+    node qualified names end in a raw-source parameter signature that JVM
+    type descriptors cannot reproduce, so names match with the signature
+    stripped and overloads are disambiguated by line span. Lambda bodies
+    (``lambda$run$0``), Scala anonymous functions, and anonymous-class
+    methods (``Client$1.run``) have no name-addressable node; they resolve
+    purely by innermost containing span.
+    """
+
+    def __init__(self, nodes: list[CallableNode]) -> None:
+        self._callables_by_path: dict[str, list[CallableNode]] = {}
+        for node in nodes:
+            if node.label != cs.NodeLabel.MODULE:
+                self._callables_by_path.setdefault(node.path, []).append(node)
+        self._paths_by_suffix: dict[str, list[str]] = {}
+
+    def resolve(
+        self, frame: FramePoint, stats: ResolutionStats
+    ) -> ResolvedFrame | None:
+        class_parts, method = self._split_qualname(frame.qualname)
+        anonymous = any(part.isdigit() for part in class_parts)
+        if method == cs.TRACE_JVM_STATIC_INITIALIZER or (
+            # An anonymous class's constructor sits at the `new` expression
+            # line; span resolution would fabricate a self-edge on the
+            # enclosing method.
+            anonymous and method == cs.TRACE_JVM_CONSTRUCTOR
+        ):
+            stats.record(cs.TraceUnresolvedReason.SYNTHETIC)
             return None
-        # The innermost span wins: a nested function's span sits inside
-        # its parent's, and the runtime line points at the inner def.
-        return max(containing, key=lambda n: n.start_line or 0)
+
+        candidates = self._candidates(frame.path)
+        if not candidates:
+            stats.record(cs.TraceUnresolvedReason.UNKNOWN_PATH)
+            return None
+
+        by_name: list[CallableNode] = []
+        if not anonymous and self._name_addressable(method):
+            if method == cs.TRACE_JVM_CONSTRUCTOR:
+                method = class_parts[-1]
+            suffix = cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join([*class_parts, method])
+            by_name = [
+                n
+                for n in candidates
+                if _signatureless(_natural_qualified_name(n.qualified_name)).endswith(
+                    suffix
+                )
+            ]
+        chosen = (
+            _innermost_span_containing_line(by_name, frame.line)
+            or (min(by_name, key=lambda n: n.qualified_name) if by_name else None)
+            or _innermost_span_containing_line(candidates, frame.line)
+        )
+        if chosen is None:
+            stats.record(cs.TraceUnresolvedReason.NO_MATCH)
+            return None
+        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+
+    @staticmethod
+    def _split_qualname(qualname: str) -> tuple[list[str], str]:
+        """``Outer$Inner.bar`` becomes ``([Outer, Inner], bar)``.
+
+        A trailing ``$`` (Scala object classes) produces an empty part that
+        is dropped; anonymous-class ordinals stay so callers can detect them.
+        """
+        simple, _, method = qualname.rpartition(cs.SEPARATOR_DOT)
+        parts = [part for part in simple.split(cs.TRACE_JVM_NESTED_MARKER) if part]
+        return parts, method
+
+    @staticmethod
+    def _name_addressable(method: str) -> bool:
+        """Whether the graph can hold a node under this dotted name.
+
+        Compiler-generated lambda bodies exist only at runtime; the static
+        tier names their code through the enclosing method, so only the line
+        span can find them. The same goes for anonymous classes, handled by
+        the caller since they are a class-chain property.
+        """
+        return not (
+            method.startswith(cs.TRACE_JVM_LAMBDA_PREFIX)
+            or method.startswith(cs.TRACE_JVM_ANONFUN_PREFIX)
+        )
+
+    def _candidates(self, frame_path: str) -> list[CallableNode]:
+        paths = self._paths_by_suffix.get(frame_path)
+        if paths is None:
+            paths = [
+                path
+                for path in self._callables_by_path
+                if path == frame_path or path.endswith("/" + frame_path)
+            ]
+            self._paths_by_suffix[frame_path] = paths
+        return [node for path in paths for node in self._callables_by_path[path]]

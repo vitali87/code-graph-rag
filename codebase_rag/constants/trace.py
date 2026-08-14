@@ -22,13 +22,22 @@ TRACE_KEY_WORKLOADS = "workloads"
 TRACE_KEY_RECEIVER_TYPES = "receiver_types"
 
 TRACE_LANGUAGE_PYTHON = "python"
+TRACE_LANGUAGE_JVM = "jvm"
 TRACE_TOOL_NAME = "cgr-trace"
+TRACE_TOOL_NAME_JVM = "cgr-trace-jvm"
 TRACE_DEFAULT_OUTPUT = "cgr-trace.jsonl"
 
 # Python runtime qualname markers.
 TRACE_QUALNAME_LOCALS = "<locals>"
 TRACE_QUALNAME_MODULE = "<module>"
 TRACE_SYNTHETIC_PREFIX = "<"
+
+# JVM runtime name markers.
+TRACE_JVM_CONSTRUCTOR = "<init>"
+TRACE_JVM_STATIC_INITIALIZER = "<clinit>"
+TRACE_JVM_LAMBDA_PREFIX = "lambda$"
+TRACE_JVM_ANONFUN_PREFIX = "$anonfun$"
+TRACE_JVM_NESTED_MARKER = "$"
 
 # Installed-dependency code frequently lives under the repo root (virtualenvs,
 # vendored packages); frames whose path contains any of these directory names

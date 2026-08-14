@@ -7,8 +7,9 @@ which functions actually called which, and merges those observations into the
 graph alongside the statically derived `CALLS` edges.
 
 Currently supported for **Python** codebases (Python 3.12+ at runtime, via
-`sys.monitoring`). Other language runtimes are tracked in
-[issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
+`sys.monitoring`) and **Java/Scala** codebases (via a zero-dependency
+`java.lang.instrument` agent, JDK 24+). Other language runtimes are tracked
+in [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
 
@@ -44,6 +45,41 @@ finally:
     tracer.stop()
 tracer.write(Path("cgr-trace.jsonl"))
 ```
+
+## Recording a JVM trace (Java, Scala)
+
+Build the agent once (requires a JDK with the `java.lang.classfile` API,
+i.e. JDK 24+; the agent itself has no dependencies):
+
+```bash
+make jvm-agent   # produces build/cgr-jvm-agent.jar
+```
+
+Attach it to any JVM workload, most usefully a test run:
+
+```bash
+java -javaagent:cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
+# Maven:  MAVEN_OPTS='-javaagent:...' mvn test
+# Gradle: add the same -javaagent flag to test { jvmArgs ... }
+```
+
+Agent arguments are semicolon-separated `key=value` pairs:
+
+| Argument | Meaning |
+|---|---|
+| `include=com.example,org.acme` | Package prefixes to instrument (required). Both endpoints of an edge must match; the JDK and third-party code are never instrumented. |
+| `output=cgr-trace.jsonl` | Trace file path (written on JVM exit). |
+| `repo=/abs/path` | Repository root recorded in the trace header. |
+| `workload=label` | Workload label for the whole run. Tests can refine it per case with `cgr.trace.TraceRecorder.setWorkload(...)`. |
+
+The agent instruments method entry and recovers the caller by walking the
+stack to the nearest project frame, seeing through JDK internals,
+lambda-metafactory classes, and generated proxies. That is deliberate: an
+edge like `list.forEach(this::handle)` or a call through a DI proxy is
+attributed to the code that initiated it, which is exactly the relationship
+static analysis cannot see. Concrete receiver classes are sampled on
+virtual and interface calls, so the graph records which implementation
+actually handled a dispatch.
 
 ## Ingesting a trace
 
@@ -85,6 +121,18 @@ does not know are counted per reason instead of being silently dropped.
   rebuild with `--clean` discards dynamic edges entirely.
 - **Threading.** Counts are aggregated without locks; heavily threaded
   workloads may undercount, though edge presence is unaffected.
-- **Overhead.** `sys.monitoring` keeps tracing cheap enough for test suites,
-  but expect measurable slowdown on call-heavy code. Receiver types are
-  sampled only for a pair's first few calls to bound the cost.
+- **Overhead.** `sys.monitoring` keeps Python tracing cheap enough for test
+  suites, but expect measurable slowdown on call-heavy code. Receiver types
+  are sampled only for a pair's first few calls to bound the cost.
+- **JVM overhead.** The agent walks the stack on every instrumented method
+  entry, costing roughly a microsecond per call (measured: 6M instrumented
+  calls added ~7s on a JIT-friendly loop that runs in milliseconds
+  untraced). Test suites dominated by I/O see far less relative impact, but
+  keep `include=` scoped to your own packages and avoid tracing
+  compute-heavy inner loops.
+- **JVM resolution.** Lambdas and anonymous classes have no static nodes;
+  their frames resolve to the enclosing method by line span. Frames the
+  static graph cannot account for (implicit constructors, static
+  initializers) are counted as unresolved rather than guessed. Scala name
+  mangling (`Util$`, `$anonfun$`) is normalized, but Scala static parsing
+  is still in development, so expect lower resolution rates than Java.

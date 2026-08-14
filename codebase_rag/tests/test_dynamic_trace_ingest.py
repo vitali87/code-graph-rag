@@ -254,6 +254,65 @@ def test_reingest_preserves_runtime_only_classification(tmp_path):
         assert props[cs.TRACE_PROP_STATIC_MISSED] is True
 
 
+def test_ingest_dispatches_jvm_traces_to_jvm_resolution(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    graph = _FakeGraph(
+        [
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.src.main.java.com.example.Foo.Foo.bar()",
+                "src/main/java/com/example/Foo.java",
+                5,
+                9,
+            ),
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.src.main.java.com.example.Foo.Foo.run()",
+                "src/main/java/com/example/Foo.java",
+                11,
+                14,
+            ),
+        ],
+        [],
+    )
+    header = TraceHeader(
+        version=cs.TRACE_FORMAT_VERSION,
+        language=cs.TRACE_LANGUAGE_JVM,
+        repo_root=str(repo),
+        tracer=cs.TRACE_TOOL_NAME_JVM,
+    )
+    # JVM frames carry package-derived paths and binary names; only the JVM
+    # resolver can join them onto the path-derived signature-bearing qns.
+    write_trace_file(
+        trace_path,
+        header,
+        [
+            CallRecord(
+                caller=FramePoint(
+                    path="com/example/Foo.java", qualname="Foo.run", line=12
+                ),
+                callee=FramePoint(
+                    path="com/example/Foo.java", qualname="Foo.bar", line=6
+                ),
+                count=3,
+                workloads=("suite",),
+                receiver_types=("com.example.Foo",),
+            )
+        ],
+    )
+
+    summary = ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    assert summary.edges == 1
+    assert summary.unresolved == 0
+    ((frm, _rel, to, props),) = graph.edges
+    assert frm[2].endswith("Foo.run()")
+    assert to[2].endswith("Foo.bar()")
+    assert props[cs.TRACE_PROP_CALL_COUNT] == 3
+
+
 def test_ingest_counts_unresolved_frames(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
