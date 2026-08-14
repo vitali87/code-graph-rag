@@ -17,7 +17,7 @@ ancestor, mirroring the JVM agent's stack walk.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .. import constants as cs
 from .records import (
@@ -86,13 +86,14 @@ def _accumulate_evented(
 ) -> bool:
     """Frame open/close events replayed as a stack; each in-scope open under
     an in-scope ancestor counts one observed activation."""
-    events = profile.get("events", [])
+    events = profile.get("events")
     if not isinstance(events, list):
         return False
     stack: list[str | None] = []
-    for event in events:
-        if not isinstance(event, dict):
+    for raw_event in cast("list[object]", events):
+        if not isinstance(raw_event, dict):
             continue
+        event = cast("dict[str, object]", raw_event)
         kind = event.get("type")
         if kind == "O":
             frame_index = event.get("frame")
