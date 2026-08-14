@@ -27,6 +27,26 @@ class _StubConfig:
         return self._output
 
 
+def test_plugin_module_defers_tracer_imports():
+    # The pytest11 entry point makes pytest import this module at startup in
+    # every session, before coverage tooling initialises and regardless of
+    # whether tracing is enabled; the tracer machinery must load only when a
+    # hook actually needs it.
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys; import codebase_rag.trace.pytest_plugin; "
+        "leaked = [m for m in sys.modules if m in ("
+        "'codebase_rag.trace.tracer', 'codebase_rag.trace.records')]; "
+        "raise SystemExit(1 if leaked else 0)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, check=False
+    )
+    assert result.returncode == 0
+
+
 def test_output_path_is_unchanged_without_xdist():
     assert _output_path(_StubConfig("cgr-trace.jsonl")) == Path("cgr-trace.jsonl")
 
