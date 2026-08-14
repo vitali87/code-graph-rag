@@ -12,6 +12,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag.trace.instrumented import convert_instrumented
@@ -62,6 +63,56 @@ def test_converts_symbolised_pairs_with_exact_counts(tmp_path):
     assert method.callee.line == 12
     for record in records:
         assert record.workloads == ("ctest",)
+
+
+def test_executable_path_with_spaces_is_preserved(tmp_path):
+    repo = tmp_path.as_posix()
+    captured: dict[str, object] = {}
+
+    def _record(exe, slide, addrs):
+        captured["exe"] = exe
+        return {
+            0x1000: ("main", f"{repo}/main.c", 3),
+            0x2000: ("run", f"{repo}/main.c", 7),
+        }
+
+    addrs_path = _write_addrs(
+        tmp_path, [(0x1000, 0x2000, 4)], exe="/opt/my app/bin/app"
+    )
+
+    count = convert_instrumented(
+        addrs_path,
+        repo_root=tmp_path,
+        output=tmp_path / "trace.jsonl",
+        symbolizer=_record,
+    )
+
+    assert captured["exe"] == "/opt/my app/bin/app"
+    assert count == 1
+
+
+def test_dropped_marker_warns_of_incomplete_trace(tmp_path):
+    repo = tmp_path.as_posix()
+    addrs_path = tmp_path / "cgr-trace.addrs"
+    addrs_path.write_text("exe /bin/app\nslide 0\ndropped 1\n1000 2000 4\n")
+    symbols = {0x1000: ("main", f"{repo}/m.c", 3), 0x2000: ("run", f"{repo}/m.c", 7)}
+
+    warnings: list[str] = []
+    sink_id = logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        count = convert_instrumented(
+            addrs_path,
+            repo_root=tmp_path,
+            output=tmp_path / "trace.jsonl",
+            symbolizer=lambda exe, slide, addrs: symbols,
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert count == 1
+    assert any("incomplete" in message.lower() for message in warnings)
 
 
 def test_malformed_addrs_is_rejected(tmp_path):

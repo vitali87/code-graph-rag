@@ -134,14 +134,13 @@ CGR_ATTR static void cgr_write(void) {
 CGR_ATTR void __cyg_profile_func_enter(void *this_fn, void *call_site);
 CGR_ATTR void __cyg_profile_func_exit(void *this_fn, void *call_site);
 
-static int cgr_registered = 0;
+static pthread_once_t cgr_once = PTHREAD_ONCE_INIT;
+
+CGR_ATTR static void cgr_register_atexit(void) { atexit(cgr_write); }
 
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
   (void)call_site;
-  if (!cgr_registered) {
-    cgr_registered = 1;
-    atexit(cgr_write);
-  }
+  pthread_once(&cgr_once, cgr_register_atexit);
   if (cgr_depth > 0 && cgr_depth <= CGR_STACK_MAX) {
     cgr_record(cgr_stack[cgr_depth - 1], this_fn);
   }

@@ -21,6 +21,8 @@ import subprocess
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from .. import constants as cs
 from .records import (
     CallRecord,
@@ -115,19 +117,26 @@ def convert_instrumented(
     """Write ``addrs_path``'s symbolised call edges to ``output``."""
     exe = ""
     slide = 0
+    dropped = False
     pairs: list[tuple[int, int, int]] = []
     for line in addrs_path.read_text(encoding="utf-8").splitlines():
-        parts = line.split()
-        if len(parts) == 2 and parts[0] == "exe":
-            exe = parts[1]
-        elif len(parts) == 2 and parts[0] == "slide":
-            slide = int(parts[1])
-        elif len(parts) == 2 and parts[0] == "dropped":
-            continue
-        elif len(parts) == 3:
-            pairs.append((int(parts[0], 16), int(parts[1], 16), int(parts[2])))
+        # Header keys are single tokens; the value is the rest of the line so
+        # an executable path may contain spaces. Edge rows are three tokens.
+        key, _sep, rest = line.partition(" ")
+        if key == "exe":
+            exe = rest
+        elif key == "slide" and rest.lstrip("-").isdigit():
+            slide = int(rest)
+        elif key == "dropped":
+            dropped = True
+        else:
+            parts = line.split()
+            if len(parts) == 3:
+                pairs.append((int(parts[0], 16), int(parts[1], 16), int(parts[2])))
     if not exe or not pairs:
         raise TraceFormatError(cs.TRACE_ERR_BAD_ADDRS.format(path=addrs_path))
+    if dropped:
+        logger.warning(cs.TRACE_WARN_ADDRS_DROPPED.format(path=addrs_path))
 
     addresses = sorted({a for pair in pairs for a in pair[:2]})
     resolve = symbolizer or _default_symbolizer()
