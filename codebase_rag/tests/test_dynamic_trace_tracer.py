@@ -164,6 +164,79 @@ def test_start_releases_tool_id_when_setup_fails(tmp_path, monkeypatch):
     sys.monitoring.free_tool_id(sys.monitoring.PROFILER_ID)
 
 
+_HOOK_MODULE = """
+    def callee():
+        pass
+
+
+    class Receiver:
+        def method(self):
+            _hook(Receiver.method.__code__, 0)
+
+
+    def call_method():
+        Receiver().method()
+
+
+    def caller():
+        _hook(callee.__code__, 0)
+
+
+    def outer():
+        caller()
+"""
+
+
+def _hook_namespace(tmp_path: Path, tracer: CallGraphTracer) -> dict:
+    # Executing the module from a file under the repo root gives its frames
+    # in-scope co_filenames, so the callback can be driven directly without
+    # claiming the interpreter-wide profiler slot.
+    path = tmp_path / "hookmod.py"
+    source = textwrap.dedent(_HOOK_MODULE)
+    path.write_text(source)
+    namespace = {"_hook": tracer._on_py_start}
+    exec(compile(source, str(path), "exec"), namespace)
+    return namespace
+
+
+def test_callback_aggregates_pairs_and_workloads(tmp_path):
+    tracer = CallGraphTracer(tmp_path)
+    namespace = _hook_namespace(tmp_path, tracer)
+
+    tracer.set_workload("w1")
+    namespace["outer"]()
+    namespace["outer"]()
+    tracer.set_workload(None)
+    namespace["outer"]()
+
+    records = {(r.caller.qualname, r.callee.qualname): r for r in tracer.records()}
+    edge = records[("outer", "callee")]
+    assert edge.count == 3
+    assert edge.workloads == ("w1",)
+
+
+def test_callback_samples_receiver_types(tmp_path):
+    tracer = CallGraphTracer(tmp_path)
+    namespace = _hook_namespace(tmp_path, tracer)
+
+    namespace["call_method"]()
+
+    records = {(r.caller.qualname, r.callee.qualname): r for r in tracer.records()}
+    edge = records[("call_method", "Receiver.method")]
+    assert len(edge.receiver_types) == 1
+    assert edge.receiver_types[0].endswith("Receiver")
+
+
+def test_callback_ignores_out_of_scope_callers(tmp_path):
+    tracer = CallGraphTracer(tmp_path)
+    namespace = _hook_namespace(tmp_path, tracer)
+
+    # Called from this test file, the caller frame lives outside tmp_path.
+    namespace["caller"]()
+
+    assert tracer.records() == []
+
+
 def test_tracer_write_read_roundtrip(tmp_path):
     package = "dyn_trace_pkg_c"
     _write_package(tmp_path, package)

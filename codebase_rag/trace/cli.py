@@ -18,7 +18,7 @@ from .. import cli_help as ch
     no_args_is_help=True,
 )
 def cli() -> None:
-    pass
+    """Group callback: subcommands carry the behaviour."""
 
 
 @cli.command(

@@ -13,8 +13,6 @@ import pytest
 from codebase_rag.trace.pytest_plugin import _OPT_OUTPUT, _output_path
 from codebase_rag.trace.records import read_trace_file
 
-pytest_plugins = ["pytester"]
-
 
 class _StubConfig:
     """Just enough of pytest.Config for output-path resolution."""
@@ -75,6 +73,44 @@ def test_plugin_traces_session_and_tags_workloads(pytester: pytest.Pytester):
     assert edge is not None, sorted(by_pair)
     assert edge.count == 1
     assert edge.workloads == ("test_traced.py::test_entry",)
+
+
+def test_plugin_hooks_run_in_process(pytester: pytest.Pytester):
+    # The subprocess variant above proves end-to-end behaviour; this
+    # in-process run exercises the hook implementations where coverage can
+    # observe them. It needs the profiler slot, so it skips under an outer
+    # `--cgr-trace` session.
+    import sys
+
+    try:
+        sys.monitoring.use_tool_id(sys.monitoring.PROFILER_ID, "probe")
+    except ValueError:
+        pytest.skip("sys.monitoring PROFILER_ID already claimed in this session")
+    sys.monitoring.free_tool_id(sys.monitoring.PROFILER_ID)
+
+    pytester.makepyfile(
+        app_in_process=(
+            "def helper():\n    return 2\n\n\ndef entry():\n    return helper()\n"
+        )
+    )
+    pytester.makepyfile(
+        test_in_process=(
+            "import app_in_process\n"
+            "\n"
+            "\n"
+            "def test_entry():\n"
+            "    assert app_in_process.entry() == 2\n"
+        )
+    )
+
+    result = pytester.runpytest_inprocess("--cgr-trace")
+
+    result.assert_outcomes(passed=1)
+    header, records_iter = read_trace_file(pytester.path / "cgr-trace.jsonl")
+    by_pair = {(r.caller.qualname, r.callee.qualname): r for r in records_iter}
+    edge = by_pair.get(("entry", "helper"))
+    assert edge is not None, sorted(by_pair)
+    assert edge.workloads == ("test_in_process.py::test_entry",)
 
 
 def test_plugin_is_inert_without_flag(pytester: pytest.Pytester):

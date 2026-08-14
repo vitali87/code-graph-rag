@@ -81,7 +81,7 @@ def _output_path(config: _TraceOutputConfig) -> Path:
     return output
 
 
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+def pytest_sessionfinish(session: pytest.Session) -> None:
     tracer = session.config.stash.get(_STASH_KEY, None)
     if tracer is None or not tracer.active:
         return

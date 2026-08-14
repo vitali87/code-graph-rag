@@ -108,8 +108,10 @@ def test_duplicate_variants_disambiguate_by_line(tmp_path):
     stats = ResolutionStats()
     first = resolver.resolve(_frame(tmp_path, "pkg/dup.py", "helper", 5), stats)
     second = resolver.resolve(_frame(tmp_path, "pkg/dup.py", "helper", 12), stats)
-    assert first is not None and first.qualified_name.endswith("helper@5")
-    assert second is not None and second.qualified_name.endswith("helper@12")
+    assert first is not None
+    assert first.qualified_name.endswith("helper@5")
+    assert second is not None
+    assert second.qualified_name.endswith("helper@12")
 
 
 def test_unresolved_reasons_are_categorised(tmp_path):
@@ -125,8 +127,10 @@ def test_unresolved_reasons_are_categorised(tmp_path):
     unknown = resolver.resolve(_frame(tmp_path, "pkg/nope.py", "f", 1), stats)
     missing = resolver.resolve(_frame(tmp_path, "pkg/mod.py", "ghost", 99), stats)
 
-    assert outside is None and synthetic is None
-    assert unknown is None and missing is None
+    assert outside is None
+    assert synthetic is None
+    assert unknown is None
+    assert missing is None
     assert stats.unresolved == {
         cs.TraceUnresolvedReason.OUTSIDE_REPO.value: 1,
         cs.TraceUnresolvedReason.SYNTHETIC.value: 1,
