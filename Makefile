@@ -1,4 +1,4 @@
-.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check pre-commit release
+.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check pre-commit release jvm-agent
 
 PYTHON := uv run
 
@@ -79,6 +79,13 @@ check: lint typecheck test ## Run all checks: lint, typecheck, test
 
 release: ## Build, verify, and publish the current pyproject version to PyPI, then tag and create a GitHub Release
 	./scripts/release.sh
+
+jvm-agent: ## Build the JVM runtime tracing agent (requires JDK 24+)
+	rm -rf build/jvm-agent
+	mkdir -p build/jvm-agent
+	javac --release 24 -d build/jvm-agent codebase_rag/trace/jvm_agent/src/cgr/trace/*.java
+	jar cfm build/cgr-jvm-agent.jar codebase_rag/trace/jvm_agent/MANIFEST.MF -C build/jvm-agent .
+	@echo "Agent built: build/cgr-jvm-agent.jar"
 
 pre-commit: ## Run all pre-commit checks locally (comprehensive test before commit)
 	@echo "Running pre-commit checks..."
