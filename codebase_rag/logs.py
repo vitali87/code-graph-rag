@@ -20,7 +20,8 @@ CPP_FRONTEND_UNAVAILABLE = (
 )
 CPP_FRONTEND_NO_COMPDB = (
     "C/C++ libclang frontend enabled but no compile_commands.json found; "
-    "generate one with cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "
+    "from the CMake project root, run "
+    "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "
     "or bear -- make; "
     "using tree-sitter"
 )

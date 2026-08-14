@@ -39,11 +39,13 @@ def cpp_frontend_available() -> bool:
     return True
 
 
-def resolve_cpp_frontend() -> cs.CppFrontend:
+def resolve_cpp_frontend(repo_path: Path | None = None) -> cs.CppFrontend:
     mode = settings.CPP_FRONTEND
-    if mode == cs.CppFrontend.TREESITTER or cpp_frontend_available():
-        return mode
-    return cs.CppFrontend.TREESITTER
+    if mode == cs.CppFrontend.TREESITTER or not cpp_frontend_available():
+        return cs.CppFrontend.TREESITTER
+    if repo_path is not None and find_compile_commands(repo_path) is None:
+        return cs.CppFrontend.TREESITTER
+    return mode
 
 
 def find_compile_commands(start: Path) -> Path | None:

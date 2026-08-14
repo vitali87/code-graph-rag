@@ -33,7 +33,7 @@ Set `CPP_FRONTEND` to one of these modes:
 | Mode | Behaviour | Requirements |
 |------|-----------|--------------|
 | `treesitter` | Uses only Tree-sitter syntax facts. | The C/C++ Tree-sitter grammars, available through `treesitter-full`. |
-| `libclang` | Uses libclang as the C/C++ frontend. | The `cpp` extra and `compile_commands.json`. |
+| `libclang` | Requests libclang as the C/C++ frontend and falls back to Tree-sitter with a diagnostic when a requirement is unavailable. | The `cpp` extra and `compile_commands.json`. |
 | `hybrid` | Keeps Tree-sitter as the backbone and layers compiler-derived facts on top. This is the default. | The `cpp` extra and `compile_commands.json` for the semantic layer; otherwise it falls back to Tree-sitter. |
 
 For example:
@@ -42,7 +42,7 @@ For example:
 export CPP_FRONTEND=hybrid
 ```
 
-Changing the effective frontend invalidates the parser fingerprint, so the next sync warns when an existing graph needs a clean rebuild.
+Changing the effective frontend or adding, removing, relocating, or materially changing the discovered `compile_commands.json` invalidates the parser fingerprint, so the next sync warns when an existing graph needs a clean rebuild.
 
 ## Generate `compile_commands.json`
 

@@ -12,7 +12,9 @@ from . import constants as cs
 from .config import settings
 
 
-def compute_parser_fingerprint(package_root: Path | None = None) -> str:
+def compute_parser_fingerprint(
+    package_root: Path | None = None, *, repo_path: Path | None = None
+) -> str:
     root = package_root if package_root is not None else Path(__file__).resolve().parent
     hasher = hashlib.md5(usedforsecurity=False)
     for source in _fingerprint_sources(root):
@@ -24,24 +26,37 @@ def compute_parser_fingerprint(package_root: Path | None = None) -> str:
     # unchanged sources (e.g. the C# Roslyn hybrid rewrites
     # INHERITS/IMPLEMENTS), so it is part of the parser identity and must
     # trip the staleness warning.
-    for entry in _frontend_settings():
+    for entry in _frontend_settings(repo_path):
         hasher.update(entry.encode())
     return hasher.hexdigest()
 
 
-def _frontend_settings() -> list[str]:
+def _frontend_settings(repo_path: Path | None) -> list[str]:
     # The C# entry records the RESOLVED mode, not the setting: under AUTO a
     # graph built with dotnet present carries hybrid edges and one without
     # does not, so the two must not share a fingerprint. Imported lazily to
     # keep this module free of the parsers package at import time.
-    from .parsers.cpp_frontend import resolve_cpp_frontend
+    from .parsers.cpp_frontend import find_compile_commands, resolve_cpp_frontend
     from .parsers.csharp_frontend import resolve_csharp_frontend
 
-    return [
+    cpp_frontend = resolve_cpp_frontend(repo_path)
+    entries = [
         f"CPP_FRONTEND={settings.CPP_FRONTEND.value}",
-        f"CPP_FRONTEND_RESOLVED={resolve_cpp_frontend().value}",
+        f"CPP_FRONTEND_RESOLVED={cpp_frontend.value}",
         f"CSHARP_FRONTEND={resolve_csharp_frontend().value}",
     ]
+    if repo_path is not None and cpp_frontend != cs.CppFrontend.TREESITTER:
+        compdb_dir = find_compile_commands(repo_path)
+        if compdb_dir is not None:
+            compdb_path = (compdb_dir / "compile_commands.json").resolve()
+            compdb_digest = hashlib.sha256(compdb_path.read_bytes()).hexdigest()
+            entries.extend(
+                [
+                    f"CPP_COMPILE_COMMANDS_PATH={compdb_path.as_posix()}",
+                    f"CPP_COMPILE_COMMANDS_SHA256={compdb_digest}",
+                ]
+            )
+    return entries
 
 
 def _fingerprint_sources(root: Path) -> list[Path]:

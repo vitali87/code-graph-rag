@@ -152,6 +152,50 @@ class TestComputeParserFingerprint:
         monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
         assert compute_parser_fingerprint() == before
 
+    def test_tracks_cpp_compilation_database_transitions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from codebase_rag.config import settings as cfg
+        from codebase_rag.parsers.cpp_frontend import frontend
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
+
+        without_compdb = compute_parser_fingerprint(repo_path=repo)
+        compdb = repo / "compile_commands.json"
+        compdb.write_text("[]", encoding="utf-8")
+        at_root = compute_parser_fingerprint(repo_path=repo)
+        assert at_root != without_compdb
+
+        compdb.unlink()
+        compdb = repo / "build" / "compile_commands.json"
+        compdb.parent.mkdir()
+        compdb.write_text("[]", encoding="utf-8")
+        in_build = compute_parser_fingerprint(repo_path=repo)
+        assert in_build != at_root
+
+        compdb.write_text('[{"file": "main.cpp"}]', encoding="utf-8")
+        with_new_contents = compute_parser_fingerprint(repo_path=repo)
+        assert with_new_contents != in_build
+
+        compdb.unlink()
+        assert compute_parser_fingerprint(repo_path=repo) == without_compdb
+
+    def test_cpp_frontend_resolution_includes_compilation_database(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from codebase_rag.config import settings as cfg
+        from codebase_rag.parsers.cpp_frontend import frontend
+
+        monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
+        assert frontend.resolve_cpp_frontend(tmp_path) == cs.CppFrontend.TREESITTER
+
+        (tmp_path / "compile_commands.json").write_text("[]", encoding="utf-8")
+        assert frontend.resolve_cpp_frontend(tmp_path) == cs.CppFrontend.HYBRID
+
 
 class TestFingerprintStamping:
     def test_full_sync_stamps_current_fingerprint(
@@ -162,7 +206,7 @@ class TestFingerprintStamping:
         stamp = _fingerprint_path(py_project)
         assert stamp.is_file()
         assert stamp.read_text(encoding="utf-8").strip() == (
-            compute_parser_fingerprint()
+            compute_parser_fingerprint(repo_path=py_project)
         )
 
     def test_incremental_sync_does_not_overwrite_stale_stamp(
@@ -188,7 +232,7 @@ class TestFingerprintStamping:
         _make_updater(py_project, mock_ingestor).run(force=True)
 
         stored = _fingerprint_path(py_project).read_text(encoding="utf-8").strip()
-        assert stored == compute_parser_fingerprint()
+        assert stored == compute_parser_fingerprint(repo_path=py_project)
 
     def test_stamp_file_is_not_indexed(
         self, py_project: Path, mock_ingestor: MagicMock
