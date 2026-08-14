@@ -33,3 +33,10 @@ def test_news_prompt_keeps_distinct_related_features():
     script = _news_step_script()
     assert "distinct new feature" in script
     assert "still a new entry" in script
+
+
+def test_news_prompt_defines_a_top_three_selection_rule():
+    # "Every distinct feature is eligible" must not contradict the three-item
+    # cap: the prompt has to say how to choose when more than three qualify.
+    script = _news_step_script()
+    assert "three most significant" in script
