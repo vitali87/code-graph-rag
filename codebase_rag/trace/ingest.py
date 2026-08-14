@@ -26,6 +26,7 @@ from .resolution import (
     FrameResolver,
     JsFrameResolver,
     JvmFrameResolver,
+    PhpFrameResolver,
     ResolutionStats,
 )
 
@@ -52,6 +53,8 @@ def _resolver_for(
         return JsFrameResolver(repo_root, nodes)
     if header.language == cs.TRACE_LANGUAGE_DOTNET:
         return DotnetFrameResolver(nodes)
+    if header.language == cs.TRACE_LANGUAGE_PHP:
+        return PhpFrameResolver(repo_root, nodes)
     return FrameResolver(repo_root, nodes)
 
 

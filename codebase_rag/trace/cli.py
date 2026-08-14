@@ -114,6 +114,19 @@ def convert_cmd(
         click.secho(message, fg="red", err=True)
         sys.exit(1)
 
+    from .xdebug import convert_xdebug_trace
+
+    if profile_file.suffix == ".xt":
+        try:
+            count = convert_xdebug_trace(
+                profile_file, output=resolved_output, workload=workload
+            )
+        except TraceFormatError as e:
+            _fail(str(e))
+            return
+        click.echo(f"call records written: {count} -> {resolved_output}")
+        return
+
     try:
         raw = json.loads(profile_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
