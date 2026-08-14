@@ -159,7 +159,7 @@ def test_missing_child_reference_is_rejected_not_crashed(tmp_path):
 
 
 def test_cyclic_or_shared_children_are_rejected_not_crashed(tmp_path):
-    url = f"file://{tmp_path.as_posix()}/main.js"
+    url = (tmp_path / "main.js").as_uri()
     profile = {
         "nodes": [
             _node(1, _frame("a", url, 1), children=[2]),
@@ -174,7 +174,7 @@ def test_cyclic_or_shared_children_are_rejected_not_crashed(tmp_path):
 
 
 def test_deep_profiles_do_not_hit_the_recursion_limit(tmp_path):
-    url = f"file://{tmp_path.as_posix()}/main.js"
+    url = (tmp_path / "main.js").as_uri()
     depth = 5000
     nodes = [
         _node(i, _frame(f"f{i}", url, i), children=[i + 1], hit_count=1)

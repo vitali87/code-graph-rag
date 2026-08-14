@@ -88,7 +88,7 @@ def test_convert_command_writes_interchange_trace(tmp_path):
                 "id": 1,
                 "callFrame": {
                     "functionName": "runAll",
-                    "url": f"file://{repo.as_posix()}/main.js",
+                    "url": (repo / "main.js").as_uri(),
                     "lineNumber": 2,
                     "columnNumber": 0,
                 },
@@ -99,7 +99,7 @@ def test_convert_command_writes_interchange_trace(tmp_path):
                 "id": 2,
                 "callFrame": {
                     "functionName": "helper",
-                    "url": f"file://{repo.as_posix()}/main.js",
+                    "url": (repo / "main.js").as_uri(),
                     "lineNumber": 6,
                     "columnNumber": 0,
                 },
