@@ -4,7 +4,11 @@
 # #1012). Set CGR_STACK_BIND_HOST=0.0.0.0 to expose the stack deliberately.
 services:
   memgraph:
-    image: memgraph/memgraph-mage
+    # Pinned by digest: engine upgrades change accepted Cypher syntax (issue
+    # #1257, Memgraph 3.x dropped pattern-in-WHERE), and memgraph-mage has no
+    # patch-level tags, so even `3.3` can float to a rebuilt image. Bump
+    # deliberately and run the integration suite against the new digest.
+    image: memgraph/memgraph-mage:3.3@sha256:4579a70a2a095026d2e4039a5b0a4756e8e0e8a37ea0350f71240346efe343e8
     ports:
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${MEMGRAPH_PORT:-7687}:7687"
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${MEMGRAPH_HTTP_PORT:-7444}:7444"
