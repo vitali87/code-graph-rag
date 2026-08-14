@@ -10,8 +10,9 @@ Currently supported runtimes: **Python** (3.12+, via `sys.monitoring`),
 **Java/Scala** (zero-dependency `java.lang.instrument` agent, JDK 24+),
 **Node.js** (V8 cpuprofile conversion), **.NET** (dotnet-trace speedscope
 conversion), **PHP** (Xdebug trace conversion), **Lua** (a pure-Lua
-`debug.sethook` agent), **Dart** (a VM Service sample collector), and
-**Go** (pprof CPU-profile conversion). Remaining runtimes are tracked in
+`debug.sethook` agent), **Dart** (a VM Service sample collector),
+**Go** (pprof CPU-profile conversion), and **C/C++** (a
+`-finstrument-functions` shim). Remaining runtimes are tracked in
 [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
@@ -243,6 +244,34 @@ their enclosing declaration by span; receivers and generic instantiations
 are stripped from names, with declaration-line spans carrying identity.
 Frames from the Go runtime, the standard library, and `vendor/` are seen
 through to the nearest project frame.
+
+## Recording a C or C++ trace
+
+A single-file shim (`codebase_rag/trace/c_agent/cgr_trace_shim.c`, no
+dependencies beyond pthreads) rides the compiler's own instrumentation and
+records **every call exactly**:
+
+```bash
+cc -pthread -finstrument-functions -g -O0 your_sources... \
+   codebase_rag/trace/c_agent/cgr_trace_shim.c -o app
+./app        # writes cgr-trace.addrs (override with CGR_TRACE_ADDRS)
+cgr trace convert cgr-trace.addrs --repo-path /path/to/your-repo --workload smoke
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+The shim records function-address pairs and the main image's load bias;
+conversion symbolises them with `atos` (macOS) or `addr2line` (ELF). PIE
+binaries need no special build flag — the shim records the ASLR slide and
+the converter subtracts it before symbolising, so the default hardened
+(PIE) build works. Calls through function pointers and virtual dispatch
+land with true invocation counts; C++ names demangle and normalise to their
+bare member form, with source positions carrying identity. Frames that
+symbolise outside the repository (libc, the C++ runtime) drop their edges
+rather than being guessed. Overhead is one mutex-guarded table insert per
+call — fine for test workloads, not for production; the edge table holds
+65k distinct pairs, and conversion **rejects** a trace the shim marked
+`dropped` (table overflowed) rather than pass off an incomplete call graph
+as exact.
 
 ## Ingesting a trace
 

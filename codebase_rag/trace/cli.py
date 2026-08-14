@@ -89,6 +89,16 @@ def _convert_profile(
     """
     import json
 
+    if profile_file.suffix == ".addrs":
+        # C/C++ instrumented address traces need symbolisation plus the repo.
+        from .instrumented import convert_instrumented
+
+        if repo_path is None:
+            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
+        return convert_instrumented(
+            profile_file, repo_root=repo_path, output=resolved_output, workload=workload
+        )
+
     with profile_file.open("rb") as fh:
         magic = fh.read(2)
 
@@ -167,23 +177,16 @@ def convert_cmd(
     include: str | None,
     workload: str | None,
 ) -> None:
-    import json
-
     from .. import constants as cs
-    from .records import TraceFormatError
 
     resolved_output = output or Path(cs.TRACE_DEFAULT_OUTPUT)
     try:
         count = _convert_profile(
             profile_file, repo_path, resolved_output, include, workload
         )
-    except (
-        TraceFormatError,
-        OSError,
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        _ConvertUsageError,
-    ) as e:
+    # TraceFormatError subclasses ValueError, so ValueError covers it (and the
+    # malformed-number / non-UTF-8 cases) without listing it redundantly.
+    except (OSError, ValueError, _ConvertUsageError) as e:
         logger.error(str(e))
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)

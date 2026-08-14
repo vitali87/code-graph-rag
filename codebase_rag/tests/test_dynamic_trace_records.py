@@ -147,3 +147,4 @@ def test_lua_language_tag_constant():
     assert trace_constants.TRACE_LANGUAGE_LUA == "lua"
     assert trace_constants.TRACE_LANGUAGE_GO == "go"
     assert trace_constants.TRACE_LANGUAGE_DART == "dart"
+    assert trace_constants.TRACE_LANGUAGE_CPP == "cpp"
