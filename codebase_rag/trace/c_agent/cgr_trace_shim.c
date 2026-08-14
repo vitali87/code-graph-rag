@@ -93,30 +93,49 @@ CGR_ATTR static int cgr_main_load_bias(struct dl_phdr_info *info, size_t size,
 }
 #endif
 
+CGR_ATTR static void cgr_exe_path(char *exe, size_t exe_size, long *slide) {
+  exe[0] = '\0';
+  *slide = 0;
+#ifdef __APPLE__
+  uint32_t size = (uint32_t)exe_size;
+  if (_NSGetExecutablePath(exe, &size) != 0) {
+    exe[0] = '\0'; /* buffer too small: leave empty, the converter rejects it */
+  }
+  *slide = (long)_dyld_get_image_vmaddr_slide(0);
+#elif defined(__linux__)
+  ssize_t got = readlink("/proc/self/exe", exe, exe_size - 1);
+  /* readlink does not NUL-terminate, and a full buffer means truncation; a
+   * truncated path would mis-symbolise, so treat it as unknown. */
+  if (got > 0 && (size_t)got < exe_size - 1) {
+    exe[got] = '\0';
+  } else {
+    exe[0] = '\0';
+  }
+  dl_iterate_phdr(cgr_main_load_bias, slide);
+#else
+  (void)exe_size; /* other platforms: exe stays empty, targets ELF/Mach-O only */
+#endif
+}
+
 CGR_ATTR static void cgr_write(void) {
   const char *path = getenv("CGR_TRACE_ADDRS");
   if (path == NULL || path[0] == '\0') {
     path = "cgr-trace.addrs";
   }
-  FILE *out = fopen(path, "w");
+  /* Write to a sibling temp file and rename on success, so a crash or a
+   * partial/failed write never publishes a truncated trace as complete. */
+  char tmp[4200];
+  int printed = snprintf(tmp, sizeof tmp, "%s.tmp", path);
+  if (printed < 0 || (size_t)printed >= sizeof tmp) {
+    return;
+  }
+  FILE *out = fopen(tmp, "w");
   if (out == NULL) {
     return;
   }
-  char exe[4096] = "";
-  long slide = 0;
-#ifdef __APPLE__
-  uint32_t size = sizeof exe;
-  _NSGetExecutablePath(exe, &size);
-  slide = (long)_dyld_get_image_vmaddr_slide(0);
-#elif defined(__linux__)
-  ssize_t got = readlink("/proc/self/exe", exe, sizeof exe - 1);
-  if (got > 0) {
-    exe[got] = '\0';
-  }
-  dl_iterate_phdr(cgr_main_load_bias, &slide);
-#endif
-  /* On other platforms exe stays empty and the converter rejects the trace:
-   * symbolisation here targets ELF (addr2line) and Mach-O (atos) only. */
+  char exe[4096];
+  long slide;
+  cgr_exe_path(exe, sizeof exe, &slide);
   fprintf(out, "exe %s\n", exe);
   fprintf(out, "slide %ld\n", slide);
   /* Serialize under the same lock cgr_record takes, so a thread still running
@@ -134,7 +153,15 @@ CGR_ATTR static void cgr_write(void) {
     }
   }
   pthread_mutex_unlock(&cgr_lock);
-  fclose(out);
+  int ok = (ferror(out) == 0);
+  if (fclose(out) != 0) {
+    ok = 0;
+  }
+  if (ok) {
+    rename(tmp, path);
+  } else {
+    remove(tmp);
+  }
 }
 
 CGR_ATTR void __cyg_profile_func_enter(void *this_fn, void *call_site);
