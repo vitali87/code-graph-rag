@@ -358,6 +358,16 @@ _CPP_PARAMETER_DECLARATIONS = frozenset(
     }
 )
 
+# Rust parameter patterns that wrap the bound identifier (`&c`, `&mut a`, `ref b`,
+# `mut b`); unwrap past them (and any mutable_specifier) to the name.
+_RUST_REF_PATTERNS = frozenset(
+    {
+        cs.TS_RS_REFERENCE_PATTERN,
+        cs.TS_RS_REF_PATTERN,
+        cs.TS_RS_MUT_PATTERN,
+    }
+)
+
 
 def _python_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
     invoked: set[str] = set()
@@ -588,6 +598,24 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
                 left = child.child_by_field_name(cs.TS_FIELD_LEFT)
                 if left is not None:
                     _python_collect_target_identifiers(left, out)
+            elif child_type == cs.TS_PY_FOR_STATEMENT:
+                left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+                if left is not None:
+                    _python_collect_target_identifiers(left, out)
+            elif child_type == cs.TS_PY_AS_PATTERN_TARGET:
+                # `with ... as x` and `except ... as x` bind x here.
+                _python_collect_target_identifiers(child, out)
+            elif child_type in _PY_IMPORT_STATEMENTS:
+                _python_collect_import_bound_names(child, out)
+            elif child_type == cs.TS_PY_GLOBAL_STATEMENT:
+                # `global x` rebinds x to module scope: it is not a capture of the
+                # enclosing function, so exclude it like a local binding.
+                for c in child.named_children:
+                    if c.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(c)):
+                        out.add(name)
+            elif child_type == cs.TS_PY_CASE_PATTERN:
+                # A `match` case binds only its CAPTURE names, not value patterns.
+                _python_collect_case_pattern_bindings(child, out)
             stack.append(child)
 
 
@@ -598,6 +626,79 @@ def _python_collect_target_identifiers(node: Node, out: set[str]) -> None:
         return
     for child in node.children:
         _python_collect_target_identifiers(child, out)
+
+
+def _python_collect_case_pattern_bindings(node: Node, out: set[str]) -> None:
+    # A `match` case binds its CAPTURE patterns and nothing else. A bare name
+    # (`case token:`, `case [token]:`) parses as a single-identifier dotted_name and
+    # binds; a multi-part dotted_name (`case sentinel.token:`) is a VALUE pattern
+    # that compares and binds nothing -- collecting its identifiers would wrongly
+    # exclude a captured name used in a value position. `as` aliases are collected
+    # by the general as_pattern_target branch. Only single-identifier dotted_names
+    # (and their `_` wildcard, which decodes to nothing) are captured here.
+    stack: list[Node] = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_DOTTED_NAME:
+            idents = [
+                c for c in current.named_children if c.type == cs.TS_PY_IDENTIFIER
+            ]
+            if len(idents) == 1 and (name := safe_decode_text(idents[0])):
+                out.add(name)
+            continue
+        stack.extend(current.children)
+
+
+_PY_IMPORT_STATEMENTS = frozenset(
+    {cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT}
+)
+
+
+def _python_collect_import_bound_names(node: Node, out: set[str]) -> None:
+    # `import a.b` binds `a`; `import a.b as c` binds `c`; `from m import x` binds
+    # `x`; `from m import x as y` binds `y`. The imported items live under the
+    # `name` field; the from-module (`module_name` field) is the source, not a
+    # local binding, so it is skipped by keying off `name` only.
+    for item in node.children_by_field_name(cs.FIELD_NAME):
+        if item.type == cs.TS_ALIASED_IMPORT:
+            alias = item.child_by_field_name(cs.FIELD_ALIAS)
+            if alias is not None and (name := safe_decode_text(alias)):
+                out.add(name)
+        elif item.type == cs.TS_PY_DOTTED_NAME:
+            first = next(
+                (c for c in item.named_children if c.type == cs.TS_PY_IDENTIFIER),
+                None,
+            )
+            if first is not None and (name := safe_decode_text(first)):
+                out.add(name)
+
+
+def _python_collect_identifier_reads(node: Node, out: set[str]) -> None:
+    stack: list[Node] = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_IDENTIFIER:
+            if name := safe_decode_text(current):
+                out.add(name)
+            continue
+        stack.extend(current.children)
+
+
+def python_free_variable_names(func_node: Node) -> set[str]:
+    # Names READ in a nested function's body that it does not bind itself (its
+    # parameters, local assignment targets, and nested def/class names). Descends
+    # into inner nested scopes so a variable used only in a doubly-nested body is
+    # still free for this function -- needed so a capture composes transitively.
+    # Conservative: over-approximates (globals, builtins, and attribute names are
+    # swept in), but a capture only composes when a bare-name read reaches a sink
+    # AND that name is tainted at the definition site, so the extras record
+    # summaries that never compose -- sound and inert (issue #1197).
+    body = func_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return set()
+    reads: set[str] = set()
+    _python_collect_identifier_reads(body, reads)
+    return reads - _python_scope_bound_names(func_node)
 
 
 def python_parameter_names(func_node: Node) -> list[str]:
@@ -658,6 +759,325 @@ def go_parameter_names(func_node: Node) -> list[str]:
             if child.type == cs.TS_IDENTIFIER and (name := safe_decode_text(child)):
                 names.append(name)
     return names
+
+
+# Position-aligned parameter slots for forward parameter-taint (issue #1169).
+# Unlike the *_parameter_names helpers above -- which compact the list, dropping
+# unnamed/destructured slots and so shifting every later index -- these return
+# ONE entry per formal positional slot, with None for a slot that binds no simple
+# name (unnamed C++/Go parameter, JS/TS destructuring pattern). The second tuple
+# element is the index of a variadic/rest slot, if any, so a caller can map every
+# argument at or after it to that parameter. Keeping indices aligned is what
+# prevents arg:<index> from binding to the wrong parameter (false source-to-sink
+# edges), the failure the compacting helpers would cause here.
+def go_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for declaration in params.named_children:
+        if declaration.type == cs.TS_GO_PARAMETER_DECLARATION:
+            # Go groups names sharing a type (`a, b int`) into one declaration
+            # with several identifiers; each identifier is its own slot. A
+            # type-only declaration (`func f(int)`) has no identifier child and
+            # is a single unnamed slot.
+            idents = [
+                safe_decode_text(child)
+                for child in declaration.children
+                if child.type == cs.TS_IDENTIFIER
+            ]
+            if idents:
+                names.extend(idents)
+            else:
+                names.append(None)
+        elif declaration.type == cs.TS_GO_VARIADIC_PARAMETER_DECLARATION:
+            if variadic_index is None:
+                variadic_index = len(names)
+            ident = next(
+                (c for c in declaration.children if c.type == cs.TS_IDENTIFIER),
+                None,
+            )
+            names.append(safe_decode_text(ident) if ident is not None else None)
+    return names, variadic_index
+
+
+def _js_ts_parameter_slot(child: Node) -> tuple[str | None, bool] | None:
+    # A single formal parameter -> (name_or_None, is_variadic), or None when the
+    # node occupies NO runtime positional slot (a TypeScript `this` parameter).
+    # A TS typed parameter (required_parameter / optional_parameter) wraps the
+    # real pattern -- an identifier, a `this`, a rest_pattern, or a destructuring
+    # pattern -- so it is unwrapped recursively; that is what makes a typed rest
+    # (`...args: string[]`) mark variadic and a typed `this` drop its slot.
+    node_type = child.type
+    if node_type == cs.TS_THIS_PARAMETER:
+        return None
+    if node_type == cs.TS_IDENTIFIER:
+        return safe_decode_text(child), False
+    if node_type in _JS_TS_TYPED_PARAMETERS:
+        pattern = child.child_by_field_name(cs.TS_FIELD_PATTERN)
+        if pattern is None:
+            return None, False
+        return _js_ts_parameter_slot(pattern)
+    if node_type == cs.TS_ASSIGNMENT_PATTERN:
+        left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+        if left is not None and left.type == cs.TS_IDENTIFIER:
+            return safe_decode_text(left), False
+        return None, False
+    if node_type == cs.TS_REST_PATTERN:
+        ident = next(
+            (c for c in child.named_children if c.type == cs.TS_IDENTIFIER), None
+        )
+        return (safe_decode_text(ident) if ident is not None else None), True
+    return None, False
+
+
+def js_ts_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is not None:
+        for child in params.named_children:
+            slot = _js_ts_parameter_slot(child)
+            if slot is None:
+                # A TypeScript `this` parameter is not a runtime argument, so it
+                # takes no slot and must not shift the parameters after it.
+                continue
+            name, is_variadic = slot
+            if is_variadic and variadic_index is None:
+                variadic_index = len(names)
+            names.append(name)
+        return names, variadic_index
+    single = func_node.child_by_field_name(cs.TS_FIELD_PARAMETER)
+    if single is not None and single.type == cs.TS_IDENTIFIER:
+        names.append(safe_decode_text(single))
+    return names, variadic_index
+
+
+def cpp_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    func_declarator = _find_descendant(declarator, cs.CppNodeType.FUNCTION_DECLARATOR)
+    if func_declarator is None:
+        return [], None
+    params = func_declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for declaration in params.named_children:
+        if declaration.type not in _CPP_PARAMETER_DECLARATIONS:
+            continue
+        param_declarator = declaration.child_by_field_name(cs.FIELD_DECLARATOR)
+        names.append(cpp_declarator_name(param_declarator))
+    return names, None
+
+
+def java_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Java `formal_parameters` -> `formal_parameter` (name field) plus a trailing
+    # `spread_parameter` for varargs (`String... xs`), whose name lives in a nested
+    # variable_declarator rather than a `name` field. A `receiver_parameter`
+    # (`A this`) occupies no runtime slot and is dropped by handling only the two
+    # real shapes.
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for param in params.named_children:
+        if param.type == cs.TS_FORMAL_PARAMETER:
+            name = param.child_by_field_name(cs.FIELD_NAME)
+            names.append(safe_decode_text(name) if name is not None else None)
+        elif param.type == cs.TS_SPREAD_PARAMETER:
+            if variadic_index is None:
+                variadic_index = len(names)
+            declarator = next(
+                (
+                    c
+                    for c in param.named_children
+                    if c.type == cs.TS_VARIABLE_DECLARATOR
+                ),
+                None,
+            )
+            name = (
+                declarator.child_by_field_name(cs.FIELD_NAME)
+                if declarator is not None
+                else None
+            )
+            names.append(safe_decode_text(name) if name is not None else None)
+    return names, variadic_index
+
+
+def csharp_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # C# `parameter_list` -> `parameter` (its `name` field survives this/ref/out
+    # modifiers). A `params T[] tail` is NOT wrapped in a `parameter`: the hidden
+    # _parameter_array rule inlines it as a bare `array_type` followed by a bare
+    # `identifier` sibling (grammar quirk, mirrored in csharp/utils). A bare
+    # array_type therefore opens the single trailing variadic slot and the next
+    # identifier carries its name; a normal `int[] arr` stays a `parameter`.
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    pending_variadic = False
+    for param in params.named_children:
+        if param.type == cs.TS_CSHARP_PARAMETER:
+            name = param.child_by_field_name(cs.FIELD_NAME)
+            names.append(safe_decode_text(name) if name is not None else None)
+            pending_variadic = False
+        elif param.type == cs.TS_CSHARP_ARRAY_TYPE:
+            if variadic_index is None:
+                variadic_index = len(names)
+            names.append(None)
+            pending_variadic = True
+        elif param.type == cs.TS_IDENTIFIER and pending_variadic:
+            names[-1] = safe_decode_text(param)
+            pending_variadic = False
+    return names, variadic_index
+
+
+def _rust_parameter_name(pattern: Node | None) -> str | None:
+    # A Rust parameter's `pattern` is usually an identifier but may be wrapped in a
+    # reference/ref/mut pattern (`&c`, `&mut a`, `ref b`); unwrap past any
+    # mutable_specifier to the bound identifier. A destructuring pattern
+    # (tuple/struct/slice) or `_` binds no single positional name -> None slot.
+    if pattern is None:
+        return None
+    if pattern.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(pattern)
+    if pattern.type in _RUST_REF_PATTERNS:
+        inner = next(
+            (c for c in pattern.named_children if c.type != cs.TS_RS_MUTABLE_SPECIFIER),
+            None,
+        )
+        return _rust_parameter_name(inner)
+    return None
+
+
+def rust_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Rust `parameters` -> `parameter` (pattern field). A `self_parameter` is the
+    # receiver, occupies no positional slot, and is dropped (like a TS `this`).
+    # Normal Rust fns have no varargs, so variadic_index stays None (extern `...`
+    # is out of scope).
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for param in params.named_children:
+        if param.type == cs.TS_RS_SELF_PARAMETER:
+            continue
+        if param.type == cs.TS_RS_PARAMETER:
+            names.append(
+                _rust_parameter_name(param.child_by_field_name(cs.TS_FIELD_PATTERN))
+            )
+    return names, None
+
+
+def c_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # C shares C++'s declarator grammar, so the C++ helpers apply unchanged: descend
+    # declarator -> function_declarator -> parameters, unwrapping each
+    # parameter_declaration's declarator to its identifier (None for an abstract
+    # prototype declarator). Unlike C++, a trailing `...` is a well-formed
+    # `variadic_parameter`, recorded as the variadic slot (printf-style sinks).
+    declarator = func_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    func_declarator = _find_descendant(declarator, cs.CppNodeType.FUNCTION_DECLARATOR)
+    if func_declarator is None:
+        return [], None
+    params = func_declarator.child_by_field_name(cs.KEY_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for declaration in params.named_children:
+        if declaration.type == cs.CppNodeType.VARIADIC_PARAMETER:
+            if variadic_index is None:
+                variadic_index = len(names)
+            names.append(None)
+            continue
+        if declaration.type not in _CPP_PARAMETER_DECLARATIONS:
+            continue
+        param_declarator = declaration.child_by_field_name(cs.FIELD_DECLARATOR)
+        names.append(cpp_declarator_name(param_declarator))
+    return names, variadic_index
+
+
+def php_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # PHP formal parameters: each `simple_parameter` binds a `name` field whose
+    # `variable_name` text carries the `$` prefix (`$m`), matching how the callee
+    # body references the parameter -- so a seeded parameter pseudo-origin and its
+    # in-body uses key identically. Variadic (`...$args`) and constructor
+    # property-promotion parameters are a follow-up (issue #1174).
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for param in params.named_children:
+        if param.type != cs.TS_PHP_SIMPLE_PARAMETER:
+            names.append(None)
+            continue
+        name_node = param.child_by_field_name(cs.TS_FIELD_NAME)
+        names.append(
+            name_node.text.decode(cs.ENCODING_UTF8)
+            if name_node is not None and name_node.text is not None
+            else None
+        )
+    return names, None
+
+
+def dart_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Dart parameters live in a `formal_parameter_list` child of the signature (not
+    # a field); each `formal_parameter` binds a `name` identifier. Optional-positional
+    # `[a, b]` and named `{a, b}` params wrap their formal_parameters in an
+    # `optional_formal_parameters` node, which is flattened. Dart requires those to
+    # come LAST, so appending them keeps every positional index correct while still
+    # seeding named params for `kw:<name>` composition. No variadic slot (#1173).
+    params = next(
+        (
+            c
+            for c in func_node.named_children
+            if c.type == cs.TS_DART_FORMAL_PARAMETER_LIST
+        ),
+        None,
+    )
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    for param in params.named_children:
+        if param.type == cs.TS_DART_FORMAL_PARAMETER:
+            names.append(_dart_parameter_name(param))
+        elif param.type == cs.TS_DART_OPTIONAL_FORMAL_PARAMETERS:
+            names.extend(
+                _dart_parameter_name(inner)
+                for inner in param.named_children
+                if inner.type == cs.TS_DART_FORMAL_PARAMETER
+            )
+    return names, None
+
+
+def _dart_parameter_name(param: Node) -> str | None:
+    name_node = param.child_by_field_name(cs.TS_FIELD_NAME)
+    return (
+        name_node.text.decode(cs.ENCODING_UTF8)
+        if name_node is not None and name_node.text is not None
+        else None
+    )
 
 
 def _js_ts_field_member_name(

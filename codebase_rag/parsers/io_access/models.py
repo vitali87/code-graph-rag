@@ -50,6 +50,12 @@ class HandleConstructor:
     # identity (C# `new SqlCommand(sql, conn)` inherits conn's DB identity from
     # arg1). None where the identity is a literal target_arg.
     handle_arg: int | None = None
+    # Access capability of the constructed handle. The lean write-flow walk
+    # (issue #1204) suppresses write emission for a READ-only handle: `os.Open` is
+    # read-only, so `f.Write` on it is not a real sink. Defaults to READ_WRITE so
+    # io_access -- which never inspects this field -- is unchanged, and a
+    # flag-dependent ctor (`os.OpenFile`) stays a sound may-write.
+    direction: IODirection = IODirection.READ_WRITE
 
 
 @dataclass(frozen=True)
@@ -60,6 +66,13 @@ class ArgHandleSink:
     callee: str
     handle_arg: int
     direction: IODirection
+    # Argument indices that carry the DATA payload written to / read from the
+    # handle. None means "every non-handle argument" (fprintf's format + varargs are
+    # all payload). An explicit tuple pins the payload position so control metadata is
+    # not mistaken for data: `fwrite(buffer, size, count, stream)` writes only arg 0,
+    # so a tainted `size`/`count` is not a leak (issue #1204, flow walk only; io_access
+    # ignores this field). Used by the taint-tracking FLOWS_TO walk.
+    data_args: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)

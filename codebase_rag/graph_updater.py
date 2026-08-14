@@ -35,12 +35,7 @@ from .parsers.cpp_frontend import (
     run_cpp_frontend,
     run_cpp_frontend_hybrid,
 )
-from .parsers.csharp_frontend import (
-    CSharpQueryCall,
-    csharp_frontend_available,
-    find_csharp_project,
-    run_csharp_frontend,
-)
+from .parsers.csharp_frontend import find_csharp_project
 from .parsers.endpoint_prefixes import (
     CYPHER_DELETE_HANDLER_EXPOSES,
     CYPHER_PROJECT_PY_MODULES,
@@ -62,6 +57,9 @@ from .parsers.endpoints import (
     parse_route_decorator,
 )
 from .parsers.factory import ProcessorFactory
+from .parsers.frontends import FRONTENDS, SemanticFacts
+from .parsers.frontends.protocol import QueryCall
+from .parsers.go_frontend import find_go_module
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -293,7 +291,7 @@ class GraphUpdater:
         # declaration groups join to Class qns after Pass 2, and LINQ
         # query-operator calls join to function locations after Pass 3.
         self._csharp_partial_decls: list[list[tuple[str, int]]] = []
-        self._csharp_query_calls: list[CSharpQueryCall] = []
+        self._csharp_query_calls: list[QueryCall] = []
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
@@ -410,20 +408,16 @@ class GraphUpdater:
         # keep applying stale facts on a later run with the frontend off.
         # csharp_call_sites is mutated in place because the type-inference
         # engine holds a reference.
-        dp = self.factory.definition_processor
-        dp.csharp_base_kinds = {}
-        dp.csharp_call_sites.clear()
-        dp.csharp_external_sites.clear()
-        self._csharp_partial_decls = []
-        self._csharp_query_calls = []
+        self._reset_semantic_facts()
         if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
             return
-        project = find_csharp_project(self.repo_path)
-        if project is None:
-            # Skip silently when there is no C# project: nothing to augment,
-            # and building the net tool for a non-C# repo would be wasteful.
+        frontend = FRONTENDS.get(cs.SupportedLanguage.CSHARP)
+        if frontend is None or not frontend.applies(self.repo_path):
+            # Skip silently when the frontend has nothing to augment (no C#
+            # project): applicability is the frontend's own rule (issue #1178), so
+            # a registered replacement can define its own.
             return
-        if not csharp_frontend_available():
+        if not frontend.available():
             # AUTO promises hybrid only where the toolchain exists, so a
             # missing dotnet is the expected fallback (info); an EXPLICIT
             # hybrid/roslyn request that cannot run stays a warning.
@@ -432,22 +426,120 @@ class GraphUpdater:
             else:
                 logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
             return
-        logger.info(ls.CSHARP_FRONTEND_RUNNING.format(path=project))
-        facts = run_csharp_frontend(self.repo_path)
-        dp.csharp_base_kinds = facts.base_kinds
-        dp.csharp_call_sites.update(facts.call_sites)
-        dp.csharp_external_sites.update(facts.external_sites)
-        self._csharp_partial_decls = facts.partial_groups
-        self._csharp_query_calls = facts.query_calls
+        logger.info(
+            ls.CSHARP_FRONTEND_RUNNING.format(path=find_csharp_project(self.repo_path))
+        )
+        facts = frontend.run(self.repo_path, ())
+        self._apply_semantic_facts(facts)
         logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
         logger.info(
             ls.CSHARP_FRONTEND_FACTS.format(
-                calls=len(facts.call_sites),
+                calls=len(facts.resolved_call_sites),
                 partials=len(facts.partial_groups),
                 queries=len(facts.query_calls),
                 externals=len(facts.external_sites),
             )
         )
+
+    def _reset_semantic_facts(self) -> None:
+        # A reused updater (watch mode) that previously ran a frontend must not
+        # keep applying stale facts on a later run with it off. csharp_call_sites
+        # is mutated in place because the type-inference engine holds a reference.
+        dp = self.factory.definition_processor
+        dp.csharp_base_kinds = {}
+        dp.csharp_call_sites.clear()
+        dp.csharp_external_sites.clear()
+        self._csharp_partial_decls = []
+        self._csharp_query_calls = []
+
+    def _apply_semantic_facts(self, facts: SemanticFacts) -> None:
+        # Copy each fact family into the processor state the existing consumers
+        # read, with per-miss fallback to the tree-sitter heuristics (issue #1178).
+        dp = self.factory.definition_processor
+        dp.csharp_base_kinds = facts.base_kinds
+        dp.csharp_call_sites.update(facts.resolved_call_sites)
+        dp.csharp_external_sites.update(facts.external_sites)
+        self._csharp_partial_decls = facts.partial_groups
+        self._csharp_query_calls = facts.query_calls
+
+    def _run_go_frontend(self) -> None:
+        # Optional go/types semantic pre-pass (issue #1179). GOTYPES/AUTO: load
+        # the module with go/packages and collect exact first-party call targets
+        # (Pass 3) and external sites the tree-sitter name trie cannot derive.
+        # Missing go, no go.mod, or a build failure all fall back to pure
+        # tree-sitter (empty facts). Reset first so a reused updater (watch mode)
+        # that previously ran the frontend does not keep applying stale facts on
+        # a later run with it off; the maps are mutated in place because the
+        # type-inference engine holds a reference.
+        self._reset_go_semantic_facts()
+        if settings.GO_FRONTEND == cs.GoFrontend.TREESITTER:
+            return
+        frontend = FRONTENDS.get(cs.SupportedLanguage.GO)
+        if frontend is None or not frontend.applies(self.repo_path):
+            return
+        if not frontend.available():
+            if settings.GO_FRONTEND == cs.GoFrontend.AUTO:
+                logger.info(ls.GO_FRONTEND_AUTO_FALLBACK)
+            else:
+                logger.warning(ls.GO_FRONTEND_UNAVAILABLE)
+            return
+        logger.info(ls.GO_FRONTEND_RUNNING.format(path=find_go_module(self.repo_path)))
+        facts = frontend.run(self.repo_path, ())
+        self._apply_go_semantic_facts(facts)
+        logger.info(
+            ls.GO_FRONTEND_FACTS.format(
+                calls=len(facts.resolved_call_sites),
+                externals=len(facts.external_sites),
+            )
+        )
+
+    def _reset_go_semantic_facts(self) -> None:
+        dp = self.factory.definition_processor
+        dp.go_call_sites.clear()
+        dp.go_external_sites.clear()
+        dp.go_implements.clear()
+
+    def _apply_go_semantic_facts(self, facts: SemanticFacts) -> None:
+        dp = self.factory.definition_processor
+        dp.go_call_sites.update(facts.resolved_call_sites)
+        dp.go_external_sites.update(facts.external_sites)
+        dp.go_implements.extend(facts.implements_pairs)
+
+    def _join_go_implements(self) -> None:
+        # go/types proved each implementer->interface pair structurally; both
+        # ends carry a declaring-identifier position that resolves to the Pass-2
+        # type node through go_type_locations. On a two-sided hit, emit the
+        # IMPLEMENTS edge and record the implementer so a call through the
+        # interface with a SOLE implementer also edges to the concrete method
+        # (resolver.interface_sole_impl_targets, no extra wiring). A miss on
+        # either end drops the pair rather than risk a dangling edge.
+        dp = self.factory.definition_processor
+        if not dp.go_implements:
+            return
+        emitted = 0
+        for pair in dp.go_implements:
+            impl = dp.go_type_locations.get(
+                (pair.impl_file, pair.impl_line, pair.impl_col)
+            )
+            iface = dp.go_type_locations.get(
+                (pair.iface_file, pair.iface_line, pair.iface_col)
+            )
+            if impl is None or iface is None:
+                continue
+            impl_qn, impl_label = impl
+            iface_qn, iface_label = iface
+            # Through _sink (the capture-filtering wrapper), not the raw
+            # ingestor, so a capture that disables IMPLEMENTS suppresses this
+            # edge too -- graph-element emission must honour the capture contract.
+            self._sink.ensure_relationship_batch(
+                (impl_label, cs.KEY_QUALIFIED_NAME, impl_qn),
+                cs.RelationshipType.IMPLEMENTS,
+                (iface_label, cs.KEY_QUALIFIED_NAME, iface_qn),
+            )
+            dp.interface_implementers.setdefault(iface_qn, set()).add(impl_qn)
+            emitted += 1
+        if emitted:
+            logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=emitted))
 
     def _join_csharp_partials(self) -> None:
         # Replace the directory-keyed syntactic partial grouping with the
@@ -504,7 +596,10 @@ class GraphUpdater:
             target = located(fact.target_file, fact.target_line, fact.target_col)
             if caller is None or target is None:
                 continue
-            self.ingestor.ensure_relationship_batch(
+            # Through _sink (the capture-filtering wrapper), not the raw
+            # ingestor, so a capture that disables CALLS suppresses these
+            # synthesized LINQ query-operator edges too (issue #1236).
+            self._sink.ensure_relationship_batch(
                 (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
                 cs.RelationshipType.CALLS,
                 (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
@@ -665,13 +760,29 @@ class GraphUpdater:
         # base-classification oracle that split_csharp_bases consults while
         # ingesting each type's INHERITS/IMPLEMENTS edges during Pass 2.
         self._run_csharp_frontend()
+        # Go facts are read at Pass 3 and the name-alias target index is filled
+        # during Pass 2, so loading them here (before Pass 2) is correct.
+        self._run_go_frontend()
 
         logger.info(ls.PASS_2_FILES)
         self._process_files(force=force)
 
+        # Before the partial join on an incremental run: rebuild the type
+        # locations for unchanged .cs files so a partial part living in one
+        # still joins its group (issue #1229). Pass-2 entries for re-parsed
+        # files are already present and take precedence. A cacheless full build
+        # (force=False but _is_full_build) already re-parsed every file, so the
+        # project-wide query would be wasted work -- skip it.
+        if not force and not self._is_full_build:
+            self._rehydrate_csharp_type_locations()
+
         # Partial groups join AFTER Pass 2: the Roslyn declaration
         # locations resolve against the Class qns Pass 2 just registered.
         self._join_csharp_partials()
+
+        # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
+        # resolve against the go_type_locations index Pass 2 just registered.
+        self._join_go_implements()
 
         # HYBRID must run after Pass 2: an incremental run deletes each
         # changed file's Module subtree before re-parsing it, so macro
@@ -1245,6 +1356,48 @@ class GraphUpdater:
             pairs.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
             result[child] = [base for _index, base in pairs]
         return result
+
+    def _rehydrate_csharp_type_locations(self) -> None:
+        # Incremental runs fill csharp_type_locations only from re-parsed files,
+        # but _join_csharp_partials resolves every partial-declaration location
+        # against it. Restore the (path, start_line) -> qn entries for types in
+        # UNCHANGED .cs files from the persisted graph so a partial part in an
+        # unchanged file still joins its group (issue #1229). A re-parsed file's
+        # fresh Pass-2 entry is kept (not overwritten); a stale rehydrated
+        # position for a type that moved is simply never queried by the join.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        locations = self.factory.definition_processor.csharp_type_locations
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        restored = 0
+        for row in rows:
+            path = row.get(cs.KEY_PATH)
+            start_line = row.get(cs.KEY_START_LINE)
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not (
+                isinstance(path, str)
+                and isinstance(start_line, int)
+                and not isinstance(start_line, bool)
+                and isinstance(qn, str)
+            ):
+                # bool is an int subclass; a stray True would key as line 1 and
+                # shadow a real line-1 type, so reject it explicitly.
+                continue
+            key = (path, start_line)
+            if key not in locations:
+                locations[key] = qn
+                restored += 1
+        if restored:
+            logger.info(ls.CSHARP_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
 
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # Record the reference edges unchanged files point at the re-indexed

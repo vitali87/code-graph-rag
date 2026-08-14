@@ -41,6 +41,7 @@ from .extract import (
     match_normalised,
     positional_arg_node,
     registry_match,
+    rust_unwrap_result,
     scope_seed_nodes,
     string_literal,
 )
@@ -1579,10 +1580,11 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles,
     ) -> bool:
         # `f.WriteString(s)` / `br.readLine()` / `out.write(..)`: a method call whose
-        # receiver is a bound handle variable is I/O on that handle's resource. Every
-        # lean grammar spells the receiver `recv.method` in the callee text (Rust
-        # field_expression methods included), so one dotted split covers them all.
-        receiver, sep, method = raw_name.rpartition(cs.SEPARATOR_DOT)
+        # receiver is a bound handle variable is I/O on that handle's resource. Most
+        # lean grammars spell the receiver `recv.method` in the callee text (Rust
+        # field_expression methods included); Lua spells it `recv:method` (`f:write`),
+        # so the split uses the descriptor's handle-method separator (issue #1204).
+        receiver, sep, method = raw_name.rpartition(descriptor.handle_method_separator)
         if not sep:
             return False
         binding = lean_handles.bindings.get(receiver)
@@ -1710,35 +1712,7 @@ class IOAccessProcessor:
             return lean_handles.bindings.get(node.text.decode(cs.ENCODING_UTF8))
         return None
 
-    @staticmethod
-    def _unwrap_result(node: Node) -> Node:
-        # Rust Result unwrapping: `File::open(p)?` (try_expression) and
-        # `File::create(p).unwrap()` / `.expect(..)` all yield the inner handle. The
-        # node shapes are Rust-specific, so this is inert elsewhere.
-        while True:
-            if node.type == cs.TS_RS_TRY_EXPRESSION:
-                inner = next(
-                    (c for c in node.named_children if c.type != cs.TS_COMMENT), None
-                )
-                if inner is None:
-                    return node
-                node = inner
-                continue
-            fn = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            if fn is not None and fn.type == cs.TS_RS_FIELD_EXPRESSION:
-                field = fn.child_by_field_name(cs.RS_FIELD_FIELD)
-                receiver = fn.child_by_field_name(cs.FIELD_VALUE)
-                if (
-                    field is not None
-                    and field.text is not None
-                    and field.text.decode(cs.ENCODING_UTF8)
-                    in cs.RS_RESULT_UNWRAP_METHODS
-                    and receiver is not None
-                    and receiver.type == cs.TS_RS_CALL_EXPRESSION
-                ):
-                    node = receiver
-                    continue
-            return node
+    _unwrap_result = staticmethod(rust_unwrap_result)
 
     def _handle_from_call(
         self,
@@ -1796,7 +1770,9 @@ class IOAccessProcessor:
             return None
         return HandleBinding(
             kind=ctor.kind,
-            identity=self._ctor_identity(node, ctor, descriptor, lean_handles),
+            identity=self._ctor_identity(
+                node, ctor, descriptor, lean_handles, import_map
+            ),
         )
 
     def _handle_from_new(
@@ -1849,7 +1825,9 @@ class IOAccessProcessor:
             return HandleBinding(kind=ctor.kind, identity=identity)
         return HandleBinding(
             kind=ctor.kind,
-            identity=self._ctor_identity(node, ctor, descriptor, lean_handles),
+            identity=self._ctor_identity(
+                node, ctor, descriptor, lean_handles, import_map
+            ),
         )
 
     def _bind_type_decl_handle(
@@ -1915,6 +1893,7 @@ class IOAccessProcessor:
         ctor: HandleConstructor,
         descriptor: LanguageDescriptor,
         lean_handles: _LeanHandles,
+        import_map: dict[str, str],
     ) -> str:
         identity = literal_target(
             call_node,
@@ -1937,7 +1916,13 @@ class IOAccessProcessor:
             return identity
         if lean_handles.identity_calls and arg.type == descriptor.call_type:
             raw = call_name(arg)
-            if raw is not None and raw in lean_handles.identity_calls:
+            # A static import (`import static java.nio.file.Path.of`) spells the
+            # factory bare (`of("cfg")`); resolve it through the import map to its
+            # qualified form so the literal is still recovered (Greptile review, #1204).
+            if raw is not None and (
+                raw in lean_handles.identity_calls
+                or import_map.get(raw) in lean_handles.identity_calls
+            ):
                 return self._literal_arg0(arg, descriptor)
         if (
             lean_handles.identity_new_types

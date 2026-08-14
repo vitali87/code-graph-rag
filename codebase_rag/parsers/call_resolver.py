@@ -3030,3 +3030,12 @@ class CallResolver:
         return self.type_inference.csharp_type_inference.resolve_csharp_method_call(
             call_node, local_var_types, module_qn, caller_qn
         )
+
+    def resolve_go_call_site(
+        self,
+        call_node: Node,
+        module_qn: str,
+    ) -> tuple[str, str] | None:
+        return self.type_inference.go_type_inference.resolve_go_call_site(
+            call_node, module_qn
+        )

@@ -139,6 +139,12 @@ PY_SOURCE_GLOB = "*.py"
 # sources are folded into the parser fingerprint.
 PARSER_FINGERPRINT_TOOL_DIR = "parsers/csharp_frontend/roslyn"
 PARSER_FINGERPRINT_TOOL_GLOBS: tuple[str, ...] = ("*.cs", "*.csproj")
+# Bundled semantic-frontend tool sources (per (dir, globs)): parser code that
+# is not Python, so an edit must still trip the staleness fingerprint.
+PARSER_FINGERPRINT_TOOL_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("parsers/csharp_frontend/roslyn", ("*.cs", "*.csproj")),
+    ("parsers/go_frontend/gotypes", ("*.go", "*.mod", "*.sum")),
+)
 GRAMMAR_DIST_PREFIX = "tree-sitter"
 GRAMMAR_VERSION_FMT = "{name}=={version}"
 GIT_DIR_NAME = ".git"

@@ -32,6 +32,7 @@ from .csharp import type_inference as csharp_ti
 from .dart import utils as dart_utils
 from .dispatch_registry import DispatchRegistryProcessor
 from .flow_access import FlowProcessor
+from .go import type_inference as go_ti
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
@@ -1034,7 +1035,6 @@ class CallProcessor:
             ingestor=ingestor,
             selection=selection,
             function_registry=function_registry,
-            import_processor=import_processor,
         )
         self._rpc_exposure = GoRpcExposureProcessor(
             ingestor=ingestor,
@@ -1052,6 +1052,7 @@ class CallProcessor:
             import_processor,
             self._resolver,
             selection=selection,
+            function_locations=self.function_locations,
         )
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
@@ -3358,6 +3359,29 @@ class CallProcessor:
                         class_context,
                         caller_qn,
                         language,
+                    )
+            elif (
+                language == cs.SupportedLanguage.GO
+                and call_node.type == cs.TS_GO_CALL_EXPRESSION
+            ):
+                # The go/types frontend (issue #1179): a HIT is the compiler's
+                # exact first-party callee (promotion, shadowing) the heuristic
+                # cannot type; the external sentinel proves the call leaves the
+                # module and suppresses trie fabrication. Any miss (incl. the
+                # frontend being off, so both fact maps are empty) falls back to
+                # today's Go resolver with call_point preserved.
+                callee_info = resolver.resolve_go_call_site(call_node, module_qn)
+                if callee_info == go_ti.GO_EXTERNAL_TARGET:
+                    callee_info = None
+                elif callee_info is None:
+                    callee_info = resolve_func(
+                        call_name,
+                        module_qn,
+                        call_var_types,
+                        class_context,
+                        caller_qn,
+                        language,
+                        call_point=call_node.start_byte,
                     )
             else:
                 callee_info = resolve_func(

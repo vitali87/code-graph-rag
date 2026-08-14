@@ -282,9 +282,13 @@ def test_auto_mode_runs_frontend_when_dotnet_available(
 ) -> None:
     root = temp_repo / "autoproj"
     _write_project(root)
+    from codebase_rag.parsers.frontends import csharp as csharp_fe
+
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)
-    monkeypatch.setattr(gu, "csharp_frontend_available", lambda: True)
-    monkeypatch.setattr(gu, "run_csharp_frontend", lambda repo_path: _button_facts())
+    monkeypatch.setattr(csharp_fe, "csharp_frontend_available", lambda: True)
+    monkeypatch.setattr(
+        csharp_fe, "run_csharp_frontend", lambda repo_path: _button_facts()
+    )
 
     ingestor = MagicMock()
     run_updater(root, ingestor, skip_if_missing=SKIP)
@@ -298,10 +302,12 @@ def test_auto_mode_falls_back_silently_without_dotnet(
 ) -> None:
     root = temp_repo / "autofallproj"
     _write_project(root)
+    from codebase_rag.parsers.frontends import csharp as csharp_fe
+
     frontend_runner = MagicMock()
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)
-    monkeypatch.setattr(gu, "csharp_frontend_available", lambda: False)
-    monkeypatch.setattr(gu, "run_csharp_frontend", frontend_runner)
+    monkeypatch.setattr(csharp_fe, "csharp_frontend_available", lambda: False)
+    monkeypatch.setattr(csharp_fe, "run_csharp_frontend", frontend_runner)
 
     ingestor = MagicMock()
     run_updater(root, ingestor, skip_if_missing=SKIP)

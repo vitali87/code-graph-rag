@@ -66,6 +66,29 @@ CSHARP_FRONTEND_NO_FACTS = (
     "C# Roslyn frontend produced no facts; every join falls back to "
     "tree-sitter. Tool diagnostics:\n{stderr}"
 )
+GO_FRONTEND_RUNNING = "--- Go go/types frontend: {path} ---"
+GO_FRONTEND_UNAVAILABLE = (
+    "Go frontend enabled but the go toolchain is unavailable; using tree-sitter"
+)
+GO_FRONTEND_AUTO_FALLBACK = "Go frontend AUTO: go not found; using tree-sitter only"
+GO_FRONTEND_FACTS = (
+    "Go go/types frontend facts: {calls} call site(s), {externals} external site(s)"
+)
+GO_FRONTEND_IMPLEMENTS_JOINED = (
+    "Go go/types frontend: {count} IMPLEMENTS edge(s) joined to Pass-2 type nodes"
+)
+GO_FRONTEND_BUILD_FAILED = (
+    "Go frontend tool failed to build; using tree-sitter.\nstderr: {stderr}"
+)
+GO_FRONTEND_PARSE_FAILED = (
+    "Go frontend produced no parseable JSON; using tree-sitter.\n"
+    "stdout: {stdout}\nstderr: {stderr}"
+)
+GO_FRONTEND_RUN_FAILED = "Go frontend tool did not finish ({error}); using tree-sitter"
+GO_FRONTEND_NO_FACTS = (
+    "Go frontend produced no facts; every join falls back to tree-sitter. "
+    "Tool diagnostics:\n{stderr}"
+)
 GRAPH_ALREADY_IN_SYNC = (
     "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
 )
@@ -816,6 +839,9 @@ PARSER_FINGERPRINT_MISMATCH = (
 REHYDRATE_QUERY_FAILED = (
     "Could not read persisted definitions from the graph; continuing with "
     "only this run's freshly parsed registry."
+)
+CSHARP_TYPE_LOCATIONS_REHYDRATED = (
+    "Rehydrated {count} C# type location(s) from the graph for the partial join"
 )
 INBOUND_CAPTURE_FAILED = (
     "Could not read inbound edges from the graph; this full rebuild "

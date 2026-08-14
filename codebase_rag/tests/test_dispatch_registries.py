@@ -1,10 +1,11 @@
 # String-keyed dispatch registries (issue #913): a handler registered under a
-# string key (module-level dict registry, or a `@flow`/`@task` registrar
-# decorator) EXPOSES `resource::DISPATCH::<key>`; a producer scheduling work
-# with a recognised dispatch keyword emits a WRITES_TO sink on the same node,
-# so both sides meet without a resolution pass. A produced `name/deployment`
-# key resolves to the bare registered `name` when no exact registration
-# exists.
+# string key by a `@flow`/`@task` registrar decorator EXPOSES
+# `resource::DISPATCH::<key>`; a producer scheduling work with a recognised
+# dispatch keyword emits a WRITES_TO sink on the same node, so both sides meet
+# without a resolution pass. A produced `name/deployment` key resolves to the
+# bare registered `name` when no exact registration exists. A module-level
+# `{str: func}` dict is deliberately NOT a registry (issue #1241): it is an
+# ordinary lookup table and cannot be tied to a DISPATCH key by key text alone.
 from __future__ import annotations
 
 from pathlib import Path
@@ -50,64 +51,40 @@ def _run(
     }
 
 
-def test_dict_registry_exposes_each_entry(tmp_path: Path) -> None:
+def test_dict_is_never_a_dispatch_registry(tmp_path: Path) -> None:
+    # Issue #1241: a `{str: func}` dict is an ordinary lookup table, never a
+    # dispatch registry. It is indistinguishable from click's stream tables,
+    # command maps or plugin registries, and a DISPATCH resource keyed only by a
+    # bare string cannot be tied back to a specific dict. Even when an unrelated
+    # producer dispatches a colliding key, the dict must NOT expose a handler --
+    # only the producer's own WRITES_TO edge is emitted. Only explicit
+    # `@flow`/`@task` decorators register handlers.
     files = {
-        "handlers.py": (
-            "def plain(ctx):\n    return 1\n\n"
-            "def with_factoid(ctx):\n    return 2\n\n"
-            "handlers = {\n"
-            '    "plain": plain,\n'
-            '    "with_factoid": with_factoid,\n'
+        "_compat.py": (
+            "def get_binary_stdin():\n    return 1\n\n"
+            "def get_binary_stdout():\n    return 2\n\n"
+            "binary_streams = {\n"
+            '    "stdin": get_binary_stdin,\n'
+            '    "stdout": get_binary_stdout,\n'
             "}\n"
+        ),
+        # An unrelated producer that happens to dispatch a colliding key must
+        # not turn the lookup table above into a registry (the cross-module
+        # collision that key-text corroboration would wrongly join).
+        "producer.py": (
+            'def schedule(client):\n    client.deploy(workflow_name="stdin")\n'
         ),
     }
     rels = _run(tmp_path, files)
     project = tmp_path.name
+    # The producer still writes to its own dispatch node...
     assert (
-        f"{project}.handlers.plain",
-        EXPOSES,
-        "resource::DISPATCH::plain",
+        f"{project}.producer.schedule",
+        WRITES_TO,
+        "resource::DISPATCH::stdin",
     ) in rels, rels
-    assert (
-        f"{project}.handlers.with_factoid",
-        EXPOSES,
-        "resource::DISPATCH::with_factoid",
-    ) in rels, rels
-
-
-def test_annotated_dict_registry_exposes(tmp_path: Path) -> None:
-    # The verified production shape carries a type annotation.
-    files = {
-        "registry.py": (
-            "def plain(ctx):\n    return 1\n\n"
-            "handlers: dict = {\n"
-            '    "plain": plain,\n'
-            "}\n"
-        ),
-    }
-    rels = _run(tmp_path, files)
-    project = tmp_path.name
-    assert (
-        f"{project}.registry.plain",
-        EXPOSES,
-        "resource::DISPATCH::plain",
-    ) in rels, rels
-
-
-def test_mixed_dict_is_not_a_registry(tmp_path: Path) -> None:
-    # The all-entries gate: one non-string key or non-function value keeps
-    # arbitrary config dicts out entirely.
-    files = {
-        "config.py": (
-            "def plain(ctx):\n    return 1\n\n"
-            "settings = {\n"
-            '    "plain": plain,\n'
-            '    "retries": 3,\n'
-            "}\n"
-        ),
-    }
-    rels = _run(tmp_path, files)
-    assert not any("resource::DISPATCH::" in b for _a, _r, b in rels), rels
+    # ...but the dict never exposes any handler.
+    assert not any(EXPOSES == r for _a, r, _b in rels), rels
 
 
 def test_flow_decorator_with_name_exposes(tmp_path: Path) -> None:
@@ -221,29 +198,6 @@ def test_dynamic_producer_value_stays_out(tmp_path: Path) -> None:
     assert not any("resource::DISPATCH::" in b for _a, _r, b in rels), rels
 
 
-def test_imported_handler_values_expose(tmp_path: Path) -> None:
-    # The verified production registry imports its handlers from sibling
-    # modules; values must resolve through the import map, not just the
-    # registry module's own scope.
-    files = {
-        "pkg/__init__.py": "",
-        "pkg/handlers.py": ("def execute_turn(ctx):\n    return 1\n"),
-        "pkg/registry.py": (
-            "from pkg.handlers import execute_turn\n\n"
-            "handlers = {\n"
-            '    "execute_turn": execute_turn,\n'
-            "}\n"
-        ),
-    }
-    rels = _run(tmp_path, files)
-    project = tmp_path.name
-    assert (
-        f"{project}.pkg.handlers.execute_turn",
-        EXPOSES,
-        "resource::DISPATCH::execute_turn",
-    ) in rels, rels
-
-
 def test_partial_capture_selections_never_dangle(tmp_path: Path) -> None:
     # Dropping either side's relationship must not leave the suffix
     # resolution with a dangling endpoint (the structural audit inside _run
@@ -295,15 +249,11 @@ def test_reprocessed_module_drops_stale_facts(tmp_path: Path) -> None:
 
             return NodeType.FUNCTION if qn.endswith(".run_things") else None
 
-    class _Imports:
-        import_mapping: dict = {}
-
     ingestor = MagicMock()
     processor = DispatchRegistryProcessor(
         ingestor=ingestor,
         selection=ALL_ENABLED,
         function_registry=_Registry(),
-        import_processor=_Imports(),
     )
     with_flow = parsers["python"].parse(
         b'from prefect import flow\n\n@flow(name="run-things")\ndef run_things():\n    return 1\n'
@@ -354,15 +304,11 @@ def test_finalize_seeds_registrations_from_database(tmp_path: Path) -> None:
 
             return NodeType.FUNCTION if qn.endswith(".schedule") else None
 
-    class _Imports:
-        import_mapping: dict = {}
-
     ingestor = _QueryIngestor()
     processor = DispatchRegistryProcessor(
         ingestor=ingestor,
         selection=ALL_ENABLED,
         function_registry=_Registry(),
-        import_processor=_Imports(),
     )
     producer = parsers["python"].parse(
         b'def schedule(client):\n    client.deploy(workflow_name="run-things/dev")\n'
@@ -377,6 +323,42 @@ def test_finalize_seeds_registrations_from_database(tmp_path: Path) -> None:
         if str(c.args[1]) == RESOLVES_TO
     ]
     assert resolves, ingestor.ensure_relationship_batch.call_args_list
+
+
+def test_registration_seed_tolerates_unreadable_graph(tmp_path: Path) -> None:
+    # The suffix-resolution pass seeds registered keys from the live graph. A
+    # read failure (the graph briefly down mid-rebuild) must degrade to no seeds
+    # rather than aborting finalize -- the rebuild has to complete regardless.
+    from codebase_rag import constants as cs2
+    from codebase_rag.capture import ALL_ENABLED
+    from codebase_rag.parsers.dispatch_registry import DispatchRegistryProcessor
+    from codebase_rag.types_defs import NodeType
+
+    parsers, _ = load_parsers()
+
+    class _DownIngestor(MagicMock):
+        def fetch_all(self, query, params=None):  # noqa: ANN001, ANN201
+            raise RuntimeError("graph down")
+
+        def execute_write(self, query, params=None):  # noqa: ANN001, ANN201
+            return None
+
+    class _Registry:
+        def get(self, qn: str):  # noqa: ANN201
+            return NodeType.FUNCTION if qn.endswith(".schedule") else None
+
+    processor = DispatchRegistryProcessor(
+        ingestor=_DownIngestor(),
+        selection=ALL_ENABLED,
+        function_registry=_Registry(),
+    )
+    producer = parsers["python"].parse(
+        b'def schedule(client):\n    client.deploy(workflow_name="run-things/dev")\n'
+    )
+    processor.process_file(
+        producer.root_node, "proj.producer", cs2.SupportedLanguage.PYTHON
+    )
+    processor.finalize()  # must not raise
 
 
 def test_resolves_only_capture_still_links_suffix(tmp_path: Path) -> None:

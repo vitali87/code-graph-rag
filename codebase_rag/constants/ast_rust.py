@@ -74,6 +74,10 @@ RS_FIELD_INDEX = "index"
 TS_RS_LET_DECLARATION = "let_declaration"
 TS_RS_PARAMETER = "parameter"
 TS_RS_SELF_PARAMETER = "self_parameter"
+TS_RS_REFERENCE_PATTERN = "reference_pattern"
+TS_RS_REF_PATTERN = "ref_pattern"
+TS_RS_MUT_PATTERN = "mut_pattern"
+TS_RS_MUTABLE_SPECIFIER = "mutable_specifier"
 TS_RS_STRUCT_EXPRESSION = "struct_expression"
 TS_RS_FIELD_DECLARATION_LIST = "field_declaration_list"
 TS_RS_FIELD_DECLARATION = "field_declaration"
@@ -97,6 +101,32 @@ TS_RS_FIELD_EXPRESSION = "field_expression"
 # Result-unwrapping method names: `File::open(p)?` / `.unwrap()` / `.expect(..)`
 # all yield the inner handle, so the I/O handle binder unwraps through them.
 RS_RESULT_UNWRAP_METHODS = frozenset({"unwrap", "expect"})
+# Value-preserving conversion methods: `s.as_bytes()`, `.as_str()`, `.clone()`,
+# `.to_vec()`, ... return a view/copy of the receiver's data, so a tainted
+# receiver stays tainted through them (`f.write_all(s.as_bytes())`). Methods that
+# derive an UNRELATED value (`.len()`, `.is_empty()`) are deliberately excluded so
+# taint is not over-propagated (issue #1204).
+RS_VALUE_PRESERVING_METHODS = frozenset(
+    {
+        "as_bytes",
+        "as_bytes_mut",
+        "as_str",
+        "as_ref",
+        "as_mut",
+        "as_slice",
+        "to_vec",
+        "to_owned",
+        "to_string",
+        "into_bytes",
+        "into_string",
+        "clone",
+    }
+)
+# Methods a tainted value passes through unchanged: Result unwrapping AND
+# value-preserving conversions. The flow walk recurses a method receiver ONLY
+# through these, so a terminal method returning an unrelated value (`.len()`,
+# `.count()`) never propagates the receiver's taint (issue #1204).
+RS_TAINT_TRANSPARENT_METHODS = RS_RESULT_UNWRAP_METHODS | RS_VALUE_PRESERVING_METHODS
 TS_RS_FIELD_PATH = "path"
 TS_RS_TOKEN_DOT = "."
 # A receiver/chain base that is a plain identifier or the `self` keyword (used

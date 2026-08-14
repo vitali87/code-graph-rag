@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.605"
+version = "0.0.632"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -61,6 +61,9 @@ dependencies = [
 code-graph-rag = "codebase_rag.cli:app"
 cgr = "codebase_rag.cli:app"
 
+[project.entry-points.pytest11]
+cgr_trace = "codebase_rag.trace.pytest_plugin"
+
 [tool.uv]
 package = true
 
@@ -80,6 +83,9 @@ codebase_rag = [
     "docker-compose.yaml",
     "parsers/csharp_frontend/roslyn/*.cs",
     "parsers/csharp_frontend/roslyn/*.csproj",
+    "parsers/go_frontend/gotypes/*.go",
+    "parsers/go_frontend/gotypes/go.mod",
+    "parsers/go_frontend/gotypes/go.sum",
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
 ]

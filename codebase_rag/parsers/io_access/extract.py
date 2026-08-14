@@ -63,6 +63,61 @@ def definition_header_nodes(node: Node) -> list[Node]:
     return []
 
 
+def rust_unwrap_result(node: Node) -> Node:
+    # Rust Result unwrapping: `File::open(p)?` (try_expression) and
+    # `File::create(p).unwrap()` / `.expect(..)` all yield the inner handle. The
+    # node shapes are Rust-specific, so this is inert elsewhere (issue #1204).
+    while True:
+        if node.type in (cs.TS_RS_TRY_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION):
+            # `File::create(p)?` (try) and `(File::create(p).unwrap())` (parens)
+            # both wrap the inner handle expression; peel to it.
+            inner = next(
+                (c for c in node.named_children if c.type != cs.TS_COMMENT), None
+            )
+            if inner is None:
+                return node
+            node = inner
+            continue
+        fn = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if fn is not None and fn.type == cs.TS_RS_FIELD_EXPRESSION:
+            field = fn.child_by_field_name(cs.RS_FIELD_FIELD)
+            receiver = fn.child_by_field_name(cs.FIELD_VALUE)
+            if (
+                field is not None
+                and field.text is not None
+                and field.text.decode(cs.ENCODING_UTF8) in cs.RS_RESULT_UNWRAP_METHODS
+                and receiver is not None
+                and receiver.type == cs.TS_RS_CALL_EXPRESSION
+            ):
+                node = receiver
+                continue
+        return node
+
+
+def lean_definition_header_nodes(
+    node: Node, descriptor: LanguageDescriptor
+) -> list[Node]:
+    # Definition-time header expressions of a lean (non-Python) nested-scope node
+    # that execute in the ENCLOSING scope: a TS parameter decorator (`m(@inject(t) x)`),
+    # whose `@inject(t)` call runs at the owning class's definition time. Collect only
+    # decorators that are DIRECT children of the node's OWN parameters -- never
+    # descending into a parameter's default value/type nor any nested scope, so a
+    # decorated class in a default initializer (`x = class { n(@dec(t) y){} }`) or a
+    # concise arrow body (`() => class { ... }`) -- which run in that inner/call-time
+    # scope, not this one -- can never surface as a false enclosing-scope flow. The
+    # default parameter value likewise runs in the callee and is never collected.
+    header_types = descriptor.nested_header_types
+    if not header_types:
+        return []
+    params = node.child_by_field_name(descriptor.params_field)
+    if params is None:
+        return []
+    out: list[Node] = []
+    for param in params.named_children:
+        out.extend(c for c in param.named_children if c.type in header_types)
+    return out
+
+
 def call_name(call_node: Node) -> str | None:
     fn = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
     if fn is not None:
@@ -426,6 +481,22 @@ def binding_targets_values(
         return targets, lean_binding_values(
             node.child_by_field_name(cs.FIELD_VALUE), descriptor
         )
+    if (
+        descriptor.binding_target_container_type is not None
+        and node.type == descriptor.declarator_type
+    ):
+        # Lua's `assignment_statement` wraps its targets in a `variable_list`
+        # (each a `name` field) and its values in an `expression_list` (each a
+        # `value` field); a multi-assign `a, b = f(), g()` pairs them by position.
+        container_targets: list[str | None] = []
+        container_values: list[Node] = []
+        for child in node.named_children:
+            if child.type == descriptor.binding_target_container_type:
+                for name in child.children_by_field_name(cs.TS_FIELD_NAME):
+                    container_targets.extend(lean_binding_targets(name, descriptor))
+            elif child.type == descriptor.binding_value_container_type:
+                container_values.extend(child.children_by_field_name(cs.FIELD_VALUE))
+        return container_targets, container_values
     targets = []
     for name in node.children_by_field_name(cs.TS_FIELD_NAME):
         targets.extend(lean_binding_targets(name, descriptor))

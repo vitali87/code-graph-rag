@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Node
+
+if TYPE_CHECKING:
+    from ...types_defs import FunctionLocation, FunctionSpanKey
 
 from ... import constants as cs
 from ...capture import CaptureSelection
 from ...services import IngestorProtocol
 from ..call_resolver import CallResolver
+from ..dart.utils import dart_body_node, dart_call_name, dart_member_read_name
 from ..import_processor import ImportProcessor
 from ..io_access import (
     DYNAMIC_TARGET,
@@ -20,7 +24,9 @@ from ..io_access import (
     LANGUAGE_DESCRIPTORS,
     PY_SCOPE_BOUNDARIES,
     RESOURCE_QN_FORMAT,
+    ArgHandleSink,
     HandleBinding,
+    HandleConstructor,
     IODirection,
     IOSink,
     LanguageDescriptor,
@@ -33,14 +39,43 @@ from ..io_access import (
     is_require_alias,
     iter_token_tree_calls,
     lean_binding_targets,
+    lean_definition_header_nodes,
     literal_target,
     match_normalised,
+    positional_arg_node,
     registry_match,
+    rust_unwrap_result,
     scope_seed_nodes,
     string_literal,
     unwrap_argument,
 )
-from ..utils import python_parameter_names, safe_decode_text
+from ..io_access.registry import (
+    IO_ARG_HANDLE_SINKS,
+    IO_IDENTITY_UNWRAP_CALLS,
+    IO_IDENTITY_UNWRAP_NEW_TYPES,
+    IO_LEAN_HANDLE_CONSTRUCTORS,
+    IO_LEAN_HANDLE_METHODS,
+    IO_NEW_HANDLE_CONSTRUCTORS,
+    IO_NEW_HANDLE_WRAPPERS,
+    IO_TYPE_HANDLE_CONSTRUCTORS,
+    LIBC_STD_STREAMS,
+)
+from ..utils import (
+    c_positional_parameter_slots,
+    cpp_declarator_name,
+    cpp_positional_parameter_slots,
+    csharp_positional_parameter_slots,
+    dart_positional_parameter_slots,
+    function_span_key,
+    go_positional_parameter_slots,
+    java_positional_parameter_slots,
+    js_ts_positional_parameter_slots,
+    php_positional_parameter_slots,
+    python_free_variable_names,
+    python_parameter_names,
+    rust_positional_parameter_slots,
+    safe_decode_text,
+)
 from .constants import (
     KEY_KIND,
     KEY_VIA,
@@ -51,6 +86,10 @@ from .constants import (
 )
 
 _BUILTIN_QN_PREFIX = f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"
+# The Dart `=` assignment token node type (no dedicated constant); the flow walk
+# splits a Dart binding on it (issue #1173).
+_DART_ASSIGN_OP = "="
+
 
 # The `kind` half of an argument `via` tag (VIA_ARG_FORMAT / VIA_KW_FORMAT),
 # used to map a call-site argument back to the callee's parameter (issue #1142).
@@ -94,7 +133,7 @@ def _py_positional_param_name(node: Node) -> str | None:
     return None
 
 
-def _py_positional_param_names(func_node: Node) -> list[str]:
+def _py_positional_param_names(func_node: Node) -> list[str | None]:
     # Parameter names a positional argument can bind to, in order, STOPPING at
     # the first `*args`/`**kwargs`/bare-`*` boundary: positional arguments past
     # that point are absorbed by the variadic or are keyword-only, so mapping
@@ -104,7 +143,7 @@ def _py_positional_param_names(func_node: Node) -> list[str]:
     params_node = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params_node is None:
         return []
-    names: list[str] = []
+    names: list[str | None] = []
     for child in params_node.named_children:
         # A comment or the `/` positional-only marker sits between parameters
         # without consuming a position; skip them and keep collecting.
@@ -121,6 +160,38 @@ def _py_positional_param_names(func_node: Node) -> list[str]:
     if names and names[0] in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
         names = names[1:]
     return names
+
+
+def _lean_parameter_slots(
+    func_node: Node, language: str
+) -> tuple[list[str | None], int | None]:
+    # Position-aligned parameter slots for a lean-walk function, used to seed
+    # parameter-taint summaries (issue #1169). Returns one entry per formal
+    # positional slot (None where the slot binds no simple name) plus the index
+    # of a variadic/rest slot, so arg:<index> maps to the right parameter even
+    # when some parameters are unnamed, destructured, or variadic -- the shift
+    # a compacting extractor would cause is what produces false source-to-sink
+    # edges. Lean languages have no keyword-call syntax, so this table is the
+    # only mapping needed (mirrors the Python _py_positional_param_names role).
+    if language == cs.SupportedLanguage.GO:
+        return go_positional_parameter_slots(func_node)
+    if language in cs.JS_TS_LANGUAGES:
+        return js_ts_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.CPP:
+        return cpp_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.JAVA:
+        return java_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.CSHARP:
+        return csharp_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.RUST:
+        return rust_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.C:
+        return c_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.PHP:
+        return php_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.DART:
+        return dart_positional_parameter_slots(func_node)
+    return [], None
 
 
 class Taint(NamedTuple):
@@ -147,6 +218,24 @@ def _merge_taint(a: Taint, b: Taint) -> Taint:
 
 # Live taint state threaded through the walk: variable -> its Taint.
 type _TaintMap = dict[str, Taint]
+# Live handle bindings threaded through the lean walk: variable -> the resource
+# handles it may hold. Set-valued so a name bound to different handles on
+# different branches writes to ALL of them at a later method call (issue #1204).
+type _HandleMap = dict[str, frozenset[HandleBinding]]
+
+
+class _LeanState(NamedTuple):
+    # Path-sensitive state threaded through the lean (non-Python) walk: the taint
+    # map plus the resource-handle map, copied at branch entry and MAY-unioned at
+    # the join exactly as the taint map alone was (issue #1204). Bundling the two
+    # keeps every `state = self._walk_x(...)` call site unchanged.
+    taint: _TaintMap
+    handles: _HandleMap
+
+    def copy(self) -> _LeanState:
+        # frozensets are immutable, so a shallow copy of each dict is a full copy.
+        return _LeanState(dict(self.taint), dict(self.handles))
+
 
 # Return wrappers whose taint lives in their elements: `return (x)`,
 # `return a, b`, `return [x]`. Unwrapped so a tainted identifier/call inside
@@ -216,6 +305,7 @@ _FLAT_LOOP_TYPES = frozenset(
         cs.TS_CPP_FOR_RANGE_LOOP,
         cs.TS_RS_FOR_EXPRESSION,
         cs.TS_RS_WHILE_EXPRESSION,
+        cs.TS_PHP_FOREACH_STATEMENT,
     }
 )
 # Loops whose body ALWAYS runs at least once (do-while, Rust `loop`): no
@@ -249,24 +339,37 @@ _SWITCH_ARM_TYPES = frozenset(
         cs.TS_CPP_CASE_STATEMENT,
         cs.TS_JS_SWITCH_CASE,
         cs.TS_JS_SWITCH_DEFAULT,
+        cs.TS_PHP_DEFAULT_STATEMENT,
+        cs.TS_DART_SWITCH_STATEMENT_CASE,
+        cs.TS_DART_SWITCH_STATEMENT_DEFAULT,
     }
 )
 # Arms a previous case can fall INTO (no break modeling: the entry unions
 # the previous arm's exit). Go cases and Java arrow rules never fall
-# through, so they enter only from the header state.
+# through, so they enter only from the header state. PHP `case`/`default`
+# and Dart `switch_statement_case`/`_default` fall through C-style.
 _FALLTHROUGH_ARM_TYPES = frozenset(
     {
         cs.TS_JAVA_SWITCH_BLOCK_STATEMENT_GROUP,
         cs.TS_CPP_CASE_STATEMENT,
         cs.TS_JS_SWITCH_CASE,
         cs.TS_JS_SWITCH_DEFAULT,
+        cs.TS_PHP_DEFAULT_STATEMENT,
+        cs.TS_DART_SWITCH_STATEMENT_CASE,
+        cs.TS_DART_SWITCH_STATEMENT_DEFAULT,
     }
 )
 
 # Arm node types spelled `default` explicitly (Go default_case, JS
-# switch_default); the other grammars mark default structurally.
+# switch_default, PHP default_statement, Dart switch_statement_default); the
+# other grammars mark default structurally.
 _EXPLICIT_DEFAULT_ARM_TYPES = frozenset(
-    {cs.TS_GO_DEFAULT_CASE, cs.TS_JS_SWITCH_DEFAULT}
+    {
+        cs.TS_GO_DEFAULT_CASE,
+        cs.TS_JS_SWITCH_DEFAULT,
+        cs.TS_PHP_DEFAULT_STATEMENT,
+        cs.TS_DART_SWITCH_STATEMENT_DEFAULT,
+    }
 )
 
 
@@ -390,6 +493,33 @@ class _JsCtx(NamedTuple):
     # declarations for JS/TS) and grown with each Go binding as the walk reaches
     # it, so a later Go shadow never suppresses an earlier valid source read.
     local_names: set[str]
+    # Handle-based writes (issue #1204): a local bound to a resource handle
+    # (`f := os.Create("out")`) so a tainted write through it (`f.Write(secret)`)
+    # emits a flow edge to the handle's resource. The live bindings ride the
+    # path-sensitive _LeanState (branch-merged like taint); these are the constant
+    # per-language registry views. Empty tables (no handle support) => inert.
+    handle_ctors: dict[str, HandleConstructor]
+    handle_methods: dict[ResourceKind, dict[str, IODirection]]
+    # `new`-shaped handle constructors (Java `new FileWriter("x")`, C#
+    # `new StreamWriter("x")`) plus the wrapper types that delegate their resource
+    # to arg0 (`new BufferedWriter(new FileWriter(..))`) and the identity-carrier
+    # types/calls reached at a target position (`new PrintWriter(new File("x"))`,
+    # `Files.newBufferedWriter(Path.of("cfg"))`). Empty for languages whose handles
+    # are only call-shaped (issue #1204).
+    new_handle_ctors: dict[str, HandleConstructor]
+    new_wrappers: frozenset[str]
+    identity_calls: frozenset[str]
+    identity_new_types: dict[str, ResourceKind]
+    # Arg-shaped handle sinks (C/C++ libc `fwrite(data, 1, n, f)`,
+    # `fprintf(f, fmt, x)`): the handle rides an ARGUMENT, not a receiver, so a
+    # tainted non-handle arg flows to the handle's resource (issue #1204). Empty for
+    # languages without the libc FILE* API.
+    arg_handle_sinks: dict[str, ArgHandleSink]
+    # Type-declaration handle constructors (C++ `std::ofstream out("x")`): a
+    # declaration whose written type is one of these binds a FILE handle on its
+    # declarator, so a later `out << x` / `out.write(..)` routes to that file
+    # (issue #1220). Empty for languages without type-declaration stream handles.
+    type_ctors: dict[str, ResourceKind]
 
 
 class FlowProcessor:
@@ -404,11 +534,17 @@ class FlowProcessor:
         import_processor: ImportProcessor,
         resolver: CallResolver,
         selection: CaptureSelection,
+        function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ) -> None:
         self.ingestor = ingestor
         self._import_processor = import_processor
         self._resolver = resolver
         self._selection = selection
+        # Span-key -> registered FunctionLocation, so a nested def's capture record
+        # uses the SAME (suffix-aware) qn the definition pass assigned, matching the
+        # qn its own walk is keyed under; without it a duplicate-named nested def
+        # would record under a reconstructed unsuffixed qn that never composes.
+        self._function_locations = function_locations or {}
         self._enabled = selection.rel_enabled(cs.RelationshipType.FLOWS_TO)
         # Per-function return-taint SUMMARY collected during the walk: caller QN
         # -> the Taint it returns (resolved origins + pending callee QNs whose
@@ -431,7 +567,7 @@ class FlowProcessor:
         # the switch with the state it saw THEN, not the arm's end state).
         # Loop walkers push None to shield the collector: a break in a
         # nested loop targets that loop, not the enclosing switch.
-        self._break_exit_stack: list[list[_TaintMap] | None] = []
+        self._break_exit_stack: list[list[_LeanState] | None] = []
         self._deferred_resource_flows: list[
             tuple[frozenset[str], ResourceKind, str]
         ] = []
@@ -468,11 +604,18 @@ class FlowProcessor:
         # element is the per-call-site pass-through token (issue #1168). Composed
         # against the parameter-sink closure in finalize to emit origin -> sink.
         self._param_call_sites: list[tuple[Taint, str, str, str]] = []
-        # Per-function positional parameter names (self/cls dropped, truncated at
-        # the first variadic/keyword-only boundary) so a call site's arg:<index>
-        # resolves to the right callee parameter without binding a positional
-        # argument to a keyword-only parameter.
-        self._positional_params: dict[str, list[str]] = {}
+        # Per-function positional parameter slots so a call site's arg:<index>
+        # resolves to the right callee parameter. The Python path truncates at
+        # the first variadic/keyword-only boundary (self/cls dropped) and has no
+        # None entries; the lean path (issue #1169) keeps one entry per formal
+        # slot, using None where a slot binds no simple name, so unnamed or
+        # destructured parameters do not shift later indices.
+        self._positional_params: dict[str, list[str | None]] = {}
+        # Index of a lean callee's variadic/rest slot, if any: every argument at
+        # or after it maps to that parameter (issue #1169). The Python path
+        # never records this because it truncates positional names at the first
+        # variadic boundary.
+        self._variadic_params: dict[str, int] = {}
 
     def process_flow_for_caller(
         self,
@@ -496,9 +639,18 @@ class FlowProcessor:
             class_context=class_context,
             language=language,
             import_map=self._import_processor.import_mapping.get(module_qn, {}),
-            read_sinks={s.callee: s for s in sinks if s.direction == IODirection.READ},
+            # A READ_WRITE sink (PHP `curl_exec`/`fsockopen`, verb-agnostic like a DB
+            # execute) is BOTH a read source and a write sink, so it enters both maps
+            # -- otherwise it would fall out of both and emit nothing (CodeRabbit, #1174).
+            read_sinks={
+                s.callee: s
+                for s in sinks
+                if s.direction in (IODirection.READ, IODirection.READ_WRITE)
+            },
             write_sinks={
-                s.callee: s for s in sinks if s.direction == IODirection.WRITE
+                s.callee: s
+                for s in sinks
+                if s.direction in (IODirection.WRITE, IODirection.READ_WRITE)
             },
             macro_sinks=IO_MACRO_SINKS.get(language, {}),
             stream_sinks=IO_STREAM_SINKS.get(language, {}),
@@ -542,6 +694,14 @@ class FlowProcessor:
         positional = _py_positional_param_names(caller_node)
         if positional:
             self._positional_params[caller_qn] = positional
+        # Seed each free variable as a capture pseudo-origin so a sink it reaches
+        # becomes a capture summary composed at finalize against the enclosing
+        # definition site (issue #1197). A free var matches only kw:<name>, so it
+        # records no positional slot; a free var that is never a tainted capture
+        # records a summary no call site composes, so it stays inert.
+        for fv in python_free_variable_names(caller_node):
+            if fv not in tainted:
+                tainted[fv] = Taint(frozenset(), frozenset(), frozenset({fv}))
         for node in scope_seed_nodes(caller_node):
             tainted = self._walk_stmt(node, tainted, ctx)
 
@@ -563,22 +723,51 @@ class FlowProcessor:
             descriptor=descriptor,
             member_reads=member_reads,
             local_names=self._js_local_names(caller_node, descriptor, ctx.language),
+            handle_ctors={
+                c.callee: c for c in IO_LEAN_HANDLE_CONSTRUCTORS.get(ctx.language, ())
+            },
+            handle_methods=IO_LEAN_HANDLE_METHODS.get(ctx.language, {}),
+            new_handle_ctors=IO_NEW_HANDLE_CONSTRUCTORS.get(ctx.language, {}),
+            new_wrappers=IO_NEW_HANDLE_WRAPPERS.get(ctx.language, frozenset()),
+            identity_calls=IO_IDENTITY_UNWRAP_CALLS.get(ctx.language, frozenset()),
+            identity_new_types=IO_IDENTITY_UNWRAP_NEW_TYPES.get(ctx.language, {}),
+            arg_handle_sinks=IO_ARG_HANDLE_SINKS.get(ctx.language, {}),
+            type_ctors=IO_TYPE_HANDLE_CONSTRUCTORS.get(ctx.language, {}),
         )
-        body = caller_node.child_by_field_name(cs.FIELD_BODY)
-        if body is None:
-            statements = list(caller_node.named_children)
-        elif body.type == descriptor.block_scope_type:
-            statements = list(body.named_children)
+        if ctx.language == cs.SupportedLanguage.DART:
+            # Dart's body is a SIBLING `function_body` of the captured signature,
+            # not a `body` field (issue #1173).
+            statements = self._dart_body_statements(caller_node)
         else:
-            statements = [body]
-        tainted: _TaintMap = {}
+            body = caller_node.child_by_field_name(cs.FIELD_BODY)
+            if body is None:
+                statements = list(caller_node.named_children)
+            elif body.type == descriptor.block_scope_type:
+                statements = list(body.named_children)
+            else:
+                statements = [body]
+        state = _LeanState(taint={}, handles={})
+        # Seed each parameter as a pseudo-origin so a sink or callee hand-off it
+        # reaches becomes a parameter-taint summary composed at finalize, exactly
+        # as the Python walk does (issue #1169 extends #1142/#1168 to the lean
+        # walk). The composition machinery in finalize is language-agnostic; only
+        # languages with a parameter-name extractor (Go/JS/TS/C++/Java/C#/Rust/C)
+        # get names, so the rest are seeded with nothing and are unaffected.
+        lean_names, lean_variadic = _lean_parameter_slots(caller_node, ctx.language)
+        for pname in lean_names:
+            if pname is not None:
+                state.taint[pname] = Taint(frozenset(), frozenset(), frozenset({pname}))
+        if lean_names:
+            self._positional_params[ctx.caller_qn] = lean_names
+            if lean_variadic is not None:
+                self._variadic_params[ctx.caller_qn] = lean_variadic
         if ctx.language in _HOISTED_DECL_LANGS:
             # Path-sensitive MAY walk (issue #714 follow-up): each JS/TS if/else,
             # loop, and try branch is evaluated against a COPY of the incoming
             # state and unioned at the merge, so taint surviving on ANY path
             # survives and a kill counts only when it happens on EVERY path.
             for node in statements:
-                tainted = self._walk_js_stmt(node, tainted, jc)
+                state = self._walk_js_stmt(node, state, jc)
         else:
             # Flat-language path-sensitive MAY walk (issue #714 follow-up):
             # if/loop/try/switch/match nodes branch-and-merge like the JS walk
@@ -590,17 +779,21 @@ class FlowProcessor:
             # merge, so a block-scoped Go/Java declaration inside a branch does
             # not leak its shadow past the join.
             for node in statements:
-                tainted = self._walk_flat_stmt(node, tainted, jc)
+                state = self._walk_flat_stmt(node, state, jc)
         if self._acc_returns_taint:
             self._summaries[ctx.caller_qn] = self._acc_return_taint
 
-    def _walk_flat_stmt(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_flat_stmt(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Structured walk for the non-hoisted flat languages (Go, Java, Rust,
         # C++): if/loop/try/match nodes branch-and-merge (issue #714 follow-up);
         # every other node applies its leaf effect and threads state through its
         # children in source order (so a nested call in an argument is seen).
         node_type = node.type
         if node_type in jc.descriptor.nested_scope_types:
+            # Definition-time header expressions (TS parameter decorators) run in
+            # THIS scope; walk them, then leave the body to its own caller pass.
+            for header in lean_definition_header_nodes(node, jc.descriptor):
+                state = self._walk_flat_stmt(header, state, jc)
             return state
         if node_type == cs.TS_BREAK_STATEMENT:
             self._record_break_exit(state)
@@ -617,12 +810,12 @@ class FlowProcessor:
             return self._walk_switch(node, state, jc, self._walk_flat_stmt)
         if node_type == cs.TS_RS_MATCH_EXPRESSION:
             return self._walk_flat_match(node, state, jc)
-        self._apply_js_leaf(node, state, jc)
+        self._apply_js_leaf(node, state.taint, state.handles, jc)
         for child in node.named_children:
             state = self._walk_flat_stmt(child, state, jc)
         return state
 
-    def _walk_flat_loop(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_flat_loop(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Loop shield: a break inside the body targets THIS loop, never an
         # enclosing switch arm's collector.
         self._shield_breaks()
@@ -632,8 +825,8 @@ class FlowProcessor:
             self._unshield_breaks()
 
     def _walk_flat_loop_inner(
-        self, node: Node, state: _TaintMap, jc: _JsCtx
-    ) -> _TaintMap:
+        self, node: Node, state: _LeanState, jc: _JsCtx
+    ) -> _LeanState:
         # The body runs zero or more times: union the skip path with one pass,
         # then re-walk once from that merge so taint carried from a later
         # iteration into an earlier statement is caught (same two-pass
@@ -646,27 +839,27 @@ class FlowProcessor:
         # the loop var to the iterable's taint) runs before the body.
         pre_loop_shadows = set(jc.local_names)
         if node.type in jc.descriptor.extra_declarator_types:
-            self._apply_js_leaf(node, state, jc)
+            self._apply_js_leaf(node, state.taint, state.handles, jc)
         body = node.child_by_field_name(cs.FIELD_BODY)
         state, update = self._walk_loop_header(node, state, jc, body)
         if body is None:
             self._restore_shadows(pre_loop_shadows, jc)
             return state
         header_shadows = set(jc.local_names)
-        once = self._walk_flat_stmt(body, dict(state), jc)
+        once = self._walk_flat_stmt(body, state.copy(), jc)
         if update is not None:
             once = self._walk_flat_stmt(update, once, jc)
         self._restore_shadows(header_shadows, jc)
-        merged = self._merge([state, once])
-        twice = self._walk_flat_stmt(body, dict(merged), jc)
+        merged = self._merge_lean([state, once])
+        twice = self._walk_flat_stmt(body, merged.copy(), jc)
         if update is not None:
             twice = self._walk_flat_stmt(update, twice, jc)
         self._restore_shadows(pre_loop_shadows, jc)
-        return self._merge([state, twice])
+        return self._merge_lean([state, twice])
 
     def _walk_loop_header(
-        self, node: Node, state: _TaintMap, jc: _JsCtx, body: Node | None
-    ) -> tuple[_TaintMap, Node | None]:
+        self, node: Node, state: _LeanState, jc: _JsCtx, body: Node | None
+    ) -> tuple[_LeanState, Node | None]:
         # Walk the pre-body header children and return the update clause
         # unwalked: a C-style for's update runs only AFTER a completed body
         # iteration, never on the zero-iteration path and never before the
@@ -687,8 +880,8 @@ class FlowProcessor:
         return state, update
 
     def _walk_go_for_clause(
-        self, clause: Node, update: Node | None, state: _TaintMap, jc: _JsCtx
-    ) -> _TaintMap:
+        self, clause: Node, update: Node | None, state: _LeanState, jc: _JsCtx
+    ) -> _LeanState:
         # Go's init;cond;post for_clause: walk everything but the post
         # (update) statement, which the loop walk defers past the body.
         for part in clause.named_children:
@@ -697,8 +890,8 @@ class FlowProcessor:
         return state
 
     def _walk_flat_mandatory_loop(
-        self, node: Node, state: _TaintMap, jc: _JsCtx
-    ) -> _TaintMap:
+        self, node: Node, state: _LeanState, jc: _JsCtx
+    ) -> _LeanState:
         # A do-while / Rust `loop` body ALWAYS runs at least once, so the
         # pre-loop state is NOT part of the exit merge (a kill in the body
         # kills on every straight-line path), and a do-while condition runs
@@ -713,10 +906,10 @@ class FlowProcessor:
     def _walk_mandatory_loop(
         self,
         node: Node,
-        state: _TaintMap,
+        state: _LeanState,
         jc: _JsCtx,
-        walk: Callable[[Node, _TaintMap, _JsCtx], _TaintMap],
-    ) -> _TaintMap:
+        walk: Callable[[Node, _LeanState, _JsCtx], _LeanState],
+    ) -> _LeanState:
         # Loop shield: a break inside the body targets THIS loop, never an
         # enclosing switch arm's collector.
         self._shield_breaks()
@@ -728,28 +921,28 @@ class FlowProcessor:
     def _walk_mandatory_loop_inner(
         self,
         node: Node,
-        state: _TaintMap,
+        state: _LeanState,
         jc: _JsCtx,
-        walk: Callable[[Node, _TaintMap, _JsCtx], _TaintMap],
-    ) -> _TaintMap:
+        walk: Callable[[Node, _LeanState, _JsCtx], _LeanState],
+    ) -> _LeanState:
         body = node.child_by_field_name(cs.FIELD_BODY)
         condition = node.child_by_field_name(cs.TS_FIELD_CONDITION)
         pre_shadows = set(jc.local_names)
-        once = dict(state)
+        once = state.copy()
         if body is not None:
             once = walk(body, once, jc)
         if condition is not None:
             once = walk(condition, once, jc)
         self._restore_shadows(pre_shadows, jc)
-        twice = dict(once)
+        twice = once.copy()
         if body is not None:
             twice = walk(body, twice, jc)
         if condition is not None:
             twice = walk(condition, twice, jc)
         self._restore_shadows(pre_shadows, jc)
-        return self._merge([once, twice])
+        return self._merge_lean([once, twice])
 
-    def _walk_flat_try(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_flat_try(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # The try body may run fully (no-throw path) or partially before a
         # catch, so each handler is seeded with union(pre, body_exit): taint
         # killed inside the body still reaches the handler, since the throw
@@ -768,22 +961,24 @@ class FlowProcessor:
                 continue
             state = self._walk_flat_stmt(child, state, jc)
         body_exit = (
-            self._walk_flat_stmt(body, dict(state), jc)
+            self._walk_flat_stmt(body, state.copy(), jc)
             if body is not None
-            else dict(state)
+            else state.copy()
         )
         self._restore_shadows(pre_shadows, jc)
-        branch_exits: list[_TaintMap] = [body_exit]
+        branch_exits: list[_LeanState] = [body_exit]
         finally_clause: Node | None = None
         for child in node.named_children:
             if child.type == cs.TS_JS_CATCH_CLAUSE:
                 branch_exits.append(
-                    self._walk_flat_stmt(child, self._merge([state, body_exit]), jc)
+                    self._walk_flat_stmt(
+                        child, self._merge_lean([state, body_exit]), jc
+                    )
                 )
                 self._restore_shadows(pre_shadows, jc)
             elif child.type == cs.TS_JS_FINALLY_CLAUSE:
                 finally_clause = child
-        merged = self._merge(branch_exits)
+        merged = self._merge_lean(branch_exits)
         if finally_clause is not None:
             merged = self._walk_flat_stmt(finally_clause, merged, jc)
             self._restore_shadows(pre_shadows, jc)
@@ -792,10 +987,10 @@ class FlowProcessor:
     def _walk_switch(
         self,
         node: Node,
-        state: _TaintMap,
+        state: _LeanState,
         jc: _JsCtx,
-        walk: Callable[[Node, _TaintMap, _JsCtx], _TaintMap],
-    ) -> _TaintMap:
+        walk: Callable[[Node, _LeanState, _JsCtx], _LeanState],
+    ) -> _LeanState:
         # Shared switch-family branch-and-merge (Go switch/type-switch/
         # select, Java switch, C++ switch, JS/TS switch). The header
         # (initializer, switched value, condition) runs on all paths; each
@@ -824,29 +1019,29 @@ class FlowProcessor:
             return state
         exits, has_default = self._walk_switch_arms(arms, state, jc, walk)
         if not has_default:
-            exits.append(dict(state))
+            exits.append(state.copy())
         self._restore_shadows(pre_switch_shadows, jc)
-        return self._merge(exits)
+        return self._merge_lean(exits)
 
     def _walk_switch_arms(
         self,
         arms: list[Node],
-        state: _TaintMap,
+        state: _LeanState,
         jc: _JsCtx,
-        walk: Callable[[Node, _TaintMap, _JsCtx], _TaintMap],
-    ) -> tuple[list[_TaintMap], bool]:
+        walk: Callable[[Node, _LeanState, _JsCtx], _LeanState],
+    ) -> tuple[list[_LeanState], bool]:
         pre_arm_shadows = set(jc.local_names)
-        exits: list[_TaintMap] = []
-        fall_in: _TaintMap | None = None
+        exits: list[_LeanState] = []
+        fall_in: _LeanState | None = None
         has_default = False
         for index, arm in enumerate(arms):
             has_default = has_default or _switch_arm_is_default(arm)
-            entry = dict(state)
+            entry = state.copy()
             # fall_in is non-None exactly when the PREVIOUS arm can fall
             # into this one (C-family arm without a trailing break, or a Go
             # arm ending in the explicit `fallthrough` keyword).
             if fall_in is not None:
-                entry = self._merge([entry, fall_in])
+                entry = self._merge_lean([entry, fall_in])
             # Each break inside the arm exits the switch with the state it
             # saw THEN (a conditional break before a later kill carries the
             # live taint out), captured by the arm's own collector.
@@ -868,7 +1063,7 @@ class FlowProcessor:
             fall_in = arm_exit if falls else None
         return exits, has_default
 
-    def _walk_flat_match(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_flat_match(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Rust match: the scrutinee runs on all paths; each arm is walked
         # against a copy and unioned (MAY join). Arms are exhaustive, so the
         # merge is over the arms only (no implicit skip path).
@@ -879,15 +1074,15 @@ class FlowProcessor:
         if body is None:
             return state
         pre_shadows = set(jc.local_names)
-        arm_exits: list[_TaintMap] = []
+        arm_exits: list[_LeanState] = []
         for arm in body.named_children:
             if arm.type != cs.TS_RS_MATCH_ARM:
                 continue
-            arm_exits.append(self._walk_flat_stmt(arm, dict(state), jc))
+            arm_exits.append(self._walk_flat_stmt(arm, state.copy(), jc))
             self._restore_shadows(pre_shadows, jc)
-        return self._merge(arm_exits) if arm_exits else state
+        return self._merge_lean(arm_exits) if arm_exits else state
 
-    def _walk_flat_if(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_flat_if(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # The header (any initializer + condition) runs on all paths; each of the
         # then / else(-if) / implicit skip paths is walked against a copy and
         # unioned (MAY join). Two shadow scopes are restored: a branch grows the
@@ -896,36 +1091,43 @@ class FlowProcessor:
         # to the whole if statement (restored on exit), so neither shadows a
         # source/sink past its scope.
         pre_if_shadows = set(jc.local_names)
-        consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
-        alternative = node.child_by_field_name(cs.FIELD_ALTERNATIVE)
-        skip = {n.id for n in (consequence, alternative) if n is not None}
+        consequence = node.child_by_field_name(jc.descriptor.if_consequence_field)
+        # Most grammars carry a single `alternative` (else block or nested else-if);
+        # PHP emits the whole chain as several sibling `alternative` children
+        # (`else_if_clause`* then an optional `else_clause`), so gather them all
+        # (issue #1174). For Go/Java/C++/Rust this list is 0 or 1 element -> unchanged.
+        alternatives = node.children_by_field_name(cs.FIELD_ALTERNATIVE)
+        skip = {n.id for n in (consequence, *alternatives) if n is not None}
         for child in node.named_children:
             if child.id not in skip:
                 state = self._walk_flat_stmt(child, state, jc)
         pre_shadows = set(jc.local_names)
-        branch_exits: list[_TaintMap] = []
+        branch_exits: list[_LeanState] = []
         if consequence is not None:
-            branch_exits.append(self._walk_flat_stmt(consequence, dict(state), jc))
+            branch_exits.append(self._walk_flat_stmt(consequence, state.copy(), jc))
             self._restore_shadows(pre_shadows, jc)
-        if alternative is not None:
-            # else_clause holds either a block or a nested if (else-if chain); the
-            # recursion handles both and merges within.
-            branch_exits.append(self._walk_flat_stmt(alternative, dict(state), jc))
+        for alternative in alternatives:
+            # A block/nested-if (Go/Java/…) or a PHP else-if/else clause; the
+            # recursion walks each in its own branch copy and merges (a MAY
+            # over-approximation for the mutually-exclusive elseif arms).
+            branch_exits.append(self._walk_flat_stmt(alternative, state.copy(), jc))
             self._restore_shadows(pre_shadows, jc)
-        else:
-            # No else: the skip path preserves the incoming state.
-            branch_exits.append(dict(state))
+        # An implicit skip path (condition false, nothing runs) survives unless the
+        # chain ends in a TERMINAL else: one plain alternative (else block / nested
+        # if) is terminal; a PHP chain ending in `else_if_clause` is not.
+        if not alternatives or alternatives[-1].type == cs.TS_PHP_ELSE_IF_CLAUSE:
+            branch_exits.append(state.copy())
         self._restore_shadows(pre_if_shadows, jc)
-        return self._merge(branch_exits)
+        return self._merge_lean(branch_exits)
 
-    def _record_break_exit(self, state: _TaintMap) -> None:
+    def _record_break_exit(self, state: _LeanState) -> None:
         # Snapshot the live state at a `break` for the enclosing switch
         # arm's collector. None on top = a loop shield (the break targets
         # that loop); empty stack = no enclosing switch at all. A labeled
         # break targeting a farther construct still records here: the
         # extra state only widens the MAY join, the sound direction.
         if self._break_exit_stack and self._break_exit_stack[-1] is not None:
-            self._break_exit_stack[-1].append(dict(state))
+            self._break_exit_stack[-1].append(state.copy())
 
     def _shield_breaks(self) -> None:
         self._break_exit_stack.append(None)
@@ -940,12 +1142,16 @@ class FlowProcessor:
         jc.local_names.clear()
         jc.local_names.update(pre_shadows)
 
-    def _walk_js_stmt(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_js_stmt(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Path-sensitive walk for JS/TS: control-flow nodes branch-and-merge, every
         # other node applies its leaf effect and threads state through its children
         # in source order (so a nested call in an argument is still seen).
         node_type = node.type
         if node_type in jc.descriptor.nested_scope_types:
+            # Definition-time header expressions (TS parameter decorators) run in
+            # THIS scope; walk them, then leave the body to its own caller pass.
+            for header in lean_definition_header_nodes(node, jc.descriptor):
+                state = self._walk_js_stmt(header, state, jc)
             return state
         if node_type == cs.TS_BREAK_STATEMENT:
             self._record_break_exit(state)
@@ -967,32 +1173,32 @@ class FlowProcessor:
             # AFTER it, so this is the mandatory-loop shape, not the
             # zero-or-more loop walk.
             return self._walk_mandatory_loop(node, state, jc, self._walk_js_stmt)
-        self._apply_js_leaf(node, state, jc)
+        self._apply_js_leaf(node, state.taint, state.handles, jc)
         for child in node.named_children:
             state = self._walk_js_stmt(child, state, jc)
         return state
 
-    def _walk_js_if(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_js_if(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # The condition runs on all paths; each of the then / else(-if) / implicit
         # skip paths is walked against a copy and unioned (MAY join).
         cond = node.child_by_field_name(cs.TS_FIELD_CONDITION)
         if cond is not None:
             state = self._walk_js_stmt(cond, state, jc)
-        branch_exits: list[_TaintMap] = []
+        branch_exits: list[_LeanState] = []
         consequence = node.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
         if consequence is not None:
-            branch_exits.append(self._walk_js_stmt(consequence, dict(state), jc))
+            branch_exits.append(self._walk_js_stmt(consequence, state.copy(), jc))
         alternative = node.child_by_field_name(cs.FIELD_ALTERNATIVE)
         if alternative is not None:
             # else_clause holds either a block or a nested if (else-if chain); the
             # recursion handles both and merges within.
-            branch_exits.append(self._walk_js_stmt(alternative, dict(state), jc))
+            branch_exits.append(self._walk_js_stmt(alternative, state.copy(), jc))
         else:
             # No else: the skip path preserves the incoming state.
-            branch_exits.append(dict(state))
-        return self._merge(branch_exits)
+            branch_exits.append(state.copy())
+        return self._merge_lean(branch_exits)
 
-    def _walk_js_loop(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_js_loop(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Loop shield: a break inside the body targets THIS loop, never an
         # enclosing switch arm's collector.
         self._shield_breaks()
@@ -1002,8 +1208,8 @@ class FlowProcessor:
             self._unshield_breaks()
 
     def _walk_js_loop_inner(
-        self, node: Node, state: _TaintMap, jc: _JsCtx
-    ) -> _TaintMap:
+        self, node: Node, state: _LeanState, jc: _JsCtx
+    ) -> _LeanState:
         # The initializer/condition/iterable runs before the body; the body runs
         # zero or more times, so union the skip path with one pass, then re-walk
         # once from that merge to catch taint carried from a later iteration into
@@ -1023,66 +1229,84 @@ class FlowProcessor:
                 continue
             state = self._walk_js_stmt(child, state, jc)
         if body is not None:
-            once = self._walk_js_stmt(body, dict(state), jc)
+            once = self._walk_js_stmt(body, state.copy(), jc)
             if increment is not None:
                 once = self._walk_js_stmt(increment, once, jc)
-            merged = self._merge([state, once])
-            twice = self._walk_js_stmt(body, dict(merged), jc)
+            merged = self._merge_lean([state, once])
+            twice = self._walk_js_stmt(body, merged.copy(), jc)
             if increment is not None:
                 twice = self._walk_js_stmt(increment, twice, jc)
-            state = self._merge([state, twice])
+            state = self._merge_lean([state, twice])
         return state
 
-    def _walk_js_try(self, node: Node, state: _TaintMap, jc: _JsCtx) -> _TaintMap:
+    def _walk_js_try(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # The try body may run fully (no-throw path) or partially before a catch;
         # seed the handler with union(pre, body_exit) so taint introduced before a
         # throw still reaches it. A finally runs on the merged state of both.
         body = node.child_by_field_name(cs.FIELD_BODY)
         body_exit = (
-            self._walk_js_stmt(body, dict(state), jc)
+            self._walk_js_stmt(body, state.copy(), jc)
             if body is not None
-            else dict(state)
+            else state.copy()
         )
-        branch_exits: list[_TaintMap] = [body_exit]
+        branch_exits: list[_LeanState] = [body_exit]
         handler = node.child_by_field_name(cs.FIELD_HANDLER)
         if handler is not None:
             branch_exits.append(
-                self._walk_js_stmt(handler, self._merge([state, body_exit]), jc)
+                self._walk_js_stmt(handler, self._merge_lean([state, body_exit]), jc)
             )
-        merged = self._merge(branch_exits)
+        merged = self._merge_lean(branch_exits)
         finalizer = node.child_by_field_name(cs.FIELD_FINALIZER)
         if finalizer is not None:
             merged = self._walk_js_stmt(finalizer, merged, jc)
         return merged
 
-    def _apply_js_leaf(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+    def _apply_js_leaf(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
         # The leaf effect of one node on the taint map: bind (JS/Go), Go range
         # kill, a call's sink/arg edges, or a return's contribution to the summary.
+        if jc.flow.language == cs.SupportedLanguage.DART:
+            # Dart's sibling-chain grammar takes a dedicated leaf path (issue #1173).
+            self._apply_dart_leaf(node, tainted, handles, jc)
+            return
         node_type = node.type
         d = jc.descriptor
+        if jc.type_ctors and node_type == cs.TS_CPP_DECLARATION:
+            # C++ `std::ofstream out("x")`: bind the declarator as a FILE handle. The
+            # walk still recurses into the child init_declarator, which the guard
+            # below skips so it is not re-bound to no handle (issue #1220).
+            self._bind_lean_type_decl(node, handles, jc)
+            return
         if node_type == d.declarator_type or node_type in (
             cs.TS_ASSIGNMENT_EXPRESSION,
             cs.TS_GO_ASSIGNMENT_STATEMENT,
         ):
-            self._lean_bind(node, tainted, jc)
+            if jc.type_ctors and self._decl_type_is_handle(node.parent, jc):
+                return
+            self._lean_bind(node, tainted, handles, jc)
         elif node_type in d.extra_declarator_types:
             if node_type == cs.TS_GO_RANGE_CLAUSE:
-                self._lean_kill(node, tainted, jc)
+                self._lean_kill(node, tainted, handles, jc)
             else:
-                self._lean_bind(node, tainted, jc)
+                self._lean_bind(node, tainted, handles, jc)
         elif node_type == d.call_type:
-            self._js_call(node, tainted, jc)
+            self._js_call(node, tainted, handles, jc)
         elif d.macro_type is not None and node_type == d.macro_type:
             self._flow_macro(node, tainted, jc)
         elif d.stream_sink_type is not None and node_type == d.stream_sink_type:
-            self._flow_stream(node, tainted, jc)
+            self._flow_stream(node, tainted, handles, jc)
+        elif d.keyword_stdout_write_types and node_type in d.keyword_stdout_write_types:
+            self._flow_keyword_write(node, tainted, jc)
         elif node_type == cs.TS_RETURN_STATEMENT:
             returned = self._js_return_taint(node, tainted, jc)
             if returned is not None:
                 self._acc_returns_taint = True
                 self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
 
-    def _lean_bind(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+    def _lean_bind(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
         # Bind LHS name(s) to their RHS taint across the grammars: JS uses a single
         # `name`/`value` (declarator) or `left`/`right` (assignment); Go uses `left`/
         # `right` expression_lists (`:=`, `=`) or `name`/`value` (`var`/`const`).
@@ -1095,7 +1319,7 @@ class FlowProcessor:
         # map before any LHS is updated, so `a, b = b, a` swaps correctly. Compute
         # all taints first, then apply, or an earlier LHS update would corrupt a
         # later RHS read of the same name.
-        computed: list[tuple[str, Taint | None]] = []
+        computed: list[tuple[str, Taint | None, Node | None]] = []
         for index, name in enumerate(targets):
             if name is None:
                 continue
@@ -1104,17 +1328,29 @@ class FlowProcessor:
                 if spread
                 else (values[index] if index < len(values) else None)
             )
-            computed.append((name, self._js_expr_taint(rhs, tainted, jc)))
-        for name, taint in computed:
+            computed.append((name, self._js_expr_taint(rhs, tainted, jc), rhs))
+        for name, taint, rhs in computed:
             if taint is not None:
                 tainted[name] = taint
             else:
                 tainted.pop(name, None)
+            # Track (or kill) the resource handle bound to this name, so a later
+            # tainted write through it emits a flow edge (issue #1204). A binding is
+            # a STRONG update (replaces the set), so straight-line reassignment
+            # redirects the handle; only a branch join widens a name to multiple.
+            if jc.handle_ctors or jc.new_handle_ctors:
+                bindings = self._lean_handle_binding(rhs, handles, jc)
+                if bindings:
+                    handles[name] = bindings
+                else:
+                    handles.pop(name, None)
         # Register the bound names AFTER reading the RHS (which still saw the
         # pre-declaration scope): a Go shadow applies only from here forward.
         self._register_shadows(targets, jc)
 
-    def _lean_kill(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+    def _lean_kill(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
         left = node.child_by_field_name(cs.FIELD_LEFT)
         if left is None:
             return
@@ -1122,6 +1358,7 @@ class FlowProcessor:
         for name in names:
             if name is not None:
                 tainted.pop(name, None)
+                handles.pop(name, None)
         self._register_shadows(names, jc)
 
     @staticmethod
@@ -1214,18 +1451,33 @@ class FlowProcessor:
                     (callee[0], callee[1], jc.flow.caller_spec)
                 )
                 return Taint(frozenset(), frozenset({callee[1]}))
-            # A method chain (`std::env::var("X").unwrap()`): the callee itself is
-            # not a source, but its receiver call may be, so recurse the left spine.
-            # Gated on the receiver being a call (not a bare identifier) so plain
-            # variable taint is never propagated through an arbitrary method.
+            # A method chain: recurse the receiver ONLY through a taint-transparent
+            # method -- Rust Result unwrapping (`std::env::var("X").unwrap()`) or a
+            # value-preserving conversion (`s.as_bytes()`). A terminal method that
+            # returns an unrelated value (`s.as_bytes().len()`, `.count()`) must not
+            # propagate the receiver's taint (issue #1204). Languages with no such
+            # methods (empty set) never recurse a chain here.
             func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            if func is not None and func.type == d.member_expression_type:
+            if (
+                func is not None
+                and func.type == d.member_expression_type
+                and d.taint_transparent_methods
+            ):
+                method = func.child_by_field_name(d.property_field)
                 receiver = func.child_by_field_name(d.object_field)
-                if receiver is not None and receiver.type == d.call_type:
+                if (
+                    receiver is not None
+                    and method is not None
+                    and method.text is not None
+                    and method.text.decode(cs.ENCODING_UTF8)
+                    in d.taint_transparent_methods
+                ):
                     return self._js_expr_taint(receiver, tainted, jc)
         return None
 
-    def _js_call(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+    def _js_call(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
         raw = call_name(node)
         if raw is None:
             return
@@ -1253,6 +1505,554 @@ class FlowProcessor:
                     self._deferred_resource_flows.append(
                         (taint.pending, sink.kind, dst_identity)
                     )
+                # A parameter reaching this sink is a parameter-to-sink summary
+                # (issue #1169), composed at finalize against every call site
+                # passing a tainted argument into this parameter.
+                for pname in taint.params:
+                    self._param_sinks[(jc.flow.caller_qn, pname)].add(
+                        (sink.kind, dst_identity)
+                    )
+            return
+        # A tainted write through a bound resource handle (issue #1204).
+        if handles and self._emit_handle_write(raw, args, handles, jc):
+            return
+        callee = self._resolve(
+            raw,
+            jc.flow.module_qn,
+            jc.flow.class_context,
+            jc.flow.caller_qn,
+            jc.flow.language,
+            jc.flow.local_var_types,
+        )
+        if callee is None:
+            # An UNRESOLVED call may still be a libc arg-shaped handle write
+            # (`fwrite(x, 1, n, f)`, `fprintf(f, fmt, x)`). A call that DOES resolve to
+            # a project function of the same name is analysed as that function above
+            # -- not assumed to be libc (Greptile review, #1204).
+            if jc.arg_handle_sinks:
+                self._emit_arg_handle_write(raw, node, args, handles, jc)
+            return
+        callee_type, callee_qn = callee
+        for via, taint in args:
+            if taint is None:
+                continue
+            if taint.origins:
+                self.ingestor.ensure_relationship_batch(
+                    jc.flow.caller_spec,
+                    cs.RelationshipType.FLOWS_TO,
+                    (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+                    properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
+                )
+            elif taint.pending:
+                self._deferred_arg_edges.append(
+                    (taint.pending, jc.flow.caller_spec, callee_type, callee_qn, via)
+                )
+            # Forward parameter-taint (issue #1169), orthogonal to the arg edge:
+            # a concrete argument records a call site to compose against the
+            # callee's parameter-sink closure; an argument that IS one of this
+            # function's parameters records a transitive hand-off so a wrapper of
+            # a wrapper still resolves. The token ties a pass-through composition
+            # to this exact call so it is not shared across calls (issue #1168).
+            if taint.origins or taint.pending:
+                token = _passthrough_result_token(jc.flow.caller_qn, node)
+                self._param_call_sites.append((taint, callee_qn, via, token))
+            for pname in taint.params:
+                self._param_flow_edges.append(
+                    (jc.flow.caller_qn, pname, callee_qn, via)
+                )
+
+    def _lean_handle_binding(
+        self, rhs: Node | None, handles: _HandleMap, jc: _JsCtx
+    ) -> frozenset[HandleBinding]:
+        # The resource handle(s) an RHS expression binds (issue #1204), threaded
+        # set-valued so a wrapper around a branch-merged variable inherits every
+        # handle it may hold. A Rust ctor arrives Result-wrapped (`File::create(p)?`,
+        # `.unwrap()`); peel those (inert elsewhere). Resolves call-shaped ctors
+        # (`os.Create`, `Files.newBufferedWriter`), `new`-shaped ctors with their
+        # wrappers/identity-carriers (Java/C#), and a plain handle alias (`g = f`).
+        if rhs is None:
+            return frozenset()
+        node = rust_unwrap_result(rhs)
+        d = jc.descriptor
+        if node.type == d.call_type:
+            return self._lean_handle_from_call(node, jc)
+        if d.new_expression_type is not None and node.type == d.new_expression_type:
+            return self._lean_handle_from_new(node, handles, jc)
+        if node.type == d.identifier_type and node.text is not None:
+            # `g = f` aliases f's handle(s).
+            return handles.get(node.text.decode(cs.ENCODING_UTF8), frozenset())
+        return frozenset()
+
+    def _lean_handle_from_call(
+        self, node: Node, jc: _JsCtx
+    ) -> frozenset[HandleBinding]:
+        # A call-shaped ctor (`os.Create("out")`), shadow-aware and import-
+        # normalised exactly like sink matching. A READ-only handle (`os.Open`) is
+        # never a write sink, so it does not bind and a later `f.Write` emits nothing.
+        raw = call_name(node)
+        if raw is None:
+            return frozenset()
+        ctor = self._js_match_sink(raw, jc.handle_ctors, jc)
+        if ctor is None or ctor.direction == IODirection.READ:
+            return frozenset()
+        return frozenset(
+            {HandleBinding(ctor.kind, self._lean_ctor_identity(node, ctor, jc))}
+        )
+
+    def _lean_handle_from_new(
+        self, node: Node, handles: _HandleMap, jc: _JsCtx
+    ) -> frozenset[HandleBinding]:
+        # A `new`-shaped handle (Java `new FileWriter("x")`, C# `new StreamWriter`).
+        # A wrapper type delegates to arg0 (a nested ctor or a bound handle var);
+        # a non-ctor identity-carrier (`new File("x")`) designates the resource under
+        # a wrapper; a `handle_arg` ctor (`new SqlCommand(sql, conn)`) inherits the
+        # bound handle at that argument. A READ-only handle never binds as a sink.
+        d = jc.descriptor
+        type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
+        if type_node is None or type_node.text is None:
+            return frozenset()
+        type_name = type_node.text.decode(cs.ENCODING_UTF8)
+        if type_name in jc.new_wrappers:
+            inner = self._lean_handle_binding(
+                self._first_positional_arg(node), handles, jc
+            )
+            if inner:
+                return inner
+        ctor = jc.new_handle_ctors.get(type_name)
+        if ctor is None:
+            kind = jc.identity_new_types.get(type_name)
+            if kind is None:
+                return frozenset()
+            return frozenset({HandleBinding(kind, self._lean_literal_arg0(node, jc))})
+        if ctor.direction == IODirection.READ:
+            return frozenset()
+        if ctor.handle_arg is not None:
+            inner = positional_arg_node(node, ctor.handle_arg, d.argument_wrapper_type)
+            parent = self._lean_handle_binding(inner, handles, jc)
+            # The bound handle at handle_arg may itself hold several resources after a
+            # branch merge; inherit ALL of their identities (one edge each), not an
+            # order-dependent single pick. <dynamic> when the argument is untracked.
+            if not parent:
+                return frozenset({HandleBinding(ctor.kind, DYNAMIC_TARGET)})
+            return frozenset(HandleBinding(ctor.kind, p.identity) for p in parent)
+        return frozenset(
+            {HandleBinding(ctor.kind, self._lean_ctor_identity(node, ctor, jc))}
+        )
+
+    def _lean_ctor_identity(
+        self, node: Node, ctor: HandleConstructor, jc: _JsCtx
+    ) -> str:
+        # The handle's resource identity: the constructor's literal target, or -- when
+        # that is a factory call / `new` identity-carrier one level down
+        # (`Files.newBufferedWriter(Path.of("cfg"))`, `new PrintWriter(new File("x"))`)
+        # -- the literal it carries.
+        d = jc.descriptor
+        identity = literal_target(
+            node,
+            ctor.target_arg,
+            ctor.target_kw,
+            string_type=d.string_type,
+            content_type=d.string_content_type,
+            keyword_arg_type=d.keyword_arg_type,
+            wrapper_type=d.argument_wrapper_type,
+            template_type=d.template_string_type,
+            substitution_type=d.template_substitution_type,
+        )
+        if identity != DYNAMIC_TARGET or ctor.target_arg != 0:
+            return identity
+        arg = self._first_positional_arg(node)
+        if arg is None:
+            return identity
+        if jc.identity_calls and arg.type == d.call_type:
+            raw = call_name(arg)
+            # A static import (`import static java.nio.file.Path.of`) spells the
+            # factory bare (`of("cfg")`); resolve it through the import map to its
+            # qualified form before the identity-call check, so the literal is still
+            # recovered (Greptile review, #1204).
+            if raw is not None and (
+                raw in jc.identity_calls
+                or jc.flow.import_map.get(raw) in jc.identity_calls
+            ):
+                return self._lean_literal_arg0(arg, jc)
+        if (
+            jc.identity_new_types
+            and d.new_expression_type is not None
+            and arg.type == d.new_expression_type
+        ):
+            inner_type = arg.child_by_field_name(cs.TS_FIELD_TYPE)
+            if (
+                inner_type is not None
+                and inner_type.text is not None
+                and inner_type.text.decode(cs.ENCODING_UTF8) in jc.identity_new_types
+            ):
+                return self._lean_literal_arg0(arg, jc)
+        return identity
+
+    @staticmethod
+    def _first_positional_arg(call_node: Node) -> Node | None:
+        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+        if args is None:
+            return None
+        return next((c for c in args.named_children if c.type != cs.TS_COMMENT), None)
+
+    @staticmethod
+    def _lean_literal_arg0(node: Node, jc: _JsCtx) -> str:
+        d = jc.descriptor
+        return literal_target(
+            node,
+            0,
+            None,
+            string_type=d.string_type,
+            content_type=d.string_content_type,
+            keyword_arg_type=d.keyword_arg_type,
+            wrapper_type=d.argument_wrapper_type,
+            template_type=d.template_string_type,
+            substitution_type=d.template_substitution_type,
+        )
+
+    def _emit_handle_write(
+        self,
+        raw: str,
+        args: list[tuple[str, Taint | None]],
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> bool:
+        # A tainted write through a bound handle (`f.Write(secret)`) is a flow to
+        # the handle's resource (issue #1204). Split the callee into receiver +
+        # method; for EACH handle the receiver may hold (a name can hold different
+        # handles on different branches), if the method WRITES (or is read/write
+        # like a DB execute), route each tainted arg to that resource. Pure READ
+        # methods are not sinks; untainted args emit nothing.
+        recv, sep, method = raw.rpartition(jc.descriptor.handle_method_separator)
+        if not sep:
+            return False
+        bindings = handles.get(recv)
+        if not bindings:
+            return False
+        emitted = False
+        for binding in bindings:
+            direction = jc.handle_methods.get(binding.kind, {}).get(method)
+            if direction is None or direction == IODirection.READ:
+                continue
+            emitted = True
+            for _via, taint in args:
+                if taint is not None:
+                    self._emit_taint_to_sink(
+                        taint, binding.kind, binding.identity, jc.flow.caller_qn
+                    )
+        return emitted
+
+    def _emit_arg_handle_write(
+        self,
+        raw: str,
+        node: Node,
+        args: list[tuple[str, Taint | None]],
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> bool:
+        # libc FILE* write: the handle rides an ARGUMENT (`fwrite(data, 1, n, f)`,
+        # `fprintf(f, fmt, secret)`), not a receiver. Route the taint of every
+        # NON-handle arg to the handle's resource. Only WRITE arg sinks are taint
+        # destinations -- fread/fgets READ into a buffer, not a resource write.
+        # Match through _js_match_sink so this path honours the SAME shadowing /
+        # import rules as every other sink -- a local named `fwrite` is not the libc
+        # symbol (CodeRabbit review, #1204).
+        sink = self._js_match_sink(raw, jc.arg_handle_sinks, jc)
+        if sink is None or sink.direction == IODirection.READ:
+            return False
+        arguments = node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+        arg_nodes = self._named_no_comments(arguments) if arguments is not None else []
+        handle_text = (
+            safe_decode_text(arg_nodes[sink.handle_arg])
+            if sink.handle_arg < len(arg_nodes)
+            else None
+        )
+        # The handle argument resolves to its resource(s): a bound handle (possibly
+        # several after a branch merge), a pre-bound std stream (`fprintf(stderr,..)`),
+        # or an untracked FILE* known only by signature (<dynamic>).
+        bindings = handles.get(handle_text) if handle_text is not None else None
+        if bindings:
+            targets = [(b.kind, b.identity) for b in bindings]
+        elif handle_text in LIBC_STD_STREAMS:
+            targets = [(LIBC_STD_STREAMS[handle_text], DYNAMIC_TARGET)]
+        else:
+            targets = [(ResourceKind.FILE, DYNAMIC_TARGET)]
+        for index, (_via, taint) in enumerate(args):
+            # Only the DATA payload flows to the file: `fwrite(buf, size, n, f)`
+            # writes arg 0, so a tainted `size`/`n` is control metadata, not a leak.
+            # data_args=None means every non-handle arg is payload (fprintf's format +
+            # varargs).
+            is_payload = (
+                index in sink.data_args
+                if sink.data_args is not None
+                else index != sink.handle_arg
+            )
+            if not is_payload or taint is None:
+                continue
+            for kind, identity in targets:
+                self._emit_taint_to_sink(taint, kind, identity, jc.flow.caller_qn)
+        return True
+
+    def _bind_lean_type_decl(self, node: Node, handles: _HandleMap, jc: _JsCtx) -> None:
+        # C++ type-declaration handles: `std::ofstream out("x.txt")` (init_declarator
+        # with an argument_list value) and the most-vexing-parse `std::ofstream
+        # dyn(path)` (a function_declarator), each binding a FILE handle -- <dynamic>
+        # when the identity is not a string literal (issue #1220). Mirrors io_access's
+        # _bind_type_decl_handle, but writes the set-valued path-sensitive map.
+        type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
+        if type_node is None or type_node.text is None:
+            return
+        kind = jc.type_ctors.get(type_node.text.decode(cs.ENCODING_UTF8))
+        if kind is None:
+            return
+        for child in node.named_children:
+            if child.type == cs.TS_CPP_INIT_DECLARATOR:
+                name = cpp_declarator_name(
+                    child.child_by_field_name(cs.FIELD_DECLARATOR)
+                )
+                identity = self._first_string_arg(
+                    child.child_by_field_name(cs.FIELD_VALUE), jc
+                )
+            elif child.type == cs.TS_CPP_FUNCTION_DECLARATOR:
+                name = cpp_declarator_name(
+                    child.child_by_field_name(cs.FIELD_DECLARATOR)
+                )
+                identity = DYNAMIC_TARGET
+            else:
+                continue
+            if name is not None:
+                handles[name] = frozenset({HandleBinding(kind, identity)})
+
+    @staticmethod
+    def _decl_type_is_handle(decl: Node | None, jc: _JsCtx) -> bool:
+        # True when `decl` is a C++ declaration whose written type is a stream handle
+        # constructor -- its init_declarator is bound by _bind_lean_type_decl, so the
+        # normal declarator binding must skip it rather than pop the handle (#1220).
+        if decl is None or decl.type != cs.TS_CPP_DECLARATION:
+            return False
+        type_node = decl.child_by_field_name(cs.TS_FIELD_TYPE)
+        return (
+            type_node is not None
+            and type_node.text is not None
+            and type_node.text.decode(cs.ENCODING_UTF8) in jc.type_ctors
+        )
+
+    @staticmethod
+    def _first_string_arg(args: Node | None, jc: _JsCtx) -> str:
+        # The first string-literal argument of a constructor's argument_list
+        # (`std::ofstream in("x.txt", std::ios::binary)` -> x.txt).
+        if args is None:
+            return DYNAMIC_TARGET
+        d = jc.descriptor
+        for child in args.named_children:
+            if child.type == d.string_type:
+                return string_literal(child, d.string_type, d.string_content_type)
+        return DYNAMIC_TARGET
+
+    # --- Dart lean walk (issue #1173). Dart has no call-expression node: calls,
+    # member reads and bindings are flat sibling `selector` chains, so it takes a
+    # dedicated leaf path reusing the dart/utils.py reconstructors. ---
+
+    def _dart_body_statements(self, caller_node: Node) -> list[Node]:
+        # The captured Dart signature's sibling `function_body` -> its `block`'s
+        # statements. A `program` (module-level) caller has no function body.
+        body = dart_body_node(caller_node)
+        if body is None:
+            return []
+        block = next(
+            (c for c in body.named_children if c.type == cs.TS_DART_BLOCK), None
+        )
+        if block is not None:
+            return list(block.named_children)
+        # An expression-bodied declaration `=> expr` (function/method/getter) has no
+        # block: the whole `function_body` is walked for the expression's call
+        # effects and evaluated as the implicit return value (Greptile review, #1173).
+        return [body]
+
+    @staticmethod
+    def _dart_selector_is_call(node: Node) -> bool:
+        return node.type == cs.TS_DART_SELECTOR and any(
+            c.type == cs.TS_DART_ARGUMENT_PART for c in node.named_children
+        )
+
+    def _apply_dart_leaf(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
+        # Dart leaf effects: a `var x = <chain>` / `x = <chain>` binding, a call
+        # (a `selector` holding an `argument_part`), or a return.
+        node_type = node.type
+        if node_type in (
+            cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION,
+            cs.TS_DART_ASSIGNMENT_EXPRESSION,
+        ):
+            self._dart_bind(node, tainted, handles, jc)
+        elif self._dart_selector_is_call(node):
+            self._dart_call(node, tainted, handles, jc)
+        elif node_type in (cs.TS_RETURN_STATEMENT, cs.TS_DART_FUNCTION_BODY):
+            # `return expr;` and an arrow body `=> expr` both contribute the
+            # expression's taint to the return summary (issue #1173).
+            returned = self._dart_return_taint(node, tainted, jc)
+            if returned is not None:
+                self._acc_returns_taint = True
+                self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
+
+    @staticmethod
+    def _dart_binding_name_and_rhs(node: Node) -> tuple[str | None, list[Node]]:
+        # `var k = <rhs...>` / `k = <rhs...>`: the name is the last identifier before
+        # `=` (unwrapping an `assignable_expression` LHS), the RHS is the named
+        # children after `=` (a spread selector chain).
+        eq_index = next(
+            (i for i, c in enumerate(node.children) if c.type == _DART_ASSIGN_OP),
+            None,
+        )
+        if eq_index is None:
+            return None, []
+        name: str | None = None
+        for child in node.children[:eq_index]:
+            target = child
+            if target.type == cs.TS_DART_ASSIGNABLE_EXPRESSION:
+                target = next(
+                    (
+                        c
+                        for c in target.named_children
+                        if c.type == cs.TS_DART_IDENTIFIER
+                    ),
+                    target,
+                )
+            if target.type == cs.TS_DART_IDENTIFIER and target.text is not None:
+                name = target.text.decode(cs.ENCODING_UTF8)
+        rhs = [c for c in node.children[eq_index + 1 :] if c.is_named]
+        return name, rhs
+
+    def _dart_bind(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
+        name, rhs = self._dart_binding_name_and_rhs(node)
+        if name is None:
+            return
+        taint, bindings = self._dart_rhs(rhs, tainted, handles, jc)
+        if taint is not None:
+            tainted[name] = taint
+        else:
+            tainted.pop(name, None)
+        if bindings:
+            handles[name] = bindings
+        else:
+            handles.pop(name, None)
+
+    def _dart_rhs(
+        self,
+        rhs: list[Node],
+        tainted: _TaintMap,
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> tuple[Taint | None, frozenset[HandleBinding]]:
+        # The taint and/or handle a Dart binding RHS yields: a `Platform.environment`
+        # member source, a `File(path)` handle constructor, a read-source call, a
+        # project-callee return (pending), or a plain identifier alias.
+        if not rhs:
+            return None, frozenset()
+        source = self._dart_member_source(rhs, jc)
+        if source is not None:
+            return Taint(frozenset({source}), frozenset()), frozenset()
+        call_sel = next((n for n in rhs if self._dart_selector_is_call(n)), None)
+        if call_sel is not None:
+            raw = dart_call_name(call_sel)
+            if raw is not None:
+                ctor = self._js_match_sink(raw, jc.handle_ctors, jc)
+                if ctor is not None and ctor.direction != IODirection.READ:
+                    identity = self._dart_first_string_arg(call_sel)
+                    return None, frozenset({HandleBinding(ctor.kind, identity)})
+                read = self._js_match_sink(raw, jc.flow.read_sinks, jc)
+                if read is not None:
+                    identity = (
+                        self._dart_first_string_arg(call_sel)
+                        if read.target_arg == 0
+                        else DYNAMIC_TARGET
+                    )
+                    return (
+                        Taint(
+                            frozenset({HandleBinding(read.kind, identity)}), frozenset()
+                        ),
+                        frozenset(),
+                    )
+                callee = self._resolve(
+                    raw,
+                    jc.flow.module_qn,
+                    jc.flow.class_context,
+                    jc.flow.caller_qn,
+                    jc.flow.language,
+                    jc.flow.local_var_types,
+                )
+                if callee is not None:
+                    self._return_edge_candidates.append(
+                        (callee[0], callee[1], jc.flow.caller_spec)
+                    )
+                    return Taint(frozenset(), frozenset({callee[1]})), frozenset()
+            return None, frozenset()
+        if len(rhs) == 1 and rhs[0].type == cs.TS_DART_IDENTIFIER and rhs[0].text:
+            alias = rhs[0].text.decode(cs.ENCODING_UTF8)
+            return tainted.get(alias), handles.get(alias, frozenset())
+        return None, frozenset()
+
+    def _dart_member_source(
+        self, nodes: list[Node], jc: _JsCtx
+    ) -> HandleBinding | None:
+        # `Platform.environment['K']`: a bound member read. `dart_member_read_name`
+        # on the `.environment` selector yields the prefix; the key comes from a
+        # trailing `index_selector`'s string literal.
+        for index, node in enumerate(nodes):
+            if node.type != cs.TS_DART_SELECTOR:
+                continue
+            name = dart_member_read_name(node)
+            if name is None:
+                continue
+            for prefix, kind in jc.member_reads:
+                if name == prefix:
+                    identity = self._dart_index_key(nodes[index + 1 :])
+                    return HandleBinding(kind=kind, identity=identity)
+        return None
+
+    def _dart_index_key(self, following: list[Node]) -> str:
+        # The string key inside a trailing `index_selector` (`['K']` -> `K`).
+        for node in following:
+            index_sel = self._find_dart_index_selector(node)
+            if index_sel is not None:
+                for child in index_sel.named_children:
+                    if child.type == cs.TS_DART_STRING_LITERAL:
+                        return self._dart_string_literal(child)
+        return DYNAMIC_TARGET
+
+    @staticmethod
+    def _find_dart_index_selector(node: Node) -> Node | None:
+        if node.type == cs.TS_DART_INDEX_SELECTOR:
+            return node
+        for child in node.named_children:
+            if child.type == cs.TS_DART_INDEX_SELECTOR:
+                return child
+            nested = FlowProcessor._find_dart_index_selector(child)
+            if nested is not None:
+                return nested
+        return None
+
+    def _dart_call(
+        self, selector: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
+        raw = dart_call_name(selector)
+        if raw is None:
+            return
+        args = self._dart_arg_taints(selector, tainted, jc)
+        if (sink := self._js_match_sink(raw, jc.flow.write_sinks, jc)) is not None:
+            dst = (
+                self._dart_first_string_arg(selector)
+                if sink.target_arg == 0
+                else DYNAMIC_TARGET
+            )
+            for _via, taint in args:
+                if taint is not None:
+                    self._emit_taint_to_sink(taint, sink.kind, dst, jc.flow.caller_qn)
+            return
+        if handles and self._emit_handle_write(raw, args, handles, jc):
             return
         callee = self._resolve(
             raw,
@@ -1279,9 +2079,114 @@ class FlowProcessor:
                 self._deferred_arg_edges.append(
                     (taint.pending, jc.flow.caller_spec, callee_type, callee_qn, via)
                 )
+            if taint.origins or taint.pending:
+                token = _passthrough_result_token(jc.flow.caller_qn, selector)
+                self._param_call_sites.append((taint, callee_qn, via, token))
+            for pname in taint.params:
+                self._param_flow_edges.append(
+                    (jc.flow.caller_qn, pname, callee_qn, via)
+                )
+
+    @staticmethod
+    def _dart_arguments(selector: Node) -> Node | None:
+        # The `arguments` node inside a call selector's `argument_part`.
+        argpart = next(
+            (c for c in selector.named_children if c.type == cs.TS_DART_ARGUMENT_PART),
+            None,
+        )
+        if argpart is None:
+            return None
+        return next(
+            (c for c in argpart.named_children if c.type == cs.TS_DART_ARGUMENTS), None
+        )
+
+    @staticmethod
+    def _dart_named_arg(arg: Node) -> tuple[str | None, list[Node]]:
+        # `named_argument` -> `label`(identifier `:`) + the value CHAIN (which may be
+        # a selector chain such as `message: Platform.environment['K']`).
+        name: str | None = None
+        value: list[Node] = []
+        for child in arg.named_children:
+            if child.type == cs.TS_DART_LABEL:
+                ident = next(
+                    (
+                        c
+                        for c in child.named_children
+                        if c.type == cs.TS_DART_IDENTIFIER
+                    ),
+                    None,
+                )
+                if ident is not None and ident.text is not None:
+                    name = ident.text.decode(cs.ENCODING_UTF8)
+            elif child.type != cs.TS_COMMENT:
+                value.append(child)
+        return name, value
+
+    def _dart_arg_taints(
+        self, selector: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> list[tuple[str, Taint | None]]:
+        # A Dart call's arguments: positional `argument` wrappers (via `arg:<index>`)
+        # and `named_argument` values (`sink(message: x)`, via `kw:<name>`). Each
+        # argument is a full expression CHAIN (a bare identifier, a
+        # `Platform.environment['K']` source, or a `src()` call), evaluated via
+        # `_dart_rhs` so inline sources reach the sink too (issue #1173).
+        arguments = self._dart_arguments(selector)
+        if arguments is None:
+            return []
+        out: list[tuple[str, Taint | None]] = []
+        positional = 0
+        for arg in arguments.named_children:
+            if arg.type == cs.TS_DART_ARGUMENT:
+                chain = [c for c in arg.named_children if c.type != cs.TS_COMMENT]
+                via = VIA_ARG_FORMAT.format(index=positional)
+                positional += 1
+            elif arg.type == cs.TS_DART_NAMED_ARGUMENT:
+                name, chain = self._dart_named_arg(arg)
+                if name is None:
+                    continue
+                via = VIA_KW_FORMAT.format(name=name)
+            else:
+                continue
+            taint, _ = self._dart_rhs(chain, tainted, {}, jc)
+            out.append((via, taint))
+        return out
+
+    def _dart_return_taint(
+        self, node: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        # A Dart `return <chain>;` contributes the chain's taint to the summary.
+        rhs = [c for c in node.named_children if c.type != cs.TS_COMMENT]
+        taint, _ = self._dart_rhs(rhs, tainted, {}, jc)
+        return taint
+
+    def _dart_first_string_arg(self, selector: Node) -> str:
+        arguments = self._dart_arguments(selector)
+        if arguments is None:
+            return DYNAMIC_TARGET
+        for arg in arguments.named_children:
+            if arg.type == cs.TS_DART_ARGUMENT:
+                chain = [c for c in arg.named_children if c.type != cs.TS_COMMENT]
+            elif arg.type == cs.TS_DART_NAMED_ARGUMENT:
+                _, chain = self._dart_named_arg(arg)
+            else:
+                continue
+            first = chain[0] if chain else None
+            if first is not None and first.type == cs.TS_DART_STRING_LITERAL:
+                return self._dart_string_literal(first)
+        return DYNAMIC_TARGET
+
+    @staticmethod
+    def _dart_string_literal(node: Node) -> str:
+        # A Dart string_literal has no content child; the text (with quotes) is
+        # inline. Interpolation (`'$x'`) collapses to <dynamic>.
+        if node.text is None:
+            return DYNAMIC_TARGET
+        if any(c.type == cs.TS_DART_TEMPLATE_SUBSTITUTION for c in node.named_children):
+            return DYNAMIC_TARGET
+        return node.text.decode(cs.ENCODING_UTF8).strip(cs.DART_QUOTE_CHARS)
 
     def _emit_taint_to_sink(
-        self, taint: Taint, kind: ResourceKind, identity: str
+        self, taint: Taint, kind: ResourceKind, identity: str, caller_qn: str
     ) -> None:
         # A tainted value reaching a write sink: emit resolved origins now, defer
         # pending callee returns to the fixpoint (mirrors the _js_call write branch).
@@ -1289,6 +2194,10 @@ class FlowProcessor:
             self._emit_resource_flow(origin, kind, identity)
         if taint.pending:
             self._deferred_resource_flows.append((taint.pending, kind, identity))
+        # A parameter reaching this macro/stream sink is a parameter-to-sink
+        # summary (issue #1169), composed at finalize like the _js_call branch.
+        for pname in taint.params:
+            self._param_sinks[(caller_qn, pname)].add((kind, identity))
 
     def _flow_macro(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
         # A Rust macro sink (`println!(secret)`) writes STDOUT (identity <dynamic>,
@@ -1306,7 +2215,9 @@ class FlowProcessor:
         for child in node.named_children:
             if child.type == cs.TS_RS_TOKEN_TREE:
                 for taint in self._macro_arg_taints(child, tainted, jc):
-                    self._emit_taint_to_sink(taint, sink.kind, DYNAMIC_TARGET)
+                    self._emit_taint_to_sink(
+                        taint, sink.kind, DYNAMIC_TARGET, jc.flow.caller_qn
+                    )
 
     def _macro_arg_taints(
         self, token_tree: Node, tainted: _TaintMap, jc: _JsCtx
@@ -1413,11 +2324,34 @@ class FlowProcessor:
                     stack.append(child)
         return out
 
-    def _flow_stream(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+    def _flow_keyword_write(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+        # A keyword output construct (PHP `echo $a, $b;` / `print $x`) writes each
+        # operand to STDOUT with no callee name (issue #1174). `echo` takes several
+        # operands wrapped in a `sequence_expression`; `print` a single operand.
+        for child in node.named_children:
+            if child.type == cs.TS_COMMENT:
+                continue
+            operands = (
+                child.named_children
+                if child.type == cs.TS_PHP_SEQUENCE_EXPRESSION
+                else (child,)
+            )
+            for operand in operands:
+                taint = self._js_expr_taint(operand, tainted, jc)
+                if taint is not None:
+                    self._emit_taint_to_sink(
+                        taint, ResourceKind.STDOUT, DYNAMIC_TARGET, jc.flow.caller_qn
+                    )
+
+    def _flow_stream(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> None:
         # A C++ stream sink (`std::cout << a << b`) nests left-associatively. Act
         # only at the TOP of the `<<` chain, walk the `left` spine to the base
-        # operand; if it is a stream sink (cout/cerr), flow the taint of every
-        # inserted operand to STDOUT. A non-stream base (arithmetic `x << 2`) misses.
+        # operand; if it is a stream sink (cout/cerr) OR a bound file handle
+        # (`out << x` on a std::ofstream, issue #1220), flow the taint of every
+        # inserted operand to that resource. A non-stream base (arithmetic `x << 2`)
+        # misses.
         d = jc.descriptor
         if not self._is_stream_insertion(node, d):
             return
@@ -1436,15 +2370,22 @@ class FlowProcessor:
             base = left
         if base.text is None:
             return
-        sink = self._js_match_sink(
-            base.text.decode(cs.ENCODING_UTF8), jc.flow.stream_sinks, jc
-        )
-        if sink is None:
+        base_text = base.text.decode(cs.ENCODING_UTF8)
+        sink = self._js_match_sink(base_text, jc.flow.stream_sinks, jc)
+        # cout/cerr write STDOUT/STDERR with no concrete resource; a bound handle
+        # base carries its file's identity (possibly several after a branch merge).
+        targets: list[tuple[ResourceKind, str]]
+        if sink is not None:
+            targets = [(sink.kind, DYNAMIC_TARGET)]
+        elif bindings := handles.get(base_text):
+            targets = [(b.kind, b.identity) for b in bindings]
+        else:
             return
         for operand in operands:
             taint = self._js_expr_taint(operand, tainted, jc)
             if taint is not None:
-                self._emit_taint_to_sink(taint, sink.kind, DYNAMIC_TARGET)
+                for kind, identity in targets:
+                    self._emit_taint_to_sink(taint, kind, identity, jc.flow.caller_qn)
 
     @staticmethod
     def _is_stream_insertion(node: Node, descriptor: LanguageDescriptor) -> bool:
@@ -1521,6 +2462,13 @@ class FlowProcessor:
 
     def _js_member_source(self, node: Node, jc: _JsCtx) -> HandleBinding | None:
         obj = node.child_by_field_name(jc.descriptor.object_field)
+        if obj is None and node.type == jc.descriptor.subscript_type:
+            # PHP `$_ENV["K"]` is a FIELDLESS subscript: the indexed object is the
+            # first named child (issue #1174). Guarded so field-based grammars
+            # (JS/Java/…) never take this path.
+            obj = next(
+                (c for c in node.named_children if c.type != cs.TS_COMMENT), None
+            )
         if obj is None or obj.text is None:
             return None
         obj_text = obj.text.decode(cs.ENCODING_UTF8)
@@ -1541,6 +2489,12 @@ class FlowProcessor:
                 return prop.text.decode(cs.ENCODING_UTF8)
             return DYNAMIC_TARGET
         index = node.child_by_field_name(d.subscript_index_field)
+        if index is None:
+            # Fieldless subscript (PHP `$_ENV["K"]`): the key is the first
+            # string-literal child.
+            index = next(
+                (c for c in node.named_children if c.type == d.string_type), None
+            )
         if index is not None and index.type == d.string_type:
             return string_literal(index, d.string_type, d.string_content_type)
         return DYNAMIC_TARGET
@@ -1563,9 +2517,7 @@ class FlowProcessor:
         return HandleBinding(kind=sink.kind, identity=identity)
 
     @staticmethod
-    def _js_match_sink(
-        raw: str, sink_map: dict[str, IOSink], jc: _JsCtx
-    ) -> IOSink | None:
+    def _js_match_sink[T](raw: str, sink_map: dict[str, T], jc: _JsCtx) -> T | None:
         # Same shadow-aware matching as io_access: a locally-bound name is not
         # the builtin; the import-normalised name matches first (so an aliased
         # builtin resolves), then the raw dotted name only when its head resolves
@@ -1574,6 +2526,10 @@ class FlowProcessor:
         # the head through the import map on `::` (`use std::env; env::var` ->
         # `std::env::var`; a fully-qualified `std::env::var` has an unimported `std`
         # head and stays as-is); a head bound to a local name is shadowed.
+        if jc.descriptor.case_insensitive_call_names:
+            # PHP function names are case-insensitive (`GETENV` == `getenv`); the
+            # registry keys are lowercase (issue #1174).
+            raw = raw.lower()
         scope_sep = jc.descriptor.scope_separator
         if scope_sep is not None:
             scoped_head, _, scoped_rest = raw.partition(scope_sep)
@@ -1683,10 +2639,25 @@ class FlowProcessor:
                 out[var] = _merge_taint(existing, taint) if existing else taint
         return out
 
+    @staticmethod
+    def _merge_lean(states: list[_LeanState]) -> _LeanState:
+        # MAY union of both maps across branches (issue #1204). Taint reuses
+        # _merge; handles union per name, so a variable that may hold either of
+        # two handles on different paths writes to BOTH at a later method call.
+        handles: _HandleMap = {}
+        for s in states:
+            for name, bindings in s.handles.items():
+                existing = handles.get(name)
+                handles[name] = existing | bindings if existing else bindings
+        return _LeanState(FlowProcessor._merge([s.taint for s in states]), handles)
+
     def _walk_stmt(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
         node_type = node.type
         if node_type in PY_SCOPE_BOUNDARIES:
-            # Nested def/class: only its header executes in this scope.
+            # Nested def/class: only its header executes in this scope. Record any
+            # enclosing taint its body captures BEFORE walking the header, using
+            # the def-site state (issue #1197); the body is left to its own pass.
+            self._record_captures(node, state, ctx)
             for header in definition_header_nodes(node):
                 state = self._walk_stmt(header, state, ctx)
             return state
@@ -2222,6 +3193,7 @@ class FlowProcessor:
         self._return_param_edges.clear()
         self._param_call_sites.clear()
         self._positional_params.clear()
+        self._variadic_params.clear()
 
     def _resolve_summaries(
         self,
@@ -2319,6 +3291,61 @@ class FlowProcessor:
                     changed = True
         return closure
 
+    @staticmethod
+    def _nested_def_name(def_node: Node) -> tuple[str, Node] | None:
+        # The bound name and function_definition node of a nested def, unwrapping a
+        # decorated_definition. None for a nested CLASS (its methods' qns are
+        # class-nested, out of scope) or an unnamed def.
+        inner = def_node
+        if def_node.type == cs.TS_PY_DECORATED_DEFINITION:
+            inner = next(
+                (
+                    c
+                    for c in def_node.children
+                    if c.type
+                    in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
+                ),
+                def_node,
+            )
+        if inner.type != cs.TS_PY_FUNCTION_DEFINITION:
+            return None
+        name_node = inner.child_by_field_name(cs.FIELD_NAME)
+        name = safe_decode_text(name_node) if name_node is not None else None
+        return (name, inner) if name else None
+
+    def _record_captures(self, def_node: Node, state: _TaintMap, ctx: _FlowCtx) -> None:
+        # A nested function may capture tainted enclosing-scope variables through
+        # its environment. For each free variable tainted at the definition site,
+        # record a capture keyed by the nested function's qn and via kw:<name>, so
+        # the existing parameter-summary finalize composes it exactly as a keyword
+        # argument would (issue #1197). A capture carrying concrete origins/pending
+        # is a resolvable call site; one carrying only the enclosing function's own
+        # parameters records a transitive flow edge, so a variable captured through
+        # two nested levels still composes.
+        resolved = self._nested_def_name(def_node)
+        if resolved is None:
+            return
+        name, inner = resolved
+        # Use the qn the definition pass registered for this exact node (it carries
+        # the duplicate-name suffix a manual reconstruction would miss); fall back to
+        # the reconstructed name only when the node was not registered.
+        loc = self._function_locations.get(function_span_key(ctx.module_qn, inner))
+        nested_qn = (
+            loc.qualified_name
+            if loc is not None
+            else f"{ctx.caller_qn}{cs.SEPARATOR_DOT}{name}"
+        )
+        for fv in python_free_variable_names(inner):
+            taint = state.get(fv)
+            if taint is None:
+                continue
+            via = VIA_KW_FORMAT.format(name=fv)
+            if taint.origins or taint.pending:
+                token = _passthrough_result_token(ctx.caller_qn, def_node)
+                self._param_call_sites.append((taint, nested_qn, via, token))
+            for pname in taint.params:
+                self._param_flow_edges.append((ctx.caller_qn, pname, nested_qn, via))
+
     def _param_name_for_via(self, callee_qn: str, via: str) -> str | None:
         # Map an argument's `via` tag to the callee's parameter name: `kw:<name>`
         # names the parameter directly (so keyword-only parameters still match);
@@ -2337,7 +3364,15 @@ class FlowProcessor:
                 index = int(rest)
             except ValueError:
                 return None
+            # Every argument at or after a variadic/rest slot binds to that one
+            # parameter (issue #1169); the Python path records no variadic index.
+            variadic = self._variadic_params.get(callee_qn)
+            if variadic is not None and index >= variadic:
+                index = variadic
             if 0 <= index < len(names):
+                # None marks a slot that binds no simple name (unnamed C++/Go
+                # parameter, JS/TS destructuring): no parameter to compose, so
+                # no edge -- never a shifted (wrong) name.
                 return names[index]
         return None
 

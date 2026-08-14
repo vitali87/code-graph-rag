@@ -361,34 +361,73 @@ module is re-exported under its own name. A project that does
   summaries are resolved by a worklist fixpoint once every file has been walked, so
   a callee defined after (or in a different file from) its caller is still known to
   return a tainted value at the caller's site.
-- Forward argument taint composes into callee **sinks** for Python: a parameter that
-  reaches a write sink inside its body is recorded as a per-function parameter-sink
-  summary (closed over transitive parameter hand-offs by the same finalize fixpoint),
-  so a tainted argument passed at a call site emits the full `resource -> resource`
-  flow even when the source and the sink live in different bodies — the logging-wrapper
-  case `secret = getenv('K'); log_it(secret)` with `log_it(m): logger.info(m)` connects
-  ENV to STDOUT. Only resolved callees participate; there are still no `Parameter` nodes
-  and no SSA-level precision.
+- Forward argument taint composes into callee **sinks** for Python and the lean-walk
+  languages with a parameter-name extractor (Go, JavaScript, TypeScript/TSX, C++): a
+  parameter that reaches a write sink inside its body is recorded as a per-function
+  parameter-sink summary (closed over transitive parameter hand-offs by the same
+  finalize fixpoint), so a tainted argument passed at a call site emits the full
+  `resource -> resource` flow even when the source and the sink live in different
+  bodies — the logging-wrapper case `secret = getenv('K'); log_it(secret)` with
+  `log_it(m): logger.info(m)` connects ENV to STDOUT. Only resolved callees participate;
+  there are still no `Parameter` nodes and no SSA-level precision. Java and C# parse
+  into the graph but have no parameter-name extractor yet, so their positional
+  composition stays inert until one is added.
 - Forward argument taint also composes through a callee's **return** value for Python
   (pass-through helpers such as `def redact(v): return v`): a parameter that reaches the
   function's return — directly or transitively through `return other(p)` and pass-through
   chains — is closed over by the same finalize fixpoint, and a call site passing a tainted
   argument into such a parameter folds that argument's origins into the callee's return
   summary, so a caller consuming the return (`y = redact(secret); print(y)`) resolves the
-  secret to the sink. The non-Python walks remain one level for now.
+  secret to the sink. This return composition is Python-only; the lean walks forward
+  taint into callee sinks (above) but not yet through a callee's return.
 - The `kind = arg` edge itself is still recorded one level deep — it marks that a
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.
 - The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
-  Go, Java, Rust, C, C++, and C#; a language not in the registry emits no I/O or
-  flow edges until its table is added.
+  Go, Java, Rust, C, C++, C#, Lua, PHP, and Dart; a language not in the registry emits no
+  I/O or flow edges until its table is added. PHP models `$_GET`/`$_POST`/
+  `$_REQUEST`/`$_COOKIE` (untrusted HTTP input → NETWORK) and `$_ENV`/`$_SERVER`
+  (→ ENV) superglobal sources, `getenv`/`file_get_contents` reads,
+  `file_put_contents` and `echo`/`print` (keyword STDOUT sinks) writes, and
+  `fopen` + arg-shaped `fwrite`/`fputs` handle writes.
+- Handle-based writes in the lean (non-Python) `FLOWS_TO` walk are being taught
+  incrementally (issue #1204). **Go**, **Rust**, **Java**, **C#**, **JS/TS**, and
+  **Lua** now track handle bindings, so a taint written through a file/socket handle
+  (`f := os.Create(p); f.Write(x)`, Rust
+  `let mut f = File::create(p)?; f.write_all(s.as_bytes())?`, Java
+  `new FileWriter(p).write(s)` — including the wrapper
+  `new BufferedWriter(new FileWriter(p))` and factory
+  `Files.newBufferedWriter(Path.of(p))` forms — C#
+  `new StreamWriter(p).Write(s)`, JS/TS
+  `fs.createWriteStream(p).write(s)`, or Lua
+  `local f = io.open(p, "w"); f:write(s)`) emits a flow edge to the handle's
+  resource — path-sensitively (a rebind on one branch writes to all feasible
+  resources) and mode-aware (a read-only `os.Open`/`File::open`/`new FileReader`/
+  `new StreamReader` handle is not a write sink; Lua's `io.open` mode is unknowable
+  to the binder, so it stays a sound may-write gated by the method table). **C** and
+  **C++** cover the arg-shaped libc `FILE*` API, where the handle rides an
+  *argument* rather than a receiver (`FILE *f = fopen(p, "w"); fwrite(x, 1, n, f)`,
+  `fprintf(f, fmt, x)`, or `fprintf(stderr, fmt, x)` to a pre-bound std stream): the
+  tainted **payload** arguments flow to the handle's resource, an untracked `FILE*`
+  degrading to `FILE:<dynamic>`. Each arg sink pins its payload position — `fprintf`
+  forwards every non-handle argument (format + varargs), but `fwrite(buffer, size,
+  count, stream)` forwards only `buffer` (arg 0), so a tainted `size`/`count` is
+  control metadata, not a leak. The libc model applies only to *unresolved* calls, so
+  a project-defined function that happens to be named `fwrite`/`fprintf` is analysed
+  as itself. C++ also binds **type-declaration** stream handles
+  (`std::ofstream out(p)`), so a tainted `out << x` (stream insertion) or
+  `out.write(..)` reaches the file. Both `new`-shaped constructors and their wrapper
+  / identity-carrier (`new PrintWriter(new File(p))`) forms resolve, reusing the same
+  registry tables the `READS_FROM`/`WRITES_TO` walk uses. Every catalogued
+  handle-write shape across the lean languages now emits a flow edge rather than a
+  false `NO_FLOW`.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.
 
 ## Language coverage
 
-`FLOWS_TO` covers **10 of the 14 supported languages** — every language whose
+`FLOWS_TO` covers **13 of the 14 supported languages** — every language whose
 source/sink table is registered in `FLOW_REGISTERED_LANGUAGES`
 (`codebase_rag/parsers/io_access/registry.py`). Python uses the deep,
 path-sensitive walk; the rest use the descriptor-driven lean walk. A language
@@ -408,10 +447,10 @@ edges, so a reachability question over it returns `UNKNOWN` rather than
 | C++ | ✅ | lean descriptor |
 | C | ✅ | lean descriptor |
 | C# | ✅ | lean descriptor |
-| Lua | ❌ | not covered — no sink table |
-| PHP | ❌ | not covered — no sink table |
+| Lua | ✅ | lean descriptor |
+| PHP | ✅ | lean descriptor |
 | Scala | ❌ | not covered — no sink table |
-| Dart | ❌ | not covered — no sink table |
+| Dart | ✅ | lean descriptor + Dart selector-chain path |
 
 ## Coverage metadata and the three-verdict query
 

@@ -332,5 +332,136 @@ def test_rust_loop_kill_has_no_skip_path(tmp_path: Path) -> None:
     assert ("resource::ENV::SECRET", "resource::FILE::out.txt") not in flows
 
 
+def test_lua_env_to_stdout_via_print(tmp_path: Path) -> None:
+    # Lua joins FLOWS_TO coverage (issue #1175): a source read nested directly in
+    # a print sink emits the resource-to-resource edge.
+    files = {"m.lua": ('function leak()\n  print(os.getenv("SECRET"))\nend\n')}
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_lua_env_to_stdout_via_io_write(tmp_path: Path) -> None:
+    files = {"m.lua": ('function leak()\n  io.write(os.getenv("SECRET"))\nend\n')}
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_lua_env_to_stdout_bound_local(tmp_path: Path) -> None:
+    # The source is bound to a local first (`local s = os.getenv(..)`); the
+    # binding walk descends Lua's variable_list/expression_list so the taint
+    # attaches to `s` and reaches the sink (issue #1175).
+    files = {
+        "m.lua": ('function leak()\n  local s = os.getenv("SECRET")\n  print(s)\nend\n')
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") in flows
+
+
+def test_lua_kill_local_before_sink_no_flow(tmp_path: Path) -> None:
+    # Negative control: the local is reassigned to a clean value on every path
+    # before the sink, so the ENV taint is killed and no edge is emitted.
+    files = {
+        "m.lua": (
+            "function leak()\n"
+            '  local s = os.getenv("SECRET")\n'
+            '  s = "safe"\n'
+            "  print(s)\n"
+            "end\n"
+        )
+    }
+    flows = _run_flow(tmp_path, files)
+    assert ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>") not in flows
+
+
+_ENV_STDOUT = ("resource::ENV::SECRET", "resource::STDOUT::<dynamic>")
+
+
+def test_ts_parameter_decorator_walks_in_enclosing_scope(tmp_path: Path) -> None:
+    # A TS parameter decorator's `@inject(t)` call runs at class-definition time in
+    # the enclosing scope; the tainted argument must reach the sink inside the
+    # decorator factory (issue #1196). This node lives inside formal_parameters
+    # inside the skipped method_definition, so before #1196 it was invisible.
+    files = {
+        "a.ts": (
+            "const t = process.env.SECRET;\n"
+            "class C { m(@inject(t) x: any) {} }\n"
+            "function inject(x: any) { console.log(x); "
+            "return (a: any, b: any, c: any) => {}; }\n"
+        )
+    }
+    assert _ENV_STDOUT in _run_flow(tmp_path, files)
+
+
+def test_ts_default_param_value_does_not_leak(tmp_path: Path) -> None:
+    # A default parameter value evaluates at CALL time in the callee's own scope,
+    # so a source read there must NOT leak into the enclosing walk. #1196 must
+    # preserve this while starting to walk sibling decorators.
+    files = {
+        "a.ts": (
+            "const t = process.env.SECRET;\n"
+            "class C { m(x: any = process.env.SECRET) {} }\n"
+        )
+    }
+    assert _ENV_STDOUT not in _run_flow(tmp_path, files)
+
+
+def test_ts_param_decorator_present_but_default_value_still_skipped(
+    tmp_path: Path,
+) -> None:
+    # The precision case: a parameter carrying BOTH a decorator and a tainted
+    # default. Walking the decorator must not drag in its sibling default value.
+    files = {
+        "a.ts": (
+            "const t = process.env.SECRET;\n"
+            "class C { m(@inject(1) x: any = process.env.SECRET) {} }\n"
+            "function inject(x: any) { console.log(x); "
+            "return (a: any, b: any, c: any) => {}; }\n"
+        )
+    }
+    assert _ENV_STDOUT not in _run_flow(tmp_path, files)
+
+
+def test_ts_untainted_param_decorator_no_edge(tmp_path: Path) -> None:
+    files = {
+        "a.ts": (
+            'class C { m(@inject("lit") x: any) {} }\n'
+            "function inject(x: any) { console.log(x); "
+            "return (a: any, b: any, c: any) => {}; }\n"
+        )
+    }
+    assert _ENV_STDOUT not in _run_flow(tmp_path, files)
+
+
+def test_ts_decorator_inside_default_value_class_does_not_leak(tmp_path: Path) -> None:
+    # A decorator on a class nested in a parameter's DEFAULT value runs when that
+    # default class is evaluated (call time, in the callee), not in the enclosing
+    # scope. Header discovery must not reach into the default value, or the module
+    # local `t` would produce a false enclosing-scope flow.
+    files = {
+        "a.ts": (
+            "const t = process.env.SECRET;\n"
+            "class C { m(x: any = class { n(@inject(t) y: any) {} }) {} }\n"
+            "function inject(x: any) { console.log(x); "
+            "return (a: any, b: any, c: any) => {}; }\n"
+        )
+    }
+    assert _ENV_STDOUT not in _run_flow(tmp_path, files)
+
+
+def test_ts_decorator_inside_concise_arrow_body_does_not_leak(tmp_path: Path) -> None:
+    # A decorator on a class returned from a concise arrow body belongs to the
+    # arrow's own call-time scope, not the enclosing definer. Header discovery must
+    # stop at the arrow's body, or `t` leaks a false enclosing-scope flow.
+    files = {
+        "a.ts": (
+            "const t = process.env.SECRET;\n"
+            "const f = () => class { n(@inject(t) y: any) {} };\n"
+            "function inject(x: any) { console.log(x); "
+            "return (a: any, b: any, c: any) => {}; }\n"
+        )
+    }
+    assert _ENV_STDOUT not in _run_flow(tmp_path, files)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

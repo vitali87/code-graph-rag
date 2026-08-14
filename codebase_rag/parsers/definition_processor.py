@@ -25,8 +25,9 @@ from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
-from .csharp_frontend import CallSiteKey, CSharpCallSite
+from .csharp_frontend import CallSiteKey
 from .dependency_parser import parse_dependencies
+from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .handlers import get_handler
@@ -151,12 +152,27 @@ class DefinitionProcessor(
         # targets keyed on the callee NAME token location. The C# resolver
         # consults this before any heuristic; MUTATED IN PLACE across runs
         # because the type-inference engine holds a reference.
-        self.csharp_call_sites: dict[CallSiteKey, CSharpCallSite] = {}
+        self.csharp_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
         # Sites Roslyn resolved to METADATA (external) methods: the resolver
         # returns the external sentinel there instead of letting the
         # name-trie fabricate a first-party edge. Same in-place mutation
         # discipline as csharp_call_sites.
         self.csharp_external_sites: set[CallSiteKey] = set()
+        # Go go/types frontend (issue #1179): the same two call families as C#
+        # -- per-invocation exact first-party call targets keyed on the callee
+        # NAME token location, and sites the compiler resolved OUTSIDE the module
+        # (stdlib, deps). Same in-place mutation discipline; the Go type-inference
+        # engine holds the reference.
+        self.go_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
+        self.go_external_sites: set[CallSiteKey] = set()
+        # go/types-proven implementer->interface pairs (each end a declaring
+        # identifier position), stashed here at frontend time and resolved to
+        # IMPLEMENTS edges after Pass 2 fills go_type_locations below.
+        self.go_implements: list[ImplementsPair] = []
+        # (rel_file, type_start_line, type_start_col) -> (class qn, node label)
+        # for every ingested Go type. Go's type_spec start_point IS the name
+        # token, so the frontend's pair positions join here directly (no alias).
+        self.go_type_locations: dict[tuple[str, int, int], tuple[str, str]] = {}
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.

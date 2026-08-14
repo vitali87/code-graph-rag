@@ -413,21 +413,26 @@ _CPP_CALL_METHODS: tuple[tuple[str, ResourceKind, IODirection, int | None], ...]
 
 # The libc FILE* API passes the handle as an ARGUMENT (fprintf's stream is arg 0,
 # fgets's arg 2, fread/fwrite's arg 3), unlike every method-shaped handle API.
-# snprintf/sprintf write to a BUFFER, not a resource: excluded.
-_LIBC_ARG_HANDLE_METHODS: tuple[tuple[str, int, IODirection], ...] = (
-    ("fprintf", 0, IODirection.WRITE),
-    ("vfprintf", 0, IODirection.WRITE),
-    ("vfscanf", 0, IODirection.READ),
-    ("fputs", 1, IODirection.WRITE),
-    ("fputc", 1, IODirection.WRITE),
-    ("putc", 1, IODirection.WRITE),
-    ("fwrite", 3, IODirection.WRITE),
-    ("fgets", 2, IODirection.READ),
-    ("fgetc", 0, IODirection.READ),
-    ("getc", 0, IODirection.READ),
-    ("fread", 3, IODirection.READ),
-    ("fscanf", 0, IODirection.READ),
-    ("getline", 2, IODirection.READ),
+# snprintf/sprintf write to a BUFFER, not a resource: excluded. The 4th field pins
+# the DATA-payload argument(s); None means every non-handle argument. `fwrite`/
+# `fread` take `(buffer, size, count, stream)`, so only arg 0 is the payload -- a
+# tainted `size`/`count` is control metadata, not data written to the file (#1204).
+_LIBC_ARG_HANDLE_METHODS: tuple[
+    tuple[str, int, IODirection, tuple[int, ...] | None], ...
+] = (
+    ("fprintf", 0, IODirection.WRITE, None),
+    ("vfprintf", 0, IODirection.WRITE, None),
+    ("vfscanf", 0, IODirection.READ, None),
+    ("fputs", 1, IODirection.WRITE, None),
+    ("fputc", 1, IODirection.WRITE, None),
+    ("putc", 1, IODirection.WRITE, None),
+    ("fwrite", 3, IODirection.WRITE, (0,)),
+    ("fgets", 2, IODirection.READ, (0,)),
+    ("fgetc", 0, IODirection.READ, None),
+    ("getc", 0, IODirection.READ, None),
+    ("fread", 3, IODirection.READ, (0,)),
+    ("fscanf", 0, IODirection.READ, None),
+    ("getline", 2, IODirection.READ, None),
 )
 
 # Pre-bound libc stream globals: `fprintf(stderr, ...)` needs no fopen.
@@ -445,6 +450,49 @@ _CPP_SINKS: tuple[IOSink, ...] = tuple(
     for prefix in _CPP_SINK_PREFIXES
 )
 
+# Lua direct-call I/O sinks (issue #1175). Keyed by the callee text
+# reconstructed from `function_call` (`print`, `os.getenv`, `io.write`): `os`/`io`
+# are globals, `print` is a builtin, so the table is not import-gated. Lua has no
+# keyword args, so the env key is positional arg 0. Handle-based file I/O
+# (`io.open(path)` + `f:write`) writes through a method call on a handle, which
+# the flow walk does not track, so it stays a follow-up (io.open is not a direct
+# sink -- its args are a path and mode, never the tainted data).
+_LUA_SINKS: tuple[IOSink, ...] = (
+    IOSink("os.getenv", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink("print", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("io.write", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("io.read", ResourceKind.STDIN, IODirection.READ),
+)
+
+# PHP direct-call I/O sinks (issue #1174). Keyed by the bare callee text from
+# `function_call_expression` (`getenv`, `file_put_contents`): PHP builtins are
+# global, so the catalogue is not import-gated, and a `$`-prefixed local can never
+# shadow a bare builtin name. `file_put_contents(path, data)` carries the tainted
+# data at arg 1 and the target path at arg 0. `echo`/`print` are keyword sinks
+# (handled by the walk, not this table); handle-based `fwrite` is an arg sink below.
+_PHP_SINKS: tuple[IOSink, ...] = (
+    IOSink("file_get_contents", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("readfile", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("file_put_contents", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("getenv", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    # curl_exec's handle carries no literal target; fsockopen's hostname is arg 0.
+    IOSink("curl_exec", ResourceKind.NETWORK, IODirection.READ_WRITE),
+    IOSink("fsockopen", ResourceKind.NETWORK, IODirection.READ_WRITE, target_arg=0),
+)
+
+# Dart direct-call I/O sinks (issue #1173). Keyed by the callee text `dart_call_name`
+# reconstructs from the selector chain (`print`, `stdout.write`, `stderr.writeln`).
+# Dart file writes go through the `File` handle (below), not a direct sink.
+_DART_SINKS: tuple[IOSink, ...] = (
+    IOSink("print", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("stdout.write", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("stdout.writeln", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("stderr.write", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("stderr.writeln", ResourceKind.STDERR, IODirection.WRITE),
+    IOSink("http.get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
+    IOSink("http.post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+)
+
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.PYTHON: _PYTHON_SINKS,
     cs.SupportedLanguage.JS: _JS_TS_SINKS,
@@ -460,6 +508,9 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
         IOSink(fn, kind, direction, target_arg=arg)
         for fn, kind, direction, arg in _CPP_CALL_METHODS
     ),
+    cs.SupportedLanguage.LUA: _LUA_SINKS,
+    cs.SupportedLanguage.PHP: _PHP_SINKS,
+    cs.SupportedLanguage.DART: _DART_SINKS,
 }
 
 # The languages the flow/I-O analysis covers at all: a Module in any other
@@ -472,13 +523,19 @@ FLOW_REGISTERED_LANGUAGES: frozenset[cs.SupportedLanguage] = frozenset(IO_SINKS)
 # the bare and std:: spellings.
 IO_ARG_HANDLE_SINKS: dict[cs.SupportedLanguage, dict[str, ArgHandleSink]] = {
     cs.SupportedLanguage.C: {
-        fn: ArgHandleSink(fn, arg, direction)
-        for fn, arg, direction in _LIBC_ARG_HANDLE_METHODS
+        fn: ArgHandleSink(fn, arg, direction, data)
+        for fn, arg, direction, data in _LIBC_ARG_HANDLE_METHODS
     },
     cs.SupportedLanguage.CPP: {
-        f"{prefix}{fn}": ArgHandleSink(f"{prefix}{fn}", arg, direction)
-        for fn, arg, direction in _LIBC_ARG_HANDLE_METHODS
+        f"{prefix}{fn}": ArgHandleSink(f"{prefix}{fn}", arg, direction, data)
+        for fn, arg, direction, data in _LIBC_ARG_HANDLE_METHODS
         for prefix in _CPP_SINK_PREFIXES
+    },
+    # PHP `fwrite($handle, $data)` REVERSES the libc order: the handle is arg 0 and
+    # the payload arg 1 (issue #1174). fputs is an alias; fputcsv writes a row array.
+    cs.SupportedLanguage.PHP: {
+        fn: ArgHandleSink(fn, 0, IODirection.WRITE, (1,))
+        for fn in ("fwrite", "fputs", "fputcsv")
     },
 }
 
@@ -522,10 +579,27 @@ _JS_TS_MEMBER_READS: tuple[tuple[str, ResourceKind], ...] = (
     ("process.env", ResourceKind.ENV),
 )
 
+# PHP superglobal taint sources (issue #1174): `$_GET["q"]` etc. are subscripts on
+# a superglobal `variable_name`. HTTP-controlled input ($_GET/$_POST/$_REQUEST/
+# $_COOKIE) is untrusted NETWORK; $_ENV/$_SERVER are process ENV. Prefix strings
+# include the `$` (matched against the superglobal's `variable_name.text`).
+_PHP_MEMBER_READS: tuple[tuple[str, ResourceKind], ...] = (
+    ("$_GET", ResourceKind.NETWORK),
+    ("$_POST", ResourceKind.NETWORK),
+    ("$_REQUEST", ResourceKind.NETWORK),
+    ("$_COOKIE", ResourceKind.NETWORK),
+    ("$_ENV", ResourceKind.ENV),
+    ("$_SERVER", ResourceKind.ENV),
+)
+
 IO_MEMBER_READS: dict[cs.SupportedLanguage, tuple[tuple[str, ResourceKind], ...]] = {
     cs.SupportedLanguage.JS: _JS_TS_MEMBER_READS,
     cs.SupportedLanguage.TS: _JS_TS_MEMBER_READS,
     cs.SupportedLanguage.TSX: _JS_TS_MEMBER_READS,
+    cs.SupportedLanguage.PHP: _PHP_MEMBER_READS,
+    # Dart `Platform.environment['K']` is a process-env read (issue #1173); the
+    # sibling-chain shape is resolved by the Dart-specific member-source path.
+    cs.SupportedLanguage.DART: (("Platform.environment", ResourceKind.ENV),),
 }
 
 # Calls whose result is a resource handle; later method calls on the bound variable
@@ -630,8 +704,14 @@ _JS_TS_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
 # os.Open / os.Create are ALSO direct sinks (the construction touches the path);
 # os.OpenFile is a handle only, because its direction depends on flags.
 _GO_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
-    HandleConstructor("os.Open", ResourceKind.FILE, target_arg=0),
-    HandleConstructor("os.Create", ResourceKind.FILE, target_arg=0),
+    HandleConstructor(
+        "os.Open", ResourceKind.FILE, target_arg=0, direction=IODirection.READ
+    ),
+    HandleConstructor(
+        "os.Create", ResourceKind.FILE, target_arg=0, direction=IODirection.WRITE
+    ),
+    # Flag-dependent (O_RDONLY/O_WRONLY/O_RDWR); may-write is the sound
+    # over-approximation for a taint tool -- never silently drop a real write.
     HandleConstructor("os.OpenFile", ResourceKind.FILE, target_arg=0),
     HandleConstructor("database/sql.Open", ResourceKind.DATABASE, target_arg=1),
     HandleConstructor("net.Dial", ResourceKind.SOCKET, target_arg=1),
@@ -666,11 +746,30 @@ _JAVA_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = tuple(
 )
 
 _RUST_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
-    HandleConstructor("std::fs::File::open", ResourceKind.FILE, target_arg=0),
-    HandleConstructor("std::fs::File::create", ResourceKind.FILE, target_arg=0),
+    HandleConstructor(
+        "std::fs::File::open",
+        ResourceKind.FILE,
+        target_arg=0,
+        direction=IODirection.READ,
+    ),
+    HandleConstructor(
+        "std::fs::File::create",
+        ResourceKind.FILE,
+        target_arg=0,
+        direction=IODirection.WRITE,
+    ),
     HandleConstructor(
         "std::net::TcpStream::connect", ResourceKind.SOCKET, target_arg=0
     ),
+)
+
+# `io.open(path [, mode])` returns a FILE handle used via `:` methods
+# (`f:write(x)`, `f:read()`). The mode (arg 1) decides read vs write, but the lean
+# binder does not inspect it, so this stays a sound may-write READ_WRITE (like Go's
+# `os.OpenFile`): a real write is never dropped, and the method table gates emission
+# (a `f:read()` on it emits nothing).
+_LUA_LEAN_HANDLE_CONSTRUCTORS: tuple[HandleConstructor, ...] = (
+    HandleConstructor("io.open", ResourceKind.FILE, target_arg=0),
 )
 
 IO_LEAN_HANDLE_CONSTRUCTORS: dict[
@@ -689,10 +788,31 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
         HandleConstructor("fopen", ResourceKind.FILE, target_arg=0),
         HandleConstructor("freopen", ResourceKind.FILE, target_arg=0),
     ),
+    # fopen/freopen are the libc FILE* constructors; ofstream/fstream cover the
+    # move-ASSIGNMENT rebind form (`out = std::ofstream(p)`, a call-shaped
+    # construction) -- the declaration form (`std::ofstream out(p)`) binds via
+    # IO_TYPE_HANDLE_CONSTRUCTORS instead. ifstream is read-only, so it is not a
+    # write handle here (issue #1220).
     cs.SupportedLanguage.CPP: tuple(
-        HandleConstructor(f"{prefix}{fn}", ResourceKind.FILE, target_arg=0)
-        for fn in ("fopen", "freopen")
+        HandleConstructor(f"{prefix}{fn}", ResourceKind.FILE, target_arg=0, direction=d)
+        for fn, d in (
+            ("fopen", IODirection.READ_WRITE),
+            ("freopen", IODirection.READ_WRITE),
+            ("ofstream", IODirection.WRITE),
+            ("fstream", IODirection.READ_WRITE),
+        )
         for prefix in _CPP_SINK_PREFIXES
+    ),
+    cs.SupportedLanguage.LUA: _LUA_LEAN_HANDLE_CONSTRUCTORS,
+    # `$f = fopen($path, "w")` returns a FILE handle used via `fwrite($f, $data)`
+    # (arg-shaped, below). The mode (arg 1) is not inspected, so may-write (#1174).
+    cs.SupportedLanguage.PHP: (
+        HandleConstructor("fopen", ResourceKind.FILE, target_arg=0),
+    ),
+    # Dart `var f = File(path)` binds a FILE handle used via `f.writeAsString(data)`
+    # (issue #1173). The read/write mode is per-method, so may-write by default.
+    cs.SupportedLanguage.DART: (
+        HandleConstructor("File", ResourceKind.FILE, target_arg=0),
     ),
 }
 
@@ -703,19 +823,23 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
 # (`new FileWriter(..)` / `new java.io.FileWriter(..)`).
 _JAVA_IO_PACKAGE = "java.io"
 
-_JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind], ...] = (
-    ("FileReader", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("FileInputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("FileWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("FileOutputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("PrintWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("RandomAccessFile", _JAVA_IO_PACKAGE, ResourceKind.FILE),
-    ("Socket", "java.net", ResourceKind.SOCKET),
+# The direction gates lean write-flow emission (issue #1204): a READ-only handle
+# (`new FileReader`) never binds as a write sink, so a `.read()` through it emits
+# nothing; a mode-flexible handle (`new RandomAccessFile`, whose "r"/"rw" mode the
+# constructor arg does not resolve here) stays a sound may-write.
+_JAVA_NEW_HANDLE_TYPES: tuple[tuple[str, str, ResourceKind, IODirection], ...] = (
+    ("FileReader", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.READ),
+    ("FileInputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.READ),
+    ("FileWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.WRITE),
+    ("FileOutputStream", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.WRITE),
+    ("PrintWriter", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.WRITE),
+    ("RandomAccessFile", _JAVA_IO_PACKAGE, ResourceKind.FILE, IODirection.READ_WRITE),
+    ("Socket", "java.net", ResourceKind.SOCKET, IODirection.READ_WRITE),
     # `new URL("http://..")` is a NETWORK handle: the URL literal is the resource
     # identity, and a later `.openStream()` reads it. URL parsing itself does no
     # I/O, but construction emits no edge (only the handle methods do), so keying it
     # as a NETWORK handle is behaviourally exact.
-    ("URL", "java.net", ResourceKind.NETWORK),
+    ("URL", "java.net", ResourceKind.NETWORK, IODirection.READ_WRITE),
 )
 
 # C# `new`-shaped handle constructors (issue #102 follow-up). Keyed by the
@@ -732,32 +856,84 @@ _CSHARP_IO_PACKAGE = "System.IO"
 # System.Data.SqlClient (legacy); both spellings are keyed.
 _CSHARP_SQL_PACKAGES = ("Microsoft.Data.SqlClient", "System.Data.SqlClient")
 
+# The trailing direction gates lean write-flow emission (issue #1204): a
+# StreamReader is READ-only (never a write sink), a StreamWriter is WRITE, and a
+# FileStream / DB / network handle stays a may-write READ_WRITE.
 _CSHARP_NEW_HANDLE_TYPES: tuple[
-    tuple[str, tuple[str, ...], ResourceKind, int | None, int | None], ...
+    tuple[str, tuple[str, ...], ResourceKind, int | None, int | None, IODirection],
+    ...,
 ] = (
-    ("StreamReader", (_CSHARP_IO_PACKAGE,), ResourceKind.FILE, 0, None),
-    ("StreamWriter", (_CSHARP_IO_PACKAGE,), ResourceKind.FILE, 0, None),
-    ("FileStream", (_CSHARP_IO_PACKAGE,), ResourceKind.FILE, 0, None),
-    ("HttpClient", ("System.Net.Http",), ResourceKind.NETWORK, None, None),
+    (
+        "StreamReader",
+        (_CSHARP_IO_PACKAGE,),
+        ResourceKind.FILE,
+        0,
+        None,
+        IODirection.READ,
+    ),
+    (
+        "StreamWriter",
+        (_CSHARP_IO_PACKAGE,),
+        ResourceKind.FILE,
+        0,
+        None,
+        IODirection.WRITE,
+    ),
+    (
+        "FileStream",
+        (_CSHARP_IO_PACKAGE,),
+        ResourceKind.FILE,
+        0,
+        None,
+        IODirection.READ_WRITE,
+    ),
+    (
+        "HttpClient",
+        ("System.Net.Http",),
+        ResourceKind.NETWORK,
+        None,
+        None,
+        IODirection.READ_WRITE,
+    ),
     # The DB connection string is the resource identity.
-    ("SqlConnection", _CSHARP_SQL_PACKAGES, ResourceKind.DATABASE, 0, None),
+    (
+        "SqlConnection",
+        _CSHARP_SQL_PACKAGES,
+        ResourceKind.DATABASE,
+        0,
+        None,
+        IODirection.READ_WRITE,
+    ),
     # `new SqlCommand(sql, conn)` is a DATABASE handle whose resource is the
     # connection (arg1), not the SQL text (arg0): inherit conn's identity when it is
     # a bound handle, else <dynamic>.
-    ("SqlCommand", _CSHARP_SQL_PACKAGES, ResourceKind.DATABASE, None, 1),
+    (
+        "SqlCommand",
+        _CSHARP_SQL_PACKAGES,
+        ResourceKind.DATABASE,
+        None,
+        1,
+        IODirection.READ_WRITE,
+    ),
 )
 
 IO_NEW_HANDLE_CONSTRUCTORS: dict[cs.SupportedLanguage, dict[str, HandleConstructor]] = {
     cs.SupportedLanguage.JAVA: {
-        written: HandleConstructor(written, kind, target_arg=0)
-        for name, package, kind in _JAVA_NEW_HANDLE_TYPES
+        written: HandleConstructor(written, kind, target_arg=0, direction=direction)
+        for name, package, kind, direction in _JAVA_NEW_HANDLE_TYPES
         for written in (name, f"{package}.{name}")
     },
     cs.SupportedLanguage.CSHARP: {
         written: HandleConstructor(
-            written, kind, target_arg=target_arg, handle_arg=handle_arg
+            written,
+            kind,
+            target_arg=target_arg,
+            handle_arg=handle_arg,
+            direction=direction,
         )
-        for name, packages, kind, target_arg, handle_arg in _CSHARP_NEW_HANDLE_TYPES
+        for name, packages, kind, target_arg, handle_arg, direction in (
+            _CSHARP_NEW_HANDLE_TYPES
+        )
         for written in (name, *(f"{package}.{name}" for package in packages))
     },
 }
@@ -989,6 +1165,29 @@ IO_LEAN_HANDLE_METHODS: dict[
             "ExecuteScalarAsync": IODirection.READ,
             "ExecuteNonQuery": IODirection.WRITE,
             "ExecuteNonQueryAsync": IODirection.WRITE,
+        },
+    },
+    # Lua file-handle methods, called with `:` (`f:write(x)`, `f:read()`). The
+    # handle-method split uses the descriptor's `:` separator (issue #1204).
+    cs.SupportedLanguage.LUA: {
+        ResourceKind.FILE: {
+            "write": IODirection.WRITE,
+            "read": IODirection.READ,
+            "lines": IODirection.READ,
+        },
+    },
+    # Dart `File` handle methods (issue #1173): the async and *Sync forms both count.
+    cs.SupportedLanguage.DART: {
+        ResourceKind.FILE: {
+            "readAsString": IODirection.READ,
+            "readAsStringSync": IODirection.READ,
+            "readAsBytes": IODirection.READ,
+            "readAsBytesSync": IODirection.READ,
+            "readAsLines": IODirection.READ,
+            "writeAsString": IODirection.WRITE,
+            "writeAsStringSync": IODirection.WRITE,
+            "writeAsBytes": IODirection.WRITE,
+            "writeAsBytesSync": IODirection.WRITE,
         },
     },
 }
