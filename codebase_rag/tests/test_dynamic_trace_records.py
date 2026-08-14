@@ -95,8 +95,9 @@ def test_empty_file_is_rejected(tmp_path):
     ],
 )
 def test_malformed_header_is_rejected(tmp_path, first_line):
+    trace_path = _write_raw(tmp_path, first_line)
     with pytest.raises(TraceFormatError):
-        read_trace_file(_write_raw(tmp_path, first_line))
+        read_trace_file(trace_path)
 
 
 def test_unsupported_version_is_rejected(tmp_path):
@@ -110,10 +111,9 @@ def test_unsupported_version_is_rejected(tmp_path):
 
 
 def test_non_string_header_field_is_rejected(tmp_path):
+    trace_path = _write_raw(tmp_path, _header_line(**{cs.TRACE_KEY_LANGUAGE: 7}))
     with pytest.raises(TraceFormatError):
-        read_trace_file(
-            _write_raw(tmp_path, _header_line(**{cs.TRACE_KEY_LANGUAGE: 7}))
-        )
+        read_trace_file(trace_path)
 
 
 @pytest.mark.parametrize("record_line", ["{broken", "42", json.dumps({"kind": "call"})])

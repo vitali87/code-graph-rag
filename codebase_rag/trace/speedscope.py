@@ -17,7 +17,8 @@ ancestor, mirroring the JVM agent's stack walk.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, cast
+import math
+from typing import TYPE_CHECKING, TypeGuard, cast
 
 from .. import constants as cs
 from .records import (
@@ -49,6 +50,24 @@ def _scoped_name(name: object, include: Sequence[str]) -> str | None:
     return None
 
 
+def _valid_index(value: object, count: int) -> TypeGuard[int]:
+    """A plain (non-bool) int that indexes the frame table."""
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value < count
+
+
+def _sample_weight(weights: list[object], position: int) -> float:
+    """The sample's weight, defaulting non-positive or non-numeric values to 1."""
+    weight = weights[position] if position < len(weights) else 1
+    if (
+        not isinstance(weight, int | float)
+        or isinstance(weight, bool)
+        or not math.isfinite(weight)
+        or weight <= 0
+    ):
+        return 1.0
+    return float(weight)
+
+
 def _accumulate_sampled(
     profile: dict[str, object],
     names: list[str | None],
@@ -62,28 +81,38 @@ def _accumulate_sampled(
     for position, stack in enumerate(samples):
         if not isinstance(stack, list):
             return False
-        weight = weights[position] if position < len(weights) else 1
-        if (
-            not isinstance(weight, int | float)
-            or isinstance(weight, bool)
-            or weight <= 0
-        ):
-            weight = 1
+        weight = _sample_weight(cast("list[object]", weights), position)
         ancestor: str | None = None
         for frame_index in stack:
-            if (
-                not isinstance(frame_index, int)
-                or isinstance(frame_index, bool)
-                or not 0 <= frame_index < len(names)
-            ):
+            if not _valid_index(frame_index, len(names)):
                 return False
             current = names[frame_index]
             if current is None:
                 continue
             if ancestor is not None:
                 key = (ancestor, current)
-                edges[key] = edges.get(key, 0) + float(weight)
+                edges[key] = edges.get(key, 0) + weight
             ancestor = current
+    return True
+
+
+def _open_event(
+    event: dict[str, object],
+    names: list[str | None],
+    stack: list[str | None],
+    edges: dict[tuple[str, str], float],
+) -> bool:
+    """Replay one ``O`` event: validate the frame and count the in-scope edge."""
+    frame_index = event.get("frame")
+    if not _valid_index(frame_index, len(names)):
+        return False
+    current = names[frame_index]
+    if current is not None:
+        ancestor = next((name for name in reversed(stack) if name is not None), None)
+        if ancestor is not None:
+            key = (ancestor, current)
+            edges[key] = edges.get(key, 0) + 1
+    stack.append(current)
     return True
 
 
@@ -104,22 +133,8 @@ def _accumulate_evented(
         event = cast("dict[str, object]", raw_event)
         kind = event.get("type")
         if kind == "O":
-            frame_index = event.get("frame")
-            if (
-                not isinstance(frame_index, int)
-                or isinstance(frame_index, bool)
-                or not 0 <= frame_index < len(names)
-            ):
+            if not _open_event(event, names, stack, edges):
                 return False
-            current = names[frame_index]
-            if current is not None:
-                ancestor = next(
-                    (name for name in reversed(stack) if name is not None), None
-                )
-                if ancestor is not None:
-                    key = (ancestor, current)
-                    edges[key] = edges.get(key, 0) + 1
-            stack.append(current)
         elif kind == "C":
             if not stack:
                 return False
@@ -127,6 +142,34 @@ def _accumulate_evented(
         else:
             return False
     return True
+
+
+def _accumulate_profiles(
+    profiles: list[object],
+    names: list[str | None],
+    edges: dict[tuple[str, str], float],
+    profile_path: Path,
+) -> None:
+    """Accumulate every recognised profile; raise if none was usable."""
+    converted = False
+    for raw_profile in profiles:
+        if not isinstance(raw_profile, dict):
+            continue
+        profile = cast("dict[str, object]", raw_profile)
+        kind = profile.get("type")
+        if kind == "sampled":
+            ok = _accumulate_sampled(profile, names, edges)
+        elif kind == "evented":
+            ok = _accumulate_evented(profile, names, edges)
+        else:
+            continue
+        if not ok:
+            raise TraceFormatError(
+                cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path)
+            )
+        converted = True
+    if not converted:
+        raise TraceFormatError(cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path))
 
 
 def convert_speedscope(
@@ -151,24 +194,7 @@ def convert_speedscope(
     # Fractional sample weights accumulate as-is and round half-up only at
     # emission, so their combined contribution is never truncated away.
     edges: dict[tuple[str, str], float] = {}
-    converted = False
-    for profile in profiles:
-        if not isinstance(profile, dict):
-            continue
-        if profile.get("type") == "sampled":
-            if not _accumulate_sampled(profile, names, edges):
-                raise TraceFormatError(
-                    cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path)
-                )
-            converted = True
-        elif profile.get("type") == "evented":
-            if not _accumulate_evented(profile, names, edges):
-                raise TraceFormatError(
-                    cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path)
-                )
-            converted = True
-    if not converted:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path))
+    _accumulate_profiles(profiles, names, edges, profile_path)
 
     workloads = (workload,) if workload else ()
     records = [

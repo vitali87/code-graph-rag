@@ -20,7 +20,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import cast
 from urllib.parse import unquote, urlparse
 
 from .. import constants as cs
@@ -31,9 +31,6 @@ from .records import (
     TraceHeader,
     write_trace_file,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +109,48 @@ def _project_frame(
     return _ProfileFrame(path=path, qualname=name, line=line + 1)
 
 
+def _int_ids(values: object) -> bool:
+    """Whether ``values`` is a list of plain (non-bool) integers."""
+    return isinstance(values, list) and all(
+        isinstance(v, int) and not isinstance(v, bool) for v in values
+    )
+
+
+def _parse_nodes(
+    nodes: list[object], root_prefix: str, profile_path: Path
+) -> tuple[dict[int, _ProfileFrame | None], dict[int, list[int]], dict[int, int]]:
+    """Validate each profile node and index frames, children, and hit counts."""
+    frames: dict[int, _ProfileFrame | None] = {}
+    children: dict[int, list[int]] = {}
+    hits: dict[int, int] = {}
+    for raw_node in nodes:
+        if not isinstance(raw_node, dict):
+            raise TraceFormatError(
+                cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
+            )
+        node = cast("dict[str, object]", raw_node)
+        node_id = node.get("id")
+        call_frame = node.get("callFrame")
+        raw_children = node.get("children", [])
+        if (
+            not isinstance(node_id, int)
+            or isinstance(node_id, bool)
+            or node_id in children
+            or not isinstance(call_frame, dict)
+            or not _int_ids(raw_children)
+        ):
+            raise TraceFormatError(
+                cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
+            )
+        frames[node_id] = _project_frame(
+            cast("dict[str, object]", call_frame), root_prefix
+        )
+        children[node_id] = list(cast("list[int]", raw_children))
+        hit_count = node.get("hitCount", 0)
+        hits[node_id] = hit_count if isinstance(hit_count, int) else 0
+    return frames, children, hits
+
+
 def convert_cpuprofile(
     profile_path: Path,
     repo_root: Path,
@@ -130,34 +169,7 @@ def convert_cpuprofile(
         raise TraceFormatError(cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
 
     root_prefix = repo_root.resolve().as_posix() + "/"
-    frames: dict[int, _ProfileFrame | None] = {}
-    children: dict[int, list[int]] = {}
-    hits: dict[int, int] = {}
-    for node in nodes:
-        if not isinstance(node, dict):
-            raise TraceFormatError(
-                cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
-            )
-        node_id = node.get("id")
-        call_frame = node.get("callFrame")
-        raw_children = node.get("children", [])
-        if (
-            not isinstance(node_id, int)
-            or isinstance(node_id, bool)
-            or node_id in children
-            or not isinstance(call_frame, dict)
-            or not isinstance(raw_children, list)
-            or not all(
-                isinstance(c, int) and not isinstance(c, bool) for c in raw_children
-            )
-        ):
-            raise TraceFormatError(
-                cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
-            )
-        frames[node_id] = _project_frame(call_frame, root_prefix)
-        children[node_id] = list(raw_children)
-        hit_count = node.get("hitCount", 0)
-        hits[node_id] = hit_count if isinstance(hit_count, int) else 0
+    frames, children, hits = _parse_nodes(nodes, root_prefix, profile_path)
 
     # A well-formed profile is a forest: every child id exists and has
     # exactly one parent. Anything else (dangling ids, shared children,

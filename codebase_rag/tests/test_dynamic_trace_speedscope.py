@@ -240,3 +240,14 @@ def test_recognised_profiles_with_malformed_payloads_are_rejected(tmp_path, prof
         convert_speedscope(
             profile_path, output=tmp_path / "out.jsonl", include=("MyApp",)
         )
+
+
+def test_non_finite_sample_weights_default_to_one():
+    # json.loads accepts NaN/Infinity; a non-finite weight must not corrupt the
+    # aggregated count, so it falls back to 1 like any other invalid weight.
+    from codebase_rag.trace.speedscope import _sample_weight
+
+    assert _sample_weight([float("inf")], 0) == 1.0
+    assert _sample_weight([float("-inf")], 0) == 1.0
+    assert _sample_weight([float("nan")], 0) == 1.0
+    assert _sample_weight([2.5], 0) == 2.5
