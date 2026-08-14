@@ -133,3 +133,9 @@ def test_blank_lines_are_skipped(tmp_path):
     _header, records = read_trace_file(trace_path)
 
     assert list(records) == []
+
+
+def test_lua_language_tag_constant():
+    # The Lua tracer's subprocess tests skip without an interpreter, so this
+    # in-process check keeps the language-tag constant covered.
+    assert cs.TRACE_LANGUAGE_LUA == "lua"
