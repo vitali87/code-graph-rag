@@ -154,6 +154,21 @@ def test_convert_command_fails_cleanly_on_malformed_profile(tmp_path):
     assert "cpuprofile" in result.output.lower()
 
 
+def test_convert_command_fails_cleanly_on_non_utf8_profile(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    profile_path = tmp_path / "invalid.profile"
+    profile_path.write_bytes(b"\xff\xfe\x00\x01")
+
+    result = CliRunner().invoke(
+        cli,
+        ["convert", str(profile_path), "--repo-path", str(repo)],
+    )
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
 def test_convert_command_sniffs_speedscope_and_requires_include(tmp_path):
     import json as jsonlib
 

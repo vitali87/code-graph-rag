@@ -177,7 +177,13 @@ def convert_cmd(
         count = _convert_profile(
             profile_file, repo_path, resolved_output, include, workload
         )
-    except (TraceFormatError, OSError, json.JSONDecodeError, _ConvertUsageError) as e:
+    except (
+        TraceFormatError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        _ConvertUsageError,
+    ) as e:
         logger.error(str(e))
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
