@@ -17,6 +17,7 @@ ancestor, mirroring the JVM agent's stack walk.
 from __future__ import annotations
 
 import json
+import math
 from typing import TYPE_CHECKING, TypeGuard, cast
 
 from .. import constants as cs
@@ -57,7 +58,12 @@ def _valid_index(value: object, count: int) -> TypeGuard[int]:
 def _sample_weight(weights: list[object], position: int) -> float:
     """The sample's weight, defaulting non-positive or non-numeric values to 1."""
     weight = weights[position] if position < len(weights) else 1
-    if not isinstance(weight, int | float) or isinstance(weight, bool) or weight <= 0:
+    if (
+        not isinstance(weight, int | float)
+        or isinstance(weight, bool)
+        or not math.isfinite(weight)
+        or weight <= 0
+    ):
         return 1.0
     return float(weight)
 
