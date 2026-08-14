@@ -224,8 +224,8 @@ class JsFrameResolver:
 
 _DOTNET_ARITY = re.compile(r"`\d+")
 _DOTNET_STATE_MACHINE = re.compile(r"^<(\w+)>d__\d+$")
-_DOTNET_LAMBDA_BODY = re.compile(r"^<(\w+)>b__[\w_]+$")
-_DOTNET_DISPLAY_CLASS = re.compile(r"^<>c(__DisplayClass[\w_]*)?$")
+_DOTNET_LAMBDA_BODY = re.compile(r"^<(\w+)>b__\w+$")
+_DOTNET_DISPLAY_CLASS = re.compile(r"^<>c(__DisplayClass\w*)?$")
 _DOTNET_ACCESSOR = re.compile(r"^(?:get|set)_(\w+)$")
 
 
