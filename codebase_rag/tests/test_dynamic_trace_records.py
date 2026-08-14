@@ -145,3 +145,4 @@ def test_lua_language_tag_constant():
 
     importlib.reload(trace_constants)
     assert trace_constants.TRACE_LANGUAGE_LUA == "lua"
+    assert trace_constants.TRACE_LANGUAGE_DART == "dart"

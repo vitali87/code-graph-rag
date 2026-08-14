@@ -9,8 +9,9 @@ graph alongside the statically derived `CALLS` edges.
 Currently supported runtimes: **Python** (3.12+, via `sys.monitoring`),
 **Java/Scala** (zero-dependency `java.lang.instrument` agent, JDK 24+),
 **Node.js** (V8 cpuprofile conversion), **.NET** (dotnet-trace speedscope
-conversion), and **PHP** (Xdebug trace conversion), and **Lua** (a pure-Lua `debug.sethook`
-agent). Remaining runtimes are tracked in
+conversion), and **PHP** (Xdebug trace conversion), **Lua** (a pure-Lua `debug.sethook`
+agent), and **Dart** (a VM Service sample collector). Remaining runtimes
+are tracked in
 [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
@@ -192,6 +193,29 @@ C-function boundaries (`pcall`, `table.sort` comparators) are seen through
 to the nearest Lua caller; under LuaJIT the hook disables JIT compilation
 on traced paths and the module's `write()` must be called explicitly at
 exit (plain tables have no `__gc` there).
+
+## Recording a Dart trace
+
+A small in-repo Dart tool (`codebase_rag/trace/dart_collector/`, one
+`vm_service` dependency fetched with `dart pub get`) runs the target under
+the VM's own sampling profiler, pulls the CPU samples over the VM Service
+protocol when the program pauses at exit, and writes the interchange
+format directly:
+
+```bash
+cd codebase_rag/trace/dart_collector && dart pub get   # once
+dart bin/cgr_trace_collect.dart --repo /path/to/your-repo \
+    --workload smoke -- /path/to/your-repo/main.dart
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+Sampled stacks make dispatch through function values, callbacks, and
+`dynamic`-typed calls visible; counts are sample counts, not call counts,
+so give workloads enough CPU time for the sampler to observe them.
+Closures and async continuations surface as `<anonymous>` frames and
+resolve to their enclosing declaration by line span (the static tier
+creates no closure nodes). Extension methods (`Ext|method`) and setter
+names (`value=`) are normalized to their source spellings.
 
 ## Ingesting a trace
 

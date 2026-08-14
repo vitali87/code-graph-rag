@@ -1,0 +1,9 @@
+name: cgr_trace_collector
+description: >-
+  Collects Dart VM Service CPU samples from a traced run and writes the cgr
+  trace interchange format (issue #1255).
+publish_to: none
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  vm_service: ^15.0.0

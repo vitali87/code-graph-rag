@@ -368,6 +368,62 @@ def test_ingest_dispatches_dotnet_traces_to_name_resolution(tmp_path):
     assert to[2].endswith("MyApp.Worker.Step")
 
 
+def test_ingest_dispatches_dart_traces_to_span_resolution(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    graph = _FakeGraph(
+        [
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.lib.registry.Registry.handle",
+                "lib/registry.dart",
+                8,
+                12,
+            ),
+            _callable_row(
+                cs.NodeLabel.FUNCTION,
+                f"{_PROJECT}.lib.registry.greet",
+                "lib/registry.dart",
+                14,
+                16,
+            ),
+        ],
+        [],
+    )
+    header = TraceHeader(
+        version=cs.TRACE_FORMAT_VERSION,
+        language=cs.TRACE_LANGUAGE_DART,
+        repo_root=str(repo),
+        tracer="cgr-trace-dart",
+    )
+    write_trace_file(
+        trace_path,
+        header,
+        [
+            CallRecord(
+                caller=FramePoint(
+                    path=str(repo / "lib/registry.dart"), qualname="handle", line=8
+                ),
+                callee=FramePoint(
+                    path=str(repo / "lib/registry.dart"), qualname="greet", line=14
+                ),
+                count=5,
+                workloads=("dart-run",),
+                receiver_types=(),
+            )
+        ],
+    )
+
+    summary = ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    assert summary.edges == 1
+    assert summary.unresolved == 0
+    ((frm, _rel, to, _props),) = graph.edges
+    assert frm[2].endswith("Registry.handle")
+    assert to[2].endswith("registry.greet")
+
+
 def test_ingest_counts_unresolved_frames(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
