@@ -22,6 +22,7 @@ from ..services import IngestorProtocol, QueryProtocol
 from .records import read_trace_file
 from .resolution import (
     CallableNode,
+    DotnetFrameResolver,
     FrameResolver,
     JsFrameResolver,
     JvmFrameResolver,
@@ -49,6 +50,8 @@ def _resolver_for(
         return JvmFrameResolver(nodes)
     if header.language == cs.TRACE_LANGUAGE_JS:
         return JsFrameResolver(repo_root, nodes)
+    if header.language == cs.TRACE_LANGUAGE_DOTNET:
+        return DotnetFrameResolver(nodes)
     return FrameResolver(repo_root, nodes)
 
 
