@@ -223,10 +223,15 @@ Go's own profiler does the capture; `go test` exposes it directly, and the
 converter reads the pprof protobuf without dependencies:
 
 ```bash
-go test -cpuprofile cpu.out -gcflags=all=-l ./...
+go test -cpuprofile cpu.out -gcflags=all=-l ./mypkg
 cgr trace convert cpu.out --repo-path /path/to/your-repo --workload go-test
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
+
+Name one package (`./mypkg`), not `./...`: `go test` runs each package's
+test binary from that package's own source directory, so `./...` scatters a
+separate relative `cpu.out` into every package and the converter reads only
+one. Trace a single package per run, or convert each generated profile.
 
 Sampled stacks make dispatch through interface values and function values
 visible; counts are sample counts, so give workloads enough CPU time.

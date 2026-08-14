@@ -160,6 +160,7 @@ def test_generic_receiver_methods_keep_their_member_name():
     assert _bare_name("main.Map[go.shape.int]") == "Map"
     assert _bare_name("main.(*Box[go.shape.[]uint8]).Put") == "Put"
     assert _bare_name("main.runAll.func1") == "<anonymous>"
+    assert _bare_name("main.runAll.func1.1") == "<anonymous>"
 
 
 def test_workload_label_lands_on_every_record(tmp_path):
@@ -173,6 +174,14 @@ def test_workload_label_lands_on_every_record(tmp_path):
 def test_malformed_profile_is_rejected(tmp_path):
     profile_path = tmp_path / "broken.out"
     profile_path.write_bytes(b"not a pprof")
+
+    with pytest.raises(ValueError):
+        convert_pprof(profile_path, repo_root=tmp_path, output=tmp_path / "out.jsonl")
+
+
+def test_truncated_gzip_profile_is_rejected(tmp_path):
+    profile_path = tmp_path / "truncated.out"
+    profile_path.write_bytes(gzip.compress(b"pprof")[:-3])
 
     with pytest.raises(ValueError):
         convert_pprof(profile_path, repo_root=tmp_path, output=tmp_path / "out.jsonl")

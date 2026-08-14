@@ -181,10 +181,14 @@ def _bare_name(symbol: str) -> str:
     segments = [s for s in tail.split(".") if s and not s.startswith("(")]
     if not segments:
         return cs.TRACE_QUALNAME_ANONYMOUS
-    leaf = segments[-1]
-    if _GO_CLOSURE_SEGMENT.match(leaf):
+    # A nested closure surfaces as `main.runAll.func1.1`; its final segment is
+    # a bare number, so test every trailing run of segments, not just the leaf.
+    if any(
+        _GO_CLOSURE_SEGMENT.fullmatch(".".join(segments[index:]))
+        for index in range(len(segments))
+    ):
         return cs.TRACE_QUALNAME_ANONYMOUS
-    return leaf
+    return segments[-1]
 
 
 def convert_pprof(
@@ -196,7 +200,12 @@ def convert_pprof(
     """Write ``profile_path``'s project call edges to ``output``; returns count."""
     raw = profile_path.read_bytes()
     if raw[:2] == b"\x1f\x8b":
-        raw = gzip.decompress(raw)
+        try:
+            raw = gzip.decompress(raw)
+        except (OSError, EOFError) as e:
+            raise TraceFormatError(
+                cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)
+            ) from e
     try:
         parsed = list(_fields(raw))
     except TraceFormatError as e:
