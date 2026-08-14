@@ -61,7 +61,12 @@ final class MethodEntryTransformer implements ClassFileTransformer {
 
     private boolean included(String internalName) {
         for (String prefix : includeInternalPrefixes) {
-            if (internalName.startsWith(prefix)) {
+            // Boundary-aware: include=com/example must not match the sibling
+            // package com/exampleevil, only com/example itself, members of
+            // the package, or nested classes of a class named by the prefix.
+            if (internalName.equals(prefix)
+                    || internalName.startsWith(prefix + "/")
+                    || internalName.startsWith(prefix + "$")) {
                 return true;
             }
         }

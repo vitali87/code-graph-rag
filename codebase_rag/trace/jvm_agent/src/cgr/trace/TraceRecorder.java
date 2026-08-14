@@ -47,7 +47,11 @@ public final class TraceRecorder {
     private static volatile String[] includePrefixes = new String[0];
     private static volatile String repoRoot = "";
     private static volatile Path outputPath = Path.of("cgr-trace.jsonl");
-    private static volatile String currentWorkload = null;
+    // Per-thread with inheritance: a test runner labelling its own thread
+    // also labels workers it spawns afterwards, and concurrent runners
+    // cannot clobber each other's provenance.
+    private static final InheritableThreadLocal<String> WORKLOAD =
+            new InheritableThreadLocal<>();
 
     private TraceRecorder() {}
 
@@ -55,13 +59,18 @@ public final class TraceRecorder {
         includePrefixes = includes.clone();
         repoRoot = repo;
         outputPath = output;
-        currentWorkload = workload;
+        if (workload != null) {
+            WORKLOAD.set(workload);
+        }
         Runtime.getRuntime().addShutdownHook(new Thread(TraceRecorder::write, "cgr-trace-writer"));
     }
 
-    /** Tags subsequently recorded calls with a workload label (test id, scenario). */
+    /**
+     * Tags calls recorded on this thread (and threads it spawns afterwards)
+     * with a workload label (test id, scenario).
+     */
     public static void setWorkload(String workload) {
-        currentWorkload = workload;
+        WORKLOAD.set(workload);
     }
 
     /**
@@ -101,7 +110,7 @@ public final class TraceRecorder {
                 firstLine);
         PairStats stats = PAIRS.computeIfAbsent(key, k -> new PairStats());
         long seen = stats.count.incrementAndGet();
-        String workload = currentWorkload;
+        String workload = WORKLOAD.get();
         if (workload != null) {
             stats.workloads.add(workload);
         }
@@ -117,7 +126,11 @@ public final class TraceRecorder {
 
     private static boolean included(String className) {
         for (String prefix : includePrefixes) {
-            if (className.startsWith(prefix)) {
+            // Boundary-aware: include=com.example must not match the sibling
+            // package com.exampleevil.
+            if (className.equals(prefix)
+                    || className.startsWith(prefix + ".")
+                    || className.startsWith(prefix + "$")) {
                 return true;
             }
         }

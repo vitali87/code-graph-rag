@@ -70,7 +70,7 @@ Agent arguments are semicolon-separated `key=value` pairs:
 | `include=com.example,org.acme` | Package prefixes to instrument (required). Both endpoints of an edge must match; the JDK and third-party code are never instrumented. |
 | `output=cgr-trace.jsonl` | Trace file path (written on JVM exit). |
 | `repo=/abs/path` | Repository root recorded in the trace header. |
-| `workload=label` | Workload label for the whole run. Tests can refine it per case with `cgr.trace.TraceRecorder.setWorkload(...)`. |
+| `workload=label` | Workload label for the run. Tests can refine it per case with `cgr.trace.TraceRecorder.setWorkload(...)`, which labels the calling thread and threads it spawns afterwards, so concurrent runners keep separate provenance. |
 
 The agent instruments method entry and recovers the caller by walking the
 stack to the nearest project frame, seeing through JDK internals,
