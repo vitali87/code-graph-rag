@@ -137,13 +137,26 @@ def test_agent_records_metatable_index_dispatch(tmp_path):
     # Static analysis cannot follow that inheritance; the tracer observes it.
     _header, records = _run_traced_lua(tmp_path, _INDEX_SAMPLE)
 
-    edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
-    dispatch = edges.get(("run", "speak"))
-    assert dispatch is not None, sorted(edges)
+    dispatched = [
+        record
+        for record in records
+        if (record.caller.qualname, record.callee.qualname) == ("run", "speak")
+    ]
+    assert len(dispatched) == 1, [
+        (r.caller.qualname, r.callee.qualname, r.callee.line) for r in records
+    ]
+    dispatch = dispatched[0]
     assert dispatch.count == 4
     assert dispatch.callee.path.endswith("main.lua")
-    # Resolves to the single Animal.speak definition reached via __index.
-    assert dispatch.callee.line > 0
+    # The callee resolves to the single `function Animal:speak()` definition
+    # reached only through the __index chain, not to anything on Dog.
+    sample_lines = textwrap.dedent(_INDEX_SAMPLE).splitlines()
+    speak_line = next(
+        number
+        for number, line in enumerate(sample_lines, start=1)
+        if "function Animal:speak()" in line
+    )
+    assert dispatch.callee.line == speak_line
 
 
 def test_agent_sees_through_c_function_glue(tmp_path):
