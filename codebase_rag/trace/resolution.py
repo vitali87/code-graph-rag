@@ -346,6 +346,26 @@ _DOTNET_DISPLAY_CLASS = re.compile(r"^<>c(__DisplayClass\w*)?$")
 _DOTNET_ACCESSOR = re.compile(r"^(?:get|set)_(\w+)$")
 
 
+def _owner_chain(owner: str) -> tuple[list[str], str | None]:
+    """The declaring type chain and any state-machine source method.
+
+    Splits nested types on ``+``, dropping display classes (lambda hosts) and
+    unwrapping an async state machine (``<RunAsync>d__3``) to the method name it
+    stands for, which supersedes the frame's own method segment.
+    """
+    chain: list[str] = []
+    state_machine_method: str | None = None
+    for part in owner.split(cs.TRACE_DOTNET_NESTED_MARKER):
+        machine = _DOTNET_STATE_MACHINE.match(part)
+        if machine:
+            state_machine_method = machine.group(1)
+            continue
+        if _DOTNET_DISPLAY_CLASS.match(part):
+            continue
+        chain.append(part)
+    return chain, state_machine_method
+
+
 def _local_function_target(host: str, local: str) -> str:
     """The dotted name of a C# local function under its host.
 
@@ -381,15 +401,9 @@ def _demangle_clr_name(name: str) -> str | None:
         owner, separator, method = name.rpartition(cs.SEPARATOR_DOT)
         if not separator:
             return None
-    chain: list[str] = []
-    for part in owner.split(cs.TRACE_DOTNET_NESTED_MARKER):
-        machine = _DOTNET_STATE_MACHINE.match(part)
-        if machine:
-            method = machine.group(1)
-            continue
-        if _DOTNET_DISPLAY_CLASS.match(part):
-            continue
-        chain.append(part)
+    chain, state_machine_method = _owner_chain(owner)
+    if state_machine_method is not None:
+        method = state_machine_method
     if not chain:
         return None
     if constructor:
