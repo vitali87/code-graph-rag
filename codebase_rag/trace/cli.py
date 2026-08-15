@@ -92,11 +92,9 @@ def _convert_for_language(
     if language == cs.TRACE_LANGUAGE_RUST:
         from .rust_pprof import convert_rust_pprof
 
-        if repo_path is None:
-            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
         return convert_rust_pprof(
             profile_file,
-            repo_root=repo_path,
+            repo_root=_require_repo(repo_path),
             output=resolved_output,
             workload=workload,
         )
@@ -105,6 +103,13 @@ def _convert_for_language(
             language=language, supported=cs.TRACE_LANGUAGE_RUST
         )
     )
+
+
+def _require_repo(repo_path: Path | None) -> Path:
+    """Return ``repo_path`` or raise the usage error when a format needs it."""
+    if repo_path is None:
+        raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
+    return repo_path
 
 
 def _convert_profile(
@@ -132,10 +137,11 @@ def _convert_profile(
         # C/C++ instrumented address traces need symbolisation plus the repo.
         from .instrumented import convert_instrumented
 
-        if repo_path is None:
-            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
         return convert_instrumented(
-            profile_file, repo_root=repo_path, output=resolved_output, workload=workload
+            profile_file,
+            repo_root=_require_repo(repo_path),
+            output=resolved_output,
+            workload=workload,
         )
 
     with profile_file.open("rb") as fh:
@@ -145,10 +151,11 @@ def _convert_profile(
         # Go pprof CPU profiles are gzipped protobufs.
         from .pprof import convert_pprof
 
-        if repo_path is None:
-            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
         return convert_pprof(
-            profile_file, repo_root=repo_path, output=resolved_output, workload=workload
+            profile_file,
+            repo_root=_require_repo(repo_path),
+            output=resolved_output,
+            workload=workload,
         )
 
     if profile_file.suffix == ".xt":
@@ -166,10 +173,11 @@ def _convert_profile(
         # V8 cpuprofile: frames carry file URLs, so scoping needs the repo.
         from .cpuprofile import convert_cpuprofile
 
-        if repo_path is None:
-            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
         return convert_cpuprofile(
-            profile_file, repo_root=repo_path, output=resolved_output, workload=workload
+            profile_file,
+            repo_root=_require_repo(repo_path),
+            output=resolved_output,
+            workload=workload,
         )
 
     # dotnet-trace speedscope: frames carry no paths, so scoping needs
