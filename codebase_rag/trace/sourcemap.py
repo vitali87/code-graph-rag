@@ -58,6 +58,11 @@ def _decode_vlq(segment: str) -> list[int]:
         values.append(-magnitude if accumulator & 1 else magnitude)
         accumulator = 0
         shift = 0
+    if shift:
+        # The final digit set the continuation bit but no digit followed: the
+        # segment is truncated, so the whole map is malformed rather than a
+        # field silently dropped.
+        raise ValueError(segment)
     return values
 
 
@@ -110,8 +115,11 @@ class SourceMap:
         segments = self.lines[generated_line]
         if not segments:
             return None
-        columns = [segment[0] for segment in segments]
-        index = bisect.bisect_right(columns, generated_column) - 1
+        # Segments are sorted by generated column; bisect on that key directly
+        # so a minified line's many segments cost no per-lookup allocation.
+        index = (
+            bisect.bisect_right(segments, generated_column, key=lambda seg: seg[0]) - 1
+        )
         if index < 0:
             return None
         _column, source_index, source_line, _source_column = segments[index]

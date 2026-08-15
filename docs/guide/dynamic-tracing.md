@@ -108,14 +108,15 @@ distinguish this from the instrumented Python and JVM tracers:
   `dynamic_call_count` holds sample counts (relative weight), not call
   counts. Lower `--cpu-prof-interval` (microseconds, default 1000) to
   tighten coverage at the cost of larger profiles.
-- **Transpiled output.** Frames point at the JavaScript that executed, but
-  when the build emits source maps (`tsc --sourceMap`, bundlers by default),
-  the converter follows each generated file's `sourceMappingURL` to its
-  `.js.map` and relocates every frame back to its original TypeScript/JavaScript
-  position, so a project built to `dist/` still resolves to the indexed
-  `src/*.ts` nodes. Frames whose generated position has no mapping (runtime
-  glue, an occasional module wrapper) keep their generated location; build with
-  source maps on, and keep the `.js.map` beside the `.js`, to close the gap.
+- **Transpiled output.** Frames point at the JavaScript that executed. Enable
+  source maps in your build (`tsc --sourceMap`; the equivalent option for your
+  bundler, whose default varies by tool and mode) and the converter follows each
+  generated file's `sourceMappingURL` to its `.js.map` and relocates every frame
+  back to its original TypeScript/JavaScript position, so a project built to
+  `dist/` still resolves to the indexed `src/*.ts` nodes. Without source maps,
+  or for a generated position that has no mapping (runtime glue, an occasional
+  module wrapper), the frame keeps its generated `dist/*.js` location; keep the
+  `.js.map` beside the `.js` so the converter can find it.
 
 ## Recording a .NET trace (C#)
 

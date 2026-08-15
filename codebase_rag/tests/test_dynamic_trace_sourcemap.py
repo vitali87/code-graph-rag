@@ -88,6 +88,18 @@ def test_unmapped_line_and_bad_map_return_none(tmp_path):
     assert load_source_map(bad) is None
 
 
+def test_truncated_vlq_segment_rejects_the_map(tmp_path):
+    # A final digit with the continuation bit set but no digit following is a
+    # truncated segment; the map must be rejected, not silently mis-decoded.
+    bad = tmp_path / "bad.js.map"
+    bad.write_text(
+        json.dumps(
+            {"version": 3, "sources": ["../src/a.ts"], "names": [], "mappings": "AAAAg"}
+        )
+    )
+    assert load_source_map(bad) is None
+
+
 def _cpuprofile_node(node_id, name, url, line, column, children):
     return {
         "id": node_id,
