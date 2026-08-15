@@ -453,6 +453,67 @@ def test_ingest_dispatches_dart_traces_to_span_resolution(tmp_path):
     assert to[2].endswith("registry.greet")
 
 
+def test_ingest_dispatches_rust_traces_to_span_resolution(tmp_path):
+    # A dyn Trait dispatch: the demangled callee `speak` resolves by span to the
+    # Dog::speak node, and the runtime-only edge is flagged sampled + missed.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    graph = _FakeGraph(
+        [
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.src.svc.Registry.handle",
+                "src/svc.rs",
+                19,
+                22,
+            ),
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.src.svc.Dog.speak",
+                "src/svc.rs",
+                24,
+                26,
+            ),
+        ],
+        [],
+    )
+    header = TraceHeader(
+        version=cs.TRACE_FORMAT_VERSION,
+        language=cs.TRACE_LANGUAGE_RUST,
+        repo_root=str(repo),
+        tracer=cs.TRACE_TOOL_NAME_RUST_PPROF,
+        sampled=True,
+    )
+    write_trace_file(
+        trace_path,
+        header,
+        [
+            CallRecord(
+                caller=FramePoint(
+                    path=str(repo / "src/svc.rs"), qualname="handle", line=19
+                ),
+                callee=FramePoint(
+                    path=str(repo / "src/svc.rs"), qualname="speak", line=24
+                ),
+                count=6,
+                workloads=("cargo-test",),
+                receiver_types=(),
+            )
+        ],
+    )
+
+    summary = ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    assert summary.edges == 1
+    assert summary.unresolved == 0
+    ((frm, _rel, to, props),) = graph.edges
+    assert frm[2].endswith("Registry.handle")
+    assert to[2].endswith("Dog.speak")
+    assert props[cs.TRACE_PROP_SAMPLED] is True
+    assert props[cs.TRACE_PROP_STATIC_MISSED] is True
+
+
 def test_ingest_counts_unresolved_frames(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

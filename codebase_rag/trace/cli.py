@@ -74,12 +74,51 @@ class _ConvertUsageError(Exception):
     """A convert invocation missing an option the detected format requires."""
 
 
+def _convert_for_language(
+    profile_file: Path,
+    repo_path: Path | None,
+    resolved_output: Path,
+    workload: str | None,
+    language: str,
+) -> int:
+    """Convert with an explicit ``--language`` override, bypassing sniffing.
+
+    Rust pprof profiles are gzipped protobufs indistinguishable from Go's by
+    magic bytes, so an explicit override is the only way to select the Rust
+    demangler.
+    """
+    from .. import constants as cs
+
+    if language == cs.TRACE_LANGUAGE_RUST:
+        from .rust_pprof import convert_rust_pprof
+
+        return convert_rust_pprof(
+            profile_file,
+            repo_root=_require_repo(repo_path),
+            output=resolved_output,
+            workload=workload,
+        )
+    raise _ConvertUsageError(
+        ch.ERR_TRACE_CONVERT_BAD_LANGUAGE.format(
+            language=language, supported=cs.TRACE_LANGUAGE_RUST
+        )
+    )
+
+
+def _require_repo(repo_path: Path | None) -> Path:
+    """Return ``repo_path`` or raise the usage error when a format needs it."""
+    if repo_path is None:
+        raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
+    return repo_path
+
+
 def _convert_profile(
     profile_file: Path,
     repo_path: Path | None,
     resolved_output: Path,
     include: str | None,
     workload: str | None,
+    language: str | None = None,
 ) -> int:
     """Dispatch by profile format and write records; returns the record count.
 
@@ -89,14 +128,20 @@ def _convert_profile(
     """
     import json
 
+    if language is not None:
+        return _convert_for_language(
+            profile_file, repo_path, resolved_output, workload, language
+        )
+
     if profile_file.suffix == ".addrs":
         # C/C++ instrumented address traces need symbolisation plus the repo.
         from .instrumented import convert_instrumented
 
-        if repo_path is None:
-            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
         return convert_instrumented(
-            profile_file, repo_root=repo_path, output=resolved_output, workload=workload
+            profile_file,
+            repo_root=_require_repo(repo_path),
+            output=resolved_output,
+            workload=workload,
         )
 
     with profile_file.open("rb") as fh:
@@ -106,10 +151,11 @@ def _convert_profile(
         # Go pprof CPU profiles are gzipped protobufs.
         from .pprof import convert_pprof
 
-        if repo_path is None:
-            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
         return convert_pprof(
-            profile_file, repo_root=repo_path, output=resolved_output, workload=workload
+            profile_file,
+            repo_root=_require_repo(repo_path),
+            output=resolved_output,
+            workload=workload,
         )
 
     if profile_file.suffix == ".xt":
@@ -127,10 +173,11 @@ def _convert_profile(
         # V8 cpuprofile: frames carry file URLs, so scoping needs the repo.
         from .cpuprofile import convert_cpuprofile
 
-        if repo_path is None:
-            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
         return convert_cpuprofile(
-            profile_file, repo_root=repo_path, output=resolved_output, workload=workload
+            profile_file,
+            repo_root=_require_repo(repo_path),
+            output=resolved_output,
+            workload=workload,
         )
 
     # dotnet-trace speedscope: frames carry no paths, so scoping needs
@@ -170,19 +217,21 @@ def _convert_profile(
 )
 @click.option("--include", default=None, help=ch.HELP_TRACE_INCLUDE)
 @click.option("--workload", default=None, help=ch.HELP_TRACE_WORKLOAD)
+@click.option("--language", default=None, help=ch.HELP_TRACE_LANGUAGE)
 def convert_cmd(
     profile_file: Path,
     repo_path: Path | None,
     output: Path | None,
     include: str | None,
     workload: str | None,
+    language: str | None,
 ) -> None:
     from .. import constants as cs
 
     resolved_output = output or Path(cs.TRACE_DEFAULT_OUTPUT)
     try:
         count = _convert_profile(
-            profile_file, repo_path, resolved_output, include, workload
+            profile_file, repo_path, resolved_output, include, workload, language
         )
     # TraceFormatError subclasses ValueError, so ValueError covers it (and the
     # malformed-number / non-UTF-8 cases) without listing it redundantly.

@@ -281,13 +281,22 @@ def _accumulate_edges(
     return edges
 
 
-def convert_pprof(
+def convert_pprof_profile(
     profile_path: Path,
     repo_root: Path,
     output: Path,
-    workload: str | None = None,
+    workload: str | None,
+    *,
+    build_frame: Callable[[_Function | None, list[str], str], FramePoint | None],
+    language: str,
+    tracer: str,
 ) -> int:
-    """Write ``profile_path``'s project call edges to ``output``; returns count."""
+    """Decode a pprof profile and write its project call edges to ``output``.
+
+    Shared by the Go and Rust converters, which differ only in ``build_frame``
+    (symbol demangling and out-of-scope directories) and the header tags. pprof
+    profiles are sampled, so the header is always flagged ``sampled``.
+    """
     raw = _decompress(profile_path.read_bytes(), profile_path)
     try:
         strings, functions, locations, samples = _decode_profile(raw)
@@ -301,7 +310,7 @@ def convert_pprof(
 
     def _frame(function_id: int) -> FramePoint | None:
         if function_id not in frames:
-            frames[function_id] = _build_frame(
+            frames[function_id] = build_frame(
                 functions.get(function_id), strings, root_prefix
             )
         return frames[function_id]
@@ -321,10 +330,28 @@ def convert_pprof(
     ]
     header = TraceHeader(
         version=cs.TRACE_FORMAT_VERSION,
-        language=cs.TRACE_LANGUAGE_GO,
+        language=language,
         repo_root=str(repo_root),
-        tracer=cs.TRACE_TOOL_NAME_PPROF,
+        tracer=tracer,
         sampled=True,
     )
     write_trace_file(output, header, records)
     return len(records)
+
+
+def convert_pprof(
+    profile_path: Path,
+    repo_root: Path,
+    output: Path,
+    workload: str | None = None,
+) -> int:
+    """Write ``profile_path``'s project call edges to ``output``; returns count."""
+    return convert_pprof_profile(
+        profile_path,
+        repo_root,
+        output,
+        workload,
+        build_frame=_build_frame,
+        language=cs.TRACE_LANGUAGE_GO,
+        tracer=cs.TRACE_TOOL_NAME_PPROF,
+    )

@@ -266,6 +266,36 @@ def test_convert_command_sniffs_pprof_and_requires_repo_path(tmp_path):
     assert "--repo-path" in result.output
 
 
+def test_convert_command_language_rust_routes_to_rust_and_requires_repo(tmp_path):
+    # Rust pprof is gzipped protobuf like Go's, so --language forces the Rust
+    # demangler; the Rust converter still needs --repo-path to scope frames.
+    import gzip as gziplib
+
+    profile_path = tmp_path / "cpu.pb.gz"
+    profile_path.write_bytes(gziplib.compress(b"\x00"))
+
+    result = CliRunner().invoke(
+        cli, ["convert", str(profile_path), "--language", "rust"]
+    )
+
+    assert result.exit_code == 1
+    assert "--repo-path" in result.output
+
+
+def test_convert_command_rejects_unknown_language(tmp_path):
+    import gzip as gziplib
+
+    profile_path = tmp_path / "cpu.pb.gz"
+    profile_path.write_bytes(gziplib.compress(b"\x00"))
+
+    result = CliRunner().invoke(
+        cli, ["convert", str(profile_path), "--language", "cobol"]
+    )
+
+    assert result.exit_code == 1
+    assert "cobol" in result.output
+
+
 def test_convert_command_sniffs_addrs_and_requires_repo_path(tmp_path):
     addrs_path = tmp_path / "cgr-trace.addrs"
     addrs_path.write_text("exe /bin/app\nslide 0\n1000 2000 1\n")
