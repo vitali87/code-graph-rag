@@ -6,11 +6,39 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import textwrap
+
 import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.trace.records import read_trace_file
 from codebase_rag.trace.xdebug import convert_xdebug_trace
+
+
+def _php_with_xdebug() -> str | None:
+    """The php interpreter path when it can load Xdebug, else None.
+
+    Evaluated at import (collection) time, so the probe is bounded by a finite
+    timeout: a stalled interpreter must degrade to "unavailable", never hang
+    pytest collection.
+    """
+    php = shutil.which("php")
+    if php is None:
+        return None
+    try:
+        probe = subprocess.run(
+            [php, "-r", 'echo extension_loaded("xdebug") ? "yes" : "no";'],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return php if probe.stdout.strip() == "yes" else None
+
 
 _HEADER = "Version: 3.5.3\nFile format: 4\nTRACE START [2026-08-14 02:07:42]\n"
 _FOOTER = "\t\t\t0.001855\t479056\nTRACE END   [2026-08-14 02:07:42]\n"
@@ -137,6 +165,24 @@ def test_callee_defining_files_are_recovered_from_child_call_sites(tmp_path):
     assert handle.callee.line == 16
 
 
+def test_instance_calls_capture_the_concrete_receiver_class(tmp_path):
+    # Xdebug names an instance call with the runtime class, so the converter
+    # records which implementation ran; static calls carry no receiver type.
+    repo = tmp_path.as_posix()
+    _count, _header, records = _convert(tmp_path, _sample_rows(repo))
+
+    edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
+    assert edges[("describeAnimal", r"App\Services\Dog->sound")].receiver_types == (
+        "Dog",
+    )
+    assert edges[("describeAnimal", r"App\Services\Cat->sound")].receiver_types == (
+        "Cat",
+    )
+    # A static call is not dynamic dispatch: no receiver type.
+    handle = edges[("{main}", r"App\Services\Registry::handle")]
+    assert handle.receiver_types == ()
+
+
 def test_workload_label_lands_on_every_record(tmp_path):
     repo = tmp_path.as_posix()
     _count, _header, records = _convert(
@@ -154,3 +200,64 @@ def test_malformed_trace_is_rejected(tmp_path):
 
     with pytest.raises(ValueError):
         convert_xdebug_trace(trace_path, output=tmp_path / "out.jsonl")
+
+
+_php = _php_with_xdebug()
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(_php is None, reason="php with the Xdebug extension is unavailable")
+def test_live_xdebug_trace_captures_polymorphic_dispatch(tmp_path):
+    # dispatch(Animal) calls $a->sound() through the interface; static analysis
+    # cannot know which implementation runs. The trace records the concrete
+    # Dog/Cat receiver on each edge, and a trait method called on the using
+    # class is captured too.
+    (tmp_path / "app.php").write_text(
+        textwrap.dedent("""\
+            <?php
+            interface Animal { public function sound(): string; }
+            class Dog implements Animal { public function sound(): string { return "woof"; } }
+            class Cat implements Animal { public function sound(): string { return "meow"; } }
+            trait TGreeter { public function greet(): string { return get_class($this); } }
+            class Service { use TGreeter; }
+            function dispatch(Animal $a): string { return $a->sound(); }
+            function run(): void {
+                foreach ([new Dog(), new Cat(), new Dog()] as $a) { dispatch($a); }
+                (new Service())->greet();
+            }
+            run();
+            """)
+    )
+    assert _php is not None
+    subprocess.run(
+        [
+            _php,
+            "-d",
+            "xdebug.mode=trace",
+            "-d",
+            "xdebug.start_with_request=yes",
+            "-d",
+            "xdebug.trace_format=1",
+            "-d",
+            "xdebug.output_dir=.",
+            "-d",
+            "xdebug.trace_output_name=run",
+            "app.php",
+        ],
+        check=True,
+        capture_output=True,
+        cwd=tmp_path,
+    )
+    trace = next(tmp_path.glob("run.xt*"))
+    output = tmp_path / "trace.jsonl"
+    count = convert_xdebug_trace(trace, output=output, workload="phpunit")
+
+    assert count > 0
+    _header, records_iter = read_trace_file(output)
+    edges = {(r.caller.qualname, r.callee.qualname): r for r in records_iter}
+    dog = edges[("dispatch", "Dog->sound")]
+    assert dog.count == 2
+    assert dog.receiver_types == ("Dog",)
+    assert edges[("dispatch", "Cat->sound")].receiver_types == ("Cat",)
+    # The trait method greet() called on the using class is observed too.
+    assert edges[("run", "Service->greet")].receiver_types == ("Service",)

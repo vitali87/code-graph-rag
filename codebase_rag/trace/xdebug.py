@@ -113,6 +113,22 @@ def _nearest_opaque_ancestor(calls: list[_Call], call: _Call) -> _Call | None:
     return calls[ancestor] if ancestor is not None else None
 
 
+def _receiver_types(qualname: str) -> tuple[str, ...]:
+    """The concrete receiver class of an instance call, or ``()``.
+
+    Xdebug names an instance call ``Class->method`` with the *runtime* class of
+    the object, so a call through an interface or base type records which
+    implementation actually ran. Static calls (``Class::method``) are not
+    dynamic dispatch, so they carry no receiver type. The namespace is dropped
+    to match the path-derived graph names.
+    """
+    if cs.TRACE_PHP_INSTANCE_SEPARATOR not in qualname:
+        return ()
+    owner = qualname.split(cs.TRACE_PHP_INSTANCE_SEPARATOR, 1)[0]
+    owner = owner.rsplit(cs.TRACE_PHP_NAMESPACE_SEPARATOR, 1)[-1].strip()
+    return (owner,) if owner else ()
+
+
 def convert_xdebug_trace(
     trace_path: Path,
     output: Path,
@@ -155,7 +171,7 @@ def convert_xdebug_trace(
             callee=callee,
             count=count,
             workloads=workloads,
-            receiver_types=(),
+            receiver_types=_receiver_types(callee.qualname),
         )
         for (caller, callee), count in edges.items()
     ]
