@@ -1,0 +1,188 @@
+"""Convert Rust pprof CPU profiles to the trace interchange format.
+
+``pprof-rs`` (``cargo flamegraph``, the ``pprof`` crate) writes gzipped
+protobuf profiles in the same wire format as Go, so the decoding here reuses
+the Go pprof reader; only the symbol grammar differs. Samples are observed
+stacks, so parent/child adjacency is a caller/callee relationship the sampler
+saw. Static analysis already resolves monomorphised Rust calls, so the dynamic
+payoff is ``dyn Trait`` dispatch, function pointers, and closures routed across
+boundaries; those appear whenever samples landed there. Counts are sample
+counts, not call counts, and the header is flagged ``sampled``.
+
+Rust symbols carry crate/module paths, trait-qualified receivers, generic
+instantiations, and a trailing legacy-mangling hash
+(``mycrate::svc::Registry::handle::h9f3a...``,
+``<mycrate::Dog as mycrate::Animal>::speak``, ``mycrate::run::{{closure}}``);
+resolution is span-first against declaration lines, so names normalise to their
+bare member form and closures become ``<anonymous>``. Traced builds should
+reduce inlining (``debug = true`` / ``opt-level = 0``) or inlined callees vanish
+from the profile.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING
+
+from .. import constants as cs
+from .pprof import (
+    _accumulate_edges,
+    _decode_profile,
+    _decompress,
+)
+from .records import (
+    CallRecord,
+    FramePoint,
+    TraceFormatError,
+    TraceHeader,
+    write_trace_file,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .pprof import _Function
+
+# A trailing ``::h<hex>`` is the legacy (v0-predecessor) mangling disambiguator
+# that ``rustc_demangle`` leaves on unless the alternate format is used.
+_RUST_LEGACY_HASH = re.compile(r"::h[0-9a-f]+$")
+# ``target`` holds build artifacts; anything under the cargo registry lives
+# outside the repo root and is already excluded by the prefix check.
+_RUST_EXCLUDED_DIR = "target"
+
+
+def _split_top_level(symbol: str) -> list[str]:
+    """Split a Rust path on ``::`` at angle/parenthesis depth zero.
+
+    ``<mycrate::Dog as mycrate::Animal>::speak`` must split into the trait
+    block and ``speak``, not on the ``::`` inside the ``<...>``.
+    """
+    segments: list[str] = []
+    depth = 0
+    start = 0
+    index = 0
+    length = len(symbol)
+    while index < length:
+        char = symbol[index]
+        if char in "<(":
+            depth += 1
+        elif char in ")>":
+            depth = max(depth - 1, 0)
+        elif (
+            char == ":"
+            and depth == 0
+            and index + 1 < length
+            and symbol[index + 1] == ":"
+        ):
+            segments.append(symbol[start:index])
+            index += 2
+            start = index
+            continue
+        index += 1
+    segments.append(symbol[start:])
+    return [s for s in segments if s]
+
+
+def _strip_generics_and_args(segment: str) -> str:
+    """Drop trailing ``<...>`` / ``(...)`` groups from a single path segment."""
+    result: list[str] = []
+    depth = 0
+    for char in segment:
+        if char in "<(":
+            depth += 1
+        elif char in ")>":
+            depth = max(depth - 1, 0)
+        elif depth == 0:
+            result.append(char)
+    return "".join(result)
+
+
+def _bare_name(symbol: str) -> str:
+    """``mycrate::svc::Registry::handle::h9f3a`` as the member name ``handle``.
+
+    Span resolution against declaration lines carries identity; the name is a
+    tiebreak, so crate/module paths, trait qualifiers, generic instantiations,
+    and the legacy hash drop. Closures mark the frame anonymous.
+    """
+    cleaned = _RUST_LEGACY_HASH.sub("", symbol.strip())
+    segments = _split_top_level(cleaned)
+    if any(seg.startswith("{{closure") for seg in segments):
+        return cs.TRACE_QUALNAME_ANONYMOUS
+    # A trailing ``::<...>`` turbofish (v0 monomorphisation) is generic args, not
+    # the member; drop it so ``util::process::<u32>`` resolves to ``process``.
+    while segments and segments[-1].startswith("<"):
+        segments.pop()
+    if not segments:
+        return cs.TRACE_QUALNAME_ANONYMOUS
+    name = _strip_generics_and_args(segments[-1]).strip()
+    if not name or name.startswith(cs.TRACE_SYNTHETIC_PREFIX) or name.startswith("{"):
+        return cs.TRACE_QUALNAME_ANONYMOUS
+    return name
+
+
+def _build_frame(
+    function: _Function | None, strings: list[str], root_prefix: str
+) -> FramePoint | None:
+    """A project FramePoint for the function, or None if out of scope."""
+    if function is None or not (0 < function.filename_index < len(strings)):
+        return None
+    path = strings[function.filename_index]
+    if not path.startswith(root_prefix):
+        return None
+    if _RUST_EXCLUDED_DIR in path[len(root_prefix) :].split("/"):
+        return None
+    name = (
+        strings[function.name_index] if 0 < function.name_index < len(strings) else ""
+    )
+    return FramePoint(
+        path=path, qualname=_bare_name(name), line=max(function.start_line, 0)
+    )
+
+
+def convert_rust_pprof(
+    profile_path: Path,
+    repo_root: Path,
+    output: Path,
+    workload: str | None = None,
+) -> int:
+    """Write ``profile_path``'s project call edges to ``output``; returns count."""
+    raw = _decompress(profile_path.read_bytes(), profile_path)
+    try:
+        strings, functions, locations, samples = _decode_profile(raw)
+    except TraceFormatError as e:
+        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
+    if not strings or not functions or not samples:
+        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+
+    root_prefix = repo_root.resolve().as_posix() + "/"
+    frames: dict[int, FramePoint | None] = {}
+
+    def _frame(function_id: int) -> FramePoint | None:
+        if function_id not in frames:
+            frames[function_id] = _build_frame(
+                functions.get(function_id), strings, root_prefix
+            )
+        return frames[function_id]
+
+    edges = _accumulate_edges(samples, locations, _frame)
+
+    workloads = (workload,) if workload else ()
+    records = [
+        CallRecord(
+            caller=caller,
+            callee=callee,
+            count=count,
+            workloads=workloads,
+            receiver_types=(),
+        )
+        for (caller, callee), count in edges.items()
+    ]
+    header = TraceHeader(
+        version=cs.TRACE_FORMAT_VERSION,
+        language=cs.TRACE_LANGUAGE_RUST,
+        repo_root=str(repo_root),
+        tracer=cs.TRACE_TOOL_NAME_RUST_PPROF,
+        sampled=True,
+    )
+    write_trace_file(output, header, records)
+    return len(records)
