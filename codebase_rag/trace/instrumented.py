@@ -156,18 +156,19 @@ def convert_instrumented(
     symbols = resolve(exe, slide, addresses)
 
     root_prefix = repo_root.resolve().as_posix() + "/"
-    # An address that symbolised to no source position at all (addr2line/atos
-    # returned an empty name or ``??``) is genuinely unresolved, distinct from an
-    # address that resolved to glue outside the repository; report the former so
-    # a symbolisation gap is visible rather than silently dropped.
+    # An address that symbolised to no usable source position (addr2line/atos
+    # returned an empty/``??`` name, or a name but no file/line because debug
+    # info was stripped) is genuinely unresolved, distinct from an address that
+    # resolved to a real position in glue outside the repository; report the
+    # former so a symbolisation gap is visible rather than silently dropped.
     unresolved: set[int] = set()
 
     def _frame(address: int) -> FramePoint | None:
         name, path, line = symbols.get(address, ("", "", 0))
-        if not name or name == "??":
+        if not name or name == "??" or not path or path == "??" or line <= 0:
             unresolved.add(address)
             return None
-        if not path.startswith(root_prefix) or line <= 0:
+        if not path.startswith(root_prefix):
             return None
         return FramePoint(path=path, qualname=_bare_name(name), line=line)
 

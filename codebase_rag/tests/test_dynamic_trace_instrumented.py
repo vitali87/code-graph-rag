@@ -122,15 +122,19 @@ def test_malformed_addrs_is_rejected(tmp_path):
 
 
 def test_unresolved_addresses_are_reported(tmp_path):
-    # An address that symbolises to no source position (stripped symbols /
-    # missing debug info) must be reported, not silently dropped.
+    # An address that symbolises to no usable source position must be reported,
+    # not silently dropped. Two failure modes: no name at all (`??`), and a
+    # valid name with no file/line because debug info was stripped.
     repo = tmp_path.as_posix()
     symbols = {
         0x1000: ("main", f"{repo}/main.c", 3),
         0x2000: ("run", f"{repo}/main.c", 7),
         0x3000: ("??", "??", 0),
+        0x4000: ("stripped_fn", "", 0),
     }
-    addrs_path = _write_addrs(tmp_path, [(0x1000, 0x2000, 4), (0x2000, 0x3000, 2)])
+    addrs_path = _write_addrs(
+        tmp_path, [(0x1000, 0x2000, 4), (0x2000, 0x3000, 2), (0x2000, 0x4000, 1)]
+    )
 
     messages: list[str] = []
     sink_id = logger.add(messages.append, level="WARNING", format="{message}")
@@ -144,9 +148,12 @@ def test_unresolved_addresses_are_reported(tmp_path):
     finally:
         logger.remove(sink_id)
 
-    # The run -> ?? edge is dropped; only main -> run survives.
+    # Only main -> run survives; both the ?? and the position-less named frame
+    # are dropped, and both are counted in the warning (2 of 4 addresses).
     assert count == 1
-    assert any("did not symbolise" in message for message in messages)
+    assert any(
+        "2 of 4" in message and "did not symbolise" in message for message in messages
+    )
 
 
 cc = shutil.which("cc")
