@@ -171,6 +171,7 @@ class CallGraphTracer:
             language=cs.TRACE_LANGUAGE_PYTHON,
             repo_root=str(self._repo_root),
             tracer=cs.TRACE_TOOL_NAME,
+            sampled=False,
         )
         write_trace_file(output, header, records)
         return len(records)

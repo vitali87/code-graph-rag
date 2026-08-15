@@ -293,6 +293,7 @@ properties:
 | `dynamic_workloads` | Test ids that exercised the edge (capped list). |
 | `dynamic_workload_count` | Uncapped number of distinct workloads. |
 | `dynamic_receiver_types` | Concrete receiver types observed for method calls. |
+| `dynamic_sampled` | `true` when the edge came from a sampling profiler (Go pprof, Node.js/V8, .NET `dotnet-trace`, Dart CPU samples), so its presence and `dynamic_call_count` are approximate; `false` when the tracer observed every call (Python, the JVM agent, Xdebug, the C shim, the Lua hook), so counts are exact. |
 | `static_missed: true` | No matching static `CALLS` edge existed in the graph at ingest time. Dynamic dispatch, reflection, and registries are the common causes; a stale or incomplete static graph produces the same flag. |
 
 An edge with `dynamic: true` and `static_missed: false` is a static edge

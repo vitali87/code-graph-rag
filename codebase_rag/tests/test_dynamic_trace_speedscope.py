@@ -67,6 +67,8 @@ def test_converts_adjacent_project_frames_to_edges(tmp_path):
     count, header, records = _convert(tmp_path, profile)
 
     assert header.language == cs.TRACE_LANGUAGE_DOTNET
+    # A sampled speedscope profile yields approximate edges.
+    assert header.sampled is True
     assert count == len(records)
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
     assert ("MyApp.Services.Registry.Handle", "MyApp.Services.Registry.Greet") in edges
@@ -161,6 +163,9 @@ def test_converts_evented_profiles_from_dotnet_trace(tmp_path):
     count, header, records = _convert(tmp_path, profile)
 
     assert header.language == cs.TRACE_LANGUAGE_DOTNET
+    # An evented profile records explicit open/close events, so its edges are
+    # exact and must not be flagged approximate.
+    assert header.sampled is False
     assert count == len(records)
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
     # Main opened Handle twice through BCL glue; Handle opened Greet once.

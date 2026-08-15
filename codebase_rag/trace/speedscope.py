@@ -149,9 +149,15 @@ def _accumulate_profiles(
     names: list[str | None],
     edges: dict[tuple[str, str], float],
     profile_path: Path,
-) -> None:
-    """Accumulate every recognised profile; raise if none was usable."""
+) -> bool:
+    """Accumulate every recognised profile; raise if none was usable.
+
+    Returns True when any accumulated profile was ``sampled`` (its edges are
+    approximate). An ``evented`` profile records explicit frame open/close
+    observations, so its edges are exact; a file mixing both is approximate.
+    """
     converted = False
+    sampled = False
     for raw_profile in profiles:
         if not isinstance(raw_profile, dict):
             continue
@@ -159,6 +165,7 @@ def _accumulate_profiles(
         kind = profile.get("type")
         if kind == "sampled":
             ok = _accumulate_sampled(profile, names, edges)
+            sampled = sampled or ok
         elif kind == "evented":
             ok = _accumulate_evented(profile, names, edges)
         else:
@@ -170,6 +177,7 @@ def _accumulate_profiles(
         converted = True
     if not converted:
         raise TraceFormatError(cs.TRACE_ERR_BAD_SPEEDSCOPE.format(path=profile_path))
+    return sampled
 
 
 def convert_speedscope(
@@ -194,7 +202,7 @@ def convert_speedscope(
     # Fractional sample weights accumulate as-is and round half-up only at
     # emission, so their combined contribution is never truncated away.
     edges: dict[tuple[str, str], float] = {}
-    _accumulate_profiles(profiles, names, edges, profile_path)
+    sampled = _accumulate_profiles(profiles, names, edges, profile_path)
 
     workloads = (workload,) if workload else ()
     records = [
@@ -212,6 +220,7 @@ def convert_speedscope(
         language=cs.TRACE_LANGUAGE_DOTNET,
         repo_root="",
         tracer=cs.TRACE_TOOL_NAME_SPEEDSCOPE,
+        sampled=sampled,
     )
     write_trace_file(output, header, records)
     return len(records)

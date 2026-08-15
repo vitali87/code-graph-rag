@@ -186,6 +186,7 @@ def convert_instrumented(
         language=cs.TRACE_LANGUAGE_CPP,
         repo_root=str(repo_root),
         tracer=cs.TRACE_TOOL_NAME_INSTRUMENTED,
+        sampled=False,
     )
     write_trace_file(output, header, records)
     return len(records)

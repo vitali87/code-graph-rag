@@ -164,6 +164,7 @@ def convert_xdebug_trace(
         language=cs.TRACE_LANGUAGE_PHP,
         repo_root="",
         tracer=cs.TRACE_TOOL_NAME_XDEBUG,
+        sampled=False,
     )
     write_trace_file(output, header, records)
     return len(records)
