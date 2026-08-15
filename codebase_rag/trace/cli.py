@@ -80,6 +80,7 @@ def _convert_profile(
     resolved_output: Path,
     include: str | None,
     workload: str | None,
+    language: str | None = None,
 ) -> int:
     """Dispatch by profile format and write records; returns the record count.
 
@@ -88,6 +89,28 @@ def _convert_profile(
     for unreadable or malformed profiles.
     """
     import json
+
+    from .. import constants as cs
+
+    if language is not None:
+        # Rust pprof profiles are gzipped protobufs indistinguishable from Go's
+        # by magic bytes, so an explicit override selects the Rust demangler.
+        if language == cs.TRACE_LANGUAGE_RUST:
+            from .rust_pprof import convert_rust_pprof
+
+            if repo_path is None:
+                raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
+            return convert_rust_pprof(
+                profile_file,
+                repo_root=repo_path,
+                output=resolved_output,
+                workload=workload,
+            )
+        raise _ConvertUsageError(
+            ch.ERR_TRACE_CONVERT_BAD_LANGUAGE.format(
+                language=language, supported=cs.TRACE_LANGUAGE_RUST
+            )
+        )
 
     if profile_file.suffix == ".addrs":
         # C/C++ instrumented address traces need symbolisation plus the repo.
@@ -170,19 +193,21 @@ def _convert_profile(
 )
 @click.option("--include", default=None, help=ch.HELP_TRACE_INCLUDE)
 @click.option("--workload", default=None, help=ch.HELP_TRACE_WORKLOAD)
+@click.option("--language", default=None, help=ch.HELP_TRACE_LANGUAGE)
 def convert_cmd(
     profile_file: Path,
     repo_path: Path | None,
     output: Path | None,
     include: str | None,
     workload: str | None,
+    language: str | None,
 ) -> None:
     from .. import constants as cs
 
     resolved_output = output or Path(cs.TRACE_DEFAULT_OUTPUT)
     try:
         count = _convert_profile(
-            profile_file, repo_path, resolved_output, include, workload
+            profile_file, repo_path, resolved_output, include, workload, language
         )
     # TraceFormatError subclasses ValueError, so ValueError covers it (and the
     # malformed-number / non-UTF-8 cases) without listing it redundantly.

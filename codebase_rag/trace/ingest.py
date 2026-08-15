@@ -55,10 +55,11 @@ def _resolver_for(
         cs.TRACE_LANGUAGE_DART,
         cs.TRACE_LANGUAGE_GO,
         cs.TRACE_LANGUAGE_CPP,
+        cs.TRACE_LANGUAGE_RUST,
     ):
         # Lua-agent and Dart-collector frames share V8's shape: repo paths,
         # bare runtime names, 1-based definition lines, <module>/<anonymous>
-        # markers.
+        # markers. Rust pprof frames reduce to the same shape after demangling.
         return JsFrameResolver(repo_root, nodes)
     if header.language == cs.TRACE_LANGUAGE_DOTNET:
         return DotnetFrameResolver(nodes)

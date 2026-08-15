@@ -119,6 +119,13 @@ HELP_TRACE_INCLUDE = (
     "Comma-separated namespace prefixes to keep (dotnet-trace speedscope "
     "profiles carry no file paths, so scoping is by name)."
 )
+HELP_TRACE_LANGUAGE = (
+    "Override the auto-detected source language. Rust pprof profiles share Go's "
+    "gzipped-protobuf format, so pass 'rust' to demangle them as Rust."
+)
+ERR_TRACE_CONVERT_BAD_LANGUAGE = (
+    "Unknown --language '{language}'; supported override values: {supported}."
+)
 ERR_TRACE_CONVERT_NEEDS_REPO = "V8 cpuprofiles need --repo-path to scope frames."
 ERR_TRACE_CONVERT_NEEDS_INCLUDE = (
     "speedscope profiles need --include namespace prefixes to scope frames."
