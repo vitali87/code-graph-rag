@@ -154,11 +154,21 @@ def test_collector_captures_dynamic_dispatch(dynamic_dispatch_trace):
         if (r.caller.qualname, r.callee.qualname) == ("dispatchDynamic", "speak")
     ]
     assert dispatched, sorted({(r.caller.qualname, r.callee.qualname) for r in records})
-    # Each concrete implementation resolves to its own definition line, so a
-    # single dynamic call site maps to the real methods that ran.
     for record in dispatched:
         assert record.callee.path.endswith("main.dart")
-        assert record.callee.line > 0
+    # Both Dog.speak and Cat.speak run through the one dynamic call site, and
+    # each must resolve to its own definition line: a regression that dropped a
+    # receiver or collapsed both onto one line would fail here.
+    speak_defs = {
+        number
+        for number, line in enumerate(
+            textwrap.dedent(_DYNAMIC_SAMPLE).splitlines(), start=1
+        )
+        if "int speak() {" in line
+    }
+    assert len(speak_defs) == 2
+    observed = {record.callee.line for record in dispatched}
+    assert speak_defs <= observed, (sorted(speak_defs), sorted(observed))
 
 
 def test_collector_scopes_and_labels_workloads(dart_trace):
