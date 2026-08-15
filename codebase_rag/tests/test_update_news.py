@@ -34,6 +34,16 @@ class TestExtractBullets:
     def test_empty_fragment_yields_nothing(self) -> None:
         assert extract_bullets("") == []
 
+    def test_normalises_em_and_en_dashes(self) -> None:
+        # House style forbids em/en dashes; the updater must strip them even if
+        # the model ignores the prompt instruction.
+        em, en = chr(0x2014), chr(0x2013)
+        fragment = f"- **Web Search**: search the web {em} fast, over 3{en}5 sources.\n"
+        (bullet,) = extract_bullets(fragment)
+        assert em not in bullet
+        assert en not in bullet
+        assert bullet == "- **Web Search**: search the web - fast, over 3-5 sources."
+
     def test_drops_non_feature_themed_bullets(self) -> None:
         fragment = (
             "- **Release Automation**: NEWS.md refreshes on every release.\n"

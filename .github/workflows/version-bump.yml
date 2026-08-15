@@ -161,7 +161,7 @@ jobs:
           DETAIL=""
           if [ -n "$GHSA" ]; then
             DETAIL=$(gh api "repos/${GITHUB_REPOSITORY}/security-advisories/${GHSA}" \
-              --jq '"\(.summary) (\(.severity) severity, CVSS \(.cvss.score // "n/a")) — advisory [\(.ghsa_id)](https://github.com/'"${GITHUB_REPOSITORY}"'/security/advisories/\(.ghsa_id))\(if .cve_id then " / " + .cve_id else "" end)."' \
+              --jq '"\(.summary) (\(.severity) severity, CVSS \(.cvss.score // "n/a")), advisory [\(.ghsa_id)](https://github.com/'"${GITHUB_REPOSITORY}"'/security/advisories/\(.ghsa_id))\(if .cve_id then " / " + .cve_id else "" end)."' \
               2>/dev/null || true)
           fi
           {
@@ -170,9 +170,9 @@ jobs:
             if [ -n "$DETAIL" ]; then
               echo "$DETAIL"
             elif [ -n "$GHSA" ]; then
-              echo "This release contains a security fix — see advisory [$GHSA](https://github.com/${GITHUB_REPOSITORY}/security/advisories/$GHSA)."
+              echo "This release contains a security fix; see advisory [$GHSA](https://github.com/${GITHUB_REPOSITORY}/security/advisories/$GHSA)."
             else
-              echo "This release contains a security fix — see the [Security Advisories](https://github.com/${GITHUB_REPOSITORY}/security/advisories) page."
+              echo "This release contains a security fix; see the [Security Advisories](https://github.com/${GITHUB_REPOSITORY}/security/advisories) page."
             fi
             echo
             echo "**Upgrading is strongly recommended.**"
@@ -201,7 +201,8 @@ jobs:
             -d @/tmp/req.json \
             "${HIGHLIGHTS_API_URL}/v1/chat/completions" \
           | jq -er '.choices[0].message.content // empty' \
-          | sed -e '/<think>/,/<\/think>/d' > /tmp/highlights.md
+          | sed -e '/<think>/,/<\/think>/d' \
+          | perl -CSD -pe 's/[\x{2014}\x{2013}]/-/g' > /tmp/highlights.md
 
       - name: Generate news bullets
         if: steps.decide.outputs.release == 'true'
@@ -226,7 +227,8 @@ jobs:
             -d @/tmp/newsreq.json \
             "${HIGHLIGHTS_API_URL}/v1/chat/completions" \
           | jq -er '.choices[0].message.content // empty' \
-          | sed -e '/<think>/,/<\/think>/d' > /tmp/newsbullets.md
+          | sed -e '/<think>/,/<\/think>/d' \
+          | perl -CSD -pe 's/[\x{2014}\x{2013}]/-/g' > /tmp/newsbullets.md
 
       - name: Install uv
         if: steps.decide.outputs.release == 'true'
