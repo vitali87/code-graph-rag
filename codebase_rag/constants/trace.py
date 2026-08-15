@@ -73,6 +73,10 @@ TRACE_ERR_ADDRS_DROPPED = (
     "{path} overflowed the shim's edge table: call edges were dropped, so the "
     "trace is incomplete and cannot honour exact invocation counts."
 )
+TRACE_MSG_ADDRS_UNRESOLVED = (
+    "{count} of {total} instrumented addresses did not symbolise to a source "
+    "position (missing debug info or stripped symbols); their edges were dropped."
+)
 TRACE_ERR_BAD_XDEBUG = (
     "{path} is not an Xdebug computerized trace (expected 'File format: 4')."
 )

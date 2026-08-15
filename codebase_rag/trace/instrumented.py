@@ -21,6 +21,8 @@ import subprocess
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from .. import constants as cs
 from .records import (
     CallRecord,
@@ -154,9 +156,17 @@ def convert_instrumented(
     symbols = resolve(exe, slide, addresses)
 
     root_prefix = repo_root.resolve().as_posix() + "/"
+    # An address that symbolised to no source position at all (addr2line/atos
+    # returned an empty name or ``??``) is genuinely unresolved, distinct from an
+    # address that resolved to glue outside the repository; report the former so
+    # a symbolisation gap is visible rather than silently dropped.
+    unresolved: set[int] = set()
 
     def _frame(address: int) -> FramePoint | None:
         name, path, line = symbols.get(address, ("", "", 0))
+        if not name or name == "??":
+            unresolved.add(address)
+            return None
         if not path.startswith(root_prefix) or line <= 0:
             return None
         return FramePoint(path=path, qualname=_bare_name(name), line=line)
@@ -169,6 +179,13 @@ def convert_instrumented(
             continue
         key = (caller, callee)
         edges[key] = edges.get(key, 0) + count
+
+    if unresolved:
+        logger.warning(
+            cs.TRACE_MSG_ADDRS_UNRESOLVED.format(
+                count=len(unresolved), total=len(addresses)
+            )
+        )
 
     workloads = (workload,) if workload else ()
     records = [
