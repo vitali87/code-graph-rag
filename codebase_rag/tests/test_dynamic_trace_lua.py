@@ -56,13 +56,44 @@ _SAMPLE = """
     require("cgr_trace").write()
 """
 
+_INDEX_SAMPLE = """
+    -- OOP via metatables: Dog inherits speak() from Animal through __index,
+    -- so a call on a Dog instance dispatches to Animal.speak. The receiver's
+    -- class and the resolved method are invisible to static analysis.
+    local Animal = {}
+    Animal.__index = Animal
+
+    function Animal:speak()
+        return "woof"
+    end
+
+    local Dog = setmetatable({}, { __index = Animal })
+    Dog.__index = Dog
+
+    function Dog.new()
+        return setmetatable({}, Dog)
+    end
+
+    local function run()
+        local d = Dog.new()
+        local out = ""
+        for _ = 1, 4 do
+            out = out .. d:speak()
+        end
+        return out
+    end
+
+    print(run())
+    require("cgr_trace").write()
+"""
+
 lua = shutil.which("lua")
 pytestmark = pytest.mark.skipif(lua is None, reason="lua interpreter not available")
 
 
-def _run_traced_lua(tmp_path: Path) -> tuple:
+def _run_traced_lua(tmp_path: Path, sample: str = _SAMPLE) -> tuple:
     script = tmp_path / "main.lua"
-    script.write_text(textwrap.dedent(_SAMPLE))
+    script.write_text(textwrap.dedent(sample))
     output = tmp_path / "cgr-trace.jsonl"
     env = dict(
         os.environ,
@@ -98,6 +129,34 @@ def test_agent_records_registry_dispatch_with_exact_counts(tmp_path):
     assert dispatch.callee.path.endswith("main.lua")
     assert dispatch.callee.line > 0
     assert edges[("run_all", "handle")].count == 3
+
+
+def test_agent_records_metatable_index_dispatch(tmp_path):
+    # `d:speak()` finds no `speak` on the Dog instance and resolves it through
+    # the __index chain (Dog -> Animal), so the call lands on Animal.speak.
+    # Static analysis cannot follow that inheritance; the tracer observes it.
+    _header, records = _run_traced_lua(tmp_path, _INDEX_SAMPLE)
+
+    dispatched = [
+        record
+        for record in records
+        if (record.caller.qualname, record.callee.qualname) == ("run", "speak")
+    ]
+    assert len(dispatched) == 1, [
+        (r.caller.qualname, r.callee.qualname, r.callee.line) for r in records
+    ]
+    dispatch = dispatched[0]
+    assert dispatch.count == 4
+    assert dispatch.callee.path.endswith("main.lua")
+    # The callee resolves to the single `function Animal:speak()` definition
+    # reached only through the __index chain, not to anything on Dog.
+    sample_lines = textwrap.dedent(_INDEX_SAMPLE).splitlines()
+    speak_line = next(
+        number
+        for number, line in enumerate(sample_lines, start=1)
+        if "function Animal:speak()" in line
+    )
+    assert dispatch.callee.line == speak_line
 
 
 def test_agent_sees_through_c_function_glue(tmp_path):
