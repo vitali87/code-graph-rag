@@ -334,8 +334,48 @@ class PhpFrameResolver:
 
 _DOTNET_STATE_MACHINE = re.compile(r"^<(\w+)>d__\d+$")
 _DOTNET_LAMBDA_BODY = re.compile(r"^<(\w+)>b__\w+$")
+# A C# local function compiles to ``<EnclosingHost>g__LocalName|N_M``; unlike a
+# lambda it keeps a source name, so it resolves to the node the static tier
+# nests under its host: a method (``Run`` -> ``Run.Local``) or an accessor body
+# (``get_X``/``set_X``, which is not its own scope, so the local nests at class
+# level). A constructor host (``<.ctor>``) carries a dot that the CLR-name
+# splitter consumes before this pattern is reached, so ctor-hosted locals stay
+# unresolved rather than mis-resolved.
+_DOTNET_LOCAL_FUNCTION = re.compile(r"^<(?P<host>\w+)>g__(?P<local>\w+)\|\w+$")
 _DOTNET_DISPLAY_CLASS = re.compile(r"^<>c(__DisplayClass\w*)?$")
 _DOTNET_ACCESSOR = re.compile(r"^(?:get|set)_(\w+)$")
+
+
+def _owner_chain(owner: str) -> tuple[list[str], str | None]:
+    """The declaring type chain and any state-machine source method.
+
+    Splits nested types on ``+``, dropping display classes (lambda hosts) and
+    unwrapping an async state machine (``<RunAsync>d__3``) to the method name it
+    stands for, which supersedes the frame's own method segment.
+    """
+    chain: list[str] = []
+    state_machine_method: str | None = None
+    for part in owner.split(cs.TRACE_DOTNET_NESTED_MARKER):
+        machine = _DOTNET_STATE_MACHINE.match(part)
+        if machine:
+            state_machine_method = machine.group(1)
+            continue
+        if _DOTNET_DISPLAY_CLASS.match(part):
+            continue
+        chain.append(part)
+    return chain, state_machine_method
+
+
+def _local_function_target(host: str, local: str) -> str:
+    """The dotted name of a C# local function under its host.
+
+    A plain method host keeps its name (``Run`` -> ``Run.Local``). An accessor
+    body (``get_X``/``set_X``) has no scope of its own, so the static tier nests
+    its local directly under the class; the host is dropped (``Local``).
+    """
+    if _DOTNET_ACCESSOR.match(host):
+        return local
+    return f"{host}{cs.SEPARATOR_DOT}{local}"
 
 
 def _demangle_clr_name(name: str) -> str | None:
@@ -361,15 +401,9 @@ def _demangle_clr_name(name: str) -> str | None:
         owner, separator, method = name.rpartition(cs.SEPARATOR_DOT)
         if not separator:
             return None
-    chain: list[str] = []
-    for part in owner.split(cs.TRACE_DOTNET_NESTED_MARKER):
-        machine = _DOTNET_STATE_MACHINE.match(part)
-        if machine:
-            method = machine.group(1)
-            continue
-        if _DOTNET_DISPLAY_CLASS.match(part):
-            continue
-        chain.append(part)
+    chain, state_machine_method = _owner_chain(owner)
+    if state_machine_method is not None:
+        method = state_machine_method
     if not chain:
         return None
     if constructor:
@@ -377,6 +411,11 @@ def _demangle_clr_name(name: str) -> str | None:
     lambda_body = _DOTNET_LAMBDA_BODY.match(method)
     if lambda_body:
         method = lambda_body.group(1)
+    local_function = _DOTNET_LOCAL_FUNCTION.match(method)
+    if local_function:
+        method = _local_function_target(
+            local_function.group("host"), local_function.group("local")
+        )
     if not method or "<" in method or any("<" in part for part in chain):
         return None
     return cs.SEPARATOR_DOT.join([*chain, method])
