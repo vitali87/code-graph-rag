@@ -21,6 +21,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from urllib.parse import unquote, urlsplit
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -138,10 +139,65 @@ def load_source_map(map_path: Path) -> SourceMap | None:
     return _from_document(raw, map_path.parent)
 
 
+def _nonneg_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _from_sections(sections: list[object], base_dir: Path) -> SourceMap | None:
+    """Flatten a Source Map v3 index map's ``sections`` into one map.
+
+    Each section places an inner map at a generated ``offset`` (line, column);
+    its segments are shifted by that offset (the column only on the section's
+    first line) and its sources are absolutised, so the combined map resolves a
+    generated position exactly as a flat map would.
+    """
+    combined_sources: list[str] = []
+    combined_lines: list[list[_Segment]] = []
+    for raw_section in sections:
+        if not isinstance(raw_section, dict):
+            return None
+        section = cast("dict[str, object]", raw_section)
+        offset = section.get("offset")
+        if not isinstance(offset, dict):
+            return None
+        offset_fields = cast("dict[str, object]", offset)
+        offset_line = offset_fields.get("line")
+        offset_column = offset_fields.get("column")
+        if not _nonneg_int(offset_line) or not _nonneg_int(offset_column):
+            return None
+        inner = _from_document(section.get("map"), base_dir)
+        if inner is None:
+            return None
+        source_base = len(combined_sources)
+        for source in inner.sources:
+            combined_sources.append((inner.base_dir / source).resolve().as_posix())
+        for index, segments in enumerate(inner.lines):
+            generated_line = cast("int", offset_line) + index
+            while len(combined_lines) <= generated_line:
+                combined_lines.append([])
+            column_shift = cast("int", offset_column) if index == 0 else 0
+            for generated_column, source_index, source_line, source_column in segments:
+                combined_lines[generated_line].append(
+                    (
+                        generated_column + column_shift,
+                        source_base + source_index,
+                        source_line,
+                        source_column,
+                    )
+                )
+    for line in combined_lines:
+        line.sort()
+    return SourceMap(sources=combined_sources, lines=combined_lines, base_dir=base_dir)
+
+
 def _from_document(raw: object, base_dir: Path) -> SourceMap | None:
     if not isinstance(raw, dict):
         return None
     document = cast("dict[str, object]", raw)
+    sections = document.get("sections")
+    if isinstance(sections, list):
+        # A Source Map v3 index map (bundler output) nests maps under sections.
+        return _from_sections(cast("list[object]", sections), base_dir)
     mappings = document.get("mappings")
     sources = document.get("sources")
     if not isinstance(mappings, str) or not isinstance(sources, list):
@@ -178,7 +234,12 @@ def _sniff_map_reference(js_path: Path) -> Path | None:
             url = stripped[len(_SOURCE_MAP_URL_MARKER) :].strip()
             if url.startswith(_INLINE_MAP_PREFIX):
                 return None
-            return (js_path.parent / url).resolve()
+            # The reference is a URL: drop any ?query / #fragment and
+            # percent-decode before treating it as a filesystem path.
+            relative = unquote(urlsplit(url).path)
+            if not relative:
+                return None
+            return (js_path.parent / relative).resolve()
     return None
 
 

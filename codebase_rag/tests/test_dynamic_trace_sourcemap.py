@@ -100,6 +100,46 @@ def test_truncated_vlq_segment_rejects_the_map(tmp_path):
     assert load_source_map(bad) is None
 
 
+def test_index_map_sections_are_flattened(tmp_path):
+    # A Source Map v3 index map nests maps under `sections`; each is placed at a
+    # generated offset. A section at line 50 must shift its inner positions.
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (tmp_path / "src").mkdir()
+    flat = json.loads(_APP_JS_MAP)
+    index_map = {
+        "version": 3,
+        "sections": [
+            {"offset": {"line": 0, "column": 0}, "map": flat},
+            {"offset": {"line": 50, "column": 0}, "map": flat},
+        ],
+    }
+    (dist / "bundle.js.map").write_text(json.dumps(index_map))
+    source_map = load_source_map(dist / "bundle.js.map")
+    assert source_map is not None
+    # First section: unshifted, identical to the flat map.
+    first = source_map.original_position(10, 12)
+    assert first is not None and first[0].endswith("src/app.ts") and first[1] == 16
+    # Second section at line 50: the same inner `run` frame is now at line 60.
+    shifted = source_map.original_position(60, 12)
+    assert shifted is not None and shifted[0].endswith("src/app.ts")
+    assert shifted[1] == 16
+
+
+def test_source_mapping_url_query_and_encoding_resolved(tmp_path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (tmp_path / "src").mkdir()
+    (dist / "app map.js.map").write_text(_APP_JS_MAP)
+    js = dist / "weird.js"
+    js.write_text("// code\n//# sourceMappingURL=app%20map.js.map?v=123\n")
+
+    result = SourceMapIndex().remap(str(js), 10, 12)
+    assert result is not None
+    assert result[0].endswith("src/app.ts")
+    assert result[1] == 16
+
+
 def _cpuprofile_node(node_id, name, url, line, column, children):
     return {
         "id": node_id,
