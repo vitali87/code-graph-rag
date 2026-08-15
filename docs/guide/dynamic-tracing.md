@@ -108,11 +108,14 @@ distinguish this from the instrumented Python and JVM tracers:
   `dynamic_call_count` holds sample counts (relative weight), not call
   counts. Lower `--cpu-prof-interval` (microseconds, default 1000) to
   tighten coverage at the cost of larger profiles.
-- **Transpiled output.** Frames point at the JavaScript that executed. If
-  you index `.ts` sources but run transpiled output from `dist/`, those
-  frames count as `unresolved[unknown_path]`; source-map translation is a
-  planned follow-up. Running TS directly (via a runner that keeps file
-  paths) or indexing the built tree avoids the gap today.
+- **Transpiled output.** Frames point at the JavaScript that executed, but
+  when the build emits source maps (`tsc --sourceMap`, bundlers by default),
+  the converter follows each generated file's `sourceMappingURL` to its
+  `.js.map` and relocates every frame back to its original TypeScript/JavaScript
+  position, so a project built to `dist/` still resolves to the indexed
+  `src/*.ts` nodes. Frames whose generated position has no mapping (runtime
+  glue, an occasional module wrapper) keep their generated location; build with
+  source maps on, and keep the `.js.map` beside the `.js`, to close the gap.
 
 ## Recording a .NET trace (C#)
 

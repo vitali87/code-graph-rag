@@ -31,6 +31,7 @@ from .records import (
     TraceHeader,
     write_trace_file,
 )
+from .sourcemap import SourceMapIndex
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,26 +88,43 @@ def _url_to_path(url: str) -> str:
     return Path(path).as_posix()
 
 
+def _is_index(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def _project_frame(
-    call_frame: dict[str, object], root_prefix: str
+    call_frame: dict[str, object], root_prefix: str, source_maps: SourceMapIndex
 ) -> _ProfileFrame | None:
     url = call_frame.get("url")
     if not isinstance(url, str) or not url.startswith(cs.TRACE_JS_FILE_URL_PREFIX):
         return None
-    path = _url_to_path(url)
-    if not path.startswith(root_prefix):
-        return None
-    if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(path).parts):
-        return None
+    generated_path = _url_to_path(url)
     line = call_frame.get("lineNumber")
-    if not isinstance(line, int) or isinstance(line, bool) or line < 0:
+    if not _is_index(line):
         return None
+    line = cast("int", line)
     name = call_frame.get("functionName")
     if not isinstance(name, str) or not name:
         # V8 reports module toplevels as a nameless frame at line 0; other
         # nameless frames are anonymous functions, resolvable only by span.
+        # The generated line drives this even when a source map relocates it.
         name = cs.TRACE_QUALNAME_MODULE if line == 0 else cs.TRACE_QUALNAME_ANONYMOUS
-    return _ProfileFrame(path=path, qualname=name, line=line + 1)
+    # A transpiled file (dist/*.js) with a source map relocates back to its
+    # original TypeScript/JavaScript position, so the frame lands on the source
+    # node the graph indexed; without a map the generated position stands.
+    column = call_frame.get("columnNumber")
+    remapped = None
+    if _is_index(column):
+        remapped = source_maps.remap(generated_path, line, cast("int", column))
+    if remapped is not None:
+        path, source_line = remapped
+    else:
+        path, source_line = generated_path, line + 1
+    if not path.startswith(root_prefix):
+        return None
+    if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(path).parts):
+        return None
+    return _ProfileFrame(path=path, qualname=name, line=source_line)
 
 
 def _int_ids(values: object) -> bool:
@@ -117,7 +135,10 @@ def _int_ids(values: object) -> bool:
 
 
 def _parse_nodes(
-    nodes: list[object], root_prefix: str, profile_path: Path
+    nodes: list[object],
+    root_prefix: str,
+    profile_path: Path,
+    source_maps: SourceMapIndex,
 ) -> tuple[dict[int, _ProfileFrame | None], dict[int, list[int]], dict[int, int]]:
     """Validate each profile node and index frames, children, and hit counts."""
     frames: dict[int, _ProfileFrame | None] = {}
@@ -143,7 +164,7 @@ def _parse_nodes(
                 cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
             )
         frames[node_id] = _project_frame(
-            cast("dict[str, object]", call_frame), root_prefix
+            cast("dict[str, object]", call_frame), root_prefix, source_maps
         )
         children[node_id] = list(cast("list[int]", raw_children))
         hit_count = node.get("hitCount", 0)
@@ -169,7 +190,9 @@ def convert_cpuprofile(
         raise TraceFormatError(cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
 
     root_prefix = repo_root.resolve().as_posix() + "/"
-    frames, children, hits = _parse_nodes(nodes, root_prefix, profile_path)
+    frames, children, hits = _parse_nodes(
+        nodes, root_prefix, profile_path, SourceMapIndex()
+    )
 
     # A well-formed profile is a forest: every child id exists and has
     # exactly one parent. Anything else (dangling ids, shared children,
