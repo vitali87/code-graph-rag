@@ -252,39 +252,42 @@ Rust has no runtime instrumentation hook, and static analysis already resolves
 monomorphised calls, so the dynamic payoff is narrower but real: `dyn Trait`
 dispatch, function pointers, and closures routed across boundaries.
 [`pprof-rs`](https://crates.io/crates/pprof) samples the process and writes a
-gzipped pprof protobuf, identical in format to Go's, so `--language rust`
-selects the Rust demangler:
+pprof protobuf, the same format as Go's, so `--language rust` selects the Rust
+demangler (`cgr trace convert` reads the profile whether or not it is gzipped):
 
 ```toml
 # Cargo.toml
 [dev-dependencies]
 pprof = { version = "0.13", features = ["protobuf-codec"] }
-
-[profile.release]
-debug = true        # keep symbols and line tables in the traced build
 ```
 
 ```rust
 // In a test or a small harness that exercises the workload:
+use pprof::protos::Message; // brings write_to_writer into scope
+
 let guard = pprof::ProfilerGuard::new(100).unwrap();
 run_the_workload();
 if let Ok(report) = guard.report().build() {
-    let mut file = std::fs::File::create("cpu.pb.gz").unwrap();
-    report.pprof().unwrap().write_to_writer(&mut file).unwrap();
+    let profile = report.pprof().unwrap();
+    let mut file = std::fs::File::create("cpu.pb").unwrap();
+    profile.write_to_writer(&mut file).unwrap();
 }
 ```
 
 ```bash
-cargo test --release      # runs the harness above, writing cpu.pb.gz
-cgr trace convert cpu.pb.gz --language rust \
+cargo test                # dev profile: runs the harness above, writing cpu.pb
+cgr trace convert cpu.pb --language rust \
     --repo-path /path/to/your-repo --workload cargo-test
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
 Sampled stacks make `dyn Trait` dispatch and calls through function pointers
-visible; counts are sample counts, so give the workload enough CPU time, and
-build with reduced inlining (`opt-level = 0` or `debug = true`) or inlined
-callees vanish. The demangler strips the legacy `::h` symbol hash, collapses
+visible; counts are sample counts, so give the workload enough CPU time. Trace a
+non-optimized build (the default `cargo test` / `cargo run` dev profile,
+`opt-level = 0`) so callees are not inlined away; `debug = true` only preserves
+symbols and line tables and does not reduce inlining in an optimized `--release`
+build, so add it to whichever profile you trace but do not rely on it alone. The
+demangler strips the legacy `::h` symbol hash, collapses
 generic instantiations and trait-qualified receivers
 (`<Dog as Animal>::speak`) to their bare member, and marks closures
 (`{{closure}}`) anonymous; monomorphised instances resolve to their single
