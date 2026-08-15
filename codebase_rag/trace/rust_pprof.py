@@ -27,18 +27,8 @@ import re
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
-from .pprof import (
-    _accumulate_edges,
-    _decode_profile,
-    _decompress,
-)
-from .records import (
-    CallRecord,
-    FramePoint,
-    TraceFormatError,
-    TraceHeader,
-    write_trace_file,
-)
+from .pprof import convert_pprof_profile
+from .records import FramePoint
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -147,44 +137,18 @@ def convert_rust_pprof(
     output: Path,
     workload: str | None = None,
 ) -> int:
-    """Write ``profile_path``'s project call edges to ``output``; returns count."""
-    raw = _decompress(profile_path.read_bytes(), profile_path)
-    try:
-        strings, functions, locations, samples = _decode_profile(raw)
-    except TraceFormatError as e:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
-    if not strings or not functions or not samples:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+    """Write ``profile_path``'s project call edges to ``output``; returns count.
 
-    root_prefix = repo_root.resolve().as_posix() + "/"
-    frames: dict[int, FramePoint | None] = {}
-
-    def _frame(function_id: int) -> FramePoint | None:
-        if function_id not in frames:
-            frames[function_id] = _build_frame(
-                functions.get(function_id), strings, root_prefix
-            )
-        return frames[function_id]
-
-    edges = _accumulate_edges(samples, locations, _frame)
-
-    workloads = (workload,) if workload else ()
-    records = [
-        CallRecord(
-            caller=caller,
-            callee=callee,
-            count=count,
-            workloads=workloads,
-            receiver_types=(),
-        )
-        for (caller, callee), count in edges.items()
-    ]
-    header = TraceHeader(
-        version=cs.TRACE_FORMAT_VERSION,
+    The pprof decode/accumulate/emit pipeline is shared with Go via
+    ``convert_pprof_profile``; only ``_build_frame`` (Rust demangling and the
+    ``target`` exclusion) and the header tags differ.
+    """
+    return convert_pprof_profile(
+        profile_path,
+        repo_root,
+        output,
+        workload,
+        build_frame=_build_frame,
         language=cs.TRACE_LANGUAGE_RUST,
-        repo_root=str(repo_root),
         tracer=cs.TRACE_TOOL_NAME_RUST_PPROF,
-        sampled=True,
     )
-    write_trace_file(output, header, records)
-    return len(records)
