@@ -126,12 +126,13 @@ def _record(repo: Path, caller, callee, count, workloads=()):
     )
 
 
-def _write_trace(repo: Path, trace_path: Path, records) -> None:
+def _write_trace(repo: Path, trace_path: Path, records, sampled: bool = False) -> None:
     header = TraceHeader(
         version=cs.TRACE_FORMAT_VERSION,
         language=cs.TRACE_LANGUAGE_PYTHON,
         repo_root=str(repo),
         tracer=cs.TRACE_TOOL_NAME,
+        sampled=sampled,
     )
     write_trace_file(trace_path, header, records)
 
@@ -183,9 +184,37 @@ def test_ingest_confirms_static_and_flags_missed_edges(tmp_path):
     assert confirmed[cs.TRACE_PROP_DYNAMIC] is True
     assert confirmed[cs.TRACE_PROP_STATIC_MISSED] is False
     assert confirmed[cs.TRACE_PROP_CALL_COUNT] == 4
+    # An exact tracer's edges are not flagged approximate.
+    assert confirmed[cs.TRACE_PROP_SAMPLED] is False
     assert missed[cs.TRACE_PROP_STATIC_MISSED] is True
     assert missed[cs.TRACE_PROP_WORKLOADS] == ["t::one", "t::two"]
     assert missed[cs.TRACE_PROP_WORKLOAD_COUNT] == 2
+
+
+def test_ingest_flags_sampled_trace_edges_as_approximate(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        repo,
+        trace_path,
+        [
+            _record(
+                repo,
+                ("pkg/registry.py", "handle", 5),
+                ("pkg/registry.py", "greet", 9),
+                4,
+            ),
+        ],
+        sampled=True,
+    )
+    graph = _graph()
+
+    ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    (props,) = [props for (_frm, _rel, _to, props) in graph.edges]
+    assert props[cs.TRACE_PROP_SAMPLED] is True
+    assert props[cs.TRACE_PROP_DYNAMIC] is True
 
 
 def test_ingest_aggregates_same_edge_and_is_idempotent(tmp_path):

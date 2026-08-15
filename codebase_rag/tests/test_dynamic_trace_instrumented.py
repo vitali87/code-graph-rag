@@ -54,6 +54,7 @@ def test_converts_symbolised_pairs_with_exact_counts(tmp_path):
     header, records_iter = read_trace_file(output)
     records = list(records_iter)
     assert header.language == cs.TRACE_LANGUAGE_CPP
+    assert header.sampled is False
     assert count == len(records) == 2
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
     assert edges[("main", "handle")].count == 7

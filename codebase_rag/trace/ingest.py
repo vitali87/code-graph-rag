@@ -138,7 +138,7 @@ def _load_existing_calls(
 
 
 def _edge_properties(
-    stats: _EdgeStats, static_missed: bool
+    stats: _EdgeStats, static_missed: bool, sampled: bool
 ) -> dict[str, PropertyValue]:
     workloads = sorted(stats.workloads)[: cs.TRACE_MAX_WORKLOADS_PER_EDGE]
     receivers = sorted(stats.receiver_types)[: cs.TRACE_MAX_RECEIVER_TYPES_PER_EDGE]
@@ -149,6 +149,7 @@ def _edge_properties(
         cs.TRACE_PROP_WORKLOADS: workloads,
         cs.TRACE_PROP_RECEIVER_TYPES: receivers,
         cs.TRACE_PROP_STATIC_MISSED: static_missed,
+        cs.TRACE_PROP_SAMPLED: sampled,
     }
 
 
@@ -194,7 +195,7 @@ def ingest_trace(
             (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
             cs.RelationshipType.CALLS,
             (callee.label, cs.KEY_QUALIFIED_NAME, callee.qualified_name),
-            properties=_edge_properties(stats, static_missed),
+            properties=_edge_properties(stats, static_missed, header.sampled),
         )
     ingestor.flush_all()
     logger.info(

@@ -20,6 +20,12 @@ TRACE_KEY_LINE = "line"
 TRACE_KEY_COUNT = "count"
 TRACE_KEY_WORKLOADS = "workloads"
 TRACE_KEY_RECEIVER_TYPES = "receiver_types"
+# Header flag: True when the tracer sampled the call stack (pprof, V8 cpuprofile,
+# dotnet-trace, Dart CPU samples) so parent/child adjacency and counts are
+# approximate, False when it instrumented every call (Python sys.monitoring, the
+# JVM agent, Xdebug, the C shim, the Lua hook) so edges and counts are exact.
+# Absent in pre-flag trace files, which read back as exact.
+TRACE_KEY_SAMPLED = "sampled"
 
 TRACE_LANGUAGE_PYTHON = "python"
 TRACE_LANGUAGE_JVM = "jvm"
@@ -114,6 +120,10 @@ TRACE_PROP_WORKLOADS = "dynamic_workloads"
 TRACE_PROP_WORKLOAD_COUNT = "dynamic_workload_count"
 TRACE_PROP_RECEIVER_TYPES = "dynamic_receiver_types"
 TRACE_PROP_STATIC_MISSED = "static_missed"
+# True when the edge came from a sampling profiler, so its presence and
+# dynamic_call_count are approximate (a sampled edge that was never sampled is
+# not evidence of dead code); False when the tracer observed every call.
+TRACE_PROP_SAMPLED = "dynamic_sampled"
 
 
 class TraceUnresolvedReason(StrEnum):

@@ -324,6 +324,7 @@ def convert_pprof(
         language=cs.TRACE_LANGUAGE_GO,
         repo_root=str(repo_root),
         tracer=cs.TRACE_TOOL_NAME_PPROF,
+        sampled=True,
     )
     write_trace_file(output, header, records)
     return len(records)

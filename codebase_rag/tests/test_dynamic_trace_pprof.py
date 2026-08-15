@@ -124,6 +124,7 @@ def test_converts_stacks_to_edges_with_sample_weights(tmp_path):
     count, header, records = _convert(tmp_path)
 
     assert header.language == cs.TRACE_LANGUAGE_GO
+    assert header.sampled is True
     assert count == len(records)
     edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
     dispatch = edges[("handle", "greet")]

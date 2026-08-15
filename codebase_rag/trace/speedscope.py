@@ -212,6 +212,7 @@ def convert_speedscope(
         language=cs.TRACE_LANGUAGE_DOTNET,
         repo_root="",
         tracer=cs.TRACE_TOOL_NAME_SPEEDSCOPE,
+        sampled=True,
     )
     write_trace_file(output, header, records)
     return len(records)

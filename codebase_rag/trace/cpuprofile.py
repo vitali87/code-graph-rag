@@ -217,6 +217,7 @@ def convert_cpuprofile(
         language=cs.TRACE_LANGUAGE_JS,
         repo_root=str(repo_root),
         tracer=cs.TRACE_TOOL_NAME_CPUPROFILE,
+        sampled=True,
     )
     write_trace_file(output, header, records)
     return len(records)

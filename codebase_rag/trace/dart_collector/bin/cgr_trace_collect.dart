@@ -177,6 +177,8 @@ Future<void> main(List<String> argv) async {
     'language': 'dart',
     'repo_root': repo,
     'tracer': 'cgr-trace-dart',
+    // The VM Service delivers CPU samples, so edges and counts are approximate.
+    'sampled': true,
   }));
   final workloads = workload == null ? <String>[] : [workload];
   for (final (caller, callee, count) in edges.values) {
