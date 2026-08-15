@@ -1,22 +1,24 @@
 """Convert Rust pprof CPU profiles to the trace interchange format.
 
-``pprof-rs`` (``cargo flamegraph``, the ``pprof`` crate) writes gzipped
-protobuf profiles in the same wire format as Go, so the decoding here reuses
-the Go pprof reader; only the symbol grammar differs. Samples are observed
-stacks, so parent/child adjacency is a caller/callee relationship the sampler
-saw. Static analysis already resolves monomorphised Rust calls, so the dynamic
-payoff is ``dyn Trait`` dispatch, function pointers, and closures routed across
-boundaries; those appear whenever samples landed there. Counts are sample
-counts, not call counts, and the header is flagged ``sampled``.
+``pprof-rs`` (the ``pprof`` crate) writes pprof protobuf profiles, normally
+uncompressed but gzipped just as readily, in the same wire format as Go, so the
+decoding here reuses the Go pprof reader (which reads either) and only the
+symbol grammar differs. Samples are observed stacks, so parent/child adjacency
+is a caller/callee relationship the sampler saw. Static analysis already
+resolves monomorphised Rust calls, so the dynamic payoff is ``dyn Trait``
+dispatch, function pointers, and closures routed across boundaries; those
+appear whenever samples landed there. Counts are sample counts, not call
+counts, and the header is flagged ``sampled``.
 
 Rust symbols carry crate/module paths, trait-qualified receivers, generic
 instantiations, and a trailing legacy-mangling hash
 (``mycrate::svc::Registry::handle::h9f3a...``,
 ``<mycrate::Dog as mycrate::Animal>::speak``, ``mycrate::run::{{closure}}``);
 resolution is span-first against declaration lines, so names normalise to their
-bare member form and closures become ``<anonymous>``. Traced builds should
-reduce inlining (``debug = true`` / ``opt-level = 0``) or inlined callees vanish
-from the profile.
+bare member form and closures become ``<anonymous>``. Trace a build compiled at
+``opt-level = 0`` (the dev profile) so callees are not inlined away; adding
+``debug = true`` only preserves symbols and line tables and does not by itself
+reduce inlining in an optimised build.
 """
 
 from __future__ import annotations
