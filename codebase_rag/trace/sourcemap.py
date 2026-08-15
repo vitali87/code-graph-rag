@@ -167,13 +167,40 @@ def _parse_section(
     return cast("int", offset_line), cast("int", offset_column), inner
 
 
+def _place_section(
+    inner: SourceMap,
+    offset_line: int,
+    offset_column: int,
+    source_base: int,
+    combined_lines: list[list[_Segment]],
+) -> None:
+    """Copy ``inner``'s segments into ``combined_lines`` at the section offset.
+
+    The column offset applies only to the section's first generated line; later
+    lines start a fresh generated line and are unshifted.
+    """
+    for index, segments in enumerate(inner.lines):
+        generated_line = offset_line + index
+        while len(combined_lines) <= generated_line:
+            combined_lines.append([])
+        column_shift = offset_column if index == 0 else 0
+        for generated_column, source_index, source_line, source_column in segments:
+            combined_lines[generated_line].append(
+                (
+                    generated_column + column_shift,
+                    source_base + source_index,
+                    source_line,
+                    source_column,
+                )
+            )
+
+
 def _from_sections(sections: list[object], base_dir: Path) -> SourceMap | None:
     """Flatten a Source Map v3 index map's ``sections`` into one map.
 
-    Each section places an inner map at a generated ``offset`` (line, column);
-    its segments are shifted by that offset (the column only on the section's
-    first line) and its sources are absolutised, so the combined map resolves a
-    generated position exactly as a flat map would.
+    Each section places an inner map at a generated ``offset`` (line, column)
+    and its sources are absolutised, so the combined map resolves a generated
+    position exactly as a flat map would.
     """
     combined_sources: list[str] = []
     combined_lines: list[list[_Segment]] = []
@@ -185,20 +212,7 @@ def _from_sections(sections: list[object], base_dir: Path) -> SourceMap | None:
         source_base = len(combined_sources)
         for source in inner.sources:
             combined_sources.append((inner.base_dir / source).resolve().as_posix())
-        for index, segments in enumerate(inner.lines):
-            generated_line = offset_line + index
-            while len(combined_lines) <= generated_line:
-                combined_lines.append([])
-            column_shift = offset_column if index == 0 else 0
-            for generated_column, source_index, source_line, source_column in segments:
-                combined_lines[generated_line].append(
-                    (
-                        generated_column + column_shift,
-                        source_base + source_index,
-                        source_line,
-                        source_column,
-                    )
-                )
+        _place_section(inner, offset_line, offset_column, source_base, combined_lines)
     for line in combined_lines:
         line.sort()
     return SourceMap(sources=combined_sources, lines=combined_lines, base_dir=base_dir)
