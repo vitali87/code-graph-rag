@@ -18,16 +18,25 @@ from codebase_rag.trace.xdebug import convert_xdebug_trace
 
 
 def _php_with_xdebug() -> str | None:
-    """The php interpreter path when it can load Xdebug, else None."""
+    """The php interpreter path when it can load Xdebug, else None.
+
+    Evaluated at import (collection) time, so the probe is bounded by a finite
+    timeout: a stalled interpreter must degrade to "unavailable", never hang
+    pytest collection.
+    """
     php = shutil.which("php")
     if php is None:
         return None
-    probe = subprocess.run(
-        [php, "-r", 'echo extension_loaded("xdebug") ? "yes" : "no";'],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        probe = subprocess.run(
+            [php, "-r", 'echo extension_loaded("xdebug") ? "yes" : "no";'],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
     return php if probe.stdout.strip() == "yes" else None
 
 
