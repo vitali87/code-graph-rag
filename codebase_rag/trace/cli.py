@@ -74,6 +74,39 @@ class _ConvertUsageError(Exception):
     """A convert invocation missing an option the detected format requires."""
 
 
+def _convert_for_language(
+    profile_file: Path,
+    repo_path: Path | None,
+    resolved_output: Path,
+    workload: str | None,
+    language: str,
+) -> int:
+    """Convert with an explicit ``--language`` override, bypassing sniffing.
+
+    Rust pprof profiles are gzipped protobufs indistinguishable from Go's by
+    magic bytes, so an explicit override is the only way to select the Rust
+    demangler.
+    """
+    from .. import constants as cs
+
+    if language == cs.TRACE_LANGUAGE_RUST:
+        from .rust_pprof import convert_rust_pprof
+
+        if repo_path is None:
+            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
+        return convert_rust_pprof(
+            profile_file,
+            repo_root=repo_path,
+            output=resolved_output,
+            workload=workload,
+        )
+    raise _ConvertUsageError(
+        ch.ERR_TRACE_CONVERT_BAD_LANGUAGE.format(
+            language=language, supported=cs.TRACE_LANGUAGE_RUST
+        )
+    )
+
+
 def _convert_profile(
     profile_file: Path,
     repo_path: Path | None,
@@ -90,26 +123,9 @@ def _convert_profile(
     """
     import json
 
-    from .. import constants as cs
-
     if language is not None:
-        # Rust pprof profiles are gzipped protobufs indistinguishable from Go's
-        # by magic bytes, so an explicit override selects the Rust demangler.
-        if language == cs.TRACE_LANGUAGE_RUST:
-            from .rust_pprof import convert_rust_pprof
-
-            if repo_path is None:
-                raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_NEEDS_REPO)
-            return convert_rust_pprof(
-                profile_file,
-                repo_root=repo_path,
-                output=resolved_output,
-                workload=workload,
-            )
-        raise _ConvertUsageError(
-            ch.ERR_TRACE_CONVERT_BAD_LANGUAGE.format(
-                language=language, supported=cs.TRACE_LANGUAGE_RUST
-            )
+        return _convert_for_language(
+            profile_file, repo_path, resolved_output, workload, language
         )
 
     if profile_file.suffix == ".addrs":
