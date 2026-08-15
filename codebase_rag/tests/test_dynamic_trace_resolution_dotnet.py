@@ -58,6 +58,12 @@ _NODES = [
         f"{_P}.Box.MyApp.Outer.Inner.M",
         path="Box.cs",
     ),
+    # A C# local function nests under its hosting method.
+    _node(
+        cs.NodeLabel.METHOD,
+        f"{_P}.Worker.MyApp.Worker.Run.Local",
+        path="Worker.cs",
+    ),
 ]
 
 
@@ -95,6 +101,16 @@ def test_resolves_constructor_to_class_named_node():
 
     assert resolved is not None
     assert resolved.qualified_name.endswith("MyApp.Worker.Worker(string)")
+
+
+def test_resolves_local_function_to_nested_node():
+    # `<Run>g__Local|0_0` is a C# local function; it resolves to the
+    # `Run.Local` node the static tier nests under the hosting method, not to
+    # `Run` and not dropped as synthetic.
+    resolved = _resolve("MyApp.Worker.<Run>g__Local|0_0")
+
+    assert resolved is not None
+    assert resolved.qualified_name.endswith("MyApp.Worker.Run.Local")
 
 
 def test_resolves_property_accessors_to_property_node():

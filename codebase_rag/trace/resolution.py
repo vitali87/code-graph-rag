@@ -334,6 +334,10 @@ class PhpFrameResolver:
 
 _DOTNET_STATE_MACHINE = re.compile(r"^<(\w+)>d__\d+$")
 _DOTNET_LAMBDA_BODY = re.compile(r"^<(\w+)>b__\w+$")
+# A C# local function compiles to ``<EnclosingMethod>g__LocalName|N_M``; unlike
+# a lambda it keeps a source name, so it resolves to the ``Method.Local`` node
+# the static tier nests under the hosting method rather than to the method.
+_DOTNET_LOCAL_FUNCTION = re.compile(r"^<(?P<method>\w+)>g__(?P<local>\w+)\|\w+$")
 _DOTNET_DISPLAY_CLASS = re.compile(r"^<>c(__DisplayClass\w*)?$")
 _DOTNET_ACCESSOR = re.compile(r"^(?:get|set)_(\w+)$")
 
@@ -377,6 +381,12 @@ def _demangle_clr_name(name: str) -> str | None:
     lambda_body = _DOTNET_LAMBDA_BODY.match(method)
     if lambda_body:
         method = lambda_body.group(1)
+    local_function = _DOTNET_LOCAL_FUNCTION.match(method)
+    if local_function:
+        method = (
+            f"{local_function.group('method')}"
+            f"{cs.SEPARATOR_DOT}{local_function.group('local')}"
+        )
     if not method or "<" in method or any("<" in part for part in chain):
         return None
     return cs.SEPARATOR_DOT.join([*chain, method])

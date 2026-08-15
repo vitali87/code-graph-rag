@@ -135,9 +135,10 @@ cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 prefixes instead of the repository root, and resolution joins on the
 namespace-bearing qualified names the static tier stores. CLR name mangling
 is handled: async state machines (`Worker+<RunAsync>d__3.MoveNext`) resolve
-to the source method, display-class lambdas to their enclosing method,
-`.ctor` to the constructor node, `get_`/`set_` accessors to the property
-node, and nested-class `+` to dotted nesting. Two caveats:
+to the source method, display-class lambdas to their enclosing method, local
+functions (`<Run>g__Local|0_0`) to the `Run.Local` node nested under the
+hosting method, `.ctor` to the constructor node, `get_`/`set_` accessors to the
+property node, and nested-class `+` to dotted nesting. Two caveats:
 
 - **Sampling.** Edge counts reflect observed activations in the flame
   chart, not exact call counts; very short calls between samples can be
