@@ -168,10 +168,16 @@ never call anything resolve by their `Class::method` name tail instead;
 when several declarations share that tail, the frame is counted as
 `unresolved[ambiguous]` rather than guessed.
 Closures resolve through the file and line range embedded in their runtime
-name. Calls through `__call` attribute to the magic method itself, since
-the graph has no notion of the proxied target. Expect significant tracing
-overhead (Xdebug instruments everything); it is meant for test runs, not
-production.
+name. Instance calls (`$obj->method()`) record the concrete runtime class as
+the edge's `dynamic_receiver_types`, so a dispatch through an interface or base
+type shows which implementation ran; static calls (`Class::method()`) are not
+dynamic dispatch and carry none. A trait method called on the using class is
+observed under that class (`UsingClass->method`); it resolves by span when its
+defining position is recovered, but a leaf trait method that makes no calls
+falls back to the name tail and may be counted `unresolved`. Calls through
+`__call` attribute to the magic method itself, since the graph has no notion of
+the proxied target. Expect significant tracing overhead (Xdebug instruments
+everything); it is meant for test runs, not production.
 
 ## Recording a Lua trace
 
