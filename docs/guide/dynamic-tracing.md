@@ -285,9 +285,10 @@ the converter subtracts it before symbolising, so the default hardened
 (C++) land with true invocation counts; C++ names demangle and normalise to
 their bare member form, with source positions carrying identity. Frames that
 symbolise outside the repository (libc, the C++ runtime) drop their edges
-rather than being guessed, and addresses that do not symbolise at all
-(stripped symbols, missing debug info) are counted and reported rather than
-silently dropped. Overhead is one mutex-guarded table insert per call — fine
+rather than being guessed. An edge whose caller or callee does not resolve to
+a project frame is excluded from the converted trace; addresses that do not
+symbolise at all (stripped symbols, missing debug info) are additionally
+counted and reported, so that symbolisation gap is visible rather than silent. Overhead is one mutex-guarded table insert per call — fine
 for test workloads, not for production; the edge table holds 65k distinct
 pairs, and conversion **rejects** a trace the shim marked `dropped` (table
 overflowed) rather than pass off an incomplete call graph as exact.
