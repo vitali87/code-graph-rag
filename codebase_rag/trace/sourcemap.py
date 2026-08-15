@@ -40,6 +40,9 @@ _Segment = tuple[int, int, int, int]
 _SOURCE_MAP_URL_MARKER = "//# sourceMappingURL="
 _INLINE_MAP_PREFIX = "data:application/json"
 
+# The shape of a decoded JSON object; source maps are plain JSON documents.
+_JsonObject = dict[str, object]
+
 
 def _decode_vlq(segment: str) -> list[int]:
     """Decode a Base64-VLQ segment into its signed integer fields."""
@@ -143,6 +146,27 @@ def _nonneg_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def _parse_section(
+    raw_section: object, base_dir: Path
+) -> tuple[int, int, SourceMap] | None:
+    """The generated line, column, and inner map of one index-map section."""
+    if not isinstance(raw_section, dict):
+        return None
+    section = cast(_JsonObject, raw_section)
+    offset = section.get("offset")
+    if not isinstance(offset, dict):
+        return None
+    offset_fields = cast(_JsonObject, offset)
+    offset_line = offset_fields.get("line")
+    offset_column = offset_fields.get("column")
+    if not _nonneg_int(offset_line) or not _nonneg_int(offset_column):
+        return None
+    inner = _from_document(section.get("map"), base_dir)
+    if inner is None:
+        return None
+    return cast("int", offset_line), cast("int", offset_column), inner
+
+
 def _from_sections(sections: list[object], base_dir: Path) -> SourceMap | None:
     """Flatten a Source Map v3 index map's ``sections`` into one map.
 
@@ -154,28 +178,18 @@ def _from_sections(sections: list[object], base_dir: Path) -> SourceMap | None:
     combined_sources: list[str] = []
     combined_lines: list[list[_Segment]] = []
     for raw_section in sections:
-        if not isinstance(raw_section, dict):
+        parsed = _parse_section(raw_section, base_dir)
+        if parsed is None:
             return None
-        section = cast("dict[str, object]", raw_section)
-        offset = section.get("offset")
-        if not isinstance(offset, dict):
-            return None
-        offset_fields = cast("dict[str, object]", offset)
-        offset_line = offset_fields.get("line")
-        offset_column = offset_fields.get("column")
-        if not _nonneg_int(offset_line) or not _nonneg_int(offset_column):
-            return None
-        inner = _from_document(section.get("map"), base_dir)
-        if inner is None:
-            return None
+        offset_line, offset_column, inner = parsed
         source_base = len(combined_sources)
         for source in inner.sources:
             combined_sources.append((inner.base_dir / source).resolve().as_posix())
         for index, segments in enumerate(inner.lines):
-            generated_line = cast("int", offset_line) + index
+            generated_line = offset_line + index
             while len(combined_lines) <= generated_line:
                 combined_lines.append([])
-            column_shift = cast("int", offset_column) if index == 0 else 0
+            column_shift = offset_column if index == 0 else 0
             for generated_column, source_index, source_line, source_column in segments:
                 combined_lines[generated_line].append(
                     (
@@ -193,7 +207,7 @@ def _from_sections(sections: list[object], base_dir: Path) -> SourceMap | None:
 def _from_document(raw: object, base_dir: Path) -> SourceMap | None:
     if not isinstance(raw, dict):
         return None
-    document = cast("dict[str, object]", raw)
+    document = cast(_JsonObject, raw)
     sections = document.get("sections")
     if isinstance(sections, list):
         # A Source Map v3 index map (bundler output) nests maps under sections.
