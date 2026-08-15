@@ -235,8 +235,12 @@ def _sniff_map_reference(js_path: Path) -> Path | None:
             if url.startswith(_INLINE_MAP_PREFIX):
                 return None
             # The reference is a URL: drop any ?query / #fragment and
-            # percent-decode before treating it as a filesystem path.
-            relative = unquote(urlsplit(url).path)
+            # percent-decode before treating it as a filesystem path. A
+            # malformed URL (urlsplit raises on bad brackets) is simply ignored.
+            try:
+                relative = unquote(urlsplit(url).path)
+            except ValueError:
+                return None
             if not relative:
                 return None
             return (js_path.parent / relative).resolve()

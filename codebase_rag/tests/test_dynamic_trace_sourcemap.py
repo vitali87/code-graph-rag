@@ -255,6 +255,14 @@ def test_live_typescript_trace_resolves_to_source(tmp_path):
                 assert frame.path.endswith(".ts"), frame.path
 
 
+def test_malformed_map_url_is_ignored(tmp_path):
+    # A malformed sourceMappingURL (urlsplit raises on bad brackets) must be
+    # ignored, keeping the generated frame, not abort the whole conversion.
+    js = tmp_path / "app.js"
+    js.write_text("// code\n//# sourceMappingURL=http://[\n")
+    assert SourceMapIndex().remap(str(js), 0, 0) is None
+
+
 def test_index_returns_none_without_a_map(tmp_path):
     plain = tmp_path / "plain.js"
     plain.write_text("function f() {}\n")
