@@ -334,12 +334,28 @@ class PhpFrameResolver:
 
 _DOTNET_STATE_MACHINE = re.compile(r"^<(\w+)>d__\d+$")
 _DOTNET_LAMBDA_BODY = re.compile(r"^<(\w+)>b__\w+$")
-# A C# local function compiles to ``<EnclosingMethod>g__LocalName|N_M``; unlike
-# a lambda it keeps a source name, so it resolves to the ``Method.Local`` node
-# the static tier nests under the hosting method rather than to the method.
-_DOTNET_LOCAL_FUNCTION = re.compile(r"^<(?P<method>\w+)>g__(?P<local>\w+)\|\w+$")
+# A C# local function compiles to ``<EnclosingHost>g__LocalName|N_M``; unlike a
+# lambda it keeps a source name, so it resolves to the node the static tier
+# nests under its host: a method (``Run`` -> ``Run.Local``) or an accessor body
+# (``get_X``/``set_X``, which is not its own scope, so the local nests at class
+# level). A constructor host (``<.ctor>``) carries a dot that the CLR-name
+# splitter consumes before this pattern is reached, so ctor-hosted locals stay
+# unresolved rather than mis-resolved.
+_DOTNET_LOCAL_FUNCTION = re.compile(r"^<(?P<host>\w+)>g__(?P<local>\w+)\|\w+$")
 _DOTNET_DISPLAY_CLASS = re.compile(r"^<>c(__DisplayClass\w*)?$")
 _DOTNET_ACCESSOR = re.compile(r"^(?:get|set)_(\w+)$")
+
+
+def _local_function_target(host: str, local: str) -> str:
+    """The dotted name of a C# local function under its host.
+
+    A plain method host keeps its name (``Run`` -> ``Run.Local``). An accessor
+    body (``get_X``/``set_X``) has no scope of its own, so the static tier nests
+    its local directly under the class; the host is dropped (``Local``).
+    """
+    if _DOTNET_ACCESSOR.match(host):
+        return local
+    return f"{host}{cs.SEPARATOR_DOT}{local}"
 
 
 def _demangle_clr_name(name: str) -> str | None:
@@ -383,9 +399,8 @@ def _demangle_clr_name(name: str) -> str | None:
         method = lambda_body.group(1)
     local_function = _DOTNET_LOCAL_FUNCTION.match(method)
     if local_function:
-        method = (
-            f"{local_function.group('method')}"
-            f"{cs.SEPARATOR_DOT}{local_function.group('local')}"
+        method = _local_function_target(
+            local_function.group("host"), local_function.group("local")
         )
     if not method or "<" in method or any("<" in part for part in chain):
         return None
