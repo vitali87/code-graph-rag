@@ -13,6 +13,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag.trace.instrumented import convert_instrumented
@@ -120,7 +121,43 @@ def test_malformed_addrs_is_rejected(tmp_path):
         )
 
 
+def test_unresolved_addresses_are_reported(tmp_path):
+    # An address that symbolises to no usable source position must be reported,
+    # not silently dropped. Two failure modes: no name at all (`??`), and a
+    # valid name with no file/line because debug info was stripped.
+    repo = tmp_path.as_posix()
+    symbols = {
+        0x1000: ("main", f"{repo}/main.c", 3),
+        0x2000: ("run", f"{repo}/main.c", 7),
+        0x3000: ("??", "??", 0),
+        0x4000: ("stripped_fn", "", 0),
+    }
+    addrs_path = _write_addrs(
+        tmp_path, [(0x1000, 0x2000, 4), (0x2000, 0x3000, 2), (0x2000, 0x4000, 1)]
+    )
+
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        count = convert_instrumented(
+            addrs_path,
+            repo_root=tmp_path,
+            output=tmp_path / "trace.jsonl",
+            symbolizer=lambda _e, _s, _a: symbols,
+        )
+    finally:
+        logger.remove(sink_id)
+
+    # Only main -> run survives; both the ?? and the position-less named frame
+    # are dropped, and both are counted in the warning (2 of 4 addresses).
+    assert count == 1
+    assert any(
+        "2 of 4" in message and "did not symbolise" in message for message in messages
+    )
+
+
 cc = shutil.which("cc")
+cxx = shutil.which("c++") or shutil.which("g++")
 atos = shutil.which("atos") or shutil.which("addr2line")
 
 
@@ -194,3 +231,87 @@ def test_live_instrumented_binary_produces_registry_dispatch(tmp_path):
     assert dispatch is not None, sorted(edges)
     assert dispatch.count == 5
     assert edges[("main", "handle")].count == 5
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    sys.platform == "win32" or cc is None or cxx is None or atos is None,
+    reason="C/C++ toolchain unavailable, or Windows/PE (the shim targets ELF/Mach-O)",
+)
+def test_live_cpp_virtual_dispatch_produces_virtual_edge(tmp_path):
+    (tmp_path / "main.cpp").write_text(
+        textwrap.dedent("""
+            struct Animal {
+                virtual ~Animal() = default;
+                virtual int speak() = 0;
+            };
+            struct Dog : Animal {
+                int speak() override;
+            };
+            int Dog::speak() { return 7; }
+
+            static int dispatch(Animal* a) {
+                return a->speak();     // virtual call through the trait object
+            }
+
+            int main() {
+                Dog d;
+                int out = 0;
+                for (int i = 0; i < 5; i++) {
+                    out += dispatch(&d);
+                }
+                return out == 35 ? 0 : 1;
+            }
+        """)
+    )
+    shim_object = tmp_path / "shim.o"
+    main_object = tmp_path / "main.o"
+    binary = tmp_path / "app"
+    # The shim is C: a C++ driver would compile the .c file as C++ and fail, so
+    # build it with the C compiler and link the instrumented C++ object with the
+    # C++ driver. Only the C++ translation unit carries -finstrument-functions.
+    subprocess.run(
+        [str(cc), "-pthread", "-c", str(_SHIM), "-o", str(shim_object)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            str(cxx),
+            "-finstrument-functions",
+            "-g",
+            "-O0",
+            "-c",
+            str(tmp_path / "main.cpp"),
+            "-o",
+            str(main_object),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [str(cxx), "-pthread", str(main_object), str(shim_object), "-o", str(binary)],
+        check=True,
+        capture_output=True,
+    )
+    addrs = tmp_path / "cgr-trace.addrs"
+    subprocess.run(
+        [str(binary)],
+        check=True,
+        capture_output=True,
+        env=dict(os.environ, CGR_TRACE_ADDRS=str(addrs)),
+        cwd=tmp_path,
+    )
+
+    output = tmp_path / "trace.jsonl"
+    count = convert_instrumented(addrs, repo_root=tmp_path, output=output)
+
+    assert count > 0
+    header, records_iter = read_trace_file(output)
+    assert header.language == cs.TRACE_LANGUAGE_CPP
+    edges = {(r.caller.qualname, r.callee.qualname): r for r in records_iter}
+    # The virtual call a->speak() resolves to Dog::speak - the runtime-only edge
+    # static analysis cannot resolve through the abstract Animal interface.
+    virtual = edges.get(("dispatch", "speak"))
+    assert virtual is not None, sorted(edges)
+    assert virtual.count == 5

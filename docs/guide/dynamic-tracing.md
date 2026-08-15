@@ -251,6 +251,8 @@ A single-file shim (`codebase_rag/trace/c_agent/cgr_trace_shim.c`, no
 dependencies beyond pthreads) rides the compiler's own instrumentation and
 records **every call exactly**:
 
+For a **C** project, compile the sources and the shim together:
+
 ```bash
 cc -pthread -finstrument-functions -g -O0 your_sources... \
    codebase_rag/trace/c_agent/cgr_trace_shim.c -o app
@@ -259,19 +261,37 @@ cgr trace convert cgr-trace.addrs --repo-path /path/to/your-repo --workload smok
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+For a **C++** project, compile the shim with the C compiler (it is C, and a
+C++ driver would compile the `.c` file as C++ and fail) and link the
+instrumented C++ objects with the C++ driver; only the C++ translation units
+carry `-finstrument-functions`:
+
+```bash
+cc  -pthread -c codebase_rag/trace/c_agent/cgr_trace_shim.c -o cgr_shim.o
+c++ -pthread -finstrument-functions -g -O0 -c your_sources... # -> *.o
+c++ -pthread your_objects... cgr_shim.o -o app
+```
+
+In CMake, add `cgr_trace_shim.c` to the target's sources (CMake compiles a
+`.c` file with the C compiler on its own) and set
+`-finstrument-functions -g -O0` on the traced build type; the shim links in
+without a separate step.
+
 The shim records function-address pairs and the main image's load bias;
 conversion symbolises them with `atos` (macOS) or `addr2line` (ELF). PIE
 binaries need no special build flag — the shim records the ASLR slide and
 the converter subtracts it before symbolising, so the default hardened
-(PIE) build works. Calls through function pointers and virtual dispatch
-land with true invocation counts; C++ names demangle and normalise to their
-bare member form, with source positions carrying identity. Frames that
+(PIE) build works. Calls through function pointers (C) and virtual dispatch
+(C++) land with true invocation counts; C++ names demangle and normalise to
+their bare member form, with source positions carrying identity. Frames that
 symbolise outside the repository (libc, the C++ runtime) drop their edges
-rather than being guessed. Overhead is one mutex-guarded table insert per
-call — fine for test workloads, not for production; the edge table holds
-65k distinct pairs, and conversion **rejects** a trace the shim marked
-`dropped` (table overflowed) rather than pass off an incomplete call graph
-as exact.
+rather than being guessed. An edge whose caller or callee does not resolve to
+a project frame is excluded from the converted trace; addresses that do not
+symbolise at all (stripped symbols, missing debug info) are additionally
+counted and reported, so that symbolisation gap is visible rather than silent. Overhead is one mutex-guarded table insert per call — fine
+for test workloads, not for production; the edge table holds 65k distinct
+pairs, and conversion **rejects** a trace the shim marked `dropped` (table
+overflowed) rather than pass off an incomplete call graph as exact.
 
 ## Ingesting a trace
 
