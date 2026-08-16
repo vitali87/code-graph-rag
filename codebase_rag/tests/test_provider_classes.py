@@ -10,6 +10,7 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
 from codebase_rag.constants import (
     ENV_MINIMAX_API_KEY,
+    ENV_ORCAROUTER_API_KEY,
     MODEL_CONTEXT_WINDOWS,
     GoogleProviderType,
     Provider,
@@ -22,6 +23,7 @@ from codebase_rag.providers.base import (
     ModelProvider,
     OllamaProvider,
     OpenAIProvider,
+    OrcaRouterProvider,
     get_provider,
     list_providers,
     register_provider,
@@ -62,6 +64,10 @@ class TestProviderRegistry:
         assert isinstance(minimax_provider, MiniMaxProvider)
         assert minimax_provider.provider_name == Provider.MINIMAX
 
+        orcarouter_provider = get_provider(Provider.ORCAROUTER, api_key="test-key")
+        assert isinstance(orcarouter_provider, OrcaRouterProvider)
+        assert orcarouter_provider.provider_name == Provider.ORCAROUTER
+
     def test_get_invalid_provider(self) -> None:
         with pytest.raises(ValueError, match="Unknown provider 'invalid_provider'"):
             get_provider("invalid_provider")
@@ -86,7 +92,8 @@ class TestProviderRegistry:
         assert Provider.AZURE in providers
         assert Provider.LITELLM_PROXY in providers
         assert Provider.MINIMAX in providers
-        assert len(providers) >= 7
+        assert Provider.ORCAROUTER in providers
+        assert len(providers) >= 8
 
     def test_register_custom_provider(self) -> None:
         class CustomProvider(ModelProvider):
@@ -428,6 +435,60 @@ class TestMiniMaxProvider:
         provider = get_provider(Provider.MINIMAX, api_key="test-key")
         assert isinstance(provider, MiniMaxProvider)
         assert provider.provider_name == Provider.MINIMAX
+
+
+class TestOrcaRouterProvider:
+    @pytest.fixture(autouse=True)
+    def clear_orcarouter_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(ENV_ORCAROUTER_API_KEY, raising=False)
+
+    def test_orcarouter_configuration(self) -> None:
+        provider = OrcaRouterProvider(
+            api_key="or-test-key",
+            endpoint="https://api.orcarouter.ai/v1",
+        )
+        assert provider.provider_name == Provider.ORCAROUTER
+        assert provider.api_key == "or-test-key"
+        assert provider.endpoint == "https://api.orcarouter.ai/v1"
+        provider.validate_config()
+
+    def test_orcarouter_default_endpoint(self) -> None:
+        provider = OrcaRouterProvider(api_key="test-key", endpoint=None)
+        assert provider.endpoint == "https://api.orcarouter.ai/v1"
+
+    def test_orcarouter_validation_error(self) -> None:
+        provider = OrcaRouterProvider()
+        with pytest.raises(ValueError, match="OrcaRouter provider requires api_key"):
+            provider.validate_config()
+
+    def test_orcarouter_api_key_from_env(self) -> None:
+        with patch.dict("os.environ", {ENV_ORCAROUTER_API_KEY: "env-or-key"}):
+            provider = OrcaRouterProvider()
+            assert provider.api_key == "env-or-key"
+
+    @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
+    @patch("codebase_rag.providers.base.OpenAIChatModel")
+    def test_orcarouter_model_creation(
+        self, mock_chat_model: Any, mock_openai_provider: Any
+    ) -> None:
+        provider = OrcaRouterProvider(api_key="or-test-key")
+        mock_model = MagicMock()
+        mock_chat_model.return_value = mock_model
+
+        result = provider.create_model("orcarouter/auto")
+
+        mock_openai_provider.assert_called_once_with(
+            api_key="or-test-key", base_url="https://api.orcarouter.ai/v1"
+        )
+        mock_chat_model.assert_called_once_with(
+            "orcarouter/auto", provider=mock_openai_provider.return_value
+        )
+        assert result == mock_model
+
+    def test_get_orcarouter_provider(self) -> None:
+        provider = get_provider(Provider.ORCAROUTER, api_key="test-key")
+        assert isinstance(provider, OrcaRouterProvider)
+        assert provider.provider_name == Provider.ORCAROUTER
 
 
 class TestModelCreation:

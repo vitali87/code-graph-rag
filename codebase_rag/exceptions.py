@@ -23,6 +23,10 @@ MINIMAX_NO_KEY = (
     "MiniMax provider requires api_key. "
     "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY or MINIMAX_API_KEY in .env file."
 )
+ORCAROUTER_NO_KEY = (
+    "OrcaRouter provider requires api_key. "
+    "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY or ORCAROUTER_API_KEY in .env file."
+)
 OLLAMA_NOT_RUNNING = (
     "Ollama server not responding at {endpoint}. "
     "Make sure Ollama is running: ollama serve"

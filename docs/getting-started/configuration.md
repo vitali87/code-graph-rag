@@ -77,11 +77,30 @@ Both model IDs work with either compatible endpoint. For the China service, use
 
 Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io/user-center/basic-information/interface-key).
 
+### OrcaRouter Models
+
+```bash
+ORCHESTRATOR_PROVIDER=orcarouter
+ORCHESTRATOR_MODEL=openai/gpt-4o-mini
+ORCHESTRATOR_API_KEY=sk-orca-your-key
+ORCHESTRATOR_ENDPOINT=https://api.orcarouter.ai/v1
+
+CYPHER_PROVIDER=orcarouter
+CYPHER_MODEL=anthropic/claude-sonnet-5
+CYPHER_API_KEY=sk-orca-your-key
+CYPHER_ENDPOINT=https://api.orcarouter.ai/v1
+```
+
+[OrcaRouter](https://www.orcarouter.ai) is a multi-provider AI gateway. Model IDs
+use a `provider/model` namespace (e.g., `openai/gpt-4o-mini`,
+`anthropic/claude-sonnet-5`); the `orcarouter` provider routes any supported
+model through your `sk-orca-` key. Get one at https://www.orcarouter.ai.
+
 ## Orchestrator Model Settings
 
 | Variable | Description |
 |----------|-------------|
-| `ORCHESTRATOR_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
+| `ORCHESTRATOR_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`, `orcarouter`) |
 | `ORCHESTRATOR_MODEL` | Model ID (e.g., `gemini-3.6-flash`, `gpt-5.6-terra`, `claude-sonnet-5`, `qwen2.5-coder`; `gemini-3.1-pro-preview` for a heavier option) |
 | `ORCHESTRATOR_API_KEY` | API key for the provider (if required) |
 | `ORCHESTRATOR_ENDPOINT` | Custom endpoint URL (if required) |
@@ -95,7 +114,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 
 | Variable | Description |
 |----------|-------------|
-| `CYPHER_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`) |
+| `CYPHER_PROVIDER` | Provider name (`google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy`, `orcarouter`) |
 | `CYPHER_MODEL` | Model ID (e.g., `gemini-3.5-flash-lite`, `gpt-5.6-luna`, `qwen2.5-coder`) |
 | `CYPHER_API_KEY` | API key for the provider (if required) |
 | `CYPHER_ENDPOINT` | Custom endpoint URL (if required) |

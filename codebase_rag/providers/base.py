@@ -295,6 +295,37 @@ class MiniMaxProvider(ModelProvider):
         return OpenAIChatModel(model_id, provider=provider)
 
 
+class OrcaRouterProvider(ModelProvider):
+    __slots__ = ("api_key", "endpoint")
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        **kwargs: str | int | None,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_ORCAROUTER_API_KEY)
+        self.endpoint = endpoint or cs.ORCAROUTER_DEFAULT_ENDPOINT
+
+    @property
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.ORCAROUTER
+
+    def validate_config(self) -> None:
+        if not self.api_key:
+            raise ValueError(ex.ORCAROUTER_NO_KEY)
+
+    def create_model(
+        self, model_id: str, **kwargs: str | int | None
+    ) -> OpenAIChatModel:
+        self.validate_config()
+        # api_key is guaranteed to be set by validate_config
+        assert self.api_key is not None
+        provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
+        return OpenAIChatModel(model_id, provider=provider)
+
+
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.GOOGLE: GoogleProvider,
     cs.Provider.OPENAI: OpenAIProvider,
@@ -302,6 +333,7 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.ANTHROPIC: AnthropicProvider,
     cs.Provider.AZURE: AzureOpenAIProvider,
     cs.Provider.MINIMAX: MiniMaxProvider,
+    cs.Provider.ORCAROUTER: OrcaRouterProvider,
 }
 
 # Import LiteLLM provider after base classes are defined to avoid circular import
