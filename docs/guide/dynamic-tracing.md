@@ -181,8 +181,12 @@ observed under that class (`UsingClass->method`); it resolves by span when its
 defining position is recovered, but a leaf trait method that makes no calls
 falls back to the name tail and may be counted `unresolved`. Calls through
 `__call` attribute to the magic method itself, since the graph has no notion of
-the proxied target. Expect significant tracing overhead (Xdebug instruments
-everything); it is meant for test runs, not production.
+the proxied target. Tracing overhead is significant (Xdebug records every call):
+measured at roughly 15-20x wall-clock on a CPU-bound loop (about 17x on 1.2M
+calls, PHP 8.3 with Xdebug 3), and the machine-readable trace grows by roughly
+150 bytes per call, so a busy suite can produce a multi-hundred-megabyte file.
+It is meant for test runs, not production; scope tracing to the suite you need
+and convert one process at a time.
 
 ## Recording a Lua trace
 
