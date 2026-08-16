@@ -153,3 +153,9 @@ TRACE_MSG_INGEST_SUMMARY = (
     "static_missed={missed} unresolved={unresolved}"
 )
 TRACE_MSG_UNRESOLVED_DETAIL = "  unresolved[{reason}]={count}"
+
+TRACE_MSG_SOURCEMAP_RESOLUTION = (
+    "source-map resolution: {resolved}/{total} project frames resolved to "
+    "source ({rate})"
+)
+TRACE_MSG_SOURCEMAP_DETAIL = "  source_map[{outcome}]={count}"

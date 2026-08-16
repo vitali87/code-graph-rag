@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
 from codebase_rag.trace.cpuprofile import convert_cpuprofile
 from codebase_rag.trace.records import read_trace_file
@@ -187,6 +188,55 @@ def test_convert_remaps_transpiled_frames_to_typescript(tmp_path):
     assert edges[("run", "handle")].callee.line == 12
 
 
+def test_convert_reports_resolution_rate_and_categorises_failures(tmp_path):
+    # Four project frames, one per source-map outcome: a mapped position that
+    # resolves, a file with no map, a mapped file whose position no segment
+    # covers, and a file whose map is malformed. The converter must report the
+    # resolution rate and categorise each failure so coverage gaps are visible.
+    map_path = _write_map(tmp_path)  # dist/app.js (+ valid app.js.map)
+    dist = map_path.parent
+    (dist / "uncovered.js").write_text("// x\n//# sourceMappingURL=uncovered.js.map\n")
+    (dist / "uncovered.js.map").write_text(_APP_JS_MAP)
+    (dist / "bad.js").write_text("// x\n//# sourceMappingURL=bad.js.map\n")
+    (dist / "bad.js.map").write_text("{ this is not valid json")
+    (tmp_path / "plain.js").write_text("function f() {}\n")
+
+    profile = {
+        "nodes": [
+            _cpuprofile_node(1, "(root)", "", 0, 0, [2]),
+            # (1, 14) maps to greet in src/app.ts: RESOLVED.
+            _cpuprofile_node(2, "greet", (dist / "app.js").as_uri(), 1, 14, [3]),
+            # No map beside plain.js: NO_MAP (kept at its generated position).
+            _cpuprofile_node(3, "f", (tmp_path / "plain.js").as_uri(), 5, 0, [4]),
+            # A valid map, but no segment covers line 9999: UNCOVERED.
+            _cpuprofile_node(4, "g", (dist / "uncovered.js").as_uri(), 9999, 0, [5]),
+            # The map file exists but is not valid JSON: MALFORMED.
+            _cpuprofile_node(5, "h", (dist / "bad.js").as_uri(), 3, 0, []),
+        ],
+        "samples": [],
+        "timeDeltas": [],
+    }
+    profile_path = tmp_path / "run.cpuprofile"
+    profile_path.write_text(json.dumps(profile))
+
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="INFO", format="{message}")
+    try:
+        convert_cpuprofile(
+            profile_path, repo_root=tmp_path, output=tmp_path / "trace.jsonl"
+        )
+    finally:
+        logger.remove(sink_id)
+
+    joined = "\n".join(messages)
+    assert (
+        "source-map resolution: 1/4 project frames resolved to source (25%)" in joined
+    ), joined
+    assert "source_map[no_map]=1" in joined, joined
+    assert "source_map[uncovered]=1" in joined, joined
+    assert "source_map[malformed]=1" in joined, joined
+
+
 def _node_with_tsc() -> tuple[str, str] | None:
     node = shutil.which("node")
     tsc = shutil.which("tsc")
@@ -239,7 +289,14 @@ def test_live_typescript_trace_resolves_to_source(tmp_path):
         cwd=tmp_path,
     )
     output = tmp_path / "trace.jsonl"
-    convert_cpuprofile(tmp_path / "run.cpuprofile", repo_root=tmp_path, output=output)
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="INFO", format="{message}")
+    try:
+        convert_cpuprofile(
+            tmp_path / "run.cpuprofile", repo_root=tmp_path, output=output
+        )
+    finally:
+        logger.remove(sink_id)
 
     _header, records = read_trace_file(output)
     # Sampling and V8 inlining make which specific frames appear nondeterministic,
@@ -248,6 +305,15 @@ def test_live_typescript_trace_resolves_to_source(tmp_path):
     # was relocated off the transpiled dist/*.js onto its .ts source.
     assert records
     assert any(record.callee.path.endswith(".ts") for record in records)
+    # The runtime-only edge: handle() calls registry[name](), a dispatch through a
+    # dictionary that static analysis cannot resolve. greet is the hot leaf, so it
+    # is reliably sampled and must land on its .ts source, not the dist/*.js.
+    assert any(
+        record.callee.qualname == "greet" and record.callee.path.endswith(".ts")
+        for record in records
+    ), [(r.callee.qualname, r.callee.path) for r in records]
+    # The resolution rate is reported so source-map coverage is visible.
+    assert any("source-map resolution:" in message for message in messages), messages
 
 
 def test_malformed_map_url_is_ignored(tmp_path):

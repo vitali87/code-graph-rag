@@ -117,6 +117,14 @@ distinguish this from the instrumented Python and JVM tracers:
   or for a generated position that has no mapping (runtime glue, an occasional
   module wrapper), the frame keeps its generated `dist/*.js` location; keep the
   `.js.map` beside the `.js` so the converter can find it.
+- **Resolution reporting.** Conversion logs a source-map resolution rate over
+  the project frames it kept (for example `source-map resolution: 42/50 project
+  frames resolved to source (84%)`) and categorises the misses so coverage gaps
+  are visible rather than silent: `no_map` (no map referenced or found beside the
+  file), `uncovered` (a map loaded but no segment covers the position), and
+  `malformed` (a map file was found but could not be parsed). A low rate with
+  many `no_map` misses usually means source maps are off in the build; `malformed`
+  points at a broken emit.
 
 ## Recording a .NET trace (C#)
 
