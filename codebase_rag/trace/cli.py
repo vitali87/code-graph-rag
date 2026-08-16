@@ -112,6 +112,77 @@ def _require_repo(repo_path: Path | None) -> Path:
     return repo_path
 
 
+def _parse_key_value(value: str, error_template: str) -> tuple[str, str]:
+    """Split a ``KEY=VALUE`` option; a usage error when it lacks ``=`` or a key.
+
+    An empty key (``=value``) would re-anchor every path or select no label, so
+    it is rejected rather than silently matching everything.
+    """
+    key, sep, val = value.partition("=")
+    if not sep or not key:
+        raise _ConvertUsageError(error_template.format(value=value))
+    return key, val
+
+
+def _warn_commit_mismatch(commit: str | None, repo_path: Path) -> None:
+    """Warn when the profiled binary's commit differs from the repo HEAD."""
+    if commit is None:
+        return
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return
+    head = result.stdout.strip()
+    if head and not head.startswith(commit) and not commit.startswith(head):
+        message = ch.MSG_TRACE_COMMIT_MISMATCH.format(profiled=commit, head=head)
+        logger.warning(message)
+        click.secho(message, fg="yellow", err=True)
+
+
+def _convert_ebpf(
+    profile_file: Path,
+    repo_path: Path | None,
+    resolved_output: Path,
+    workload: str | None,
+    language: str | None,
+    path_map: tuple[str, ...],
+    build_id: str | None,
+    service: str | None,
+    label: str | None,
+    commit: str | None,
+) -> int:
+    """Convert an eBPF-profiler pprof profile with re-anchoring and filtering."""
+    from .. import constants as cs
+    from .ebpf_pprof import convert_ebpf_pprof
+
+    repo = _require_repo(repo_path)
+    mappings = [
+        _parse_key_value(entry, ch.ERR_TRACE_CONVERT_BAD_PATH_MAP) for entry in path_map
+    ]
+    service_pair = (
+        _parse_key_value(service, ch.ERR_TRACE_CONVERT_BAD_SERVICE) if service else None
+    )
+    _warn_commit_mismatch(commit, repo)
+    return convert_ebpf_pprof(
+        profile_file,
+        repo_root=repo,
+        output=resolved_output,
+        workload=workload,
+        path_map=mappings,
+        build_id=build_id,
+        service=service_pair,
+        workload_label=label,
+        language=language or cs.TRACE_LANGUAGE_GO,
+    )
+
+
 def _convert_profile(
     profile_file: Path,
     repo_path: Path | None,
@@ -218,6 +289,12 @@ def _convert_profile(
 @click.option("--include", default=None, help=ch.HELP_TRACE_INCLUDE)
 @click.option("--workload", default=None, help=ch.HELP_TRACE_WORKLOAD)
 @click.option("--language", default=None, help=ch.HELP_TRACE_LANGUAGE)
+@click.option("--format", "fmt", default=None, help=ch.HELP_TRACE_FORMAT)
+@click.option("--path-map", "path_map", multiple=True, help=ch.HELP_TRACE_PATH_MAP)
+@click.option("--build-id", default=None, help=ch.HELP_TRACE_BUILD_ID)
+@click.option("--service", default=None, help=ch.HELP_TRACE_SERVICE)
+@click.option("--label", default=None, help=ch.HELP_TRACE_LABEL)
+@click.option("--commit", default=None, help=ch.HELP_TRACE_COMMIT)
 def convert_cmd(
     profile_file: Path,
     repo_path: Path | None,
@@ -225,14 +302,36 @@ def convert_cmd(
     include: str | None,
     workload: str | None,
     language: str | None,
+    fmt: str | None,
+    path_map: tuple[str, ...],
+    build_id: str | None,
+    service: str | None,
+    label: str | None,
+    commit: str | None,
 ) -> None:
     from .. import constants as cs
 
     resolved_output = output or Path(cs.TRACE_DEFAULT_OUTPUT)
     try:
-        count = _convert_profile(
-            profile_file, repo_path, resolved_output, include, workload, language
-        )
+        if fmt == "ebpf":
+            count = _convert_ebpf(
+                profile_file,
+                repo_path,
+                resolved_output,
+                workload,
+                language,
+                path_map,
+                build_id,
+                service,
+                label,
+                commit,
+            )
+        elif fmt is not None:
+            raise _ConvertUsageError(ch.ERR_TRACE_CONVERT_BAD_FORMAT.format(format=fmt))
+        else:
+            count = _convert_profile(
+                profile_file, repo_path, resolved_output, include, workload, language
+            )
     # TraceFormatError subclasses ValueError, so ValueError covers it (and the
     # malformed-number / non-UTF-8 cases) without listing it redundantly.
     except (OSError, ValueError, _ConvertUsageError) as e:
