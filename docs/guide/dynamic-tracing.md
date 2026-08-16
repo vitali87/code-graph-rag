@@ -439,7 +439,7 @@ protobuf magic. Three things differ from a `go test -cpuprofile`:
 
 - **Mappings.** A fleet profile mixes the target service, libc, and the kernel.
   `--build-id` keeps only the mapping whose build id (or binary filename) matches;
-  other binaries are seen through, like any glue frame. Unsymbolized locations in
+  other binaries are seen through, like any glue frame. Unsymbolised locations in
   the target binary are counted per mapping and logged, not dropped silently.
 - **Path re-anchoring.** Production binaries are built elsewhere
   (`/build/src/...`, container prefixes), so `--path-map BUILD=REPO` rewrites the
@@ -451,10 +451,10 @@ protobuf magic. Three things differ from a `go test -cpuprofile`:
   value to each edge's `workloads` — production's analogue of "which test ran it".
 
 `--language` selects the demangler (`go`, `rust`, or `cpp`; C/C++ frames must
-arrive server-side-symbolized and demangled, which Parca provides). Caveats:
+arrive server-side-symbolised and demangled, which Parca provides). Caveats:
 optimized production builds inline aggressively, so coverage is structurally
 lower than test-suite traces (absence of an edge still never means dead code);
-symbolization needs frame pointers or DWARF in the deployed binary; and the
+symbolisation needs frame pointers or DWARF in the deployed binary; and the
 profiled binary may lag the indexed graph, which `--commit` surfaces.
 
 ## Ingesting a trace

@@ -11,7 +11,7 @@ handled here rather than in the shared decoder:
 
 * **Mappings** (pprof field 3) name the binary each location came from; a fleet
   profile mixes the target service, libc, and the kernel. Locations are filtered
-  to a target build-id or mapping filename, and unsymbolized locations are
+  to a target build-id or mapping filename, and unsymbolised locations are
   counted per mapping instead of being dropped silently.
 * **Sample labels** (Sample field 3) carry ``pid``/``service``/``endpoint`` tags.
   A label filters to the target service, and a chosen label becomes the edge's
@@ -29,6 +29,7 @@ demangles, which this path assumes).
 
 from __future__ import annotations
 
+import posixpath
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -191,12 +192,28 @@ def _decode(raw: bytes) -> _Profile:
     return _Profile(strings, functions, locations, mappings, samples)
 
 
+def _prefix_matches(path: str, prefix: str) -> bool:
+    """Whether ``prefix`` matches ``path`` at a path-component boundary.
+
+    ``/build/src`` matches ``/build/src/x`` but not ``/build/src-other/x``.
+    """
+    if not path.startswith(prefix):
+        return False
+    rest = path[len(prefix) :]
+    return prefix.endswith("/") or rest == "" or rest.startswith("/")
+
+
 def _reanchor(path: str, path_map: list[tuple[str, str]]) -> str:
     """Rewrite a build-time path prefix to the repository prefix, first match."""
     for build_prefix, repo_prefix in path_map:
-        if path.startswith(build_prefix):
+        if _prefix_matches(path, build_prefix):
             return repo_prefix + path[len(build_prefix) :]
     return path
+
+
+def _within_repo(path: str, root_prefix: str) -> bool:
+    """Whether a normalised path is the repo root or sits inside it."""
+    return path == root_prefix.rstrip("/") or path.startswith(root_prefix)
 
 
 class _FrameBuilder:
@@ -227,11 +244,14 @@ class _FrameBuilder:
         filename_index = getattr(function, "filename_index", 0)
         if function is None or not 0 < filename_index < len(strings):
             return None
-        path = _reanchor(strings[filename_index], self._path_map)
-        if not path.startswith(self._root_prefix):
-            # A production build path no --path-map rewrote into the repo: keep
-            # the original and count it, so re-anchoring gaps are visible.
-            self.unmapped_paths[strings[filename_index]] += 1
+        original = strings[filename_index]
+        # normpath collapses any ``..`` so a re-anchored path cannot traverse out
+        # of the repo and still pass the containment check below.
+        path = posixpath.normpath(_reanchor(original, self._path_map))
+        if not _within_repo(path, self._root_prefix):
+            # No --path-map rewrote this build path into the repo (or it escaped
+            # via ``..``): keep the original and count it, so gaps are visible.
+            self.unmapped_paths[original] += 1
             return None
         name_index = getattr(function, "name_index", 0)
         name = strings[name_index] if 0 < name_index < len(strings) else ""
@@ -285,13 +305,13 @@ def _accumulate(
 ) -> tuple[dict[tuple[FramePoint, FramePoint], tuple[int, set[str]]], Counter[str]]:
     """Adjacent in-repo frames per leaf-first stack, with per-edge workloads.
 
-    Locations from other binaries and unsymbolized locations are seen through
+    Locations from other binaries and unsymbolised locations are seen through
     (they do not reset the ancestor), so a project edge survives a libc frame
-    between its endpoints. Unsymbolized locations in the target binary are
+    between its endpoints. Unsymbolised locations in the target binary are
     counted per mapping rather than dropped silently.
     """
     edges: dict[tuple[FramePoint, FramePoint], tuple[int, set[str]]] = {}
-    unsymbolized: Counter[str] = Counter()
+    unsymbolised: Counter[str] = Counter()
     for sample in profile.samples:
         if not _sample_matches(sample, service):
             continue
@@ -302,7 +322,7 @@ def _accumulate(
             if location is None or not _mapping_selected(location, profile, build_id):
                 continue
             if not location.function_ids:
-                unsymbolized[_mapping_name(profile, location) or "<unknown>"] += 1
+                unsymbolised[_mapping_name(profile, location) or "<unknown>"] += 1
                 continue
             for function_id in reversed(location.function_ids):
                 frame = builder.frame(function_id)
@@ -314,19 +334,19 @@ def _accumulate(
                         workloads.add(workload)
                     edges[(ancestor, frame)] = (count + sample.weight, workloads)
                 ancestor = frame
-    return edges, unsymbolized
+    return edges, unsymbolised
 
 
-def _report(unsymbolized: Counter[str], unmapped_paths: Counter[str]) -> None:
+def _report(unsymbolised: Counter[str], unmapped_paths: Counter[str]) -> None:
     """Log symbolisation and path-anchoring gaps so they are visible."""
-    total_unsymbolized = sum(unsymbolized.values())
-    if total_unsymbolized:
+    total_unsymbolised = sum(unsymbolised.values())
+    if total_unsymbolised:
         logger.info(
             cs.TRACE_MSG_EBPF_UNSYMBOLIZED.format(
-                count=total_unsymbolized, mappings=len(unsymbolized)
+                count=total_unsymbolised, mappings=len(unsymbolised)
             )
         )
-        for name, count in unsymbolized.most_common():
+        for name, count in unsymbolised.most_common():
             logger.info(cs.TRACE_MSG_EBPF_MAPPING_DETAIL.format(name=name, count=count))
     total_unmapped = sum(unmapped_paths.values())
     if total_unmapped:
@@ -373,7 +393,7 @@ def convert_ebpf_pprof(
 
     root_prefix = repo_root.resolve().as_posix() + "/"
     builder = _FrameBuilder(profile, root_prefix, path_map or [], demangle)
-    edges, unsymbolized = _accumulate(
+    edges, unsymbolised = _accumulate(
         profile,
         builder,
         build_id=build_id,
@@ -381,7 +401,7 @@ def convert_ebpf_pprof(
         workload_label=workload_label,
         default_workload=workload,
     )
-    _report(unsymbolized, builder.unmapped_paths)
+    _report(unsymbolised, builder.unmapped_paths)
 
     fallback = (workload,) if workload else ()
     records = [

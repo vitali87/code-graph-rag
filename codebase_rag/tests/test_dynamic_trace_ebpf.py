@@ -1,7 +1,7 @@
 # eBPF continuous-profiler pprof profiles share Go's protobuf wire format but
 # add mappings (per-binary build ids), per-sample labels, and build-time paths.
 # The converter must re-anchor those paths to the repo, filter by build id and
-# label, map a label to workloads, and count unsymbolized locations per mapping
+# label, map a label to workloads, and count unsymbolised locations per mapping
 # rather than dropping them (issue #1287).
 
 from __future__ import annotations
@@ -12,7 +12,11 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag.trace.ebpf_pprof import convert_ebpf_pprof
+from codebase_rag.trace.ebpf_pprof import (
+    _prefix_matches,
+    _reanchor,
+    convert_ebpf_pprof,
+)
 from codebase_rag.trace.records import TraceFormatError, read_trace_file
 
 
@@ -100,14 +104,14 @@ def _profile_bytes() -> bytes:
         _location(1, 1, [(1, 12)])  # handle, target binary
         + _location(2, 1, [(2, 22)])  # greet, target binary
         + _location(3, 2, [(3, 5)])  # libc frame, other binary
-        + _location(4, 1, [])  # unsymbolized location in the target binary
+        + _location(4, 1, [])  # unsymbolised location in the target binary
     )
     endpoint = _label(_S["endpoint"], _S["/api/greet"])
     svc = _label(_S["service"], _S["checkout"])
     samples = (
         # handle -> libc -> greet (leaf-first): the libc frame is seen through.
         _sample([2, 3, 1], 7, [endpoint, svc])
-        # handle -> unsymbolized leaf: counted, no edge.
+        # handle -> unsymbolised leaf: counted, no edge.
         + _sample([4, 1], 3, [endpoint, svc])
     )
     return strings + functions + mappings + locations + samples
@@ -143,7 +147,7 @@ def test_reanchors_paths_and_captures_seen_through_edge(tmp_path):
     assert record.workloads == ("/api/greet",)
 
 
-def test_unsymbolized_locations_are_counted_per_mapping(tmp_path):
+def test_unsymbolised_locations_are_counted_per_mapping(tmp_path):
     messages: list[str] = []
     sink_id = logger.add(messages.append, level="INFO", format="{message}")
     try:
@@ -152,8 +156,8 @@ def test_unsymbolized_locations_are_counted_per_mapping(tmp_path):
         logger.remove(sink_id)
 
     joined = "\n".join(messages)
-    assert "eBPF symbolisation: 1 unsymbolized locations" in joined, joined
-    assert "unsymbolized[/app/service]=1" in joined, joined
+    assert "eBPF symbolisation: 1 unsymbolised locations" in joined, joined
+    assert "unsymbolised[/app/service]=1" in joined, joined
 
 
 def test_service_label_filters_samples(tmp_path):
@@ -279,3 +283,91 @@ def test_cli_rejects_malformed_path_map(tmp_path):
     )
     assert result.exit_code == 1
     assert "Invalid --path-map" in result.output
+
+
+@pytest.mark.parametrize(
+    "option,error", [("--path-map", "path-map"), ("--service", "service")]
+)
+def test_cli_rejects_empty_option_key(tmp_path, option, error):
+    # `--path-map =REPO` would re-anchor every path; `--service =VALUE` selects no
+    # label. An empty key must be rejected, not silently accepted.
+    from click.testing import CliRunner
+
+    from codebase_rag.trace.cli import cli
+
+    profile = _write_profile(tmp_path)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "convert",
+            str(profile),
+            "--format",
+            "ebpf",
+            "--repo-path",
+            str(tmp_path),
+            option,
+            "=value",
+        ],
+    )
+    assert result.exit_code == 1
+    assert error in result.output
+
+
+def test_path_map_matches_only_at_a_component_boundary():
+    # /build/src must not swallow /build/src-other: a partial-component match
+    # would emit false in-repo frames for a sibling directory.
+    assert _prefix_matches("/build/src/app.go", "/build/src")
+    assert _prefix_matches("/build/src", "/build/src")
+    assert not _prefix_matches("/build/src-other/app.go", "/build/src")
+    mapping = [("/build/src", "/repo/src")]
+    assert _reanchor("/build/src/app.go", mapping) == "/repo/src/app.go"
+    assert _reanchor("/build/src-other/app.go", mapping) == "/build/src-other/app.go"
+
+
+def _two_frame_profile(caller_path: str, callee_path: str) -> bytes:
+    strings = [
+        "",
+        "main.caller",
+        "main.callee",
+        caller_path,
+        callee_path,
+        "/svc",
+        "bid",
+    ]
+    table = b"".join(_string(s) for s in strings)
+    functions = _function(1, 1, 3, 10) + _function(2, 2, 4, 20)
+    mapping = _mapping(1, 5, 6)
+    locations = _location(1, 1, [(1, 12)]) + _location(2, 1, [(2, 22)])
+    # leaf-first: callee then caller, so root-first is caller -> callee.
+    sample = _sample([2, 1], 5, [])
+    return table + functions + mapping + locations + sample
+
+
+def test_reanchored_path_cannot_escape_the_repository(tmp_path):
+    # A profile path with `..` re-anchors under the repo prefix but resolves
+    # outside it; the traversal must be rejected, not injected as an edge.
+    profile = tmp_path / "cpu.pb.gz"
+    profile.write_bytes(
+        gzip.compress(
+            _two_frame_profile("/build/src/caller.go", "/build/src/../../outside.go")
+        )
+    )
+    output = tmp_path / "trace.jsonl"
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="INFO", format="{message}")
+    try:
+        count = convert_ebpf_pprof(
+            profile,
+            repo_root=tmp_path,
+            output=output,
+            path_map=[("/build/src/", tmp_path.as_posix() + "/src/")],
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert count == 0
+    _header, records = read_trace_file(output)
+    for record in records:
+        assert "outside" not in record.caller.path
+        assert "outside" not in record.callee.path
+    assert any("unmapped build paths" in message for message in messages), messages

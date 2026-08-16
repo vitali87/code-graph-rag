@@ -113,10 +113,14 @@ def _require_repo(repo_path: Path | None) -> Path:
 
 
 def _parse_key_value(value: str, error_template: str) -> tuple[str, str]:
-    """Split a ``KEY=VALUE`` option, raising a usage error when it lacks ``=``."""
-    if "=" not in value:
+    """Split a ``KEY=VALUE`` option; a usage error when it lacks ``=`` or a key.
+
+    An empty key (``=value``) would re-anchor every path or select no label, so
+    it is rejected rather than silently matching everything.
+    """
+    key, sep, val = value.partition("=")
+    if not sep or not key:
         raise _ConvertUsageError(error_template.format(value=value))
-    key, _sep, val = value.partition("=")
     return key, val
 
 

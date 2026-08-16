@@ -165,9 +165,9 @@ TRACE_ERR_EBPF_LANGUAGE = (
     "Unsupported eBPF profile language {language!r}; supported: {supported}."
 )
 TRACE_MSG_EBPF_UNSYMBOLIZED = (
-    "eBPF symbolisation: {count} unsymbolized locations across {mappings} mappings"
+    "eBPF symbolisation: {count} unsymbolised locations across {mappings} mappings"
 )
-TRACE_MSG_EBPF_MAPPING_DETAIL = "  unsymbolized[{name}]={count}"
+TRACE_MSG_EBPF_MAPPING_DETAIL = "  unsymbolised[{name}]={count}"
 TRACE_MSG_EBPF_UNMAPPED = (
     "{count} frames at {paths} unmapped build paths (add --path-map to re-anchor)"
 )
