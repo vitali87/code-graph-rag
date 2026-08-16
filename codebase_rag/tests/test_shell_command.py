@@ -102,6 +102,13 @@ class TestRequiresApproval:
         assert _requires_approval("rg secret ~/.config") is True
         assert _requires_approval("head -10 /tmp/outside.txt") is True
 
+    def test_find_mutating_actions_require_approval(self) -> None:
+        # Every action that runs a command or deletes files gates `find` behind
+        # approval, not just -exec/-delete.
+        for action in ("-delete", "-exec", "-execdir", "-ok", "-okdir"):
+            command = f"find . -name '*.py' {action} rm {{}} ;"
+            assert _requires_approval(command) is True, command
+
     def test_safe_git_subcommands_no_approval(self) -> None:
         assert not settings.SHELL_SAFE_GIT_SUBCOMMANDS
 

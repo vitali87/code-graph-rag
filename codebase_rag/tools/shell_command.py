@@ -228,8 +228,7 @@ def _has_redirect_operators(parts: list[str]) -> bool:
 
 
 def _find_requires_approval(parts: list[str]) -> bool:
-    mutating_actions = {"-delete", "-exec", "-execdir", "-ok", "-okdir"}
-    return any(part in mutating_actions for part in parts[1:])
+    return any(part in cs.SHELL_FIND_MUTATING_ACTIONS for part in parts[1:])
 
 
 def _requires_approval(command: str) -> bool:
