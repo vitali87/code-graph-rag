@@ -19,12 +19,23 @@ from __future__ import annotations
 import bisect
 import json
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from urllib.parse import unquote, urlsplit
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+
+class SourceMapOutcome(StrEnum):
+    """The result of trying to relocate a generated frame to its source."""
+
+    RESOLVED = "resolved"  # a source map covered the position
+    NO_MAP = "no_map"  # no source map referenced or found beside the file
+    UNCOVERED = "uncovered"  # a map loaded but no segment covers the position
+    MALFORMED = "malformed"  # a map file was found but could not be parsed
+
 
 _B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 _B64_INDEX = {char: index for index, char in enumerate(_B64_ALPHABET)}
@@ -279,34 +290,47 @@ class SourceMapIndex:
     """Lazily loads and caches the source map for each generated file."""
 
     def __init__(self) -> None:
-        self._cache: dict[str, SourceMap | None] = {}
+        self._cache: dict[str, tuple[SourceMap | None, SourceMapOutcome]] = {}
 
-    def _map_for(self, js_path: str) -> SourceMap | None:
+    def _map_for(self, js_path: str) -> tuple[SourceMap | None, SourceMapOutcome]:
         if js_path not in self._cache:
             self._cache[js_path] = self._load(Path(js_path))
         return self._cache[js_path]
 
     @staticmethod
-    def _load(path: Path) -> SourceMap | None:
+    def _load(path: Path) -> tuple[SourceMap | None, SourceMapOutcome]:
         referenced = _sniff_map_reference(path)
         candidates: Iterable[Path] = (
             [referenced] if referenced else [path.with_name(path.name + ".map")]
         )
+        found = False
         for candidate in candidates:
             if candidate.is_file():
+                found = True
                 loaded = load_source_map(candidate)
                 if loaded is not None:
-                    return loaded
-        return None
+                    return loaded, SourceMapOutcome.RESOLVED
+        # A map file was present but every candidate failed to parse; otherwise
+        # no map is referenced or sitting beside the generated file at all.
+        return None, (SourceMapOutcome.MALFORMED if found else SourceMapOutcome.NO_MAP)
 
-    def remap(self, path: str, line: int, column: int) -> tuple[str, int] | None:
-        """Map a generated ``(path, line, column)`` back to source ``(path, line)``.
+    def remap_detailed(
+        self, path: str, line: int, column: int
+    ) -> tuple[tuple[str, int] | None, SourceMapOutcome]:
+        """Remap a generated ``(path, line, column)`` and report the outcome.
 
         ``line`` and ``column`` are 0-based (as V8 reports them); the returned
-        line is 1-based. Returns None when no map covers the position, so the
-        caller keeps the generated frame.
+        line is 1-based. The position is None (and the caller keeps the generated
+        frame) whenever the outcome is not ``RESOLVED``.
         """
-        source_map = self._map_for(path)
+        source_map, load_outcome = self._map_for(path)
         if source_map is None:
-            return None
-        return source_map.original_position(line, column)
+            return None, load_outcome
+        position = source_map.original_position(line, column)
+        if position is None:
+            return None, SourceMapOutcome.UNCOVERED
+        return position, SourceMapOutcome.RESOLVED
+
+    def remap(self, path: str, line: int, column: int) -> tuple[str, int] | None:
+        """The remapped source position, or None when no map covers it."""
+        return self.remap_detailed(path, line, column)[0]

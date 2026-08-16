@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urlparse
+
+from loguru import logger
 
 from .. import constants as cs
 from .records import (
@@ -31,7 +34,7 @@ from .records import (
     TraceHeader,
     write_trace_file,
 )
-from .sourcemap import SourceMapIndex
+from .sourcemap import SourceMapIndex, SourceMapOutcome
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +96,10 @@ def _is_index(value: object) -> bool:
 
 
 def _project_frame(
-    call_frame: dict[str, object], root_prefix: str, source_maps: SourceMapIndex
+    call_frame: dict[str, object],
+    root_prefix: str,
+    source_maps: SourceMapIndex,
+    stats: Counter[SourceMapOutcome],
 ) -> _ProfileFrame | None:
     url = call_frame.get("url")
     if not isinstance(url, str) or not url.startswith(cs.TRACE_JS_FILE_URL_PREFIX):
@@ -113,9 +119,12 @@ def _project_frame(
     # original TypeScript/JavaScript position, so the frame lands on the source
     # node the graph indexed; without a map the generated position stands.
     column = call_frame.get("columnNumber")
-    remapped = None
     if _is_index(column):
-        remapped = source_maps.remap(generated_path, line, cast("int", column))
+        remapped, outcome = source_maps.remap_detailed(
+            generated_path, line, cast("int", column)
+        )
+    else:
+        remapped, outcome = None, SourceMapOutcome.NO_MAP
     if remapped is not None:
         path, source_line = remapped
     else:
@@ -124,6 +133,9 @@ def _project_frame(
         return None
     if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(path).parts):
         return None
+    # Only project frames count toward the resolution rate; the source-map
+    # outcome categorises whether each landed on its source or fell back.
+    stats[outcome] += 1
     return _ProfileFrame(path=path, qualname=name, line=source_line)
 
 
@@ -139,6 +151,7 @@ def _parse_nodes(
     root_prefix: str,
     profile_path: Path,
     source_maps: SourceMapIndex,
+    stats: Counter[SourceMapOutcome],
 ) -> tuple[dict[int, _ProfileFrame | None], dict[int, list[int]], dict[int, int]]:
     """Validate each profile node and index frames, children, and hit counts."""
     frames: dict[int, _ProfileFrame | None] = {}
@@ -164,12 +177,31 @@ def _parse_nodes(
                 cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path)
             )
         frames[node_id] = _project_frame(
-            cast("dict[str, object]", call_frame), root_prefix, source_maps
+            cast("dict[str, object]", call_frame), root_prefix, source_maps, stats
         )
         children[node_id] = list(cast("list[int]", raw_children))
         hit_count = node.get("hitCount", 0)
         hits[node_id] = hit_count if isinstance(hit_count, int) else 0
     return frames, children, hits
+
+
+def _report_resolution(stats: Counter[SourceMapOutcome]) -> None:
+    """Log the source-map resolution rate and categorise any failures."""
+    total = sum(stats.values())
+    if not total:
+        return
+    resolved = stats[SourceMapOutcome.RESOLVED]
+    logger.info(
+        cs.TRACE_MSG_SOURCEMAP_RESOLUTION.format(
+            resolved=resolved, total=total, rate=f"{resolved / total:.0%}"
+        )
+    )
+    for outcome in SourceMapOutcome:
+        count = stats[outcome]
+        if outcome is not SourceMapOutcome.RESOLVED and count:
+            logger.info(
+                cs.TRACE_MSG_SOURCEMAP_DETAIL.format(outcome=outcome.value, count=count)
+            )
 
 
 def convert_cpuprofile(
@@ -190,9 +222,11 @@ def convert_cpuprofile(
         raise TraceFormatError(cs.TRACE_ERR_BAD_CPUPROFILE.format(path=profile_path))
 
     root_prefix = repo_root.resolve().as_posix() + "/"
+    resolution: Counter[SourceMapOutcome] = Counter()
     frames, children, hits = _parse_nodes(
-        nodes, root_prefix, profile_path, SourceMapIndex()
+        nodes, root_prefix, profile_path, SourceMapIndex(), resolution
     )
+    _report_resolution(resolution)
 
     # A well-formed profile is a forest: every child id exists and has
     # exactly one parent. Anything else (dangling ids, shared children,
