@@ -250,18 +250,32 @@ fn main() {
 
 cargo = shutil.which("cargo")
 
-# Substrings that mark a crates.io connectivity failure (vs. a real build error).
-_CARGO_NETWORK_ERRORS = (
+# Phrases cargo prints only while acquiring dependencies from the registry; any
+# one of these is an unambiguous crates.io fetch failure.
+_CARGO_FETCH_CONTEXT = (
     "failed to download",
     "failed to get",
     "failed to query replaced source",
-    "could not resolve host",
-    "network failure",
     "spurious network error",
-    "timed out",
+    "failed to update registry",
+)
+# Bare connectivity errors: a build script or a real compile error can also
+# print these, so they only count as an outage inside a registry-fetch context.
+_CARGO_CONNECTIVITY = (
+    "could not resolve host",
     "no such host",
     "connection refused",
+    "network failure",
+    "timed out",
 )
+
+
+def _is_crates_io_outage(stderr: str) -> bool:
+    text = stderr.lower()
+    if any(marker in text for marker in _CARGO_FETCH_CONTEXT):
+        return True
+    in_registry_context = "crates.io" in text or "registry" in text
+    return in_registry_context and any(m in text for m in _CARGO_CONNECTIVITY)
 
 
 @pytest.mark.slow
@@ -288,7 +302,7 @@ def test_live_cargo_pprof_captures_dyn_and_generic(tmp_path):
     if build.returncode != 0:
         # `pprof` is fetched from crates.io; skip only for a genuine network
         # failure, and fail on a real build error so regressions are not hidden.
-        if any(marker in build.stderr.lower() for marker in _CARGO_NETWORK_ERRORS):
+        if _is_crates_io_outage(build.stderr):
             pytest.skip(f"crates.io unreachable: {build.stderr[-300:]}")
         raise AssertionError(f"cargo build failed:\n{build.stderr[-1000:]}")
     binary = tmp_path / "target" / "release" / "cgrtrace_demo"
