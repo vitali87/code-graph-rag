@@ -139,8 +139,10 @@ sampler does not follow, so the test code's frames never appear. A DI- or
 reflection-resolved implementation (`IServiceCollection`, `Activator.CreateInstance`)
 is the runtime-only edge that static analysis cannot resolve; because the sample
 records the concrete method on the stack, an interface call lands on the concrete
-implementation (`Worker.Dispatch -> Dog.Speak`), so the receiver that actually ran
-is recovered even without a separate receiver-type field.
+implementation (`Worker.Dispatch -> Dog.Speak`), so the implementation that
+actually ran is observed. The exact receiver type or object is not recoverable
+from samples (see the caveat below); the concrete implementation frame is what
+the dispatch resolves to.
 
 .NET frames carry no file paths, so scoping uses `--include` namespace
 prefixes instead of the repository root, and resolution joins on the
