@@ -145,6 +145,39 @@ HELP_TRACE_COMMIT = (
     "The commit the profiled binary was built from; warns if it differs from "
     "the repository HEAD at convert time (ebpf format)."
 )
+CMD_TRACE_PULL = (
+    "Download a pprof profile from an eBPF continuous profiler over HTTP and "
+    "convert it (Parca download, Pyroscope render?format=pprof, or any URL)."
+)
+HELP_TRACE_PULL_SAVE = (
+    "Keep the downloaded pprof at this path; by default it is removed after conversion."
+)
+HELP_TRACE_PULL_HEADER = (
+    "Extra HTTP request header as NAME=VALUE (e.g. Authorization=Bearer TOKEN); "
+    "repeatable."
+)
+HELP_TRACE_PULL_TIMEOUT = "HTTP request timeout in seconds (default 60)."
+ERR_TRACE_PULL_BAD_URL = "Unsupported URL {url}; expected an http:// or https:// URL."
+# The header value can be a bearer token, so it is never echoed back.
+ERR_TRACE_PULL_BAD_HEADER = (
+    "Invalid --header; expected NAME=VALUE (for example Authorization=Bearer TOKEN)."
+)
+ERR_TRACE_PULL_FAILED = "Could not download {url}: {error}."
+ERR_TRACE_PULL_TOO_LARGE = (
+    "Profile at {url} exceeds the maximum download size (256 MB)."
+)
+ERR_TRACE_PULL_SAVE_EQUALS_OUTPUT = (
+    "--save and --output must be different paths (--output holds the converted "
+    "trace, --save the downloaded profile)."
+)
+EXAMPLES_TRACE_PULL = (
+    "EXAMPLE\n\n"
+    "  cgr trace pull https://parca.example/api/... \\\n"
+    "      --repo-path ./my-repo --build-id 8f3a \\\n"
+    "      --path-map /build/src/=./my-repo/src/ \\\n"
+    "      --header Authorization=Bearer $TOKEN\n\n"
+    "  cgr trace ingest cgr-trace.jsonl --repo-path ./my-repo"
+)
 ERR_TRACE_CONVERT_BAD_FORMAT = "Unknown --format '{format}'; supported: ebpf."
 ERR_TRACE_CONVERT_BAD_PATH_MAP = (
     "Invalid --path-map '{value}'; expected BUILD_PREFIX=REPO_PREFIX."

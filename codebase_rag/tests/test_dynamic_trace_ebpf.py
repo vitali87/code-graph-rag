@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import gzip
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from loguru import logger
@@ -371,3 +374,206 @@ def test_reanchored_path_cannot_escape_the_repository(tmp_path):
         assert "outside" not in record.caller.path
         assert "outside" not in record.callee.path
     assert any("unmapped build paths" in message for message in messages), messages
+
+
+@contextlib.contextmanager
+def _pprof_server(payload: bytes, require_auth: str | None = None):
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
+            if require_auth and self.headers.get("Authorization") != require_auth:
+                self.send_response(401)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args):  # silence per-request logging
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/profile.pb.gz"
+    finally:
+        server.shutdown()
+
+
+def test_cli_pull_downloads_and_converts(tmp_path):
+    from click.testing import CliRunner
+
+    from codebase_rag.trace.cli import cli
+
+    output = tmp_path / "trace.jsonl"
+    with _pprof_server(
+        gzip.compress(_profile_bytes()), require_auth="Bearer tok"
+    ) as url:
+        result = CliRunner().invoke(
+            cli,
+            [
+                "pull",
+                url,
+                "--repo-path",
+                str(tmp_path),
+                "-o",
+                str(output),
+                "--path-map",
+                f"/build/src/={tmp_path.as_posix()}/src/",
+                "--build-id",
+                "abc123",
+                "--label",
+                "endpoint",
+                "--header",
+                "Authorization=Bearer tok",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    _header, records = read_trace_file(output)
+    edges = {(r.caller.qualname, r.callee.qualname) for r in records}
+    assert ("handle", "greet") in edges
+
+
+def test_cli_pull_saves_profile_when_requested(tmp_path):
+    from click.testing import CliRunner
+
+    from codebase_rag.trace.cli import cli
+
+    saved = tmp_path / "prod.pb.gz"
+    with _pprof_server(gzip.compress(_profile_bytes())) as url:
+        result = CliRunner().invoke(
+            cli,
+            [
+                "pull",
+                url,
+                "--repo-path",
+                str(tmp_path),
+                "-o",
+                str(tmp_path / "trace.jsonl"),
+                "--save",
+                str(saved),
+                "--path-map",
+                f"/build/src/={tmp_path.as_posix()}/src/",
+                "--build-id",
+                "abc123",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert saved.is_file()
+
+
+def test_cli_pull_rejects_non_http_url(tmp_path):
+    from click.testing import CliRunner
+
+    from codebase_rag.trace.cli import cli
+
+    result = CliRunner().invoke(
+        cli, ["pull", "file:///etc/passwd", "--repo-path", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert "Unsupported URL" in result.output
+
+
+def test_cli_pull_reports_download_failure(tmp_path):
+    from click.testing import CliRunner
+
+    from codebase_rag.trace.cli import cli
+
+    # Port 1 refuses immediately, so the failure is reported, not raised.
+    result = CliRunner().invoke(
+        cli,
+        [
+            "pull",
+            "http://127.0.0.1:1/x",
+            "--repo-path",
+            str(tmp_path),
+            "--timeout",
+            "5",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Could not download" in result.output
+
+
+def test_cli_pull_rejects_save_equal_output(tmp_path):
+    from click.testing import CliRunner
+
+    from codebase_rag.trace.cli import cli
+
+    same = tmp_path / "same.jsonl"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "pull",
+            "http://127.0.0.1:1/x",
+            "--repo-path",
+            str(tmp_path),
+            "-o",
+            str(same),
+            "--save",
+            str(same),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--save and --output" in result.output
+
+
+def test_pull_download_is_size_capped(tmp_path, monkeypatch):
+    import codebase_rag.trace.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "_MAX_PROFILE_BYTES", 16)
+    with _pprof_server(gzip.compress(_profile_bytes())) as url:
+        with pytest.raises(cli_mod._ConvertUsageError):
+            cli_mod._download_pprof(url, (), 10.0)
+
+
+def test_pull_strips_auth_on_redirect(tmp_path):
+    # A redirect must not forward the Authorization header to the new location,
+    # so a profiler endpoint cannot exfiltrate a bearer token via a 302.
+    from codebase_rag.trace.cli import _download_pprof
+
+    payload = gzip.compress(_profile_bytes())
+    received: dict[str, str | None] = {}
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            received["auth"] = self.headers.get("Authorization")
+            received["apikey"] = self.headers.get("X-Api-Key")
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args):
+            return
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+    threading.Thread(target=target.serve_forever, daemon=True).start()
+    target_url = f"http://127.0.0.1:{target.server_address[1]}/target.pb.gz"
+
+    class Redirector(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(302)
+            self.send_header("Location", target_url)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            return
+
+    redirector = ThreadingHTTPServer(("127.0.0.1", 0), Redirector)
+    threading.Thread(target=redirector.serve_forever, daemon=True).start()
+    redirect_url = f"http://127.0.0.1:{redirector.server_address[1]}/start"
+    try:
+        data = _download_pprof(
+            redirect_url,
+            ("Authorization=Bearer secret", "X-Api-Key=vendor-token"),
+            10.0,
+        )
+    finally:
+        target.shutdown()
+        redirector.shutdown()
+
+    assert data == payload
+    # Neither the standard nor the custom credential header crossed the redirect.
+    assert received["auth"] is None
+    assert received["apikey"] is None

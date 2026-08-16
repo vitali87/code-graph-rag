@@ -183,6 +183,66 @@ def _convert_ebpf(
     )
 
 
+# A merged fleet pprof profile is aggregated and small; cap the download so a
+# malicious or runaway endpoint cannot exhaust memory or run unattended forever.
+_MAX_PROFILE_BYTES = 256 * 1024 * 1024
+
+
+def _redact_url(url: str) -> str:
+    """A log-safe form of a URL: scheme, host, and path, without userinfo/query."""
+    import urllib.parse
+
+    parts = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit(
+        (parts.scheme, parts.hostname or "", parts.path, "", "")
+    )
+
+
+def _download_pprof(url: str, headers: tuple[str, ...], timeout: float) -> bytes:
+    """GET a pprof profile over HTTP(S); a usage error on a bad URL or failure.
+
+    Redirects are followed but never carry credentials across them and must stay
+    on http(s); the body is read under a size cap. ``urllib.error.URLError`` is
+    an ``OSError`` subclass, so one ``except OSError`` covers both.
+    """
+    import urllib.parse
+    import urllib.request
+
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        raise _ConvertUsageError(ch.ERR_TRACE_PULL_BAD_URL.format(url=_redact_url(url)))
+
+    request = urllib.request.Request(url)  # noqa: S310 - scheme checked above
+    for header in headers:
+        key, value = _parse_key_value(header, ch.ERR_TRACE_PULL_BAD_HEADER)
+        # Every caller-supplied header goes in unredirected: it was meant for this
+        # endpoint, and any of them (Authorization, X-Api-Key, X-Scope-OrgID, ...)
+        # may be a credential, so urllib must not resend it to a redirect target.
+        request.add_unredirected_header(key, value)
+    # An opener with only HTTP(S) handlers: a redirect to file:// or ftp:// has no
+    # handler and fails, so a redirect cannot bypass the scheme check above.
+    opener = urllib.request.OpenerDirector()
+    for handler in (
+        urllib.request.HTTPHandler,
+        urllib.request.HTTPSHandler,
+        urllib.request.HTTPRedirectHandler,
+        urllib.request.HTTPErrorProcessor,
+        urllib.request.HTTPDefaultErrorHandler,
+    ):
+        opener.add_handler(handler())
+    try:
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310
+            data = response.read(_MAX_PROFILE_BYTES + 1)
+    except OSError as e:
+        raise _ConvertUsageError(
+            ch.ERR_TRACE_PULL_FAILED.format(url=_redact_url(url), error=e)
+        ) from e
+    if len(data) > _MAX_PROFILE_BYTES:
+        raise _ConvertUsageError(
+            ch.ERR_TRACE_PULL_TOO_LARGE.format(url=_redact_url(url))
+        )
+    return data
+
+
 def _convert_profile(
     profile_file: Path,
     repo_path: Path | None,
@@ -334,6 +394,100 @@ def convert_cmd(
             )
     # TraceFormatError subclasses ValueError, so ValueError covers it (and the
     # malformed-number / non-UTF-8 cases) without listing it redundantly.
+    except (OSError, ValueError, _ConvertUsageError) as e:
+        logger.error(str(e))
+        click.secho(str(e), fg="red", err=True)
+        sys.exit(1)
+    click.echo(f"call records written: {count} -> {resolved_output}")
+
+
+@cli.command(
+    "pull",
+    help=ch.CMD_TRACE_PULL,
+    short_help=ch.CMD_TRACE_PULL,
+    epilog=ch.EXAMPLES_TRACE_PULL,
+)
+@click.argument("url")
+@click.option(
+    "--repo-path",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help=ch.HELP_TRACE_REPO_PATH,
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=ch.HELP_TRACE_OUTPUT,
+)
+@click.option(
+    "--save",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=ch.HELP_TRACE_PULL_SAVE,
+)
+@click.option("--header", "headers", multiple=True, help=ch.HELP_TRACE_PULL_HEADER)
+@click.option("--timeout", default=60.0, type=float, help=ch.HELP_TRACE_PULL_TIMEOUT)
+@click.option("--workload", default=None, help=ch.HELP_TRACE_WORKLOAD)
+@click.option("--language", default=None, help=ch.HELP_TRACE_LANGUAGE)
+@click.option("--path-map", "path_map", multiple=True, help=ch.HELP_TRACE_PATH_MAP)
+@click.option("--build-id", default=None, help=ch.HELP_TRACE_BUILD_ID)
+@click.option("--service", default=None, help=ch.HELP_TRACE_SERVICE)
+@click.option("--label", default=None, help=ch.HELP_TRACE_LABEL)
+@click.option("--commit", default=None, help=ch.HELP_TRACE_COMMIT)
+def pull_cmd(
+    url: str,
+    repo_path: Path | None,
+    output: Path | None,
+    save: Path | None,
+    headers: tuple[str, ...],
+    timeout: float,
+    workload: str | None,
+    language: str | None,
+    path_map: tuple[str, ...],
+    build_id: str | None,
+    service: str | None,
+    label: str | None,
+    commit: str | None,
+) -> None:
+    import os
+    import tempfile
+
+    from .. import constants as cs
+
+    resolved_output = output or Path(cs.TRACE_DEFAULT_OUTPUT)
+    try:
+        if save is not None and save.resolve() == resolved_output.resolve():
+            raise _ConvertUsageError(ch.ERR_TRACE_PULL_SAVE_EQUALS_OUTPUT)
+        data = _download_pprof(url, headers, timeout)
+        # Persist the profile where the caller asked, else in a temp file that is
+        # removed after conversion (a cron overlay does not need to keep it).
+        # mkstemp returns an open fd; close it so Windows does not lock the file
+        # against the write below.
+        if save is not None:
+            profile_path = save
+        else:
+            handle, temp_name = tempfile.mkstemp(suffix=".pb.gz", prefix="cgr-ebpf-")
+            os.close(handle)
+            profile_path = Path(temp_name)
+        try:
+            profile_path.write_bytes(data)
+            count = _convert_ebpf(
+                profile_path,
+                repo_path,
+                resolved_output,
+                workload,
+                language,
+                path_map,
+                build_id,
+                service,
+                label,
+                commit,
+            )
+        finally:
+            if save is None:
+                profile_path.unlink(missing_ok=True)
     except (OSError, ValueError, _ConvertUsageError) as e:
         logger.error(str(e))
         click.secho(str(e), fg="red", err=True)

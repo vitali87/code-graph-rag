@@ -460,6 +460,28 @@ lower than test-suite traces (absence of an edge still never means dead code);
 symbolisation needs frame pointers or DWARF in the deployed binary; and the
 profiled binary may lag the indexed graph, which `--commit` surfaces.
 
+`cgr trace pull` fetches the profile in one step instead of downloading it by
+hand: it GETs a pprof over HTTP(S) and converts it with the same eBPF options.
+The URL is whatever your profiler serves as pprof bytes (a Parca download, a
+Pyroscope `render?format=pprof` query, or any endpoint), and `--header` adds
+auth:
+
+```bash
+cgr trace pull "https://parca.example/...&format=pprof" \
+    --repo-path /path/to/your-repo --build-id 8f3a \
+    --path-map /build/src/=/path/to/your-repo/src/ \
+    --label endpoint --header "Authorization=Bearer $TOKEN"
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+Ingest is idempotent (properties are set, not accumulated), so a cron'd `pull`
+plus `ingest` keeps a continuously refreshing production overlay. **Off-CPU and
+wall-clock** profiles use the same pprof format and convert through the same
+`--format ebpf` / `pull` path; off-CPU profiles weight samples by blocked
+(off-CPU) duration and wall-clock profiles by elapsed time, so both surface
+I/O-bound paths (a handler that lives in `await`) that a CPU profile barely
+samples.
+
 ## Ingesting a trace
 
 Parse the repository into the graph first (`cgr start --repo-path ... --update-graph`),
