@@ -157,9 +157,19 @@ HELP_TRACE_PULL_HEADER = (
     "repeatable."
 )
 HELP_TRACE_PULL_TIMEOUT = "HTTP request timeout in seconds (default 60)."
-ERR_TRACE_PULL_BAD_URL = "Unsupported URL {url!r}; expected an http:// or https:// URL."
-ERR_TRACE_PULL_BAD_HEADER = "Invalid --header {value!r}; expected NAME=VALUE."
-ERR_TRACE_PULL_FAILED = "Could not download {url!r}: {error}."
+ERR_TRACE_PULL_BAD_URL = "Unsupported URL {url}; expected an http:// or https:// URL."
+# The header value can be a bearer token, so it is never echoed back.
+ERR_TRACE_PULL_BAD_HEADER = (
+    "Invalid --header; expected NAME=VALUE (for example Authorization=Bearer TOKEN)."
+)
+ERR_TRACE_PULL_FAILED = "Could not download {url}: {error}."
+ERR_TRACE_PULL_TOO_LARGE = (
+    "Profile at {url} exceeds the maximum download size (256 MB)."
+)
+ERR_TRACE_PULL_SAVE_EQUALS_OUTPUT = (
+    "--save and --output must be different paths (--output holds the converted "
+    "trace, --save the downloaded profile)."
+)
 EXAMPLES_TRACE_PULL = (
     "EXAMPLE\n\n"
     "  cgr trace pull https://parca.example/api/... \\\n"

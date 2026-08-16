@@ -475,11 +475,12 @@ cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
 Ingest is idempotent (properties are set, not accumulated), so a cron'd `pull`
-plus `ingest` keeps a continuously refreshing production overlay. **Off-CPU or
-wallclock** profiles use the same pprof format and convert through the same
-`--format ebpf` / `pull` path; their sample weights are blocked-time rather than
-CPU-time, which surfaces I/O-bound paths (a handler that lives in `await`) that a
-CPU profile barely samples.
+plus `ingest` keeps a continuously refreshing production overlay. **Off-CPU and
+wall-clock** profiles use the same pprof format and convert through the same
+`--format ebpf` / `pull` path; off-CPU profiles weight samples by blocked
+(off-CPU) duration and wall-clock profiles by elapsed time, so both surface
+I/O-bound paths (a handler that lives in `await`) that a CPU profile barely
+samples.
 
 ## Ingesting a trace
 

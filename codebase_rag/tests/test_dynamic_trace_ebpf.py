@@ -494,3 +494,79 @@ def test_cli_pull_reports_download_failure(tmp_path):
     )
     assert result.exit_code == 1
     assert "Could not download" in result.output
+
+
+def test_cli_pull_rejects_save_equal_output(tmp_path):
+    from click.testing import CliRunner
+
+    from codebase_rag.trace.cli import cli
+
+    same = tmp_path / "same.jsonl"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "pull",
+            "http://127.0.0.1:1/x",
+            "--repo-path",
+            str(tmp_path),
+            "-o",
+            str(same),
+            "--save",
+            str(same),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--save and --output" in result.output
+
+
+def test_pull_download_is_size_capped(tmp_path, monkeypatch):
+    import codebase_rag.trace.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "_MAX_PROFILE_BYTES", 16)
+    with _pprof_server(gzip.compress(_profile_bytes())) as url:
+        with pytest.raises(cli_mod._ConvertUsageError):
+            cli_mod._download_pprof(url, (), 10.0)
+
+
+def test_pull_strips_auth_on_redirect(tmp_path):
+    # A redirect must not forward the Authorization header to the new location,
+    # so a profiler endpoint cannot exfiltrate a bearer token via a 302.
+    from codebase_rag.trace.cli import _download_pprof
+
+    payload = gzip.compress(_profile_bytes())
+    received: dict[str, str | None] = {}
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            received["auth"] = self.headers.get("Authorization")
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args):
+            return
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+    threading.Thread(target=target.serve_forever, daemon=True).start()
+    target_url = f"http://127.0.0.1:{target.server_address[1]}/target.pb.gz"
+
+    class Redirector(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(302)
+            self.send_header("Location", target_url)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            return
+
+    redirector = ThreadingHTTPServer(("127.0.0.1", 0), Redirector)
+    threading.Thread(target=redirector.serve_forever, daemon=True).start()
+    redirect_url = f"http://127.0.0.1:{redirector.server_address[1]}/start"
+    try:
+        data = _download_pprof(redirect_url, ("Authorization=Bearer secret",), 10.0)
+    finally:
+        target.shutdown()
+        redirector.shutdown()
+
+    assert data == payload
+    assert received["auth"] is None
