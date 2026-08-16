@@ -123,6 +123,37 @@ HELP_TRACE_LANGUAGE = (
     "Override the auto-detected source language. Rust pprof profiles share Go's "
     "gzipped-protobuf format, so pass 'rust' to demangle them as Rust."
 )
+HELP_TRACE_FORMAT = (
+    "Force a profile format instead of auto-detecting it. Use 'ebpf' for pprof "
+    "profiles from an eBPF continuous profiler (Parca, Pyroscope, OTel, perf)."
+)
+HELP_TRACE_PATH_MAP = (
+    "Re-anchor a production build path to the repo, as BUILD_PREFIX=REPO_PREFIX. "
+    "Repeatable; applied before the in-repo check (ebpf format)."
+)
+HELP_TRACE_BUILD_ID = (
+    "Keep only frames from the mapping with this build id or binary filename "
+    "(ebpf format); other binaries are seen through."
+)
+HELP_TRACE_SERVICE = (
+    "Keep only samples whose label matches, as KEY=VALUE (ebpf format)."
+)
+HELP_TRACE_LABEL = (
+    "Sample label whose value becomes each edge's workload (ebpf format)."
+)
+HELP_TRACE_COMMIT = (
+    "The commit the profiled binary was built from; warns if it differs from "
+    "the repository HEAD at convert time (ebpf format)."
+)
+ERR_TRACE_CONVERT_BAD_FORMAT = "Unknown --format '{format}'; supported: ebpf."
+ERR_TRACE_CONVERT_BAD_PATH_MAP = (
+    "Invalid --path-map '{value}'; expected BUILD_PREFIX=REPO_PREFIX."
+)
+ERR_TRACE_CONVERT_BAD_SERVICE = "Invalid --service '{value}'; expected KEY=VALUE."
+MSG_TRACE_COMMIT_MISMATCH = (
+    "Profiled commit {profiled} differs from repository HEAD {head}; edges may "
+    "resolve against moved or renamed code."
+)
 ERR_TRACE_CONVERT_BAD_LANGUAGE = (
     "Unknown --language '{language}'; supported override values: {supported}."
 )

@@ -13,7 +13,9 @@ conversion), **PHP** (Xdebug trace conversion), **Lua** (a pure-Lua
 `debug.sethook` agent), **Dart** (a VM Service sample collector),
 **Go** (pprof CPU-profile conversion), **C/C++** (a
 `-finstrument-functions` shim), and **Rust** (pprof-rs CPU-profile
-conversion). Remaining runtimes are tracked in
+conversion). For production fleets, an **eBPF continuous profiler** (Parca,
+Pyroscope, OpenTelemetry, `perf`) can be ingested through the same pprof door
+(`--format ebpf`). All per-runtime tracers landed under
 [issue #1244](https://github.com/vitali87/code-graph-rag/issues/1244).
 
 ## Recording a trace
@@ -410,6 +412,50 @@ counted and reported, so that symbolisation gap is visible rather than silent. O
 for test workloads, not for production; the edge table holds 65k distinct
 pairs, and conversion **rejects** a trace the shim marked `dropped` (table
 overflowed) rather than pass off an incomplete call graph as exact.
+
+## Recording a production trace (eBPF continuous profilers)
+
+Every recipe above traces a test or dev workload from inside the runtime. An
+eBPF continuous profiler (Parca, Pyroscope, the OpenTelemetry eBPF profiler,
+`perf` exported to pprof) instead samples stacks from the kernel: no
+instrumentation of the target, roughly 1% overhead, fleet-wide and continuous.
+Its output is the same pprof wire format the Go and Rust recipes decode, so a
+production overlay ingests through the same door:
+
+```bash
+# obtain a merged pprof from your profiler (e.g. Parca's query API), then:
+cgr trace convert prod.pb.gz --format ebpf --repo-path /path/to/your-repo \
+    --language go \
+    --build-id 8f3a...   `# keep only the target binary's mapping` \
+    --path-map /build/src/=/path/to/your-repo/src/ \
+    --label endpoint     `# a sample label becomes each edge's workload` \
+    --service service_name=checkout \
+    --commit 1a2b3c4       `# warns if it differs from the repo HEAD`
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+`--format ebpf` is required because eBPF profiles share Go pprof's gzipped
+protobuf magic. Three things differ from a `go test -cpuprofile`:
+
+- **Mappings.** A fleet profile mixes the target service, libc, and the kernel.
+  `--build-id` keeps only the mapping whose build id (or binary filename) matches;
+  other binaries are seen through, like any glue frame. Unsymbolized locations in
+  the target binary are counted per mapping and logged, not dropped silently.
+- **Path re-anchoring.** Production binaries are built elsewhere
+  (`/build/src/...`, container prefixes), so `--path-map BUILD=REPO` rewrites the
+  prefix before the in-repo check (repeatable). Frames no map re-anchors keep
+  their path and are counted so the gap is visible; this is the source-map idea
+  from the Node.js recipe applied to native builds.
+- **Labels.** Profilers attach `pid`/`service`/`endpoint` tags per sample.
+  `--service KEY=VALUE` filters to one service; `--label KEY` maps that label's
+  value to each edge's `workloads` — production's analogue of "which test ran it".
+
+`--language` selects the demangler (`go`, `rust`, or `cpp`; C/C++ frames must
+arrive server-side-symbolized and demangled, which Parca provides). Caveats:
+optimized production builds inline aggressively, so coverage is structurally
+lower than test-suite traces (absence of an edge still never means dead code);
+symbolization needs frame pointers or DWARF in the deployed binary; and the
+profiled binary may lag the indexed graph, which `--commit` surfaces.
 
 ## Ingesting a trace
 

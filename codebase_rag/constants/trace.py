@@ -45,6 +45,7 @@ TRACE_TOOL_NAME_XDEBUG = "cgr-trace-xdebug"
 TRACE_TOOL_NAME_PPROF = "cgr-trace-pprof"
 TRACE_TOOL_NAME_RUST_PPROF = "cgr-trace-rust-pprof"
 TRACE_TOOL_NAME_INSTRUMENTED = "cgr-trace-instrumented"
+TRACE_TOOL_NAME_EBPF = "cgr-trace-ebpf"
 TRACE_DEFAULT_OUTPUT = "cgr-trace.jsonl"
 
 # Python runtime qualname markers.
@@ -159,3 +160,14 @@ TRACE_MSG_SOURCEMAP_RESOLUTION = (
     "source ({rate})"
 )
 TRACE_MSG_SOURCEMAP_DETAIL = "  source_map[{outcome}]={count}"
+
+TRACE_ERR_EBPF_LANGUAGE = (
+    "Unsupported eBPF profile language {language!r}; supported: {supported}."
+)
+TRACE_MSG_EBPF_UNSYMBOLIZED = (
+    "eBPF symbolisation: {count} unsymbolized locations across {mappings} mappings"
+)
+TRACE_MSG_EBPF_MAPPING_DETAIL = "  unsymbolized[{name}]={count}"
+TRACE_MSG_EBPF_UNMAPPED = (
+    "{count} frames at {paths} unmapped build paths (add --path-map to re-anchor)"
+)
