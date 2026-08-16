@@ -539,6 +539,7 @@ def test_pull_strips_auth_on_redirect(tmp_path):
     class Target(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             received["auth"] = self.headers.get("Authorization")
+            received["apikey"] = self.headers.get("X-Api-Key")
             self.send_response(200)
             self.end_headers()
             self.wfile.write(payload)
@@ -563,10 +564,16 @@ def test_pull_strips_auth_on_redirect(tmp_path):
     threading.Thread(target=redirector.serve_forever, daemon=True).start()
     redirect_url = f"http://127.0.0.1:{redirector.server_address[1]}/start"
     try:
-        data = _download_pprof(redirect_url, ("Authorization=Bearer secret",), 10.0)
+        data = _download_pprof(
+            redirect_url,
+            ("Authorization=Bearer secret", "X-Api-Key=vendor-token"),
+            10.0,
+        )
     finally:
         target.shutdown()
         redirector.shutdown()
 
     assert data == payload
+    # Neither the standard nor the custom credential header crossed the redirect.
     assert received["auth"] is None
+    assert received["apikey"] is None

@@ -214,12 +214,10 @@ def _download_pprof(url: str, headers: tuple[str, ...], timeout: float) -> bytes
     request = urllib.request.Request(url)  # noqa: S310 - scheme checked above
     for header in headers:
         key, value = _parse_key_value(header, ch.ERR_TRACE_PULL_BAD_HEADER)
-        # Credentials go in as unredirected headers so urllib never resends them
-        # to a redirect target (a 302 cannot exfiltrate a bearer token).
-        if key.lower() in ("authorization", "cookie", "proxy-authorization"):
-            request.add_unredirected_header(key, value)
-        else:
-            request.add_header(key, value)
+        # Every caller-supplied header goes in unredirected: it was meant for this
+        # endpoint, and any of them (Authorization, X-Api-Key, X-Scope-OrgID, ...)
+        # may be a credential, so urllib must not resend it to a redirect target.
+        request.add_unredirected_header(key, value)
     # An opener with only HTTP(S) handlers: a redirect to file:// or ftp:// has no
     # handler and fails, so a redirect cannot bypass the scheme check above.
     opener = urllib.request.OpenerDirector()
