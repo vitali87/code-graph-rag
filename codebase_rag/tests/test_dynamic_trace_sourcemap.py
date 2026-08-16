@@ -254,17 +254,24 @@ def test_live_typescript_trace_resolves_to_source(tmp_path):
     node, tsc = _toolchain
     src = tmp_path / "src"
     src.mkdir()
+    # greet carries the CPU work so it is the hot leaf: a sampler reliably lands
+    # inside it with handle (its only caller, through the registry) on the stack,
+    # making the runtime-only handle -> greet edge dependable rather than flaky.
     (src / "app.ts").write_text(
-        "type Handler = () => string;\n"
+        "type Handler = () => number;\n"
         "const registry: Record<string, Handler> = {};\n"
-        "function greet(): string { return 'hi'; }\n"
+        "function greet(): number {\n"
+        "    let a = 0;\n"
+        "    for (let i = 0; i < 20000000; i++) { a += i % 7; }\n"
+        "    return a;\n"
+        "}\n"
         "function register(name: string, fn: Handler): void { registry[name] = fn; }\n"
-        "function handle(name: string): string { return registry[name](); }\n"
+        "function handle(name: string): number { return registry[name](); }\n"
         "function run(): void {\n"
         "    register('greet', greet);\n"
-        "    let out = '';\n"
-        "    for (let i = 0; i < 3000000; i++) { out = handle('greet'); }\n"
-        "    if (out.length < 0) console.log(out);\n"
+        "    let out = 0;\n"
+        "    for (let i = 0; i < 30; i++) { out += handle('greet'); }\n"
+        "    if (out < 0) console.log(out);\n"
         "}\n"
         "run();\n"
     )
@@ -306,12 +313,19 @@ def test_live_typescript_trace_resolves_to_source(tmp_path):
     assert records
     assert any(record.callee.path.endswith(".ts") for record in records)
     # The runtime-only edge: handle() calls registry[name](), a dispatch through a
-    # dictionary that static analysis cannot resolve. greet is the hot leaf, so it
-    # is reliably sampled and must land on its .ts source, not the dist/*.js.
-    assert any(
-        record.callee.qualname == "greet" and record.callee.path.endswith(".ts")
+    # dictionary that static analysis cannot resolve. greet is the hot leaf called
+    # only by handle, and --no-opt keeps both as distinct frames, so the concrete
+    # handle -> greet edge is reliably sampled and both endpoints must relocate
+    # off the transpiled dist/*.js onto their .ts source.
+    dispatch = [
+        record
         for record in records
-    ), [(r.callee.qualname, r.callee.path) for r in records]
+        if record.caller.qualname == "handle" and record.callee.qualname == "greet"
+    ]
+    assert dispatch, [(r.caller.qualname, r.callee.qualname) for r in records]
+    for record in dispatch:
+        assert record.caller.path.endswith(".ts"), record.caller.path
+        assert record.callee.path.endswith(".ts"), record.callee.path
     # The resolution rate is reported so source-map coverage is visible.
     assert any("source-map resolution:" in message for message in messages), messages
 
