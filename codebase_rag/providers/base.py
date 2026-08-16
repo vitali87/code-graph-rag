@@ -46,12 +46,9 @@ class ModelProvider(ABC):
 
 
 def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
-    env_key = os.environ.get(env_var)
-    if env_key:
-        return env_key
     if api_key and api_key != cs.DEFAULT_API_KEY:
         return api_key
-    return None
+    return os.environ.get(env_var)
 
 
 class GoogleProvider(ModelProvider):

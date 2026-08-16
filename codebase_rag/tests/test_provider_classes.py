@@ -112,6 +112,17 @@ class TestProviderRegistry:
 
 
 class TestGoogleProvider:
+    def test_explicit_key_takes_precedence_over_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GOOGLE_API_KEY", "environment-key")
+
+        provider = GoogleProvider(
+            api_key="explicit-key", provider_type=GoogleProviderType.GLA
+        )
+
+        assert provider.api_key == "explicit-key"
+
     def test_google_gla_configuration(self) -> None:
         provider = GoogleProvider(
             api_key="test-key", provider_type=GoogleProviderType.GLA
@@ -135,7 +146,8 @@ class TestGoogleProvider:
 
         provider.validate_config()
 
-    def test_google_gla_validation_error(self) -> None:
+    def test_google_gla_validation_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
         provider = GoogleProvider(provider_type=GoogleProviderType.GLA)
 
         with pytest.raises(ValueError, match="Gemini GLA provider requires api_key"):
