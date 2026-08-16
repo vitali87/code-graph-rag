@@ -450,8 +450,11 @@ protobuf magic. Three things differ from a `go test -cpuprofile`:
   `--service KEY=VALUE` filters to one service; `--label KEY` maps that label's
   value to each edge's `workloads` — production's analogue of "which test ran it".
 
-`--language` selects the demangler (`go`, `rust`, or `cpp`; C/C++ frames must
-arrive server-side-symbolised and demangled, which Parca provides). Caveats:
+`--language` selects how symbol names are normalised to their bare member
+(`go`, `rust`, or `cpp`). This normalises names; it does not symbolise addresses
+or demangle mangled symbols, so C/C++ frames must arrive already
+server-side-symbolised and demangled (which Parca provides) for `--language cpp`
+to reduce them correctly. Caveats:
 optimized production builds inline aggressively, so coverage is structurally
 lower than test-suite traces (absence of an edge still never means dead code);
 symbolisation needs frame pointers or DWARF in the deployed binary; and the

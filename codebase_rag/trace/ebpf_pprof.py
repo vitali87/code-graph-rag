@@ -102,6 +102,15 @@ def _parse_mapping(payload: bytes) -> tuple[int, _Mapping]:
     return mapping_id, mapping
 
 
+def _line_function_ids(line_payload: bytes) -> list[int]:
+    """The function ids of a Location's inline Line records."""
+    return [
+        value
+        for line_field, _wire, value in _fields(line_payload)
+        if line_field == 1 and isinstance(value, int)
+    ]
+
+
 def _parse_location(payload: bytes) -> tuple[int, _Location]:
     """A location's id, mapping id, and function ids (inline frames)."""
     location_id = 0
@@ -112,9 +121,7 @@ def _parse_location(payload: bytes) -> tuple[int, _Location]:
         elif field_num == 2 and isinstance(value, int):
             location.mapping_id = value
         elif field_num == 4 and isinstance(value, bytes):
-            for line_field, _lw, line_value in _fields(value):
-                if line_field == 1 and isinstance(line_value, int):
-                    location.function_ids.append(line_value)
+            location.function_ids.extend(_line_function_ids(value))
     return location_id, location
 
 
@@ -294,6 +301,34 @@ def _mapping_name(profile: _Profile, location: _Location) -> str:
     return _string_at(profile.strings, mapping.filename_index) if mapping else ""
 
 
+def _resolved_frames(
+    sample: _LabeledSample,
+    profile: _Profile,
+    builder: _FrameBuilder,
+    build_id: str | None,
+    unsymbolised: Counter[str],
+) -> list[FramePoint]:
+    """A sample's in-repo frames, root-first, seeing through other binaries.
+
+    Locations from another binary and unsymbolised locations are skipped rather
+    than breaking the chain, so a project edge survives a libc frame between its
+    endpoints; unsymbolised target-binary locations are counted per mapping.
+    """
+    frames: list[FramePoint] = []
+    for location_id in reversed(sample.location_ids):
+        location = profile.locations.get(location_id)
+        if location is None or not _mapping_selected(location, profile, build_id):
+            continue
+        if not location.function_ids:
+            unsymbolised[_mapping_name(profile, location) or "<unknown>"] += 1
+            continue
+        for function_id in reversed(location.function_ids):
+            frame = builder.frame(function_id)
+            if frame is not None:
+                frames.append(frame)
+    return frames
+
+
 def _accumulate(
     profile: _Profile,
     builder: _FrameBuilder,
@@ -303,37 +338,19 @@ def _accumulate(
     workload_label: str | None,
     default_workload: str | None,
 ) -> tuple[dict[tuple[FramePoint, FramePoint], tuple[int, set[str]]], Counter[str]]:
-    """Adjacent in-repo frames per leaf-first stack, with per-edge workloads.
-
-    Locations from other binaries and unsymbolised locations are seen through
-    (they do not reset the ancestor), so a project edge survives a libc frame
-    between its endpoints. Unsymbolised locations in the target binary are
-    counted per mapping rather than dropped silently.
-    """
+    """Adjacent in-repo frames per leaf-first stack, with per-edge workloads."""
     edges: dict[tuple[FramePoint, FramePoint], tuple[int, set[str]]] = {}
     unsymbolised: Counter[str] = Counter()
     for sample in profile.samples:
         if not _sample_matches(sample, service):
             continue
         workload = _sample_workload(sample, workload_label, default_workload)
-        ancestor: FramePoint | None = None
-        for location_id in reversed(sample.location_ids):
-            location = profile.locations.get(location_id)
-            if location is None or not _mapping_selected(location, profile, build_id):
-                continue
-            if not location.function_ids:
-                unsymbolised[_mapping_name(profile, location) or "<unknown>"] += 1
-                continue
-            for function_id in reversed(location.function_ids):
-                frame = builder.frame(function_id)
-                if frame is None:
-                    continue
-                if ancestor is not None:
-                    count, workloads = edges.get((ancestor, frame), (0, set()))
-                    if workload:
-                        workloads.add(workload)
-                    edges[(ancestor, frame)] = (count + sample.weight, workloads)
-                ancestor = frame
+        frames = _resolved_frames(sample, profile, builder, build_id, unsymbolised)
+        for ancestor, frame in zip(frames, frames[1:], strict=False):
+            count, workloads = edges.get((ancestor, frame), (0, set()))
+            if workload:
+                workloads.add(workload)
+            edges[(ancestor, frame)] = (count + sample.weight, workloads)
     return edges, unsymbolised
 
 
