@@ -268,15 +268,21 @@ demangler (`cgr trace convert` reads the profile whether or not it is gzipped):
 
 ```toml
 # Cargo.toml
-[dev-dependencies]
+[dependencies]
 pprof = { version = "0.13", features = ["protobuf-codec"] }
+
+# Trace a release build with symbols kept: pprof-rs's sampler can trip a
+# debug-assertion (a slice-alignment check) in a dev build on recent
+# toolchains, so profile the release profile with debug info on.
+[profile.release]
+debug = true
 ```
 
 ```rust
-// In a test or a small harness that exercises the workload:
+// In a small harness (or a `--release` integration test) that runs the workload:
 use pprof::protos::Message; // brings write_to_writer into scope
 
-let guard = pprof::ProfilerGuard::new(100).unwrap();
+let guard = pprof::ProfilerGuard::new(250).unwrap();
 run_the_workload();
 if let Ok(report) = guard.report().build() {
     let profile = report.pprof().unwrap();
@@ -286,18 +292,18 @@ if let Ok(report) = guard.report().build() {
 ```
 
 ```bash
-cargo test                # dev profile: runs the harness above, writing cpu.pb
+cargo run --release       # runs the harness above, writing cpu.pb
 cgr trace convert cpu.pb --language rust \
-    --repo-path /path/to/your-repo --workload cargo-test
+    --repo-path /path/to/your-repo --workload cargo
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
 Sampled stacks make `dyn Trait` dispatch and calls through function pointers
-visible; counts are sample counts, so give the workload enough CPU time. Trace a
-non-optimized build (the default `cargo test` / `cargo run` dev profile,
-`opt-level = 0`) so callees are not inlined away; `debug = true` only preserves
-symbols and line tables and does not reduce inlining in an optimized `--release`
-build, so add it to whichever profile you trace but do not rely on it alone. The
+visible; counts are sample counts, so give the workload enough CPU time. An
+optimized build inlines small functions and turns a pass-through wrapper
+(`fn f(a) { a.method() }`) into a tail call whose frame the sampler never sees;
+mark functions you want as distinct frames `#[inline(never)]`, and keep work
+after the call so the callee is not in tail position. The
 demangler strips the legacy `::h` symbol hash, collapses
 generic instantiations and trait-qualified receivers
 (`<Dog as Animal>::speak`) to their bare member, and marks closures
