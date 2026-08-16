@@ -1,7 +1,37 @@
+import os
+import subprocess
+import sys
+
 import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.config import ModelConfig, format_missing_api_key_errors
+
+
+def test_import_does_not_walk_parent_directories_for_dotenv(tmp_path) -> None:
+    parent = tmp_path / "parent"
+    child = parent / "child"
+    child.mkdir(parents=True)
+    (parent / ".env").write_text("GOOGLE_API_KEY=parent-secret\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env.pop("GOOGLE_API_KEY", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import os; import codebase_rag.config; "
+            "print(os.environ.get('GOOGLE_API_KEY', 'missing'))",
+        ],
+        cwd=child,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "missing"
 
 
 class TestValidateApiKey:

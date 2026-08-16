@@ -55,6 +55,12 @@ SHELL_RETURN_CODE_ERROR = -1
 SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
 SHELL_SUBSHELL_PATTERNS = ("$(", "`")
 SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
+# `find` actions that run a command or delete files, so they need approval even
+# though `find` itself is a read tool. Kept here so the security boundary is
+# auditable in one place rather than inline in the approval check.
+SHELL_FIND_MUTATING_ACTIONS = frozenset(
+    {"-delete", "-exec", "-execdir", "-ok", "-okdir"}
+)
 
 # Dangerous commands, absolutely blocked
 SHELL_DANGEROUS_COMMANDS = frozenset(

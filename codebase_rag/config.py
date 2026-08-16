@@ -17,7 +17,11 @@ from . import exceptions as ex
 from . import logs
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
-load_dotenv()
+# Load only the configuration file in the invocation directory.  The default
+# python-dotenv discovery walks parent directories, which can silently import
+# credentials from an unrelated workspace (and makes tests depend on the
+# caller's directory layout).
+load_dotenv(dotenv_path=Path.cwd() / ".env")
 
 
 class ApiKeyInfoEntry(TypedDict):
@@ -200,7 +204,9 @@ class AppConfig(BaseSettings):
     # HYBRID needs a dotnet SDK + a restorable .csproj/.sln and degrades without
     # them. HYBRID augments (base-vs-interface, overload and extension binding,
     # partial-class identity); tree-sitter stays the standalone-correct backbone.
-    CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.AUTO
+    # Default to tree-sitter so indexing an untrusted repository never auto-invokes
+    # MSBuild/Roslyn; opt into AUTO/HYBRID/ROSLYN explicitly (security, #1231).
+    CSHARP_FRONTEND: cs.CSharpFrontend = cs.CSharpFrontend.TREESITTER
     # Opt-in go/packages semantic layer for Go (issue #1179). AUTO uses it where a
     # go toolchain is on PATH and degrades to pure tree-sitter otherwise. GOTYPES
     # augments exact first-party call binding and external-site suppression;
@@ -243,35 +249,18 @@ class AppConfig(BaseSettings):
             "tee",
         }
     )
+    # Only commands that cannot accept filesystem paths are approval-free.
+    # Filesystem and Git reads require approval because their path syntaxes can
+    # escape the project root (absolute paths, traversal, symlinks, git -C, and
+    # --git-dir). Project-confined read/search tools should be preferred instead.
     SHELL_READ_ONLY_COMMANDS: frozenset[str] = frozenset(
         {
-            "ls",
-            "cat",
-            "find",
             "pwd",
-            "rg",
             "echo",
-            "wc",
-            "head",
-            "tail",
-            "sort",
-            "uniq",
-            "cut",
             "tr",
         }
     )
-    SHELL_SAFE_GIT_SUBCOMMANDS: frozenset[str] = frozenset(
-        {
-            "status",
-            "log",
-            "diff",
-            "show",
-            "ls-files",
-            "remote",
-            "config",
-            "branch",
-        }
-    )
+    SHELL_SAFE_GIT_SUBCOMMANDS: frozenset[str] = frozenset()
 
     QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
     QDRANT_URL: str | None = None

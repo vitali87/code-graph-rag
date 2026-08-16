@@ -227,6 +227,10 @@ def _has_redirect_operators(parts: list[str]) -> bool:
     return any(p in cs.SHELL_REDIRECT_OPERATORS for p in parts)
 
 
+def _find_requires_approval(parts: list[str]) -> bool:
+    return any(part in cs.SHELL_FIND_MUTATING_ACTIONS for part in parts[1:])
+
+
 def _requires_approval(command: str) -> bool:
     if not command.strip():
         return True
@@ -255,6 +259,8 @@ def _requires_approval(command: str) -> bool:
 
             has_commands = True
             base_cmd = parts[0]
+            if base_cmd == "find" and _find_requires_approval(parts):
+                return True
             if base_cmd in settings.SHELL_READ_ONLY_COMMANDS:
                 continue
 
