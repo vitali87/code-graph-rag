@@ -171,6 +171,100 @@ def test_collector_captures_dynamic_dispatch(dynamic_dispatch_trace):
     assert speak_defs <= observed, (sorted(speak_defs), sorted(observed))
 
 
+_TEST_PUBSPEC = """\
+name: cgr_dart_test_demo
+environment:
+  sdk: ^3.0.0
+dev_dependencies:
+  test: ^1.24.0
+"""
+
+_TEST_LIB = """\
+int greet() {
+  var a = 0;
+  for (var i = 0; i < 8000000; i++) {
+    a += i % 3;
+  }
+  return a;
+}
+
+final Map<String, int Function()> handlers = {'greet': greet};
+
+int handle(String name) => handlers[name]!();
+"""
+
+_TEST_FILE = """\
+import 'package:test/test.dart';
+import '../lib_work.dart';
+
+void main() {
+  test('registry dispatch', () {
+    var out = 0;
+    for (var i = 0; i < 12; i++) {
+      out += handle('greet');
+    }
+    expect(out, isNonNegative);
+  });
+}
+"""
+
+
+def test_collector_traces_a_dart_test_file(tmp_path):
+    # `dart test` forks an isolate per test file that a single VM Service
+    # attach cannot follow, so a test file is traced by pointing the collector
+    # at it directly: package:test runs the file's tests in-process, and the
+    # sampler captures the registry dispatch inside the test.
+    (tmp_path / "pubspec.yaml").write_text(_TEST_PUBSPEC)
+    (tmp_path / "lib_work.dart").write_text(_TEST_LIB)
+    (tmp_path / "test").mkdir()
+    (tmp_path / "test" / "work_test.dart").write_text(_TEST_FILE)
+    pub_get = subprocess.run(
+        [str(dart), "pub", "get"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if pub_get.returncode != 0:
+        pytest.skip(f"dart pub get failed (offline?): {pub_get.stderr[-200:]}")
+    collector_pub_get = subprocess.run(
+        [str(dart), "pub", "get"],
+        cwd=_COLLECTOR_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if collector_pub_get.returncode != 0:
+        pytest.skip(
+            f"collector pub get failed (offline?): {collector_pub_get.stderr[-200:]}"
+        )
+    output = tmp_path / "cgr-trace.jsonl"
+    result = subprocess.run(
+        [
+            str(dart),
+            "bin/cgr_trace_collect.dart",
+            "--repo",
+            str(tmp_path),
+            "--output",
+            str(output),
+            "--workload",
+            "dart-test",
+            "--",
+            str(tmp_path / "test" / "work_test.dart"),
+        ],
+        cwd=_COLLECTOR_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    _header, records = read_trace_file(output)
+    edges = {(r.caller.qualname, r.callee.qualname) for r in records}
+    # The registry dispatch, invisible to static analysis, observed inside a test.
+    assert ("handle", "greet") in edges, sorted(edges)
+
+
 def test_collector_scopes_and_labels_workloads(dart_trace):
     _header, records = dart_trace
 
