@@ -39,10 +39,13 @@ if TYPE_CHECKING:
 Symbolizer = Callable[[str, int, Sequence[int]], dict[int, tuple[str, str, int]]]
 
 
-# An operator's demangled name (``operator<``, ``operator()``, ``operator new``)
-# carries punctuation the angle/paren scan below cannot parse, so it is matched
-# whole and kept as-is.
-_OPERATOR = re.compile(r"\boperator(?:\s*\w+|\(\)|\[\]|\s*[^\w\s(]+)")
+# Trailing cv-/ref-/exception qualifiers a demangled method or operator carries
+# after its parameter list (``... const``, ``... &&``, ``... noexcept``).
+_TRAILING_QUALIFIERS = re.compile(r"(?:\s+(?:const|volatile|noexcept)|\s*&&?)+$")
+# ``operator`` at a name boundary, not followed by a word char, so an ``operator``
+# spelling (``operator<``, ``operator()``, ``operator new[]``, ``operator T``) is
+# recognised while an identifier like ``operatorX`` or ``cooperator`` is not.
+_OPERATOR = re.compile(r"\boperator(?![\w])")
 
 
 def _strip_angle_groups(text: str) -> str:
@@ -59,17 +62,22 @@ def _strip_angle_groups(text: str) -> str:
     return "".join(out)
 
 
-def _signature_head(symbol: str) -> str:
-    """The text before the parameter list, ignoring ``(`` inside ``<...>``."""
+def _strip_trailing_params(text: str) -> str:
+    """Drop a trailing balanced ``(...)`` parameter list, counting only parens so
+    ``<...>`` and function-pointer parameters inside it are handled correctly."""
+    text = text.rstrip()
+    if not text.endswith(")"):
+        return text
     depth = 0
-    for index, char in enumerate(symbol):
-        if char == "<":
+    for index in range(len(text) - 1, -1, -1):
+        char = text[index]
+        if char == ")":
             depth += 1
-        elif char == ">":
-            depth = max(depth - 1, 0)
-        elif char == "(" and depth == 0:
-            return symbol[:index]
-    return symbol
+        elif char == "(":
+            depth -= 1
+            if depth == 0:
+                return text[:index].rstrip()
+    return text
 
 
 def _drop_return_type(head: str) -> str:
@@ -94,15 +102,17 @@ def _bare_name(symbol: str) -> str:
     instantiation shares one node (``int apply<Dog>(Dog const*)`` and
     ``int apply<Cat>(Cat const*)`` both become ``apply``, ``int Cache::get<int>``
     becomes ``get``); a method drops its qualifier (``Dog::sound(int)`` becomes
-    ``sound``); an ``operator`` name is kept whole.
+    ``sound``); an ``operator`` name is kept whole, including ``operator new[]``,
+    ``operator()``, a user-defined literal, or a conversion operator's type.
     """
-    text = symbol.strip()
+    text = _TRAILING_QUALIFIERS.sub("", symbol.strip())
     if not text:
         return cs.TRACE_QUALNAME_ANONYMOUS
-    match = _OPERATOR.search(text)
+    head = _strip_trailing_params(text)
+    match = _OPERATOR.search(head)
     if match:
-        return re.sub(r"\s+", " ", match.group(0))
-    name = _strip_angle_groups(_drop_return_type(_signature_head(text)))
+        return re.sub(r"\s+", " ", head[match.start() :]).strip()
+    name = _strip_angle_groups(_drop_return_type(head))
     return name.rsplit("::", 1)[-1].strip() or cs.TRACE_QUALNAME_ANONYMOUS
 
 

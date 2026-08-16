@@ -171,8 +171,29 @@ def test_bare_name_collapses_templates_and_demangles():
     assert _bare_name("ns::sub::foo(int)") == "foo"
     assert _bare_name("dispatch(Animal const*)") == "dispatch"
     assert _bare_name("main") == "main"
-    assert _bare_name("operator<(Dog const&, Dog const&)") == "operator<"
+    # A trailing const/ref qualifier is dropped, not mistaken for the name.
+    assert _bare_name("Reg::size(int) const") == "size"
+
+
+def test_bare_name_keeps_complete_operator_names():
+    # `addr2line -f -C` spells operators in full (including the trailing const
+    # cv-qualifier and the parameter list); the whole operator name must survive,
+    # never truncated to the first token.
+    assert _bare_name("F::operator<(F const&, F const&)") == "operator<"
     assert _bare_name("bool ns::operator<<(A const&)") == "operator<<"
+    assert _bare_name("F::operator<(F const&) const") == "operator<"
+    assert _bare_name("F::operator()(int)") == "operator()"
+    assert _bare_name("F::operator[](int)") == "operator[]"
+    assert _bare_name("operator new[](unsigned long, A&)") == "operator new[]"
+    assert _bare_name("operator new(unsigned long)") == "operator new"
+    assert _bare_name('operator"" _tag(unsigned long long)') == 'operator"" _tag'
+    # A qualified conversion operator keeps its complete conversion-type spelling,
+    # including the `::` inside it, rather than truncating at the first token.
+    assert _bare_name("X::operator std::string() const") == "operator std::string"
+    assert (
+        _bare_name("F::operator std::__cxx11::basic_string<char> () const")
+        == "operator std::__cxx11::basic_string<char>"
+    )
     assert _bare_name("") == cs.TRACE_QUALNAME_ANONYMOUS
 
 
@@ -341,11 +362,15 @@ def test_live_cpp_virtual_dispatch_produces_virtual_edge(tmp_path):
 _CMAKE_LISTS = """\
 cmake_minimum_required(VERSION 3.13)
 project(cgrdemo C CXX)
+find_package(Threads REQUIRED)
 add_executable(app main.cpp reg.c cgr_trace_shim.c)
 # The traced build type: -O0 keeps every frame (no inlining elides callees),
 # -g emits the DWARF the offline symboliser reads. The shim self-excludes with
 # no_instrument_function, so applying the flag to the whole target is safe.
 target_compile_options(app PRIVATE -finstrument-functions -g -O0)
+# The shim uses pthread_mutex_*/pthread_once; link pthreads explicitly so the
+# build works on toolchains where they are separate from libc.
+target_link_libraries(app PRIVATE Threads::Threads)
 """
 
 _CMAKE_MAIN = """\
@@ -471,8 +496,11 @@ def test_live_cmake_project_produces_dynamic_edges(tmp_path):
     assert edge_count("apply", "speak") == 8  # 4 * Dog + 4 * Cat
     assert len(callee_lines("apply", "speak")) == 2, records
 
-    # No template argument or return type leaks into any qualname.
+    # No template argument or return type leaks into any qualname; an operator
+    # name legitimately carries spaces (operator new[], a conversion type) so it
+    # is exempt from the no-space check.
     for record in records:
         for frame in (record.caller, record.callee):
             assert "<" not in frame.qualname, frame.qualname
-            assert " " not in frame.qualname, frame.qualname
+            if not frame.qualname.startswith("operator"):
+                assert " " not in frame.qualname, frame.qualname

@@ -349,9 +349,17 @@ c++ -pthread your_objects... cgr_shim.o -o app
 ```
 
 In CMake, add `cgr_trace_shim.c` to the target's sources (CMake compiles a
-`.c` file with the C compiler on its own) and set
-`-finstrument-functions -g -O0` on the traced build type; the shim links in
-without a separate step.
+`.c` file with the C compiler on its own), set `-finstrument-functions -g -O0`
+on the traced build type, and link pthreads (the shim uses
+`pthread_mutex_*`/`pthread_once`):
+
+```cmake
+find_package(Threads REQUIRED)
+target_compile_options(app PRIVATE -finstrument-functions -g -O0)
+target_link_libraries(app PRIVATE Threads::Threads)
+```
+
+The shim links in without a separate step.
 
 The shim records function-address pairs and the main image's load bias;
 conversion symbolises them with `atos` (macOS) or `addr2line` (ELF). PIE
