@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import gzip
+import shutil
+import subprocess
 
 import pytest
 
@@ -192,3 +194,93 @@ def test_malformed_profile_is_rejected(tmp_path):
         convert_rust_pprof(
             profile_path, repo_root=tmp_path, output=tmp_path / "out.jsonl"
         )
+
+
+_CARGO_TOML = """\
+[package]
+name = "cgrtrace_demo"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+pprof = { version = "0.13", features = ["protobuf-codec"] }
+
+[profile.release]
+debug = true
+"""
+
+# `dispatch` calls through a `dyn Animal` (dynamic dispatch); `apply` is a
+# generic monomorphised for Dog and Cat. Both keep work after the call so the
+# callee is not in tail position (else the frame is elided), and #[inline(never)]
+# keeps them as distinct frames in the optimised build.
+_MAIN_RS = """\
+use pprof::protos::Message;
+
+trait Animal { fn speak(&self) -> u64; }
+struct Dog;
+struct Cat;
+impl Animal for Dog {
+    #[inline(never)]
+    fn speak(&self) -> u64 { let mut a=0u64; for i in 0..8_000_000u64 { a=a.wrapping_add(i%7);} a }
+}
+impl Animal for Cat {
+    #[inline(never)]
+    fn speak(&self) -> u64 { let mut a=0u64; for i in 0..8_000_000u64 { a=a.wrapping_add(i%5);} a }
+}
+
+#[inline(never)]
+fn dispatch(a: &dyn Animal) -> u64 { let r = a.speak(); r.wrapping_add(1) }
+
+#[inline(never)]
+fn apply<T: Animal>(a: &T) -> u64 { let r = a.speak(); r.wrapping_add(2) }
+
+fn main() {
+    let guard = pprof::ProfilerGuard::new(250).unwrap();
+    let mut total = 0u64;
+    for i in 0..8 { let a: &dyn Animal = if i%2==0 {&Dog} else {&Cat}; total = total.wrapping_add(dispatch(a)); }
+    for _ in 0..4 { total = total.wrapping_add(apply(&Dog)); total = total.wrapping_add(apply(&Cat)); }
+    if total == 12345 { println!("{total}"); }
+    if let Ok(report) = guard.report().build() {
+        let mut f = std::fs::File::create("cpu.pb").unwrap();
+        report.pprof().unwrap().write_to_writer(&mut f).unwrap();
+    }
+}
+"""
+
+cargo = shutil.which("cargo")
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(cargo is None, reason="cargo toolchain not available")
+def test_live_cargo_pprof_captures_dyn_and_generic(tmp_path):
+    # A real cargo build + run under pprof-rs: the dyn Trait call and the
+    # monomorphised generic must both surface as project edges, with the two
+    # generic instantiations collapsed onto the one `apply` definition.
+    (tmp_path / "Cargo.toml").write_text(_CARGO_TOML)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.rs").write_text(_MAIN_RS)
+
+    build = subprocess.run(
+        [cargo, "build", "--release"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    if build.returncode != 0:
+        # The one dependency (pprof) is fetched from crates.io; without network
+        # the build cannot proceed, so skip rather than fail.
+        pytest.skip(f"cargo build failed (offline?): {build.stderr[-300:]}")
+    binary = tmp_path / "target" / "release" / "cgrtrace_demo"
+    subprocess.run([str(binary)], cwd=tmp_path, check=True, capture_output=True)
+
+    output = tmp_path / "trace.jsonl"
+    convert_rust_pprof(tmp_path / "cpu.pb", repo_root=tmp_path, output=output)
+
+    _header, records = read_trace_file(output)
+    edges = {(r.caller.qualname, r.callee.qualname) for r in records}
+    # The dyn Trait dispatch static analysis cannot resolve.
+    assert ("dispatch", "speak") in edges, sorted(edges)
+    # apply::<Dog> and apply::<Cat> both collapse onto the generic `apply`.
+    assert ("apply", "speak") in edges, sorted(edges)
