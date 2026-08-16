@@ -9,6 +9,7 @@ from __future__ import annotations
 import gzip
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -249,9 +250,25 @@ fn main() {
 
 cargo = shutil.which("cargo")
 
+# Substrings that mark a crates.io connectivity failure (vs. a real build error).
+_CARGO_NETWORK_ERRORS = (
+    "failed to download",
+    "failed to get",
+    "failed to query replaced source",
+    "could not resolve host",
+    "network failure",
+    "spurious network error",
+    "timed out",
+    "no such host",
+    "connection refused",
+)
+
 
 @pytest.mark.slow
-@pytest.mark.skipif(cargo is None, reason="cargo toolchain not available")
+@pytest.mark.skipif(
+    cargo is None or sys.platform != "linux",
+    reason="needs cargo; pprof-rs symbolisation is validated on Linux",
+)
 def test_live_cargo_pprof_captures_dyn_and_generic(tmp_path):
     # A real cargo build + run under pprof-rs: the dyn Trait call and the
     # monomorphised generic must both surface as project edges, with the two
@@ -269,11 +286,15 @@ def test_live_cargo_pprof_captures_dyn_and_generic(tmp_path):
         check=False,
     )
     if build.returncode != 0:
-        # The one dependency (pprof) is fetched from crates.io; without network
-        # the build cannot proceed, so skip rather than fail.
-        pytest.skip(f"cargo build failed (offline?): {build.stderr[-300:]}")
+        # `pprof` is fetched from crates.io; skip only for a genuine network
+        # failure, and fail on a real build error so regressions are not hidden.
+        if any(marker in build.stderr.lower() for marker in _CARGO_NETWORK_ERRORS):
+            pytest.skip(f"crates.io unreachable: {build.stderr[-300:]}")
+        raise AssertionError(f"cargo build failed:\n{build.stderr[-1000:]}")
     binary = tmp_path / "target" / "release" / "cgrtrace_demo"
-    subprocess.run([str(binary)], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        [str(binary)], cwd=tmp_path, check=True, capture_output=True, timeout=300
+    )
 
     output = tmp_path / "trace.jsonl"
     convert_rust_pprof(tmp_path / "cpu.pb", repo_root=tmp_path, output=output)
@@ -282,5 +303,9 @@ def test_live_cargo_pprof_captures_dyn_and_generic(tmp_path):
     edges = {(r.caller.qualname, r.callee.qualname) for r in records}
     # The dyn Trait dispatch static analysis cannot resolve.
     assert ("dispatch", "speak") in edges, sorted(edges)
-    # apply::<Dog> and apply::<Cat> both collapse onto the generic `apply`.
-    assert ("apply", "speak") in edges, sorted(edges)
+    # apply::<Dog> and apply::<Cat> collapse onto the one generic `apply` node:
+    # every speak caller whose name starts with apply must be exactly `apply`.
+    apply_callers = {
+        caller for caller, callee in edges if callee == "speak" and "apply" in caller
+    }
+    assert apply_callers == {"apply"}, sorted(apply_callers)
