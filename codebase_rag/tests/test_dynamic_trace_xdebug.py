@@ -316,7 +316,8 @@ def test_live_phpunit_run_captures_variable_call_closure_and_trait(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "Handlers.php").write_text(_PHPUNIT_SRC)
     (tmp_path / "tests" / "RegistryTest.php").write_text(_PHPUNIT_TEST)
-    assert _php is not None and _phpunit is not None
+    assert _php is not None
+    assert _phpunit is not None
     subprocess.run(
         [
             _php,
