@@ -274,7 +274,9 @@ def _is_crates_io_outage(stderr: str) -> bool:
     text = stderr.lower()
     if any(marker in text for marker in _CARGO_FETCH_CONTEXT):
         return True
-    in_registry_context = "crates.io" in text or "registry" in text
+    in_registry_context = any(
+        token in text for token in ("registry", "index", "download")
+    )
     return in_registry_context and any(m in text for m in _CARGO_CONNECTIVITY)
 
 
