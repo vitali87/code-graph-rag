@@ -182,6 +182,9 @@ def test_bare_name_keeps_complete_operator_names():
     assert _bare_name("F::operator<(F const&, F const&)") == "operator<"
     assert _bare_name("bool ns::operator<<(A const&)") == "operator<<"
     assert _bare_name("F::operator<(F const&) const") == "operator<"
+    # Combined trailing qualifiers are all stripped (and the shrinking loop that
+    # does it cannot backtrack, unlike the earlier regex).
+    assert _bare_name("F::at(int) const && noexcept") == "at"
     assert _bare_name("F::operator()(int)") == "operator()"
     assert _bare_name("F::operator[](int)") == "operator[]"
     assert _bare_name("operator new[](unsigned long, A&)") == "operator new[]"

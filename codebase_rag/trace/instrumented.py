@@ -40,12 +40,34 @@ Symbolizer = Callable[[str, int, Sequence[int]], dict[int, tuple[str, str, int]]
 
 
 # Trailing cv-/ref-/exception qualifiers a demangled method or operator carries
-# after its parameter list (``... const``, ``... &&``, ``... noexcept``).
-_TRAILING_QUALIFIERS = re.compile(r"(?:\s+(?:const|volatile|noexcept)|\s*&&?)+$")
+# after its parameter list (``... const``, ``... &&``, ``... noexcept``). Stripped
+# with a shrinking loop, not a regex, to avoid catastrophic backtracking.
+_TRAILING_QUALIFIERS = ("const", "volatile", "noexcept", "&&", "&")
 # ``operator`` at a name boundary, not followed by a word char, so an ``operator``
 # spelling (``operator<``, ``operator()``, ``operator new[]``, ``operator T``) is
 # recognised while an identifier like ``operatorX`` or ``cooperator`` is not.
 _OPERATOR = re.compile(r"\boperator(?![\w])")
+
+
+def _strip_trailing_qualifiers(text: str) -> str:
+    """Drop trailing cv-/ref-/exception qualifiers left after a parameter list."""
+    text = text.rstrip()
+    shrinking = True
+    while shrinking:
+        shrinking = False
+        for token in _TRAILING_QUALIFIERS:
+            if not text.endswith(token):
+                continue
+            start = len(text) - len(token)
+            # A word-like token (``const``) must sit at a boundary, so an
+            # identifier that merely ends in those letters is left alone.
+            preceding = text[start - 1] if start else ""
+            if token[0].isalpha() and (preceding.isalnum() or preceding == "_"):
+                continue
+            text = text[:start].rstrip()
+            shrinking = True
+            break
+    return text
 
 
 def _strip_angle_groups(text: str) -> str:
@@ -105,7 +127,7 @@ def _bare_name(symbol: str) -> str:
     ``sound``); an ``operator`` name is kept whole, including ``operator new[]``,
     ``operator()``, a user-defined literal, or a conversion operator's type.
     """
-    text = _TRAILING_QUALIFIERS.sub("", symbol.strip())
+    text = _strip_trailing_qualifiers(symbol.strip())
     if not text:
         return cs.TRACE_QUALNAME_ANONYMOUS
     head = _strip_trailing_params(text)
