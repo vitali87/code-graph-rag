@@ -16,6 +16,7 @@ direct caller/callee pairs, so out-of-repo endpoints simply drop the edge.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Sequence
@@ -38,10 +39,71 @@ if TYPE_CHECKING:
 Symbolizer = Callable[[str, int, Sequence[int]], dict[int, tuple[str, str, int]]]
 
 
+# An operator's demangled name (``operator<``, ``operator()``, ``operator new``)
+# carries punctuation the angle/paren scan below cannot parse, so it is matched
+# whole and kept as-is.
+_OPERATOR = re.compile(r"\boperator(?:\s*\w+|\(\)|\[\]|\s*[^\w\s(]+)")
+
+
+def _strip_angle_groups(text: str) -> str:
+    """Drop every balanced ``<...>`` template-argument span, at any nesting."""
+    out: list[str] = []
+    depth = 0
+    for char in text:
+        if char == "<":
+            depth += 1
+        elif char == ">":
+            depth = max(depth - 1, 0)
+        elif depth == 0:
+            out.append(char)
+    return "".join(out)
+
+
+def _signature_head(symbol: str) -> str:
+    """The text before the parameter list, ignoring ``(`` inside ``<...>``."""
+    depth = 0
+    for index, char in enumerate(symbol):
+        if char == "<":
+            depth += 1
+        elif char == ">":
+            depth = max(depth - 1, 0)
+        elif char == "(" and depth == 0:
+            return symbol[:index]
+    return symbol
+
+
+def _drop_return_type(head: str) -> str:
+    """Drop a leading return type: templates demangle as ``ret name<...>``, and
+    the name begins after the last space that sits outside any ``<...>``."""
+    depth = 0
+    split_at = -1
+    for index, char in enumerate(head):
+        if char == "<":
+            depth += 1
+        elif char == ">":
+            depth = max(depth - 1, 0)
+        elif char == " " and depth == 0:
+            split_at = index
+    return head[split_at + 1 :]
+
+
 def _bare_name(symbol: str) -> str:
-    """``Dog::sound(int)`` as the member name ``sound``."""
-    head = symbol.split("(", 1)[0].strip()
-    return head.rsplit("::", 1)[-1] or cs.TRACE_QUALNAME_ANONYMOUS
+    """The bare member name of a demangled C/C++ symbol.
+
+    A template instantiation collapses to its source definition so every
+    instantiation shares one node (``int apply<Dog>(Dog const*)`` and
+    ``int apply<Cat>(Cat const*)`` both become ``apply``, ``int Cache::get<int>``
+    becomes ``get``); a method drops its qualifier (``Dog::sound(int)`` becomes
+    ``sound``); an ``operator`` name is kept whole.
+    """
+    text = symbol.strip()
+    if not text:
+        return cs.TRACE_QUALNAME_ANONYMOUS
+    match = _OPERATOR.search(text)
+    if match:
+        return re.sub(r"\s+", " ", match.group(0))
+    name = _strip_angle_groups(_drop_return_type(_signature_head(text)))
+    return name.rsplit("::", 1)[-1].strip() or cs.TRACE_QUALNAME_ANONYMOUS
 
 
 def _atos_symbolizer(

@@ -359,7 +359,11 @@ binaries need no special build flag — the shim records the ASLR slide and
 the converter subtracts it before symbolising, so the default hardened
 (PIE) build works. Calls through function pointers (C) and virtual dispatch
 (C++) land with true invocation counts; C++ names demangle and normalise to
-their bare member form, with source positions carrying identity. Frames that
+their bare member form, with source positions carrying identity. Template
+instantiations collapse to their one source definition (`apply<Dog>` and
+`apply<Cat>` both become `apply`), while each distinct callee keeps its own
+declaration-line position, so a virtual or templated call still resolves to
+every concrete receiver that ran. Frames that
 symbolise outside the repository (libc, the C++ runtime) drop their edges
 rather than being guessed. An edge whose caller or callee does not resolve to
 a project frame is excluded from the converted trace; addresses that do not
