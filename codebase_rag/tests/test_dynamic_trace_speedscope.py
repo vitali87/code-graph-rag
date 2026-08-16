@@ -6,11 +6,17 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.trace.records import read_trace_file
+from codebase_rag.trace.resolution import _demangle_clr_name
 from codebase_rag.trace.speedscope import convert_speedscope
 
 
@@ -256,3 +262,205 @@ def test_non_finite_sample_weights_default_to_one():
     assert _sample_weight([float("-inf")], 0) == 1.0
     assert _sample_weight([float("nan")], 0) == 1.0
     assert _sample_weight([2.5], 0) == 2.5
+
+
+def _dotnet_with_sdk() -> str | None:
+    """The dotnet path only when an SDK is installed (not a runtime-only setup).
+
+    ``shutil.which("dotnet")`` also succeeds for runtime-only installs, which
+    cannot build; probing ``--list-sdks`` (bounded, at import time) degrades a
+    build-incapable install to "unavailable" instead of failing the live test.
+    """
+    dotnet = shutil.which("dotnet")
+    if dotnet is None:
+        return None
+    try:
+        probe = subprocess.run(
+            [dotnet, "--list-sdks"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return dotnet if probe.returncode == 0 and probe.stdout.strip() else None
+
+
+def _dotnet_trace() -> str | None:
+    """dotnet-trace on PATH, or in the default global-tools directory."""
+    found = shutil.which("dotnet-trace")
+    if found:
+        return found
+    candidate = Path.home() / ".dotnet" / "tools" / "dotnet-trace"
+    return str(candidate) if candidate.exists() else None
+
+
+_dotnet = _dotnet_with_sdk()
+_dotnet_trace = _dotnet_trace()
+_NET_NETWORK_ERRORS = (
+    "unable to load the service index",
+    "no such host",
+    "could not resolve",
+    "connection refused",
+    "connection timed out",
+    "name or service not known",
+    "network is unreachable",
+    "failed to retrieve information about",
+)
+# The installed SDK is too old to target net8.0: an environment gap, not a
+# regression, so it skips rather than failing.
+_NET_SDK_ERRORS = ("does not support targeting", "no .net sdks were found")
+
+# An xUnit v3 test assembly runs its tests in-process as a plain executable, so
+# `dotnet-trace collect -- dotnet Tests.dll` traces the actual test run in one
+# process. `dotnet test` instead forks a testhost the single-process sampler
+# cannot follow, which is why the recipe runs the assembly directly.
+_NET_CSPROJ = """\
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="1.0.0" />
+  </ItemGroup>
+</Project>
+"""
+
+# The concrete Dog is chosen at runtime by reflection (opaque to static
+# analysis); the interface call Dispatch -> IAnimal.Speak must resolve to the
+# concrete Dog.Speak, and the async methods run through compiler state machines.
+_NET_TESTS = """\
+using System;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
+using Xunit;
+namespace Demo {
+  public interface IAnimal { long Speak(); }
+  public class Dog : IAnimal { public long Speak() { long a=0; for(long i=0;i<40000000;i++) a+=i%7; return a; } }
+  public class Worker {
+    private readonly IAnimal _animal;
+    public Worker(IAnimal animal) { _animal = animal; }
+    // NoInlining keeps the forwarding frame in Release-mode samples, so the
+    // Dispatch -> Dog.Speak dispatch edge is not erased by the JIT.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public long Dispatch() { return _animal.Speak(); }
+    public async Task<long> RunAsync() { await Task.Yield(); long s=0; for(int k=0;k<20;k++) s+=Dispatch(); return s; }
+  }
+  public class WorkerTests {
+    [Fact]
+    public async Task DispatchesThroughReflectionResolvedType() {
+      var type = Type.GetType("Demo.Dog");
+      var animal = (IAnimal)Activator.CreateInstance(type);
+      var worker = new Worker(animal);
+      Assert.True(await worker.RunAsync() >= 0);
+    }
+  }
+}
+"""
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    _dotnet is None or _dotnet_trace is None or sys.platform == "win32",
+    reason="the dotnet SDK and dotnet-trace are required (EventPipe is validated on Unix)",
+)
+def test_live_dotnet_test_run_captures_dispatch_and_async(tmp_path):
+    # A real xUnit test run under dotnet-trace: the reflection-resolved interface
+    # dispatch must resolve to the concrete Dog.Speak (the runtime-only edge; the
+    # sampled stack records the concrete implementation, not a receiver-type
+    # field), and the async methods must resolve back to their source
+    # declarations, not the state-machine internals.
+    (tmp_path / "Tests.csproj").write_text(_NET_CSPROJ)
+    (tmp_path / "Tests.cs").write_text(_NET_TESTS)
+    env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1", DOTNET_NOLOGO="1")
+
+    build = subprocess.run(
+        [_dotnet, "build", "-c", "Release", "-v", "q"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=600,
+    )
+    if build.returncode != 0:
+        output = (build.stdout + build.stderr).lower()
+        if any(marker in output for marker in _NET_NETWORK_ERRORS):
+            pytest.skip(f"NuGet unreachable: {(build.stdout + build.stderr)[-300:]}")
+        if any(marker in output for marker in _NET_SDK_ERRORS):
+            pytest.skip(
+                f"no net8.0-capable SDK: {(build.stdout + build.stderr)[-300:]}"
+            )
+        raise AssertionError(f"dotnet build failed:\n{build.stdout[-1500:]}")
+
+    dll = tmp_path / "bin" / "Release" / "net8.0" / "Tests.dll"
+    nettrace = tmp_path / "run.nettrace"
+    subprocess.run(
+        [_dotnet_trace, "collect", "--output", str(nettrace), "--", _dotnet, str(dll)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+        timeout=300,
+    )
+    subprocess.run(
+        [
+            _dotnet_trace,
+            "convert",
+            str(nettrace),
+            "--format",
+            "speedscope",
+            "--output",
+            str(tmp_path / "run"),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+        timeout=300,
+    )
+
+    output = tmp_path / "trace.jsonl"
+    count = convert_speedscope(
+        tmp_path / "run.speedscope.json",
+        output=output,
+        include=["Demo"],
+        workload="dotnet-test",
+    )
+    assert count > 0
+    _header, records_iter = read_trace_file(output)
+    records = list(records_iter)
+    edges = {(r.caller.qualname, r.callee.qualname) for r in records}
+
+    # The interface dispatch resolves to the concrete Dog.Speak: static analysis
+    # sees IAnimal.Speak, the runtime sample records the concrete receiver type.
+    assert ("Demo.Worker.Dispatch", "Demo.Dog.Speak") in edges, sorted(edges)
+    for record in records:
+        assert record.workloads == ("dotnet-test",)
+
+    # Async frames surface as state-machine MoveNext internals; the CLR resolver
+    # maps each back to its source method, not the compiler's <M>d__N machinery.
+    movenext = {
+        frame.qualname
+        for record in records
+        for frame in (record.caller, record.callee)
+        if "MoveNext" in frame.qualname
+    }
+    assert movenext, sorted(edges)
+    # Each observed state-machine frame must resolve to a real async method in
+    # the sample project, not merely to some string: the two async methods are
+    # Worker.RunAsync and the async test method.
+    expected_declarations = {
+        "Demo.Worker.RunAsync",
+        "Demo.WorkerTests.DispatchesThroughReflectionResolvedType",
+    }
+    resolved = {_demangle_clr_name(name) for name in movenext}
+    assert "Demo.Worker.RunAsync" in resolved, sorted(movenext)
+    assert resolved <= expected_declarations, sorted(resolved)

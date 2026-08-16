@@ -131,6 +131,19 @@ cgr trace convert run.speedscope.json --include MyApp --workload smoke
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+To trace a **test run**, point the collector at a test assembly that executes
+its tests in-process (an xUnit v3 assembly runs as a plain executable:
+`dotnet-trace collect -- dotnet bin/Release/net8.0/MyTests.dll`). Do not wrap
+`dotnet test`: it forks a `testhost` child process that the single-process
+sampler does not follow, so the test code's frames never appear. A DI- or
+reflection-resolved implementation (`IServiceCollection`, `Activator.CreateInstance`)
+is the runtime-only edge that static analysis cannot resolve; because the sample
+records the concrete method on the stack, an interface call lands on the concrete
+implementation (`Worker.Dispatch -> Dog.Speak`), so the implementation that
+actually ran is observed. The exact receiver type or object is not recoverable
+from samples (see the caveat below); the concrete implementation frame is what
+the dispatch resolves to.
+
 .NET frames carry no file paths, so scoping uses `--include` namespace
 prefixes instead of the repository root, and resolution joins on the
 namespace-bearing qualified names the static tier stores. CLR name mangling
@@ -149,6 +162,11 @@ property node, and nested-class `+` to dotted nesting. Two caveats:
 - **Overloads.** Runtime argument types (CLR names) cannot be matched to
   the graph's source-text signatures, so all overloads of a name collapse
   onto one deterministic node.
+- **Overhead.** EventPipe sampling is cheap: measured at roughly 1.7x
+  wall-clock on a short CPU-bound run (most of which is `dotnet-trace`'s
+  fixed session startup), and the per-work cost is a stack sample about every
+  millisecond, so it stays roughly constant regardless of call volume rather
+  than scaling with it like the exact per-call tracers.
 
 ## Recording a PHP trace
 
