@@ -227,9 +227,17 @@ def test_collector_traces_a_dart_test_file(tmp_path):
     )
     if pub_get.returncode != 0:
         pytest.skip(f"dart pub get failed (offline?): {pub_get.stderr[-200:]}")
-    subprocess.run(
-        [str(dart), "pub", "get"], cwd=_COLLECTOR_DIR, capture_output=True, check=True
+    collector_pub_get = subprocess.run(
+        [str(dart), "pub", "get"],
+        cwd=_COLLECTOR_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    if collector_pub_get.returncode != 0:
+        pytest.skip(
+            f"collector pub get failed (offline?): {collector_pub_get.stderr[-200:]}"
+        )
     output = tmp_path / "cgr-trace.jsonl"
     result = subprocess.run(
         [

@@ -234,7 +234,10 @@ To trace a test suite, point the collector at a `package:test` file directly
 (`dart bin/cgr_trace_collect.dart --repo ... -- test/foo_test.dart`): running the
 file executes its tests in-process, which the collector samples. Do not wrap
 `dart test` itself, which forks an isolate per file that the single VM Service
-attach cannot follow.
+attach cannot follow. Running a file this way does not load the full `package:test`
+runner, so runner-dependent features (tags, sharding, custom reporters,
+platform selectors) are unavailable; it suits straightforward unit tests whose
+bodies run on invocation.
 
 ## Recording a Go trace
 
