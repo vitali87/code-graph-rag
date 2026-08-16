@@ -261,3 +261,112 @@ def test_live_xdebug_trace_captures_polymorphic_dispatch(tmp_path):
     assert edges[("dispatch", "Cat->sound")].receiver_types == ("Cat",)
     # The trait method greet() called on the using class is observed too.
     assert edges[("run", "Service->greet")].receiver_types == ("Service",)
+
+
+_phpunit = shutil.which("phpunit")
+
+_PHPUNIT_SRC = """\
+<?php
+trait TStamp { public function stamp(): string { return static::class; } }
+class Greeter {
+    use TStamp;
+    public function hello(): string { return "hi"; }
+    public function bye(): string { return "bye"; }
+}
+class Registry {
+    private array $ops;
+    public function __construct() { $this->ops = ['run' => fn(Greeter $g) => $g->hello()]; }
+    public function invoke(string $key, Greeter $g): string { $fn = $this->ops[$key]; return $fn($g); }
+    public function call(Greeter $g, string $method): string { return $g->$method(); }
+}
+"""
+
+_PHPUNIT_TEST = """\
+<?php
+use PHPUnit\\Framework\\TestCase;
+require_once __DIR__ . '/../src/Handlers.php';
+final class RegistryTest extends TestCase {
+    public function testVariableMethodCall(): void {
+        $r = new Registry(); $g = new Greeter();
+        $this->assertSame("hi", $r->call($g, "hello"));
+        $this->assertSame("bye", $r->call($g, "bye"));
+    }
+    public function testClosureAndContainer(): void {
+        $this->assertSame("hi", (new Registry())->invoke("run", new Greeter()));
+    }
+    public function testTrait(): void {
+        $this->assertSame("Greeter", (new Greeter())->stamp());
+    }
+}
+"""
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    _php is None or _phpunit is None,
+    reason="php with the Xdebug extension and a phpunit executable are required",
+)
+def test_live_phpunit_run_captures_variable_call_closure_and_trait(tmp_path):
+    # A real PHPUnit run under Xdebug tracing: the runtime-only edge is the
+    # variable method call `$g->$method()` (the callee name is data, opaque to
+    # static analysis); a container-held closure and a trait method must resolve
+    # too. PHPUnit's own framework frames are left in the trace and scoped out at
+    # ingest, so only the project edges are asserted here.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "Handlers.php").write_text(_PHPUNIT_SRC)
+    (tmp_path / "tests" / "RegistryTest.php").write_text(_PHPUNIT_TEST)
+    assert _php is not None
+    assert _phpunit is not None
+    subprocess.run(
+        [
+            _php,
+            "-d",
+            "xdebug.mode=trace",
+            "-d",
+            "xdebug.start_with_request=yes",
+            "-d",
+            "xdebug.trace_format=1",
+            "-d",
+            "xdebug.output_dir=.",
+            "-d",
+            "xdebug.trace_output_name=run",
+            _phpunit,
+            "tests/RegistryTest.php",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=300,
+    )
+    trace = next(tmp_path.glob("run.xt*"))
+    output = tmp_path / "trace.jsonl"
+    count = convert_xdebug_trace(trace, output=output, workload="phpunit")
+
+    assert count > 0
+    _header, records_iter = read_trace_file(output)
+    records = list(records_iter)
+    edges = {(r.caller.qualname, r.callee.qualname): r for r in records}
+
+    # Variable method call `$g->$method()`: the runtime-only edge, resolved to
+    # both concrete methods with the receiver class captured.
+    hello = edges[("Registry->call", "Greeter->hello")]
+    assert hello.receiver_types == ("Greeter",)
+    assert edges[("Registry->call", "Greeter->bye")].receiver_types == ("Greeter",)
+
+    # The container-held closure resolves through its embedded file:line, both
+    # as a callee of invoke() and as the caller of the method it dispatches to.
+    closure_callees = {
+        callee
+        for caller, callee in edges
+        if caller == "Registry->invoke" and callee.startswith("Registry->{closure:")
+    }
+    assert closure_callees, sorted(c for _, c in edges if "closure" in c)
+    closure = next(iter(closure_callees))
+    assert "Handlers.php" in closure
+    assert (closure, "Greeter->hello") in edges, sorted(edges)
+
+    # The trait method resolves under the using class (Greeter), not the trait.
+    trait = edges[("RegistryTest->testTrait", "Greeter->stamp")]
+    assert trait.receiver_types == ("Greeter",)
