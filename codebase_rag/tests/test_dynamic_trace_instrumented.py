@@ -16,7 +16,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
-from codebase_rag.trace.instrumented import convert_instrumented
+from codebase_rag.trace.instrumented import _bare_name, convert_instrumented
 from codebase_rag.trace.records import TraceFormatError, read_trace_file
 
 _SHIM = Path(__file__).resolve().parents[1] / "trace" / "c_agent" / "cgr_trace_shim.c"
@@ -156,9 +156,54 @@ def test_unresolved_addresses_are_reported(tmp_path):
     )
 
 
+def test_bare_name_collapses_templates_and_demangles():
+    # `addr2line -f -C` prints a template instantiation with its return type and
+    # its instantiated arguments (`int apply<Dog>(Dog const*)`); every
+    # instantiation must collapse to the one source definition so they share a
+    # node, methods drop their qualifier, and operators are kept whole.
+    assert _bare_name("int apply<Dog>(Dog const*)") == "apply"
+    assert _bare_name("int apply<Cat>(Cat const*)") == "apply"
+    assert _bare_name("int Cache::get<int>(int)") == "get"
+    assert _bare_name("std::vector<int> make<Dog>(Dog const&)") == "make"
+    assert _bare_name("unsigned int apply<Dog, Cat>(int)") == "apply"
+    assert _bare_name("Reg::handle(int)") == "handle"
+    assert _bare_name("Dog::sound(int)") == "sound"
+    assert _bare_name("ns::sub::foo(int)") == "foo"
+    assert _bare_name("dispatch(Animal const*)") == "dispatch"
+    assert _bare_name("main") == "main"
+    # A trailing const/ref qualifier is dropped, not mistaken for the name.
+    assert _bare_name("Reg::size(int) const") == "size"
+
+
+def test_bare_name_keeps_complete_operator_names():
+    # `addr2line -f -C` spells operators in full (including the trailing const
+    # cv-qualifier and the parameter list); the whole operator name must survive,
+    # never truncated to the first token.
+    assert _bare_name("F::operator<(F const&, F const&)") == "operator<"
+    assert _bare_name("bool ns::operator<<(A const&)") == "operator<<"
+    assert _bare_name("F::operator<(F const&) const") == "operator<"
+    # Combined trailing qualifiers are all stripped (and the shrinking loop that
+    # does it cannot backtrack, unlike the earlier regex).
+    assert _bare_name("F::at(int) const && noexcept") == "at"
+    assert _bare_name("F::operator()(int)") == "operator()"
+    assert _bare_name("F::operator[](int)") == "operator[]"
+    assert _bare_name("operator new[](unsigned long, A&)") == "operator new[]"
+    assert _bare_name("operator new(unsigned long)") == "operator new"
+    assert _bare_name('operator"" _tag(unsigned long long)') == 'operator"" _tag'
+    # A qualified conversion operator keeps its complete conversion-type spelling,
+    # including the `::` inside it, rather than truncating at the first token.
+    assert _bare_name("X::operator std::string() const") == "operator std::string"
+    assert (
+        _bare_name("F::operator std::__cxx11::basic_string<char> () const")
+        == "operator std::__cxx11::basic_string<char>"
+    )
+    assert _bare_name("") == cs.TRACE_QUALNAME_ANONYMOUS
+
+
 cc = shutil.which("cc")
 cxx = shutil.which("c++") or shutil.which("g++")
 atos = shutil.which("atos") or shutil.which("addr2line")
+cmake = shutil.which("cmake")
 
 
 @pytest.mark.slow
@@ -315,3 +360,150 @@ def test_live_cpp_virtual_dispatch_produces_virtual_edge(tmp_path):
     virtual = edges.get(("dispatch", "speak"))
     assert virtual is not None, sorted(edges)
     assert virtual.count == 5
+
+
+_CMAKE_LISTS = """\
+cmake_minimum_required(VERSION 3.13)
+project(cgrdemo C CXX)
+find_package(Threads REQUIRED)
+add_executable(app main.cpp reg.c cgr_trace_shim.c)
+# The traced build type: -O0 keeps every frame (no inlining elides callees),
+# -g emits the DWARF the offline symboliser reads. The shim self-excludes with
+# no_instrument_function, so applying the flag to the whole target is safe.
+target_compile_options(app PRIVATE -finstrument-functions -g -O0)
+# The shim uses pthread_mutex_*/pthread_once; link pthreads explicitly so the
+# build works on toolchains where they are separate from libc.
+target_link_libraries(app PRIVATE Threads::Threads)
+"""
+
+_CMAKE_MAIN = """\
+struct Animal {
+    virtual ~Animal() = default;
+    virtual int speak() = 0;
+};
+struct Dog : Animal { int speak() override; };
+struct Cat : Animal { int speak() override; };
+int Dog::speak() { return 7; }
+int Cat::speak() { return 9; }
+
+static int dispatch(Animal* a) { return a->speak(); }
+
+// One template, two instantiations: apply<Dog> and apply<Cat> must collapse to
+// the one source definition `apply`, not two `apply<...>` nodes.
+template <typename T>
+static int apply(T* t) { return t->speak() + 1; }
+
+extern "C" int run_ptr();
+
+int main() {
+    Dog d;
+    Cat c;
+    int out = 0;
+    for (int i = 0; i < 5; i++) out += dispatch(&d);
+    for (int i = 0; i < 3; i++) out += dispatch(&c);
+    for (int i = 0; i < 4; i++) {
+        out += apply<Dog>(&d);
+        out += apply<Cat>(&c);
+    }
+    out += run_ptr();
+    return out > 0 ? 0 : 1;
+}
+"""
+
+_CMAKE_REG = """\
+static int greet(void) { return 1; }
+static int (*fp)(void);
+int run_ptr(void) {
+    fp = greet;              /* call through a function pointer (C) */
+    return fp();
+}
+"""
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    sys.platform == "win32"
+    or cmake is None
+    or cc is None
+    or cxx is None
+    or atos is None,
+    reason="cmake/C/C++ toolchain unavailable, or Windows/PE (shim targets ELF/Mach-O)",
+)
+def test_live_cmake_project_produces_dynamic_edges(tmp_path):
+    # AC: a traced test run of a sample CMake project produces dynamic edges,
+    # with a function-pointer edge (C) and a virtual edge (C++), and template
+    # instantiations collapsed to their one source definition.
+    (tmp_path / "CMakeLists.txt").write_text(_CMAKE_LISTS)
+    (tmp_path / "main.cpp").write_text(_CMAKE_MAIN)
+    (tmp_path / "reg.c").write_text(_CMAKE_REG)
+    shutil.copy(_SHIM, tmp_path / "cgr_trace_shim.c")
+
+    build = tmp_path / "build"
+    subprocess.run(
+        [str(cmake), "-S", str(tmp_path), "-B", str(build)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [str(cmake), "--build", str(build)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    addrs = tmp_path / "cgr-trace.addrs"
+    subprocess.run(
+        [str(build / "app")],
+        check=True,
+        capture_output=True,
+        env=dict(os.environ, CGR_TRACE_ADDRS=str(addrs)),
+        cwd=tmp_path,
+    )
+
+    output = tmp_path / "trace.jsonl"
+    count = convert_instrumented(addrs, repo_root=tmp_path, output=output)
+
+    assert count > 0
+    header, records_iter = read_trace_file(output)
+    assert header.language == cs.TRACE_LANGUAGE_CPP
+    records = list(records_iter)
+
+    def edge_count(caller: str, callee: str) -> int:
+        return sum(
+            r.count
+            for r in records
+            if r.caller.qualname == caller and r.callee.qualname == callee
+        )
+
+    def callee_lines(caller: str, callee: str) -> set[int]:
+        return {
+            r.callee.line
+            for r in records
+            if r.caller.qualname == caller and r.callee.qualname == callee
+        }
+
+    edges = {(r.caller.qualname, r.callee.qualname) for r in records}
+
+    # Virtual dispatch through the abstract Animal interface (C++ runtime-only):
+    # both concrete receivers are recovered as distinct source positions.
+    assert edge_count("dispatch", "speak") == 8  # 5 * Dog + 3 * Cat
+    assert len(callee_lines("dispatch", "speak")) == 2, records
+
+    # Function-pointer call resolved at runtime (C runtime-only).
+    assert ("run_ptr", "greet") in edges, sorted(edges)
+
+    # Both apply<Dog> and apply<Cat> collapse onto the one `apply` node, yet the
+    # two concrete callees keep their own source positions.
+    speak_callers = {caller for caller, callee in edges if callee == "speak"}
+    assert speak_callers == {"dispatch", "apply"}, sorted(speak_callers)
+    assert edge_count("apply", "speak") == 8  # 4 * Dog + 4 * Cat
+    assert len(callee_lines("apply", "speak")) == 2, records
+
+    # No template argument or return type leaks into any qualname; an operator
+    # name legitimately carries spaces (operator new[], a conversion type) so it
+    # is exempt from the no-space check.
+    for record in records:
+        for frame in (record.caller, record.callee):
+            assert "<" not in frame.qualname, frame.qualname
+            if not frame.qualname.startswith("operator"):
+                assert " " not in frame.qualname, frame.qualname

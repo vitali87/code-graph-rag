@@ -16,6 +16,7 @@ direct caller/callee pairs, so out-of-repo endpoints simply drop the edge.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Sequence
@@ -38,10 +39,103 @@ if TYPE_CHECKING:
 Symbolizer = Callable[[str, int, Sequence[int]], dict[int, tuple[str, str, int]]]
 
 
+# Trailing cv-/ref-/exception qualifiers a demangled method or operator carries
+# after its parameter list (``... const``, ``... &&``, ``... noexcept``). Stripped
+# with a shrinking loop, not a regex, to avoid catastrophic backtracking.
+_TRAILING_QUALIFIERS = ("const", "volatile", "noexcept", "&&", "&")
+# ``operator`` at a name boundary, not followed by a word char, so an ``operator``
+# spelling (``operator<``, ``operator()``, ``operator new[]``, ``operator T``) is
+# recognised while an identifier like ``operatorX`` or ``cooperator`` is not.
+_OPERATOR = re.compile(r"\boperator(?![\w])")
+
+
+def _strip_trailing_qualifiers(text: str) -> str:
+    """Drop trailing cv-/ref-/exception qualifiers left after a parameter list."""
+    text = text.rstrip()
+    shrinking = True
+    while shrinking:
+        shrinking = False
+        for token in _TRAILING_QUALIFIERS:
+            if not text.endswith(token):
+                continue
+            start = len(text) - len(token)
+            # A word-like token (``const``) must sit at a boundary, so an
+            # identifier that merely ends in those letters is left alone.
+            preceding = text[start - 1] if start else ""
+            if token[0].isalpha() and (preceding.isalnum() or preceding == "_"):
+                continue
+            text = text[:start].rstrip()
+            shrinking = True
+            break
+    return text
+
+
+def _strip_angle_groups(text: str) -> str:
+    """Drop every balanced ``<...>`` template-argument span, at any nesting."""
+    out: list[str] = []
+    depth = 0
+    for char in text:
+        if char == "<":
+            depth += 1
+        elif char == ">":
+            depth = max(depth - 1, 0)
+        elif depth == 0:
+            out.append(char)
+    return "".join(out)
+
+
+def _strip_trailing_params(text: str) -> str:
+    """Drop a trailing balanced ``(...)`` parameter list, counting only parens so
+    ``<...>`` and function-pointer parameters inside it are handled correctly."""
+    text = text.rstrip()
+    if not text.endswith(")"):
+        return text
+    depth = 0
+    for index in range(len(text) - 1, -1, -1):
+        char = text[index]
+        if char == ")":
+            depth += 1
+        elif char == "(":
+            depth -= 1
+            if depth == 0:
+                return text[:index].rstrip()
+    return text
+
+
+def _drop_return_type(head: str) -> str:
+    """Drop a leading return type: templates demangle as ``ret name<...>``, and
+    the name begins after the last space that sits outside any ``<...>``."""
+    depth = 0
+    split_at = -1
+    for index, char in enumerate(head):
+        if char == "<":
+            depth += 1
+        elif char == ">":
+            depth = max(depth - 1, 0)
+        elif char == " " and depth == 0:
+            split_at = index
+    return head[split_at + 1 :]
+
+
 def _bare_name(symbol: str) -> str:
-    """``Dog::sound(int)`` as the member name ``sound``."""
-    head = symbol.split("(", 1)[0].strip()
-    return head.rsplit("::", 1)[-1] or cs.TRACE_QUALNAME_ANONYMOUS
+    """The bare member name of a demangled C/C++ symbol.
+
+    A template instantiation collapses to its source definition so every
+    instantiation shares one node (``int apply<Dog>(Dog const*)`` and
+    ``int apply<Cat>(Cat const*)`` both become ``apply``, ``int Cache::get<int>``
+    becomes ``get``); a method drops its qualifier (``Dog::sound(int)`` becomes
+    ``sound``); an ``operator`` name is kept whole, including ``operator new[]``,
+    ``operator()``, a user-defined literal, or a conversion operator's type.
+    """
+    text = _strip_trailing_qualifiers(symbol.strip())
+    if not text:
+        return cs.TRACE_QUALNAME_ANONYMOUS
+    head = _strip_trailing_params(text)
+    match = _OPERATOR.search(head)
+    if match:
+        return re.sub(r"\s+", " ", head[match.start() :]).strip()
+    name = _strip_angle_groups(_drop_return_type(head))
+    return name.rsplit("::", 1)[-1].strip() or cs.TRACE_QUALNAME_ANONYMOUS
 
 
 def _atos_symbolizer(
