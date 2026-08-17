@@ -44,6 +44,57 @@ if TYPE_CHECKING:
 _JS_DECLARATOR_QUERY = "(variable_declarator) @declarator"
 
 
+def _container_element(type_str: str | None) -> str | None:
+    """The element inside a canonical ``list[<element>]`` marker, else ``None``."""
+    if (
+        type_str
+        and type_str.startswith(cs.JS_LIST_TYPE_PREFIX)
+        and type_str.endswith("]")
+    ):
+        return type_str[len(cs.JS_LIST_TYPE_PREFIX) : -1] or None
+    return None
+
+
+def _tree_root(node: ASTNode) -> ASTNode:
+    while node.parent is not None:
+        node = node.parent
+    return node
+
+
+def _find_function_declaration(root: ASTNode, name: str) -> ASTNode | None:
+    """The single same-file free function by name, else ``None``.
+
+    Matches a declaration or an arrow bound by a declarator (`const f =
+    (): T => ...`, whose annotation rides the arrow node). Without lexical
+    scope resolution, two same-named functions (a local shadowing a
+    top-level one) cannot be attributed to a call site, so more than one
+    match yields nothing rather than a possibly wrong binding.
+    """
+    matches: list[ASTNode] = []
+    stack: list[ASTNode] = [root]
+    while stack:
+        current = stack.pop()
+        if current.type in (
+            cs.TS_FUNCTION_DECLARATION,
+            cs.TS_GENERATOR_FUNCTION_DECLARATION,
+        ):
+            name_node = current.child_by_field_name("name")
+            if name_node is not None and safe_decode_text(name_node) == name:
+                matches.append(current)
+        elif current.type == cs.TS_VARIABLE_DECLARATOR:
+            name_node = current.child_by_field_name("name")
+            value_node = current.child_by_field_name("value")
+            if (
+                name_node is not None
+                and value_node is not None
+                and value_node.type == cs.TS_ARROW_FUNCTION
+                and safe_decode_text(name_node) == name
+            ):
+                matches.append(value_node)
+        stack.extend(reversed(current.children))
+    return matches[0] if len(matches) == 1 else None
+
+
 class JsTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -100,61 +151,19 @@ class JsTypeInferenceEngine:
         if declarator_nodes is not None:
             for current in declarator_nodes:
                 declarator_count += 1
-                name_node = current.child_by_field_name("name")
-                value_node = current.child_by_field_name("value")
-                if name_node and value_node:
-                    var_name_text = name_node.text
-                    if var_name_text:
-                        var_name = safe_decode_text(name_node)
-                        if var_name is not None:
-                            logger.debug(
-                                ls.JS_VAR_DECLARATOR_FOUND,
-                                var_name=var_name,
-                                module_qn=module_qn,
-                            )
-                            if var_type := self._infer_js_variable_type_from_value(
-                                value_node, module_qn
-                            ):
-                                local_var_types[var_name] = var_type
-                                logger.debug(
-                                    ls.JS_VAR_INFERRED,
-                                    var_name=var_name,
-                                    var_type=var_type,
-                                )
-                            else:
-                                logger.debug(ls.JS_VAR_INFER_FAILED, var_name=var_name)
+                self._record_declarator(current, local_var_types, module_qn)
         else:
             stack: list[ASTNode] = [caller_node]
             while stack:
                 current = stack.pop()
                 if current.type == cs.TS_VARIABLE_DECLARATOR:
                     declarator_count += 1
-                    name_node = current.child_by_field_name("name")
-                    value_node = current.child_by_field_name("value")
-                    if name_node and value_node:
-                        var_name_text = name_node.text
-                        if var_name_text:
-                            var_name = safe_decode_text(name_node)
-                            if var_name is not None:
-                                logger.debug(
-                                    ls.JS_VAR_DECLARATOR_FOUND,
-                                    var_name=var_name,
-                                    module_qn=module_qn,
-                                )
-                                if var_type := self._infer_js_variable_type_from_value(
-                                    value_node, module_qn
-                                ):
-                                    local_var_types[var_name] = var_type
-                                    logger.debug(
-                                        ls.JS_VAR_INFERRED,
-                                        var_name=var_name,
-                                        var_type=var_type,
-                                    )
-                                else:
-                                    logger.debug(
-                                        ls.JS_VAR_INFER_FAILED, var_name=var_name
-                                    )
+                    self._record_declarator(current, local_var_types, module_qn)
                 stack.extend(reversed(current.children))
+
+        # After declarators so a loop over an already-typed variable can read
+        # its container marker.
+        self._seed_for_of_variables(caller_node, local_var_types, module_qn)
 
         logger.debug(
             ls.JS_VAR_TYPE_MAP_BUILT,
@@ -162,6 +171,199 @@ class JsTypeInferenceEngine:
             declarator_count=declarator_count,
         )
         return local_var_types
+
+    def _record_declarator(
+        self, declarator: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """One declarator's type: the annotation is declared truth and wins
+        over value inference; an annotation-only ``let u: User;`` still types.
+        """
+        name_node = declarator.child_by_field_name("name")
+        if name_node is None or not name_node.text:
+            return
+        var_name = safe_decode_text(name_node)
+        if var_name is None:
+            return
+        logger.debug(ls.JS_VAR_DECLARATOR_FOUND, var_name=var_name, module_qn=module_qn)
+        # Precedence: a `new` expression is exact runtime truth and beats the
+        # declared annotation (`const s: IService = new UserService()` types as
+        # the concrete class); the annotation beats the remaining value
+        # heuristics; an annotation-only `let u: User;` still types.
+        value_node = declarator.child_by_field_name("value")
+        var_type = None
+        if value_node is not None and value_node.type == cs.TS_NEW_EXPRESSION:
+            var_type = self._infer_js_variable_type_from_value(value_node, module_qn)
+        if var_type is None and (type_node := declarator.child_by_field_name("type")):
+            var_type = self._annotation_type(type_node, module_qn)
+        if var_type is None and value_node is not None:
+            var_type = self._infer_js_variable_type_from_value(value_node, module_qn)
+        if var_type:
+            local_var_types[var_name] = var_type
+            logger.debug(ls.JS_VAR_INFERRED, var_name=var_name, var_type=var_type)
+        else:
+            logger.debug(ls.JS_VAR_INFER_FAILED, var_name=var_name)
+
+    def _annotation_type(self, annotation_node: ASTNode, module_qn: str) -> str | None:
+        """The type of a ``type_annotation`` node (`: User`, `: User[]`, ...)."""
+        inner = next(iter(annotation_node.named_children), None)
+        return self._type_from_type_node(inner, module_qn) if inner else None
+
+    def _type_from_type_node(self, node: ASTNode, module_qn: str) -> str | None:
+        if node.type == cs.TS_UNION_TYPE:
+            # `User | null` names a single concrete member; wider unions are
+            # not a receiver type.
+            members = [
+                child
+                for child in node.named_children
+                if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
+            ]
+            if len(members) == 1:
+                return self._type_from_type_node(members[0], module_qn)
+            return None
+        if node.type == cs.TS_ARRAY_TYPE:
+            inner = next(iter(node.named_children), None)
+            element = self._type_from_type_node(inner, module_qn) if inner else None
+            return self._element_marker(element)
+        if node.type == cs.TS_GENERIC_TYPE:
+            return self._generic_type(node, module_qn)
+        if node.type == cs.TS_TYPE_IDENTIFIER:
+            name = safe_decode_text(node)
+            if not name:
+                return None
+            return self._resolve_js_class_name(name, module_qn) or name
+        if node.type == cs.TS_NESTED_TYPE_IDENTIFIER:
+            return safe_decode_text(node)
+        return None
+
+    def _generic_type(self, node: ASTNode, module_qn: str) -> str | None:
+        """`Array<User>` and friends carry an element; other generics do not."""
+        name_node = node.child_by_field_name("name")
+        if (
+            name_node is None
+            or (safe_decode_text(name_node) or "") not in cs.TS_ARRAY_GENERIC_NAMES
+        ):
+            return None
+        arguments = next(
+            (child for child in node.named_children if child != name_node), None
+        )
+        if arguments is None:
+            return None
+        argument_types = list(arguments.named_children)
+        if len(argument_types) != 1:
+            return None
+        return self._element_marker(
+            self._type_from_type_node(argument_types[0], module_qn)
+        )
+
+    @staticmethod
+    def _element_marker(element: str | None) -> str | None:
+        # Nested containers (`User[][]`) have no scalar element to iterate to.
+        if element is None or element.startswith(cs.JS_LIST_TYPE_PREFIX):
+            return None
+        return cs.JS_LIST_TYPE_FORMAT.format(element=element)
+
+    def _seed_for_of_variables(
+        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        stack: list[ASTNode] = [caller_node]
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_JS_FOR_IN_STATEMENT:
+                self._seed_one_for_of(node, local_var_types, module_qn)
+            stack.extend(reversed(node.children))
+
+    def _seed_one_for_of(
+        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        operator = node.child_by_field_name("operator")
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+        if (
+            operator is None
+            or left is None
+            or right is None
+            or safe_decode_text(operator) != cs.TS_JS_OPERATOR_OF
+            or left.type != cs.TS_IDENTIFIER
+        ):
+            return
+        loop_var = safe_decode_text(left)
+        if not loop_var:
+            return
+        element = self._for_of_element_type(right, local_var_types, module_qn)
+        # The map is function-wide while the loop binding is block-scoped: the
+        # header REBINDS the name, so an entry that disagrees with the loop's
+        # element (or an element the engine cannot type) would emit wrong
+        # edges on one side of the loop. Dropping it beats guessing.
+        existing = local_var_types.get(loop_var)
+        if existing is not None and existing != element:
+            del local_var_types[loop_var]
+            return
+        if element:
+            local_var_types[loop_var] = element
+            logger.debug(ls.JS_VAR_INFERRED, var_name=loop_var, var_type=element)
+
+    def _for_of_element_type(
+        self, right: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> str | None:
+        if right.type == cs.TS_IDENTIFIER:
+            name = safe_decode_text(right)
+            return _container_element(local_var_types.get(name)) if name else None
+        if right.type == cs.TS_CALL_EXPRESSION:
+            # A scalar return is not an element type; only the marker unwraps.
+            return _container_element(self._call_return_type(right, module_qn))
+        if right.type == cs.TS_ARRAY:
+            return self._array_literal_element_type(right, module_qn)
+        return None
+
+    def _array_literal_element_type(
+        self, array_node: ASTNode, module_qn: str
+    ) -> str | None:
+        """`[new Widget(), new Widget()]` names its element; a literal whose
+        elements construct different classes, or mix constructions with other
+        expressions, guarantees nothing and yields ``None``."""
+        element: str | None = None
+        for child in array_node.named_children:
+            if child.type != cs.TS_NEW_EXPRESSION:
+                return None
+            class_name = ut.extract_constructor_name(child)
+            if not class_name:
+                return None
+            resolved = self._resolve_js_class_name(class_name, module_qn) or class_name
+            if element is None:
+                element = resolved
+            elif element != resolved:
+                return None
+        return element
+
+    def _call_return_type(self, call_node: ASTNode, module_qn: str) -> str | None:
+        func_node = call_node.child_by_field_name("function")
+        if func_node is None:
+            return None
+        if func_node.type == cs.TS_IDENTIFIER:
+            # The shared method lookup only knows `Class.method` shapes, so a
+            # free function is located in its own file's tree (imported
+            # functions stay out of reach without AST access; honest miss).
+            callee = safe_decode_text(func_node)
+            if not callee:
+                return None
+            fn_node = _find_function_declaration(_tree_root(call_node), callee)
+            if fn_node is None:
+                return None
+            fn_qn = f"{module_qn}{cs.SEPARATOR_DOT}{callee}"
+            return self._annotated_return_type_of(
+                fn_node, module_qn
+            ) or self._analyze_return_statements(fn_node, fn_qn)
+        if func_node.type == cs.TS_MEMBER_EXPRESSION and (
+            method_call := ut.extract_method_call(func_node)
+        ):
+            return self._infer_js_method_return_type(method_call, module_qn)
+        return None
+
+    def _annotated_return_type_of(
+        self, callable_node: ASTNode, module_qn: str
+    ) -> str | None:
+        annotation = callable_node.child_by_field_name("return_type")
+        return self._annotation_type(annotation, module_qn) if annotation else None
 
     def _infer_js_variable_type_from_value(
         self, value_node: ASTNode, module_qn: str
@@ -230,7 +432,11 @@ class JsTypeInferenceEngine:
             logger.debug(ls.JS_METHOD_AST_NOT_FOUND, method_qn=method_qn)
             return None
 
-        return_type = self._analyze_return_statements(method_node, method_qn)
+        # A declared return annotation is the cheapest, most reliable source;
+        # body analysis is the fallback (issue #1303).
+        return_type = self._annotated_return_type_of(
+            method_node, module_qn
+        ) or self._analyze_return_statements(method_node, method_qn)
         logger.debug(
             ls.JS_RETURN_ANALYZED, method_qn=method_qn, return_type=return_type
         )
