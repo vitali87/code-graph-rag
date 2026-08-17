@@ -20,6 +20,8 @@ class MCPToolName(StrEnum):
     STRUCTURAL_REPLACE = "structural_replace"
     ASK_AGENT = "ask_agent"
     FLOW_VERDICT = "flow_verdict"
+    EXPLAIN_TRACEBACK = "explain_traceback"
+    RANK_ROOT_CAUSES = "rank_root_causes"
 
 
 class MCPTransport(StrEnum):
@@ -68,6 +70,7 @@ class MCPParamName(StrEnum):
     SOURCE_QN = "source_qualified_name"
     SINK_QN = "sink_qualified_name"
     DRY_RUN = "dry_run"
+    TRACEBACK_TEXT = "traceback_text"
 
 
 # MCP server constants

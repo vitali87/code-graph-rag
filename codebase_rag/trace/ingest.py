@@ -31,6 +31,7 @@ from .resolution import (
 )
 
 if TYPE_CHECKING:
+    from ..flow_verdict import QueryFn
     from ..types_defs import PropertyValue, ResultRow
     from .records import FramePoint, TraceHeader
     from .resolution import ResolvedFrame
@@ -92,10 +93,13 @@ class TraceIngestSummary:
         return self.resolution.total
 
 
-def _load_callables(
-    ingestor: TraceGraphProtocol, project_prefix: str
-) -> list[CallableNode]:
-    rows: list[ResultRow] = ingestor.fetch_all(
+def load_callables(fetch_all: QueryFn, project_prefix: str) -> list[CallableNode]:
+    """The Function/Method/Module nodes of one project, ready for resolution.
+
+    Shared with the crash-correlation query layer, which resolves traceback
+    frames against the same node shapes trace ingestion does.
+    """
+    rows: list[ResultRow] = fetch_all(
         CYPHER_TRACE_CALLABLES, {cs.KEY_PREFIX: project_prefix}
     )
     nodes: list[CallableNode] = []
@@ -165,7 +169,7 @@ def ingest_trace(
     repo_root = repo_path.resolve() if repo_path else Path(header.repo_root)
     project_prefix = project_name + cs.SEPARATOR_DOT
 
-    nodes = _load_callables(ingestor, project_prefix)
+    nodes = load_callables(ingestor.fetch_all, project_prefix)
     existing = _load_existing_calls(ingestor, project_prefix)
     resolver = _resolver_for(header, repo_root, nodes)
 
