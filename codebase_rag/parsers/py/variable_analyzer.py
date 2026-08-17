@@ -32,6 +32,8 @@ if TYPE_CHECKING:
             local_var_types: dict[str, str] | None = None,
         ) -> str | None: ...
 
+        def _get_method_return_type_from_ast(self, method_qn: str) -> str | None: ...
+
     _VarBase: type = _VariableAnalyzerDeps
 else:
     _VarBase = object
@@ -234,7 +236,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
         if iterable_node.type == cs.TS_PY_CALL:
             # `for w in load_widgets():` types through the callee's container
             # return annotation (`-> list[Widget]`); a scalar return is not an
-            # element type, so only the container marker unwraps.
+            # element type, so only the container marker unwraps. A
+            # `self.load_more()` iterable falls back to the enclosing class's
+            # own method.
             call_text = safe_decode_text(iterable_node)
             if not call_text:
                 return None
@@ -242,6 +246,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 self._infer_method_call_return_type(
                     call_text, module_qn, local_var_types
                 )
+                or self._self_method_element_type(iterable_node, module_qn)
             )
 
         if iterable_node.type == cs.TS_PY_ATTRIBUTE:
@@ -335,21 +340,38 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 self._process_self_assignment(current, local_var_types, module_qn)
             stack.extend(reversed(current.children))
 
-    def _seed_self_receiver_type(
-        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        """Seed ``self`` with the enclosing class so ``self.helper()``
-        receivers resolve through the class's own methods (issue #1304
-        review: ``for w in self.load_widgets():``)."""
-        if cs.PY_KEYWORD_SELF in local_var_types:
-            return
-        if (class_node := self._enclosing_class_node(caller_node)) is None:
-            return
+    def _self_method_element_type(
+        self, call_node: ASTNode, module_qn: str
+    ) -> str | None:
+        """The return type of a ``self.m()`` call, resolved on the enclosing
+        class.
+
+        Deliberately scoped to iterable position: a general ``self`` receiver
+        must stay override-aware (an abstract stub's concrete sibling wins),
+        but an iterated call only needs the visible method's container
+        annotation.
+        """
+        func_node = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func_node is None or func_node.type != cs.TS_PY_ATTRIBUTE:
+            return None
+        text = safe_decode_text(func_node)
+        if not text or not text.startswith(cs.PY_SELF_PREFIX):
+            return None
+        parts = text.split(cs.SEPARATOR_DOT)
+        if len(parts) != 2:
+            return None
+        if (class_node := self._enclosing_class_node(call_node)) is None:
+            return None
         name_node = class_node.child_by_field_name(cs.FIELD_NAME)
         if name_node is None or not (class_name := safe_decode_text(name_node)):
-            return
-        local_var_types[cs.PY_KEYWORD_SELF] = (
-            self._find_class_in_scope(class_name, module_qn) or class_name
+            return None
+        class_qn = self._find_class_in_scope(class_name, module_qn) or class_name
+        if cs.SEPARATOR_DOT not in class_qn:
+            # A same-module class resolves to its bare name; the method lookup
+            # needs the full module.Class.method shape.
+            class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_qn}"
+        return self._get_method_return_type_from_ast(
+            f"{class_qn}{cs.SEPARATOR_DOT}{parts[1]}"
         )
 
     def _enclosing_class_node(self, node: ASTNode) -> ASTNode | None:

@@ -91,7 +91,6 @@ class PythonTypeInferenceEngine(
 
         try:
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
-            self._seed_self_receiver_type(caller_node, local_var_types, module_qn)
             # Single-pass traversal avoids O(5*N) traversals for type inference.
             comprehensions, for_statements = self._traverse_single_pass(
                 caller_node, local_var_types, module_qn
