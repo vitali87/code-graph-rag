@@ -727,3 +727,79 @@ export class Screen {
     if missing:
         pytest.fail(f"Missing annotation-typed calls: {missing}")
     assert not any(callee == decoy for _caller, callee in found)
+
+
+class TestForOfConservativeCeilings:
+    # Review round on #1306: without lexical scoping the engine must prefer
+    # no binding over a possibly wrong one.
+
+    def test_shadowed_loop_variable_drops_the_binding(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"""
+const item: Widget = fetchOne();
+for (const item of banners) { item.show(); }
+"""
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        # The name is block-shadowed with a conflicting type: either binding
+        # would emit wrong edges on one side of the loop, so neither survives.
+        assert "item" not in result
+
+    def test_for_of_rebinding_same_type_is_kept(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"""
+const widgets: Widget[] = fetchAll();
+for (const w of widgets) { w.render(); }
+"""
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert result["w"] == "Widget"
+
+    def test_heterogeneous_array_literal_yields_nothing(
+        self, js_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"""
+for (const x of [new Widget(), new Banner()]) { x.render(); }
+"""
+        tree = js_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main"
+        )
+        assert "x" not in result
+
+    def test_array_literal_mixing_constructions_and_names_yields_nothing(
+        self, js_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"""
+for (const x of [new Widget(), fallback]) { x.render(); }
+"""
+        tree = js_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main"
+        )
+        assert "x" not in result
+
+    def test_duplicate_function_names_are_ambiguous(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        # A local `load` shadowing a top-level one cannot be attributed to
+        # the call site without lexical scoping: no binding, never a guess.
+        code = b"""
+function load(): Banner[] { return JSON.parse("[]"); }
+
+function screen(): void {
+    const load = (): Widget[] => JSON.parse("[]");
+    for (const x of load()) { x.render(); }
+}
+"""
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert "x" not in result

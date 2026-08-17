@@ -62,9 +62,15 @@ def _tree_root(node: ASTNode) -> ASTNode:
 
 
 def _find_function_declaration(root: ASTNode, name: str) -> ASTNode | None:
-    """A same-file free function by name: a declaration, or an arrow bound
-    by a declarator (`const f = (): T => ...`), whose annotation rides the
-    arrow node."""
+    """The single same-file free function by name, else ``None``.
+
+    Matches a declaration or an arrow bound by a declarator (`const f =
+    (): T => ...`, whose annotation rides the arrow node). Without lexical
+    scope resolution, two same-named functions (a local shadowing a
+    top-level one) cannot be attributed to a call site, so more than one
+    match yields nothing rather than a possibly wrong binding.
+    """
+    matches: list[ASTNode] = []
     stack: list[ASTNode] = [root]
     while stack:
         current = stack.pop()
@@ -74,7 +80,7 @@ def _find_function_declaration(root: ASTNode, name: str) -> ASTNode | None:
         ):
             name_node = current.child_by_field_name("name")
             if name_node is not None and safe_decode_text(name_node) == name:
-                return current
+                matches.append(current)
         elif current.type == cs.TS_VARIABLE_DECLARATOR:
             name_node = current.child_by_field_name("name")
             value_node = current.child_by_field_name("value")
@@ -84,9 +90,9 @@ def _find_function_declaration(root: ASTNode, name: str) -> ASTNode | None:
                 and value_node.type == cs.TS_ARROW_FUNCTION
                 and safe_decode_text(name_node) == name
             ):
-                return value_node
+                matches.append(value_node)
         stack.extend(reversed(current.children))
-    return None
+    return matches[0] if len(matches) == 1 else None
 
 
 class JsTypeInferenceEngine:
@@ -281,8 +287,18 @@ class JsTypeInferenceEngine:
         ):
             return
         loop_var = safe_decode_text(left)
+        if not loop_var:
+            return
         element = self._for_of_element_type(right, local_var_types, module_qn)
-        if loop_var and element:
+        # The map is function-wide while the loop binding is block-scoped: the
+        # header REBINDS the name, so an entry that disagrees with the loop's
+        # element (or an element the engine cannot type) would emit wrong
+        # edges on one side of the loop. Dropping it beats guessing.
+        existing = local_var_types.get(loop_var)
+        if existing is not None and existing != element:
+            del local_var_types[loop_var]
+            return
+        if element:
             local_var_types[loop_var] = element
             logger.debug(ls.JS_VAR_INFERRED, var_name=loop_var, var_type=element)
 
@@ -296,16 +312,28 @@ class JsTypeInferenceEngine:
             # A scalar return is not an element type; only the marker unwraps.
             return _container_element(self._call_return_type(right, module_qn))
         if right.type == cs.TS_ARRAY:
-            # `for (const w of [new Widget(), ...])`: the literal names its
-            # element directly, the JS analogue of an annotation.
-            for child in right.named_children:
-                if child.type == cs.TS_NEW_EXPRESSION and (
-                    class_name := ut.extract_constructor_name(child)
-                ):
-                    return self._resolve_js_class_name(class_name, module_qn) or (
-                        class_name
-                    )
+            return self._array_literal_element_type(right, module_qn)
         return None
+
+    def _array_literal_element_type(
+        self, array_node: ASTNode, module_qn: str
+    ) -> str | None:
+        """`[new Widget(), new Widget()]` names its element; a literal whose
+        elements construct different classes, or mix constructions with other
+        expressions, guarantees nothing and yields ``None``."""
+        element: str | None = None
+        for child in array_node.named_children:
+            if child.type != cs.TS_NEW_EXPRESSION:
+                return None
+            class_name = ut.extract_constructor_name(child)
+            if not class_name:
+                return None
+            resolved = self._resolve_js_class_name(class_name, module_qn) or class_name
+            if element is None:
+                element = resolved
+            elif element != resolved:
+                return None
+        return element
 
     def _call_return_type(self, call_node: ASTNode, module_qn: str) -> str | None:
         func_node = call_node.child_by_field_name("function")
