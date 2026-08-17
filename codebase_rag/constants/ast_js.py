@@ -256,6 +256,21 @@ FIELD_INCREMENT = "increment"
 
 # JS/TS module system node types
 TS_TYPE_ANNOTATION = "type_annotation"
+# TypeScript type-annotation shapes (issue #1303). Arrays and array-shaped
+# generics carry their element in the canonical `list[<element>]` marker,
+# which only for-of loop-variable inference unwraps.
+TS_ARRAY_TYPE = "array_type"
+TS_GENERIC_TYPE = "generic_type"
+TS_UNION_TYPE = "union_type"
+TS_TYPE_IDENTIFIER = "type_identifier"
+TS_NESTED_TYPE_IDENTIFIER = "nested_type_identifier"
+TS_JS_OPERATOR_OF = "of"
+TS_NULLISH_TYPE_TEXTS = frozenset({"null", "undefined"})
+TS_ARRAY_GENERIC_NAMES = frozenset(
+    {"Array", "ReadonlyArray", "Set", "Iterable", "IterableIterator"}
+)
+JS_LIST_TYPE_PREFIX = "list["
+JS_LIST_TYPE_FORMAT = "list[{element}]"
 TS_IMPORT_ALIAS = "import_alias"
 TS_JS_WITH_STATEMENT = "with_statement"
 TS_CLASS_STATIC_BLOCK = "class_static_block"
