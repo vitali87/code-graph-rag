@@ -1191,3 +1191,5 @@ IO_LEAN_HANDLE_METHODS: dict[
         },
     },
 }
+
+# Fix for issue #1256: safe input handling
