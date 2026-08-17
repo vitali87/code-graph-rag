@@ -89,6 +89,7 @@ Point Code-Graph-RAG at a repository and it reads every source file, extracts fu
 - Optimise code against language best practices or your own coding standards.
 - Find dead code by walking call and reference edges from entry points.
 - Search and rewrite structurally by AST pattern with ast-grep.
+- Overlay runtime behaviour: trace a test run (or pull production eBPF profiles) with `cgr trace` and merge the calls that actually happened into the graph, exposing dispatch that static analysis cannot see.
 
 ## How It Works
 
@@ -158,6 +159,7 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 - [Interactive Querying](docs/guide/interactive-querying.md)
 - [Code Optimisation](docs/guide/code-optimization.md)
 - [Dead Code Detection](docs/guide/dead-code.md)
+- [Dynamic Call Tracing](docs/guide/dynamic-tracing.md)
 - [Graph Export](docs/guide/graph-export.md)
 - [Real-Time Updates](docs/guide/realtime-updates.md)
 - [MCP Server](docs/guide/mcp-server.md)

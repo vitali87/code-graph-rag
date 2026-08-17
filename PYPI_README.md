@@ -13,6 +13,7 @@ Point it at a repository and it reads every source file, extracts functions, cla
 - Trace data flow through assignments, calls, and I/O sinks via `FLOWS_TO` taint edges.
 - Optimise code against language best practices or your own coding standards.
 - Find dead code by walking call and reference edges from entry points.
+- Overlay runtime behaviour: trace a test run (or pull production eBPF profiles) and merge the calls that actually happened into the graph, exposing dispatch that static analysis cannot see.
 - Group several repositories into a named workspace and query them as one graph.
 - Trace calls between microservices: route decorators become endpoint templates, and HTTP client URLs resolve to the handlers that serve them, linking services across project boundaries.
 
@@ -112,6 +113,40 @@ cgr stats                                  # node and relationship counts
 cgr status                                 # stack state and last sync per project
 cgr doctor                                 # check dependencies and configuration
 ```
+
+## Runtime Call Tracing
+
+Static analysis cannot see calls through interfaces, reflection, registries, or framework routing. `cgr trace` records which functions actually called which while your code runs (typically the test suite) and merges the observations into the graph as `CALLS` edges with dynamic provenance: `dynamic: true`, observed call counts, the workloads (tests) that exercised each edge, and `static_missed: true` where no static edge existed.
+
+Index the repository first (`cgr start --repo-path ./my-project --update-graph`), then:
+
+**Python** (a pytest plugin ships with the package, inert unless enabled):
+
+```bash
+cd ./my-project
+pytest --cgr-trace                              # writes cgr-trace.jsonl
+cgr trace ingest cgr-trace.jsonl --repo-path .  # merge into the graph
+```
+
+**Node.js / TypeScript** (V8's built-in profiler, no agent needed; source maps are followed back to the original TypeScript):
+
+```bash
+node --cpu-prof --cpu-prof-name=run.cpuprofile app.js
+cgr trace convert run.cpuprofile --repo-path ./my-project --workload smoke
+cgr trace ingest cgr-trace.jsonl --repo-path ./my-project
+```
+
+**Production overlay** (eBPF continuous profilers: Parca, Pyroscope, OpenTelemetry). Fetch a pprof over HTTP and convert it in one step, re-anchoring build paths to your checkout:
+
+```bash
+cgr trace pull "https://parca.example/query?...&format=pprof" \
+    --repo-path ./my-project --language go \
+    --path-map /build/src/=./my-project/src/ \
+    --label endpoint --header "Authorization=Bearer $TOKEN"
+cgr trace ingest cgr-trace.jsonl --repo-path ./my-project
+```
+
+The JVM (Java, Scala), .NET, PHP, Lua, Dart, Go, Rust, and C/C++ each have a recording recipe in the [Dynamic Call Tracing guide](https://docs.code-graph-rag.com/guide/dynamic-tracing/). Ingest is idempotent, so a cron'd `pull` plus `ingest` keeps a continuously refreshing production overlay. The absence of a dynamic edge never means dead code; it only means the traced workload did not exercise that path.
 
 ## MCP Server
 
