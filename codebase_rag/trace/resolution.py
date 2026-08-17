@@ -8,6 +8,7 @@ line containment when names alone are ambiguous.
 
 from __future__ import annotations
 
+import posixpath
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,8 +33,15 @@ def _repo_relative(root_posix: str, frame_path: str) -> str | None:
     form (the in-process tracers emit ``co_filename`` with ``os.sep``). Both are
     normalised to POSIX before the containment check so a separator mismatch
     cannot read an in-repo frame as outside the repository on Windows.
+    ``posixpath.normpath`` collapses any ``..`` first, so a frame that walks out
+    of and back into the repo still resolves and one that walks out stays out.
+    The returned path only ever keys ``_callables_by_path`` (a table of known
+    in-repo node paths), so a stray relative fragment fails to match rather than
+    escaping anywhere. Case-insensitive drives and symlink aliases are left as
+    the identity match the graph itself uses, since the indexer keys nodes by
+    the same lexical relative paths without resolving either.
     """
-    frame_posix = Path(frame_path).as_posix()
+    frame_posix = posixpath.normpath(Path(frame_path).as_posix())
     if not frame_posix.startswith(root_posix):
         return None
     return frame_posix[len(root_posix) :]
