@@ -733,9 +733,28 @@ class TestForOfConservativeCeilings:
     # Review round on #1306: without lexical scoping the engine must prefer
     # no binding over a possibly wrong one.
 
-    def test_shadowed_loop_variable_drops_the_binding(
+    def test_shadowed_loop_variable_with_conflicting_type_drops_the_binding(
         self, ts_parser, js_type_engine: JsTypeInferenceEngine
     ) -> None:
+        # Both bindings are typed: `item` is Widget outside the loop and
+        # Banner inside it; either single entry would emit wrong edges on one
+        # side of the loop, so neither survives.
+        code = b"""
+const banners: Banner[] = fetchBanners();
+const item: Widget = fetchOne();
+for (const item of banners) { item.show(); }
+"""
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert "item" not in result
+
+    def test_shadowed_loop_variable_with_untypable_element_drops_the_binding(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        # The header rebinds the name even when the element cannot be typed:
+        # keeping the outer Widget would type the loop body wrongly.
         code = b"""
 const item: Widget = fetchOne();
 for (const item of banners) { item.show(); }
@@ -744,14 +763,15 @@ for (const item of banners) { item.show(); }
         result = js_type_engine.build_local_variable_type_map(
             tree.root_node, "myapp.main", cs.SupportedLanguage.TS
         )
-        # The name is block-shadowed with a conflicting type: either binding
-        # would emit wrong edges on one side of the loop, so neither survives.
         assert "item" not in result
 
     def test_for_of_rebinding_same_type_is_kept(
         self, ts_parser, js_type_engine: JsTypeInferenceEngine
     ) -> None:
+        # A pre-existing binding of the SAME type agrees with the loop
+        # element, so the entry survives.
         code = b"""
+const w: Widget = fetchOne();
 const widgets: Widget[] = fetchAll();
 for (const w of widgets) { w.render(); }
 """
