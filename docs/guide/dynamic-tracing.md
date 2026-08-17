@@ -509,6 +509,11 @@ reported like any other unmapped path, never silently dropped. `--path-map` maps
 the container/build source root to the repository the same way it does for native
 frames.
 
+Like every eBPF profile, Python profiles are sampled: ingested edges carry
+`dynamic_sampled: true` and their `dynamic_call_count` is an approximate sample
+count, not the exact per-call total the in-process `sys.monitoring` Python tracer
+records.
+
 ## Ingesting a trace
 
 Parse the repository into the graph first (`cgr start --repo-path ... --update-graph`),
