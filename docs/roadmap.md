@@ -4,11 +4,11 @@ description: "What Code-Graph-RAG intends to do, and not do, over the next year.
 
 # Roadmap
 
-This page describes what the project intends to do, and deliberately not do, over roughly the next year (from mid-2026). It is a statement of direction rather than a schedule; items ship when they are ready. Day-to-day priorities live in the [issue tracker](https://github.com/vitali87/code-graph-rag/issues), and known analysis gaps are catalogued in [TODO.md](https://github.com/vitali87/code-graph-rag/blob/main/docs/TODO.md).
+This page describes what the project intends to do, and deliberately not do, over roughly the next year (from mid-2026). It is a statement of direction rather than a schedule; items ship when they are ready. Day-to-day priorities and known analysis gaps live in the [issue tracker](https://github.com/vitali87/code-graph-rag/issues).
 
 ## What we intend to do
 
-**Deepen analysis quality for the languages we already support.** The fully supported languages (see the [language support matrix](architecture/language-support.md) for the current list and per-language status) should converge on the same level of fidelity: call resolution, type inference, and data-flow edges. The known per-language type-inference gaps are tracked in TODO.md and are worked down continuously.
+**Deepen analysis quality for the languages we already support.** The fully supported languages (see the [language support matrix](architecture/language-support.md) for the current list and per-language status) should converge on the same level of fidelity: call resolution, type inference, and data-flow edges. The known per-language type-inference gaps are tracked in the issue tracker and are worked down continuously.
 
 **Keep improving dead-code detection precision.** False-positive reduction against real-world codebases is an ongoing campaign, driven by dogfooding the tool against large open-source projects and fixing every class of misreport at the root.
 
