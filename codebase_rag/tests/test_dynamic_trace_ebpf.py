@@ -920,7 +920,11 @@ def test_jvm_scala_frames_attribute_to_the_scala_file(tmp_path):
         language=cs.TRACE_LANGUAGE_JVM,
     )
     _header, records = read_trace_file(output)
-    paths = {r.caller.path for r in records} | {r.callee.path for r in records}
+    materialized = list(records)
+    assert materialized
+    paths = {r.caller.path for r in materialized} | {
+        r.callee.path for r in materialized
+    }
     assert paths == {"workload/Service.scala"}
 
 
@@ -951,7 +955,12 @@ def test_jvm_stem_matching_both_java_and_scala_is_ambiguous(tmp_path):
     finally:
         logger.remove(sink)
     assert count == 0
-    assert any("unmapped build paths" in m for m in messages)
+    # Collision-specific evidence: the four Service-stem frames (spin, handle,
+    # leaf, lambda) join the JDK class and the VM blob in the unmapped report,
+    # 6 frames across 3 distinct paths, where the unambiguous fixture reports
+    # only the 2 non-project frames.
+    expected = cs.TRACE_MSG_EBPF_UNMAPPED.format(count=6, paths=3)
+    assert any(expected in m for m in messages)
 
 
 def test_jvm_trace_ingests_to_calls_edges(tmp_path):
