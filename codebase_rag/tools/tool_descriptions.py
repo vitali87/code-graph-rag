@@ -226,14 +226,18 @@ MCP_EXPLAIN_TRACEBACK = (
 
 MCP_RANK_ROOT_CAUSES = (
     "Rank the sites that can explain a Python traceback's failure, best "
-    "first. Candidates score by three additive signals: being a FLOWS_TO "
-    "source into the failing frame (a possible producer of the failing "
-    "value), sitting on the crashing stack itself, and reaching the "
-    "failing frame through CALLS edges (closer callers score higher). "
-    "Each candidate carries its file, definition line, reasons, and the "
-    "call path to the failure. When the project has no FLOWS_TO edges the "
-    "ranking degrades to a CALLS-only walk and flow_used is false, with "
-    "the files outside flow coverage named in flow_gaps."
+    "first. The anchor (failing) is the innermost frame the graph "
+    "resolves; anchor_is_crash_site is false when the actual crash line "
+    "sits deeper (a library frame, or a frame the graph cannot match), so "
+    "the ranking reads as relative to the deepest resolvable frame. "
+    "Candidates score by three additive signals: being a FLOWS_TO source "
+    "into the failing frame (a possible producer of the failing value), "
+    "sitting on the crashing stack itself, and reaching the failing frame "
+    "through CALLS edges (closer callers score higher). Each candidate "
+    "carries its file, definition line, reasons, and the call path to the "
+    "failure. When the project has no FLOWS_TO edges the ranking degrades "
+    "to a CALLS-only walk and flow_used is false; flow_gaps always names "
+    "the files outside flow-analysis coverage."
 )
 
 MCP_PARAM_TRACEBACK_TEXT = (

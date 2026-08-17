@@ -549,6 +549,7 @@ class MCPToolsRegistry:
             "exception_type": report.exception_type,
             "exception_message": report.exception_message,
             "failing": report.failing,
+            "anchor_is_crash_site": report.anchor_is_crash_site,
             "candidates": [candidate._asdict() for candidate in report.candidates],
             "flow_used": report.flow_used,
             "flow_gaps": list(report.flow_gaps),

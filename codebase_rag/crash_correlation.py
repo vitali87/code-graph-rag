@@ -33,8 +33,14 @@ _TB_FRAME = re.compile(
     r'^\s*File "(?P<path>[^"]+)", line (?P<line>\d+), in (?P<name>.+)$'
 )
 _TB_HEADER = "Traceback (most recent call last):"
-# ``ValueError: boom`` or a bare ``KeyboardInterrupt``.
-_TB_EXCEPTION = re.compile(r"^(?P<type>[A-Za-z_][\w.]*)(?::\s?(?P<message>.*))?$")
+_TB_GROUP_HEADER = "Exception Group Traceback (most recent call last):"
+# ``ValueError: boom`` or a bare ``KeyboardInterrupt``; the leading class of
+# characters admits Unicode identifiers, which Python allows in class names.
+_TB_EXCEPTION = re.compile(r"^(?P<type>[^\W\d][\w.]*)(?::\s?(?P<message>.*))?$")
+# ExceptionGroup rendering draws a box: ``  + Exception Group Traceback ...``,
+# ``  |   File ...``, ``  +-+------- 1 -------``. Stripping the margin turns
+# each sub-exception back into a plain traceback section.
+_TB_GROUP_MARGIN = re.compile(r"^\s*(?:\+-)?[+|]\s?")
 
 _REASON_ON_STACK = "on the crashing stack, {depth} frame(s) above the failure"
 _REASON_CALLER = "can reach the failing frame through CALLS, depth {depth}"
@@ -88,15 +94,22 @@ class RootCause(NamedTuple):
 class RootCauseReport(NamedTuple):
     """Ranked writers/callers that can explain the failure.
 
+    ``failing`` is the innermost frame the graph resolves -- the deepest
+    point the analysis can anchor on. When the crash site itself is deeper
+    (a library frame, or an in-repo frame the graph cannot match),
+    ``anchor_is_crash_site`` is false so the ranking reads as "relative to
+    the deepest resolvable frame", never as a claim about the crash line.
     ``flow_used`` distinguishes "no FLOWS_TO evidence considered" from "flow
     considered and empty": when the project has no flow edges at all the
-    ranking degrades to a CALLS-only walk, and ``flow_gaps`` names the files
-    outside flow-analysis coverage so the absence is not read as evidence.
+    ranking degrades to a CALLS-only walk. ``flow_gaps`` always names the
+    files outside flow-analysis coverage so an absent flow signal is not
+    read as evidence.
     """
 
     exception_type: str
     exception_message: str
     failing: str | None
+    anchor_is_crash_site: bool
     candidates: tuple[RootCause, ...]
     flow_used: bool
     flow_gaps: tuple[str, ...]
@@ -107,12 +120,17 @@ def parse_python_traceback(text: str) -> ParsedTraceback:
 
     Chained tracebacks (``During handling ...``/``direct cause``) contain
     several sections; the last one is the failure that propagated, so its
-    frames and its trailing exception line are the ones returned.
+    frames and its trailing exception line are the ones returned. An
+    ``ExceptionGroup`` rendering is normalised by stripping its box margin,
+    after which the same rule picks the last sub-exception's traceback --
+    the deepest real cause, not the group wrapper.
     """
-    lines = [line for line in text.splitlines() if line.strip()]
+    lines = [
+        _TB_GROUP_MARGIN.sub("", line) for line in text.splitlines() if line.strip()
+    ]
     last_header = -1
     for index, line in enumerate(lines):
-        if line.strip() == _TB_HEADER:
+        if line.strip() in (_TB_HEADER, _TB_GROUP_HEADER):
             last_header = index
     frames: list[FramePoint] = []
     exception_type = ""
@@ -176,16 +194,16 @@ class _CrashGraph:
             source, target = row.get("source"), row.get("target")
             if isinstance(source, str) and isinstance(target, str):
                 self.flow_sources.setdefault(target, []).append(source)
-        self.flow_gaps: tuple[str, ...] = ()
-        if not self.flow_sources:
-            gap_rows = fetch_all(CYPHER_FLOW_COVERAGE_GAPS, params)
-            self.flow_gaps = tuple(
-                sorted(
-                    path
-                    for row in gap_rows
-                    if isinstance(path := row.get(cs.KEY_PATH), str)
-                )
+        # Gaps are fetched unconditionally: a flow edge elsewhere in the
+        # project must not hide that the failing file sits outside coverage.
+        gap_rows = fetch_all(CYPHER_FLOW_COVERAGE_GAPS, params)
+        self.flow_gaps: tuple[str, ...] = tuple(
+            sorted(
+                path
+                for row in gap_rows
+                if isinstance(path := row.get(cs.KEY_PATH), str)
             )
+        )
 
 
 def _resolve_stack(
@@ -252,7 +270,9 @@ def _reverse_reachable(
         current, depth = queue.popleft()
         if depth == _CALLER_DEPTH_LIMIT:
             continue
-        for caller in graph.callers.get(current, ()):
+        # Sorted expansion keeps the recorded shortest path deterministic
+        # when several exist; the graph returns edges in no fixed order.
+        for caller in sorted(graph.callers.get(current, ())):
             if caller in seen:
                 continue
             seen.add(caller)
@@ -281,11 +301,13 @@ def rank_root_causes(
     stack = _resolve_stack(parsed, graph, repo_root)
     stack_qns = [qn for _frame, qn, _label, _reason in stack if qn]
     failing = stack_qns[-1] if stack_qns else None
+    anchor_is_crash_site = bool(stack) and stack[-1][1] is not None
     if failing is None:
         return RootCauseReport(
             exception_type=parsed.exception_type,
             exception_message=parsed.exception_message,
             failing=None,
+            anchor_is_crash_site=False,
             candidates=(),
             flow_used=bool(graph.flow_sources),
             flow_gaps=graph.flow_gaps,
@@ -325,6 +347,7 @@ def rank_root_causes(
         exception_type=parsed.exception_type,
         exception_message=parsed.exception_message,
         failing=failing,
+        anchor_is_crash_site=anchor_is_crash_site,
         candidates=candidates,
         flow_used=bool(graph.flow_sources),
         flow_gaps=graph.flow_gaps,

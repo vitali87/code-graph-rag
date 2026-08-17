@@ -206,6 +206,119 @@ def test_rank_degrades_to_calls_only_when_flow_is_absent(tmp_path):
     assert ranked == [f"{_P}.app.service.dispatch", f"{_P}.app.service.main"]
 
 
+def test_parses_a_real_exception_group_using_the_last_sub_exception():
+    def leaf_a():
+        raise ValueError("a failed")
+
+    def gather():
+        errs = []
+        try:
+            leaf_a()
+        except Exception as e:
+            errs.append(e)
+        raise ExceptionGroup("parallel failures", errs)
+
+    try:
+        gather()
+    except BaseException:
+        text = traceback.format_exc()
+    # The box margin (+, |) is stripped and the last sub-exception's own
+    # traceback wins: the deepest real cause, not the group wrapper.
+    parsed = parse_python_traceback(text)
+    assert parsed.exception_type == "ValueError"
+    assert parsed.exception_message == "a failed"
+    assert [frame.qualname for frame in parsed.frames] == ["gather", "leaf_a"]
+
+
+def test_parses_a_unicode_exception_name():
+    text = (
+        "Traceback (most recent call last):\n"
+        '  File "/app/main.py", line 3, in <module>\n'
+        "    run()\n"
+        "ÉchecRéseau: connexion perdue\n"
+    )
+    parsed = parse_python_traceback(text)
+    assert parsed.exception_type == "ÉchecRéseau"
+    assert parsed.exception_message == "connexion perdue"
+
+
+def test_flow_gaps_survive_unrelated_flow_edges(tmp_path):
+    # A flow edge elsewhere in the project must not hide that coverage gaps
+    # exist: the failing file's absence from flow analysis stays disclosed.
+    fetch_all = _fetch_all_for(
+        flow_edges=[(f"{_P}.other.writer", f"{_P}.other.reader")],
+        gaps=["app/service.py"],
+    )
+    report = rank_root_causes(fetch_all, _P, tmp_path, _crash_text(tmp_path))
+    assert report.flow_used is True
+    assert report.flow_gaps == ("app/service.py",)
+
+
+def test_rank_anchors_on_the_innermost_resolved_frame_and_discloses_it(tmp_path):
+    # The crash propagates from inside a library: the deepest frame cannot
+    # resolve, the anchor is the deepest project frame, and the report says
+    # the anchor is not the crash site.
+    src = (tmp_path / "app" / "service.py").as_posix()
+    text = (
+        "Traceback (most recent call last):\n"
+        f'  File "{src}", line 16, in dispatch\n'
+        "    return handle(cfg)\n"
+        f'  File "{src}", line 10, in handle\n'
+        "    return lib.parse(cfg)\n"
+        '  File "/usr/lib/python3.12/site-packages/lib.py", line 5, in parse\n'
+        "    return cfg.timeout\n"
+        "AttributeError: 'NoneType' object has no attribute 'timeout'\n"
+    )
+    fetch_all = _fetch_all_for(flow_edges=[])
+    report = rank_root_causes(fetch_all, _P, tmp_path, text)
+    assert report.failing == f"{_P}.app.service.handle"
+    assert report.anchor_is_crash_site is False
+    # The fully resolved scenario claims the crash site outright.
+    resolved = rank_root_causes(fetch_all, _P, tmp_path, _crash_text(tmp_path))
+    assert resolved.anchor_is_crash_site is True
+
+
+def test_shortest_call_paths_are_deterministic_over_diamonds(tmp_path):
+    # main reaches handle through both branch_a and branch_b; the recorded
+    # shortest path must not depend on graph row order.
+    callables = [
+        _callable_row(cs.NodeLabel.FUNCTION, f"{_P}.app.service.handle", 8, 12),
+        _callable_row(cs.NodeLabel.FUNCTION, f"{_P}.app.service.branch_a", 14, 16),
+        _callable_row(cs.NodeLabel.FUNCTION, f"{_P}.app.service.branch_b", 18, 20),
+        _callable_row(cs.NodeLabel.FUNCTION, f"{_P}.app.service.main", 22, 26),
+    ]
+    calls = [
+        {"from_qn": f"{_P}.app.service.branch_b", "to_qn": f"{_P}.app.service.handle"},
+        {"from_qn": f"{_P}.app.service.branch_a", "to_qn": f"{_P}.app.service.handle"},
+        {"from_qn": f"{_P}.app.service.main", "to_qn": f"{_P}.app.service.branch_b"},
+        {"from_qn": f"{_P}.app.service.main", "to_qn": f"{_P}.app.service.branch_a"},
+    ]
+
+    def fetch_all(query: str, params: dict | None = None) -> list[dict]:
+        if query == CYPHER_TRACE_CALLABLES:
+            return callables
+        if query == CYPHER_CRASH_CALLS:
+            return calls
+        return []
+
+    src = (tmp_path / "app" / "service.py").as_posix()
+    text = (
+        "Traceback (most recent call last):\n"
+        f'  File "{src}", line 10, in handle\n'
+        "    boom()\n"
+        "RuntimeError: boom\n"
+    )
+    report = rank_root_causes(fetch_all, _P, tmp_path, text)
+    main = next(
+        c for c in report.candidates if c.qualified_name == f"{_P}.app.service.main"
+    )
+    assert main.call_path == (
+        f"{_P}.app.service.main",
+        f"{_P}.app.service.branch_a",
+        f"{_P}.app.service.handle",
+    )
+
+
 def test_rank_with_no_resolvable_frame_reports_nothing(tmp_path):
     text = (
         "Traceback (most recent call last):\n"
