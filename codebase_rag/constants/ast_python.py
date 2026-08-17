@@ -96,6 +96,22 @@ PY_UNION_SEPARATOR = "|"
 PY_NONE = "None"
 # `-> Self` names the enclosing class, not a class called Self.
 PY_ANNOTATION_SELF = "Self"
+# Homogeneous-container return annotations (`-> list[Widget]`): the container
+# spelling is irrelevant downstream, only "iterable of element" survives, in
+# the canonical `list[<element>]` marker consumed by loop-variable inference.
+PY_GENERIC_CONTAINER_PATTERN = (
+    r"^(?:typing\.)?(?P<name>list|List|set|Set|frozenset|FrozenSet|tuple|Tuple|"
+    r"Sequence|Collection|Iterable|Iterator|Generator|AsyncGenerator|"
+    r"AsyncIterator|AsyncIterable)\[(?P<inner>.+)\]$"
+)
+PY_TUPLE_CONTAINERS = frozenset({"tuple", "Tuple"})
+# Yield type first; Generator[Y, S, R] takes up to three parameters while
+# AsyncGenerator[Y, S] takes up to two.
+PY_GENERATOR_ARG_LIMITS = {"Generator": 3, "AsyncGenerator": 2}
+PY_ELLIPSIS = "..."
+PY_OPTIONAL_PATTERN = r"^(?:typing\.)?Optional\[(?P<inner>.+)\]$"
+PY_LIST_TYPE_PREFIX = "list["
+PY_LIST_TYPE_FORMAT = "list[{element}]"
 
 PY_KEYWORD_SELF = "self"
 PY_KEYWORD_CLS = "cls"

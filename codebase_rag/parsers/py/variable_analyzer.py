@@ -21,9 +21,33 @@ if TYPE_CHECKING:
 
         def _find_class_node(self, class_qn: str) -> ASTNode | None: ...
 
+        def _find_class_in_scope(
+            self, class_name: str, module_qn: str
+        ) -> str | None: ...
+
+        def _infer_method_call_return_type(
+            self,
+            method_call: str,
+            module_qn: str,
+            local_var_types: dict[str, str] | None = None,
+        ) -> str | None: ...
+
+        def _get_method_return_type_from_ast(self, method_qn: str) -> str | None: ...
+
     _VarBase: type = _VariableAnalyzerDeps
 else:
     _VarBase = object
+
+
+def _container_element_type(type_str: str | None) -> str | None:
+    """The element inside a canonical ``list[<element>]`` marker, else ``None``."""
+    if (
+        type_str
+        and type_str.startswith(cs.PY_LIST_TYPE_PREFIX)
+        and type_str.endswith("]")
+    ):
+        return type_str[len(cs.PY_LIST_TYPE_PREFIX) : -1] or None
+    return None
 
 
 class PythonVariableAnalyzerMixin(_VarBase):
@@ -209,6 +233,31 @@ class PythonVariableAnalyzerMixin(_VarBase):
         if iterable_node.type == cs.TS_PY_LIST:
             return self._infer_list_element_type(iterable_node)
 
+        if iterable_node.type == cs.TS_PY_CALL:
+            # `for w in load_widgets():` types through the callee's container
+            # return annotation (`-> list[Widget]`); a scalar return is not an
+            # element type, so only the container marker unwraps. A
+            # `self.load_more()` iterable falls back to the enclosing class's
+            # own method.
+            call_text = safe_decode_text(iterable_node)
+            if not call_text:
+                return None
+            return _container_element_type(
+                self._infer_method_call_return_type(
+                    call_text, module_qn, local_var_types
+                )
+                or self._self_method_element_type(iterable_node, module_qn)
+            )
+
+        if iterable_node.type == cs.TS_PY_ATTRIBUTE:
+            # `for w in self.widgets:` reads the attribute's already-inferred
+            # container type (keyed as `self.widgets` by the self-assignment
+            # pass).
+            attr_text = safe_decode_text(iterable_node)
+            if not attr_text:
+                return None
+            return _container_element_type(local_var_types.get(attr_text))
+
         if (
             iterable_node.type != cs.TS_PY_IDENTIFIER
             or iterable_node.text is None
@@ -290,6 +339,40 @@ class PythonVariableAnalyzerMixin(_VarBase):
             if current.type == cs.TS_PY_ASSIGNMENT:
                 self._process_self_assignment(current, local_var_types, module_qn)
             stack.extend(reversed(current.children))
+
+    def _self_method_element_type(
+        self, call_node: ASTNode, module_qn: str
+    ) -> str | None:
+        """The return type of a ``self.m()`` call, resolved on the enclosing
+        class.
+
+        Deliberately scoped to iterable position: a general ``self`` receiver
+        must stay override-aware (an abstract stub's concrete sibling wins),
+        but an iterated call only needs the visible method's container
+        annotation.
+        """
+        func_node = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func_node is None or func_node.type != cs.TS_PY_ATTRIBUTE:
+            return None
+        text = safe_decode_text(func_node)
+        if not text or not text.startswith(cs.PY_SELF_PREFIX):
+            return None
+        parts = text.split(cs.SEPARATOR_DOT)
+        if len(parts) != 2:
+            return None
+        if (class_node := self._enclosing_class_node(call_node)) is None:
+            return None
+        name_node = class_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None or not (class_name := safe_decode_text(name_node)):
+            return None
+        class_qn = self._find_class_in_scope(class_name, module_qn) or class_name
+        if cs.SEPARATOR_DOT not in class_qn:
+            # A same-module class resolves to its bare name; the method lookup
+            # needs the full module.Class.method shape.
+            class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_qn}"
+        return self._get_method_return_type_from_ast(
+            f"{class_qn}{cs.SEPARATOR_DOT}{parts[1]}"
+        )
 
     def _enclosing_class_node(self, node: ASTNode) -> ASTNode | None:
         current = node.parent
@@ -542,7 +625,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and (var_type := local_var_types[var_name])
             and var_type != cs.TYPE_INFERENCE_LIST
         ):
-            return var_type
+            # A container-marked variable (`widgets = load_widgets()` with a
+            # `-> list[Widget]` annotation) iterates as its element type.
+            return _container_element_type(var_type) or var_type
         return self._infer_method_return_element_type(var_name, module_qn)
 
     def _infer_method_return_element_type(
