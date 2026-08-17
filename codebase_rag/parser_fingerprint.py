@@ -11,6 +11,8 @@ from pathlib import Path
 from . import constants as cs
 from .config import settings
 
+_FILE_HASH_CHUNK_SIZE = 1024 * 1024
+
 
 def compute_parser_fingerprint(
     package_root: Path | None = None, *, repo_path: Path | None = None
@@ -51,7 +53,7 @@ def _frontend_settings(repo_path: Path | None) -> list[str]:
         compdb_dir = find_compile_commands(repo_path)
         if compdb_dir is not None:
             compdb_path = (compdb_dir / "compile_commands.json").resolve()
-            compdb_digest = hashlib.sha256(compdb_path.read_bytes()).hexdigest()
+            compdb_digest = _sha256_file(compdb_path)
             entries.extend(
                 [
                     f"CPP_COMPILE_COMMANDS_PATH={compdb_path.as_posix()}",
@@ -59,6 +61,14 @@ def _frontend_settings(repo_path: Path | None) -> list[str]:
                 ]
             )
     return entries
+
+
+def _sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(_FILE_HASH_CHUNK_SIZE):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def _fingerprint_sources(root: Path) -> list[Path]:

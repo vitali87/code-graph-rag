@@ -4,7 +4,9 @@
 # unchanged files. These tests pin the parser-fingerprint safeguard: full
 # syncs stamp the fingerprint of the parser that built the graph, and any
 # later sync against a different parser warns loudly until a clean rebuild.
+import hashlib
 from collections.abc import Iterator
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -182,6 +184,38 @@ class TestComputeParserFingerprint:
 
         compdb.unlink()
         assert compute_parser_fingerprint(repo_path=repo) == without_compdb
+
+    def test_streams_cpp_compilation_database_digest_in_bounded_chunks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import codebase_rag.parser_fingerprint as pf
+        from codebase_rag.config import settings as cfg
+        from codebase_rag.parsers.cpp_frontend import frontend
+
+        max_read_size = 1024 * 1024
+        payload = b"x" * (max_read_size * 2 + 17)
+        compdb = tmp_path / "compile_commands.json"
+        compdb.write_bytes(payload)
+        monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
+
+        reader = BytesIO(payload)
+        read_sizes: list[int] = []
+        original_read = reader.read
+
+        def tracked_read(size: int = -1) -> bytes:
+            read_sizes.append(size)
+            return original_read(size)
+
+        monkeypatch.setattr(reader, "read", tracked_read)
+        monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: reader)
+
+        entries = pf._frontend_settings(tmp_path)
+
+        expected_digest = hashlib.sha256(payload).hexdigest()
+        assert f"CPP_COMPILE_COMMANDS_SHA256={expected_digest}" in entries
+        assert len(read_sizes) >= 3
+        assert all(0 < size <= max_read_size for size in read_sizes)
 
     def test_cpp_frontend_resolution_includes_compilation_database(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
