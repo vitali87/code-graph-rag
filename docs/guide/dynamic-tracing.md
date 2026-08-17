@@ -482,7 +482,7 @@ wall-clock** profiles use the same pprof format and convert through the same
 I/O-bound paths (a handler that lives in `await`) that a CPU profile barely
 samples.
 
-### Interpreted runtimes (`--language python`)
+### Managed runtimes (`--language python`, `--language jvm`)
 
 The `--language go`/`rust`/`cpp` paths above cover natively compiled binaries,
 whose frames are addresses in the target's own binary. eBPF profilers
@@ -509,10 +509,30 @@ reported like any other unmapped path, never silently dropped. `--path-map` maps
 the container/build source root to the repository the same way it does for native
 frames.
 
-Like every eBPF profile, Python profiles are sampled: ingested edges carry
+JVM frames take the same road with `--language jvm`, but the symbol itself is
+the path. Both real symbolisation routes emit the same grammar, e.g.
+`long workload.Service$Inner.spin(workload.Service, int)`: the JDK's own perf
+map (`-XX:+DumpPerfMapAtExit` on JDK 17+, or `jcmd <pid> Compiler.perfmap`,
+which perf-map-reading profilers surface verbatim) and the OpenTelemetry
+profiler's HotSpot demangler. The converter strips the return type and the
+parameter list and derives the frame's path from the package
+(`workload/Service.java`), the same package-derived convention the in-process
+JVM agent emits, so ingestion routes the records to the existing JVM frame
+resolver. Frames whose derived path matches no source file in the repository
+(JDK and library classes, VM blobs like `Interpreter`, native symbols) are
+counted and reported, never edge endpoints. Two JVM-specific caveats: give the
+JVM `-XX:+PreserveFramePointer` or the profiler cannot unwind through JIT
+frames at all, and expect inlining to hide callees, since the JIT aggressively
+inlines hot methods and a perf-map symbol only names the outermost one. A
+Scala class whose source file does not share the class's name derives a path
+that matches no file and is counted unmapped, and so is a class whose stem
+matches both a Java and a Scala file, since the symbol carries no
+source-language discriminator to pick between them.
+
+Like every eBPF profile, these profiles are sampled: ingested edges carry
 `dynamic_sampled: true` and their `dynamic_call_count` is an approximate sample
-count, not the exact per-call total the in-process `sys.monitoring` Python tracer
-records.
+count, not the exact per-call total the in-process tracers (`sys.monitoring`,
+the JVM agent) record.
 
 ## Ingesting a trace
 

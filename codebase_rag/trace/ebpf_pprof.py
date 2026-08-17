@@ -35,11 +35,22 @@ perf-map symbolisation route prepends), filters to the project by source-path
 containment, and emits ``language=python`` so ingestion routes the records to
 Python's existing frame resolver -- the same resolver the ``sys.monitoring``
 tracer feeds.
+
+JVM frames (``--language jvm``) are managed the same way but carry no usable
+path at all: both symbolisation routes -- the JDK's own perf map
+(``-XX:+DumpPerfMapAtExit`` / ``jcmd Compiler.perfmap``, which perf-map-reading
+profilers surface verbatim) and the OpenTelemetry profiler's HotSpot demangler
+-- emit ``long workload.Service$Inner.spin(workload.Service, int)``. The
+package in the symbol is the path: ``workload/Service`` joins a repository
+source file by suffix, the same package-derived convention the in-process JVM
+agent emits, so ingestion routes ``language=jvm`` records to the existing
+``JvmFrameResolver`` unchanged.
 """
 
 from __future__ import annotations
 
 import posixpath
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -98,7 +109,39 @@ _INTERPRETED_NAME_FNS = {
     cs.TRACE_LANGUAGE_PYTHON: _interpreted_name,
 }
 
-_SUPPORTED_LANGUAGES = frozenset(_DEMANGLERS) | frozenset(_INTERPRETED_NAME_FNS)
+# JVM frames are managed-runtime frames too, but they need a dedicated builder
+# (the package inside the symbol is the path), not just a name normaliser.
+_INTERPRETED_LANGUAGES = frozenset(_INTERPRETED_NAME_FNS) | {cs.TRACE_LANGUAGE_JVM}
+
+_SUPPORTED_LANGUAGES = frozenset(_DEMANGLERS) | _INTERPRETED_LANGUAGES
+
+# Synthetic lambda classes carry an address hash after the class chain:
+# ``Service$$Lambda$1/0x00007d62f8000c20`` from the JDK perf map, with the
+# slash rewritten to a dot by the OpenTelemetry demangler.
+_JVM_LAMBDA_HASH = re.compile(r"[/.]0x[0-9a-fA-F]+$")
+
+_JVM_SOURCE_EXTENSIONS = cs.JAVA_EXTENSIONS + cs.SCALA_EXTENSIONS
+
+
+def _jvm_symbol_parts(name: str) -> tuple[str, str, str] | None:
+    """A JVM frame symbol's (package, class chain, method), or ``None``.
+
+    Both real symbolisation routes emit the same grammar, e.g.
+    ``long workload.Service$Inner.spin(workload.Service, int)``: an optional
+    return type, the dotted class FQN with ``$``-separated nesting, the
+    method, and an optional parameter list. VM blobs (``Interpreter``,
+    ``StubRoutines (1)``) and native symbols do not parse as a dotted member
+    and are rejected.
+    """
+    head = name.split("(", 1)[0].rsplit(" ", 1)[-1]
+    class_fqn, sep, method = head.rpartition(cs.SEPARATOR_DOT)
+    if not sep or not method:
+        return None
+    class_fqn = _JVM_LAMBDA_HASH.sub("", class_fqn)
+    package, _, simple = class_fqn.rpartition(cs.SEPARATOR_DOT)
+    if not simple:
+        return None
+    return package, simple, method
 
 
 @dataclass(slots=True)
@@ -303,6 +346,86 @@ class _FrameBuilder:
         )
 
 
+class _JvmFrameBuilder:
+    """Resolves JVM symbol frames to package-derived in-project frames.
+
+    A JVM frame carries no usable native path: the perf-map route has no file
+    and the OpenTelemetry route only a basename. The package in the symbol is
+    the path -- ``workload.Service$Inner.spin`` derives ``workload/Service``
+    and joins a repository source file by suffix, the package-derived
+    convention ``JvmFrameResolver`` already speaks. Frames whose derived path
+    matches no repository source file (JDK and library classes, VM blobs,
+    native symbols) are counted, not resolved, the same visibility contract as
+    unmapped build paths. A stem that matches under more than one extension
+    (``pkg/Dup.java`` and ``pkg/Dup.scala`` both exist) is ambiguous -- the
+    symbol carries no source-language discriminator -- and is counted rather
+    than guessed, the resolver's own ceiling discipline (issue #1246).
+    """
+
+    def __init__(self, profile: _Profile, repo_root: Path) -> None:
+        self._profile = profile
+        # Every path suffix of every JVM source file, one traversal, so each
+        # candidate check below is one set lookup instead of a linear scan.
+        extensions = set(_JVM_SOURCE_EXTENSIONS)
+        self._source_suffixes: set[str] = set()
+        for path in repo_root.rglob("*"):
+            if path.suffix not in extensions or not path.is_file():
+                continue
+            parts = path.relative_to(repo_root).as_posix().split(cs.SEPARATOR_SLASH)
+            self._source_suffixes.update(
+                cs.SEPARATOR_SLASH.join(parts[index:]) for index in range(len(parts))
+            )
+        self._cache: dict[int, FramePoint | None] = {}
+        self.unmapped_paths: Counter[str] = Counter()
+
+    def frame(self, function_id: int) -> FramePoint | None:
+        if function_id not in self._cache:
+            self._cache[function_id] = self._build(function_id)
+        return self._cache[function_id]
+
+    def _build(self, function_id: int) -> FramePoint | None:
+        function = self._profile.functions.get(function_id)
+        strings = self._profile.strings
+        name_index = getattr(function, "name_index", 0)
+        if function is None or not 0 < name_index < len(strings):
+            return None
+        symbol = strings[name_index]
+        parts = _jvm_symbol_parts(symbol)
+        if parts is None:
+            self.unmapped_paths[symbol] += 1
+            return None
+        package, simple, method = parts
+        path = self._project_path(package, simple)
+        if path is None:
+            self.unmapped_paths[_jvm_source_stem(package, simple)] += 1
+            return None
+        return FramePoint(
+            path=path,
+            qualname=f"{simple}{cs.SEPARATOR_DOT}{method}",
+            line=max(getattr(function, "start_line", 0), 0),
+        )
+
+    def _project_path(self, package: str, simple: str) -> str | None:
+        stem = _jvm_source_stem(package, simple)
+        matches = [
+            stem + ext
+            for ext in _JVM_SOURCE_EXTENSIONS
+            if stem + ext in self._source_suffixes
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+
+def _jvm_source_stem(package: str, simple: str) -> str:
+    """The package-derived source path of a class chain, without extension.
+
+    The outermost class names the file; nested, anonymous, and synthetic
+    lambda classes all live in it. A Scala object's trailing ``$`` falls away
+    with the split.
+    """
+    outer = simple.split(cs.TRACE_JVM_NESTED_MARKER, 1)[0]
+    return posixpath.join(package.replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH), outer)
+
+
 def _mapping_selected(
     location: _Location, profile: _Profile, build_id: str | None
 ) -> bool:
@@ -338,7 +461,7 @@ def _mapping_name(profile: _Profile, location: _Location) -> str:
 def _resolved_frames(
     sample: _LabeledSample,
     profile: _Profile,
-    builder: _FrameBuilder,
+    builder: _FrameBuilder | _JvmFrameBuilder,
     build_id: str | None,
     unsymbolised: Counter[str],
     *,
@@ -374,7 +497,7 @@ def _resolved_frames(
 
 def _accumulate(
     profile: _Profile,
-    builder: _FrameBuilder,
+    builder: _FrameBuilder | _JvmFrameBuilder,
     *,
     build_id: str | None,
     service: tuple[str, str] | None,
@@ -443,12 +566,12 @@ def convert_ebpf_pprof(
     ``build_id`` filters to one binary's mapping; ``service`` (a ``key, value``
     pair) filters samples; ``workload_label`` maps a sample label to per-edge
     ``workloads``; ``language`` selects the symbol demangler (native runtimes)
-    or the interpreted-frame name normaliser (Python), the latter reusing the
-    language's existing ingest-time frame resolver.
+    or the managed-runtime frame path (Python name normalisation, JVM
+    package-derived paths), the latter reusing the language's existing
+    ingest-time frame resolver.
     """
-    interpreted = language in _INTERPRETED_NAME_FNS
-    name_fn = _INTERPRETED_NAME_FNS.get(language) or _DEMANGLERS.get(language)
-    if name_fn is None:
+    interpreted = language in _INTERPRETED_LANGUAGES
+    if language not in _SUPPORTED_LANGUAGES:
         raise TraceFormatError(
             cs.TRACE_ERR_EBPF_LANGUAGE.format(
                 language=language, supported=", ".join(sorted(_SUPPORTED_LANGUAGES))
@@ -462,8 +585,13 @@ def convert_ebpf_pprof(
     if not profile.strings or not profile.functions or not profile.samples:
         raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
 
-    root_prefix = repo_root.resolve().as_posix() + "/"
-    builder = _FrameBuilder(profile, root_prefix, path_map or [], name_fn)
+    builder: _FrameBuilder | _JvmFrameBuilder
+    if language == cs.TRACE_LANGUAGE_JVM:
+        builder = _JvmFrameBuilder(profile, repo_root)
+    else:
+        root_prefix = repo_root.resolve().as_posix() + "/"
+        name_fn = _INTERPRETED_NAME_FNS.get(language) or _DEMANGLERS[language]
+        builder = _FrameBuilder(profile, root_prefix, path_map or [], name_fn)
     edges, unsymbolised = _accumulate(
         profile,
         builder,

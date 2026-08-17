@@ -763,3 +763,242 @@ def test_interpreted_python_trace_ingests_to_calls_edges(tmp_path):
     }
     # Runtime-only edges from a sampled profile carry the sampled provenance flag.
     assert all(props[cs.TRACE_PROP_SAMPLED] for _f, _t, props in graph.edges)
+
+
+# --- JVM frames (issue #1287 follow-up) ------------------------------------
+#
+# Both real JVM symbolisation routes emit the same grammar, captured on a JDK 17
+# workload via ``-XX:+DumpPerfMapAtExit`` (what perf-map-reading profilers
+# surface) and confirmed against the OpenTelemetry profiler's HotSpot demangler:
+#
+#   long workload.Service$Inner.spin(workload.Service, int)
+#   void workload.Service$$Lambda$1/0x00007d62f8000c20.run()
+#   int java.lang.Object.hashCode()          (JDK class, out of project)
+#   Interpreter                              (VM blob, unparseable)
+#
+# The perf-map route carries no file and no line; the OpenTelemetry route adds
+# a source basename and line. Either way the package in the symbol derives the
+# path (``workload/Service.java``), the convention ``JvmFrameResolver`` speaks.
+
+_JVM_SPIN = "long workload.Service$Inner.spin(workload.Service, int)"
+_JVM_HANDLE = "long workload.Service.handleRequest(int)"
+_JVM_LEAF = "long workload.Service.leafCompute(int)"
+_JVM_LAMBDA = "void workload.Service$$Lambda$1/0x00007d62f8000c20.run()"
+_JVM_JDK = "int java.lang.Object.hashCode()"
+_JVM_BLOB = "Interpreter"
+
+
+def _jvm_profile_bytes() -> bytes:
+    strings = [
+        "",
+        _JVM_SPIN,  # 1: perf-map shape, no file, no line
+        _JVM_HANDLE,  # 2: OTel shape, basename + line below
+        _JVM_LEAF,  # 3: perf-map shape
+        _JVM_JDK,  # 4: JDK class, out of project
+        _JVM_BLOB,  # 5: VM blob
+        _JVM_LAMBDA,  # 6: synthetic lambda class with address hash
+        "Service.java",  # 7: OTel source basename
+        "[anon:jit]",  # 8: JIT mapping name, no build id
+    ]
+    idx = {s: i for i, s in enumerate(strings)}
+    table = b"".join(_string(s) for s in strings)
+    functions = (
+        _function(1, idx[_JVM_SPIN], 0, 0)
+        + _function(2, idx[_JVM_HANDLE], idx["Service.java"], 6)
+        + _function(3, idx[_JVM_LEAF], 0, 0)
+        + _function(4, idx[_JVM_JDK], 0, 0)
+        + _function(5, idx[_JVM_BLOB], 0, 0)
+        + _function(6, idx[_JVM_LAMBDA], 0, 0)
+    )
+    mappings = _mapping(1, idx["[anon:jit]"], 0)
+    locations = (
+        _location(1, 1, [(1, 0)])
+        + _location(2, 1, [(2, 9)])
+        + _location(3, 1, [(3, 0)])
+        + _location(4, 1, [(4, 0)])
+        + _location(5, 1, [(5, 0)])
+        + _location(6, 1, [(6, 0)])
+    )
+    samples = (
+        # Leaf-first: leafCompute, hashCode (JDK, seen through), handleRequest,
+        # Interpreter (VM blob, seen through), spin.
+        _sample([3, 4, 2, 5, 1], 11, [])
+        # Leaf-first: lambda body under spin.
+        + _sample([6, 1], 2, [])
+    )
+    return table + functions + mappings + locations + samples
+
+
+def _jvm_convert(tmp_path, **kwargs):
+    src = tmp_path / "src" / "main" / "java" / "workload" / "Service.java"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("class Service {}\n", encoding="utf-8")
+    profile = tmp_path / "jvm.pb.gz"
+    profile.write_bytes(gzip.compress(_jvm_profile_bytes()))
+    output = tmp_path / "trace.jsonl"
+    kwargs.setdefault("language", cs.TRACE_LANGUAGE_JVM)
+    count = convert_ebpf_pprof(profile, repo_root=tmp_path, output=output, **kwargs)
+    header, records = read_trace_file(output)
+    return count, header, list(records), output
+
+
+def test_jvm_frames_derive_package_paths_for_the_resolver(tmp_path):
+    count, header, records, _ = _jvm_convert(tmp_path)
+    assert header.language == cs.TRACE_LANGUAGE_JVM
+    assert header.sampled is True
+    edges = {
+        (r.caller.qualname, r.callee.qualname): (r.caller, r.callee) for r in records
+    }
+    assert set(edges) == {
+        ("Service$Inner.spin", "Service.handleRequest"),
+        ("Service.handleRequest", "Service.leafCompute"),
+        ("Service$Inner.spin", "Service$$Lambda$1.run"),
+    }
+    caller, callee = edges[("Service$Inner.spin", "Service.handleRequest")]
+    # The package derives the path; the return type and the parameter list are
+    # gone; the nested-class chain survives as the resolver's $ notation.
+    assert caller.path == "workload/Service.java"
+    assert caller.line == 0
+    assert callee.path == "workload/Service.java"
+    # The OTel-shaped frame keeps its definition line for span disambiguation.
+    assert callee.line == 6
+    # The lambda class keeps its chain but drops the address hash.
+    _, lam = edges[("Service$Inner.spin", "Service$$Lambda$1.run")]
+    assert lam.qualname == "Service$$Lambda$1.run"
+    assert count == 3
+
+
+def test_jvm_out_of_project_and_vm_frames_are_counted_not_resolved(tmp_path):
+    messages: list[str] = []
+    sink = logger.add(messages.append, level="INFO", format="{message}")
+    try:
+        _count, _header, records, _ = _jvm_convert(tmp_path)
+    finally:
+        logger.remove(sink)
+    names = {r.caller.qualname for r in records} | {r.callee.qualname for r in records}
+    # The JDK frame and the VM blob are seen through, never edge endpoints.
+    assert not any("hashCode" in n or "Interpreter" in n for n in names)
+    assert any("unmapped build paths" in m for m in messages)
+
+
+def test_jvm_symbol_grammar_covers_both_routes():
+    from codebase_rag.trace.ebpf_pprof import _jvm_source_stem, _jvm_symbol_parts
+
+    # Constructor, Scala object, and the OTel dot-rewritten lambda hash.
+    assert _jvm_symbol_parts("void workload.Service.<init>()") == (
+        "workload",
+        "Service",
+        "<init>",
+    )
+    assert _jvm_symbol_parts("long demo.Util$.free(int)") == ("demo", "Util$", "free")
+    assert _jvm_source_stem("demo", "Util$") == "demo/Util"
+    assert _jvm_symbol_parts(
+        "void workload.Service$$Lambda$1.0x00007d62f8000c20.run()"
+    ) == ("workload", "Service$$Lambda$1", "run")
+    # Default package: the class alone names the file.
+    assert _jvm_symbol_parts("int Main.run()") == ("", "Main", "run")
+    assert _jvm_source_stem("", "Main") == "Main"
+    # VM blobs and native symbols do not parse as a dotted member.
+    assert _jvm_symbol_parts("Interpreter") is None
+    assert _jvm_symbol_parts("StubRoutines (1)") is None
+    assert _jvm_symbol_parts("JavaCalls::call_helper(JavaValue*)") is None
+
+
+def test_jvm_scala_frames_attribute_to_the_scala_file(tmp_path):
+    # With only a Scala source present the derived path takes the .scala
+    # extension; extension order must not bias attribution toward Java.
+    src = tmp_path / "src" / "main" / "scala" / "workload" / "Service.scala"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("class Service\n", encoding="utf-8")
+    profile = tmp_path / "jvm.pb.gz"
+    profile.write_bytes(gzip.compress(_jvm_profile_bytes()))
+    output = tmp_path / "trace.jsonl"
+    convert_ebpf_pprof(
+        profile,
+        repo_root=tmp_path,
+        output=output,
+        language=cs.TRACE_LANGUAGE_JVM,
+    )
+    _header, records = read_trace_file(output)
+    materialized = list(records)
+    assert materialized
+    paths = {r.caller.path for r in materialized} | {
+        r.callee.path for r in materialized
+    }
+    assert paths == {"workload/Service.scala"}
+
+
+def test_jvm_stem_matching_both_java_and_scala_is_ambiguous(tmp_path):
+    # The symbol carries no source-language discriminator: when both files
+    # exist the frame is counted unmapped instead of guessed (Greptile's
+    # collision case on PR #1299). A ceiling yields nothing, never a wrong
+    # link.
+    for rel in (
+        "src/main/java/workload/Service.java",
+        "src/main/scala/workload/Service.scala",
+    ):
+        src = tmp_path / rel
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_text("class Service\n", encoding="utf-8")
+    profile = tmp_path / "jvm.pb.gz"
+    profile.write_bytes(gzip.compress(_jvm_profile_bytes()))
+    output = tmp_path / "trace.jsonl"
+    messages: list[str] = []
+    sink = logger.add(messages.append, level="INFO", format="{message}")
+    try:
+        count = convert_ebpf_pprof(
+            profile,
+            repo_root=tmp_path,
+            output=output,
+            language=cs.TRACE_LANGUAGE_JVM,
+        )
+    finally:
+        logger.remove(sink)
+    assert count == 0
+    # Collision-specific evidence: the four Service-stem frames (spin, handle,
+    # leaf, lambda) join the JDK class and the VM blob in the unmapped report,
+    # 6 frames across 3 distinct paths, where the unambiguous fixture reports
+    # only the 2 non-project frames.
+    expected = cs.TRACE_MSG_EBPF_UNMAPPED.format(count=6, paths=3)
+    assert any(expected in m for m in messages)
+
+
+def test_jvm_trace_ingests_to_calls_edges(tmp_path):
+    # End-to-end proof: convert a JVM eBPF profile, then ingest it through the
+    # real JvmFrameResolver and confirm package-derived frames bind to nodes.
+    project = "svc__cafebabe"
+    node_path = "src/main/java/workload/Service.java"
+    module = f"{project}.src.main.java.workload.Service"
+
+    def row(label, qn, start, end):
+        return {
+            cs.KEY_LABEL: label,
+            cs.KEY_QUALIFIED_NAME: qn,
+            cs.KEY_PATH: node_path,
+            cs.KEY_START_LINE: start,
+            cs.KEY_END_LINE: end,
+        }
+
+    callables = [
+        row(cs.NodeLabel.METHOD, f"{module}.Service.Inner.spin(Service, int)", 24, 31),
+        row(cs.NodeLabel.METHOD, f"{module}.Service.handleRequest(int)", 6, 14),
+        row(cs.NodeLabel.METHOD, f"{module}.Service.leafCompute(int)", 16, 22),
+    ]
+    _count, _header, _records, output = _jvm_convert(tmp_path)
+    graph = _FakePyGraph(callables, [])
+    summary = ingest_trace(output, graph, tmp_path, project)
+
+    resolved = {(frm, to) for frm, to, _props in graph.edges}
+    assert resolved == {
+        (
+            f"{module}.Service.Inner.spin(Service, int)",
+            f"{module}.Service.handleRequest(int)",
+        ),
+        (
+            f"{module}.Service.handleRequest(int)",
+            f"{module}.Service.leafCompute(int)",
+        ),
+    }
+    # The synthetic lambda frame has no line to span-match: unresolved, counted.
+    assert summary.unresolved == 1
+    assert all(props[cs.TRACE_PROP_SAMPLED] for _f, _t, props in graph.edges)
