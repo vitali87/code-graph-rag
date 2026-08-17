@@ -577,3 +577,189 @@ def test_pull_strips_auth_on_redirect(tmp_path):
     # Neither the standard nor the custom credential header crossed the redirect.
     assert received["auth"] is None
     assert received["apikey"] is None
+
+
+# --- Interpreted-language frames (issue #1287 follow-up) ------------------
+#
+# The OTel/Parca/Pyroscope eBPF profilers unwind the interpreter stack in the
+# kernel and report Python frames as source-level names against the real ``.py``
+# file, not as native binary addresses. The shapes below are the two observed in
+# real captures on a Python 3.12 workload:
+#
+#   * perf-map symbolisation:  ``py::Service.handle_request``  (Class.method,
+#     ``py::`` prefixed, definition line in Function.start_line)
+#   * py-spy-style:            ``leaf_compute``  (bare name, line present)
+#
+# plus ``<module>`` toplevels and standard-library frames whose file sits
+# outside the repository. ``--language python`` emits ``language=python`` so
+# ingestion routes the records to Python's existing FrameResolver.
+
+from codebase_rag.trace.ingest import ingest_trace  # noqa: E402
+
+
+def _py_profile_bytes(src_abs: str) -> bytes:
+    strings = [
+        "",
+        "py::Service.handle_request",  # 1: perf-map Class.method + py:: prefix
+        "leaf_compute",  # 2: py-spy bare name
+        "<module>",  # 3: module toplevel
+        "_find_and_load",  # 4: stdlib frame, out-of-repo file
+        src_abs,  # 5: the real in-repo source file
+        "<frozen importlib._bootstrap>",  # 6: stdlib "file"
+        "endpoint",  # 7: label key
+        "/api/checkout",  # 8: label value
+        "/opt/py/interp",  # 9: interpreter mapping name
+    ]
+    idx = {s: i for i, s in enumerate(strings)}
+    table = b"".join(_string(s) for s in strings)
+    functions = (
+        _function(1, idx["py::Service.handle_request"], idx[src_abs], 12)
+        + _function(2, idx["leaf_compute"], idx[src_abs], 4)
+        + _function(3, idx["<module>"], idx[src_abs], 1)
+        + _function(4, idx["_find_and_load"], idx["<frozen importlib._bootstrap>"], 900)
+    )
+    # A single interpreter mapping with no build id: interpreted frames are
+    # filtered by source-path containment, never by this mapping.
+    mappings = _mapping(1, idx["/opt/py/interp"], 0)
+    locations = (
+        _location(1, 1, [(1, 14)])  # handle_request, runtime line 14
+        + _location(2, 1, [(2, 5)])  # leaf_compute, runtime line 5
+        + _location(3, 1, [(3, 25)])  # <module>, runtime line 25
+        + _location(4, 1, [(4, 950)])  # stdlib frame, out-of-repo file
+    )
+    endpoint = _label(idx["endpoint"], idx["/api/checkout"])
+    # Leaf-first: leaf_compute, stdlib(seen-through), handle_request, <module>.
+    samples = _sample([2, 4, 1, 3], 9, [endpoint])
+    return table + functions + mappings + locations + samples
+
+
+def _py_convert(tmp_path, **kwargs):
+    src = tmp_path / "app" / "service.py"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("x = 1\n", encoding="utf-8")
+    profile = tmp_path / "py.pb.gz"
+    profile.write_bytes(gzip.compress(_py_profile_bytes(src.as_posix())))
+    output = tmp_path / "trace.jsonl"
+    kwargs.setdefault("language", cs.TRACE_LANGUAGE_PYTHON)
+    count = convert_ebpf_pprof(profile, repo_root=tmp_path, output=output, **kwargs)
+    header, records = read_trace_file(output)
+    return count, header, list(records), output
+
+
+def test_interpreted_python_frames_are_shaped_for_the_resolver(tmp_path):
+    count, header, records, _ = _py_convert(tmp_path)
+    assert header.language == cs.TRACE_LANGUAGE_PYTHON
+    assert header.sampled is True
+    assert header.tracer == cs.TRACE_TOOL_NAME_EBPF
+    src = (tmp_path / "app" / "service.py").as_posix()
+    edges = {
+        (r.caller.qualname, r.callee.qualname): (r.caller, r.callee) for r in records
+    }
+    # The stdlib frame is seen through, leaving module -> method -> function.
+    assert set(edges) == {
+        ("<module>", "Service.handle_request"),
+        ("Service.handle_request", "leaf_compute"),
+    }
+    caller, callee = edges[("<module>", "Service.handle_request")]
+    # py:: prefix stripped, Class.method preserved, real file, definition line
+    # (Function.start_line, which the resolver's span match anchors on).
+    assert callee.qualname == "Service.handle_request"
+    assert callee.path == src
+    assert callee.line == 12
+    assert caller.qualname == cs.TRACE_QUALNAME_MODULE
+    # The bare py-spy-style leaf keeps its name and its definition line.
+    _, leaf = edges[("Service.handle_request", "leaf_compute")]
+    assert leaf.qualname == "leaf_compute"
+    assert leaf.line == 4
+    assert count == 2
+
+
+def test_interpreted_frames_ignore_a_native_build_id_filter(tmp_path):
+    # A build-id filter selects a native binary's mapping; interpreted frames
+    # live in the interpreter's mapping and must survive it (they are filtered
+    # by source path instead), or every Python edge would vanish.
+    count, _header, records, _ = _py_convert(tmp_path, build_id="native-only-xyz")
+    assert count == 2
+    assert {(r.caller.qualname, r.callee.qualname) for r in records} == {
+        ("<module>", "Service.handle_request"),
+        ("Service.handle_request", "leaf_compute"),
+    }
+
+
+def test_interpreted_out_of_repo_stdlib_frame_is_counted_not_resolved(tmp_path):
+    messages: list[str] = []
+    sink = logger.add(messages.append, level="INFO", format="{message}")
+    try:
+        _count, _header, records, _ = _py_convert(tmp_path)
+    finally:
+        logger.remove(sink)
+    # No edge references the stdlib frame's out-of-repo file.
+    assert all("_find_and_load" not in r.callee.qualname for r in records)
+    assert all("_find_and_load" not in r.caller.qualname for r in records)
+    # The out-of-repo frame is counted and reported, not silently dropped.
+    assert any("unmapped build paths" in m for m in messages)
+
+
+class _FakePyGraph:
+    """Minimal TraceGraphProtocol: serves Python callables, records edges."""
+
+    def __init__(self, callable_rows, existing_rows):
+        self._callable_rows = callable_rows
+        self._existing_rows = existing_rows
+        self.edges = []
+
+    def fetch_all(self, query, params=None):
+        from codebase_rag.cypher_queries import (
+            CYPHER_TRACE_CALLABLES,
+            CYPHER_TRACE_EXISTING_CALLS,
+        )
+
+        if query == CYPHER_TRACE_CALLABLES:
+            return self._callable_rows
+        if query == CYPHER_TRACE_EXISTING_CALLS:
+            return self._existing_rows
+        raise AssertionError(f"unexpected query: {query}")
+
+    def ensure_relationship_batch(self, from_spec, rel_type, to_spec, properties=None):
+        self.edges.append((from_spec[2], to_spec[2], properties))
+
+    def flush_all(self):
+        return None
+
+
+def test_interpreted_python_trace_ingests_to_calls_edges(tmp_path):
+    # End-to-end proof: convert a Python eBPF profile, then ingest it through the
+    # real resolver and confirm the source-level frames bind to graph nodes.
+    project = "svc__deadbeef"
+
+    def row(label, qn, start, end):
+        return {
+            cs.KEY_LABEL: label,
+            cs.KEY_QUALIFIED_NAME: qn,
+            cs.KEY_PATH: "app/service.py",
+            cs.KEY_START_LINE: start,
+            cs.KEY_END_LINE: end,
+        }
+
+    callables = [
+        row(cs.NodeLabel.MODULE, f"{project}.app.service", None, None),
+        row(
+            cs.NodeLabel.METHOD, f"{project}.app.service.Service.handle_request", 12, 18
+        ),
+        row(cs.NodeLabel.FUNCTION, f"{project}.app.service.leaf_compute", 4, 6),
+    ]
+    _count, _header, _records, output = _py_convert(tmp_path)
+    graph = _FakePyGraph(callables, [])
+    summary = ingest_trace(output, graph, tmp_path, project)
+
+    assert summary.unresolved == 0
+    resolved = {(frm, to) for frm, to, _props in graph.edges}
+    assert resolved == {
+        (f"{project}.app.service", f"{project}.app.service.Service.handle_request"),
+        (
+            f"{project}.app.service.Service.handle_request",
+            f"{project}.app.service.leaf_compute",
+        ),
+    }
+    # Runtime-only edges from a sampled profile carry the sampled provenance flag.
+    assert all(props[cs.TRACE_PROP_SAMPLED] for _f, _t, props in graph.edges)
