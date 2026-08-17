@@ -21,6 +21,10 @@ if TYPE_CHECKING:
 
         def _find_class_node(self, class_qn: str) -> ASTNode | None: ...
 
+        def _find_class_in_scope(
+            self, class_name: str, module_qn: str
+        ) -> str | None: ...
+
         def _infer_method_call_return_type(
             self,
             method_call: str,
@@ -330,6 +334,23 @@ class PythonVariableAnalyzerMixin(_VarBase):
             if current.type == cs.TS_PY_ASSIGNMENT:
                 self._process_self_assignment(current, local_var_types, module_qn)
             stack.extend(reversed(current.children))
+
+    def _seed_self_receiver_type(
+        self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """Seed ``self`` with the enclosing class so ``self.helper()``
+        receivers resolve through the class's own methods (issue #1304
+        review: ``for w in self.load_widgets():``)."""
+        if cs.PY_KEYWORD_SELF in local_var_types:
+            return
+        if (class_node := self._enclosing_class_node(caller_node)) is None:
+            return
+        name_node = class_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None or not (class_name := safe_decode_text(name_node)):
+            return
+        local_var_types[cs.PY_KEYWORD_SELF] = (
+            self._find_class_in_scope(class_name, module_qn) or class_name
+        )
 
     def _enclosing_class_node(self, node: ASTNode) -> ASTNode | None:
         current = node.parent

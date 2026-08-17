@@ -35,8 +35,8 @@ def _homogeneous_element(name: str, inner: str) -> str | None:
         if len(parts) == 1 or (len(parts) == 2 and parts[1] == cs.PY_ELLIPSIS):
             return parts[0]
         return None
-    if name in cs.PY_GENERATOR_CONTAINERS:
-        return parts[0] if len(parts) <= 3 else None
+    if limit := cs.PY_GENERATOR_ARG_LIMITS.get(name):
+        return parts[0] if len(parts) <= limit else None
     return parts[0] if len(parts) == 1 else None
 
 

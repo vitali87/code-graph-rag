@@ -505,6 +505,9 @@ def fetch_widgets() -> "Sequence[Widget]":
 def stream_widgets() -> tuple[Widget, ...]:
     return json.loads("[]")
 
+def opt_widgets() -> Optional[list[Widget]]:
+    return json.loads("[]")
+
 class Screen:
     def __init__(self):
         self.widgets = load_widgets()
@@ -528,6 +531,17 @@ class Screen:
 
     def draw_homogeneous_tuple(self):
         for w in stream_widgets():
+            w.render()
+
+    def draw_optional(self):
+        for w in opt_widgets():
+            w.render()
+
+    def load_more(self) -> list[Widget]:
+        return json.loads("[]")
+
+    def draw_self_method(self):
+        for w in self.load_more():
             w.render()
 """,
     )
@@ -557,6 +571,8 @@ class Screen:
             "draw_sequence",
             "draw_attribute",
             "draw_homogeneous_tuple",
+            "draw_optional",
+            "draw_self_method",
         )
         if ((caller := f"{project_name}.app.Screen.{method}"), render)
         not in found_method_calls
@@ -579,5 +595,8 @@ def test_homogeneous_element_rules():
     assert _homogeneous_element("Tuple", "Widget, Banner, Panel") is None
     assert _homogeneous_element("Generator", "Widget, None, None") == "Widget"
     assert _homogeneous_element("Generator", "Widget, None, None, X") is None
+    # AsyncGenerator takes yield and send types only, never a return type.
+    assert _homogeneous_element("AsyncGenerator", "Widget, None") == "Widget"
+    assert _homogeneous_element("AsyncGenerator", "Widget, None, None") is None
     assert _homogeneous_element("list", "Widget") == "Widget"
     assert _homogeneous_element("list", "Widget, Banner") is None

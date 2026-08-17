@@ -105,7 +105,9 @@ PY_GENERIC_CONTAINER_PATTERN = (
     r"AsyncIterator|AsyncIterable)\[(?P<inner>.+)\]$"
 )
 PY_TUPLE_CONTAINERS = frozenset({"tuple", "Tuple"})
-PY_GENERATOR_CONTAINERS = frozenset({"Generator", "AsyncGenerator"})
+# Yield type first; Generator[Y, S, R] takes up to three parameters while
+# AsyncGenerator[Y, S] takes up to two.
+PY_GENERATOR_ARG_LIMITS = {"Generator": 3, "AsyncGenerator": 2}
 PY_ELLIPSIS = "..."
 PY_OPTIONAL_PATTERN = r"^(?:typing\.)?Optional\[(?P<inner>.+)\]$"
 PY_LIST_TYPE_PREFIX = "list["
