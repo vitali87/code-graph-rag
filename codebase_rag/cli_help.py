@@ -121,7 +121,10 @@ HELP_TRACE_INCLUDE = (
 )
 HELP_TRACE_LANGUAGE = (
     "Override the auto-detected source language. Rust pprof profiles share Go's "
-    "gzipped-protobuf format, so pass 'rust' to demangle them as Rust."
+    "gzipped-protobuf format, so pass 'rust' to demangle them as Rust. For an "
+    "eBPF profile of an interpreted runtime, pass '--format ebpf --language "
+    "python' together to resolve the in-kernel-unwound source frames against "
+    "the Python graph ('python' is an eBPF-only override)."
 )
 HELP_TRACE_FORMAT = (
     "Force a profile format instead of auto-detecting it. Use 'ebpf' for pprof "

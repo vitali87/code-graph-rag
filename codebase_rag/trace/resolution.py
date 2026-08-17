@@ -8,7 +8,7 @@ line containment when names alone are ambiguous.
 
 from __future__ import annotations
 
-import os
+import posixpath
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +18,33 @@ from .. import constants as cs
 
 if TYPE_CHECKING:
     from .records import FramePoint
+
+
+def _repo_root_posix(repo_root: Path) -> str:
+    """The resolved repo root as a POSIX prefix ending in a separator."""
+    return repo_root.resolve().as_posix().rstrip("/") + "/"
+
+
+def _repo_relative(root_posix: str, frame_path: str) -> str | None:
+    """The repo-relative POSIX path of an in-repo frame, or None if outside.
+
+    Frame paths arrive either POSIX (the pprof/V8 converters emit forward
+    slashes, since production build paths are POSIX) or in the host's native
+    form (the in-process tracers emit ``co_filename`` with ``os.sep``). Both are
+    normalised to POSIX before the containment check so a separator mismatch
+    cannot read an in-repo frame as outside the repository on Windows.
+    ``posixpath.normpath`` collapses any ``..`` first, so a frame that walks out
+    of and back into the repo still resolves and one that walks out stays out.
+    The returned path only ever keys ``_callables_by_path`` (a table of known
+    in-repo node paths), so a stray relative fragment fails to match rather than
+    escaping anywhere. Case-insensitive drives and symlink aliases are left as
+    the identity match the graph itself uses, since the indexer keys nodes by
+    the same lexical relative paths without resolving either.
+    """
+    frame_posix = posixpath.normpath(Path(frame_path).as_posix())
+    if not frame_posix.startswith(root_posix):
+        return None
+    return frame_posix[len(root_posix) :]
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +91,7 @@ class FrameResolver:
     """Maps runtime frame identities of one project to graph nodes."""
 
     def __init__(self, repo_root: Path, nodes: list[CallableNode]) -> None:
-        self._repo_root = repo_root.resolve()
-        self._root_prefix = str(self._repo_root) + os.sep
+        self._root_posix = _repo_root_posix(repo_root)
         self._callables_by_path: dict[str, list[CallableNode]] = {}
         self._modules_by_path: dict[str, CallableNode] = {}
         for node in nodes:
@@ -77,10 +103,10 @@ class FrameResolver:
     def resolve(
         self, frame: FramePoint, stats: ResolutionStats
     ) -> ResolvedFrame | None:
-        if not frame.path.startswith(self._root_prefix):
+        rel_path = _repo_relative(self._root_posix, frame.path)
+        if rel_path is None:
             stats.record(cs.TraceUnresolvedReason.OUTSIDE_REPO)
             return None
-        rel_path = Path(frame.path).relative_to(self._repo_root).as_posix()
 
         parts = [
             p
@@ -169,8 +195,7 @@ class JsFrameResolver:
     """
 
     def __init__(self, repo_root: Path, nodes: list[CallableNode]) -> None:
-        self._repo_root = repo_root.resolve()
-        self._root_prefix = str(self._repo_root) + os.sep
+        self._root_posix = _repo_root_posix(repo_root)
         self._callables_by_path: dict[str, list[CallableNode]] = {}
         self._modules_by_path: dict[str, CallableNode] = {}
         for node in nodes:
@@ -182,10 +207,10 @@ class JsFrameResolver:
     def resolve(
         self, frame: FramePoint, stats: ResolutionStats
     ) -> ResolvedFrame | None:
-        if not frame.path.startswith(self._root_prefix):
+        rel_path = _repo_relative(self._root_posix, frame.path)
+        if rel_path is None:
             stats.record(cs.TraceUnresolvedReason.OUTSIDE_REPO)
             return None
-        rel_path = Path(frame.path).relative_to(self._repo_root).as_posix()
 
         if frame.qualname == cs.TRACE_QUALNAME_MODULE:
             module = self._modules_by_path.get(rel_path)
@@ -239,8 +264,7 @@ class PhpFrameResolver:
     """
 
     def __init__(self, repo_root: Path, nodes: list[CallableNode]) -> None:
-        self._repo_root = repo_root.resolve()
-        self._root_prefix = str(self._repo_root) + os.sep
+        self._root_posix = _repo_root_posix(repo_root)
         self._callables_by_path: dict[str, list[CallableNode]] = {}
         self._modules_by_path: dict[str, CallableNode] = {}
         for node in nodes:
@@ -264,9 +288,7 @@ class PhpFrameResolver:
         return self._resolve_by_name_tail(frame.qualname, stats)
 
     def _relative(self, path: str) -> str | None:
-        if not path.startswith(self._root_prefix):
-            return None
-        return Path(path).relative_to(self._repo_root).as_posix()
+        return _repo_relative(self._root_posix, path)
 
     def _resolve_module(
         self, path: str, stats: ResolutionStats

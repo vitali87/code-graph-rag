@@ -482,6 +482,38 @@ wall-clock** profiles use the same pprof format and convert through the same
 I/O-bound paths (a handler that lives in `await`) that a CPU profile barely
 samples.
 
+### Interpreted runtimes (`--language python`)
+
+The `--language go`/`rust`/`cpp` paths above cover natively compiled binaries,
+whose frames are addresses in the target's own binary. eBPF profilers
+(OpenTelemetry, Parca, Pyroscope) also unwind **interpreted** stacks in the
+kernel and report them as source-level names against the real `.py` file
+(`<module>`, a bare `leaf_compute`, or `Service.handle_request`), not as native
+addresses. Pass `--language python` for those:
+
+```bash
+cgr trace convert prod.pb.gz --format ebpf --repo-path /path/to/your-repo \
+    --language python --path-map /app/=/path/to/your-repo/ --label endpoint
+cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
+```
+
+Interpreted frames are handled differently from native ones in two ways, both
+automatic: they are **not** filtered by `--build-id` (they live in the
+interpreter's mapping, not the target binary, so a native build-id would drop
+every one) and are instead scoped to the project by source-path containment; and
+their names are used as-is (only the `py::` prefix the perf-map symbolisation
+route prepends is stripped) rather than run through a symbol demangler, then
+routed to the same resolver the in-process Python tracer feeds. Frames from
+outside the repository (the standard library, site-packages) are counted and
+reported like any other unmapped path, never silently dropped. `--path-map` maps
+the container/build source root to the repository the same way it does for native
+frames.
+
+Like every eBPF profile, Python profiles are sampled: ingested edges carry
+`dynamic_sampled: true` and their `dynamic_call_count` is an approximate sample
+count, not the exact per-call total the in-process `sys.monitoring` Python tracer
+records.
+
 ## Ingesting a trace
 
 Parse the repository into the graph first (`cgr start --repo-path ... --update-graph`),

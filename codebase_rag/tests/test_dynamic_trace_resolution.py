@@ -150,3 +150,20 @@ def test_wrapper_falls_back_to_line_containment(tmp_path):
     )
     assert resolved is not None
     assert resolved.qualified_name == f"{_PROJECT}.pkg.mod.outer.inner"
+
+
+def test_repo_relative_collapses_parent_traversal_and_gates_escapes(tmp_path):
+    # The containment helper normalises `..` before the check, so an in-repo
+    # frame that dips through a parent still resolves, while one that walks out
+    # of the repository is rejected (it would only fail to key a node anyway).
+    # Paths are derived from the resolved root prefix so the assertions hold on
+    # Windows (drive-anchored) and macOS (/var -> /private/var) alike.
+    from codebase_rag.trace.resolution import _repo_relative, _repo_root_posix
+
+    root = _repo_root_posix(tmp_path / "repo")
+    base = root.rstrip("/")
+    assert _repo_relative(root, f"{base}/pkg/mod.py") == "pkg/mod.py"
+    assert _repo_relative(root, f"{base}/pkg/../mod.py") == "mod.py"
+    assert _repo_relative(root, f"{base}/../other/mod.py") is None
+    # A sibling whose name merely shares the repo's prefix is not inside it.
+    assert _repo_relative(root, f"{base}_evil/mod.py") is None

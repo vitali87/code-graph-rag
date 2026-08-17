@@ -25,6 +25,16 @@ Symbol grammars are reused from the per-runtime converters, keyed off the
 selected language: Go (``pprof``), Rust (``rust_pprof``), and C/C++ (the
 already-demangled grammar in ``instrumented``; Parca server-side-symbolizes and
 demangles, which this path assumes).
+
+Interpreted runtimes (``--language python``) are the other axis: the eBPF
+profiler unwinds the interpreter stack in-kernel and reports source-level frames
+(``<module>``, a bare ``func``, or ``Class.method``) against the real ``.py``
+file, so those frames carry no native symbol to demangle and no native mapping
+to filter on. This path normalises the name (dropping the ``py::`` prefix the
+perf-map symbolisation route prepends), filters to the project by source-path
+containment, and emits ``language=python`` so ingestion routes the records to
+Python's existing frame resolver -- the same resolver the ``sys.monitoring``
+tracer feeds.
 """
 
 from __future__ import annotations
@@ -65,6 +75,30 @@ _DEMANGLERS = {
     cs.TRACE_LANGUAGE_RUST: _rust_bare_name,
     cs.TRACE_LANGUAGE_CPP: _cpp_bare_name,
 }
+
+# Interpreted runtimes the eBPF profiler unwinds in-kernel. Their frames arrive
+# as source-level names (``<module>``, a bare ``func``, or ``Class.method``)
+# against the real source file, not as native binary addresses, so they reuse
+# each language's existing frame resolver (Python's ``FrameResolver`` is the
+# ingest default) instead of a symbol demangler, and are filtered to the project
+# by source-path containment rather than a native build-id. The name passes
+# through untouched except for stripping the ``py::`` prefix the perf-map
+# symbolisation path some profilers reuse prepends to Python frames.
+_PY_PERF_PREFIX = "py::"
+
+
+def _interpreted_name(name: str) -> str:
+    """A pprof interpreted-frame name as the language resolver expects it."""
+    if name.startswith(_PY_PERF_PREFIX):
+        return name[len(_PY_PERF_PREFIX) :]
+    return name
+
+
+_INTERPRETED_NAME_FNS = {
+    cs.TRACE_LANGUAGE_PYTHON: _interpreted_name,
+}
+
+_SUPPORTED_LANGUAGES = frozenset(_DEMANGLERS) | frozenset(_INTERPRETED_NAME_FNS)
 
 
 @dataclass(slots=True)
@@ -231,12 +265,12 @@ class _FrameBuilder:
         profile: _Profile,
         root_prefix: str,
         path_map: list[tuple[str, str]],
-        demangle,
+        name_fn,
     ) -> None:
         self._profile = profile
         self._root_prefix = root_prefix
         self._path_map = path_map
-        self._demangle = demangle
+        self._name_fn = name_fn
         self._cache: dict[int, FramePoint | None] = {}
         self.unmapped_paths: Counter[str] = Counter()
 
@@ -264,7 +298,7 @@ class _FrameBuilder:
         name = strings[name_index] if 0 < name_index < len(strings) else ""
         return FramePoint(
             path=path,
-            qualname=self._demangle(name),
+            qualname=self._name_fn(name),
             line=max(getattr(function, "start_line", 0), 0),
         )
 
@@ -307,17 +341,26 @@ def _resolved_frames(
     builder: _FrameBuilder,
     build_id: str | None,
     unsymbolised: Counter[str],
+    *,
+    select_mapping: bool = True,
 ) -> list[FramePoint]:
     """A sample's in-repo frames, root-first, seeing through other binaries.
 
     Locations from another binary and unsymbolised locations are skipped rather
     than breaking the chain, so a project edge survives a libc frame between its
     endpoints; unsymbolised target-binary locations are counted per mapping.
+
+    Interpreted frames (``select_mapping=False``) sit in the interpreter's
+    mapping, not the target's native binary, so a native build-id filter would
+    drop every one; they are kept regardless of mapping and filtered to the
+    project by the builder's source-path containment check instead.
     """
     frames: list[FramePoint] = []
     for location_id in reversed(sample.location_ids):
         location = profile.locations.get(location_id)
-        if location is None or not _mapping_selected(location, profile, build_id):
+        if location is None:
+            continue
+        if select_mapping and not _mapping_selected(location, profile, build_id):
             continue
         if not location.function_ids:
             unsymbolised[_mapping_name(profile, location) or "<unknown>"] += 1
@@ -337,6 +380,7 @@ def _accumulate(
     service: tuple[str, str] | None,
     workload_label: str | None,
     default_workload: str | None,
+    interpreted: bool = False,
 ) -> tuple[dict[tuple[FramePoint, FramePoint], tuple[int, set[str]]], Counter[str]]:
     """Adjacent in-repo frames per leaf-first stack, with per-edge workloads."""
     edges: dict[tuple[FramePoint, FramePoint], tuple[int, set[str]]] = {}
@@ -345,7 +389,14 @@ def _accumulate(
         if not _sample_matches(sample, service):
             continue
         workload = _sample_workload(sample, workload_label, default_workload)
-        frames = _resolved_frames(sample, profile, builder, build_id, unsymbolised)
+        frames = _resolved_frames(
+            sample,
+            profile,
+            builder,
+            build_id,
+            unsymbolised,
+            select_mapping=not interpreted,
+        )
         for ancestor, frame in zip(frames, frames[1:], strict=False):
             count, workloads = edges.get((ancestor, frame), (0, set()))
             if workload:
@@ -391,13 +442,16 @@ def convert_ebpf_pprof(
     ``path_map`` rewrites build-time path prefixes to the repository prefix;
     ``build_id`` filters to one binary's mapping; ``service`` (a ``key, value``
     pair) filters samples; ``workload_label`` maps a sample label to per-edge
-    ``workloads``; ``language`` selects the symbol demangler.
+    ``workloads``; ``language`` selects the symbol demangler (native runtimes)
+    or the interpreted-frame name normaliser (Python), the latter reusing the
+    language's existing ingest-time frame resolver.
     """
-    demangle = _DEMANGLERS.get(language)
-    if demangle is None:
+    interpreted = language in _INTERPRETED_NAME_FNS
+    name_fn = _INTERPRETED_NAME_FNS.get(language) or _DEMANGLERS.get(language)
+    if name_fn is None:
         raise TraceFormatError(
             cs.TRACE_ERR_EBPF_LANGUAGE.format(
-                language=language, supported=", ".join(sorted(_DEMANGLERS))
+                language=language, supported=", ".join(sorted(_SUPPORTED_LANGUAGES))
             )
         )
     raw = _decompress(profile_path.read_bytes(), profile_path)
@@ -409,7 +463,7 @@ def convert_ebpf_pprof(
         raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
 
     root_prefix = repo_root.resolve().as_posix() + "/"
-    builder = _FrameBuilder(profile, root_prefix, path_map or [], demangle)
+    builder = _FrameBuilder(profile, root_prefix, path_map or [], name_fn)
     edges, unsymbolised = _accumulate(
         profile,
         builder,
@@ -417,6 +471,7 @@ def convert_ebpf_pprof(
         service=service,
         workload_label=workload_label,
         default_workload=workload,
+        interpreted=interpreted,
     )
     _report(unsymbolised, builder.unmapped_paths)
 
