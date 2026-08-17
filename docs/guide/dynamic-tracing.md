@@ -525,7 +525,9 @@ JVM `-XX:+PreserveFramePointer` or the profiler cannot unwind through JIT
 frames at all, and expect inlining to hide callees, since the JIT aggressively
 inlines hot methods and a perf-map symbol only names the outermost one. A
 Scala class whose source file does not share the class's name derives a path
-that matches no file and is counted unmapped.
+that matches no file and is counted unmapped, and so is a class whose stem
+matches both a Java and a Scala file, since the symbol carries no
+source-language discriminator to pick between them.
 
 Like every eBPF profile, these profiles are sampled: ingested edges carry
 `dynamic_sampled: true` and their `dynamic_call_count` is an approximate sample

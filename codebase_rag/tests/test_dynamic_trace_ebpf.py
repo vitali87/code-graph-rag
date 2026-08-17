@@ -904,6 +904,56 @@ def test_jvm_symbol_grammar_covers_both_routes():
     assert _jvm_symbol_parts("JavaCalls::call_helper(JavaValue*)") is None
 
 
+def test_jvm_scala_frames_attribute_to_the_scala_file(tmp_path):
+    # With only a Scala source present the derived path takes the .scala
+    # extension; extension order must not bias attribution toward Java.
+    src = tmp_path / "src" / "main" / "scala" / "workload" / "Service.scala"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("class Service\n", encoding="utf-8")
+    profile = tmp_path / "jvm.pb.gz"
+    profile.write_bytes(gzip.compress(_jvm_profile_bytes()))
+    output = tmp_path / "trace.jsonl"
+    convert_ebpf_pprof(
+        profile,
+        repo_root=tmp_path,
+        output=output,
+        language=cs.TRACE_LANGUAGE_JVM,
+    )
+    _header, records = read_trace_file(output)
+    paths = {r.caller.path for r in records} | {r.callee.path for r in records}
+    assert paths == {"workload/Service.scala"}
+
+
+def test_jvm_stem_matching_both_java_and_scala_is_ambiguous(tmp_path):
+    # The symbol carries no source-language discriminator: when both files
+    # exist the frame is counted unmapped instead of guessed (Greptile's
+    # collision case on PR #1299). A ceiling yields nothing, never a wrong
+    # link.
+    for rel in (
+        "src/main/java/workload/Service.java",
+        "src/main/scala/workload/Service.scala",
+    ):
+        src = tmp_path / rel
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_text("class Service\n", encoding="utf-8")
+    profile = tmp_path / "jvm.pb.gz"
+    profile.write_bytes(gzip.compress(_jvm_profile_bytes()))
+    output = tmp_path / "trace.jsonl"
+    messages: list[str] = []
+    sink = logger.add(messages.append, level="INFO", format="{message}")
+    try:
+        count = convert_ebpf_pprof(
+            profile,
+            repo_root=tmp_path,
+            output=output,
+            language=cs.TRACE_LANGUAGE_JVM,
+        )
+    finally:
+        logger.remove(sink)
+    assert count == 0
+    assert any("unmapped build paths" in m for m in messages)
+
+
 def test_jvm_trace_ingests_to_calls_edges(tmp_path):
     # End-to-end proof: convert a JVM eBPF profile, then ingest it through the
     # real JvmFrameResolver and confirm package-derived frames bind to nodes.

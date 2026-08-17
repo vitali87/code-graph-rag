@@ -356,16 +356,25 @@ class _JvmFrameBuilder:
     convention ``JvmFrameResolver`` already speaks. Frames whose derived path
     matches no repository source file (JDK and library classes, VM blobs,
     native symbols) are counted, not resolved, the same visibility contract as
-    unmapped build paths.
+    unmapped build paths. A stem that matches under more than one extension
+    (``pkg/Dup.java`` and ``pkg/Dup.scala`` both exist) is ambiguous -- the
+    symbol carries no source-language discriminator -- and is counted rather
+    than guessed, the resolver's own ceiling discipline (issue #1246).
     """
 
     def __init__(self, profile: _Profile, repo_root: Path) -> None:
         self._profile = profile
-        self._sources = [
-            path.relative_to(repo_root).as_posix()
-            for ext in _JVM_SOURCE_EXTENSIONS
-            for path in repo_root.rglob(f"*{ext}")
-        ]
+        # Every path suffix of every JVM source file, one traversal, so each
+        # candidate check below is one set lookup instead of a linear scan.
+        extensions = set(_JVM_SOURCE_EXTENSIONS)
+        self._source_suffixes: set[str] = set()
+        for path in repo_root.rglob("*"):
+            if path.suffix not in extensions or not path.is_file():
+                continue
+            parts = path.relative_to(repo_root).as_posix().split(cs.SEPARATOR_SLASH)
+            self._source_suffixes.update(
+                cs.SEPARATOR_SLASH.join(parts[index:]) for index in range(len(parts))
+            )
         self._cache: dict[int, FramePoint | None] = {}
         self.unmapped_paths: Counter[str] = Counter()
 
@@ -398,15 +407,12 @@ class _JvmFrameBuilder:
 
     def _project_path(self, package: str, simple: str) -> str | None:
         stem = _jvm_source_stem(package, simple)
-        for ext in _JVM_SOURCE_EXTENSIONS:
-            candidate = stem + ext
-            suffix = cs.SEPARATOR_SLASH + candidate
-            if any(
-                source == candidate or source.endswith(suffix)
-                for source in self._sources
-            ):
-                return candidate
-        return None
+        matches = [
+            stem + ext
+            for ext in _JVM_SOURCE_EXTENSIONS
+            if stem + ext in self._source_suffixes
+        ]
+        return matches[0] if len(matches) == 1 else None
 
 
 def _jvm_source_stem(package: str, simple: str) -> str:
