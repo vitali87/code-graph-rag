@@ -21,9 +21,27 @@ if TYPE_CHECKING:
 
         def _find_class_node(self, class_qn: str) -> ASTNode | None: ...
 
+        def _infer_method_call_return_type(
+            self,
+            method_call: str,
+            module_qn: str,
+            local_var_types: dict[str, str] | None = None,
+        ) -> str | None: ...
+
     _VarBase: type = _VariableAnalyzerDeps
 else:
     _VarBase = object
+
+
+def _container_element_type(type_str: str | None) -> str | None:
+    """The element inside a canonical ``list[<element>]`` marker, else ``None``."""
+    if (
+        type_str
+        and type_str.startswith(cs.PY_LIST_TYPE_PREFIX)
+        and type_str.endswith("]")
+    ):
+        return type_str[len(cs.PY_LIST_TYPE_PREFIX) : -1] or None
+    return None
 
 
 class PythonVariableAnalyzerMixin(_VarBase):
@@ -208,6 +226,28 @@ class PythonVariableAnalyzerMixin(_VarBase):
     ) -> str | None:
         if iterable_node.type == cs.TS_PY_LIST:
             return self._infer_list_element_type(iterable_node)
+
+        if iterable_node.type == cs.TS_PY_CALL:
+            # `for w in load_widgets():` types through the callee's container
+            # return annotation (`-> list[Widget]`); a scalar return is not an
+            # element type, so only the container marker unwraps.
+            call_text = safe_decode_text(iterable_node)
+            if not call_text:
+                return None
+            return _container_element_type(
+                self._infer_method_call_return_type(
+                    call_text, module_qn, local_var_types
+                )
+            )
+
+        if iterable_node.type == cs.TS_PY_ATTRIBUTE:
+            # `for w in self.widgets:` reads the attribute's already-inferred
+            # container type (keyed as `self.widgets` by the self-assignment
+            # pass).
+            attr_text = safe_decode_text(iterable_node)
+            if not attr_text:
+                return None
+            return _container_element_type(local_var_types.get(attr_text))
 
         if (
             iterable_node.type != cs.TS_PY_IDENTIFIER
@@ -542,7 +582,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and (var_type := local_var_types[var_name])
             and var_type != cs.TYPE_INFERENCE_LIST
         ):
-            return var_type
+            # A container-marked variable (`widgets = load_widgets()` with a
+            # `-> list[Widget]` annotation) iterates as its element type.
+            return _container_element_type(var_type) or var_type
         return self._infer_method_return_element_type(var_name, module_qn)
 
     def _infer_method_return_element_type(

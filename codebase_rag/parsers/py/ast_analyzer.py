@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Protocol
 
@@ -377,10 +378,12 @@ class PythonAstAnalyzerMixin(_AstBase):
     def _annotated_return_type(
         self, method_node: Node, method_qn: str, module_qn: str
     ) -> str | None:
-        # A declared `-> Widget` (or `-> Widget | None`, or the quoted forward-ref
-        # form) is the cheapest, most reliable return-type source; only a simple or
-        # dotted name is trusted, generics and multi-type unions fall through to
-        # body inference.
+        # A declared `-> Widget` (or `-> Widget | None`, the quoted forward-ref
+        # form, `-> Self`, or a homogeneous container like `-> list[Widget]`)
+        # is the cheapest, most reliable return-type source; anything else
+        # falls through to body inference. A container annotation produces the
+        # canonical `list[<element>]` marker so loop-variable inference can
+        # recover the element (issue #1304).
         type_node = method_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
         if type_node is None or type_node.text is None:
             return None
@@ -393,6 +396,23 @@ class PythonAstAnalyzerMixin(_AstBase):
         if len(non_none) != 1:
             return None
         candidate = non_none[0]
+        if optional := re.match(cs.PY_OPTIONAL_PATTERN, candidate):
+            candidate = optional.group("inner").strip()
+        if container := re.match(cs.PY_GENERIC_CONTAINER_PATTERN, candidate):
+            # Generator[Widget, None, None] yields its first argument;
+            # tuple[Widget, ...] is homogeneous. A non-simple element
+            # (dict[str, X], nested generics) fails the trust check below.
+            element_text = container.group("inner").split(cs.CHAR_COMMA)[0].strip()
+            element = self._trusted_annotation_name(
+                element_text.strip("\"'"), method_qn, module_qn
+            )
+            return cs.PY_LIST_TYPE_FORMAT.format(element=element) if element else None
+        return self._trusted_annotation_name(candidate, method_qn, module_qn)
+
+    def _trusted_annotation_name(
+        self, candidate: str, method_qn: str, module_qn: str
+    ) -> str | None:
+        """A simple or dotted annotation name resolved in scope, else ``None``."""
         if not all(part.isidentifier() for part in candidate.split(cs.SEPARATOR_DOT)):
             return None
         if candidate == cs.PY_ANNOTATION_SELF:

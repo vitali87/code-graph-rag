@@ -471,3 +471,77 @@ def test_loop_variable_return_types(
 
     if missing_calls:
         pytest.fail(f"Missing loop variable return type calls: {missing_calls}")
+
+
+def test_generic_return_annotation_types_loop_variables(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `-> list[Widget]` annotation is the only evidence here: the bodies
+    # return through opaque calls, so body inference yields nothing and the
+    # loop variables can only type through the parsed generic (issue #1304).
+    project_path = tmp_path / "generic_annotation_test"
+    project_path.mkdir()
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
+    (project_path / "app.py").write_text(
+        encoding="utf-8",
+        data="""import json
+
+class Widget:
+    def render(self) -> str:
+        return "w"
+
+class Banner:
+    # Decoy: shares the method name so the bare-name fallback is ambiguous
+    # and only a typed receiver can bind the calls below.
+    def render(self) -> str:
+        return "b"
+
+def load_widgets() -> list[Widget]:
+    return json.loads("[]")
+
+def fetch_widgets() -> "Sequence[Widget]":
+    return json.loads("[]")
+
+class Screen:
+    def draw_direct(self):
+        for w in load_widgets():
+            w.render()
+
+    def draw_stored(self):
+        widgets = load_widgets()
+        for w in widgets:
+            w.render()
+
+    def draw_sequence(self):
+        for w in fetch_widgets():
+            w.render()
+""",
+    )
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project_path,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    project_name = project_path.name
+    found_method_calls = {
+        (c[0][0][2], c[0][2][2])
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeType.METHOD
+    }
+    render = f"{project_name}.app.Widget.render"
+    decoy = f"{project_name}.app.Banner.render"
+    missing = [
+        (caller, render)
+        for method in ("draw_direct", "draw_stored", "draw_sequence")
+        if ((caller := f"{project_name}.app.Screen.{method}"), render)
+        not in found_method_calls
+    ]
+    if missing:
+        pytest.fail(f"Missing generic-annotation loop calls: {missing}")
+    # The annotation names Widget, so the decoy must never be linked.
+    assert not any(callee == decoy for _caller, callee in found_method_calls)
