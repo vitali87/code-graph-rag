@@ -92,12 +92,21 @@ class PythonTypeInferenceEngine(
         try:
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
             # Single-pass traversal avoids O(5*N) traversals for type inference.
-            self._traverse_single_pass(caller_node, local_var_types, module_qn)
+            comprehensions, for_statements = self._traverse_single_pass(
+                caller_node, local_var_types, module_qn
+            )
             self._infer_instance_attributes_from_init(
                 caller_node, local_var_types, module_qn
             )
             self._infer_property_return_types(caller_node, local_var_types, module_qn)
             self._infer_class_annotation_types(caller_node, local_var_types, module_qn)
+            # Attribute-backed iterables (`for w in self.widgets`) only type
+            # after the attribute passes above populated `self.x`; re-running
+            # the loop analyzers picks them up (they never downgrade a type).
+            for comp in comprehensions:
+                self._analyze_comprehension(comp, local_var_types, module_qn)
+            for for_stmt in for_statements:
+                self._analyze_for_loop(for_stmt, local_var_types, module_qn)
             aliases = self._collect_local_aliases(caller_node)
             self._expand_chained_attribute_types(local_var_types, module_qn, aliases)
 

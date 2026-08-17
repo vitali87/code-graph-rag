@@ -59,10 +59,14 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 func_node
                 and func_node.type == cs.TS_PY_IDENTIFIER
                 and func_node.text is not None
-                and (class_name := safe_decode_text(func_node))
-                and class_name[0].isupper()
+                and (callee := safe_decode_text(func_node))
             ):
-                return class_name
+                if callee[0].isupper():
+                    return callee
+                # A lowercase callee is a free-function factory: type from its
+                # return (annotation first), so `self.widgets = load_widgets()`
+                # seeds the attribute for methods that only read it.
+                return self._infer_free_function_return_type(callee, module_qn)
 
             if (
                 func_node

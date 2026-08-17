@@ -502,7 +502,13 @@ def load_widgets() -> list[Widget]:
 def fetch_widgets() -> "Sequence[Widget]":
     return json.loads("[]")
 
+def stream_widgets() -> tuple[Widget, ...]:
+    return json.loads("[]")
+
 class Screen:
+    def __init__(self):
+        self.widgets = load_widgets()
+
     def draw_direct(self):
         for w in load_widgets():
             w.render()
@@ -514,6 +520,14 @@ class Screen:
 
     def draw_sequence(self):
         for w in fetch_widgets():
+            w.render()
+
+    def draw_attribute(self):
+        for w in self.widgets:
+            w.render()
+
+    def draw_homogeneous_tuple(self):
+        for w in stream_widgets():
             w.render()
 """,
     )
@@ -537,7 +551,13 @@ class Screen:
     decoy = f"{project_name}.app.Banner.render"
     missing = [
         (caller, render)
-        for method in ("draw_direct", "draw_stored", "draw_sequence")
+        for method in (
+            "draw_direct",
+            "draw_stored",
+            "draw_sequence",
+            "draw_attribute",
+            "draw_homogeneous_tuple",
+        )
         if ((caller := f"{project_name}.app.Screen.{method}"), render)
         not in found_method_calls
     ]
@@ -545,3 +565,19 @@ class Screen:
         pytest.fail(f"Missing generic-annotation loop calls: {missing}")
     # The annotation names Widget, so the decoy must never be linked.
     assert not any(callee == decoy for _caller, callee in found_method_calls)
+
+
+def test_homogeneous_element_rules():
+    # A heterogeneous tuple guarantees nothing about a given element, so it
+    # must never type a loop variable as its first member (the untyped frame
+    # then falls to the resolver's pre-existing bare-name behaviour).
+    from codebase_rag.parsers.py.ast_analyzer import _homogeneous_element
+
+    assert _homogeneous_element("tuple", "Widget") == "Widget"
+    assert _homogeneous_element("tuple", "Widget, ...") == "Widget"
+    assert _homogeneous_element("tuple", "Widget, Banner") is None
+    assert _homogeneous_element("Tuple", "Widget, Banner, Panel") is None
+    assert _homogeneous_element("Generator", "Widget, None, None") == "Widget"
+    assert _homogeneous_element("Generator", "Widget, None, None, X") is None
+    assert _homogeneous_element("list", "Widget") == "Widget"
+    assert _homogeneous_element("list", "Widget, Banner") is None

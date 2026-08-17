@@ -20,6 +20,26 @@ _PY_TRAVERSE_QUERY = (
     f"({cs.TS_PY_RETURN_STATEMENT}) @return_stmt"
 )
 
+
+def _homogeneous_element(name: str, inner: str) -> str | None:
+    """The single element type a container annotation guarantees, else ``None``.
+
+    ``tuple[Widget, Banner]`` guarantees nothing about a given element, so
+    only ``tuple[Widget]`` and the homogeneous ``tuple[Widget, ...]`` pass;
+    generators yield their first argument; every other container takes
+    exactly one. A nested-generic first argument survives to the caller's
+    trust check, which rejects it.
+    """
+    parts = [part.strip() for part in inner.split(cs.CHAR_COMMA)]
+    if name in cs.PY_TUPLE_CONTAINERS:
+        if len(parts) == 1 or (len(parts) == 2 and parts[1] == cs.PY_ELLIPSIS):
+            return parts[0]
+        return None
+    if name in cs.PY_GENERATOR_CONTAINERS:
+        return parts[0] if len(parts) <= 3 else None
+    return parts[0] if len(parts) == 1 else None
+
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from pathlib import Path
@@ -91,7 +111,10 @@ class PythonAstAnalyzerMixin(_AstBase):
 
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
+    ) -> tuple[list[Node], list[Node]]:
+        """Types locals in one traversal; returns (comprehensions, for
+        statements) so the coordinator can re-run loop inference after the
+        attribute passes populate ``self.x`` types."""
         assignments: list[Node] = []
         comprehensions: list[Node] = []
         for_statements: list[Node] = []
@@ -141,6 +164,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         self._infer_instance_variable_types_from_assignments(
             assignments, local_var_types, module_qn
         )
+        return comprehensions, for_statements
 
     def _process_assignment_simple(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -399,10 +423,11 @@ class PythonAstAnalyzerMixin(_AstBase):
         if optional := re.match(cs.PY_OPTIONAL_PATTERN, candidate):
             candidate = optional.group("inner").strip()
         if container := re.match(cs.PY_GENERIC_CONTAINER_PATTERN, candidate):
-            # Generator[Widget, None, None] yields its first argument;
-            # tuple[Widget, ...] is homogeneous. A non-simple element
-            # (dict[str, X], nested generics) fails the trust check below.
-            element_text = container.group("inner").split(cs.CHAR_COMMA)[0].strip()
+            element_text = _homogeneous_element(
+                container.group("name"), container.group("inner")
+            )
+            if element_text is None:
+                return None
             element = self._trusted_annotation_name(
                 element_text.strip("\"'"), method_qn, module_qn
             )

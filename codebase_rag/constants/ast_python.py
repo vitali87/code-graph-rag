@@ -100,10 +100,13 @@ PY_ANNOTATION_SELF = "Self"
 # spelling is irrelevant downstream, only "iterable of element" survives, in
 # the canonical `list[<element>]` marker consumed by loop-variable inference.
 PY_GENERIC_CONTAINER_PATTERN = (
-    r"^(?:typing\.)?(?:list|List|set|Set|frozenset|FrozenSet|tuple|Tuple|"
+    r"^(?:typing\.)?(?P<name>list|List|set|Set|frozenset|FrozenSet|tuple|Tuple|"
     r"Sequence|Collection|Iterable|Iterator|Generator|AsyncGenerator|"
     r"AsyncIterator|AsyncIterable)\[(?P<inner>.+)\]$"
 )
+PY_TUPLE_CONTAINERS = frozenset({"tuple", "Tuple"})
+PY_GENERATOR_CONTAINERS = frozenset({"Generator", "AsyncGenerator"})
+PY_ELLIPSIS = "..."
 PY_OPTIONAL_PATTERN = r"^(?:typing\.)?Optional\[(?P<inner>.+)\]$"
 PY_LIST_TYPE_PREFIX = "list["
 PY_LIST_TYPE_FORMAT = "list[{element}]"
