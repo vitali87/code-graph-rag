@@ -239,6 +239,24 @@ class TestExtractSourceWithFallback:
 
 
 class TestValidateSourceLocation:
+    def test_rejects_negative_start_line(self) -> None:
+        valid, path = validate_source_location("/path/to/file.py", -1, 10)
+
+        assert valid is False
+        assert path is None
+
+    def test_rejects_negative_end_line(self) -> None:
+        valid, path = validate_source_location("/path/to/file.py", 1, -10)
+
+        assert valid is False
+        assert path is None
+
+    def test_rejects_reversed_line_range(self) -> None:
+        valid, path = validate_source_location("/path/to/file.py", 10, 1)
+
+        assert valid is False
+        assert path is None
+
     def test_returns_true_for_valid_location(self) -> None:
         valid, path = validate_source_location("/path/to/file.py", 1, 10)
 
