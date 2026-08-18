@@ -1491,6 +1491,7 @@ class GraphUpdater:
             container = row.get("container_qn")
             start_line = _persisted_int(row.get(cs.KEY_START_LINE))
             start_col = _persisted_int(row.get(cs.KEY_START_COL))
+            name_line = _persisted_int(row.get(cs.KEY_NAME_START_LINE))
             name_col = _persisted_int(row.get(cs.KEY_NAME_START_COL))
             if not (
                 isinstance(module_qn, str)
@@ -1505,8 +1506,13 @@ class GraphUpdater:
                 qualified_name=qn,
                 container_qn=container if isinstance(container, str) else None,
             )
-            for col in {start_col, name_col if name_col is not None else start_col}:
-                key = (module_qn, start_line, col)
+            keys = {(module_qn, start_line, start_col)}
+            if name_col is not None:
+                # The NAME token can sit on a LATER line than the declaration
+                # start (a multiline Go receiver), so the alias keys at its
+                # own persisted line, never the declaration's.
+                keys.add((module_qn, name_line or start_line, name_col))
+            for key in keys:
                 if key not in locations:
                     locations[key] = record
                     restored += 1

@@ -32,6 +32,7 @@ KEY_START_LINE = "start_line"
 # keys sit at the `func` keyword). Persisted so incremental runs can rehydrate
 # the col-keyed location indexes for unchanged files (issue #1240).
 KEY_START_COL = "start_col"
+KEY_NAME_START_LINE = "name_start_line"
 KEY_NAME_START_COL = "name_start_col"
 KEY_END_LINE = "end_line"
 KEY_PATH = "path"
@@ -502,7 +503,8 @@ CYPHER_ALL_FUNCTION_LOCATIONS = (
     "WHERE m.qualified_name STARTS WITH $project_prefix "
     "RETURN labels(f)[0] AS label, f.qualified_name AS qualified_name, "
     "m.qualified_name AS module_qn, f.start_line AS start_line, "
-    "f.start_col AS start_col, f.name_start_col AS name_start_col"
+    "f.start_col AS start_col, f.name_start_line AS name_start_line, "
+    "f.name_start_col AS name_start_col"
 )
 CYPHER_ALL_METHOD_LOCATIONS = (
     "MATCH (m:Module)-[:DEFINES]->(c)-[:DEFINES_METHOD]->(f:Method) "
@@ -510,7 +512,8 @@ CYPHER_ALL_METHOD_LOCATIONS = (
     "RETURN labels(f)[0] AS label, f.qualified_name AS qualified_name, "
     "c.qualified_name AS container_qn, "
     "m.qualified_name AS module_qn, f.start_line AS start_line, "
-    "f.start_col AS start_col, f.name_start_col AS name_start_col"
+    "f.start_col AS start_col, f.name_start_line AS name_start_line, "
+    "f.name_start_col AS name_start_col"
 )
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"

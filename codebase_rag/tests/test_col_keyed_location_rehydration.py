@@ -184,6 +184,36 @@ def test_function_rehydration_keys_span_and_name_alias(tmp_path: Path) -> None:
     assert method.label == "Method"
 
 
+def test_alias_keys_at_the_name_tokens_own_line(tmp_path: Path) -> None:
+    # A multiline Go receiver puts the NAME on a later line than the
+    # declaration start; the alias must key at the name's persisted line,
+    # never the declaration's (review on #1318).
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    graph = _LocGraph(
+        methods=[
+            {
+                cs.KEY_QUALIFIED_NAME: "proj.pkg.s.Wide.Do",
+                cs.KEY_LABEL: "Method",
+                "container_qn": "proj.pkg.s.Wide",
+                "module_qn": "proj.pkg.s",
+                cs.KEY_START_LINE: 5,
+                cs.KEY_START_COL: 0,
+                cs.KEY_NAME_START_LINE: 7,
+                cs.KEY_NAME_START_COL: 2,
+            }
+        ]
+    )
+    updater = _updater(repo, graph)
+    dp = updater.factory.definition_processor
+
+    updater._rehydrate_function_locations()
+
+    assert ("proj.pkg.s", 5, 0) in dp.function_locations
+    assert ("proj.pkg.s", 7, 2) in dp.function_locations
+    assert ("proj.pkg.s", 5, 2) not in dp.function_locations
+
+
 def test_function_rehydration_never_overwrites_fresh_entries(tmp_path: Path) -> None:
     from codebase_rag.types_defs import FunctionLocation
 
