@@ -16,11 +16,36 @@ _SOURCE = _ORACLE_DIR / ec.JAVA_ORACLE_SOURCE
 _CLASS = _ORACLE_DIR / f"{ec.JAVA_ORACLE_CLASS}.class"
 _CALLABLE_KINDS = frozenset({cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value})
 
+# A real `-version` probe answers in well under a second; the bound exists so a
+# wedged shim can never stall pytest collection through a skip condition.
+_PROBE_TIMEOUT_SECONDS = 10.0
+
+
+def _toolchain_runs(bin_name: str) -> bool:
+    # `shutil.which` only proves the binary is on PATH. On macOS, /usr/bin/javac
+    # and /usr/bin/java are stub shims that exist even with no JDK installed and
+    # exit non-zero ("Unable to locate a Java Runtime") the moment they run. A
+    # which-only check therefore reports Java available, the oracle tests fail
+    # to skip, and `_ensure_compiled()` blows up with CalledProcessError. Probe
+    # `-version` and require a clean exit so a broken shim reads as unavailable.
+    path = shutil.which(bin_name)
+    if path is None:
+        return False
+    try:
+        result = subprocess.run(
+            [path, "-version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
 
 def java_available() -> bool:
-    return (
-        shutil.which(ec.JAVAC_BIN) is not None and shutil.which(ec.JAVA_BIN) is not None
-    )
+    return _toolchain_runs(ec.JAVAC_BIN) and _toolchain_runs(ec.JAVA_BIN)
 
 
 def _ensure_compiled() -> None:
