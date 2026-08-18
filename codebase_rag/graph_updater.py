@@ -78,6 +78,7 @@ from .types_defs import (
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
+    cached_file_identity_posix,
     cached_relative_path,
     should_keep_dir,
     should_skip_path,
@@ -2210,6 +2211,7 @@ class GraphUpdater:
         ]
 
         read_failed = False
+        legacy_file_keys: list[tuple[str, str]] = []
         for query_all, delete_query, label in prune_specs:
             try:
                 rows = self.ingestor.fetch_all(query_all)
@@ -2233,6 +2235,17 @@ class GraphUpdater:
                 if isinstance(abs_path, str) and not (
                     abs_path == repo_abs or abs_path.startswith(repo_abs + "/")
                 ):
+                    # An out-of-repo File key the containment gate would leak
+                    # forever: legacy pre-GHSA-85gg nodes were keyed on a
+                    # symlink's dereferenced TARGET. A key that disagrees with
+                    # the identity derivable from the relative path is such a
+                    # record; one that agrees is a file under a symlinked
+                    # ancestor directory, legitimate under the current scheme
+                    # (issue #1156).
+                    if label == "File" and abs_path != (
+                        cached_file_identity_posix(self.repo_path / path)
+                    ):
+                        legacy_file_keys.append((path, abs_path))
                     continue
                 if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
                     continue
@@ -2266,6 +2279,8 @@ class GraphUpdater:
             # for the next healthy run.
             return
 
+        total_pruned += self._sweep_legacy_file_identities(legacy_file_keys)
+
         # Drop external import-target modules that no module imports anymore,
         # e.g. an imported name renamed/removed on an incremental rebuild.
         self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
@@ -2278,6 +2293,55 @@ class GraphUpdater:
             logger.info(ls.PRUNE_COMPLETE, count=total_pruned)
         else:
             logger.info(ls.PRUNE_SKIP)
+
+    def _sweep_legacy_file_identities(self, candidates: list[tuple[str, str]]) -> int:
+        """Delete legacy target-resolved File records, sparing shared keys.
+
+        File nodes MERGE globally on absolute_path, so the stale key can be
+        the very node another project legitimately owns (its repo contains
+        the old link's target); any container from outside this repository
+        vetoes the delete (issue #1156).
+        """
+        swept = 0
+        for path, abs_path in candidates:
+            if not self._file_key_owned_only_by_this_project(abs_path):
+                continue
+            logger.debug(ls.PRUNE_DELETING, label="File", path=path)
+            self.ingestor.execute_write(cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: abs_path})
+            swept += 1
+        if swept:
+            logger.info(ls.PRUNE_LEGACY_IDENTITIES, count=swept)
+        return swept
+
+    def _file_key_owned_only_by_this_project(self, abs_path: str) -> bool:
+        """Positive attribution: every container is this project's, and at
+        least one exists. A sibling project's node can share both the key
+        and the relative path (issue #897), and a node whose containers are
+        missing or unreadable offers no evidence of sole ownership, so both
+        veto the sweep.
+        """
+        rows = self.ingestor.fetch_all(
+            cs.CYPHER_FILE_CONTAINERS, {cs.KEY_PATH: abs_path}
+        )
+        repo_abs = self.repo_path.resolve().as_posix()
+        owned = False
+        for row in rows:
+            labels = row.get("labels") or []
+            name = row.get("name")
+            container_abs = row.get("absolute_path")
+            if cs.NodeLabel.PROJECT.value in labels:
+                if name != self.project_name:
+                    return False
+                owned = True
+                continue
+            if isinstance(container_abs, str) and container_abs:
+                if container_abs == repo_abs or container_abs.startswith(
+                    repo_abs + "/"
+                ):
+                    owned = True
+                else:
+                    return False
+        return owned
 
     def _generate_semantic_embeddings(self) -> None:
         if self.skip_embeddings:

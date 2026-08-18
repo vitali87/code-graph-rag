@@ -399,6 +399,14 @@ CYPHER_COUNT_PROJECT_MODULES = (
 CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
 )
+# Containers of one File key, for legacy-identity sweep attribution: File
+# nodes MERGE globally on absolute_path, so a key can be shared with another
+# project and must not be deleted from under it (issue #1156).
+CYPHER_FILE_CONTAINERS = (
+    "MATCH (p)-[:CONTAINS]->(f:File {absolute_path: $path}) "
+    "RETURN labels(p) AS labels, p.name AS name, "
+    "p.absolute_path AS absolute_path"
+)
 CYPHER_ALL_MODULE_PATHS_INTERNAL = (
     "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
