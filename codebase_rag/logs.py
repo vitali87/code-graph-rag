@@ -843,6 +843,12 @@ REHYDRATE_QUERY_FAILED = (
 CSHARP_TYPE_LOCATIONS_REHYDRATED = (
     "Rehydrated {count} C# type location(s) from the graph for the partial join"
 )
+GO_TYPE_LOCATIONS_REHYDRATED = (
+    "Rehydrated {count} Go type location(s) from the persisted graph"
+)
+FUNCTION_LOCATIONS_REHYDRATED = (
+    "Rehydrated {count} function location(s) from the persisted graph"
+)
 INBOUND_CAPTURE_FAILED = (
     "Could not read inbound edges from the graph; this full rebuild "
     "re-parses every caller, so the edges are re-resolved from source."

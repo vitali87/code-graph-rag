@@ -50,6 +50,20 @@ if TYPE_CHECKING:
     from .handlers import LanguageHandler
 
 
+def _name_start_col(func_node: Node) -> int:
+    """Column of the definition's NAME token, falling back to the node start.
+
+    Go's semantic call join keys targets at the name identifier while the
+    span key sits at the `func` keyword; persisting both columns lets an
+    incremental run rehydrate the name-token alias for unchanged files
+    (issue #1240).
+    """
+    name_node = func_node.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None:
+        return func_node.start_point[1]
+    return name_node.start_point[1]
+
+
 def _nearest_preceding_csharp_type(
     func_node: Node, class_node_types: frozenset[str]
 ) -> Node | None:
@@ -763,6 +777,8 @@ class FunctionIngestMixin:
                 cs.KEY_MODIFIERS: modifiers,
                 cs.KEY_DECORATORS: decorators,
                 cs.KEY_START_LINE: func_node.start_point[0] + 1,
+                cs.KEY_START_COL: func_node.start_point[1],
+                cs.KEY_NAME_START_COL: _name_start_col(func_node),
                 cs.KEY_END_LINE: func_node.end_point[0] + 1,
                 cs.KEY_DOCSTRING: self._get_docstring(func_node),
             }
@@ -1403,6 +1419,8 @@ class FunctionIngestMixin:
             cs.KEY_MODIFIERS: modifiers,
             cs.KEY_DECORATORS: decorators,
             cs.KEY_START_LINE: func_node.start_point[0] + 1,
+            cs.KEY_START_COL: func_node.start_point[1],
+            cs.KEY_NAME_START_COL: _name_start_col(func_node),
             # Dart splits a definition into a signature node and a sibling
             # function_body; extend the end over that body so the snippet covers the
             # whole function (no-op for every other language).

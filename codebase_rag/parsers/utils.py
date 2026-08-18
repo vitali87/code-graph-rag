@@ -31,6 +31,16 @@ if TYPE_CHECKING:
     from ..types_defs import FunctionRegistryTrieProtocol
 
 
+def _member_name_start_col(node: Node) -> int:
+    """Column of the definition's NAME token, falling back to the node start
+    (issue #1240: the persisted pair lets incremental runs rehydrate both the
+    span key and Go's name-token alias)."""
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None:
+        return node.start_point[1]
+    return name_node.start_point[1]
+
+
 def follow_reexports(
     qn: str,
     import_mapping: dict[str, dict[str, str]],
@@ -1212,6 +1222,8 @@ def ingest_method(
         cs.KEY_MODIFIERS: modifiers,
         cs.KEY_DECORATORS: decorators,
         cs.KEY_START_LINE: method_start_line,
+        cs.KEY_START_COL: method_start_col,
+        cs.KEY_NAME_START_COL: _member_name_start_col(method_node),
         # Dart method signatures end before their sibling function_body;
         # extend the span over the body (no-op for other languages).
         cs.KEY_END_LINE: _method_end_line(method_node, language),
@@ -1358,6 +1370,8 @@ def module_function_props(
         cs.KEY_MODIFIERS: [],
         cs.KEY_DECORATORS: [],
         cs.KEY_START_LINE: function_node.start_point[0] + 1,
+        cs.KEY_START_COL: function_node.start_point[1],
+        cs.KEY_NAME_START_COL: _member_name_start_col(function_node),
         cs.KEY_END_LINE: function_node.end_point[0] + 1,
         cs.KEY_DOCSTRING: docstring,
         # JS/TS only (per this helper's contract), so the JS branch of the
