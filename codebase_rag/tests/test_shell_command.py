@@ -84,6 +84,56 @@ class TestIsDangerousCommand:
         assert is_dangerous is False
 
 
+class TestGitConfigExecKeyBlocked:
+    """GHSA-2rr7-8xrw-gmhr: git config writes to shell-executing keys are
+    blocked outright at execution time, regardless of approval."""
+
+    def test_core_sshcommand_backdoor_blocked(self) -> None:
+        available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+        payload = (
+            "git config --global core.sshCommand "
+            '"sh -c \'echo pwned; exec ssh \\"$@\\"\'"'
+        )
+        error = _validate_segment(payload, available)
+        assert error is not None
+        assert "core.sshcommand" in error.lower()
+
+    def test_exec_keys_blocked_every_scope(self) -> None:
+        for key in ("core.sshCommand", "core.pager", "core.hooksPath"):
+            for scope in ("--global", "--system", "--local", ""):
+                parts = ["git", "config"]
+                if scope:
+                    parts.append(scope)
+                parts += [key, "value"]
+                is_dangerous, _ = _is_dangerous_command(parts, " ".join(parts))
+                assert is_dangerous is True, (key, scope)
+
+    def test_credential_helper_and_alias_blocked(self) -> None:
+        for key in ("credential.helper", "credential.https://x.helper", "alias.x"):
+            is_dangerous, _ = _is_dangerous_command(
+                ["git", "config", key, "!sh -c evil"], f"git config {key} ..."
+            )
+            assert is_dangerous is True, key
+
+    def test_reads_and_unset_allowed(self) -> None:
+        # A victim must be able to inspect and clear a planted backdoor.
+        for args in (
+            ["git", "config", "--get", "core.sshCommand"],
+            ["git", "config", "--list"],
+            ["git", "config", "--global", "--unset", "core.sshCommand"],
+        ):
+            is_dangerous, _ = _is_dangerous_command(args, " ".join(args))
+            assert is_dangerous is False, args
+
+    def test_benign_config_write_not_blocked_here(self) -> None:
+        # Not an exec key -> not blocked by THIS guard (approval still applies).
+        is_dangerous, _ = _is_dangerous_command(
+            ["git", "config", "--global", "user.name", "x"],
+            "git config --global user.name x",
+        )
+        assert is_dangerous is False
+
+
 class TestRequiresApproval:
     def test_read_only_commands_no_approval(self) -> None:
         for cmd in settings.SHELL_READ_ONLY_COMMANDS:

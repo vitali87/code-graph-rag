@@ -179,6 +179,53 @@ def _check_segment_patterns(segment: str) -> str | None:
     return None
 
 
+def _flag_name(arg: str) -> str:
+    # `--type=bool` and `--type bool` should compare equal on the flag name.
+    return arg.split("=", 1)[0]
+
+
+def _is_git_config_exec_key(key: str) -> bool:
+    key = key.lower()
+    if key in cs.SHELL_GIT_CONFIG_EXEC_KEYS:
+        return True
+    return any(
+        key.startswith(prefix)
+        and key.endswith(suffix)
+        and len(key) > len(prefix) + len(suffix)
+        for prefix, suffix in cs.SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS
+    )
+
+
+def _git_config_exec_key(cmd_parts: list[str]) -> str | None:
+    """Return the shell-executing git config key this command would write.
+
+    `git config` writes to keys like `core.sshCommand` plant a value git later
+    hands to a shell, so the write itself is RCE on the next git operation
+    (GHSA-2rr7-8xrw-gmhr). Reading a key is fine, and clearing one (`--unset`)
+    is how a victim recovers, so those return None.
+    """
+    if len(cmd_parts) < 3 or cmd_parts[0] != cs.SHELL_CMD_GIT:
+        return None
+    if cmd_parts[1] != cs.SHELL_GIT_SUBCMD_CONFIG:
+        return None
+
+    args = cmd_parts[2:]
+    flags = [_flag_name(arg) for arg in args if arg.startswith("-")]
+    if any(flag in cs.SHELL_GIT_CONFIG_READ_ACTIONS for flag in flags):
+        return None
+    if any(flag in cs.SHELL_GIT_CONFIG_UNSET_FLAGS for flag in flags):
+        return None
+
+    return next(
+        (
+            arg
+            for arg in args
+            if not arg.startswith("-") and _is_git_config_exec_key(arg)
+        ),
+        None,
+    )
+
+
 def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool, str]:
     if not cmd_parts:
         return False, ""
@@ -190,6 +237,9 @@ def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool
 
     if _is_dangerous_rm(cmd_parts):
         return True, "rm with dangerous flags"
+
+    if key := _git_config_exec_key(cmd_parts):
+        return True, f"git config write to '{key}' plants a command git will run"
 
     if reason := _check_segment_patterns(full_segment):
         return True, reason
