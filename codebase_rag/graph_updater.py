@@ -2302,6 +2302,8 @@ class GraphUpdater:
         the old link's target); any container from outside this repository
         vetoes the delete (issue #1156).
         """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return 0
         swept = 0
         for path, abs_path in candidates:
             if not self._file_key_owned_only_by_this_project(abs_path):
@@ -2331,28 +2333,24 @@ class GraphUpdater:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="File containers")
             return False
         repo_abs = self.repo_path.resolve().as_posix()
-        owned = False
-        for row in rows:
-            labels = row.get("labels") or []
-            name = row.get("name")
-            container_abs = row.get("absolute_path")
-            if cs.NodeLabel.PROJECT.value in labels:
-                if name != self.project_name:
-                    return False
-                owned = True
-                continue
-            if isinstance(container_abs, str) and container_abs:
-                if container_abs == repo_abs or container_abs.startswith(
-                    repo_abs + "/"
-                ):
-                    owned = True
-                else:
-                    return False
-                continue
-            # A container with no usable identity could belong to anyone;
-            # partial evidence must not read as sole ownership.
+        if not all(self._container_is_ours(row, repo_abs) for row in rows):
             return False
-        return owned
+        return bool(rows)
+
+    def _container_is_ours(self, row: ResultRow, repo_abs: str) -> bool:
+        """Whether one container row proves THIS project's ownership.
+
+        A foreign Project or Folder, and equally a container with no usable
+        identity, reads as not-ours: partial evidence must never delete a
+        globally merged key.
+        """
+        labels = row.get("labels")
+        if isinstance(labels, list) and cs.NodeLabel.PROJECT.value in labels:
+            return row.get("name") == self.project_name
+        container_abs = row.get("absolute_path")
+        if isinstance(container_abs, str) and container_abs:
+            return container_abs == repo_abs or container_abs.startswith(repo_abs + "/")
+        return False
 
     def _generate_semantic_embeddings(self) -> None:
         if self.skip_embeddings:
