@@ -1952,6 +1952,15 @@ class FlowProcessor:
         # project-callee return (pending), or a plain identifier alias.
         if not rhs:
             return None, frozenset()
+        if len(rhs) == 1 and rhs[0].type in (
+            cs.TS_DART_UNARY_EXPRESSION,
+            cs.TS_DART_AWAIT_EXPRESSION,
+        ):
+            # `await Socket.connect(...)` wraps the chain one node deep per
+            # level; the awaited (or negated) value carries the chain's taint
+            # and handle, so unwrap and re-evaluate (issue #1224).
+            inner = [c for c in rhs[0].named_children if c.type != cs.TS_COMMENT]
+            return self._dart_rhs(inner, tainted, handles, jc)
         source = self._dart_member_source(rhs, jc)
         if source is not None:
             return Taint(frozenset({source}), frozenset()), frozenset()
@@ -1993,7 +2002,34 @@ class FlowProcessor:
         if len(rhs) == 1 and rhs[0].type == cs.TS_DART_IDENTIFIER and rhs[0].text:
             alias = rhs[0].text.decode(cs.ENCODING_UTF8)
             return tainted.get(alias), handles.get(alias, frozenset())
+        if len(rhs) == 1 and rhs[0].type == cs.TS_DART_STRING_LITERAL:
+            return self._dart_interpolation_taint(rhs[0], tainted, jc), frozenset()
         return None, frozenset()
+
+    def _dart_interpolation_taint(
+        self, literal: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        # `'$k'` and `'${a.b}'` embed expressions inside the literal; shell
+        # payloads are routinely built this way, so each substitution is
+        # evaluated and the taints merged (issue #1224 review). The bare
+        # `$k` form parses its name as identifier_dollar_escaped, which the
+        # alias path does not recognise, so it is looked up by text.
+        merged: Taint | None = None
+        for child in literal.named_children:
+            if child.type != cs.TS_DART_TEMPLATE_SUBSTITUTION:
+                continue
+            inner = [c for c in child.named_children if c.type != cs.TS_COMMENT]
+            if (
+                len(inner) == 1
+                and inner[0].type == cs.TS_DART_IDENTIFIER_DOLLAR_ESCAPED
+                and inner[0].text
+            ):
+                taint = tainted.get(inner[0].text.decode(cs.ENCODING_UTF8))
+            else:
+                taint, _ = self._dart_rhs(inner, tainted, {}, jc)
+            if taint is not None:
+                merged = taint if merged is None else _merge_taint(merged, taint)
+        return merged
 
     def _dart_member_source(
         self, nodes: list[Node], jc: _JsCtx
@@ -2148,8 +2184,29 @@ class FlowProcessor:
             else:
                 continue
             taint, _ = self._dart_rhs(chain, tainted, {}, jc)
+            if (
+                taint is None
+                and len(chain) == 1
+                and chain[0].type == cs.TS_DART_LIST_LITERAL
+            ):
+                taint = self._dart_list_literal_taint(chain[0], tainted, jc)
             out.append((via, taint))
         return out
+
+    def _dart_list_literal_taint(
+        self, literal: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        # A `Process.run('sh', ['-c', k])`-style call carries its payload
+        # INSIDE a list literal; each element expression is evaluated on its
+        # own so a tainted element taints the argument (issue #1224).
+        merged: Taint | None = None
+        for element in literal.named_children:
+            if element.type == cs.TS_COMMENT:
+                continue
+            taint, _ = self._dart_rhs([element], tainted, {}, jc)
+            if taint is not None:
+                merged = taint if merged is None else _merge_taint(merged, taint)
+        return merged
 
     def _dart_return_taint(
         self, node: Node, tainted: _TaintMap, jc: _JsCtx
