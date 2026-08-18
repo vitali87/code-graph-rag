@@ -232,15 +232,16 @@ def _build_tool(dotnet: str) -> Path | None:
         return dll
     cache.mkdir(parents=True, exist_ok=True)
     lock = cache / _BUILD_LOCK
-    if not acquire_build_lock(
+    handle = acquire_build_lock(
         lock, lambda: _dll_fresh(dll), _LOCK_TRIES, _LOCK_POLL_SECONDS
-    ):
+    )
+    if handle is None:
         return dll if _dll_fresh(dll) else None
     try:
         if not _dll_fresh(dll) and not _compile_tool(dotnet, src, out):
             return None
     finally:
-        release_build_lock(lock)
+        release_build_lock(handle)
     return dll if _dll_fresh(dll) else None
 
 

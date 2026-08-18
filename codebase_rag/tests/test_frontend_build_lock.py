@@ -1,72 +1,98 @@
-# Issue #1227: the mkdir build lock shared by the Go and C# frontends must
-# survive a holder killed between mkdir and the releasing rmdir. A waiter
-# reclaims the lock when the recorded holder pid is dead (POSIX) or, without
-# a usable pid, when the lock has outlived any plausible build.
-import os
+# Issue #1227: the build lock shared by the Go and C# frontends must survive
+# a holder killed at any point. It is an OS-level file lock (flock /
+# msvcrt.locking), so the kernel releases it on process death and no stale
+# lock can exist; these tests prove mutual exclusion against a real second
+# process and automatic release when that process is SIGKILLed.
 import subprocess
 import sys
+import textwrap
 import time
 from pathlib import Path
 
-import pytest
-
-from codebase_rag.parsers import build_lock
 from codebase_rag.parsers.build_lock import acquire_build_lock, release_build_lock
 
+_HOLDER_SCRIPT = textwrap.dedent(
+    """
+    import sys, time
+    from pathlib import Path
+    from codebase_rag.parsers.build_lock import acquire_build_lock
 
-def _dead_pid() -> int:
-    proc = subprocess.run(
-        [sys.executable, "-c", "import os; print(os.getpid())"],
-        capture_output=True,
+    handle = acquire_build_lock(Path(sys.argv[1]), lambda: False, 1, 0.0)
+    print("locked" if handle else "busy", flush=True)
+    if handle:
+        time.sleep(600)
+    """
+)
+
+
+def _spawn_holder(lock: Path) -> subprocess.Popen:
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _HOLDER_SCRIPT, str(lock)],
+        stdout=subprocess.PIPE,
         text=True,
-        check=True,
     )
-    return int(proc.stdout.strip())
+    assert proc.stdout is not None
+    assert proc.stdout.readline().strip() == "locked"
+    return proc
 
 
-def test_acquire_records_holder_and_release_removes_lock(tmp_path: Path) -> None:
+def test_acquire_then_release_frees_the_lock(tmp_path: Path) -> None:
     lock = tmp_path / ".build-lock"
-    assert acquire_build_lock(lock, lambda: False, tries=1, poll_seconds=0.0)
-    assert lock.is_dir()
-    assert int((lock / "pid").read_text()) == os.getpid()
-    release_build_lock(lock)
-    assert not lock.exists()
+    handle = acquire_build_lock(lock, lambda: False, tries=1, poll_seconds=0.0)
+    assert handle is not None
+    release_build_lock(handle)
+    again = acquire_build_lock(lock, lambda: False, tries=1, poll_seconds=0.0)
+    assert again is not None
+    release_build_lock(again)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="pid liveness probe is POSIX-only")
-def test_dead_holder_lock_is_reclaimed(tmp_path: Path) -> None:
+def test_live_holder_excludes_other_processes(tmp_path: Path) -> None:
     lock = tmp_path / ".build-lock"
-    lock.mkdir()
-    (lock / "pid").write_text(str(_dead_pid()))
-    assert acquire_build_lock(lock, lambda: False, tries=2, poll_seconds=0.0)
-    assert int((lock / "pid").read_text()) == os.getpid()
-    release_build_lock(lock)
+    holder = _spawn_holder(lock)
+    try:
+        assert (
+            acquire_build_lock(lock, lambda: False, tries=3, poll_seconds=0.05) is None
+        )
+    finally:
+        holder.kill()
+        holder.wait()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="pid liveness probe is POSIX-only")
-def test_live_holder_lock_is_respected(tmp_path: Path) -> None:
+def test_killed_holder_releases_the_lock(tmp_path: Path) -> None:
+    # The original #1227 failure mode: a holder SIGKILLed mid-build. The OS
+    # releases the file lock with the process, so the next worker acquires
+    # immediately instead of waiting out a retry budget forever.
     lock = tmp_path / ".build-lock"
-    lock.mkdir()
-    (lock / "pid").write_text(str(os.getpid()))
-    assert not acquire_build_lock(lock, lambda: False, tries=2, poll_seconds=0.0)
-    assert lock.is_dir()
-
-
-def test_pidless_lock_falls_back_to_age(tmp_path: Path, monkeypatch) -> None:
-    # A holder killed between mkdir and the pid write (or a non-POSIX host)
-    # leaves no usable pid; only an over-age lock may be reclaimed.
-    monkeypatch.setattr(build_lock, "_holder_pid", lambda _lock: None)
-    lock = tmp_path / ".build-lock"
-    lock.mkdir()
-    assert not acquire_build_lock(lock, lambda: False, tries=2, poll_seconds=0.0)
-    stale = time.time() - build_lock._LOCK_STALE_SECONDS - 60
-    os.utime(lock, (stale, stale))
-    assert acquire_build_lock(lock, lambda: False, tries=2, poll_seconds=0.0)
-    release_build_lock(lock)
+    holder = _spawn_holder(lock)
+    holder.kill()
+    holder.wait()
+    deadline = time.time() + 30
+    handle = None
+    while handle is None and time.time() < deadline:
+        handle = acquire_build_lock(lock, lambda: False, tries=1, poll_seconds=0.0)
+    assert handle is not None
+    release_build_lock(handle)
 
 
 def test_waiter_yields_to_fresh_artifact(tmp_path: Path) -> None:
     lock = tmp_path / ".build-lock"
+    holder = _spawn_holder(lock)
+    try:
+        assert (
+            acquire_build_lock(lock, lambda: True, tries=50, poll_seconds=0.01) is None
+        )
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_legacy_mkdir_lock_directory_is_cleared(tmp_path: Path) -> None:
+    # A crashed pre-#1227 holder left a mkdir-lock DIRECTORY at this path;
+    # the file lock must displace it instead of failing to open forever.
+    lock = tmp_path / ".build-lock"
     lock.mkdir()
-    (lock / "pid").write_text(str(os.getpid()))
-    assert not acquire_build_lock(lock, lambda: True, tries=5, poll_seconds=0.0)
+    (lock / "pid").write_text("12345")
+    handle = acquire_build_lock(lock, lambda: False, tries=1, poll_seconds=0.0)
+    assert handle is not None
+    assert lock.is_file()
+    release_build_lock(handle)

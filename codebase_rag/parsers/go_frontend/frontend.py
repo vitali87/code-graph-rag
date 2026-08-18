@@ -168,15 +168,16 @@ def _build_tool(go: str) -> Path | None:
         return binary
     cache.mkdir(parents=True, exist_ok=True)
     lock = cache / _BUILD_LOCK
-    if not acquire_build_lock(
+    handle = acquire_build_lock(
         lock, lambda: _binary_fresh(binary), _LOCK_TRIES, _LOCK_POLL_SECONDS
-    ):
+    )
+    if handle is None:
         return binary if _binary_fresh(binary) else None
     try:
         if not _binary_fresh(binary) and not _compile_tool(go, src, out):
             return None
     finally:
-        release_build_lock(lock)
+        release_build_lock(handle)
     return binary if _binary_fresh(binary) else None
 
 

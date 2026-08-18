@@ -359,3 +359,54 @@ def test_ignored_directories_never_get_a_tool_run(
     run_go_frontend(repo)
 
     assert fake.invoked == [""]
+
+
+def test_one_failing_module_degrades_only_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A per-module tool failure (timeout, crash) must drop only that
+    # module's facts to tree-sitter; the sibling module's facts survive.
+    repo = tmp_path / "repo"
+    (repo / "sub").mkdir(parents=True)
+    (repo / "go.mod").write_text("module example.com/root\n\ngo 1.22\n")
+    (repo / "sub" / "go.mod").write_text("module example.com/sub\n\ngo 1.22\n")
+    import codebase_rag.parsers.go_frontend.frontend as fe
+
+    monkeypatch.setattr(fe.shutil, "which", lambda _name: "/usr/bin/go")
+    monkeypatch.setattr(fe, "_build_tool", lambda _go: Path("/fake/gotypes"))
+
+    def _run(cmd, **kwargs):
+        root = Path(cmd[1])
+        if root == repo:
+            raise subprocess.TimeoutExpired(cmd, 1)
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "calls": [
+                        {
+                            "file": "s.go",
+                            "line": 3,
+                            "col": 1,
+                            "name": "Do",
+                            "tfile": "s.go",
+                            "tline": 1,
+                            "tcol": 5,
+                        }
+                    ],
+                    "externals": [],
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(fe.subprocess, "run", _run)
+
+    facts = run_go_frontend(repo)
+
+    assert facts.call_sites == {
+        ("sub/s.go", 3, 1, "Do"): GoCallSite("Do", "sub/s.go", 1, 5)
+    }
+    assert facts.external_sites == set()
+    assert facts.implements == []
