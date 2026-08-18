@@ -16,6 +16,10 @@ _SOURCE = _ORACLE_DIR / ec.JAVA_ORACLE_SOURCE
 _CLASS = _ORACLE_DIR / f"{ec.JAVA_ORACLE_CLASS}.class"
 _CALLABLE_KINDS = frozenset({cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value})
 
+# A real `-version` probe answers in well under a second; the bound exists so a
+# wedged shim can never stall pytest collection through a skip condition.
+_PROBE_TIMEOUT_SECONDS = 10.0
+
 
 def _toolchain_runs(bin_name: str) -> bool:
     # `shutil.which` only proves the binary is on PATH. On macOS, /usr/bin/javac
@@ -33,8 +37,9 @@ def _toolchain_runs(bin_name: str) -> bool:
             capture_output=True,
             text=True,
             check=False,
+            timeout=_PROBE_TIMEOUT_SECONDS,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
 
