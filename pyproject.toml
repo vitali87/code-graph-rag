@@ -104,6 +104,10 @@ test = [
     "pyyaml>=6.0",
 ]
 
+cpp = [
+    "libclang>=18.1.1",
+]
+
 treesitter-full = [
     "tree-sitter-python>=0.23.6",
     "tree-sitter-javascript>=0.23.1",

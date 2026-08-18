@@ -9,16 +9,19 @@ from importlib import metadata
 from pathlib import Path
 
 from . import constants as cs
-from .config import settings
 
 
-def compute_parser_fingerprint(package_root: Path | None = None) -> str:
+def compute_parser_fingerprint(
+    package_root: Path | None = None, repo_path: Path | None = None
+) -> str:
     root = package_root if package_root is not None else Path(__file__).resolve().parent
     hasher = hashlib.md5(usedforsecurity=False)
     for source in _fingerprint_sources(root):
         hasher.update(source.relative_to(root).as_posix().encode())
         hasher.update(source.read_bytes())
     for entry in _grammar_versions():
+        hasher.update(entry.encode())
+    for entry in _repo_frontend_inputs(repo_path):
         hasher.update(entry.encode())
     # The active frontend selection changes which edges are produced for
     # unchanged sources (e.g. the C# Roslyn hybrid rewrites
@@ -29,16 +32,43 @@ def compute_parser_fingerprint(package_root: Path | None = None) -> str:
     return hasher.hexdigest()
 
 
+def _repo_frontend_inputs(repo_path: Path | None) -> list[str]:
+    # The selected compile database is as much a part of what the C++
+    # semantic mode produces as libclang availability: generating one after a
+    # tree-sitter-only index, editing its flags, or a different database
+    # winning discovery all change the edges for unchanged sources, so the
+    # entry records which database was selected and a digest of its content
+    # (issue #1177 review). Only the updater passes a repo; repo-less calls
+    # omit the entry consistently.
+    if repo_path is None:
+        return []
+    from .parsers.cpp_frontend import find_compile_commands, resolve_cpp_frontend
+
+    if resolve_cpp_frontend() is cs.CppFrontend.TREESITTER:
+        return []
+    compdb_dir = find_compile_commands(repo_path)
+    if compdb_dir is None:
+        return ["CPP_COMPDB=absent"]
+    database = compdb_dir / "compile_commands.json"
+    try:
+        digest = hashlib.md5(database.read_bytes(), usedforsecurity=False).hexdigest()
+    except OSError:
+        return ["CPP_COMPDB=absent"]
+    return [f"CPP_COMPDB={database.as_posix()}:{digest}"]
+
+
 def _frontend_settings() -> list[str]:
-    # The C# entry records the RESOLVED mode, not the setting: under AUTO a
-    # graph built with dotnet present carries hybrid edges and one without
-    # does not, so the two must not share a fingerprint. Imported lazily to
+    # The C# and C++ entries record the RESOLVED mode, not the setting:
+    # under AUTO/HYBRID a graph built with the toolchain present carries
+    # hybrid edges and one without does not, so the two must not share a
+    # fingerprint (dotnet for C#, libclang for C++, issue #1177). Imported lazily to
     # keep this module free of the parsers package at import time.
+    from .parsers.cpp_frontend import resolve_cpp_frontend
     from .parsers.csharp_frontend import resolve_csharp_frontend
     from .parsers.go_frontend import resolve_go_frontend
 
     return [
-        f"CPP_FRONTEND={settings.CPP_FRONTEND.value}",
+        f"CPP_FRONTEND={resolve_cpp_frontend().value}",
         f"CSHARP_FRONTEND={resolve_csharp_frontend().value}",
         f"GO_FRONTEND={resolve_go_frontend().value}",
     ]
