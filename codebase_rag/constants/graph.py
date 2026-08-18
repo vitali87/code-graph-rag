@@ -459,6 +459,17 @@ CYPHER_INBOUND_EDGES = (
     "caller.qualified_name AS caller_qn, type(r) AS rel, "
     "head(labels(target)) AS target_label, target.qualified_name AS target_qn"
 )
+# Files whose code DEPENDS on a re-indexed file (issue #1229 phase 4): a
+# change there can rebind their calls (a new override shadowing an inherited
+# method), so restoring their old edges verbatim would freeze a stale
+# binding. They are re-parsed instead, one level deep: their own definitions
+# are unchanged, so their callers' bindings cannot move.
+CYPHER_AFFECTED_CALLER_PATHS = (
+    "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS]->(target) "
+    "WHERE target.path IN $paths AND caller.path IS NOT NULL "
+    "AND NOT caller.path IN $paths "
+    "RETURN DISTINCT caller.path AS caller_path"
+)
 # Rehydrate class_inheritance on an incremental run: every INHERITS edge
 # (child -> base) with resolved qns, so protocol dispatch and inherited-method
 # resolution still see the hierarchy of classes defined in files that were not
@@ -520,6 +531,7 @@ KEY_BASE_QN = "base_qn"
 KEY_BASE_INDEX = "base_index"
 
 CYPHER_PARAM_PATHS = "paths"
+KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
 KEY_REL = "rel"

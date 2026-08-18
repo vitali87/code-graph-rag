@@ -822,6 +822,9 @@ HASH_CACHE_SAVE_FAILED = "Failed to save hash cache to {path}: {error}"
 PERIODIC_FLUSH = "Periodic flush after {count} files processed"
 INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
+INCREMENTAL_AFFECTED_CALLERS = (
+    "Re-parsing {count} dependent caller file(s) of re-indexed targets"
+)
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
 INCREMENTAL_FORCE = "Force mode enabled, bypassing hash cache"
 HASH_CACHE_ORPHANED = (

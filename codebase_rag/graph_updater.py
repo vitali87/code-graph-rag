@@ -1518,6 +1518,31 @@ class GraphUpdater:
                     restored += 1
         return restored
 
+    def _affected_caller_keys(self, reindexed_keys: list[str]) -> list[str]:
+        """Relative paths of files whose code depends on a re-indexed file.
+
+        One level deep is complete: an affected caller's own DEFINITIONS are
+        unchanged, so bindings in ITS callers cannot move. A failed read
+        degrades to today's verbatim restore, never worse.
+        """
+        if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_AFFECTED_CALLER_PATHS,
+                {cs.CYPHER_PARAM_PATHS: reindexed_keys},
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="affected callers")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+            }
+        )
+
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # Record the reference edges unchanged files point at the re-indexed
         # files, BEFORE those files' subtrees (and thus the inbound edges) are
@@ -2066,6 +2091,33 @@ class GraphUpdater:
         reindexed_keys = sorted(
             file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
         )
+        # A file depending on a re-indexed one can have its bindings moved by
+        # the change (a new override shadowing an inherited method); restoring
+        # its old edges verbatim would freeze the stale binding, so it joins
+        # the re-parse set BEFORE capture: the capture query then excludes
+        # edges among the expanded set and Pass 3 recomputes them, while its
+        # own inbound edges are captured and restored like any re-indexed
+        # file's (issue #1229 phase 4).
+        present = {file_key for _fp, file_key, _new, _b in changed_entries}
+        affected = 0
+        for caller_key in self._affected_caller_keys(reindexed_keys):
+            if caller_key in present:
+                continue
+            caller_path = self.repo_path / caller_key
+            if not caller_path.is_file():
+                continue
+            try:
+                caller_bytes = caller_path.read_bytes()
+            except OSError:
+                continue
+            changed_entries.append((caller_path, caller_key, False, caller_bytes))
+            present.add(caller_key)
+            affected += 1
+        if affected:
+            logger.info(ls.INCREMENTAL_AFFECTED_CALLERS, count=affected)
+            reindexed_keys = sorted(
+                file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
+            )
         captured_inbound = self._capture_inbound_edges(reindexed_keys)
         self._reparsed_file_keys = {
             file_key for _fp, file_key, _new, _b in changed_entries
