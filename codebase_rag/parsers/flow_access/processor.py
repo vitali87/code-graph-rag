@@ -1985,6 +1985,9 @@ class FlowProcessor:
                         ),
                         frozenset(),
                     )
+                handle_read = self._dart_handle_read_taint(raw, handles, jc)
+                if handle_read is not None:
+                    return handle_read, frozenset()
                 callee = self._resolve(
                     raw,
                     jc.flow.module_qn,
@@ -2030,6 +2033,122 @@ class FlowProcessor:
             if taint is not None:
                 merged = taint if merged is None else _merge_taint(merged, taint)
         return merged
+
+    def _dart_walk_read_callbacks(
+        self,
+        raw: str,
+        selector: Node,
+        tainted: _TaintMap,
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> None:
+        # `s.listen((data) { ... })` delivers data FROM the handle's resource
+        # into the callback parameter. The lean walk skips nested callable
+        # bodies by design, so the callback block is walked here with a COPY
+        # of the state whose parameters are seeded by the handle's bindings
+        # (issue #1316); the copy keeps the seeding scoped to the lambda.
+        recv, sep, method = raw.rpartition(jc.descriptor.handle_method_separator)
+        if not sep:
+            return
+        origins = {
+            binding
+            for binding in handles.get(recv, frozenset())
+            if jc.handle_methods.get(binding.kind, {}).get(method) == IODirection.READ
+        }
+        if not origins:
+            return
+        arguments = self._dart_arguments(selector)
+        if arguments is None:
+            return
+        seed = Taint(frozenset(origins), frozenset())
+        for arg in arguments.named_children:
+            if arg.type != cs.TS_DART_ARGUMENT:
+                continue
+            fn = next(
+                (
+                    c
+                    for c in arg.named_children
+                    if c.type == cs.TS_DART_FUNCTION_EXPRESSION
+                ),
+                None,
+            )
+            if fn is None:
+                continue
+            inner = dict(tainted)
+            for name in self._dart_lambda_param_names(fn):
+                inner[name] = seed
+            state = _LeanState(taint=inner, handles=dict(handles))
+            for stmt in self._dart_lambda_body_statements(fn):
+                state = self._walk_flat_stmt(stmt, state, jc)
+
+    @staticmethod
+    def _dart_lambda_param_names(fn: Node) -> list[str]:
+        plist = next(
+            (
+                c
+                for c in fn.named_children
+                if c.type == cs.TS_DART_FORMAL_PARAMETER_LIST
+            ),
+            None,
+        )
+        if plist is None:
+            return []
+        names: list[str] = []
+        for param in plist.named_children:
+            ident = (
+                param
+                if param.type == cs.TS_DART_IDENTIFIER
+                else next(
+                    (
+                        c
+                        for c in param.named_children
+                        if c.type == cs.TS_DART_IDENTIFIER
+                    ),
+                    None,
+                )
+            )
+            if ident is not None and ident.text:
+                names.append(ident.text.decode(cs.ENCODING_UTF8))
+        return names
+
+    @staticmethod
+    def _dart_lambda_body_statements(fn: Node) -> list[Node]:
+        body = next(
+            (
+                c
+                for c in fn.named_children
+                if c.type == cs.TS_DART_FUNCTION_EXPRESSION_BODY
+            ),
+            None,
+        )
+        if body is None:
+            return []
+        block = next(
+            (c for c in body.named_children if c.type == cs.TS_DART_BLOCK), None
+        )
+        if block is not None:
+            return list(block.named_children)
+        return [body]
+
+    def _dart_handle_read_taint(
+        self, raw: str, handles: _HandleMap, jc: _JsCtx
+    ) -> Taint | None:
+        # A read METHOD on a bound handle yields data FROM the resource
+        # (`var d = f.readAsString()`), the read mirror of
+        # `_emit_handle_write` (issue #1316). READ_WRITE methods count: a DB
+        # execute's result is resource data too.
+        recv, sep, method = raw.rpartition(jc.descriptor.handle_method_separator)
+        if not sep:
+            return None
+        origins = {
+            binding
+            for binding in handles.get(recv, frozenset())
+            if jc.handle_methods.get(binding.kind, {}).get(method)
+            in (IODirection.READ, IODirection.READ_WRITE)
+        }
+        if not origins:
+            return None
+        return Taint(frozenset(origins), frozenset())
 
     def _dart_member_source(
         self, nodes: list[Node], jc: _JsCtx
@@ -2090,6 +2209,7 @@ class FlowProcessor:
             return
         if handles and self._emit_handle_write(raw, args, handles, jc):
             return
+        self._dart_walk_read_callbacks(raw, selector, tainted, handles, jc)
         callee = self._resolve(
             raw,
             jc.flow.module_qn,

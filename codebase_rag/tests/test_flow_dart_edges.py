@@ -214,3 +214,46 @@ def test_dart_env_flows_through_string_interpolation_to_process(tmp_path: Path) 
         "}\n"
     )
     assert (_ENV_K, "resource::PROCESS::sh") in _run_flow(tmp_path, source)
+
+
+def test_dart_file_read_binding_carries_the_resource_taint(tmp_path: Path) -> None:
+    # `var d = f.readAsString()` yields data FROM the file: the binding must
+    # carry the FILE resource as origin so a later sink links it (issue #1316).
+    source = (
+        "void leak() {\n"
+        "  var f = File('in.txt');\n"
+        "  var d = f.readAsString();\n"
+        "  print(d);\n"
+        "}\n"
+    )
+    assert ("resource::FILE::in.txt", _STDOUT) in _run_flow(tmp_path, source)
+
+
+def test_dart_awaited_read_binding_carries_the_resource_taint(
+    tmp_path: Path,
+) -> None:
+    # The async form routes through the await unwrap before the handle-read
+    # path; the binding must carry the same origin.
+    source = (
+        "void leak() async {\n"
+        "  var f = File('in.txt');\n"
+        "  var d = await f.readAsBytes();\n"
+        "  print(d);\n"
+        "}\n"
+    )
+    assert ("resource::FILE::in.txt", _STDOUT) in _run_flow(tmp_path, source)
+
+
+def test_dart_listen_callback_parameter_carries_the_socket_taint(
+    tmp_path: Path,
+) -> None:
+    # `s.listen((data) { ... })` delivers data FROM the connected socket into
+    # the callback parameter; the body is walked with the parameter seeded by
+    # the socket's resource identity (issue #1316).
+    source = (
+        "void leak() async {\n"
+        "  var s = await Socket.connect('example.com', 80);\n"
+        "  s.listen((data) { print(data); });\n"
+        "}\n"
+    )
+    assert ("resource::SOCKET::example.com", _STDOUT) in _run_flow(tmp_path, source)
