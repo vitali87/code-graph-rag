@@ -455,3 +455,167 @@ class TestPruneSiblingRootPrefix:
         ]
         assert len(file_deletes) == 1
         assert file_deletes[0].args[1] == {cs.KEY_PATH: own_abs}
+
+
+class TestLegacyFileIdentitySweep:
+    # Issue #1156: a pre-GHSA-85gg graph can hold a File node keyed on an
+    # external symlink's DEREFERENCED target. Its absolute_path sits outside
+    # the repo, so the containment gate skips it and it is never swept. The
+    # sweep drops such nodes when the stored key disagrees with the identity
+    # derivable from the relative path, unless another project owns the key
+    # (File nodes MERGE globally on absolute_path).
+
+    def _run_prune(self, updater, mock_ingestor, file_rows, owners_by_key):
+        owner_calls: list[str] = []
+
+        def fetch_all(query, params=None):
+            if query == cs.CYPHER_ALL_FILE_PATHS:
+                return file_rows
+            if query == cs.CYPHER_FILE_CONTAINERS:
+                owner_calls.append(params[cs.KEY_PATH])
+                return owners_by_key.get(params[cs.KEY_PATH], [])
+            return []
+
+        mock_ingestor.fetch_all.side_effect = fetch_all
+        updater._prune_orphan_nodes()
+        return owner_calls
+
+    def test_legacy_external_file_identity_is_swept(
+        self, updater: GraphUpdater, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        row = {"path": "cfg/link.yaml", "absolute_path": "/outside/target.yaml"}
+        owners = {
+            "/outside/target.yaml": [
+                {
+                    "labels": ["Folder"],
+                    "name": None,
+                    "absolute_path": (temp_repo / "cfg").resolve().as_posix(),
+                }
+            ]
+        }
+        self._run_prune(updater, mock_ingestor, [row], owners)
+        deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert len(deletes) == 1
+        assert deletes[0].args[1] == {cs.KEY_PATH: "/outside/target.yaml"}
+
+    @pytest.mark.parametrize(
+        "owner",
+        [
+            {"labels": ["Folder"], "name": None, "absolute_path": "/other/repo/cfg"},
+            {"labels": ["Project"], "name": "other_project", "absolute_path": None},
+        ],
+    )
+    def test_legacy_sweep_spares_a_foreign_owned_key(
+        self, updater: GraphUpdater, mock_ingestor: MagicMock, owner: dict
+    ) -> None:
+        # The key may be the SAME node another project legitimately owns:
+        # deleting it would be cross-project data loss, so any foreign
+        # container vetoes the sweep.
+        row = {"path": "cfg/link.yaml", "absolute_path": "/other/repo/cfg/real.yaml"}
+        owners = {"/other/repo/cfg/real.yaml": [owner]}
+        self._run_prune(updater, mock_ingestor, [row], owners)
+        deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert deletes == []
+
+    def test_legacy_sweep_requires_positive_ownership(
+        self, updater: GraphUpdater, mock_ingestor: MagicMock
+    ) -> None:
+        # A key with no visible containers offers no evidence of sole
+        # ownership (edges may be missing or unreadable); the sweep must
+        # spare it rather than guess.
+        row = {"path": "cfg/link.yaml", "absolute_path": "/outside/target.yaml"}
+        self._run_prune(updater, mock_ingestor, [row], {})
+        deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert deletes == []
+
+    def test_symlinked_ancestor_identity_is_not_a_sweep_candidate(
+        self,
+        updater: GraphUpdater,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        # A file under an in-repo DIRECTORY symlink legitimately keys outside
+        # the repo under the current scheme (parent resolved, leaf kept); its
+        # stored key matches the derivable identity and must never be swept.
+        outside = tmp_path / "outside_pkg"
+        outside.mkdir()
+        (outside / "x.py").write_text("A = 1\n", encoding="utf-8")
+        (temp_repo / "sub").symlink_to(outside, target_is_directory=True)
+        from codebase_rag.utils.path_utils import cached_file_identity_posix
+
+        stored = cached_file_identity_posix(temp_repo / "sub" / "x.py")
+        row = {"path": "sub/x.py", "absolute_path": stored}
+        owner_calls = self._run_prune(updater, mock_ingestor, [row], {})
+        deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert deletes == []
+        assert owner_calls == []
+
+    def test_containers_query_matches_the_real_containment_type(self) -> None:
+        # File parents link via CONTAINS_FILE (structure_processor); a wrong
+        # relationship type would silently return no owners and neuter the
+        # sweep behind the positive-attribution rule.
+        assert cs.RelationshipType.CONTAINS_FILE.value in cs.CYPHER_FILE_CONTAINERS
+
+    def test_legacy_sweep_spares_a_key_with_an_unidentifiable_container(
+        self, updater: GraphUpdater, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # One local owner plus one container with no usable identity: the
+        # unknown row could be a foreign project, so the sweep must spare.
+        row = {"path": "cfg/link.yaml", "absolute_path": "/outside/target.yaml"}
+        owners = {
+            "/outside/target.yaml": [
+                {
+                    "labels": ["Folder"],
+                    "name": None,
+                    "absolute_path": (temp_repo / "cfg").resolve().as_posix(),
+                },
+                {"labels": ["Folder"], "name": None, "absolute_path": None},
+            ]
+        }
+        self._run_prune(updater, mock_ingestor, [row], owners)
+        deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert deletes == []
+
+    def test_legacy_sweep_survives_an_ownership_read_failure(
+        self, updater: GraphUpdater, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # The per-candidate read runs after the ordinary orphan deletes; a
+        # raise must neither delete the key nor escape the prune.
+        row = {"path": "cfg/link.yaml", "absolute_path": "/outside/target.yaml"}
+
+        def fetch_all(query, params=None):
+            if query == cs.CYPHER_ALL_FILE_PATHS:
+                return [row]
+            if query == cs.CYPHER_FILE_CONTAINERS:
+                raise RuntimeError("connection dropped")
+            return []
+
+        mock_ingestor.fetch_all.side_effect = fetch_all
+        updater._prune_orphan_nodes()
+        deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert deletes == []
