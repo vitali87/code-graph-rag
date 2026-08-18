@@ -403,7 +403,7 @@ CYPHER_ALL_FILE_PATHS = (
 # nodes MERGE globally on absolute_path, so a key can be shared with another
 # project and must not be deleted from under it (issue #1156).
 CYPHER_FILE_CONTAINERS = (
-    "MATCH (p)-[:CONTAINS]->(f:File {absolute_path: $path}) "
+    "MATCH (p)-[:CONTAINS_FILE]->(f:File {absolute_path: $path}) "
     "RETURN labels(p) AS labels, p.name AS name, "
     "p.absolute_path AS absolute_path"
 )

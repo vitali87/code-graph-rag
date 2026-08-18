@@ -566,3 +566,56 @@ class TestLegacyFileIdentitySweep:
         ]
         assert deletes == []
         assert owner_calls == []
+
+    def test_containers_query_matches_the_real_containment_type(self) -> None:
+        # File parents link via CONTAINS_FILE (structure_processor); a wrong
+        # relationship type would silently return no owners and neuter the
+        # sweep behind the positive-attribution rule.
+        assert cs.RelationshipType.CONTAINS_FILE.value in cs.CYPHER_FILE_CONTAINERS
+
+    def test_legacy_sweep_spares_a_key_with_an_unidentifiable_container(
+        self, updater: GraphUpdater, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # One local owner plus one container with no usable identity: the
+        # unknown row could be a foreign project, so the sweep must spare.
+        row = {"path": "cfg/link.yaml", "absolute_path": "/outside/target.yaml"}
+        owners = {
+            "/outside/target.yaml": [
+                {
+                    "labels": ["Folder"],
+                    "name": None,
+                    "absolute_path": (temp_repo / "cfg").resolve().as_posix(),
+                },
+                {"labels": ["Folder"], "name": None, "absolute_path": None},
+            ]
+        }
+        self._run_prune(updater, mock_ingestor, [row], owners)
+        deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert deletes == []
+
+    def test_legacy_sweep_survives_an_ownership_read_failure(
+        self, updater: GraphUpdater, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # The per-candidate read runs after the ordinary orphan deletes; a
+        # raise must neither delete the key nor escape the prune.
+        row = {"path": "cfg/link.yaml", "absolute_path": "/outside/target.yaml"}
+
+        def fetch_all(query, params=None):
+            if query == cs.CYPHER_ALL_FILE_PATHS:
+                return [row]
+            if query == cs.CYPHER_FILE_CONTAINERS:
+                raise RuntimeError("connection dropped")
+            return []
+
+        mock_ingestor.fetch_all.side_effect = fetch_all
+        updater._prune_orphan_nodes()
+        deletes = [
+            c
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_FILE
+        ]
+        assert deletes == []

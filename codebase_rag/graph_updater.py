@@ -2320,9 +2320,16 @@ class GraphUpdater:
         missing or unreadable offers no evidence of sole ownership, so both
         veto the sweep.
         """
-        rows = self.ingestor.fetch_all(
-            cs.CYPHER_FILE_CONTAINERS, {cs.KEY_PATH: abs_path}
-        )
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_FILE_CONTAINERS, {cs.KEY_PATH: abs_path}
+            )
+        except Exception:
+            # Unreadable ownership is unknown ownership: never delete a
+            # globally merged key on a failed read, and never let the
+            # failure escape mid-update.
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="File containers")
+            return False
         repo_abs = self.repo_path.resolve().as_posix()
         owned = False
         for row in rows:
@@ -2341,6 +2348,10 @@ class GraphUpdater:
                     owned = True
                 else:
                     return False
+                continue
+            # A container with no usable identity could belong to anyone;
+            # partial evidence must not read as sole ownership.
+            return False
         return owned
 
     def _generate_semantic_embeddings(self) -> None:
