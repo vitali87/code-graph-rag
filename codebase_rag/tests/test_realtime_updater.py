@@ -157,6 +157,8 @@ class TestSemanticFrontendReruns:
         self._fire(event_handler, mock_updater.repo_path / "svc.go")
         mock_updater._run_go_frontend.assert_called_once()
         mock_updater._run_csharp_frontend.assert_not_called()
+        mock_updater._rehydrate_go_type_locations.assert_called_once()
+        mock_updater._rehydrate_function_locations.assert_called_once()
         mock_updater._join_go_implements.assert_called_once()
 
     def test_csharp_change_reruns_the_roslyn_frontend(
@@ -165,6 +167,7 @@ class TestSemanticFrontendReruns:
         self._fire(event_handler, mock_updater.repo_path / "Svc.cs")
         mock_updater._run_csharp_frontend.assert_called_once()
         mock_updater._run_go_frontend.assert_not_called()
+        mock_updater._rehydrate_csharp_type_locations.assert_called_once()
         mock_updater._join_csharp_partials.assert_called_once()
 
     def test_python_change_touches_no_semantic_frontend(
@@ -183,3 +186,4 @@ class TestSemanticFrontendReruns:
         gone.unlink()
         event_handler._process_change(FileDeletedEvent(str(gone)))
         mock_updater._run_go_frontend.assert_called_once()
+        mock_updater._join_go_implements.assert_called_once()

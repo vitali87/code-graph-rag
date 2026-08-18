@@ -319,9 +319,17 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         changed_language = changed_spec.language if changed_spec else None
         if changed_language == SupportedLanguage.GO:
             self.updater._run_go_frontend()
+            # A watch process that did not perform the full build itself has
+            # no in-memory locations for unchanged files; restoring them from
+            # the persisted graph matches the incremental flow and costs
+            # nothing when live state already holds them (fresh entries win).
+            self.updater._rehydrate_go_type_locations()
+            self.updater._rehydrate_function_locations()
             self.updater._join_go_implements()
         elif changed_language == SupportedLanguage.CSHARP:
             self.updater._run_csharp_frontend()
+            self.updater._rehydrate_csharp_type_locations()
+            self.updater._rehydrate_function_locations()
             self.updater._join_csharp_partials()
 
         # Rust inline-mod import maps retract at the end of every parse
