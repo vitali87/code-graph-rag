@@ -128,6 +128,34 @@ class TestComputeParserFingerprint:
         monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
         assert compute_parser_fingerprint() != before
 
+    def test_changes_when_cpp_frontend_setting_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from codebase_rag.config import settings as cfg
+        from codebase_rag.parsers.cpp_frontend import frontend
+
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
+        monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.TREESITTER)
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+        assert compute_parser_fingerprint() != before
+
+    def test_changes_when_libclang_becomes_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Installing the [cpp] extra flips the default HYBRID from degraded
+        # tree-sitter output to real hybrid facts for unchanged sources, so
+        # the fingerprint must record the RESOLVED mode and read the old
+        # graph as stale (issue #1177), mirroring the C# entry above.
+        from codebase_rag.config import settings as cfg
+        from codebase_rag.parsers.cpp_frontend import frontend
+
+        monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: False)
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
+        assert compute_parser_fingerprint() != before
+
 
 class TestFingerprintStamping:
     def test_full_sync_stamps_current_fingerprint(
@@ -278,16 +306,17 @@ def test_fingerprint_resolves_auto_to_effective_frontend(
     # the two must not share a fingerprint just because the setting string
     # is the same.
     import codebase_rag.parser_fingerprint as pf
+    from codebase_rag.config import settings as cfg
     from codebase_rag.parsers.csharp_frontend import frontend as fe
 
-    monkeypatch.setattr(pf.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)
+    monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)
     monkeypatch.setattr(fe, "csharp_frontend_available", lambda: True)
     fp_auto_with_dotnet = pf.compute_parser_fingerprint()
     monkeypatch.setattr(fe, "csharp_frontend_available", lambda: False)
     fp_auto_without_dotnet = pf.compute_parser_fingerprint()
     assert fp_auto_with_dotnet != fp_auto_without_dotnet
 
-    monkeypatch.setattr(pf.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+    monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
     monkeypatch.setattr(fe, "csharp_frontend_available", lambda: True)
     assert pf.compute_parser_fingerprint() == fp_auto_with_dotnet
     # An EXPLICIT hybrid request that cannot run degrades the build to
@@ -295,5 +324,5 @@ def test_fingerprint_resolves_auto_to_effective_frontend(
     # must record what actually ran there too, not the setting string.
     monkeypatch.setattr(fe, "csharp_frontend_available", lambda: False)
     assert pf.compute_parser_fingerprint() == fp_auto_without_dotnet
-    monkeypatch.setattr(pf.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
+    monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
     assert pf.compute_parser_fingerprint() == fp_auto_without_dotnet

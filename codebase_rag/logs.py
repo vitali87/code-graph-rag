@@ -15,11 +15,15 @@ PASS_3_CALLS = "--- Pass 3: Processing Function Calls from AST Cache ---"
 PASS_4_EMBEDDINGS = "--- Pass 4: Generating semantic embeddings ---"
 CPP_FRONTEND_RUNNING = "--- C/C++ libclang frontend: {path} ---"
 CPP_FRONTEND_UNAVAILABLE = (
-    "C/C++ libclang frontend enabled but libclang is unavailable; using tree-sitter"
+    "C/C++ libclang frontend enabled but libclang is unavailable; using "
+    "tree-sitter only (no macro Function nodes or #include IMPORTS). "
+    'Enable it with: pip install "code-graph-rag[cpp]"'
 )
 CPP_FRONTEND_NO_COMPDB = (
     "C/C++ libclang frontend enabled but no compile_commands.json found; "
-    "using tree-sitter"
+    "using tree-sitter only (no macro Function nodes or #include IMPORTS). "
+    "Generate one with: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON (or: "
+    "bear -- make)"
 )
 CPP_FRONTEND_COVERED = "C/C++ libclang frontend covered {count} file(s)"
 CPP_FRONTEND_HYBRID_PENDING = (

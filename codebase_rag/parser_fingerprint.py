@@ -9,7 +9,6 @@ from importlib import metadata
 from pathlib import Path
 
 from . import constants as cs
-from .config import settings
 
 
 def compute_parser_fingerprint(package_root: Path | None = None) -> str:
@@ -30,15 +29,17 @@ def compute_parser_fingerprint(package_root: Path | None = None) -> str:
 
 
 def _frontend_settings() -> list[str]:
-    # The C# entry records the RESOLVED mode, not the setting: under AUTO a
-    # graph built with dotnet present carries hybrid edges and one without
-    # does not, so the two must not share a fingerprint. Imported lazily to
+    # The C# and C++ entries record the RESOLVED mode, not the setting:
+    # under AUTO/HYBRID a graph built with the toolchain present carries
+    # hybrid edges and one without does not, so the two must not share a
+    # fingerprint (dotnet for C#, libclang for C++, issue #1177). Imported lazily to
     # keep this module free of the parsers package at import time.
+    from .parsers.cpp_frontend import resolve_cpp_frontend
     from .parsers.csharp_frontend import resolve_csharp_frontend
     from .parsers.go_frontend import resolve_go_frontend
 
     return [
-        f"CPP_FRONTEND={settings.CPP_FRONTEND.value}",
+        f"CPP_FRONTEND={resolve_cpp_frontend().value}",
         f"CSHARP_FRONTEND={resolve_csharp_frontend().value}",
         f"GO_FRONTEND={resolve_go_frontend().value}",
     ]

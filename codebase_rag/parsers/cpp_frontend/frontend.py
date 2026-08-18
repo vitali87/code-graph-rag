@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import constants as cs
+from ...config import settings
 from ...services import IngestorProtocol
 from ...types_defs import (
     FunctionRegistryTrieProtocol,
@@ -36,6 +37,19 @@ def cpp_frontend_available() -> bool:
     except Exception:
         return False
     return True
+
+
+def resolve_cpp_frontend() -> cs.CppFrontend:
+    """The mode that will actually run: LIBCLANG/HYBRID degrade to
+    TREESITTER when libclang is absent, and the fingerprint must record that
+    resolved identity so installing the ``cpp`` extra reads the old graph as
+    stale (issue #1177), mirroring the C# entry."""
+    mode = settings.CPP_FRONTEND
+    if mode in (cs.CppFrontend.LIBCLANG, cs.CppFrontend.HYBRID) and not (
+        cpp_frontend_available()
+    ):
+        return cs.CppFrontend.TREESITTER
+    return mode
 
 
 def find_compile_commands(start: Path) -> Path | None:
