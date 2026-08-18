@@ -491,6 +491,10 @@ _DART_SINKS: tuple[IOSink, ...] = (
     IOSink("stderr.writeln", ResourceKind.STDERR, IODirection.WRITE),
     IOSink("http.get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
     IOSink("http.post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    # Subprocess execution (issue #1224): the command (arg 0) is the resource
+    # identity, the argument list (arg 1) the injectable payload.
+    IOSink("Process.run", ResourceKind.PROCESS, IODirection.WRITE, target_arg=0),
+    IOSink("Process.start", ResourceKind.PROCESS, IODirection.WRITE, target_arg=0),
 )
 
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
@@ -813,6 +817,9 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
     # (issue #1173). The read/write mode is per-method, so may-write by default.
     cs.SupportedLanguage.DART: (
         HandleConstructor("File", ResourceKind.FILE, target_arg=0),
+        # `var s = await Socket.connect(host, port)` binds a SOCKET handle
+        # whose identity is the host (issue #1224).
+        HandleConstructor("Socket.connect", ResourceKind.SOCKET, target_arg=0),
     ),
 }
 
@@ -1188,6 +1195,15 @@ IO_LEAN_HANDLE_METHODS: dict[
             "writeAsStringSync": IODirection.WRITE,
             "writeAsBytes": IODirection.WRITE,
             "writeAsBytesSync": IODirection.WRITE,
+        },
+        # Socket handle methods (issue #1224): listen consumes the stream,
+        # the add/write family sends on it.
+        ResourceKind.SOCKET: {
+            "listen": IODirection.READ,
+            "add": IODirection.WRITE,
+            "addStream": IODirection.WRITE,
+            "write": IODirection.WRITE,
+            "writeln": IODirection.WRITE,
         },
     },
 }

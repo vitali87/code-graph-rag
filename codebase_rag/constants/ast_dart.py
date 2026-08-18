@@ -23,6 +23,10 @@ TS_DART_LABEL = "label"
 # Python's `conditional_expression` node TYPE but orders operands
 # [condition, consequence, alternative], not [body, condition, alternative].
 TS_DART_LIST_LITERAL = "list_literal"
+# `await expr` parses as unary_expression > await_expression > chain; the
+# awaited value carries the chain's taint and handle (issue #1224).
+TS_DART_UNARY_EXPRESSION = "unary_expression"
+TS_DART_AWAIT_EXPRESSION = "await_expression"
 TS_DART_SET_OR_MAP_LITERAL = "set_or_map_literal"
 # Inside a set_or_map_literal: a MAP entry is a `pair` whose `value` field
 # holds the stored expression; `type_arguments` (`<String, T>{...}`) carry

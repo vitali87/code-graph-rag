@@ -1952,6 +1952,15 @@ class FlowProcessor:
         # project-callee return (pending), or a plain identifier alias.
         if not rhs:
             return None, frozenset()
+        if len(rhs) == 1 and rhs[0].type in (
+            cs.TS_DART_UNARY_EXPRESSION,
+            cs.TS_DART_AWAIT_EXPRESSION,
+        ):
+            # `await Socket.connect(...)` wraps the chain one node deep per
+            # level; the awaited (or negated) value carries the chain's taint
+            # and handle, so unwrap and re-evaluate (issue #1224).
+            inner = [c for c in rhs[0].named_children if c.type != cs.TS_COMMENT]
+            return self._dart_rhs(inner, tainted, handles, jc)
         source = self._dart_member_source(rhs, jc)
         if source is not None:
             return Taint(frozenset({source}), frozenset()), frozenset()
@@ -2148,8 +2157,29 @@ class FlowProcessor:
             else:
                 continue
             taint, _ = self._dart_rhs(chain, tainted, {}, jc)
+            if (
+                taint is None
+                and len(chain) == 1
+                and chain[0].type == cs.TS_DART_LIST_LITERAL
+            ):
+                taint = self._dart_list_literal_taint(chain[0], tainted, jc)
             out.append((via, taint))
         return out
+
+    def _dart_list_literal_taint(
+        self, literal: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        # A `Process.run('sh', ['-c', k])`-style call carries its payload
+        # INSIDE a list literal; each element expression is evaluated on its
+        # own so a tainted element taints the argument (issue #1224).
+        merged: Taint | None = None
+        for element in literal.named_children:
+            if element.type == cs.TS_COMMENT:
+                continue
+            taint, _ = self._dart_rhs([element], tainted, {}, jc)
+            if taint is not None:
+                merged = taint if merged is None else _merge_taint(merged, taint)
+        return merged
 
     def _dart_return_taint(
         self, node: Node, tainted: _TaintMap, jc: _JsCtx

