@@ -1061,6 +1061,7 @@ class ClassIngestMixin:
             cs.KEY_MODIFIERS: modifiers,
             cs.KEY_DECORATORS: decorators,
             cs.KEY_START_LINE: class_start_line,
+            cs.KEY_START_COL: class_start_col,
             cs.KEY_END_LINE: class_node.end_point[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(class_node),
             cs.KEY_IS_EXPORTED: is_exported,

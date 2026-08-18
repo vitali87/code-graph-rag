@@ -27,6 +27,13 @@ KEY_IS_MACRO = "is_macro"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
 KEY_START_LINE = "start_line"
+# Column of the definition's own start token, and of its NAME token where the
+# two differ (Go keys semantic call targets at the name identifier while span
+# keys sit at the `func` keyword). Persisted so incremental runs can rehydrate
+# the col-keyed location indexes for unchanged files (issue #1240).
+KEY_START_COL = "start_col"
+KEY_NAME_START_LINE = "name_start_line"
+KEY_NAME_START_COL = "name_start_col"
 KEY_END_LINE = "end_line"
 KEY_PATH = "path"
 KEY_ABSOLUTE_PATH = "absolute_path"
@@ -480,6 +487,33 @@ CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
     "AND n.path ENDS WITH '.cs' "
     "RETURN n.qualified_name AS qualified_name, n.path AS path, "
     "n.start_line AS start_line"
+)
+
+# Col-keyed location rehydration fetches (issue #1240). Both guard for
+# start_col's absence in Python: a pre-#1240 graph has none and degrades to
+# today's behavior until re-indexed.
+CYPHER_ALL_GO_TYPE_LOCATIONS = (
+    "MATCH (n) WHERE (n:Class OR n:Interface OR n:Enum OR n:Type OR n:Union) "
+    "AND n.qualified_name STARTS WITH $project_prefix "
+    "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
+    "n.path AS path, n.start_line AS start_line, n.start_col AS start_col"
+)
+CYPHER_ALL_FUNCTION_LOCATIONS = (
+    "MATCH (m:Module)-[:DEFINES]->(f:Function) "
+    "WHERE m.qualified_name STARTS WITH $project_prefix "
+    "RETURN labels(f)[0] AS label, f.qualified_name AS qualified_name, "
+    "m.qualified_name AS module_qn, f.start_line AS start_line, "
+    "f.start_col AS start_col, f.name_start_line AS name_start_line, "
+    "f.name_start_col AS name_start_col"
+)
+CYPHER_ALL_METHOD_LOCATIONS = (
+    "MATCH (m:Module)-[:DEFINES]->(c)-[:DEFINES_METHOD]->(f:Method) "
+    "WHERE m.qualified_name STARTS WITH $project_prefix "
+    "RETURN labels(f)[0] AS label, f.qualified_name AS qualified_name, "
+    "c.qualified_name AS container_qn, "
+    "m.qualified_name AS module_qn, f.start_line AS start_line, "
+    "f.start_col AS start_col, f.name_start_line AS name_start_line, "
+    "f.name_start_col AS name_start_col"
 )
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"

@@ -68,6 +68,7 @@ from .types_defs import (
     CppDefinitionSpan,
     EmbeddingQueryResult,
     FunctionLocation,
+    FunctionLocations,
     LanguageQueries,
     NodeType,
     PendingExpansionCall,
@@ -85,6 +86,14 @@ from .utils.path_utils import (
     should_skip_rel_file,
 )
 from .utils.source_extraction import extract_source_with_fallback
+
+
+def _persisted_int(value: object) -> int | None:
+    # bool is an int subclass; a stray True would key as 1 and shadow a real
+    # entry, so it is rejected explicitly (same discipline as the C# path).
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
 
 
 def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
@@ -769,6 +778,11 @@ class GraphUpdater:
         # project-wide query would be wasted work -- skip it.
         if not force and not self._is_full_build:
             self._rehydrate_csharp_type_locations()
+            # Same posture for the col-keyed indexes (issue #1240): the Go
+            # IMPLEMENTS and semantic-call joins below resolve against
+            # locations Pass 2 filled only for re-parsed files.
+            self._rehydrate_go_type_locations()
+            self._rehydrate_function_locations()
 
         # Partial groups join AFTER Pass 2: the Roslyn declaration
         # locations resolve against the Class qns Pass 2 just registered.
@@ -1392,6 +1406,117 @@ class GraphUpdater:
                 restored += 1
         if restored:
             logger.info(ls.CSHARP_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
+
+    def _rehydrate_go_type_locations(self) -> None:
+        # Incremental runs fill go_type_locations only from re-parsed files,
+        # but _join_go_implements resolves BOTH ends of each pair against it.
+        # Restore (path, line, col) -> (qn, label) for types in unchanged .go
+        # files from the persisted graph (issue #1240). A pre-#1240 graph has
+        # no start_col: those rows are skipped and behavior degrades to
+        # today's until a re-index.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        locations = self.factory.definition_processor.go_type_locations
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        restored = 0
+        for row in rows:
+            path = row.get(cs.KEY_PATH)
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            label = row.get(cs.KEY_LABEL)
+            start_line = _persisted_int(row.get(cs.KEY_START_LINE))
+            start_col = _persisted_int(row.get(cs.KEY_START_COL))
+            if not (
+                isinstance(path, str)
+                and path.endswith(cs.EXT_GO)
+                and isinstance(qn, str)
+                and isinstance(label, str)
+                and start_line is not None
+                and start_col is not None
+            ):
+                continue
+            key = (path, start_line, start_col)
+            if key not in locations:
+                locations[key] = (qn, label)
+                restored += 1
+        if restored:
+            logger.info(ls.GO_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
+
+    def _rehydrate_function_locations(self) -> None:
+        # The C#/Go semantic call + LINQ joins resolve targets against
+        # function_locations, keyed (module_qn, line, col) at the definition
+        # START; Go's join additionally keys at the NAME token, whose column
+        # is persisted separately (issue #1240). Fresh Pass-2 entries win;
+        # rehydrated records serve the joins only (Pass 3 touches re-parsed
+        # files exclusively), so a METHOD's container comes from the query
+        # and is_named stays True (generated qns never persist under Module
+        # DEFINES).
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        locations = self.factory.definition_processor.function_locations
+        params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
+        restored = 0
+        for query in (
+            cs.CYPHER_ALL_FUNCTION_LOCATIONS,
+            cs.CYPHER_ALL_METHOD_LOCATIONS,
+        ):
+            try:
+                rows = self.ingestor.fetch_all(query, params)
+            except Exception:
+                if not self._is_full_build:
+                    raise
+                logger.warning(ls.REHYDRATE_QUERY_FAILED)
+                return
+            restored += self._restore_function_rows(rows, locations)
+        if restored:
+            logger.info(ls.FUNCTION_LOCATIONS_REHYDRATED.format(count=restored))
+
+    @staticmethod
+    def _restore_function_rows(
+        rows: list[ResultRow], locations: FunctionLocations
+    ) -> int:
+        restored = 0
+        for row in rows:
+            module_qn = row.get("module_qn")
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            label = row.get(cs.KEY_LABEL)
+            container = row.get("container_qn")
+            start_line = _persisted_int(row.get(cs.KEY_START_LINE))
+            start_col = _persisted_int(row.get(cs.KEY_START_COL))
+            name_line = _persisted_int(row.get(cs.KEY_NAME_START_LINE))
+            name_col = _persisted_int(row.get(cs.KEY_NAME_START_COL))
+            if not (
+                isinstance(module_qn, str)
+                and isinstance(qn, str)
+                and isinstance(label, str)
+                and start_line is not None
+                and start_col is not None
+            ):
+                continue
+            record = FunctionLocation(
+                label=label,
+                qualified_name=qn,
+                container_qn=container if isinstance(container, str) else None,
+            )
+            keys = {(module_qn, start_line, start_col)}
+            if name_col is not None:
+                # The NAME token can sit on a LATER line than the declaration
+                # start (a multiline Go receiver), so the alias keys at its
+                # own persisted line, never the declaration's.
+                keys.add((module_qn, name_line or start_line, name_col))
+            for key in keys:
+                if key not in locations:
+                    locations[key] = record
+                    restored += 1
+        return restored
 
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # Record the reference edges unchanged files point at the re-indexed
