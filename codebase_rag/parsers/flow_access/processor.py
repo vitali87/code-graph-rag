@@ -2074,12 +2074,25 @@ class FlowProcessor:
             )
             if fn is None:
                 continue
+            names = self._dart_lambda_param_names(fn)
             inner = dict(tainted)
-            for name in self._dart_lambda_param_names(fn):
+            inner_handles = dict(handles)
+            added_locals = [n for n in names if n not in jc.local_names]
+            for name in names:
+                # The parameter SHADOWS every outer meaning of the name: a
+                # same-named outer handle must not receive the callback's
+                # calls, and a parameter named after a builtin sink must not
+                # match it (review on #1317).
                 inner[name] = seed
-            state = _LeanState(taint=inner, handles=dict(handles))
-            for stmt in self._dart_lambda_body_statements(fn):
-                state = self._walk_flat_stmt(stmt, state, jc)
+                inner_handles.pop(name, None)
+                jc.local_names.add(name)
+            try:
+                state = _LeanState(taint=inner, handles=inner_handles)
+                for stmt in self._dart_lambda_body_statements(fn):
+                    state = self._walk_flat_stmt(stmt, state, jc)
+            finally:
+                for name in added_locals:
+                    jc.local_names.discard(name)
 
     @staticmethod
     def _dart_lambda_param_names(fn: Node) -> list[str]:
@@ -2093,22 +2106,26 @@ class FlowProcessor:
         )
         if plist is None:
             return []
+        # Optional-positional (`[data]`) and named (`{data}`) parameters sit
+        # under wrapper nodes, so the list is walked recursively; a typed
+        # parameter's NAME is its last identifier (`String data`), never the
+        # type (review on #1317).
         names: list[str] = []
-        for param in plist.named_children:
-            ident = (
-                param
-                if param.type == cs.TS_DART_IDENTIFIER
-                else next(
-                    (
-                        c
-                        for c in param.named_children
-                        if c.type == cs.TS_DART_IDENTIFIER
-                    ),
-                    None,
-                )
-            )
-            if ident is not None and ident.text:
-                names.append(ident.text.decode(cs.ENCODING_UTF8))
+        stack = list(plist.named_children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_DART_FORMAL_PARAMETER:
+                idents = [
+                    c
+                    for c in node.named_children
+                    if c.type == cs.TS_DART_IDENTIFIER and c.text
+                ]
+                if idents:
+                    names.append(idents[-1].text.decode(cs.ENCODING_UTF8))
+            elif node.type == cs.TS_DART_IDENTIFIER and node.text:
+                names.append(node.text.decode(cs.ENCODING_UTF8))
+            else:
+                stack.extend(node.named_children)
         return names
 
     @staticmethod
