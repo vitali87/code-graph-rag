@@ -62,7 +62,13 @@ class CodeRetriever:
             start_line = res.get("start")
             end_line = res.get("end")
 
-            if not all([file_path_str, start_line, end_line]):
+            if (
+                not isinstance(file_path_str, str)
+                or type(start_line) is not int
+                or type(end_line) is not int
+                or start_line < 1
+                or end_line < start_line
+            ):
                 return CodeSnippet(
                     qualified_name=qualified_name,
                     source_code="",
@@ -100,6 +106,17 @@ class CodeRetriever:
                 )
             with full_path.open("r", encoding=ENCODING_UTF8) as f:
                 all_lines = f.readlines()
+
+            if end_line > len(all_lines):
+                return CodeSnippet(
+                    qualified_name=qualified_name,
+                    source_code="",
+                    file_path=file_path_str,
+                    line_start=0,
+                    line_end=0,
+                    found=False,
+                    error_message=te.CODE_MISSING_LOCATION,
+                )
 
             snippet_lines = all_lines[start_line - 1 : end_line]
             source_code = "".join(snippet_lines)
