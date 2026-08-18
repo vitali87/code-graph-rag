@@ -270,7 +270,10 @@ def test_nodes_persist_start_and_name_columns(tmp_path: Path) -> None:
         p for p in by_label.get("Function", []) if p.get(cs.KEY_NAME) == "main"
     ]
     methods = [p for p in by_label.get("Method", []) if p.get(cs.KEY_NAME) == "render"]
-    assert classes and cs.KEY_START_COL in classes[0]
-    assert functions and cs.KEY_START_COL in functions[0]
+    assert classes
+    assert cs.KEY_START_COL in classes[0]
+    assert functions
+    assert cs.KEY_START_COL in functions[0]
     assert functions[0][cs.KEY_NAME_START_COL] == 4
-    assert methods and methods[0][cs.KEY_START_COL] == 4
+    assert methods
+    assert methods[0][cs.KEY_START_COL] == 4
