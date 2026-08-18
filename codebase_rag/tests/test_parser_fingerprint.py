@@ -166,7 +166,7 @@ class TestFingerprintStamping:
         stamp = _fingerprint_path(py_project)
         assert stamp.is_file()
         assert stamp.read_text(encoding="utf-8").strip() == (
-            compute_parser_fingerprint()
+            compute_parser_fingerprint(repo_path=py_project)
         )
 
     def test_incremental_sync_does_not_overwrite_stale_stamp(
@@ -192,7 +192,7 @@ class TestFingerprintStamping:
         _make_updater(py_project, mock_ingestor).run(force=True)
 
         stored = _fingerprint_path(py_project).read_text(encoding="utf-8").strip()
-        assert stored == compute_parser_fingerprint()
+        assert stored == compute_parser_fingerprint(repo_path=py_project)
 
     def test_stamp_file_is_not_indexed(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -326,3 +326,37 @@ def test_fingerprint_resolves_auto_to_effective_frontend(
     assert pf.compute_parser_fingerprint() == fp_auto_without_dotnet
     monkeypatch.setattr(cfg, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
     assert pf.compute_parser_fingerprint() == fp_auto_without_dotnet
+
+
+def test_changes_when_a_compile_database_appears(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Generating compile_commands.json after a tree-sitter-only index changes
+    # the edges hybrid produces for unchanged sources, exactly like installing
+    # libclang; the repo-aware fingerprint must read the old graph as stale
+    # (issue #1177 review).
+    from codebase_rag.config import settings as cfg
+    from codebase_rag.parsers.cpp_frontend import frontend
+
+    monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    before = compute_parser_fingerprint(repo_path=repo)
+    (repo / "compile_commands.json").write_text("[]", encoding="utf-8")
+    assert compute_parser_fingerprint(repo_path=repo) != before
+
+
+def test_compile_database_is_ignored_when_mode_resolves_to_treesitter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from codebase_rag.config import settings as cfg
+    from codebase_rag.parsers.cpp_frontend import frontend
+
+    monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    before = compute_parser_fingerprint(repo_path=repo)
+    (repo / "compile_commands.json").write_text("[]", encoding="utf-8")
+    assert compute_parser_fingerprint(repo_path=repo) == before

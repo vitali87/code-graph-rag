@@ -11,13 +11,17 @@ from pathlib import Path
 from . import constants as cs
 
 
-def compute_parser_fingerprint(package_root: Path | None = None) -> str:
+def compute_parser_fingerprint(
+    package_root: Path | None = None, repo_path: Path | None = None
+) -> str:
     root = package_root if package_root is not None else Path(__file__).resolve().parent
     hasher = hashlib.md5(usedforsecurity=False)
     for source in _fingerprint_sources(root):
         hasher.update(source.relative_to(root).as_posix().encode())
         hasher.update(source.read_bytes())
     for entry in _grammar_versions():
+        hasher.update(entry.encode())
+    for entry in _repo_frontend_inputs(repo_path):
         hasher.update(entry.encode())
     # The active frontend selection changes which edges are produced for
     # unchanged sources (e.g. the C# Roslyn hybrid rewrites
@@ -26,6 +30,22 @@ def compute_parser_fingerprint(package_root: Path | None = None) -> str:
     for entry in _frontend_settings():
         hasher.update(entry.encode())
     return hasher.hexdigest()
+
+
+def _repo_frontend_inputs(repo_path: Path | None) -> list[str]:
+    # A discoverable compile database is as much a part of what the C++
+    # semantic mode produces as libclang availability: generating one after a
+    # tree-sitter-only index changes the edges for unchanged sources, so it
+    # must trip the staleness warning too (issue #1177 review). Only the
+    # updater passes a repo; repo-less calls omit the entry consistently.
+    if repo_path is None:
+        return []
+    from .parsers.cpp_frontend import find_compile_commands, resolve_cpp_frontend
+
+    if resolve_cpp_frontend() is cs.CppFrontend.TREESITTER:
+        return []
+    found = find_compile_commands(repo_path) is not None
+    return [f"CPP_COMPDB={found}"]
 
 
 def _frontend_settings() -> list[str]:
