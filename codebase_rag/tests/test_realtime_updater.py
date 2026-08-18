@@ -139,3 +139,51 @@ def test_non_code_files_create_file_nodes(
         non_code_file, "document.md"
     )
     mock_updater.ingestor.flush_all.assert_called_once()
+
+
+class TestSemanticFrontendReruns:
+    # Issue #1229 phase 3: semantic facts are location-keyed against the
+    # compiler's view of the whole module, so a change in one file can rebind
+    # calls in unchanged files; the applicable frontend must re-run on the
+    # watch path before the CALLS recompute.
+
+    def _fire(self, handler: CodeChangeEventHandler, path: Path) -> None:
+        path.write_text("// change\n", encoding="utf-8")
+        handler._process_change(FileModifiedEvent(str(path)))
+
+    def test_go_change_reruns_the_go_frontend(
+        self, event_handler: CodeChangeEventHandler, mock_updater: MagicMock
+    ) -> None:
+        self._fire(event_handler, mock_updater.repo_path / "svc.go")
+        mock_updater._run_go_frontend.assert_called_once()
+        mock_updater._run_csharp_frontend.assert_not_called()
+        mock_updater._rehydrate_go_type_locations.assert_called_once()
+        mock_updater._rehydrate_function_locations.assert_called_once()
+        mock_updater._join_go_implements.assert_called_once()
+
+    def test_csharp_change_reruns_the_roslyn_frontend(
+        self, event_handler: CodeChangeEventHandler, mock_updater: MagicMock
+    ) -> None:
+        self._fire(event_handler, mock_updater.repo_path / "Svc.cs")
+        mock_updater._run_csharp_frontend.assert_called_once()
+        mock_updater._run_go_frontend.assert_not_called()
+        mock_updater._rehydrate_csharp_type_locations.assert_called_once()
+        mock_updater._join_csharp_partials.assert_called_once()
+
+    def test_python_change_touches_no_semantic_frontend(
+        self, event_handler: CodeChangeEventHandler, mock_updater: MagicMock
+    ) -> None:
+        self._fire(event_handler, mock_updater.repo_path / "app.py")
+        mock_updater._run_go_frontend.assert_not_called()
+        mock_updater._run_csharp_frontend.assert_not_called()
+
+    def test_go_deletion_also_reruns_the_frontend(
+        self, event_handler: CodeChangeEventHandler, mock_updater: MagicMock
+    ) -> None:
+        # Removing a file changes the module's bindings just as an edit does.
+        gone = mock_updater.repo_path / "gone.go"
+        gone.write_text("package x\n", encoding="utf-8")
+        gone.unlink()
+        event_handler._process_change(FileDeletedEvent(str(gone)))
+        mock_updater._run_go_frontend.assert_called_once()
+        mock_updater._join_go_implements.assert_called_once()

@@ -309,6 +309,29 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 path, path.name
             )
 
+        # Semantic facts are location-keyed against the compiler's view of
+        # the WHOLE module, so this change can rebind calls in UNCHANGED
+        # files; the applicable frontend re-runs (each resets its own facts)
+        # and its joins re-emit before the call recompute (issue #1229
+        # phase 3). Deletions count too: removing a file changes the
+        # module's bindings just as an edit does.
+        changed_spec = get_language_spec(path.suffix)
+        changed_language = changed_spec.language if changed_spec else None
+        if changed_language == SupportedLanguage.GO:
+            self.updater._run_go_frontend()
+            # A watch process that did not perform the full build itself has
+            # no in-memory locations for unchanged files; restoring them from
+            # the persisted graph matches the incremental flow and costs
+            # nothing when live state already holds them (fresh entries win).
+            self.updater._rehydrate_go_type_locations()
+            self.updater._rehydrate_function_locations()
+            self.updater._join_go_implements()
+        elif changed_language == SupportedLanguage.CSHARP:
+            self.updater._run_csharp_frontend()
+            self.updater._rehydrate_csharp_type_locations()
+            self.updater._rehydrate_function_locations()
+            self.updater._join_csharp_partials()
+
         # Rust inline-mod import maps retract at the end of every parse
         # and only re-commit through arbitration; run() is not on this
         # path, so arbitrate here before calls recompute through the maps.
