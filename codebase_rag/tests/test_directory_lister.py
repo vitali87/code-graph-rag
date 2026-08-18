@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic_ai import Tool
@@ -45,6 +46,17 @@ class TestDirectoryListerInit:
 
 
 class TestListDirectoryContents:
+    def test_list_directory_contents_are_sorted(
+        self, directory_lister: DirectoryLister
+    ) -> None:
+        with patch(
+            "codebase_rag.tools.directory_lister.os.listdir",
+            return_value=["zeta.py", "alpha.py", "middle.py"],
+        ):
+            result = directory_lister.list_directory_contents(".")
+
+        assert result.splitlines() == ["alpha.py", "middle.py", "zeta.py"]
+
     def test_list_root_directory(
         self, directory_lister: DirectoryLister, sample_directory_structure: Path
     ) -> None:
