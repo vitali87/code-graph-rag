@@ -64,6 +64,7 @@ class CodeRetriever:
 
             if (
                 not isinstance(file_path_str, str)
+                or not file_path_str
                 or type(start_line) is not int
                 or type(end_line) is not int
                 or start_line < 1

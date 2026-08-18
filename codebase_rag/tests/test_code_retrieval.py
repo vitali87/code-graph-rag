@@ -61,6 +61,20 @@ class TestFindCodeSnippet:
         assert "missing location data" in result.error_message
 
     @pytest.mark.asyncio
+    async def test_returns_not_found_when_path_is_empty(
+        self, retriever: CodeRetriever, mock_ingestor: MagicMock
+    ) -> None:
+        mock_ingestor.fetch_all.return_value = [
+            {"path": "", "start": 1, "end": 10, "name": "func"}
+        ]
+
+        result = await retriever.find_code_snippet("module.func")
+
+        assert result.found is False
+        assert result.error_message is not None
+        assert "missing location data" in result.error_message
+
+    @pytest.mark.asyncio
     async def test_returns_not_found_when_missing_start_line(
         self, retriever: CodeRetriever, mock_ingestor: MagicMock
     ) -> None:
