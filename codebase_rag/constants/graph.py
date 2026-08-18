@@ -468,6 +468,8 @@ CYPHER_AFFECTED_CALLER_PATHS = (
     "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS]->(target) "
     "WHERE target.path IN $paths AND caller.path IS NOT NULL "
     "AND NOT caller.path IN $paths "
+    "AND caller.qualified_name STARTS WITH $project_prefix "
+    "AND target.qualified_name STARTS WITH $project_prefix "
     "RETURN DISTINCT caller.path AS caller_path"
 )
 # Rehydrate class_inheritance on an incremental run: every INHERITS edge

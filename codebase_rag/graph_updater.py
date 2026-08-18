@@ -1530,7 +1530,10 @@ class GraphUpdater:
         try:
             rows = self.ingestor.fetch_all(
                 cs.CYPHER_AFFECTED_CALLER_PATHS,
-                {cs.CYPHER_PARAM_PATHS: reindexed_keys},
+                {
+                    cs.CYPHER_PARAM_PATHS: reindexed_keys,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
             )
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="affected callers")
@@ -2099,12 +2102,13 @@ class GraphUpdater:
         # own inbound edges are captured and restored like any re-indexed
         # file's (issue #1229 phase 4).
         present = {file_key for _fp, file_key, _new, _b in changed_entries}
+        eligible_by_key = {file_key: fp for fp, file_key in eligible_files}
         affected = 0
         for caller_key in self._affected_caller_keys(reindexed_keys):
             if caller_key in present:
                 continue
-            caller_path = self.repo_path / caller_key
-            if not caller_path.is_file():
+            caller_path = eligible_by_key.get(caller_key)
+            if caller_path is None or not caller_path.is_file():
                 continue
             try:
                 caller_bytes = caller_path.read_bytes()

@@ -55,7 +55,10 @@ class InMemoryGraph:
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
         if query == cs.CYPHER_AFFECTED_CALLER_PATHS:
-            return self._affected_caller_rows((params or {}).get("paths") or [])
+            request = params or {}
+            return self._affected_caller_rows(
+                request.get("paths") or [], request.get(cs.KEY_PROJECT_PREFIX)
+            )
         if query == cs.CYPHER_ALL_MODULE_QNS:
             return self._module_qn_rows((params or {}).get(cs.KEY_PROJECT_PREFIX))
         if query == cs.CYPHER_ALL_DEFINITION_QNS:
@@ -112,9 +115,14 @@ class InMemoryGraph:
                 rows.append({cs.KEY_QUALIFIED_NAME: qn, cs.KEY_LABEL: label})
         return rows
 
-    def _affected_caller_rows(self, paths: PropertyValue) -> list[ResultRow]:
+    def _affected_caller_rows(
+        self, paths: PropertyValue, prefix: PropertyValue
+    ) -> list[ResultRow]:
         # Answers the phase-4 dependency query from the stored graph: callers
-        # with an edge into any target whose path is being re-indexed.
+        # with an edge into any target whose path is being re-indexed, both
+        # endpoints scoped to the requesting project.
+        if not isinstance(prefix, str):
+            return []
         path_set = {str(p) for p in paths} if isinstance(paths, list) else set()
         dependency_rels = {"CALLS", "REFERENCES", "INSTANTIATES", "IMPORTS", "INHERITS"}
         out: set[str] = set()
@@ -127,12 +135,18 @@ class InMemoryGraph:
                 continue
             target_path = target.get(cs.KEY_PATH)
             caller_path = caller.get(cs.KEY_PATH)
+            target_qn = target.get(cs.KEY_QUALIFIED_NAME)
+            caller_qn = caller.get(cs.KEY_QUALIFIED_NAME)
             if (
                 isinstance(target_path, str)
                 and target_path in path_set
                 and isinstance(caller_path, str)
                 and caller_path
                 and caller_path not in path_set
+                and isinstance(target_qn, str)
+                and target_qn.startswith(prefix)
+                and isinstance(caller_qn, str)
+                and caller_qn.startswith(prefix)
             ):
                 out.add(caller_path)
         return [{cs.KEY_CALLER_PATH: path} for path in sorted(out)]
