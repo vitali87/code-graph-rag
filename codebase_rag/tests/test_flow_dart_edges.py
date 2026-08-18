@@ -201,3 +201,16 @@ def test_dart_env_flows_to_socket_write(tmp_path: Path) -> None:
         "}\n"
     )
     assert (_ENV_K, "resource::SOCKET::example.com") in _run_flow(tmp_path, source)
+
+
+def test_dart_env_flows_through_string_interpolation_to_process(tmp_path: Path) -> None:
+    # Shell payloads are routinely interpolated: `'echo $k'` embeds the
+    # tainted expression inside the literal, both in the `$k` and `${...}`
+    # forms (issue #1224 review).
+    source = (
+        "void leak() {\n"
+        "  var k = Platform.environment['K'];\n"
+        "  Process.run('sh', ['-c', 'echo $k']);\n"
+        "}\n"
+    )
+    assert (_ENV_K, "resource::PROCESS::sh") in _run_flow(tmp_path, source)

@@ -2002,7 +2002,34 @@ class FlowProcessor:
         if len(rhs) == 1 and rhs[0].type == cs.TS_DART_IDENTIFIER and rhs[0].text:
             alias = rhs[0].text.decode(cs.ENCODING_UTF8)
             return tainted.get(alias), handles.get(alias, frozenset())
+        if len(rhs) == 1 and rhs[0].type == cs.TS_DART_STRING_LITERAL:
+            return self._dart_interpolation_taint(rhs[0], tainted, jc), frozenset()
         return None, frozenset()
+
+    def _dart_interpolation_taint(
+        self, literal: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        # `'$k'` and `'${a.b}'` embed expressions inside the literal; shell
+        # payloads are routinely built this way, so each substitution is
+        # evaluated and the taints merged (issue #1224 review). The bare
+        # `$k` form parses its name as identifier_dollar_escaped, which the
+        # alias path does not recognise, so it is looked up by text.
+        merged: Taint | None = None
+        for child in literal.named_children:
+            if child.type != cs.TS_DART_TEMPLATE_SUBSTITUTION:
+                continue
+            inner = [c for c in child.named_children if c.type != cs.TS_COMMENT]
+            if (
+                len(inner) == 1
+                and inner[0].type == cs.TS_DART_IDENTIFIER_DOLLAR_ESCAPED
+                and inner[0].text
+            ):
+                taint = tainted.get(inner[0].text.decode(cs.ENCODING_UTF8))
+            else:
+                taint, _ = self._dart_rhs(inner, tainted, {}, jc)
+            if taint is not None:
+                merged = taint if merged is None else _merge_taint(merged, taint)
+        return merged
 
     def _dart_member_source(
         self, nodes: list[Node], jc: _JsCtx

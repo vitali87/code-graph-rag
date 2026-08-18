@@ -97,6 +97,8 @@ TS_DART_FORMAL_PARAMETER_LIST = "formal_parameter_list"
 TS_DART_SWITCH_STATEMENT_CASE = "switch_statement_case"
 TS_DART_SWITCH_STATEMENT_DEFAULT = "switch_statement_default"
 TS_DART_TEMPLATE_SUBSTITUTION = "template_substitution"
+# The bare `$name` interpolation form wraps its name in this node type.
+TS_DART_IDENTIFIER_DOLLAR_ESCAPED = "identifier_dollar_escaped"
 # `[String m]` (optional positional) and `{String? m}` (named) both wrap their
 # `formal_parameter`s in an `optional_formal_parameters` node (issue #1173).
 TS_DART_OPTIONAL_FORMAL_PARAMETERS = "optional_formal_parameters"
