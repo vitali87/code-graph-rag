@@ -147,6 +147,7 @@ ignore = [
     "PLR2004",  # magic value comparison (too noisy)
     "PLC0415",  # import not at top-level (intentional lazy imports)
     "PLR0913",  # too many arguments (often unavoidable)
+    "PLR0917",  # too many positional arguments (often unavoidable)
     "PLR0911",  # too many return statements
     "PLR0912",  # too many branches
     "PLR0915",  # too many statements
