@@ -69,6 +69,7 @@ DART_PATTERN_NODE_SUFFIX = "_pattern"
 # swallows a trailing ternary as its LAST named child.
 DART_EXPRESSION_NODE_SUFFIX = "_expression"
 TS_DART_FUNCTION_EXPRESSION = "function_expression"
+TS_DART_FUNCTION_EXPRESSION_BODY = "function_expression_body"
 TS_DART_LOCAL_FUNCTION_DECLARATION = "local_function_declaration"
 
 # Nodes opening their OWN variable scope: the local-type walk must not descend,
