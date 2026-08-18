@@ -33,19 +33,28 @@ def compute_parser_fingerprint(
 
 
 def _repo_frontend_inputs(repo_path: Path | None) -> list[str]:
-    # A discoverable compile database is as much a part of what the C++
+    # The selected compile database is as much a part of what the C++
     # semantic mode produces as libclang availability: generating one after a
-    # tree-sitter-only index changes the edges for unchanged sources, so it
-    # must trip the staleness warning too (issue #1177 review). Only the
-    # updater passes a repo; repo-less calls omit the entry consistently.
+    # tree-sitter-only index, editing its flags, or a different database
+    # winning discovery all change the edges for unchanged sources, so the
+    # entry records which database was selected and a digest of its content
+    # (issue #1177 review). Only the updater passes a repo; repo-less calls
+    # omit the entry consistently.
     if repo_path is None:
         return []
     from .parsers.cpp_frontend import find_compile_commands, resolve_cpp_frontend
 
     if resolve_cpp_frontend() is cs.CppFrontend.TREESITTER:
         return []
-    found = find_compile_commands(repo_path) is not None
-    return [f"CPP_COMPDB={found}"]
+    compdb_dir = find_compile_commands(repo_path)
+    if compdb_dir is None:
+        return ["CPP_COMPDB=absent"]
+    database = compdb_dir / "compile_commands.json"
+    try:
+        digest = hashlib.md5(database.read_bytes(), usedforsecurity=False).hexdigest()
+    except OSError:
+        return ["CPP_COMPDB=absent"]
+    return [f"CPP_COMPDB={database.as_posix()}:{digest}"]
 
 
 def _frontend_settings() -> list[str]:

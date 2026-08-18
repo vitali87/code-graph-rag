@@ -360,3 +360,22 @@ def test_compile_database_is_ignored_when_mode_resolves_to_treesitter(
     before = compute_parser_fingerprint(repo_path=repo)
     (repo / "compile_commands.json").write_text("[]", encoding="utf-8")
     assert compute_parser_fingerprint(repo_path=repo) == before
+
+
+def test_changes_when_compile_database_content_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Edited flags rebuild different facts for unchanged sources; presence
+    # alone cannot see that, so the entry digests the selected database.
+    from codebase_rag.config import settings as cfg
+    from codebase_rag.parsers.cpp_frontend import frontend
+
+    monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+    monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    db = repo / "compile_commands.json"
+    db.write_text('[{"arguments": ["c++", "-O0"]}]', encoding="utf-8")
+    before = compute_parser_fingerprint(repo_path=repo)
+    db.write_text('[{"arguments": ["c++", "-DFEATURE"]}]', encoding="utf-8")
+    assert compute_parser_fingerprint(repo_path=repo) != before
