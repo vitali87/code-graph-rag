@@ -282,6 +282,7 @@ class GraphUpdater:
         # spare foreign files' entries (issue #1025).
         self._frontend_owned_qns: dict[str, set[str]] = {}
         self.unignore_paths = unignore_paths
+        self._configured_unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
         # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
         # callers (MCP, workspace sync) opt out without a CLI flag.
@@ -776,6 +777,10 @@ class GraphUpdater:
             self._drop_cache_if_graph_lost()
             self._warn_if_parser_changed()
 
+        # Discovery must precede the in-sync check: a build that appeared
+        # since the cached run changes the eligible set, and the check walks
+        # with the same unignore patterns the indexing pass will use.
+        self._register_generated_sources()
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
@@ -1999,15 +2004,18 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         dp.generated_source_prefixes = generated_prefixes_for(roots)
         self.factory.import_processor.set_java_generated_roots(roots)
-        if not roots:
-            return
+        # Rebuilt from the CONFIGURED base every run, never accumulated: a
+        # root that vanished (target/ cleaned) must stop rescuing its subtree.
         patterns = unignore_patterns_for(roots)
-        self.unignore_paths = (
-            frozenset(self.unignore_paths) | patterns
-            if self.unignore_paths
-            else patterns
+        base = (
+            frozenset(self._configured_unignore_paths)
+            if self._configured_unignore_paths
+            else frozenset()
         )
-        logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
+        combined = base | patterns
+        self.unignore_paths = combined if combined else None
+        if roots:
+            logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
 
     def _collect_eligible_files(self) -> list[tuple[Path, str]]:
         if self._single_file is not None:
@@ -2078,7 +2086,6 @@ class GraphUpdater:
         _touch_empty_json(cache_path)
         _touch_empty_json(dir_mtimes_path)
 
-        self._register_generated_sources()
         eligible_files = self._collect_eligible_files()
 
         if not is_full_build:

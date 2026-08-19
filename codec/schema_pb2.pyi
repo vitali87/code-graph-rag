@@ -143,7 +143,7 @@ class File(_message.Message):
     def __init__(self, path: _Optional[str] = ..., name: _Optional[str] = ..., extension: _Optional[str] = ...) -> None: ...
 
 class Module(_message.Message):
-    __slots__ = ("qualified_name", "name", "path", "decorators", "rust_cfg_test_mods", "rust_ungated_mods", "flow_covered")
+    __slots__ = ("qualified_name", "name", "path", "decorators", "rust_cfg_test_mods", "rust_ungated_mods", "flow_covered", "generated", "generator")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
@@ -151,6 +151,8 @@ class Module(_message.Message):
     RUST_CFG_TEST_MODS_FIELD_NUMBER: _ClassVar[int]
     RUST_UNGATED_MODS_FIELD_NUMBER: _ClassVar[int]
     FLOW_COVERED_FIELD_NUMBER: _ClassVar[int]
+    GENERATED_FIELD_NUMBER: _ClassVar[int]
+    GENERATOR_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     path: str
@@ -158,7 +160,9 @@ class Module(_message.Message):
     rust_cfg_test_mods: _containers.RepeatedScalarFieldContainer[str]
     rust_ungated_mods: _containers.RepeatedScalarFieldContainer[str]
     flow_covered: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., decorators: _Optional[_Iterable[str]] = ..., rust_cfg_test_mods: _Optional[_Iterable[str]] = ..., rust_ungated_mods: _Optional[_Iterable[str]] = ..., flow_covered: _Optional[bool] = ...) -> None: ...
+    generated: bool
+    generator: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., decorators: _Optional[_Iterable[str]] = ..., rust_cfg_test_mods: _Optional[_Iterable[str]] = ..., rust_ungated_mods: _Optional[_Iterable[str]] = ..., flow_covered: _Optional[bool] = ..., generated: _Optional[bool] = ..., generator: _Optional[str] = ...) -> None: ...
 
 class ExternalModule(_message.Message):
     __slots__ = ("qualified_name", "name", "path")

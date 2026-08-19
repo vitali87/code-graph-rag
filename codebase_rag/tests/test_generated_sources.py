@@ -133,3 +133,54 @@ def test_repo_without_build_files_keeps_the_prune(tmp_path: Path) -> None:
     assert discover_generated_source_roots(repo) == []
     mock = _run(repo)
     assert not any("target" in qn for qn in _modules(mock))
+
+
+def test_vanished_generated_roots_stop_rescuing(tmp_path: Path) -> None:
+    import shutil
+
+    repo = tmp_path / "proj"
+    _write_maven_repo(repo)
+    parsers, queries = load_parsers()
+    mock = MagicMock()
+    updater = GraphUpdater(
+        ingestor=mock,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=ALL_ENABLED,
+    )
+    updater.run()
+    assert any("generated-sources" in p for p in (updater.unignore_paths or ()))
+    shutil.rmtree(repo / "target")
+    updater.run(force=True)
+    assert not any("generated-sources" in p for p in (updater.unignore_paths or ()))
+
+
+def test_generated_provenance_survives_the_protobuf_round_trip(
+    tmp_path: Path,
+) -> None:
+    import codec.schema_pb2 as pb
+    from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+
+    repo = tmp_path / "proj"
+    _write_maven_repo(repo)
+    out = tmp_path / "out"
+    parsers, queries = load_parsers()
+    ingestor = ProtobufFileIngestor(output_path=str(out), repo_path=str(repo))
+    GraphUpdater(
+        ingestor=ingestor,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=ALL_ENABLED,
+    ).run(force=True)
+    ingestor.flush_all()
+    index = pb.GraphCodeIndex()
+    index.ParseFromString((out / "index.bin").read_bytes())
+    generated = [
+        n.module
+        for n in index.nodes
+        if n.WhichOneof("payload") == "module" and n.module.generated
+    ]
+    assert generated
+    assert all(m.generator == "annotations" for m in generated)
