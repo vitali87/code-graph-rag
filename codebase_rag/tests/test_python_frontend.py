@@ -18,6 +18,14 @@ from codebase_rag.parser_loader import load_parsers
 
 jedi = pytest.importorskip("jedi")
 
+
+@pytest.fixture(autouse=True)
+def _isolated_jedi_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # pytest-xdist workers otherwise share jedi's on-disk pickle cache and
+    # race it (EOFError: Ran out of input on CI); each test gets its own.
+    monkeypatch.setattr(jedi.settings, "cache_directory", str(tmp_path / "jedi-cache"))
+
+
 from codebase_rag.parsers.py_frontend import frontend as py_fe  # noqa: E402
 from codebase_rag.parsers.py_frontend.frontend import (  # noqa: E402
     _byte_to_char_col,
@@ -68,7 +76,12 @@ def test_reexport_chain_resolves_to_the_definition(tmp_path: Path) -> None:
     assert ("proj.caller.use", "proj.pkg.impl.f") in calls
 
 
-def test_stdlib_call_is_proven_external(tmp_path: Path) -> None:
+def test_stdlib_call_is_proven_external(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A cold jedi cache makes the first stdlib inference slow; the budget is
+    # not what this test measures, so give it room (loaded CI workers).
+    monkeypatch.setattr(py_fe, "_FILE_BUDGET_SECONDS", 60.0)
     repo = tmp_path / "proj"
     repo.mkdir()
     (repo / "caller.py").write_text(

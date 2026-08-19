@@ -34,7 +34,10 @@ from ... import logs as ls
 from ...config import settings
 from ..frontends.protocol import CallSiteKey, ResolvedCallSite, SemanticFacts
 
-_FILE_BUDGET_SECONDS = 2.0
+# Generous enough for jedi's cold-start typeshed parse (the dominant cost,
+# amortized by its on-disk cache after the first file); a stuck module still
+# degrades to heuristics instead of stalling the index.
+_FILE_BUDGET_SECONDS = 10.0
 _RESOLVABLE_TYPES = frozenset({"function", "class"})
 
 
@@ -129,7 +132,9 @@ def _record_site(
     char_col = _byte_to_char_col(source_lines[line - 1], byte_col)
     try:
         names = script.infer(line, char_col)
-    except (jedi.InternalError, RecursionError, ValueError):
+    except (jedi.InternalError, RecursionError, ValueError, OSError, EOFError):
+        # EOFError/OSError surface from jedi's on-disk parser cache when
+        # concurrent processes race it; a lost site degrades to heuristics.
         return
     target = _single_resolvable_target(names)
     if target is None:
