@@ -60,6 +60,11 @@ from .parsers.factory import ProcessorFactory
 from .parsers.frontends import FRONTENDS, SemanticFacts
 from .parsers.frontends.protocol import QueryCall
 from .parsers.go_frontend import find_go_module
+from .parsers.java_generated import (
+    discover_generated_source_roots,
+    generated_prefixes_for,
+    unignore_patterns_for,
+)
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -277,6 +282,7 @@ class GraphUpdater:
         # spare foreign files' entries (issue #1025).
         self._frontend_owned_qns: dict[str, set[str]] = {}
         self.unignore_paths = unignore_paths
+        self._configured_unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
         # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
         # callers (MCP, workspace sync) opt out without a CLI flag.
@@ -771,6 +777,10 @@ class GraphUpdater:
             self._drop_cache_if_graph_lost()
             self._warn_if_parser_changed()
 
+        # Discovery must precede the in-sync check: a build that appeared
+        # since the cached run changes the eligible set, and the check walks
+        # with the same unignore patterns the indexing pass will use.
+        self._register_generated_sources()
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
@@ -1983,6 +1993,35 @@ class GraphUpdater:
             if _hash_file(Path(file_path_str)) != old_hash:
                 return False
         return True
+
+    def _register_generated_sources(self) -> None:
+        # Annotation-processor output next to a build file (issue #1140):
+        # carve those exact subtrees out of the target/build prune, register
+        # them as Java import-probe roots, and stamp their modules generated.
+        # Recomputed per run so a build that appears between watch runs is
+        # picked up; no roots leaves everything exactly as before.
+        roots = discover_generated_source_roots(self.repo_path)
+        dp = self.factory.definition_processor
+        dp.generated_source_prefixes = generated_prefixes_for(roots)
+        self.factory.import_processor.set_java_generated_roots(roots)
+        # Rebuilt from the CONFIGURED base every run, never accumulated: a
+        # root that vanished (target/ cleaned) must stop rescuing its subtree.
+        patterns = unignore_patterns_for(roots)
+        base = (
+            frozenset(self._configured_unignore_paths)
+            if self._configured_unignore_paths
+            else frozenset()
+        )
+        combined = base | patterns
+        resolved = combined if combined else None
+        self.unignore_paths = resolved
+        # The factory-owned processors hold their own copies for structure
+        # traversal and import-time walks; they must prune identically or a
+        # sweep could read files the indexer skipped (issue #1088 invariant).
+        self.factory.import_processor.unignore_paths = resolved
+        self.factory.structure_processor.unignore_paths = resolved
+        if roots:
+            logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
 
     def _collect_eligible_files(self) -> list[tuple[Path, str]]:
         if self._single_file is not None:

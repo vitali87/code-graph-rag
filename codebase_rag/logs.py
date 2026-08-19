@@ -917,3 +917,6 @@ PY_FRONTEND_FACTS = (
 PY_FRONTEND_BUDGET_DEGRADED = (
     "Jedi budget exceeded in {count} file(s); those fall back to heuristics"
 )
+GENERATED_SOURCES_REGISTERED = (
+    "Indexing {count} annotation-processor generated source root(s)"
+)

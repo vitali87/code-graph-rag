@@ -41,6 +41,8 @@ KEY_ABSOLUTE_PATH = "absolute_path"
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
 # the three-verdict flow reachability query (issue #1050).
 KEY_FLOW_COVERED = "flow_covered"
+KEY_GENERATED = "generated"
+KEY_GENERATOR = "generator"
 KEY_EXTENSION = "extension"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"

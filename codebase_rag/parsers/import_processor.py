@@ -482,6 +482,7 @@ class ImportProcessor:
         "_is_local_module_cached",
         "_is_local_java_import_cached",
         "_java_source_root_prefix_cached",
+        "java_generated_roots",
         "_project_named_package",
         "_map_py_source_root",
         "_map_go_import_path",
@@ -767,6 +768,10 @@ class ImportProcessor:
                 or (repo_path / module_name / cs.INIT_PY).is_file()
             )
 
+        # Discovered annotation-processor roots (issue #1140): mutated via
+        # set_java_generated_roots, which clears the probe cache below.
+        self.java_generated_roots: tuple[tuple[str, ...], ...] = ()
+
         @lru_cache(maxsize=4096)
         def _java_source_root_prefix_cached(import_path: str) -> str | None:
             # The registered Module qns carry the build-tool source root
@@ -782,7 +787,11 @@ class ImportProcessor:
             # a nested-class member (Outer.Inner.CONSTANT) two or more, so
             # every ancestor is probed.
             parts = import_path.split(cs.SEPARATOR_DOT)
-            for root in ((), *cs.JAVA_MAVEN_SOURCE_ROOTS):
+            for root in (
+                (),
+                *cs.JAVA_MAVEN_SOURCE_ROOTS,
+                *self.java_generated_roots,
+            ):
                 base = repo_path.joinpath(*root)
                 if base.joinpath(*parts).is_dir() or any(
                     base.joinpath(
@@ -927,6 +936,12 @@ class ImportProcessor:
                 module_qn=module_qn, full_name=full_name, language=language
             )
         )
+
+    def set_java_generated_roots(self, roots: list[tuple[str, ...]]) -> None:
+        # The probe closure reads the attribute late-bound, but its lru cache
+        # may hold pre-discovery misses; clear so generated imports resolve.
+        self.java_generated_roots = tuple(roots)
+        self._java_source_root_prefix_cached.cache_clear()
 
     def flush_deferred_import_edges(self, known_module_paths: dict[str, str]) -> int:
         """Emit IMPORTS edges now that every file is parsed.
