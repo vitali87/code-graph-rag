@@ -29,7 +29,9 @@ from codebase_rag.parsers.py_frontend.frontend import (  # noqa: E402
 CALLS = cs.RelationshipType.CALLS.value
 
 
-def _calls(tmp_path: Path, files: dict[str, str], mode: cs.PythonFrontend) -> set:
+def _calls_edges_for(
+    tmp_path: Path, files: dict[str, str], mode: cs.PythonFrontend
+) -> set:
     parsers, queries = load_parsers()
     repo = tmp_path / "proj"
     for rel, content in files.items():
@@ -62,7 +64,7 @@ def test_reexport_chain_resolves_to_the_definition(tmp_path: Path) -> None:
         "pkg/impl.py": "def f():\n    return 1\n",
         "caller.py": "from pkg import f\n\n\ndef use():\n    f()\n",
     }
-    calls = _calls(tmp_path, files, cs.PythonFrontend.JEDI)
+    calls = _calls_edges_for(tmp_path, files, cs.PythonFrontend.JEDI)
     assert ("proj.caller.use", "proj.pkg.impl.f") in calls
 
 
@@ -85,7 +87,7 @@ def test_repo_local_shadow_beats_the_stdlib(tmp_path: Path) -> None:
         "os.py": "def getenv(key):\n    return key\n",
         "caller.py": 'import os\n\n\ndef use():\n    os.getenv("X")\n',
     }
-    calls = _calls(tmp_path, files, cs.PythonFrontend.JEDI)
+    calls = _calls_edges_for(tmp_path, files, cs.PythonFrontend.JEDI)
     assert ("proj.caller.use", "proj.os.getenv") in calls
 
 
@@ -99,7 +101,7 @@ def test_decorated_function_still_resolves(tmp_path: Path) -> None:
         ),
         "caller.py": "from deco import work\n\n\ndef use():\n    work()\n",
     }
-    calls = _calls(tmp_path, files, cs.PythonFrontend.JEDI)
+    calls = _calls_edges_for(tmp_path, files, cs.PythonFrontend.JEDI)
     assert ("proj.caller.use", "proj.deco.work") in calls
 
 
@@ -113,12 +115,16 @@ _ALIASED_REEXPORT = {
 def test_aliased_reexport_is_the_jedi_discriminator(tmp_path: Path) -> None:
     # The heuristics drop an aliased re-export entirely; jedi follows the
     # rename through __init__ to the real definition.
-    calls = _calls(tmp_path, files=_ALIASED_REEXPORT, mode=cs.PythonFrontend.JEDI)
+    calls = _calls_edges_for(
+        tmp_path, files=_ALIASED_REEXPORT, mode=cs.PythonFrontend.JEDI
+    )
     assert ("proj.caller.use", "proj.pkg.impl.real_fn") in calls
 
 
 def test_heuristic_mode_stays_heuristic(tmp_path: Path) -> None:
-    calls = _calls(tmp_path, files=_ALIASED_REEXPORT, mode=cs.PythonFrontend.HEURISTIC)
+    calls = _calls_edges_for(
+        tmp_path, files=_ALIASED_REEXPORT, mode=cs.PythonFrontend.HEURISTIC
+    )
     assert ("proj.caller.use", "proj.pkg.impl.real_fn") not in calls
 
 

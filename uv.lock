@@ -452,6 +452,7 @@ semantic = [
 test = [
     { name = "ast-grep-py" },
     { name = "filelock" },
+    { name = "jedi" },
     { name = "libclang" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -512,6 +513,7 @@ requires-dist = [
     { name = "filelock", marker = "extra == 'test'", specifier = ">=3.12" },
     { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=1.7.2" },
     { name = "jedi", marker = "extra == 'python-semantics'", specifier = ">=0.19" },
+    { name = "jedi", marker = "extra == 'test'", specifier = ">=0.19" },
     { name = "libclang", marker = "extra == 'cpp'", specifier = ">=18.1.1" },
     { name = "libclang", marker = "extra == 'test'", specifier = ">=18.1.1" },
     { name = "loguru", specifier = ">=0.7.3" },

@@ -93,6 +93,7 @@ codebase_rag = [
 
 [project.optional-dependencies]
 test = [
+    "jedi>=0.19",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=4.0.0",

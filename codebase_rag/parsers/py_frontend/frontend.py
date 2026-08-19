@@ -102,13 +102,60 @@ def _char_to_byte_col(line_text: str, char_col: int) -> int:
     return len(line_text[:char_col].encode(cs.ENCODING_UTF8))
 
 
-def _target_of(names, repo_path: Path):
+def _single_resolvable_target(names):
+    # Exactly one inferred function/class is a usable fact; anything else
+    # (ambiguity, modules, instances) is the ceiling: no fact, never a guess.
     if len(names) != 1:
         return None
     name = names[0]
     if name.type not in _RESOLVABLE_TYPES:
         return None
     return name
+
+
+def _record_site(
+    script,
+    source_lines: list[str],
+    rel_file: str,
+    site: tuple[str, int, int],
+    repo_path: Path,
+    facts: SemanticFacts,
+) -> None:
+    import jedi
+
+    simple_name, line, byte_col = site
+    if line - 1 >= len(source_lines):
+        return
+    char_col = _byte_to_char_col(source_lines[line - 1], byte_col)
+    try:
+        names = script.infer(line, char_col)
+    except (jedi.InternalError, RecursionError, ValueError):
+        return
+    target = _single_resolvable_target(names)
+    if target is None:
+        return
+    key: CallSiteKey = (rel_file, line, byte_col, simple_name)
+    module_path = target.module_path
+    if module_path is None or not Path(module_path).is_relative_to(repo_path):
+        facts.external_sites.add(key)
+        return
+    target_rel = Path(module_path).relative_to(repo_path).as_posix()
+    try:
+        target_lines = (
+            Path(module_path).read_text(encoding=cs.ENCODING_UTF8).splitlines()
+        )
+    except (OSError, UnicodeDecodeError):
+        return
+    if target.line is None or target.line - 1 >= len(target_lines):
+        return
+    # The Pass-2 span index keys Python definitions at the def/class
+    # KEYWORD (the line's first code byte), not the name token jedi
+    # reports; the indent is ASCII so its byte and char widths agree.
+    def_line = target_lines[target.line - 1]
+    target_byte_col = len(def_line) - len(def_line.lstrip())
+    facts.resolved_call_sites[key] = ResolvedCallSite(
+        simple_name, target_rel, target.line, target_byte_col
+    )
 
 
 def _resolve_file(
@@ -120,43 +167,20 @@ def _resolve_file(
     facts: SemanticFacts,
     deadline: float,
 ) -> bool:
-    import jedi
-
-    for simple_name, line, byte_col in sites:
+    # File-local collection makes degradation ATOMIC: a file that blows its
+    # budget contributes nothing, instead of a half-resolved prefix. jedi has
+    # no cancellation API, so one slow infer() can overshoot the deadline;
+    # the post-call check then discards the whole file's facts, bounding the
+    # damage to a single call's wall time.
+    file_facts = SemanticFacts()
+    for site in sites:
         if time.monotonic() > deadline:
             return False
-        if line - 1 >= len(source_lines):
-            continue
-        char_col = _byte_to_char_col(source_lines[line - 1], byte_col)
-        try:
-            names = script.infer(line, char_col)
-        except (jedi.InternalError, RecursionError, ValueError):
-            continue
-        target = _target_of(names, repo_path)
-        if target is None:
-            continue
-        key: CallSiteKey = (rel_file, line, byte_col, simple_name)
-        module_path = target.module_path
-        if module_path is None or not str(module_path).startswith(str(repo_path) + "/"):
-            facts.external_sites.add(key)
-            continue
-        target_rel = Path(module_path).relative_to(repo_path).as_posix()
-        try:
-            target_lines = (
-                Path(module_path).read_text(encoding=cs.ENCODING_UTF8).splitlines()
-            )
-        except (OSError, UnicodeDecodeError):
-            continue
-        if target.line is None or target.line - 1 >= len(target_lines):
-            continue
-        # The Pass-2 span index keys Python definitions at the def/class
-        # KEYWORD (the line's first code byte), not the name token jedi
-        # reports; the indent is ASCII so its byte and char widths agree.
-        def_line = target_lines[target.line - 1]
-        target_byte_col = len(def_line) - len(def_line.lstrip())
-        facts.resolved_call_sites[key] = ResolvedCallSite(
-            simple_name, target_rel, target.line, target_byte_col
-        )
+        _record_site(script, source_lines, rel_file, site, repo_path, file_facts)
+    if time.monotonic() > deadline:
+        return False
+    facts.resolved_call_sites.update(file_facts.resolved_call_sites)
+    facts.external_sites.update(file_facts.external_sites)
     return True
 
 
