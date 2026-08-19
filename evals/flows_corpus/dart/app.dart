@@ -3,6 +3,7 @@ void leak() {
   print(token);
 }
 
-String safe() {
-  return "constant";
+void safe() {
+  var fixed = "constant";
+  print(fixed);
 }

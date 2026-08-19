@@ -4,7 +4,8 @@ class App {
         System.out.println(token);
     }
 
-    String safe() {
-        return "constant";
+    void safe() {
+        String fixed = "constant";
+        System.out.println(fixed);
     }
 }

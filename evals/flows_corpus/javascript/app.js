@@ -5,5 +5,5 @@ function leak() {
 
 function safe() {
   const fixed = "constant";
-  return fixed;
+  console.log(fixed);
 }

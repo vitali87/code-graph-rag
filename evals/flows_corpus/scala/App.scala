@@ -4,5 +4,8 @@ object App {
     println(token)
   }
 
-  def safe(): String = "constant"
+  def safe(): Unit = {
+    val fixed = "constant"
+    println(fixed)
+  }
 }

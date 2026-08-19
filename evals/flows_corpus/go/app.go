@@ -10,6 +10,7 @@ func leak() {
 	fmt.Println(token)
 }
 
-func safe() string {
-	return "constant"
+func safe() {
+	fixed := "constant"
+	fmt.Println(fixed)
 }

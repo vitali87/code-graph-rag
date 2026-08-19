@@ -8,4 +8,4 @@ def leak():
 
 def safe():
     fixed = "constant"
-    return fixed
+    print(fixed)
