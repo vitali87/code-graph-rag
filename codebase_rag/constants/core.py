@@ -118,8 +118,14 @@ KEYWORD_CONSTRUCTOR = "constructor"
 HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
+DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 CGR_STATE_FILENAMES: frozenset[str] = frozenset(
-    {HASH_CACHE_FILENAME, DIR_MTIMES_FILENAME, PARSER_FINGERPRINT_FILENAME}
+    {
+        HASH_CACHE_FILENAME,
+        DIR_MTIMES_FILENAME,
+        PARSER_FINGERPRINT_FILENAME,
+        DELOMBOK_STATE_FILENAME,
+    }
 )
 
 # Inputs to the parser fingerprint: everything that changes how source files

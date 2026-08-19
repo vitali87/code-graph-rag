@@ -38,7 +38,17 @@ def _write_repo(repo: Path) -> None:
     (repo / "src/main/java/com/app/Widget.java").write_text(_RAW, encoding="utf-8")
 
 
+def _fake_java(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        java_lombok.shutil,
+        "which",
+        lambda command: "/fake/java" if command == "java" else None,
+    )
+
+
 def _fake_delombok(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_java(monkeypatch)
+
     def fake_run(java, jar, source_root, out_dir):
         for original in Path(source_root).rglob("*.java"):
             target = Path(out_dir) / original.relative_to(source_root)
@@ -57,7 +67,7 @@ def _fake_delombok(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _run(repo: Path) -> MagicMock:
+def _index_repo_with_mock_ingestor(repo: Path) -> MagicMock:
     parsers, queries = load_parsers()
     mock = MagicMock()
     GraphUpdater(
@@ -84,7 +94,7 @@ def test_expanded_member_lands_in_the_graph(
     repo = tmp_path / "proj"
     _write_repo(repo)
     _fake_delombok(monkeypatch)
-    mock = _run(repo)
+    mock = _index_repo_with_mock_ingestor(repo)
     assert any("Widget.getName" in qn for qn in _method_qns(mock))
     # The overlay never touches the checked-in source.
     assert "@Getter" in (repo / "src/main/java/com/app/Widget.java").read_text()
@@ -95,8 +105,9 @@ def test_without_a_jar_raw_source_parses_unchanged(
 ) -> None:
     repo = tmp_path / "proj"
     _write_repo(repo)
+    _fake_java(monkeypatch)
     monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: None)
-    mock = _run(repo)
+    mock = _index_repo_with_mock_ingestor(repo)
     assert not any("Widget.getName" in qn for qn in _method_qns(mock))
 
 
@@ -109,6 +120,7 @@ def test_lombok_free_build_never_invokes_delombok(
     (repo / "src/main/java/com/app/Plain.java").write_text(
         "package com.app;\npublic class Plain {}\n", encoding="utf-8"
     )
+    _fake_java(monkeypatch)
     monkeypatch.setattr(
         java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok.jar")
     )
@@ -118,7 +130,7 @@ def test_lombok_free_build_never_invokes_delombok(
         "_run_delombok",
         lambda *a: calls.append("run") or True,
     )
-    _run(repo)
+    _index_repo_with_mock_ingestor(repo)
     assert calls == []
 
 
@@ -159,5 +171,66 @@ def test_hash_cache_keys_the_checked_in_source(
 def test_real_delombok_end_to_end(tmp_path: Path) -> None:
     repo = tmp_path / "proj"
     _write_repo(repo)
-    mock = _run(repo)
+    mock = _index_repo_with_mock_ingestor(repo)
     assert any("Widget.getName" in qn for qn in _method_qns(mock))
+
+
+def test_no_java_degrades_to_raw_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    monkeypatch.setattr(java_lombok.shutil, "which", lambda _c: None)
+    monkeypatch.setattr(
+        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok.jar")
+    )
+    mock = _index_repo_with_mock_ingestor(repo)
+    assert not any("Widget.getName" in qn for qn in _method_qns(mock))
+
+
+def test_jar_appearing_after_a_raw_index_forces_the_reparse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The checked-in bytes never changed, so the hash cache alone would skip
+    # every Java file; the persisted overlay identity forces the affected
+    # files through a reparse when the jar appears (and symmetrically when
+    # it vanishes).
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    _fake_java(monkeypatch)
+    monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: None)
+    parsers, queries = load_parsers()
+    mock = MagicMock()
+    updater = GraphUpdater(
+        ingestor=mock,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=ALL_ENABLED,
+    )
+    updater.run()
+    assert not any(".getName(" in qn for qn in _method_qns(mock))
+    _fake_delombok(monkeypatch)
+    mock.reset_mock()
+    updater.run()
+    # The reused updater re-registers the class under a duplicate-name
+    # suffix (Widget@N), so the assertion matches the METHOD name only.
+    assert any(".getName(" in qn for qn in _method_qns(mock))
+    monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: None)
+    mock.reset_mock()
+    updater.run()
+    assert not any(".getName(" in qn for qn in _method_qns(mock))
+
+
+def test_maven_cache_prefers_the_numerically_newest_jar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    m2 = tmp_path / ".m2"
+    for version in ("1.18.9", "1.18.30"):
+        jar_dir = m2 / "repository/org/projectlombok/lombok" / version
+        jar_dir.mkdir(parents=True)
+        (jar_dir / f"lombok-{version}.jar").write_bytes(b"jar")
+    monkeypatch.setattr(java_lombok.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(java_lombok.settings, "LOMBOK_JAR", None)
+    jar = java_lombok.find_lombok_jar()
+    assert jar is not None and jar.name == "lombok-1.18.30.jar"

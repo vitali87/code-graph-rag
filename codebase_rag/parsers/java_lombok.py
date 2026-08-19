@@ -13,6 +13,7 @@ source exactly as before.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import subprocess
@@ -32,13 +33,23 @@ _M2_LOMBOK_GLOB = "repository/org/projectlombok/lombok/*/lombok-*.jar"
 _JAR_VERSION_RE = re.compile(r"lombok-(.+)\.jar$")
 
 
+def _version_sort_key(jar: Path) -> tuple:
+    # Numeric-aware: lombok-1.18.30 outranks lombok-1.18.9, which plain
+    # lexicographic path sorting gets backwards.
+    version = lombok_jar_version(jar)
+    parts = []
+    for piece in version.split("."):
+        parts.append((0, int(piece)) if piece.isdigit() else (1, piece))
+    return tuple(parts)
+
+
 def find_lombok_jar() -> Path | None:
     configured = settings.LOMBOK_JAR
     if configured:
         path = Path(configured)
         return path if path.is_file() else None
     m2 = Path.home() / ".m2"
-    candidates = sorted(m2.glob(_M2_LOMBOK_GLOB))
+    candidates = sorted(m2.glob(_M2_LOMBOK_GLOB), key=_version_sort_key)
     return candidates[-1] if candidates else None
 
 
@@ -134,3 +145,17 @@ def build_delombok_overlay(repo_path: Path) -> dict[str, bytes]:
     if overlay:
         logger.info(ls.DELOMBOK_OVERLAY_BUILT, count=len(overlay))
     return overlay
+
+
+def overlay_identity(overlay: dict[str, bytes]) -> str:
+    """A stable digest of the overlay's effect: which files it covers and what
+    it expands them to. Any change (jar appearing/vanishing, version bump,
+    annotation edits changing the expansion) must force those files through a
+    reparse, or the graph keeps stale generated members."""
+    if not overlay:
+        return ""
+    digest = hashlib.sha256()
+    for key in sorted(overlay):
+        digest.update(key.encode(cs.ENCODING_UTF8))
+        digest.update(hashlib.sha256(overlay[key]).digest())
+    return digest.hexdigest()
