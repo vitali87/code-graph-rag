@@ -174,41 +174,30 @@ def write_manifest(
     return out_path
 
 
-def verify_index(
-    index_dir: Path, trusted_manifest_sha256: str | None = None
-) -> list[str]:
-    """Every way the artifact/manifest binding can be broken, as messages;
-    empty means verified.
-
-    Local verification alone proves internal consistency, not authorship: a
-    writer who can replace both an artifact and its recorded hash defeats it.
-    Passing trusted_manifest_sha256 (the digest an attestation vouches for)
-    anchors the whole chain: manifest bytes -> artifact hashes -> artifacts.
-    """
-    problems: list[str] = []
-    manifest_path = index_dir / MANIFEST_FILE
-    # is_file() follows symlinks: a crafted index could point the manifest or
-    # an allowlisted artifact name outside index_dir and leak an external
-    # file's digest through the mismatch message.
+def _load_manifest(manifest_path: Path) -> tuple[dict | None, list[str]]:
     if manifest_path.is_symlink() or not manifest_path.is_file():
-        return [f"manifest missing: {manifest_path}"]
-    if trusted_manifest_sha256 is not None:
-        actual_manifest = _sha256(manifest_path)
-        if actual_manifest != trusted_manifest_sha256.lower():
-            return [
-                "manifest digest does not match the trusted digest: "
-                f"expected {trusted_manifest_sha256.lower()} got {actual_manifest}"
-            ]
+        return None, [f"manifest missing: {manifest_path}"]
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        return [f"manifest unreadable: {error}"]
+        return None, [f"manifest unreadable: {error}"]
     if not isinstance(manifest, dict):
-        return ["manifest is not a JSON object"]
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict) or not artifacts:
-        problems.append("manifest lists no artifacts")
-        artifacts = {}
+        return None, ["manifest is not a JSON object"]
+    return manifest, []
+
+
+def _check_trusted_digest(manifest_path: Path, trusted: str) -> list[str]:
+    actual = _sha256(manifest_path)
+    if actual != trusted.lower():
+        return [
+            "manifest digest does not match the trusted digest: "
+            f"expected {trusted.lower()} got {actual}"
+        ]
+    return []
+
+
+def _check_artifacts(index_dir: Path, artifacts: dict) -> list[str]:
+    problems: list[str] = []
     if cs.PROTOBUF_INDEX_FILE in artifacts and cs.PROTOBUF_NODES_FILE in artifacts:
         problems.append(
             "mixed index layouts: manifest covers both joint and split artifacts"
@@ -232,6 +221,33 @@ def verify_index(
     for name in _ARTIFACT_FILES:
         if (index_dir / name).is_file() and name not in artifacts:
             problems.append(f"artifact not covered by manifest: {name}")
+    return problems
+
+
+def verify_index(
+    index_dir: Path, trusted_manifest_sha256: str | None = None
+) -> list[str]:
+    """Every way the artifact/manifest binding can be broken, as messages;
+    empty means verified.
+
+    Local verification alone proves internal consistency, not authorship: a
+    writer who can replace both an artifact and its recorded hash defeats it.
+    Passing trusted_manifest_sha256 (the digest an attestation vouches for)
+    anchors the whole chain: manifest bytes -> artifact hashes -> artifacts.
+    """
+    manifest_path = index_dir / MANIFEST_FILE
+    manifest, problems = _load_manifest(manifest_path)
+    if manifest is None:
+        return problems
+    if trusted_manifest_sha256 is not None:
+        digest_problems = _check_trusted_digest(manifest_path, trusted_manifest_sha256)
+        if digest_problems:
+            return digest_problems
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict) or not artifacts:
+        problems.append("manifest lists no artifacts")
+        artifacts = {}
+    problems.extend(_check_artifacts(index_dir, artifacts))
     if not problems:
         claimed = manifest.get("coverage")
         actual_coverage = _coverage_summary(index_dir)
