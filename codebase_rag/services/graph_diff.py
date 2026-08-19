@@ -66,7 +66,16 @@ def _schema_hash(index_dir: Path) -> str | None:
 def _require_same_schema(old_dir: Path, new_dir: Path) -> None:
     old_hash = _schema_hash(old_dir)
     new_hash = _schema_hash(new_dir)
-    if old_hash is not None and new_hash is not None and old_hash != new_hash:
+    if old_hash is None or new_hash is None:
+        # An absent/malformed manifest or missing hash means compatibility
+        # cannot be verified at all; proceeding would produce a delta with
+        # unknowable field semantics.
+        missing = old_dir if old_hash is None else new_dir
+        raise DiffError(
+            f"schema metadata missing: no codec_schema_sha256 for {missing}; "
+            "re-export with a manifest before diffing"
+        )
+    if old_hash != new_hash:
         raise DiffError(
             "schema mismatch: the artifacts were produced by different codec "
             f"schemas ({old_hash[:12]} vs {new_hash[:12]}); field semantics "
@@ -76,12 +85,17 @@ def _require_same_schema(old_dir: Path, new_dir: Path) -> None:
 
 def _payload_fields(message) -> JsonDict:
     fields: JsonDict = {}
-    for descriptor, value in message.ListFields():
-        # Repeated containers expose extend(); scalars never do. Avoids the
-        # descriptor.label deprecation and the property/method drift of
-        # is_repeated across protobuf versions.
+    # Iterate the DESCRIPTOR, not ListFields(): proto3 implicit-presence
+    # scalars (flow_covered=false, start_line=0) are omitted by ListFields,
+    # which would report one side of a boolean flip as null instead of its
+    # declared default. Repeated containers expose extend(); scalars never do
+    # (avoids the descriptor.label deprecation and the property/method drift
+    # of is_repeated across protobuf versions).
+    for descriptor in message.DESCRIPTOR.fields:
+        value = getattr(message, descriptor.name)
         if hasattr(value, "extend"):
-            fields[descriptor.name] = [str(v) for v in value]
+            if value:
+                fields[descriptor.name] = [str(v) for v in value]
         else:
             fields[descriptor.name] = value
     return fields

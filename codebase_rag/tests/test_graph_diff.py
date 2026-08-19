@@ -107,3 +107,51 @@ def test_cross_schema_artifacts_refuse_to_diff(tmp_path: Path) -> None:
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(DiffError, match="schema mismatch"):
         diff_indexes(out_a, out_b)
+
+
+def test_missing_manifest_refuses_to_diff(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    _write(repo, _BASE)
+    out_a = tmp_path / "out_a"
+    out_b = tmp_path / "out_b"
+    _export(repo, out_a)
+    _export(repo, out_b)
+    (out_b / MANIFEST_FILE).unlink()
+    with pytest.raises(DiffError, match="schema metadata missing"):
+        diff_indexes(out_a, out_b)
+
+
+def test_missing_schema_hash_refuses_to_diff(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    _write(repo, _BASE)
+    out_a = tmp_path / "out_a"
+    out_b = tmp_path / "out_b"
+    _export(repo, out_a)
+    _export(repo, out_b)
+    manifest_path = out_a / MANIFEST_FILE
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["codec_schema_sha256"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(DiffError, match="schema metadata missing"):
+        diff_indexes(out_a, out_b)
+
+
+def test_bool_flip_reports_declared_defaults_not_null(tmp_path: Path) -> None:
+    from codebase_rag.capture import resolve_capture
+
+    repo_old = tmp_path / "old" / "proj"
+    repo_new = tmp_path / "new" / "proj"
+    _write(repo_old, _BASE)
+    _write(repo_new, _BASE)
+    out_old = tmp_path / "out_old"
+    out_new = tmp_path / "out_new"
+    _export(repo_old, out_old, capture=resolve_capture(["defaults"]))
+    _export(repo_new, out_new, capture=ALL_ENABLED)
+    diff = diff_indexes(out_old, out_new)
+    changed = diff["nodes"]["changed"]
+    flips = [
+        delta["flow_covered"] for delta in changed.values() if "flow_covered" in delta
+    ]
+    assert flips
+    for flip in flips:
+        assert flip == {"old": False, "new": True}
