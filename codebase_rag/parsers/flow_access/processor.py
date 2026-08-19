@@ -3021,11 +3021,11 @@ class FlowProcessor:
     def _apply_assignment(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:
         left = node.child_by_field_name(cs.TS_FIELD_LEFT)
         right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
-        if right is not None and right.type == cs.TS_PY_IDENTIFIER and right.text:
-            # A closure assigned ANYWHERE (holder.callback = send, d[k] = send)
-            # escapes, even when the non-identifier target makes this
-            # assignment otherwise untrackable (issue #1211 review).
-            self._note_capture_escape(right.text.decode(cs.ENCODING_UTF8))
+        # A closure carried ANYWHERE in the RHS (holder.callback = send,
+        # d[k] = (send), x = send if c else other) escapes, even when the
+        # non-identifier target makes the assignment otherwise untrackable
+        # (issue #1211 review); direct-call callees are exempt.
+        self._note_capture_escapes_in(right)
         if (
             left is None
             or right is None
@@ -3228,10 +3228,11 @@ class FlowProcessor:
         result = _EMPTY_TAINT
         tainted_here = False
         for child in _return_value_nodes(node):
+            # Any returned expression may hand the closure to the caller
+            # (`return send`, `return send if c else other`): it escapes.
+            self._note_capture_escapes_in(child)
             if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
                 name = child.text.decode(cs.ENCODING_UTF8)
-                # `return send` hands the closure to the caller: it escapes.
-                self._note_capture_escape(name)
                 if (taint := tainted.get(name)) is not None:
                     tainted_here = True
                     result = _merge_taint(result, taint)
@@ -3617,6 +3618,27 @@ class FlowProcessor:
         record = self._pending_captures.get(name)
         if record is not None:
             record.escaped = True
+
+    def _note_capture_escapes_in(self, expr: Node | None) -> None:
+        # Every identifier VALUE anywhere in this expression escapes its
+        # closure: wrappers, conditionals, containers, and call ARGUMENTS all
+        # hand the function object onward. The one exception is a call's
+        # callee position -- `send()` is the direct invocation the
+        # call-relative path handles -- so calls recurse into arguments only.
+        # Over-marking is conservative-safe (escape means the def-site MAY
+        # snapshot), never a lost flow.
+        if expr is None:
+            return
+        if expr.type == cs.TS_PY_CALL:
+            self._note_capture_escapes_in(
+                expr.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+            )
+            return
+        if expr.type == cs.TS_PY_IDENTIFIER and expr.text is not None:
+            self._note_capture_escape(expr.text.decode(cs.ENCODING_UTF8))
+            return
+        for child in expr.named_children:
+            self._note_capture_escapes_in(child)
 
     def _flush_pending_captures(self) -> None:
         # Scope end: an escaped closure may run at ANY time with any cell

@@ -1384,3 +1384,35 @@ def test_returned_closure_escapes(tmp_path: Path) -> None:
         )
     }
     assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_conditionally_returned_closure_escapes(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler(flag):\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    return send if flag else None\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_assigned_call_result_is_not_an_escape(tmp_path: Path) -> None:
+    # `x = send()` is a direct invocation whose RESULT is stored, not an
+    # escape of the closure itself: the call-relative path governs, so a
+    # call after the unconditional clean reassign stays silent.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    x = send()\n"
+            "    return x\n"
+        )
+    }
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
