@@ -569,6 +569,43 @@ _PHP_DESCRIPTOR = LanguageDescriptor(
 
 # Non-Python languages with a direct-sink descriptor. Python keeps its own
 # handle-aware walk; each new language lands one entry (plus registry rows).
+_SCALA_DESCRIPTOR = LanguageDescriptor(
+    # Scala calls are ordinary `call_expression` nodes whose `function` field
+    # text is already the dotted callee (`Console.err.println`), so the
+    # standard lean walk applies with no leaf path (issue #1256).
+    call_type=cs.TS_SCALA_CALL_EXPRESSION,
+    string_type=cs.TS_SCALA_STRING,
+    # A Scala `string` has no content child at all; string_literal() reads a
+    # childless string inline from node.text with the quotes stripped.
+    string_content_type=cs.TS_SCALA_STRING,
+    keyword_arg_type=None,
+    nested_scope_types=frozenset(
+        {cs.TS_SCALA_FUNCTION_DEFINITION, cs.TS_SCALA_LAMBDA_EXPRESSION}
+    ),
+    # Scala is declare-at-point (`val x = ...` shadows only later uses). Sink
+    # heads (println, Console, System, Files, sys) are Predef/JDK effective
+    # globals, so the catalog is not import-gated.
+    identifier_type=cs.TS_SCALA_IDENTIFIER,
+    declarator_type=cs.TS_SCALA_VAL_DEFINITION,
+    params_field=cs.FIELD_PARAMETERS,
+    block_scope_type=cs.TS_SCALA_BLOCK,
+    extra_declarator_types=frozenset({cs.TS_SCALA_VAR_DEFINITION}),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
+    sinks_require_import=False,
+    hoisted_declarations=False,
+    decl_in_own_initializer=False,
+    declaration_statement_type=None,
+    macro_type=None,
+    # Inert: no Scala member-read rows; env access is call-shaped (sys.env(k),
+    # System.getenv(k)). Wired to the real field_expression shape regardless.
+    member_expression_type=cs.TS_SCALA_FIELD_EXPRESSION,
+    subscript_type=cs.TS_SCALA_CALL_EXPRESSION,
+    object_field=cs.FIELD_VALUE,
+    property_field=cs.FIELD_FIELD,
+    subscript_index_field=cs.TS_FIELD_ARGUMENTS,
+)
+
 LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.JS: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.TS: _JS_TS_DESCRIPTOR,
@@ -585,4 +622,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.LUA: _LUA_DESCRIPTOR,
     cs.SupportedLanguage.PHP: _PHP_DESCRIPTOR,
     cs.SupportedLanguage.DART: _DART_DESCRIPTOR,
+    cs.SupportedLanguage.SCALA: _SCALA_DESCRIPTOR,
 }

@@ -347,6 +347,13 @@ def string_literal(
         return _template_literal(arg, content_type, substitution_type)
     if arg.type != string_type:
         return DYNAMIC_TARGET
+    if not arg.children and arg.text is not None:
+        # A childless string node (Scala `string`) carries its content only in
+        # node.text; strip the surrounding quotes. A bare quote pair is an
+        # empty literal, which carries no identity.
+        text = arg.text.decode(cs.ENCODING_UTF8)
+        stripped = text[1:-1] if len(text) >= 2 else ""
+        return stripped if stripped else DYNAMIC_TARGET
     # An f-string is a `string` node whose content is split around
     # `interpolation` children; keep every fragment and render each
     # interpolation as its literal `{expr}` source so the identity stays a
