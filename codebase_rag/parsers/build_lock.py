@@ -40,15 +40,49 @@ def _try_lock(fd: int) -> bool:
     return True
 
 
-def _clear_legacy_lock_dir(lock: Path) -> None:
+_LEGACY_STALE_SECONDS = 600.0
+
+
+def _clear_stale_legacy_lock_dir(lock: Path) -> None:
     # Pre-#1227 versions used a mkdir lock at this same path; a crashed
     # holder's leftover directory would otherwise block the lock file from
-    # ever being created.
+    # ever being created. During a mixed-version upgrade window that
+    # directory can belong to a LIVE old-version builder, so it is removed
+    # only when its holder is provably dead (POSIX pid liveness) or the
+    # directory has outlived any plausible build; otherwise the acquire loop
+    # just keeps polling.
     if not lock.is_dir():
         return None
+    pid: int | None
+    try:
+        pid = int((lock / "pid").read_text().strip())
+    except (OSError, ValueError):
+        pid = None
+    if pid is not None and os.name == "posix":
+        try:
+            os.kill(pid, 0)
+            return None
+        except ProcessLookupError:
+            pass
+        except OSError:
+            return None
+    else:
+        try:
+            age = time.time() - lock.stat().st_mtime
+        except OSError:
+            return None
+        if age <= _LEGACY_STALE_SECONDS:
+            return None
     try:
         (lock / "pid").unlink(missing_ok=True)
         lock.rmdir()
+    except OSError:
+        return None
+
+
+def _open_lock_file(lock: Path) -> int | None:
+    try:
+        return os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError:
         return None
 
@@ -65,20 +99,22 @@ def acquire_build_lock(
     another worker already produced a fresh artifact, the tries ran out, or
     the lock file cannot be opened at all.
     """
-    _clear_legacy_lock_dir(lock)
+    fd: int | None = None
     try:
-        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
-    except OSError:
+        for _ in range(tries):
+            if fd is None:
+                _clear_stale_legacy_lock_dir(lock)
+                fd = _open_lock_file(lock)
+            if fd is not None and _try_lock(fd):
+                handle, fd = BuildLock(fd), None
+                return handle
+            time.sleep(poll_seconds)
+            if artifact_fresh():
+                return None
         return None
-    for _ in range(tries):
-        if _try_lock(fd):
-            return BuildLock(fd)
-        time.sleep(poll_seconds)
-        if artifact_fresh():
+    finally:
+        if fd is not None:
             os.close(fd)
-            return None
-    os.close(fd)
-    return None
 
 
 def release_build_lock(handle: BuildLock | None) -> None:

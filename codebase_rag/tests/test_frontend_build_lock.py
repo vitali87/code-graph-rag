@@ -3,6 +3,7 @@
 # msvcrt.locking), so the kernel releases it on process death and no stale
 # lock can exist; these tests prove mutual exclusion against a real second
 # process and automatic release when that process is SIGKILLed.
+import os
 import subprocess
 import sys
 import textwrap
@@ -86,13 +87,46 @@ def test_waiter_yields_to_fresh_artifact(tmp_path: Path) -> None:
         holder.wait()
 
 
-def test_legacy_mkdir_lock_directory_is_cleared(tmp_path: Path) -> None:
+def test_dead_legacy_holder_directory_is_cleared(tmp_path: Path) -> None:
     # A crashed pre-#1227 holder left a mkdir-lock DIRECTORY at this path;
     # the file lock must displace it instead of failing to open forever.
     lock = tmp_path / ".build-lock"
     lock.mkdir()
-    (lock / "pid").write_text("12345")
+    if os.name == "posix":
+        proc = subprocess.run(
+            [sys.executable, "-c", "import os; print(os.getpid())"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        (lock / "pid").write_text(proc.stdout.strip())
+    else:
+        stale = time.time() - 3600
+        os.utime(lock, (stale, stale))
     handle = acquire_build_lock(lock, lambda: False, tries=1, poll_seconds=0.0)
     assert handle is not None
     assert lock.is_file()
     release_build_lock(handle)
+
+
+def test_old_bare_legacy_directory_is_cleared(tmp_path: Path) -> None:
+    # The released mkdir design wrote nothing inside the directory, so a
+    # bare leftover is reclaimed once it has outlived any plausible build.
+    lock = tmp_path / ".build-lock"
+    lock.mkdir()
+    stale = time.time() - 3600
+    os.utime(lock, (stale, stale))
+    handle = acquire_build_lock(lock, lambda: False, tries=1, poll_seconds=0.0)
+    assert handle is not None
+    assert lock.is_file()
+    release_build_lock(handle)
+
+
+def test_live_legacy_holder_keeps_the_path_busy(tmp_path: Path) -> None:
+    # A mixed-version upgrade window: an old-version builder still holds the
+    # mkdir lock. Its directory must survive; acquisition just times out.
+    lock = tmp_path / ".build-lock"
+    lock.mkdir()
+    (lock / "pid").write_text(str(os.getpid()))
+    assert acquire_build_lock(lock, lambda: False, tries=3, poll_seconds=0.0) is None
+    assert lock.is_dir()

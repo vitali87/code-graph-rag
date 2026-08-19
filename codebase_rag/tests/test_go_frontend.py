@@ -375,8 +375,11 @@ def test_one_failing_module_degrades_only_itself(
     monkeypatch.setattr(fe.shutil, "which", lambda _name: "/usr/bin/go")
     monkeypatch.setattr(fe, "_build_tool", lambda _go: Path("/fake/gotypes"))
 
+    invoked: list[Path] = []
+
     def _run(cmd, **kwargs):
         root = Path(cmd[1])
+        invoked.append(root)
         if root == repo:
             raise subprocess.TimeoutExpired(cmd, 1)
         return subprocess.CompletedProcess(
@@ -410,3 +413,4 @@ def test_one_failing_module_degrades_only_itself(
     }
     assert facts.external_sites == set()
     assert facts.implements == []
+    assert invoked == [repo, repo / "sub"]
