@@ -118,6 +118,69 @@ def test_python_os_environ_subscript_with_aliased_import(tmp_path: Path) -> None
     )
 
 
+def test_python_environ_from_import_subscript_read_is_env_source(
+    tmp_path: Path,
+) -> None:
+    # `from os import environ` binds the imported member directly; the subscript
+    # read of that binding is still ENV source K (issue #1324).
+    files = {"m.py": "from os import environ\n\nprint(environ['K'])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_without_os_import_is_not_env_source(
+    tmp_path: Path,
+) -> None:
+    # An unimported `os` is never the stdlib module: a local `os = Fake()` with
+    # an `environ` attribute must not create a false ENV source (issue #1324).
+    files = {
+        "m.py": (
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "def leak():\n"
+            "    os = Fake()\n"
+            "    print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_local_rebind_shadows_import(
+    tmp_path: Path,
+) -> None:
+    # Python makes a name assigned anywhere in a function local for the whole
+    # function, so a local `os = Fake()` shadows the module-level import and
+    # the read is not an ENV source (issue #1324).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "def leak():\n"
+            "    os = Fake()\n"
+            "    print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_python_os_environ_subscript_dynamic_key_is_dynamic_target(
     tmp_path: Path,
 ) -> None:

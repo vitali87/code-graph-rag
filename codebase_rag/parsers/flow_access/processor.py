@@ -44,6 +44,7 @@ from ..io_access import (
     match_normalised,
     normalise,
     positional_arg_node,
+    python_locally_assigned_names,
     registry_match,
     rust_unwrap_result,
     scope_seed_nodes,
@@ -3094,13 +3095,25 @@ class FlowProcessor:
         # so an aliased import (`import os as os_` -> `os_.environ["K"]`) still
         # reads `os.environ`, then matched against the shared member-read
         # catalog; a non-string index keeps the <dynamic> identity, exactly
-        # like the lean member walks.
+        # like the lean member walks. The written receiver head must be an
+        # imported name (an unimported `os` is a local or a NameError, never
+        # the stdlib module), and a name assigned anywhere in the enclosing
+        # Python scope is local for the whole scope, shadowing the import.
         obj = node.child_by_field_name(cs.FIELD_VALUE)
         if obj is None or obj.text is None:
             return None
         obj_text = obj.text.decode(cs.ENCODING_UTF8)
+        raw_head, _, _ = obj_text.partition(cs.SEPARATOR_DOT)
+        if ctx.import_map.get(raw_head) is None:
+            return None
+        scope = self._py_scope_of(node)
+        if scope is not None and raw_head in python_locally_assigned_names(scope):
+            return None
+        normalised = normalise(obj_text, ctx.import_map)
+        if normalised is None:
+            return None
         for prefix, kind in IO_MEMBER_READS.get(ctx.language, ()):
-            if normalise(obj_text, ctx.import_map) != prefix:
+            if normalised != prefix:
                 continue
             index = node.child_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
             identity = (
@@ -3109,6 +3122,21 @@ class FlowProcessor:
                 else DYNAMIC_TARGET
             )
             return HandleBinding(kind=kind, identity=identity)
+        return None
+
+    @staticmethod
+    def _py_scope_of(node: Node) -> Node | None:
+        # The innermost Python scope containing a node: a def/class body (the
+        # assignment locality rule is whole-body) or the module.
+        scope = node.parent
+        while scope is not None:
+            if scope.type in (
+                cs.TS_PY_FUNCTION_DEFINITION,
+                cs.TS_PY_CLASS_DEFINITION,
+                cs.TS_PY_MODULE,
+            ):
+                return scope
+            scope = scope.parent
         return None
 
     def _apply_call(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:

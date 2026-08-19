@@ -7,7 +7,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import cpp_declarator_name
-from .constants import DYNAMIC_TARGET
+from .constants import DYNAMIC_TARGET, PY_SCOPE_BOUNDARIES
 from .descriptor import LanguageDescriptor
 
 # Definition nodes whose BODY is a separate scope but whose HEADER (default arg
@@ -35,6 +35,37 @@ def scope_seed_nodes(caller_node: Node) -> list[Node]:
     # the enclosing scope. For a module it is every child.
     body = _definition_body(caller_node)
     return list(body.children) if body is not None else list(caller_node.children)
+
+
+def python_locally_assigned_names(scope_node: Node) -> set[str]:
+    # Plain identifiers assigned anywhere in this scope's OWN body (nested
+    # defs/classes pruned): assignment / with-as / for targets. Python makes a
+    # name assigned anywhere in a function local for the WHOLE function, so any
+    # such name shadows a same-named module import even before the assignment
+    # (a use before it is UnboundLocalError).
+    names: set[str] = set()
+    stack = list(scope_seed_nodes(scope_node))
+    while stack:
+        node = stack.pop()
+        if node.type in PY_SCOPE_BOUNDARIES:
+            continue
+        target: Node | None = None
+        if node.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
+            target = node.child_by_field_name(cs.TS_FIELD_LEFT)
+        elif node.type == cs.TS_PY_AS_PATTERN:
+            alias = next(
+                (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
+                None,
+            )
+            target = alias.children[0] if alias and alias.children else None
+        if (
+            target is not None
+            and target.type == cs.TS_PY_IDENTIFIER
+            and target.text is not None
+        ):
+            names.add(target.text.decode(cs.ENCODING_UTF8))
+        stack.extend(node.children)
+    return names
 
 
 def definition_header_nodes(node: Node) -> list[Node]:

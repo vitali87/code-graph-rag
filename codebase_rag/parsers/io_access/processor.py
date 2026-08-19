@@ -40,6 +40,7 @@ from .extract import (
     literal_target,
     match_normalised,
     positional_arg_node,
+    python_locally_assigned_names,
     registry_match,
     rust_unwrap_result,
     scope_seed_nodes,
@@ -471,33 +472,7 @@ class IOAccessProcessor:
         return handles
 
     def _locally_assigned_names(self, caller_node: Node) -> set[str]:
-        # Plain identifiers assigned anywhere in this scope's OWN body (nested
-        # defs/classes pruned): assignment / with-as / for targets. Any such name is
-        # local for the whole function, so an inherited handle of that name is
-        # shadowed. Dotted attribute targets (self.x) are not locals, so skipped.
-        names: set[str] = set()
-        stack = list(scope_seed_nodes(caller_node))
-        while stack:
-            node = stack.pop()
-            if node.type in PY_SCOPE_BOUNDARIES:
-                continue
-            target: Node | None = None
-            if node.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
-                target = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            elif node.type == cs.TS_PY_AS_PATTERN:
-                alias = next(
-                    (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
-                    None,
-                )
-                target = alias.children[0] if alias and alias.children else None
-            if (
-                target is not None
-                and target.type == cs.TS_PY_IDENTIFIER
-                and target.text is not None
-            ):
-                names.add(target.text.decode(cs.ENCODING_UTF8))
-            stack.extend(node.children)
-        return names
+        return python_locally_assigned_names(caller_node)
 
     def _collect_scope_var_handles(
         self,
