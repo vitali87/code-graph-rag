@@ -162,6 +162,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["T201"]
 "benchmarks/**" = ["T201"]
+"evals/flows_corpus/**" = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"
