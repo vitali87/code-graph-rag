@@ -1416,3 +1416,21 @@ def test_assigned_call_result_is_not_an_escape(tmp_path: Path) -> None:
         )
     }
     assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_keyword_argument_label_is_not_an_escape(tmp_path: Path) -> None:
+    # `other(send=None)` names a PARAMETER of other; the closure never
+    # travels, so the call-relative silence after the clean reassign holds.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def other(send=None):\n    return send\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    other(send=None)\n"
+            "    send()\n"
+        )
+    }
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))

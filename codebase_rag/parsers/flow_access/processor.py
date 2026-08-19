@@ -3568,12 +3568,15 @@ class FlowProcessor:
             return
         if (previous := self._pending_captures.pop(name, None)) is not None:
             self._commit_pending_capture(previous)
+        snapshot = {
+            fv: taint for fv in free_vars if (taint := state.get(fv)) is not None
+        }
         self._pending_captures[name] = _PendingCapture(
             nested_qn=nested_qn,
             def_node=def_node,
             caller_qn=ctx.caller_qn,
             free_vars=free_vars,
-            snapshot={fv: t for fv in free_vars if (t := state.get(fv)) is not None},
+            snapshot=snapshot,
         )
 
     def _commit_capture_state(
@@ -3609,10 +3612,10 @@ class FlowProcessor:
         if record is None:
             return
         record.called = True
-        self._commit_capture_state(
-            record,
-            {fv: t for fv in record.free_vars if (t := state.get(fv)) is not None},
-        )
+        cell_state = {
+            fv: taint for fv in record.free_vars if (taint := state.get(fv)) is not None
+        }
+        self._commit_capture_state(record, cell_state)
 
     def _note_capture_escape(self, name: str) -> None:
         record = self._pending_captures.get(name)
@@ -3636,6 +3639,11 @@ class FlowProcessor:
             return
         if expr.type == cs.TS_PY_IDENTIFIER and expr.text is not None:
             self._note_capture_escape(expr.text.decode(cs.ENCODING_UTF8))
+            return
+        if expr.type == cs.TS_PY_KEYWORD_ARGUMENT:
+            # `other(send=None)`: the label names a PARAMETER, not the
+            # closure; only the value can carry it onward.
+            self._note_capture_escapes_in(expr.child_by_field_name(cs.FIELD_VALUE))
             return
         for child in expr.named_children:
             self._note_capture_escapes_in(child)
