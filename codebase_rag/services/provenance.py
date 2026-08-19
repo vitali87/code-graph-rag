@@ -1,0 +1,191 @@
+"""Provenance manifest for the protobuf index (issue #1138).
+
+The canonical artifact (sorted nodes/relationships, deterministic protobuf
+serialization) is a byte-stable fingerprint of one analyzed source state. The
+manifest binds it to the state that produced it: source commit (plus a
+dirty-tree flag), analyzer and codec versions, the capture configuration, and
+a per-language coverage summary computed FROM the artifact itself, so the
+claims can never drift from the content. `verify_index` re-derives the
+hashes and the coverage summary and reports every mismatch; CI attestation
+of the manifest then extends the trust chain to a signer identity.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import subprocess
+from datetime import UTC, datetime
+from importlib import metadata
+from pathlib import Path
+
+import codec.schema_pb2 as pb
+
+from .. import constants as cs
+from ..language_spec import get_language_spec
+
+type JsonDict = dict[str, object]
+_DIST_NAME = "code-graph-rag"
+
+MANIFEST_FILE = "manifest.json"
+_MANIFEST_VERSION = 1
+_HASH_ALGORITHM = "sha256"
+_SCHEMA_FILE = Path(pb.__file__).parent / "schema.proto"
+_ARTIFACT_FILES = (
+    cs.PROTOBUF_INDEX_FILE,
+    cs.PROTOBUF_NODES_FILE,
+    cs.PROTOBUF_RELS_FILE,
+)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _git_line(repo_path: Path, *args: str) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_path), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def _source_state(repo_path: Path) -> JsonDict:
+    commit = _git_line(repo_path, "rev-parse", "HEAD")
+    status = _git_line(repo_path, "status", "--porcelain")
+    return {
+        "commit": commit,
+        # None when the state is unknowable (not a git repo): a verifier must
+        # not read "unknown" as "clean".
+        "dirty": bool(status) if status is not None else None,
+    }
+
+
+def _module_language(path: str) -> str:
+    suffix = Path(path).suffix
+    spec = get_language_spec(suffix) if suffix else None
+    return str(spec.language) if spec is not None else "unknown"
+
+
+def _coverage_from_nodes(nodes) -> JsonDict:
+    per_language: dict[str, dict[str, int]] = {}
+    for node in nodes:
+        if node.WhichOneof(cs.PROTOBUF_PAYLOAD_ONEOF) != cs.ONEOF_MODULE:
+            continue
+        module = node.module
+        language = _module_language(module.path)
+        row = per_language.setdefault(language, {"modules": 0, "flow_covered": 0})
+        row["modules"] += 1
+        if module.flow_covered:
+            row["flow_covered"] += 1
+    return {lang: per_language[lang] for lang in sorted(per_language)}
+
+
+def _coverage_summary(index_dir: Path) -> JsonDict:
+    nodes = []
+    for name in (cs.PROTOBUF_INDEX_FILE, cs.PROTOBUF_NODES_FILE):
+        artifact = index_dir / name
+        if not artifact.is_file():
+            continue
+        index = pb.GraphCodeIndex()
+        index.ParseFromString(artifact.read_bytes())
+        nodes.extend(index.nodes)
+    return _coverage_from_nodes(nodes)
+
+
+def _analyzer_version() -> str:
+    try:
+        return metadata.version(_DIST_NAME)
+    except metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def build_manifest(
+    index_dir: Path,
+    repo_path: Path,
+    capture_tokens: list[str] | None,
+) -> JsonDict:
+    artifacts = {
+        name: {_HASH_ALGORITHM: _sha256(index_dir / name)}
+        for name in _ARTIFACT_FILES
+        if (index_dir / name).is_file()
+    }
+    return {
+        "manifest_version": _MANIFEST_VERSION,
+        "analyzer_version": _analyzer_version(),
+        "codec_schema_sha256": (
+            _sha256(_SCHEMA_FILE) if _SCHEMA_FILE.is_file() else None
+        ),
+        "capture": sorted(capture_tokens) if capture_tokens else None,
+        "source": _source_state(repo_path),
+        "artifacts": artifacts,
+        "coverage": _coverage_summary(index_dir),
+        # Provenance metadata only: the timestamp binds nothing and is
+        # deliberately outside every hash so double exports stay comparable.
+        "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+
+
+def write_manifest(
+    index_dir: Path,
+    repo_path: Path,
+    capture_tokens: list[str] | None,
+) -> Path:
+    manifest = build_manifest(index_dir, repo_path, capture_tokens)
+    index_dir.mkdir(parents=True, exist_ok=True)
+    out_path = index_dir / MANIFEST_FILE
+    out_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return out_path
+
+
+def verify_index(index_dir: Path) -> list[str]:
+    """Every way the artifact/manifest binding can be broken, as messages;
+    empty means verified."""
+    problems: list[str] = []
+    manifest_path = index_dir / MANIFEST_FILE
+    if not manifest_path.is_file():
+        return [f"manifest missing: {manifest_path}"]
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return [f"manifest unreadable: {error}"]
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict) or not artifacts:
+        problems.append("manifest lists no artifacts")
+        artifacts = {}
+    for name, hashes in artifacts.items():
+        artifact = index_dir / name
+        if not artifact.is_file():
+            problems.append(f"artifact missing: {name}")
+            continue
+        expected = hashes.get(_HASH_ALGORITHM) if isinstance(hashes, dict) else None
+        actual = _sha256(artifact)
+        if expected != actual:
+            problems.append(
+                f"artifact hash mismatch: {name} expected {expected} got {actual}"
+            )
+    for name in _ARTIFACT_FILES:
+        if (index_dir / name).is_file() and name not in artifacts:
+            problems.append(f"artifact not covered by manifest: {name}")
+    if not problems:
+        claimed = manifest.get("coverage")
+        actual_coverage = _coverage_summary(index_dir)
+        if claimed != actual_coverage:
+            problems.append(
+                "coverage summary disagrees with the graph: "
+                f"manifest {claimed} vs graph {actual_coverage}"
+            )
+    return problems

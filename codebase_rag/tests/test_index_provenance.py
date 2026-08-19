@@ -1,0 +1,128 @@
+# Issue #1138: the protobuf index is canonical (two exports of one source
+# state are byte-identical) and the provenance manifest binds the artifact to
+# the state that produced it; verify_index must fail on every tampered part
+# and on a manifest whose coverage claims disagree with the graph itself.
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from codebase_rag.capture import ALL_ENABLED
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+from codebase_rag.services.provenance import (
+    MANIFEST_FILE,
+    build_manifest,
+    verify_index,
+    write_manifest,
+)
+
+_INDEX_FILE = "index.bin"
+
+
+def _write_repo(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "app.py").write_text(
+        'import os\n\n\ndef leak():\n    v = os.getenv("TOKEN")\n    print(v)\n',
+        encoding="utf-8",
+    )
+    (root / "util.lua").write_text(
+        "local function f() return 1 end\n", encoding="utf-8"
+    )
+
+
+def _export(repo: Path, out: Path) -> None:
+    parsers, queries = load_parsers()
+    ingestor = ProtobufFileIngestor(output_path=str(out), repo_path=str(repo))
+    GraphUpdater(
+        ingestor=ingestor,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=ALL_ENABLED,
+    ).run(force=True)
+    ingestor.flush_all()
+
+
+def test_double_export_is_byte_identical(tmp_path: Path) -> None:
+    repo_a = tmp_path / "a" / "proj"
+    repo_b = tmp_path / "b" / "proj"
+    _write_repo(repo_a)
+    _write_repo(repo_b)
+    out_a = tmp_path / "out_a"
+    out_b = tmp_path / "out_b"
+    _export(repo_a, out_a)
+    _export(repo_b, out_b)
+    assert (out_a / _INDEX_FILE).read_bytes() == (out_b / _INDEX_FILE).read_bytes()
+
+
+def test_manifest_coverage_agrees_and_verify_passes(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    out = tmp_path / "out"
+    _export(repo, out)
+    write_manifest(out, repo, ["io"])
+    manifest = json.loads((out / MANIFEST_FILE).read_text(encoding="utf-8"))
+    assert manifest["coverage"]["python"]["modules"] == 1
+    assert manifest["coverage"]["lua"]["modules"] == 1
+    assert manifest["capture"] == ["io"]
+    assert manifest["artifacts"][_INDEX_FILE]["sha256"]
+    assert verify_index(out) == []
+
+
+def test_verify_fails_on_tampered_artifact(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    out = tmp_path / "out"
+    _export(repo, out)
+    write_manifest(out, repo, None)
+    artifact = out / _INDEX_FILE
+    blob = bytearray(artifact.read_bytes())
+    blob[len(blob) // 2] ^= 0xFF
+    artifact.write_bytes(bytes(blob))
+    problems = verify_index(out)
+    assert any("hash mismatch" in p for p in problems)
+
+
+def test_verify_fails_on_tampered_manifest_claims(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    out = tmp_path / "out"
+    _export(repo, out)
+    write_manifest(out, repo, None)
+    manifest_path = out / MANIFEST_FILE
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["coverage"]["python"]["flow_covered"] = 999
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    problems = verify_index(out)
+    assert any("coverage summary disagrees" in p for p in problems)
+
+
+def test_verify_fails_on_missing_manifest_and_uncovered_artifact(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    out = tmp_path / "out"
+    _export(repo, out)
+    assert any("manifest missing" in p for p in verify_index(out))
+    write_manifest(out, repo, None)
+    manifest_path = out / MANIFEST_FILE
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["artifacts"][_INDEX_FILE]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert any("not covered by manifest" in p for p in verify_index(out))
+
+
+def test_manifest_records_source_state(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    out = tmp_path / "out"
+    _export(repo, out)
+    manifest = build_manifest(out, repo, None)
+    # tmp_path is not a git repo: the state is unknowable, never "clean".
+    assert manifest["source"]["commit"] is None
+    assert manifest["source"]["dirty"] is None
+    assert manifest["analyzer_version"]
+    assert manifest["codec_schema_sha256"]

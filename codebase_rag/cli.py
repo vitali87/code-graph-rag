@@ -39,6 +39,7 @@ from .main import (
 from .parser_loader import load_parsers
 from .services.graph_service import MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
+from .services.provenance import verify_index, write_manifest
 from .stack import StackManager
 from .stack.cli import cli as daemon_cli
 from .stack.constants import StackState
@@ -689,7 +690,9 @@ def index(
 
     try:
         ingestor = ProtobufFileIngestor(
-            output_path=output_proto_dir, split_index=split_index
+            output_path=output_proto_dir,
+            split_index=split_index,
+            repo_path=str(repo_to_index),
         )
         parsers, queries = load_parsers()
         updater = GraphUpdater(
@@ -703,6 +706,12 @@ def index(
         )
 
         updater.run()
+        manifest_path = write_manifest(
+            Path(output_proto_dir), Path(repo_to_index), capture
+        )
+        _info(
+            style(cs.CLI_MSG_MANIFEST_WRITTEN.format(path=manifest_path), cs.Color.CYAN)
+        )
         _info(style(cs.CLI_MSG_INDEXING_DONE, cs.Color.GREEN))
 
     except Exception as e:
@@ -711,6 +720,27 @@ def index(
         )
         logger.exception(ls.INDEXING_FAILED)
         raise typer.Exit(1) from e
+
+
+@app.command(
+    name="verify-index",
+    help=ch.CMD_VERIFY_INDEX,
+    short_help=ch.CMD_VERIFY_INDEX,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
+def verify_index_command(
+    index_dir: str = typer.Option(
+        ..., "-i", "--index-dir", help=ch.HELP_VERIFY_INDEX_DIR
+    ),
+) -> None:
+    problems = verify_index(Path(index_dir))
+    if problems:
+        for problem in problems:
+            app_context.console.print(
+                style(cs.CLI_MSG_VERIFY_PROBLEM.format(problem=problem), cs.Color.RED)
+            )
+        raise typer.Exit(1)
+    _info(style(cs.CLI_MSG_VERIFY_OK.format(path=index_dir), cs.Color.GREEN))
 
 
 @app.command(

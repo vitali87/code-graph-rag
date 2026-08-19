@@ -351,3 +351,5 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DOCTOR: CMD_DOCTOR,
     CLICommandName.HELP: CMD_HELP,
 }
+CMD_VERIFY_INDEX = "Verify a protobuf index against its provenance manifest"
+HELP_VERIFY_INDEX_DIR = "Directory holding the index artifacts and manifest.json."

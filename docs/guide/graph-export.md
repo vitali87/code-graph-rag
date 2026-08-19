@@ -61,3 +61,33 @@ Exported graph data is useful for:
 - Creating code metrics dashboards
 
 See the [Python SDK](../sdk/overview.md) for more programmatic access patterns.
+
+## Canonical index and provenance manifest
+
+`cgr index` writes a canonical artifact: nodes and relationships are sorted
+(node id; then source id, relationship type, target id) and serialized with
+deterministic protobuf encoding, and every File/Folder identity is
+repo-relative. Two exports of the same source state with the same analyzer
+version and capture configuration are byte-identical, wherever the repo is
+checked out.
+
+Alongside the artifacts, `manifest.json` records the provenance: the source
+commit and a dirty-tree flag (null when the target is not a git repository),
+the analyzer version, the sha256 of the codec schema, the capture
+configuration, a sha256 per artifact, and a per-language coverage summary
+(module counts and `flow_covered` totals) computed from the artifact itself,
+so the claims can never drift from the content. The `created_at` timestamp is
+metadata only and participates in no hash.
+
+Verify an index against its manifest:
+
+```bash
+cgr verify-index -i ./index-dir
+```
+
+Verification fails when an artifact is missing or its hash mismatches, when an
+artifact is not covered by the manifest, or when the manifest's coverage
+summary disagrees with the graph content. In CI, attesting `manifest.json`
+(GitHub artifact attestation) extends the chain to a signer identity: the
+attestation proves who produced the manifest, and the manifest proves which
+artifact bytes and source state it belongs to.
