@@ -100,6 +100,10 @@ class LanguageDescriptor:
     # a handle constructor (`new FileWriter("x")`); None where handles are only
     # call-shaped (issue #714 handle walk).
     new_expression_type: str | None = None
+    # True when a same-file declaration OUTSIDE the caller's own scope (a
+    # sibling object at the template/module level) also shadows a sink head;
+    # the walk then seeds the enclosing scopes' declaration names (Scala).
+    enclosing_scope_shadows: bool = False
     # Stream-extraction operator (C++ `>>`): on a bound stream handle it is a
     # READ of that handle's resource. None where the language has none.
     stream_extract_operator: str | None = None
@@ -579,8 +583,16 @@ _SCALA_DESCRIPTOR = LanguageDescriptor(
     # childless string inline from node.text with the quotes stripped.
     string_content_type=cs.TS_SCALA_STRING,
     keyword_arg_type=None,
+    # object/class/trait definitions are separate scopes AND shadowing heads:
+    # a local `object Source` must suppress the scala.io.Source rows.
     nested_scope_types=frozenset(
-        {cs.TS_SCALA_FUNCTION_DEFINITION, cs.TS_SCALA_LAMBDA_EXPRESSION}
+        {
+            cs.TS_SCALA_FUNCTION_DEFINITION,
+            cs.TS_SCALA_LAMBDA_EXPRESSION,
+            cs.TS_SCALA_OBJECT_DEFINITION,
+            cs.TS_SCALA_CLASS_DEFINITION,
+            cs.TS_SCALA_TRAIT_DEFINITION,
+        }
     ),
     # Scala is declare-at-point (`val x = ...` shadows only later uses). Sink
     # heads (println, Console, System, Files, sys) are Predef/JDK effective
@@ -604,6 +616,14 @@ _SCALA_DESCRIPTOR = LanguageDescriptor(
     object_field=cs.FIELD_VALUE,
     property_field=cs.FIELD_FIELD,
     subscript_index_field=cs.TS_FIELD_ARGUMENTS,
+    new_expression_type=cs.TS_SCALA_INSTANCE_EXPRESSION,
+    # `val w = new PrintWriter(..)` binds through the `pattern` name field and
+    # the `value` field, like Rust's let.
+    declarator_name_field=cs.TS_FIELD_PATTERN,
+    # A same-file `object Source`/`val Files` declared OUTSIDE the caller
+    # (template body or module top level) still shadows a sink head, so the
+    # walk seeds the enclosing scopes' declarations too.
+    enclosing_scope_shadows=True,
 )
 
 LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {

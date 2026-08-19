@@ -553,6 +553,8 @@ class IOAccessProcessor:
         # Parameters are visible in every block of the function body and always
         # shadow a same-named builtin (a parameter is never an import alias).
         params = self._param_names(caller_node, descriptor)
+        if descriptor.enclosing_scope_shadows:
+            params |= self._enclosing_scope_names(caller_node, descriptor)
         self._walk_scope(
             statements,
             frozenset(params),
@@ -1193,6 +1195,33 @@ class IOAccessProcessor:
                 self._pattern_names(target, descriptor, names)
         return names
 
+    def _enclosing_scope_names(
+        self, caller_node: Node, descriptor: LanguageDescriptor
+    ) -> set[str]:
+        # Declaration names visible from the caller's ENCLOSING scopes: sibling
+        # object/class/trait definitions and val/var bindings at every ancestor
+        # level (Scala members are visible regardless of declaration order).
+        # Over-shadowing is conservative: it suppresses an edge, never
+        # fabricates one.
+        names: set[str] = set()
+        ancestor = caller_node.parent
+        while ancestor is not None:
+            for sibling in ancestor.named_children:
+                if sibling.id == caller_node.id:
+                    continue
+                if sibling.type in descriptor.nested_scope_types:
+                    if (
+                        name := self._named_child_text(sibling, descriptor)
+                    ) is not None:
+                        names.add(name)
+                elif (
+                    sibling.type == descriptor.declarator_type
+                    or sibling.type in descriptor.extra_declarator_types
+                ):
+                    names |= self._declarator_names(sibling, descriptor)
+            ancestor = ancestor.parent
+        return names
+
     @staticmethod
     def _named_child_text(node: Node, descriptor: LanguageDescriptor) -> str | None:
         name = node.child_by_field_name(cs.TS_FIELD_NAME)
@@ -1787,6 +1816,18 @@ class IOAccessProcessor:
         # constructor or a bound variable); PrintWriter falls through to its filename
         # overload when arg0 is not a handle.
         type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
+        if type_node is None:
+            # Scala's instance_expression has no `type` field; the constructed
+            # type is the one named child that is not the arguments field.
+            args = node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+            type_node = next(
+                (
+                    c
+                    for c in node.named_children
+                    if (args is None or c.id != args.id) and c.type != cs.TS_COMMENT
+                ),
+                None,
+            )
         if type_node is None or type_node.text is None:
             return None
         type_name = type_node.text.decode(cs.ENCODING_UTF8)

@@ -1272,3 +1272,25 @@ IO_LEAN_HANDLE_METHODS: dict[
         },
     },
 }
+
+# Scala runs on the JVM and drives the java.io/java.nio/java.sql handle surface
+# directly (`new java.io.PrintWriter(path)`, `Files.newBufferedWriter`), so it
+# reuses the Java handle tables verbatim (issue #1256).
+IO_LEAN_HANDLE_CONSTRUCTORS[cs.SupportedLanguage.SCALA] = IO_LEAN_HANDLE_CONSTRUCTORS[
+    cs.SupportedLanguage.JAVA
+]
+IO_NEW_HANDLE_CONSTRUCTORS[cs.SupportedLanguage.SCALA] = IO_NEW_HANDLE_CONSTRUCTORS[
+    cs.SupportedLanguage.JAVA
+]
+IO_NEW_HANDLE_WRAPPERS[cs.SupportedLanguage.SCALA] = IO_NEW_HANDLE_WRAPPERS[
+    cs.SupportedLanguage.JAVA
+]
+IO_LEAN_HANDLE_METHODS[cs.SupportedLanguage.SCALA] = IO_LEAN_HANDLE_METHODS[
+    cs.SupportedLanguage.JAVA
+]
+IO_IDENTITY_UNWRAP_CALLS[cs.SupportedLanguage.SCALA] = IO_IDENTITY_UNWRAP_CALLS[
+    cs.SupportedLanguage.JAVA
+]
+IO_IDENTITY_UNWRAP_NEW_TYPES[cs.SupportedLanguage.SCALA] = IO_IDENTITY_UNWRAP_NEW_TYPES[
+    cs.SupportedLanguage.JAVA
+]

@@ -140,3 +140,73 @@ def test_scala_stdin_read(tmp_path: Path) -> None:
     }
     rels = _run(tmp_path, files)
     assert _has(rels, "In.ask", READS_FROM, "resource::STDIN::<dynamic>")
+
+
+def test_scala_triple_quoted_path_strips_delimiters(tmp_path: Path) -> None:
+    files = {
+        "Raw.scala": (
+            "object Raw {\n"
+            "  def load(): String = {\n"
+            '    scala.io.Source.fromFile("""/etc/app.conf""").mkString\n'
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert _has(rels, "Raw.load", READS_FROM, "resource::FILE::/etc/app.conf")
+
+
+def test_scala_local_objects_shadow_stdlib_heads(tmp_path: Path) -> None:
+    # A same-file `object Source`/`object StdIn` (declared OUTSIDE the caller,
+    # at module level) is not the scala.io API: calls through it must emit
+    # nothing (review on #1256's PR).
+    files = {
+        "Own.scala": (
+            "object Source { def fromFile(p: String): String = p }\n"
+            'object StdIn { def readLine(): String = "x" }\n'
+            "\n"
+            "object App {\n"
+            "  def use(): Unit = {\n"
+            '    Source.fromFile("/local/thing")\n'
+            "    StdIn.readLine()\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert not any(a.partition("(")[0].endswith("App.use") for a, _r, _b in rels)
+
+
+def test_scala_print_writer_handle_write(tmp_path: Path) -> None:
+    # JVM interop handles: `new java.io.PrintWriter(path)` binds a FILE write
+    # handle through the Java constructor table; the method write lands on
+    # the constructor's literal path.
+    files = {
+        "W.scala": (
+            "object W {\n"
+            "  def dump(data: String): Unit = {\n"
+            '    val w = new java.io.PrintWriter("out.txt")\n'
+            "    w.write(data)\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert _has(rels, "W.dump", WRITES_TO, "resource::FILE::out.txt")
+
+
+def test_scala_buffered_writer_wrapper_resolves_inner_file(tmp_path: Path) -> None:
+    files = {
+        "B.scala": (
+            "object B {\n"
+            "  def log(line: String): Unit = {\n"
+            "    val out = new java.io.BufferedWriter(\n"
+            '      new java.io.FileWriter("app.log")\n'
+            "    )\n"
+            "    out.write(line)\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert _has(rels, "B.log", WRITES_TO, "resource::FILE::app.log")

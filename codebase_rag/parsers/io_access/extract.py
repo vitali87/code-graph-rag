@@ -329,6 +329,22 @@ def _template_literal(arg: Node, content_type: str, substitution_type: str) -> s
     return "".join(parts)
 
 
+def _childless_string_text(text: str) -> str:
+    # A childless string node (Scala `string`) carries its content only in
+    # node.text; strip the surrounding delimiters, triple quotes before the
+    # ordinary quote so a raw literal ("""x""") never keeps quote residue.
+    # A bare delimiter pair is an empty literal, which carries no identity.
+    for delim in ('"""', '"'):
+        if (
+            text.startswith(delim)
+            and text.endswith(delim)
+            and len(text) >= 2 * len(delim)
+        ):
+            stripped = text[len(delim) : -len(delim)]
+            return stripped if stripped else DYNAMIC_TARGET
+    return DYNAMIC_TARGET
+
+
 def string_literal(
     arg: Node | None,
     string_type: str = cs.TS_PY_STRING,
@@ -348,12 +364,7 @@ def string_literal(
     if arg.type != string_type:
         return DYNAMIC_TARGET
     if not arg.children and arg.text is not None:
-        # A childless string node (Scala `string`) carries its content only in
-        # node.text; strip the surrounding quotes. A bare quote pair is an
-        # empty literal, which carries no identity.
-        text = arg.text.decode(cs.ENCODING_UTF8)
-        stripped = text[1:-1] if len(text) >= 2 else ""
-        return stripped if stripped else DYNAMIC_TARGET
+        return _childless_string_text(arg.text.decode(cs.ENCODING_UTF8))
     # An f-string is a `string` node whose content is split around
     # `interpolation` children; keep every fragment and render each
     # interpolation as its literal `{expr}` source so the identity stays a
