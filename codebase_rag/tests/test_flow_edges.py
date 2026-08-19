@@ -77,6 +77,84 @@ def test_resource_to_resource_env_to_stdout(tmp_path: Path) -> None:
     )
 
 
+def test_python_os_environ_subscript_read_is_env_source(tmp_path: Path) -> None:
+    # `os.environ['K']` is the index-object form of the `os.environ.get('K')`
+    # env read; the deep walk must treat it as ENV source K (issue #1324).
+    files = {
+        "m.py": "import os\n\ndef leak():\n    x = os.environ['K']\n    print(x)\n"
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_inline_in_sink_arg(tmp_path: Path) -> None:
+    # An inline subscript source in a sink's argument is seen by the
+    # argument-taint evaluator, not only a pre-assigned name (issue #1324).
+    files = {"m.py": "import os\n\nprint(os.environ['K'])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_with_aliased_import(tmp_path: Path) -> None:
+    # The object is import-normalised before the member-read match, so an
+    # aliased `import os as o` still reads `os.environ` (issue #1324).
+    files = {"m.py": "import os as o\n\nprint(o.environ['K'])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_dynamic_key_is_dynamic_target(
+    tmp_path: Path,
+) -> None:
+    # A non-literal index keeps the <dynamic> identity, matching the io_access
+    # member-read walk's fallback (issue #1324).
+    files = {"m.py": "import os\n\nk = 'K'\nprint(os.environ[k])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::<dynamic>",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_returned_os_environ_subscript_flows_to_caller_sink(
+    tmp_path: Path,
+) -> None:
+    # A returned subscript source flows out of the function exactly like a
+    # returned call-shaped source (issue #1324).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def build():\n    return os.environ['K']\n\n"
+            "def caller():\n    v = build()\n    print(v)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+    assert _has(edges, "m.build", "m.caller", kind=FlowKind.RETURN.value)
+
+
 def test_tainted_positional_arg_flows_to_callee(tmp_path: Path) -> None:
     files = {
         "m.py": (

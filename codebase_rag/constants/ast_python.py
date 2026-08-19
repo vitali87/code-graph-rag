@@ -45,6 +45,8 @@ TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
 TS_PY_SUBSCRIPT = "subscript"
+# The `subscript` node's index field (`os.environ["K"]` -> the `"K"` string).
+TS_PY_FIELD_SUBSCRIPT = "subscript"
 TS_PY_COMPARISON_OPERATOR = "comparison_operator"
 TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"

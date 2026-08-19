@@ -669,6 +669,9 @@ IO_MEMBER_READS: dict[cs.SupportedLanguage, tuple[tuple[str, ResourceKind], ...]
     # Dart `Platform.environment['K']` is a process-env read (issue #1173); the
     # sibling-chain shape is resolved by the Dart-specific member-source path.
     cs.SupportedLanguage.DART: (("Platform.environment", ResourceKind.ENV),),
+    # Python `os.environ['K']` is a subscript read of a process-env mapping
+    # (issue #1324); resolved by the flow walk's Python subscript handling.
+    cs.SupportedLanguage.PYTHON: (("os.environ", ResourceKind.ENV),),
 }
 
 # Calls whose result is a resource handle; later method calls on the bound variable

@@ -42,6 +42,7 @@ from ..io_access import (
     lean_definition_header_nodes,
     literal_target,
     match_normalised,
+    normalise,
     positional_arg_node,
     registry_match,
     rust_unwrap_result,
@@ -3046,6 +3047,12 @@ class FlowProcessor:
                 self._py_value_taint_field(node, cs.TS_FIELD_LEFT, tainted, ctx),
                 self._py_value_taint_field(node, cs.TS_FIELD_RIGHT, tainted, ctx),
             )
+        if node.type == cs.TS_PY_SUBSCRIPT:
+            # `os.environ["K"]` is a subscript read of a process-env mapping:
+            # a source like `os.getenv("K")` / `os.environ.get("K")`, only
+            # shaped as an indexed object (issue #1324).
+            if seed := self._py_env_member_seed(node, ctx):
+                return Taint(frozenset({seed}), frozenset())
         if node.type == cs.TS_PY_CALL and (raw := call_name(node)) is not None:
             if seed := self._source_binding(node, raw, ctx.import_map, ctx.read_sinks):
                 return Taint(frozenset({seed}), frozenset())
@@ -3079,6 +3086,30 @@ class FlowProcessor:
     ) -> Taint | None:
         child = node.child_by_field_name(field)
         return self._py_value_taint(child, tainted, ctx) if child is not None else None
+
+    def _py_env_member_seed(self, node: Node, ctx: _FlowCtx) -> HandleBinding | None:
+        # A Python subscript read of a process-env mapping: `os.environ["K"]`
+        # is ENV source K, the index-object form of the `os.environ.get("K")`
+        # call sink (issue #1324). The object's dotted text is import-normalised
+        # so an aliased import (`import os as os_` -> `os_.environ["K"]`) still
+        # reads `os.environ`, then matched against the shared member-read
+        # catalog; a non-string index keeps the <dynamic> identity, exactly
+        # like the lean member walks.
+        obj = node.child_by_field_name(cs.FIELD_VALUE)
+        if obj is None or obj.text is None:
+            return None
+        obj_text = obj.text.decode(cs.ENCODING_UTF8)
+        for prefix, kind in IO_MEMBER_READS.get(ctx.language, ()):
+            if normalise(obj_text, ctx.import_map) != prefix:
+                continue
+            index = node.child_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
+            identity = (
+                string_literal(index, cs.TS_PY_STRING, cs.TS_PY_STRING_CONTENT)
+                if index is not None and index.type == cs.TS_PY_STRING
+                else DYNAMIC_TARGET
+            )
+            return HandleBinding(kind=kind, identity=identity)
+        return None
 
     def _apply_call(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:
         raw = call_name(node)
@@ -3233,6 +3264,13 @@ class FlowProcessor:
                             self._return_param_edges.append(
                                 (ctx.caller_qn, pname, callee[1], via)
                             )
+            elif child.type == cs.TS_PY_SUBSCRIPT:
+                # `return os.environ["K"]`: the subscript source flows out of
+                # the function exactly like the call-shaped env reads (issue
+                # #1324).
+                if seed := self._py_env_member_seed(child, ctx):
+                    tainted_here = True
+                    result = _merge_taint(result, Taint(frozenset({seed}), frozenset()))
         return result if tainted_here else None
 
     def _returned_arg_params(
