@@ -1351,3 +1351,36 @@ def test_capture_composes_for_duplicate_named_nested_defs(tmp_path: Path) -> Non
         )
     }
     assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_attribute_assigned_closure_escapes(tmp_path: Path) -> None:
+    # `holder.callback = send` stores the closure on an object: it may run
+    # later with any cell value, so the def-site MAY snapshot stands even
+    # though the only direct call happens after the clean reassign.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class H:\n    pass\n\n"
+            "def handler(holder):\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    holder.callback = send\n"
+            "    send()\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_returned_closure_escapes(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    return send\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))

@@ -3021,6 +3021,11 @@ class FlowProcessor:
     def _apply_assignment(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:
         left = node.child_by_field_name(cs.TS_FIELD_LEFT)
         right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if right is not None and right.type == cs.TS_PY_IDENTIFIER and right.text:
+            # A closure assigned ANYWHERE (holder.callback = send, d[k] = send)
+            # escapes, even when the non-identifier target makes this
+            # assignment otherwise untrackable (issue #1211 review).
+            self._note_capture_escape(right.text.decode(cs.ENCODING_UTF8))
         if (
             left is None
             or right is None
@@ -3225,6 +3230,8 @@ class FlowProcessor:
         for child in _return_value_nodes(node):
             if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
                 name = child.text.decode(cs.ENCODING_UTF8)
+                # `return send` hands the closure to the caller: it escapes.
+                self._note_capture_escape(name)
                 if (taint := tainted.get(name)) is not None:
                     tainted_here = True
                     result = _merge_taint(result, taint)
