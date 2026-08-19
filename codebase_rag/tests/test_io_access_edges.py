@@ -523,6 +523,27 @@ def test_python_unimported_os_subscript_is_not_env(tmp_path: Path) -> None:
     assert not _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
 
 
+def test_python_os_environ_subscript_global_receiver_is_env(
+    tmp_path: Path,
+) -> None:
+    # `global os` makes the later `os = Fake()` a module-global rebind, NOT a
+    # local binding, so the earlier read still hits the imported module and
+    # emits READS_FROM ENV (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'TOKEN': 'x'}\n\n"
+            "def leak():\n"
+            "    global os\n"
+            "    print(os.environ['TOKEN'])\n"
+            "    os = Fake()\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+
+
 def test_python_os_environ_subscript_local_shadow_is_not_env(tmp_path: Path) -> None:
     # A name bound anywhere in the scope shadows the module-level import for
     # the whole scope, so a local `os = Fake()` never reads the env mapping.

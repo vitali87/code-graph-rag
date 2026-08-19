@@ -94,13 +94,38 @@ def _python_parameter_names(scope_node: Node) -> set[str]:
     return names
 
 
+def _global_declared_names(scope_node: Node) -> set[str]:
+    # Identifiers declared `global` in this scope's OWN body (nested
+    # defs/classes pruned): `global os` makes EVERY `os` use here resolve to
+    # the module-level binding, so a same-named assignment is a GLOBAL rebind,
+    # not a local -- the whole-scope locality rule must not treat it as a
+    # shadowing local (CodeRabbit review on PR #1325). A module scope is never
+    # `global`-affected (there it is a legal no-op and the assignment still
+    # rebinds the module name), so callers apply this only for non-module
+    # scopes.
+    names: set[str] = set()
+    stack = list(scope_seed_nodes(scope_node))
+    while stack:
+        node = stack.pop()
+        if node.type in PY_SCOPE_BOUNDARIES:
+            continue
+        if node.type == cs.TS_PY_GLOBAL_STATEMENT:
+            for child in node.children:
+                if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
+                    names.add(child.text.decode(cs.ENCODING_UTF8))
+        stack.extend(node.children)
+    return names
+
+
 def python_locally_assigned_names(scope_node: Node) -> set[str]:
     # Plain identifiers bound anywhere in this scope's OWN body (nested
     # defs/classes pruned): assignment / with-as / for targets, including
     # destructuring forms, plus a function's parameter names. Python makes a
     # name bound anywhere in a function local for the WHOLE function, so any
     # such name shadows a same-named module import even before the assignment
-    # (a use before it is UnboundLocalError).
+    # (a use before it is UnboundLocalError). A `global` declaration removes
+    # the name from this scope's locals: its uses resolve to the module
+    # binding, so an assignment is a global rebind, not a shadowing local.
     names = _python_parameter_names(scope_node)
     stack = list(scope_seed_nodes(scope_node))
     while stack:
@@ -119,6 +144,8 @@ def python_locally_assigned_names(scope_node: Node) -> set[str]:
         if target is not None:
             names |= _binding_identifiers(target)
         stack.extend(node.children)
+    if scope_node.type != cs.TS_PY_MODULE:
+        names -= _global_declared_names(scope_node)
     return names
 
 

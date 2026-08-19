@@ -249,6 +249,83 @@ def test_python_os_environ_subscript_typed_parameter_shadow_not_source(
     )
 
 
+def test_python_os_environ_subscript_global_receiver_is_env_source(
+    tmp_path: Path,
+) -> None:
+    # `global os` declares the name module-scoped: the later `os = Fake()`
+    # rebinds the GLOBAL, not a local, so the earlier read still resolves to
+    # the imported module and is an ENV source (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "def leak():\n"
+            "    global os\n"
+            "    print(os.environ['K'])\n"
+            "    os = Fake()\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_read_before_local_assignment_not_source(
+    tmp_path: Path,
+) -> None:
+    # Without a `global` declaration the whole-scope locality rule still holds:
+    # a read BEFORE a later `os = Fake()` is shadowed for the whole function
+    # (a use before the assignment is UnboundLocalError), so it is not an ENV
+    # source (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "def leak():\n"
+            "    print(os.environ['K'])\n"
+            "    os = Fake()\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_module_scope_rebind_still_shadows(
+    tmp_path: Path,
+) -> None:
+    # At module scope `global` is a legal no-op: a module-level `os = Fake()`
+    # still rebinds the module name, so the read is not an ENV source
+    # (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "global os\n"
+            "os = Fake()\n"
+            "print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_python_os_environ_subscript_destructuring_shadow_not_source(
     tmp_path: Path,
 ) -> None:
