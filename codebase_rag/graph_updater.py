@@ -2013,7 +2013,13 @@ class GraphUpdater:
             else frozenset()
         )
         combined = base | patterns
-        self.unignore_paths = combined if combined else None
+        resolved = combined if combined else None
+        self.unignore_paths = resolved
+        # The factory-owned processors hold their own copies for structure
+        # traversal and import-time walks; they must prune identically or a
+        # sweep could read files the indexer skipped (issue #1088 invariant).
+        self.factory.import_processor.unignore_paths = resolved
+        self.factory.structure_processor.unignore_paths = resolved
         if roots:
             logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
 
