@@ -213,6 +213,7 @@ class AppConfig(BaseSettings):
     # tree-sitter stays the standalone-correct backbone.
     GO_FRONTEND: cs.GoFrontend = cs.GoFrontend.AUTO
     PYTHON_FRONTEND: cs.PythonFrontend = cs.PythonFrontend.HEURISTIC
+    LOMBOK_JAR: str | None = None
     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )

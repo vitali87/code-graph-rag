@@ -1,0 +1,163 @@
+# Issue #1140 tier 1: Lombok-generated members exist only after expansion, so
+# the updater parses delomboked BYTES keyed by the ORIGINAL path. The seam is
+# subprocess-shaped: these tests fake the delombok run (no jar in CI) and
+# assert the graph gains the expanded member while the on-disk source lacks
+# it, the hash cache keys the checked-in bytes, and every missing piece
+# degrades to raw parsing.
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag.capture import ALL_ENABLED
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers import java_lombok
+
+_RAW = (
+    "package com.app;\n\nimport lombok.Getter;\n\n@Getter\n"
+    "public class Widget {\n    private String name;\n}\n"
+)
+_EXPANDED = (
+    "package com.app;\n\npublic class Widget {\n    private String name;\n\n"
+    "    public String getName() {\n        return this.name;\n    }\n}\n"
+)
+
+
+def _write_repo(repo: Path) -> None:
+    (repo / "src/main/java/com/app").mkdir(parents=True)
+    (repo / "pom.xml").write_text(
+        "<project><dependencies><dependency>"
+        "<groupId>org.projectlombok</groupId><artifactId>lombok</artifactId>"
+        "</dependency></dependencies></project>",
+        encoding="utf-8",
+    )
+    (repo / "src/main/java/com/app/Widget.java").write_text(_RAW, encoding="utf-8")
+
+
+def _fake_delombok(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(java, jar, source_root, out_dir):
+        for original in Path(source_root).rglob("*.java"):
+            target = Path(out_dir) / original.relative_to(source_root)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                _EXPANDED
+                if "@Getter" in original.read_text()
+                else original.read_text(),
+                encoding="utf-8",
+            )
+        return True
+
+    monkeypatch.setattr(java_lombok, "_run_delombok", fake_run)
+    monkeypatch.setattr(
+        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok.jar")
+    )
+
+
+def _run(repo: Path) -> MagicMock:
+    parsers, queries = load_parsers()
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=ALL_ENABLED,
+    ).run()
+    return mock
+
+
+def _method_qns(mock: MagicMock) -> set[str]:
+    return {
+        c.args[1]["qualified_name"]
+        for c in mock.ensure_node_batch.call_args_list
+        if str(c.args[0]) == "Method"
+    }
+
+
+def test_expanded_member_lands_in_the_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    _fake_delombok(monkeypatch)
+    mock = _run(repo)
+    assert any("Widget.getName" in qn for qn in _method_qns(mock))
+    # The overlay never touches the checked-in source.
+    assert "@Getter" in (repo / "src/main/java/com/app/Widget.java").read_text()
+
+
+def test_without_a_jar_raw_source_parses_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: None)
+    mock = _run(repo)
+    assert not any("Widget.getName" in qn for qn in _method_qns(mock))
+
+
+def test_lombok_free_build_never_invokes_delombok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "proj"
+    (repo / "src/main/java/com/app").mkdir(parents=True)
+    (repo / "pom.xml").write_text("<project/>", encoding="utf-8")
+    (repo / "src/main/java/com/app/Plain.java").write_text(
+        "package com.app;\npublic class Plain {}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok.jar")
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        java_lombok,
+        "_run_delombok",
+        lambda *a: calls.append("run") or True,
+    )
+    _run(repo)
+    assert calls == []
+
+
+def test_hash_cache_keys_the_checked_in_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Editing the ORIGINAL file must invalidate the cache even though the
+    # parse consumed overlay bytes; a reused updater re-parses it.
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    _fake_delombok(monkeypatch)
+    parsers, queries = load_parsers()
+    mock = MagicMock()
+    updater = GraphUpdater(
+        ingestor=mock,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=ALL_ENABLED,
+    )
+    updater.run()
+    widget = repo / "src/main/java/com/app/Widget.java"
+    widget.write_text(_RAW.replace("name;", "name;\n    private int age;"), "utf-8")
+    mock.reset_mock()
+    updater.run()
+    reparsed = {
+        c.args[1].get("path")
+        for c in mock.ensure_node_batch.call_args_list
+        if str(c.args[0]) == "Module"
+    }
+    assert "src/main/java/com/app/Widget.java" in reparsed
+
+
+@pytest.mark.skipif(
+    shutil.which("java") is None or java_lombok.find_lombok_jar() is None,
+    reason="real delombok e2e needs java and a lombok jar",
+)
+def test_real_delombok_end_to_end(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    mock = _run(repo)
+    assert any("Widget.getName" in qn for qn in _method_qns(mock))

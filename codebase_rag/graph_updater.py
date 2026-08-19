@@ -65,6 +65,7 @@ from .parsers.java_generated import (
     generated_prefixes_for,
     unignore_patterns_for,
 )
+from .parsers.java_lombok import build_delombok_overlay
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -283,6 +284,7 @@ class GraphUpdater:
         self._frontend_owned_qns: dict[str, set[str]] = {}
         self.unignore_paths = unignore_paths
         self._configured_unignore_paths = unignore_paths
+        self._delombok_overlay: dict[str, bytes] = {}
         self.exclude_paths = exclude_paths
         # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
         # callers (MCP, workspace sync) opt out without a CLI flag.
@@ -2022,6 +2024,10 @@ class GraphUpdater:
         self.factory.structure_processor.unignore_paths = resolved
         if roots:
             logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
+        # Delombok overlay (issue #1140 tier 1): rebuilt per run so a jar or
+        # annotation appearing between watch runs is picked up; empty means
+        # raw parsing everywhere, exactly as before.
+        self._delombok_overlay = build_delombok_overlay(self.repo_path)
 
     def _collect_eligible_files(self) -> list[tuple[Path, str]]:
         if self._single_file is not None:
@@ -2137,6 +2143,10 @@ class GraphUpdater:
                 unreadable_keys.add(file_key)
                 continue
             current_hash, file_bytes = hashed
+            # The hash keys the CHECKED-IN source (cache invalidation follows
+            # edits); the PARSE may consume the delomboked expansion instead,
+            # so Lombok-generated members become real graph nodes (#1140).
+            file_bytes = self._delombok_overlay.get(file_key, file_bytes)
 
             current_file_keys.add(file_key)
             new_hashes[file_key] = current_hash
@@ -2380,6 +2390,8 @@ class GraphUpdater:
             return None
         try:
             file_bytes = file_path.read_bytes()
+            overlay_key = cached_relative_path(file_path, self.repo_path).as_posix()
+            file_bytes = self._delombok_overlay.get(overlay_key, file_bytes)
         except OSError as e:
             logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
             return None

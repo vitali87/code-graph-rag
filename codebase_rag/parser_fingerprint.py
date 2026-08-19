@@ -66,6 +66,7 @@ def _frontend_settings() -> list[str]:
     from .parsers.cpp_frontend import resolve_cpp_frontend
     from .parsers.csharp_frontend import resolve_csharp_frontend
     from .parsers.go_frontend import resolve_go_frontend
+    from .parsers.java_lombok import find_lombok_jar, lombok_jar_version
     from .parsers.py_frontend import resolve_python_frontend
 
     return [
@@ -73,6 +74,7 @@ def _frontend_settings() -> list[str]:
         f"CSHARP_FRONTEND={resolve_csharp_frontend().value}",
         f"GO_FRONTEND={resolve_go_frontend().value}",
         f"PYTHON_FRONTEND={resolve_python_frontend().value}",
+        f"LOMBOK={lombok_jar_version(jar) if (jar := find_lombok_jar()) else 'absent'}",
     ]
 
 
