@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from datetime import UTC, datetime
 from importlib import metadata
@@ -38,9 +39,19 @@ _ARTIFACT_FILES = (
 )
 
 
+def _open_nofollow(path: Path):
+    # O_NOFOLLOW makes refusing a symlink and opening the file ONE atomic
+    # operation, so a link swapped in between a check and the read still
+    # fails (ELOOP) instead of leaking an external file's content. Platforms
+    # without the flag (Windows) degrade to a plain open behind the explicit
+    # is_symlink() checks.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    return os.fdopen(os.open(path, flags), "rb")
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with open(path, "rb") as handle:
+    with _open_nofollow(path) as handle:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -99,7 +110,11 @@ def _coverage_summary(index_dir: Path) -> JsonDict:
         if not artifact.is_file():
             continue
         index = pb.GraphCodeIndex()
-        index.ParseFromString(artifact.read_bytes())
+        try:
+            with _open_nofollow(artifact) as handle:
+                index.ParseFromString(handle.read())
+        except OSError:
+            continue
         nodes.extend(index.nodes)
     return _coverage_from_nodes(nodes)
 
@@ -178,8 +193,9 @@ def _load_manifest(manifest_path: Path) -> tuple[dict | None, list[str]]:
     if manifest_path.is_symlink() or not manifest_path.is_file():
         return None, [f"manifest missing: {manifest_path}"]
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        with _open_nofollow(manifest_path) as handle:
+            manifest = json.loads(handle.read().decode("utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
         return None, [f"manifest unreadable: {error}"]
     if not isinstance(manifest, dict):
         return None, ["manifest is not a JSON object"]
@@ -213,7 +229,11 @@ def _check_artifacts(index_dir: Path, artifacts: dict) -> list[str]:
             problems.append(f"artifact missing: {name}")
             continue
         expected = hashes.get(_HASH_ALGORITHM) if isinstance(hashes, dict) else None
-        actual = _sha256(artifact)
+        try:
+            actual = _sha256(artifact)
+        except OSError:
+            problems.append(f"artifact missing: {name}")
+            continue
         if expected != actual:
             problems.append(
                 f"artifact hash mismatch: {name} expected {expected} got {actual}"
@@ -240,7 +260,12 @@ def verify_index(
     if manifest is None:
         return problems
     if trusted_manifest_sha256 is not None:
-        digest_problems = _check_trusted_digest(manifest_path, trusted_manifest_sha256)
+        try:
+            digest_problems = _check_trusted_digest(
+                manifest_path, trusted_manifest_sha256
+            )
+        except OSError as error:
+            return [f"manifest unreadable: {error}"]
         if digest_problems:
             return digest_problems
     artifacts = manifest.get("artifacts")
