@@ -114,12 +114,14 @@ def test_indexing_records_flow_coverage_per_module(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     (temp_repo / "covered.py").write_text("def f():\n    return 1\n")
-    # Lua joined FLOW_REGISTERED_LANGUAGES in #1175, PHP in #1174, Dart in #1173;
-    # Scala is still outside it, so it stays the honest "uncovered" example here.
+    # Lua joined FLOW_REGISTERED_LANGUAGES in #1175, PHP in #1174, Dart in
+    # #1173, and Scala (the last gap) in #1256, so every supported language is
+    # now flow-registered; an unsupported extension still parses to no Module
+    # at all, so there is no honest per-language "uncovered" example left.
     (temp_repo / "lua_covered.lua").write_text("local function f() return 1 end\n")
     (temp_repo / "php_covered.php").write_text("<?php\nfunction f() { return 1; }\n")
     (temp_repo / "dart_covered.dart").write_text("int f() { return 1; }\n")
-    (temp_repo / "uncovered.scala").write_text("object U { def f(): Int = 1 }\n")
+    (temp_repo / "scala_covered.scala").write_text("object U { def f(): Int = 1 }\n")
     parsers, queries = load_parsers()
     if not {"php", "lua", "dart", "scala"} <= set(parsers):
         pytest.skip("php/lua/dart/scala parser not available")
@@ -137,7 +139,7 @@ def test_indexing_records_flow_coverage_per_module(
     assert modules[f"{project}.lua_covered"]["flow_covered"] is True
     assert modules[f"{project}.php_covered"]["flow_covered"] is True
     assert modules[f"{project}.dart_covered"]["flow_covered"] is True
-    assert modules[f"{project}.uncovered"]["flow_covered"] is False
+    assert modules[f"{project}.scala_covered"]["flow_covered"] is True
 
 
 def test_default_capture_reports_modules_uncovered(
