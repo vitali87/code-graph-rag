@@ -331,6 +331,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self.updater._rehydrate_csharp_type_locations()
             self.updater._rehydrate_function_locations()
             self.updater._join_csharp_partials()
+        elif changed_language == SupportedLanguage.PYTHON:
+            # The Jedi facts (issue #1183) are position-keyed against the
+            # repo-wide import graph, so an edit can rebind call sites in
+            # unchanged files; same rerun-then-rehydrate posture as Go/C#.
+            self.updater._run_python_frontend()
+            self.updater._rehydrate_function_locations()
 
         # Rust inline-mod import maps retract at the end of every parse
         # and only re-commit through arbitration; run() is not on this

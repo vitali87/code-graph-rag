@@ -20,6 +20,7 @@ from __future__ import annotations
 # Import for side effect: each frontend module self-registers into the registry.
 from . import csharp as _csharp  # noqa: E402,F401  (registers CSharpFrontend)
 from . import go as _go  # noqa: E402,F401  (registers GoFrontend)
+from . import python as _python  # noqa: E402,F401  (registers PythonJediFrontend)
 from .protocol import (
     CallSiteKey,
     EmittingFrontend,

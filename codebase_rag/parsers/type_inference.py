@@ -48,6 +48,8 @@ class TypeInferenceEngine:
         "go_function_return_types",
         "go_call_sites",
         "go_external_sites",
+        "python_call_sites",
+        "python_external_sites",
         "csharp_partial_groups",
         "csharp_extension_methods",
         "csharp_call_sites",
@@ -89,6 +91,8 @@ class TypeInferenceEngine:
         go_function_return_types: dict[str, str] | None = None,
         go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
         go_external_sites: set[CallSiteKey] | None = None,
+        python_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
+        python_external_sites: set[CallSiteKey] | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
         | None = None,
@@ -147,6 +151,14 @@ class TypeInferenceEngine:
         self.go_call_sites = go_call_sites if go_call_sites is not None else {}
         self.go_external_sites = (
             go_external_sites if go_external_sites is not None else set()
+        )
+        # Shared references, same discipline: the Jedi call-site facts and
+        # external proofs (issue #1183), populated after construction.
+        self.python_call_sites = (
+            python_call_sites if python_call_sites is not None else {}
+        )
+        self.python_external_sites = (
+            python_external_sites if python_external_sites is not None else set()
         )
         self._go_free_fn_index: dict[tuple[str, str], str] = {}
         self._go_free_fn_index_size = -1

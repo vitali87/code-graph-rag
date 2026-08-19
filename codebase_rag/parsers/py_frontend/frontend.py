@@ -1,0 +1,200 @@
+"""Jedi in-process Python semantic frontend (issue #1183, stage 1).
+
+Python gets the deepest FLOWS_TO walk in the repo and had no semantic layer:
+re-export chains, decorated callables, and MRO dispatch were all approximated
+by the parsers/py heuristics plus the shared name trie. Jedi is pure Python
+and needs no external toolchain, making it the cheapest semantic win in the
+roadmap. The frontend enumerates call sites with the stdlib ast (byte-exact
+name-token positions matching the tree-sitter CallSiteKey convention), asks
+jedi to infer each callee, and emits the two standard fact families:
+
+- resolved_call_sites: the definition a call binds to, following re-exports,
+  decorators, and class hierarchies, keyed and targeted at NAME tokens.
+- external_sites: callees resolving outside the repo (stdlib, site-packages,
+  builtins) — the compiler-grade proof the trie fallback must not fabricate a
+  first-party CALLS edge.
+
+Cost control: only attribute calls and import-bound bare calls are queried
+(module-local bare calls are the heuristics' home turf), one jedi Project is
+shared across files, and a per-file time budget degrades that file to the
+heuristics rather than stalling the index. Ambiguity is a ceiling: multiple
+or empty inferences emit no fact, never a guess.
+"""
+
+from __future__ import annotations
+
+import ast
+import time
+from pathlib import Path
+
+from loguru import logger
+
+from ... import constants as cs
+from ... import logs as ls
+from ...config import settings
+from ..frontends.protocol import CallSiteKey, ResolvedCallSite, SemanticFacts
+
+_FILE_BUDGET_SECONDS = 2.0
+_RESOLVABLE_TYPES = frozenset({"function", "class"})
+
+
+def python_frontend_available() -> bool:
+    try:
+        import jedi  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def resolve_python_frontend() -> cs.PythonFrontend:
+    # The parser fingerprint records the RESOLVED mode: a graph built with
+    # jedi facts and one without must never share an identity.
+    mode = settings.PYTHON_FRONTEND
+    if mode == cs.PythonFrontend.HEURISTIC:
+        return mode
+    if not python_frontend_available():
+        return cs.PythonFrontend.HEURISTIC
+    return cs.PythonFrontend.JEDI
+
+
+class _CallSite(ast.NodeVisitor):
+    """Collects (name, name_line, name_byte_col) for the call sites worth a
+    jedi query: attribute calls and bare calls bound by an import."""
+
+    def __init__(self) -> None:
+        self.imported_names: set[str] = set()
+        self.sites: list[tuple[str, int, int]] = []
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            head = (alias.asname or alias.name).partition(".")[0]
+            self.imported_names.add(head)
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for alias in node.names:
+            self.imported_names.add(alias.asname or alias.name)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            # The attribute NAME token starts len(attr)-bytes before the
+            # expression's end; ast offsets are UTF-8 byte offsets, matching
+            # the tree-sitter key convention.
+            if func.end_lineno is not None and func.end_col_offset is not None:
+                col = func.end_col_offset - len(func.attr.encode(cs.ENCODING_UTF8))
+                self.sites.append((func.attr, func.end_lineno, col))
+        elif isinstance(func, ast.Name) and func.id in self.imported_names:
+            self.sites.append((func.id, func.lineno, func.col_offset))
+        self.generic_visit(node)
+
+
+def _byte_to_char_col(line_text: str, byte_col: int) -> int:
+    return len(
+        line_text.encode(cs.ENCODING_UTF8)[:byte_col].decode(
+            cs.ENCODING_UTF8, errors="replace"
+        )
+    )
+
+
+def _char_to_byte_col(line_text: str, char_col: int) -> int:
+    return len(line_text[:char_col].encode(cs.ENCODING_UTF8))
+
+
+def _target_of(names, repo_path: Path):
+    if len(names) != 1:
+        return None
+    name = names[0]
+    if name.type not in _RESOLVABLE_TYPES:
+        return None
+    return name
+
+
+def _resolve_file(
+    script,
+    source_lines: list[str],
+    rel_file: str,
+    sites: list[tuple[str, int, int]],
+    repo_path: Path,
+    facts: SemanticFacts,
+    deadline: float,
+) -> bool:
+    import jedi
+
+    for simple_name, line, byte_col in sites:
+        if time.monotonic() > deadline:
+            return False
+        if line - 1 >= len(source_lines):
+            continue
+        char_col = _byte_to_char_col(source_lines[line - 1], byte_col)
+        try:
+            names = script.infer(line, char_col)
+        except (jedi.InternalError, RecursionError, ValueError):
+            continue
+        target = _target_of(names, repo_path)
+        if target is None:
+            continue
+        key: CallSiteKey = (rel_file, line, byte_col, simple_name)
+        module_path = target.module_path
+        if module_path is None or not str(module_path).startswith(str(repo_path) + "/"):
+            facts.external_sites.add(key)
+            continue
+        target_rel = Path(module_path).relative_to(repo_path).as_posix()
+        try:
+            target_lines = (
+                Path(module_path).read_text(encoding=cs.ENCODING_UTF8).splitlines()
+            )
+        except (OSError, UnicodeDecodeError):
+            continue
+        if target.line is None or target.line - 1 >= len(target_lines):
+            continue
+        # The Pass-2 span index keys Python definitions at the def/class
+        # KEYWORD (the line's first code byte), not the name token jedi
+        # reports; the indent is ASCII so its byte and char widths agree.
+        def_line = target_lines[target.line - 1]
+        target_byte_col = len(def_line) - len(def_line.lstrip())
+        facts.resolved_call_sites[key] = ResolvedCallSite(
+            simple_name, target_rel, target.line, target_byte_col
+        )
+    return True
+
+
+def run_python_frontend(repo_path: Path, files: list[Path]) -> SemanticFacts:
+    facts = SemanticFacts()
+    if not files:
+        return facts
+    import jedi
+
+    repo_path = repo_path.resolve()
+    project = jedi.Project(str(repo_path))
+    degraded = 0
+    for file_path in files:
+        try:
+            source = file_path.read_text(encoding=cs.ENCODING_UTF8)
+            tree = ast.parse(source)
+        except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
+            continue
+        collector = _CallSite()
+        collector.visit(tree)
+        if not collector.sites:
+            continue
+        try:
+            rel_file = file_path.resolve().relative_to(repo_path).as_posix()
+        except ValueError:
+            continue
+        script = jedi.Script(path=str(file_path), project=project)
+        deadline = time.monotonic() + _FILE_BUDGET_SECONDS
+        if not _resolve_file(
+            script,
+            source.splitlines(),
+            rel_file,
+            collector.sites,
+            repo_path,
+            facts,
+            deadline,
+        ):
+            degraded += 1
+    if degraded:
+        logger.info(ls.PY_FRONTEND_BUDGET_DEGRADED, count=degraded)
+    return facts

@@ -116,6 +116,15 @@ class CSharpFrontend(StrEnum):
     HYBRID = "hybrid"
 
 
+class PythonFrontend(StrEnum):
+    # HEURISTIC is the default: the tree-sitter walkers plus the name trie.
+    # JEDI layers in-process semantic facts on top (issue #1183); it degrades
+    # to HEURISTIC when jedi is not installed, and the parser fingerprint
+    # records the RESOLVED mode.
+    HEURISTIC = "heuristic"
+    JEDI = "jedi"
+
+
 class GoFrontend(StrEnum):
     # AUTO resolves at run time: GOTYPES where a go toolchain is on PATH,
     # TREESITTER otherwise (resolve_go_frontend). The parser fingerprint records
