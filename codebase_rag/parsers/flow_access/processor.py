@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Node
@@ -522,6 +523,20 @@ class _JsCtx(NamedTuple):
     type_ctors: dict[str, ResourceKind]
 
 
+@dataclass
+class _PendingCapture:
+    """A nested def whose captured-cell composition is deferred until the walk
+    learns HOW the closure is used (issue #1211)."""
+
+    nested_qn: str
+    def_node: Node
+    caller_qn: str
+    free_vars: tuple[str, ...]
+    snapshot: dict[str, Taint]
+    called: bool = False
+    escaped: bool = False
+
+
 class FlowProcessor:
     """Detects intra-procedural value flow in a function body and emits FLOWS_TO
     edges: resource->resource (a read source reaches a write sink), caller->callee
@@ -604,6 +619,7 @@ class FlowProcessor:
         # element is the per-call-site pass-through token (issue #1168). Composed
         # against the parameter-sink closure in finalize to emit origin -> sink.
         self._param_call_sites: list[tuple[Taint, str, str, str]] = []
+        self._pending_captures: dict[str, _PendingCapture] = {}
         # Per-function positional parameter slots so a call site's arg:<index>
         # resolves to the right callee parameter. The Python path truncates at
         # the first variadic/keyword-only boundary (self/cls dropped) and has no
@@ -702,8 +718,10 @@ class FlowProcessor:
         for fv in python_free_variable_names(caller_node):
             if fv not in tainted:
                 tainted[fv] = Taint(frozenset(), frozenset(), frozenset({fv}))
+        self._pending_captures.clear()
         for node in scope_seed_nodes(caller_node):
             tainted = self._walk_stmt(node, tainted, ctx)
+        self._flush_pending_captures()
 
         if self._acc_returns_taint:
             self._summaries[caller_qn] = self._acc_return_taint
@@ -3003,6 +3021,11 @@ class FlowProcessor:
     def _apply_assignment(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:
         left = node.child_by_field_name(cs.TS_FIELD_LEFT)
         right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        # A closure carried ANYWHERE in the RHS (holder.callback = send,
+        # d[k] = (send), x = send if c else other) escapes, even when the
+        # non-identifier target makes the assignment otherwise untrackable
+        # (issue #1211 review); direct-call callees are exempt.
+        self._note_capture_escapes_in(right)
         if (
             left is None
             or right is None
@@ -3027,7 +3050,12 @@ class FlowProcessor:
         # return, and value-selection forms (`a if c else b`, `a or b`,
         # `a and b`) union their operands (the result MAY be either).
         if node.type == cs.TS_PY_IDENTIFIER and node.text is not None:
-            return tainted.get(node.text.decode(cs.ENCODING_UTF8))
+            text = node.text.decode(cs.ENCODING_UTF8)
+            # A VALUE use of a locally-defined closure name escapes it: it may
+            # be stored/passed/returned and run later with any cell value, so
+            # its capture falls back to the def-site MAY snapshot (#1211).
+            self._note_capture_escape(text)
+            return tainted.get(text)
         if node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
             inner = next(iter(node.named_children), None)
             return self._py_value_taint(inner, tainted, ctx) if inner else None
@@ -3084,6 +3112,9 @@ class FlowProcessor:
         raw = call_name(node)
         if raw is None:
             return
+        # BEFORE the no-args early return: a zero-arg `send()` is exactly the
+        # direct closure invocation whose cell state matters (issue #1211).
+        self._note_capture_call(raw, tainted)
         # Evaluate every argument through the value-taint evaluator, so a source
         # or tainted callee written inline -- log_it(os.getenv("K")) -- is seen,
         # not only a bare tainted identifier (CodeRabbit review on PR #1167).
@@ -3197,6 +3228,9 @@ class FlowProcessor:
         result = _EMPTY_TAINT
         tainted_here = False
         for child in _return_value_nodes(node):
+            # Any returned expression may hand the closure to the caller
+            # (`return send`, `return send if c else other`): it escapes.
+            self._note_capture_escapes_in(child)
             if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
                 name = child.text.decode(cs.ENCODING_UTF8)
                 if (taint := tainted.get(name)) is not None:
@@ -3509,13 +3543,13 @@ class FlowProcessor:
 
     def _record_captures(self, def_node: Node, state: _TaintMap, ctx: _FlowCtx) -> None:
         # A nested function may capture tainted enclosing-scope variables through
-        # its environment. For each free variable tainted at the definition site,
-        # record a capture keyed by the nested function's qn and via kw:<name>, so
-        # the existing parameter-summary finalize composes it exactly as a keyword
-        # argument would (issue #1197). A capture carrying concrete origins/pending
-        # is a resolvable call site; one carrying only the enclosing function's own
-        # parameters records a transitive flow edge, so a variable captured through
-        # two nested levels still composes.
+        # its environment. A closure captures a CELL, not a value, so the state
+        # that matters is the cell's value when the closure RUNS (issue #1211):
+        # a direct same-scope call commits the capture from the state AT that
+        # call, while a closure that escapes (stored, passed, returned) or is
+        # never called locally keeps the def-site MAY snapshot of #1197 -- the
+        # walk cannot know when an escaped closure runs, so the safe
+        # over-approximation stands. Redefinition commits the old record first.
         resolved = self._nested_def_name(def_node)
         if resolved is None:
             return
@@ -3529,16 +3563,100 @@ class FlowProcessor:
             if loc is not None
             else f"{ctx.caller_qn}{cs.SEPARATOR_DOT}{name}"
         )
-        for fv in python_free_variable_names(inner):
-            taint = state.get(fv)
+        free_vars = tuple(python_free_variable_names(inner))
+        if not free_vars:
+            return
+        if (previous := self._pending_captures.pop(name, None)) is not None:
+            self._commit_pending_capture(previous)
+        snapshot = {
+            fv: taint for fv in free_vars if (taint := state.get(fv)) is not None
+        }
+        self._pending_captures[name] = _PendingCapture(
+            nested_qn=nested_qn,
+            def_node=def_node,
+            caller_qn=ctx.caller_qn,
+            free_vars=free_vars,
+            snapshot=snapshot,
+        )
+
+    def _commit_capture_state(
+        self, record: _PendingCapture, cell_state: dict[str, Taint]
+    ) -> None:
+        # Keyed by the nested function's qn and via kw:<name>, so the existing
+        # parameter-summary finalize composes it exactly as a keyword argument
+        # would (issue #1197). A capture carrying concrete origins/pending is a
+        # resolvable call site; one carrying only the enclosing function's own
+        # parameters records a transitive flow edge, so a variable captured
+        # through two nested levels still composes.
+        for fv in record.free_vars:
+            taint = cell_state.get(fv)
             if taint is None:
                 continue
             via = VIA_KW_FORMAT.format(name=fv)
             if taint.origins or taint.pending:
-                token = _passthrough_result_token(ctx.caller_qn, def_node)
-                self._param_call_sites.append((taint, nested_qn, via, token))
+                token = _passthrough_result_token(record.caller_qn, record.def_node)
+                self._param_call_sites.append((taint, record.nested_qn, via, token))
             for pname in taint.params:
-                self._param_flow_edges.append((ctx.caller_qn, pname, nested_qn, via))
+                self._param_flow_edges.append(
+                    (record.caller_qn, pname, record.nested_qn, via)
+                )
+
+    def _commit_pending_capture(self, record: _PendingCapture) -> None:
+        self._commit_capture_state(record, record.snapshot)
+
+    def _note_capture_call(self, raw: str, state: _TaintMap) -> None:
+        # A direct call of a locally-defined closure: the cell holds the
+        # CURRENT threaded state, so this invocation composes with it -- the
+        # path-sensitive branch copies make a partially-cleaned merge stay MAY.
+        record = self._pending_captures.get(raw)
+        if record is None:
+            return
+        record.called = True
+        cell_state = {
+            fv: taint for fv in record.free_vars if (taint := state.get(fv)) is not None
+        }
+        self._commit_capture_state(record, cell_state)
+
+    def _note_capture_escape(self, name: str) -> None:
+        record = self._pending_captures.get(name)
+        if record is not None:
+            record.escaped = True
+
+    def _note_capture_escapes_in(self, expr: Node | None) -> None:
+        # Every identifier VALUE anywhere in this expression escapes its
+        # closure: wrappers, conditionals, containers, and call ARGUMENTS all
+        # hand the function object onward. The one exception is a call's
+        # callee position -- `send()` is the direct invocation the
+        # call-relative path handles -- so calls recurse into arguments only.
+        # Over-marking is conservative-safe (escape means the def-site MAY
+        # snapshot), never a lost flow.
+        if expr is None:
+            return
+        if expr.type == cs.TS_PY_CALL:
+            self._note_capture_escapes_in(
+                expr.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+            )
+            return
+        if expr.type == cs.TS_PY_IDENTIFIER and expr.text is not None:
+            self._note_capture_escape(expr.text.decode(cs.ENCODING_UTF8))
+            return
+        if expr.type == cs.TS_PY_KEYWORD_ARGUMENT:
+            # `other(send=None)`: the label names a PARAMETER, not the
+            # closure; only the value can carry it onward.
+            self._note_capture_escapes_in(expr.child_by_field_name(cs.FIELD_VALUE))
+            return
+        for child in expr.named_children:
+            self._note_capture_escapes_in(child)
+
+    def _flush_pending_captures(self) -> None:
+        # Scope end: an escaped closure may run at ANY time with any cell
+        # value, and a never-called one may still be reached through its qn,
+        # so both keep the def-site MAY snapshot (#1197 semantics). A closure
+        # only ever called directly already committed per-invocation states.
+        for record in self._pending_captures.values():
+            if record.escaped or not record.called:
+                self._commit_pending_capture(record)
+        self._pending_captures.clear()
 
     def _param_name_for_via(self, callee_qn: str, via: str) -> str | None:
         # Map an argument's `via` tag to the callee's parameter name: `kw:<name>`
