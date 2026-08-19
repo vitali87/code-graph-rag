@@ -357,3 +357,7 @@ HELP_TRUSTED_MANIFEST_SHA = (
     "Externally trusted sha256 of manifest.json (e.g. from an attestation); "
     "anchors verification beyond local self-consistency."
 )
+CMD_DIFF_INDEX = "Structural diff between two protobuf index snapshots"
+HELP_DIFF_OLD = "Directory holding the OLD snapshot artifacts."
+HELP_DIFF_NEW = "Directory holding the NEW snapshot artifacts."
+HELP_DIFF_JSON_OUT = "Write the JSON delta to FILE instead of stdout."
