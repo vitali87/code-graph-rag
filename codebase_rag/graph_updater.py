@@ -496,6 +496,37 @@ class GraphUpdater:
             )
         )
 
+    def _run_python_frontend(self) -> None:
+        # In-process Jedi facts (issue #1183): exact first-party callees
+        # through re-exports/decorators and external proofs for calls leaving
+        # the repo. Off (HEURISTIC) or unavailable degrades to the tree-sitter
+        # heuristics; reset first so a reused updater does not keep stale
+        # facts when the setting flips between runs.
+        dp = self.factory.definition_processor
+        dp.python_call_sites.clear()
+        dp.python_external_sites.clear()
+        if settings.PYTHON_FRONTEND == cs.PythonFrontend.HEURISTIC:
+            return
+        frontend = FRONTENDS.get(cs.SupportedLanguage.PYTHON)
+        if frontend is None or not frontend.available():
+            logger.warning(ls.PY_FRONTEND_UNAVAILABLE)
+            return
+        files = [
+            fp for fp, lang in self._parsed_files if lang == cs.SupportedLanguage.PYTHON
+        ]
+        if not files:
+            return
+        logger.info(ls.PY_FRONTEND_RUNNING)
+        facts = frontend.run(self.repo_path, files)
+        dp.python_call_sites.update(facts.resolved_call_sites)
+        dp.python_external_sites.update(facts.external_sites)
+        logger.info(
+            ls.PY_FRONTEND_FACTS.format(
+                calls=len(facts.resolved_call_sites),
+                externals=len(facts.external_sites),
+            )
+        )
+
     def _reset_go_semantic_facts(self) -> None:
         dp = self.factory.definition_processor
         dp.go_call_sites.clear()
@@ -791,6 +822,11 @@ class GraphUpdater:
         # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
         # resolve against the go_type_locations index Pass 2 just registered.
         self._join_go_implements()
+
+        # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
+        # calls against the function_locations Pass 2 just filled) and needs
+        # the parsed-file list, which Pass 2 produced (issue #1183).
+        self._run_python_frontend()
 
         # HYBRID must run after Pass 2: an incremental run deletes each
         # changed file's Module subtree before re-parsing it, so macro

@@ -906,3 +906,14 @@ WEB_SEARCH_KEYLESS_FALLBACK = (
 WEB_SEARCH_UNKNOWN_PROVIDER = (
     "Unknown web search provider '{provider}'; using duckduckgo"
 )
+PY_FRONTEND_RUNNING = "Jedi Python frontend: resolving semantic call facts"
+PY_FRONTEND_UNAVAILABLE = (
+    "PYTHON_FRONTEND=jedi but jedi is not installed (python-semantics extra); "
+    "using heuristics"
+)
+PY_FRONTEND_FACTS = (
+    "Jedi facts: {calls} resolved call sites, {externals} external sites"
+)
+PY_FRONTEND_BUDGET_DEGRADED = (
+    "Jedi budget exceeded in {count} file(s); those fall back to heuristics"
+)

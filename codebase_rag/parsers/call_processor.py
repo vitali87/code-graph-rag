@@ -24,7 +24,7 @@ from ..types_defs import (
     NodeType,
 )
 from ..utils.path_utils import cached_relative_path
-from .call_resolver import CallResolver
+from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
 from .cpp.type_inference import CppTypeInferenceEngine
@@ -3359,6 +3359,29 @@ class CallProcessor:
                         class_context,
                         caller_qn,
                         language,
+                    )
+            elif (
+                language == cs.SupportedLanguage.PYTHON
+                and call_node.type == cs.TS_PY_CALL
+            ):
+                # The Jedi frontend (issue #1183): a HIT is the exact callee
+                # through re-exports/decorators the trie approximates; the
+                # external sentinel proves the call leaves the repo and
+                # suppresses trie fabrication. Any miss (incl. the frontend
+                # off, so both maps are empty) falls back to the Python
+                # heuristics with call_point preserved.
+                callee_info = resolver.resolve_python_call_site(call_node, module_qn)
+                if callee_info == PY_EXTERNAL_TARGET:
+                    callee_info = None
+                elif callee_info is None:
+                    callee_info = resolve_func(
+                        call_name,
+                        module_qn,
+                        call_var_types,
+                        class_context,
+                        caller_qn,
+                        language,
+                        call_point=call_node.start_byte,
                     )
             elif (
                 language == cs.SupportedLanguage.GO

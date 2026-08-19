@@ -14,6 +14,7 @@ from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from .import_processor import ImportProcessor
 from .py import resolve_class_name
 from .rs import utils as rs_utils
+from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
 from .utils import follow_reexports
 
@@ -64,8 +65,12 @@ def _split_receiver_chain(expr: str) -> list[str]:
     return parts
 
 
+PY_EXTERNAL_TARGET: tuple[str, str] = ("", "")
+
+
 class CallResolver:
     __slots__ = (
+        "_py_rel_to_module",
         "function_registry",
         "import_processor",
         "type_inference",
@@ -106,6 +111,7 @@ class CallResolver:
         self.import_processor = import_processor
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
+        self._py_rel_to_module: dict[str, str] = {}
         # Every inline `mod` qn the class pass ingested (shared ref). A Rust
         # enclosing scope is an inline mod IFF it is in here: an impl target is
         # not, and neither is registered under a type label when it is a
@@ -3039,3 +3045,59 @@ class CallResolver:
         return self.type_inference.go_type_inference.resolve_go_call_site(
             call_node, module_qn
         )
+
+    def resolve_python_call_site(
+        self,
+        call_node: Node,
+        module_qn: str,
+    ) -> tuple[str, str] | None:
+        # The Jedi semantic path (issue #1183), mirroring the Go shape: an
+        # exact first-party callee through re-exports/decorators, or the
+        # external sentinel proving the call leaves the repo. Any miss falls
+        # back to the heuristics.
+        ti = self.type_inference
+        if not (ti.python_call_sites or ti.python_external_sites):
+            return None
+        name_node = self._python_callee_name_node(call_node)
+        if name_node is None:
+            return None
+        name = name_node.text.decode(cs.ENCODING_UTF8) if name_node.text else ""
+        if not name:
+            return None
+        key = call_site_key(
+            name_node,
+            name,
+            module_qn,
+            ti.module_qn_to_file_path,
+            ti.repo_path,
+        )
+        if key is None:
+            return None
+        fact = ti.python_call_sites.get(key)
+        if fact is not None:
+            return declared_location(
+                fact.target_file,
+                fact.target_line,
+                fact.target_col,
+                ti.function_locations,
+                ti.module_qn_to_file_path,
+                ti.repo_path,
+                self._py_rel_to_module,
+            )
+        if key in ti.python_external_sites:
+            return PY_EXTERNAL_TARGET
+        return None
+
+    @staticmethod
+    def _python_callee_name_node(call_node: Node) -> Node | None:
+        # The callee NAME token: a bare identifier for `f()`, the `attribute`
+        # child for `obj.m()` / `pkg.f()`; anything else (subscripts, calls of
+        # call results) has no single name token and stays heuristic.
+        func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is None:
+            return None
+        if func.type == cs.TS_PY_IDENTIFIER:
+            return func
+        if func.type == cs.TS_PY_ATTRIBUTE:
+            return func.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+        return None

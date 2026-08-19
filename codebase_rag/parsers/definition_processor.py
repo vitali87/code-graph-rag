@@ -169,6 +169,11 @@ class DefinitionProcessor(
         # identifier position), stashed here at frontend time and resolved to
         # IMPLEMENTS edges after Pass 2 fills go_type_locations below.
         self.go_implements: list[ImplementsPair] = []
+        # Jedi Python frontend (issue #1183): the same two call families,
+        # keyed on the callee NAME token like C#/Go. Same in-place mutation
+        # discipline; the resolver reads these references directly.
+        self.python_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
+        self.python_external_sites: set[CallSiteKey] = set()
         # (rel_file, type_start_line, type_start_col) -> (class qn, node label)
         # for every ingested Go type. Go's type_spec start_point IS the name
         # token, so the frontend's pair positions join here directly (no alias).
