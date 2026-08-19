@@ -226,6 +226,23 @@ def _coverage_problems(index_dir: Path, manifest: dict) -> list[str]:
     return []
 
 
+def _artifact_problem(index_dir: Path, name: str, expected: object) -> str | None:
+    if name not in _ARTIFACT_FILES:
+        # A crafted manifest must never steer verification at files outside
+        # the index directory (path traversal / absolute names).
+        return f"unknown artifact name in manifest: {name}"
+    artifact = index_dir / name
+    if artifact.is_symlink() or not artifact.is_file():
+        return f"artifact missing: {name}"
+    try:
+        actual = _sha256(artifact)
+    except OSError:
+        return f"artifact missing: {name}"
+    if expected != actual:
+        return f"artifact hash mismatch: {name} expected {expected} got {actual}"
+    return None
+
+
 def _check_artifacts(index_dir: Path, artifacts: dict) -> list[str]:
     problems: list[str] = []
     if cs.PROTOBUF_INDEX_FILE in artifacts and cs.PROTOBUF_NODES_FILE in artifacts:
@@ -233,25 +250,9 @@ def _check_artifacts(index_dir: Path, artifacts: dict) -> list[str]:
             "mixed index layouts: manifest covers both joint and split artifacts"
         )
     for name, hashes in artifacts.items():
-        if name not in _ARTIFACT_FILES:
-            # A crafted manifest must never steer verification at files
-            # outside the index directory (path traversal / absolute names).
-            problems.append(f"unknown artifact name in manifest: {name}")
-            continue
-        artifact = index_dir / name
-        if artifact.is_symlink() or not artifact.is_file():
-            problems.append(f"artifact missing: {name}")
-            continue
         expected = hashes.get(_HASH_ALGORITHM) if isinstance(hashes, dict) else None
-        try:
-            actual = _sha256(artifact)
-        except OSError:
-            problems.append(f"artifact missing: {name}")
-            continue
-        if expected != actual:
-            problems.append(
-                f"artifact hash mismatch: {name} expected {expected} got {actual}"
-            )
+        if (problem := _artifact_problem(index_dir, name, expected)) is not None:
+            problems.append(problem)
     for name in _ARTIFACT_FILES:
         if (index_dir / name).is_file() and name not in artifacts:
             problems.append(f"artifact not covered by manifest: {name}")
