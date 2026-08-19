@@ -187,7 +187,10 @@ def verify_index(
     """
     problems: list[str] = []
     manifest_path = index_dir / MANIFEST_FILE
-    if not manifest_path.is_file():
+    # is_file() follows symlinks: a crafted index could point the manifest or
+    # an allowlisted artifact name outside index_dir and leak an external
+    # file's digest through the mismatch message.
+    if manifest_path.is_symlink() or not manifest_path.is_file():
         return [f"manifest missing: {manifest_path}"]
     if trusted_manifest_sha256 is not None:
         actual_manifest = _sha256(manifest_path)
@@ -217,7 +220,7 @@ def verify_index(
             problems.append(f"unknown artifact name in manifest: {name}")
             continue
         artifact = index_dir / name
-        if not artifact.is_file():
+        if artifact.is_symlink() or not artifact.is_file():
             problems.append(f"artifact missing: {name}")
             continue
         expected = hashes.get(_HASH_ALGORITHM) if isinstance(hashes, dict) else None

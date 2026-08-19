@@ -196,3 +196,17 @@ def test_trusted_manifest_digest_anchors_verification(tmp_path: Path) -> None:
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     problems = verify_index(out, good)
     assert any("trusted digest" in p for p in problems)
+
+
+def test_verify_rejects_symlinked_artifacts(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    out = tmp_path / "out"
+    _export(repo, out)
+    write_manifest(out, source_state(repo), capture_description(ALL_ENABLED))
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes((out / _INDEX_FILE).read_bytes())
+    (out / _INDEX_FILE).unlink()
+    (out / _INDEX_FILE).symlink_to(outside)
+    problems = verify_index(out)
+    assert any("artifact missing" in p for p in problems)
