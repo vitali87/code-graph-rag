@@ -43,6 +43,43 @@ def _try_lock(fd: int) -> bool:
 _LEGACY_STALE_SECONDS = 600.0
 
 
+_HOLDER_ALIVE = "alive"
+_HOLDER_DEAD = "dead"
+_HOLDER_UNKNOWN = "unknown"
+
+
+def _legacy_holder_pid(lock: Path) -> int | None:
+    try:
+        pid = int((lock / "pid").read_text().strip())
+    except (OSError, ValueError):
+        return None
+    # 0 probes the caller's own process group (always alive) and a negative
+    # value targets a group, so neither identifies a holder.
+    return pid if pid > 0 else None
+
+
+def _legacy_holder_state(lock: Path) -> str:
+    pid = _legacy_holder_pid(lock)
+    if pid is None or os.name != "posix":
+        return _HOLDER_UNKNOWN
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return _HOLDER_DEAD
+    except OverflowError:
+        return _HOLDER_UNKNOWN
+    except OSError:
+        return _HOLDER_ALIVE
+    return _HOLDER_ALIVE
+
+
+def _legacy_dir_expired(lock: Path) -> bool:
+    try:
+        return time.time() - lock.stat().st_mtime > _LEGACY_STALE_SECONDS
+    except OSError:
+        return False
+
+
 def _clear_stale_legacy_lock_dir(lock: Path) -> None:
     # Pre-#1227 versions used a mkdir lock at this same path; a crashed
     # holder's leftover directory would otherwise block the lock file from
@@ -53,32 +90,11 @@ def _clear_stale_legacy_lock_dir(lock: Path) -> None:
     # just keeps polling.
     if not lock.is_dir():
         return None
-    pid: int | None
-    try:
-        pid = int((lock / "pid").read_text().strip())
-    except (OSError, ValueError):
-        pid = None
-    if pid is not None and pid <= 0:
-        # 0 probes the caller's own process group (always alive) and a
-        # negative value targets a group, so neither identifies a holder.
-        pid = None
-    if pid is not None and os.name == "posix":
-        try:
-            os.kill(pid, 0)
-            return None
-        except ProcessLookupError:
-            pass
-        except OverflowError:
-            pid = None
-        except OSError:
-            return None
-    if pid is None or os.name != "posix":
-        try:
-            age = time.time() - lock.stat().st_mtime
-        except OSError:
-            return None
-        if age <= _LEGACY_STALE_SECONDS:
-            return None
+    state = _legacy_holder_state(lock)
+    if state == _HOLDER_ALIVE:
+        return None
+    if state == _HOLDER_UNKNOWN and not _legacy_dir_expired(lock):
+        return None
     try:
         (lock / "pid").unlink(missing_ok=True)
         lock.rmdir()
