@@ -10,6 +10,8 @@ import textwrap
 import time
 from pathlib import Path
 
+import pytest
+
 from codebase_rag.parsers.build_lock import acquire_build_lock, release_build_lock
 
 _HOLDER_SCRIPT = textwrap.dedent(
@@ -130,3 +132,21 @@ def test_live_legacy_holder_keeps_the_path_busy(tmp_path: Path) -> None:
     (lock / "pid").write_text(str(os.getpid()))
     assert acquire_build_lock(lock, lambda: False, tries=3, poll_seconds=0.0) is None
     assert lock.is_dir()
+
+
+@pytest.mark.parametrize("bad_pid", ["0", "-5", str(10**100), "not-a-pid"])
+def test_unusable_legacy_pid_falls_back_to_age(tmp_path: Path, bad_pid: str) -> None:
+    # pid 0 probes the caller's own process group (always alive), negatives
+    # target groups, and an oversized int raises OverflowError from os.kill;
+    # none identifies a holder, so only the age heuristic may reclaim.
+    lock = tmp_path / ".build-lock"
+    lock.mkdir()
+    (lock / "pid").write_text(bad_pid)
+    assert acquire_build_lock(lock, lambda: False, tries=2, poll_seconds=0.0) is None
+    assert lock.is_dir()
+    stale = time.time() - 3600
+    os.utime(lock, (stale, stale))
+    handle = acquire_build_lock(lock, lambda: False, tries=1, poll_seconds=0.0)
+    assert handle is not None
+    assert lock.is_file()
+    release_build_lock(handle)

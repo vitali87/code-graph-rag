@@ -58,15 +58,21 @@ def _clear_stale_legacy_lock_dir(lock: Path) -> None:
         pid = int((lock / "pid").read_text().strip())
     except (OSError, ValueError):
         pid = None
+    if pid is not None and pid <= 0:
+        # 0 probes the caller's own process group (always alive) and a
+        # negative value targets a group, so neither identifies a holder.
+        pid = None
     if pid is not None and os.name == "posix":
         try:
             os.kill(pid, 0)
             return None
         except ProcessLookupError:
             pass
+        except OverflowError:
+            pid = None
         except OSError:
             return None
-    else:
+    if pid is None or os.name != "posix":
         try:
             age = time.time() - lock.stat().st_mtime
         except OSError:
