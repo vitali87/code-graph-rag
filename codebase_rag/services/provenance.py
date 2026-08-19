@@ -111,11 +111,34 @@ def _analyzer_version() -> str:
         return "unknown"
 
 
+def capture_description(selection) -> JsonDict:
+    # The EFFECTIVE configuration, not the raw CLI tokens: CGR_CAPTURE and
+    # order-dependent overrides all funnel into the resolved selection, so two
+    # identical selections always record identically and an environment-only
+    # configuration is never recorded as null.
+    return {
+        "relationships": sorted(str(rel) for rel in selection.enabled_rels),
+        "node_labels": sorted(str(label) for label in selection.enabled_node_labels),
+    }
+
+
+def source_state(repo_path: Path) -> JsonDict:
+    """Snapshot the git state; call BEFORE indexing so artifacts written into
+    the tree (or edits racing the run) cannot skew the recorded state."""
+    return _source_state(repo_path)
+
+
 def build_manifest(
     index_dir: Path,
-    repo_path: Path,
-    capture_tokens: list[str] | None,
+    source: JsonDict,
+    capture: JsonDict,
 ) -> JsonDict:
+    joint = (index_dir / cs.PROTOBUF_INDEX_FILE).is_file()
+    split = (index_dir / cs.PROTOBUF_NODES_FILE).is_file()
+    if joint and split:
+        raise ValueError(
+            "mixed index layouts: both the joint and the split artifacts exist"
+        )
     artifacts = {
         name: {_HASH_ALGORITHM: _sha256(index_dir / name)}
         for name in _ARTIFACT_FILES
@@ -127,8 +150,8 @@ def build_manifest(
         "codec_schema_sha256": (
             _sha256(_SCHEMA_FILE) if _SCHEMA_FILE.is_file() else None
         ),
-        "capture": sorted(capture_tokens) if capture_tokens else None,
-        "source": _source_state(repo_path),
+        "capture": capture,
+        "source": source,
         "artifacts": artifacts,
         "coverage": _coverage_summary(index_dir),
         # Provenance metadata only: the timestamp binds nothing and is
@@ -139,10 +162,10 @@ def build_manifest(
 
 def write_manifest(
     index_dir: Path,
-    repo_path: Path,
-    capture_tokens: list[str] | None,
+    source: JsonDict,
+    capture: JsonDict,
 ) -> Path:
-    manifest = build_manifest(index_dir, repo_path, capture_tokens)
+    manifest = build_manifest(index_dir, source, capture)
     index_dir.mkdir(parents=True, exist_ok=True)
     out_path = index_dir / MANIFEST_FILE
     out_path.write_text(
@@ -162,11 +185,22 @@ def verify_index(index_dir: Path) -> list[str]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return [f"manifest unreadable: {error}"]
+    if not isinstance(manifest, dict):
+        return ["manifest is not a JSON object"]
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict) or not artifacts:
         problems.append("manifest lists no artifacts")
         artifacts = {}
+    if cs.PROTOBUF_INDEX_FILE in artifacts and cs.PROTOBUF_NODES_FILE in artifacts:
+        problems.append(
+            "mixed index layouts: manifest covers both joint and split artifacts"
+        )
     for name, hashes in artifacts.items():
+        if name not in _ARTIFACT_FILES:
+            # A crafted manifest must never steer verification at files
+            # outside the index directory (path traversal / absolute names).
+            problems.append(f"unknown artifact name in manifest: {name}")
+            continue
         artifact = index_dir / name
         if not artifact.is_file():
             problems.append(f"artifact missing: {name}")

@@ -7,13 +7,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from codebase_rag.capture import ALL_ENABLED
+from codebase_rag.capture import ALL_ENABLED, resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.services.provenance import (
     MANIFEST_FILE,
     build_manifest,
+    capture_description,
+    source_state,
     verify_index,
     write_manifest,
 )
@@ -62,11 +64,13 @@ def test_manifest_coverage_agrees_and_verify_passes(tmp_path: Path) -> None:
     _write_repo(repo)
     out = tmp_path / "out"
     _export(repo, out)
-    write_manifest(out, repo, ["io"])
+    write_manifest(
+        out, source_state(repo), capture_description(resolve_capture(["io"]))
+    )
     manifest = json.loads((out / MANIFEST_FILE).read_text(encoding="utf-8"))
     assert manifest["coverage"]["python"]["modules"] == 1
     assert manifest["coverage"]["lua"]["modules"] == 1
-    assert manifest["capture"] == ["io"]
+    assert "READS_FROM" in manifest["capture"]["relationships"]
     assert manifest["artifacts"][_INDEX_FILE]["sha256"]
     assert verify_index(out) == []
 
@@ -76,7 +80,7 @@ def test_verify_fails_on_tampered_artifact(tmp_path: Path) -> None:
     _write_repo(repo)
     out = tmp_path / "out"
     _export(repo, out)
-    write_manifest(out, repo, None)
+    write_manifest(out, source_state(repo), capture_description(ALL_ENABLED))
     artifact = out / _INDEX_FILE
     blob = bytearray(artifact.read_bytes())
     blob[len(blob) // 2] ^= 0xFF
@@ -90,7 +94,7 @@ def test_verify_fails_on_tampered_manifest_claims(tmp_path: Path) -> None:
     _write_repo(repo)
     out = tmp_path / "out"
     _export(repo, out)
-    write_manifest(out, repo, None)
+    write_manifest(out, source_state(repo), capture_description(ALL_ENABLED))
     manifest_path = out / MANIFEST_FILE
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["coverage"]["python"]["flow_covered"] = 999
@@ -107,7 +111,7 @@ def test_verify_fails_on_missing_manifest_and_uncovered_artifact(
     out = tmp_path / "out"
     _export(repo, out)
     assert any("manifest missing" in p for p in verify_index(out))
-    write_manifest(out, repo, None)
+    write_manifest(out, source_state(repo), capture_description(ALL_ENABLED))
     manifest_path = out / MANIFEST_FILE
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     del manifest["artifacts"][_INDEX_FILE]
@@ -120,9 +124,55 @@ def test_manifest_records_source_state(tmp_path: Path) -> None:
     _write_repo(repo)
     out = tmp_path / "out"
     _export(repo, out)
-    manifest = build_manifest(out, repo, None)
+    manifest = build_manifest(out, source_state(repo), capture_description(ALL_ENABLED))
     # tmp_path is not a git repo: the state is unknowable, never "clean".
     assert manifest["source"]["commit"] is None
     assert manifest["source"]["dirty"] is None
     assert manifest["analyzer_version"]
     assert manifest["codec_schema_sha256"]
+
+
+def test_verify_rejects_foreign_artifact_names(tmp_path: Path) -> None:
+    # A crafted manifest must never steer hashing at files outside the index
+    # directory: unknown names (traversal, absolute paths) are rejected
+    # before any file access.
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    out = tmp_path / "out"
+    _export(repo, out)
+    write_manifest(out, source_state(repo), capture_description(ALL_ENABLED))
+    secret = tmp_path / "secret.txt"
+    secret.write_text("s3cr3t", encoding="utf-8")
+    manifest_path = out / MANIFEST_FILE
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"]["../secret.txt"] = {"sha256": "0" * 64}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    problems = verify_index(out)
+    assert any("unknown artifact name" in p for p in problems)
+    assert not any("s3cr3t" in p or "secret" in p and "hash" in p for p in problems)
+
+
+def test_flush_layouts_are_mutually_exclusive(tmp_path: Path) -> None:
+    # Reusing one output directory across joint and split runs must never
+    # leave both layouts behind (the manifest would double-count coverage).
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    out = tmp_path / "out"
+    _export(repo, out)
+    assert (out / _INDEX_FILE).is_file()
+    parsers, queries = load_parsers()
+    ingestor = ProtobufFileIngestor(
+        output_path=str(out), split_index=True, repo_path=str(repo)
+    )
+    GraphUpdater(
+        ingestor=ingestor,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=ALL_ENABLED,
+    ).run(force=True)
+    ingestor.flush_all()
+    assert not (out / _INDEX_FILE).exists()
+    assert (out / "nodes.bin").is_file()
+    write_manifest(out, source_state(repo), capture_description(ALL_ENABLED))
+    assert verify_index(out) == []

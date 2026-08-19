@@ -39,7 +39,12 @@ from .main import (
 from .parser_loader import load_parsers
 from .services.graph_service import MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
-from .services.provenance import verify_index, write_manifest
+from .services.provenance import (
+    capture_description,
+    source_state,
+    verify_index,
+    write_manifest,
+)
 from .stack import StackManager
 from .stack.cli import cli as daemon_cli
 from .stack.constants import StackState
@@ -689,6 +694,8 @@ def index(
         unignore_paths = cgrignore.unignore or None
 
     try:
+        indexed_source = source_state(Path(repo_to_index))
+        capture_config = _capture_selection(capture)
         ingestor = ProtobufFileIngestor(
             output_path=output_proto_dir,
             split_index=split_index,
@@ -702,12 +709,14 @@ def index(
             queries=queries,
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
-            capture=_capture_selection(capture),
+            capture=capture_config,
         )
 
         updater.run()
         manifest_path = write_manifest(
-            Path(output_proto_dir), Path(repo_to_index), capture
+            Path(output_proto_dir),
+            indexed_source,
+            capture_description(capture_config),
         )
         _info(
             style(cs.CLI_MSG_MANIFEST_WRITTEN.format(path=manifest_path), cs.Color.CYAN)

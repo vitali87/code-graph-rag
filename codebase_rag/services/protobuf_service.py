@@ -65,12 +65,23 @@ class ProtobufFileIngestor:
         # realtime watcher deletes by absolute path, issue #1141), which would
         # make the artifact differ per checkout location. The canonical export
         # relativizes every id under the repo root instead (issue #1138).
-        self._repo_prefix = str(Path(repo_path).resolve()) + "/" if repo_path else None
+        self._repo_prefix = (
+            str(Path(repo_path).resolve()).replace("\\", "/").rstrip("/") + "/"
+            if repo_path
+            else None
+        )
         logger.info(ls.PROTOBUF_INIT.format(path=self.output_dir))
 
     def _canonical_ref(self, value: str) -> str:
-        if self._repo_prefix is not None and value.startswith(self._repo_prefix):
-            return value[len(self._repo_prefix) :]
+        # Separator-normalized prefix strip: Windows writers hand native
+        # backslash paths while the resolved prefix and POSIX writers use
+        # forward slashes, so both sides normalize before the comparison and
+        # the artifact always carries forward-slash relative ids.
+        if self._repo_prefix is None:
+            return value
+        normalized = value.replace("\\", "/")
+        if normalized.startswith(self._repo_prefix):
+            return normalized[len(self._repo_prefix) :]
         return value
 
     def _get_node_id(self, label: cs.NodeLabel, properties: PropertyDict) -> str:
@@ -121,6 +132,12 @@ class ProtobufFileIngestor:
             if hasattr(payload_message, key):
                 if value is None:
                     continue
+                if key == cs.KEY_PATH and isinstance(value, str):
+                    # The payload path must match the node's canonical id:
+                    # writers already emit repo-relative paths here, but the
+                    # export enforces it so an absolute writer path can never
+                    # make the artifact checkout-specific.
+                    value = self._canonical_ref(value)
                 destination_attribute = getattr(payload_message, key)
                 if hasattr(destination_attribute, "extend") and isinstance(value, list):
                     del destination_attribute[:]
@@ -198,6 +215,10 @@ class ProtobufFileIngestor:
         out_path = self.output_dir / cs.PROTOBUF_INDEX_FILE
         with open(out_path, "wb") as f:
             f.write(serialised_file)
+        # The two layouts are mutually exclusive: a leftover split pair beside
+        # a fresh joint index would double every manifest coverage count.
+        (self.output_dir / cs.PROTOBUF_NODES_FILE).unlink(missing_ok=True)
+        (self.output_dir / cs.PROTOBUF_RELS_FILE).unlink(missing_ok=True)
 
         logger.success(
             ls.PROTOBUF_FLUSH_SUCCESS.format(
@@ -225,6 +246,8 @@ class ProtobufFileIngestor:
 
         with open(rels_path, "wb") as f:
             f.write(serialised_rels)
+
+        (self.output_dir / cs.PROTOBUF_INDEX_FILE).unlink(missing_ok=True)
 
         logger.success(
             ls.PROTOBUF_FLUSH_SUCCESS.format(
