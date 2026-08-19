@@ -83,7 +83,14 @@ Verify an index against its manifest:
 
 ```bash
 cgr verify-index -i ./index-dir
+# Anchored to an attestation-vouched manifest digest:
+cgr verify-index -i ./index-dir --trusted-manifest-sha256 <digest>
 ```
+
+Local verification alone proves internal consistency; a writer who can
+replace both an artifact and its recorded hash defeats it. Passing the
+manifest digest an attestation vouches for anchors the whole chain: manifest
+bytes, then artifact hashes, then artifacts.
 
 Verification fails when an artifact is missing or its hash mismatches, when an
 artifact is not covered by the manifest, or when the manifest's coverage

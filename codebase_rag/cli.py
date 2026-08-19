@@ -741,8 +741,13 @@ def verify_index_command(
     index_dir: str = typer.Option(
         ..., "-i", "--index-dir", help=ch.HELP_VERIFY_INDEX_DIR
     ),
+    trusted_manifest_sha256: str | None = typer.Option(
+        None,
+        "--trusted-manifest-sha256",
+        help=ch.HELP_TRUSTED_MANIFEST_SHA,
+    ),
 ) -> None:
-    problems = verify_index(Path(index_dir))
+    problems = verify_index(Path(index_dir), trusted_manifest_sha256)
     if problems:
         for problem in problems:
             app_context.console.print(

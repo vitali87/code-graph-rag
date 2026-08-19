@@ -82,7 +82,11 @@ class ProtobufFileIngestor:
         normalized = value.replace("\\", "/")
         if normalized.startswith(self._repo_prefix):
             return normalized[len(self._repo_prefix) :]
-        return value
+        # Already-relative Windows ids (src\main.py) must also serialize with
+        # forward slashes or the artifact bytes differ per OS; source-derived
+        # identities are the same text on every OS, so this normalization is
+        # itself deterministic.
+        return normalized
 
     def _get_node_id(self, label: cs.NodeLabel, properties: PropertyDict) -> str:
         if label in PATH_BASED_LABELS:

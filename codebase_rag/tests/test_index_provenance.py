@@ -176,3 +176,23 @@ def test_flush_layouts_are_mutually_exclusive(tmp_path: Path) -> None:
     assert (out / "nodes.bin").is_file()
     write_manifest(out, source_state(repo), capture_description(ALL_ENABLED))
     assert verify_index(out) == []
+
+
+def test_trusted_manifest_digest_anchors_verification(tmp_path: Path) -> None:
+    import hashlib
+
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    out = tmp_path / "out"
+    _export(repo, out)
+    manifest_path = write_manifest(
+        out, source_state(repo), capture_description(ALL_ENABLED)
+    )
+    good = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    assert verify_index(out, good) == []
+    assert verify_index(out, good.upper()) == []
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["analyzer_version"] = "9.9.9"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    problems = verify_index(out, good)
+    assert any("trusted digest" in p for p in problems)

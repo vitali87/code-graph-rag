@@ -174,13 +174,28 @@ def write_manifest(
     return out_path
 
 
-def verify_index(index_dir: Path) -> list[str]:
+def verify_index(
+    index_dir: Path, trusted_manifest_sha256: str | None = None
+) -> list[str]:
     """Every way the artifact/manifest binding can be broken, as messages;
-    empty means verified."""
+    empty means verified.
+
+    Local verification alone proves internal consistency, not authorship: a
+    writer who can replace both an artifact and its recorded hash defeats it.
+    Passing trusted_manifest_sha256 (the digest an attestation vouches for)
+    anchors the whole chain: manifest bytes -> artifact hashes -> artifacts.
+    """
     problems: list[str] = []
     manifest_path = index_dir / MANIFEST_FILE
     if not manifest_path.is_file():
         return [f"manifest missing: {manifest_path}"]
+    if trusted_manifest_sha256 is not None:
+        actual_manifest = _sha256(manifest_path)
+        if actual_manifest != trusted_manifest_sha256.lower():
+            return [
+                "manifest digest does not match the trusted digest: "
+                f"expected {trusted_manifest_sha256.lower()} got {actual_manifest}"
+            ]
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
