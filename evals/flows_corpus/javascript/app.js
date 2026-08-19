@@ -1,6 +1,6 @@
 function leak() {
-  const token = process.env.TOKEN;
-  console.log(token);
+  const value = process.env.TOKEN;
+  console.log(value);
 }
 
 function safe() {

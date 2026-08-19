@@ -2,8 +2,8 @@ import os
 
 
 def leak():
-    secret = os.getenv("TOKEN")
-    print(secret)
+    value = os.getenv("TOKEN")
+    print(value)
 
 
 def safe():
