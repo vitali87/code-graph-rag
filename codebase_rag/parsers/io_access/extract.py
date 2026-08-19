@@ -37,13 +37,71 @@ def scope_seed_nodes(caller_node: Node) -> list[Node]:
     return list(body.children) if body is not None else list(caller_node.children)
 
 
+def _binding_identifiers(target: Node) -> set[str]:
+    # The identifiers a Python binding target actually binds: the target itself,
+    # or every identifier nested in a destructuring pattern (`os, v = ...` /
+    # `[os, v] = ...` / `for os, v in ...`). An attribute or subscript target
+    # (`os.environ['K'] = v`, `a.b = v`) binds NO plain name -- its identifiers
+    # are loads, not stores -- so those subtrees are skipped entirely.
+    out: set[str] = set()
+    stack = [target]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_IDENTIFIER and node.text is not None:
+            out.add(node.text.decode(cs.ENCODING_UTF8))
+        elif node.type not in (cs.TS_PY_ATTRIBUTE, cs.TS_PY_SUBSCRIPT):
+            stack.extend(node.children)
+    return out
+
+
+def _python_parameter_names(scope_node: Node) -> set[str]:
+    # A function's parameter names are local for the whole function (their scope
+    # IS the body), so `def leak(os):` shadows a module-level `import os` for the
+    # entire body like any assignment (CodeRabbit review on PR #1325). A typed /
+    # default parameter binds only its `name` field -- its annotation / default
+    # expressions are loads in the ENCLOSING scope, never bindings here.
+    if scope_node.type == cs.TS_PY_DECORATED_DEFINITION:
+        inner = scope_node.child_by_field_name(cs.FIELD_DEFINITION)
+        if inner is not None:
+            scope_node = inner
+    if scope_node.type != cs.TS_PY_FUNCTION_DEFINITION:
+        return set()
+    params = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return set()
+    names: set[str] = set()
+    for param in params.named_children:
+        if param.type in (
+            cs.TS_PY_DEFAULT_PARAMETER,
+            cs.TS_PY_TYPED_DEFAULT_PARAMETER,
+        ):
+            name = param.child_by_field_name(cs.TS_FIELD_NAME)
+            if name is not None and name.type == cs.TS_PY_IDENTIFIER and name.text:
+                names.add(name.text.decode(cs.ENCODING_UTF8))
+        elif param.type == cs.TS_PY_TYPED_PARAMETER:
+            # A typed parameter has no `name` field: the binding identifier is
+            # the DIRECT child before the `type` field (`os: int` -> os); the
+            # annotation identifier sits inside the type field and is never a
+            # binding here.
+            name = next(
+                (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER),
+                None,
+            )
+            if name is not None and name.text is not None:
+                names.add(name.text.decode(cs.ENCODING_UTF8))
+        else:
+            names |= _binding_identifiers(param)
+    return names
+
+
 def python_locally_assigned_names(scope_node: Node) -> set[str]:
-    # Plain identifiers assigned anywhere in this scope's OWN body (nested
-    # defs/classes pruned): assignment / with-as / for targets. Python makes a
-    # name assigned anywhere in a function local for the WHOLE function, so any
+    # Plain identifiers bound anywhere in this scope's OWN body (nested
+    # defs/classes pruned): assignment / with-as / for targets, including
+    # destructuring forms, plus a function's parameter names. Python makes a
+    # name bound anywhere in a function local for the WHOLE function, so any
     # such name shadows a same-named module import even before the assignment
     # (a use before it is UnboundLocalError).
-    names: set[str] = set()
+    names = _python_parameter_names(scope_node)
     stack = list(scope_seed_nodes(scope_node))
     while stack:
         node = stack.pop()
@@ -58,12 +116,8 @@ def python_locally_assigned_names(scope_node: Node) -> set[str]:
                 None,
             )
             target = alias.children[0] if alias and alias.children else None
-        if (
-            target is not None
-            and target.type == cs.TS_PY_IDENTIFIER
-            and target.text is not None
-        ):
-            names.add(target.text.decode(cs.ENCODING_UTF8))
+        if target is not None:
+            names |= _binding_identifiers(target)
         stack.extend(node.children)
     return names
 

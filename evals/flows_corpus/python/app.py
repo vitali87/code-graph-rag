@@ -6,6 +6,11 @@ def leak():
     print(value)
 
 
+def subscript_leak():
+    value = os.environ["TOKEN"]
+    print(value)
+
+
 def safe():
     fixed = "constant"
     print(fixed)

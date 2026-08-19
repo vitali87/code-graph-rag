@@ -218,6 +218,96 @@ def test_python_returned_os_environ_subscript_flows_to_caller_sink(
     assert _has(edges, "m.build", "m.caller", kind=FlowKind.RETURN.value)
 
 
+def test_python_os_environ_subscript_parameter_shadow_not_source(
+    tmp_path: Path,
+) -> None:
+    # A function parameter named `os` is local for the whole function, so it
+    # shadows the module-level import and the read is not an ENV source
+    # (CodeRabbit review on PR #1325).
+    files = {"m.py": "import os\n\ndef leak(os):\n    print(os.environ['K'])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_typed_parameter_shadow_not_source(
+    tmp_path: Path,
+) -> None:
+    # A TYPED parameter (`os: dict`) binds its name field-less shape the same
+    # way, shadowing the module-level import for the whole function.
+    files = {"m.py": "import os\n\ndef leak(os: dict):\n    print(os.environ['K'])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_destructuring_shadow_not_source(
+    tmp_path: Path,
+) -> None:
+    # A destructuring assignment binds every target identifier, so `os, _ =
+    # split()` shadows the module-level `import os` for the whole function
+    # (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n"
+            "    os, _ = split()\n"
+            "    print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_for_destructuring_shadow_not_source(
+    tmp_path: Path,
+) -> None:
+    # A for-loop destructuring target binds its identifiers, so `for os, _ in
+    # pairs():` shadows the module-level `import os` for the whole function
+    # (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n"
+            "    for os, _ in pairs():\n"
+            "        print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_assignment_lhs_is_not_read_source(
+    tmp_path: Path,
+) -> None:
+    # `os.environ['K'] = v` writes the env mapping; the value-taint evaluator
+    # only reads the RHS, so the LHS subscript must never surface as an ENV
+    # read source (maintainer review on PR #1325).
+    files = {
+        "m.py": "import os\n\ndef store(v):\n    os.environ['K'] = v\n    print('stored')\n"
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not any(a.startswith("resource::ENV") for a, _b, _p in edges)
+
+
 def test_tainted_positional_arg_flows_to_callee(tmp_path: Path) -> None:
     files = {
         "m.py": (
