@@ -329,6 +329,24 @@ def _template_literal(arg: Node, content_type: str, substitution_type: str) -> s
     return "".join(parts)
 
 
+def _joined_string_parts(arg: Node, content_type: str) -> str:
+    parts: list[str] = []
+    has_content = False
+    for child in arg.named_children:
+        if child.text is None:
+            continue
+        if child.type in (content_type, cs.TS_ESCAPE_SEQUENCE):
+            has_content = True
+            parts.append(child.text.decode(cs.ENCODING_UTF8))
+        elif child.type == cs.TS_PY_INTERPOLATION:
+            text = child.text.decode(cs.ENCODING_UTF8)
+            safe = not any(delim in text for delim in _URL_STRUCTURE_DELIMITERS)
+            parts.append(text if safe else OPAQUE_PLACEHOLDER)
+    if not has_content:
+        return DYNAMIC_TARGET
+    return "".join(parts)
+
+
 def _childless_string_text(text: str) -> str:
     # A childless string node (Scala `string`) carries its content only in
     # node.text; strip the surrounding delimiters, triple quotes before the
@@ -376,21 +394,7 @@ def string_literal(
     # alike (as they already did in Python). An expression containing a path
     # or URL-parse delimiter
     # would fabricate segment structure, so it collapses to `{*}`.
-    parts: list[str] = []
-    has_content = False
-    for child in arg.named_children:
-        if child.text is None:
-            continue
-        if child.type in (content_type, cs.TS_ESCAPE_SEQUENCE):
-            has_content = True
-            parts.append(child.text.decode(cs.ENCODING_UTF8))
-        elif child.type == cs.TS_PY_INTERPOLATION:
-            text = child.text.decode(cs.ENCODING_UTF8)
-            safe = not any(delim in text for delim in _URL_STRUCTURE_DELIMITERS)
-            parts.append(text if safe else OPAQUE_PLACEHOLDER)
-    if not has_content:
-        return DYNAMIC_TARGET
-    return "".join(parts)
+    return _joined_string_parts(arg, content_type)
 
 
 def iter_token_tree_calls(

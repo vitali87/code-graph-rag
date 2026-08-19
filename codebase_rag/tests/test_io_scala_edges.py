@@ -210,3 +210,20 @@ def test_scala_buffered_writer_wrapper_resolves_inner_file(tmp_path: Path) -> No
     }
     rels = _run(tmp_path, files)
     assert _has(rels, "B.log", WRITES_TO, "resource::FILE::app.log")
+
+
+def test_scala_file_identity_carrier_in_constructor(tmp_path: Path) -> None:
+    # `new FileWriter(new File("out.txt"))`: the inner File is not a handle,
+    # but it designates the resource, so the writer binds its literal.
+    files = {
+        "F.scala": (
+            "object F {\n"
+            "  def save(text: String): Unit = {\n"
+            '    val w = new java.io.FileWriter(new java.io.File("out.txt"))\n'
+            "    w.write(text)\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run(tmp_path, files)
+    assert _has(rels, "F.save", WRITES_TO, "resource::FILE::out.txt")

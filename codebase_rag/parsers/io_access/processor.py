@@ -229,6 +229,24 @@ def _rpc_client_binding(
     return HandleBinding(kind=ResourceKind.RPC, identity=match.group(1))
 
 
+def _new_type_node(node: Node) -> Node | None:
+    # The constructed type of a new-expression: the `type` field where the
+    # grammar has one; Scala's instance_expression has no such field, so the
+    # type is the one named child that is not the arguments field.
+    type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
+    if type_node is not None:
+        return type_node
+    args = node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    return next(
+        (
+            c
+            for c in node.named_children
+            if (args is None or c.id != args.id) and c.type != cs.TS_COMMENT
+        ),
+        None,
+    )
+
+
 def _lean_handles_for(language: cs.SupportedLanguage) -> _LeanHandles | None:
     ctors = {c.callee: c for c in IO_LEAN_HANDLE_CONSTRUCTORS.get(language, ())}
     new_ctors = IO_NEW_HANDLE_CONSTRUCTORS.get(language, {})
@@ -1815,19 +1833,7 @@ class IOAccessProcessor:
         # Java `new`-shaped handles. A wrapper type delegates to arg0 (a nested
         # constructor or a bound variable); PrintWriter falls through to its filename
         # overload when arg0 is not a handle.
-        type_node = node.child_by_field_name(cs.TS_FIELD_TYPE)
-        if type_node is None:
-            # Scala's instance_expression has no `type` field; the constructed
-            # type is the one named child that is not the arguments field.
-            args = node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-            type_node = next(
-                (
-                    c
-                    for c in node.named_children
-                    if (args is None or c.id != args.id) and c.type != cs.TS_COMMENT
-                ),
-                None,
-            )
+        type_node = _new_type_node(node)
         if type_node is None or type_node.text is None:
             return None
         type_name = type_node.text.decode(cs.ENCODING_UTF8)
@@ -1970,7 +1976,7 @@ class IOAccessProcessor:
             and descriptor.new_expression_type is not None
             and arg.type == descriptor.new_expression_type
         ):
-            inner_type = arg.child_by_field_name(cs.TS_FIELD_TYPE)
+            inner_type = _new_type_node(arg)
             if (
                 inner_type is not None
                 and inner_type.text is not None
