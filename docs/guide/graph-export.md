@@ -98,3 +98,22 @@ summary disagrees with the graph content. In CI, attesting `manifest.json`
 (GitHub artifact attestation) extends the chain to a signer identity: the
 attestation proves who produced the manifest, and the manifest proves which
 artifact bytes and source state it belongs to.
+
+## Snapshot diff
+
+Compare two canonical snapshots structurally:
+
+```bash
+cgr diff-index --old ./snapshot-a --new ./snapshot-b
+cgr diff-index --old ./snapshot-a --new ./snapshot-b --json-out delta.json
+```
+
+Nodes match on kind plus identity plus path (path included because a
+qualified name alone is not unique in the Rust cfg-twin cases) and report as
+added, removed, or changed with a property-level delta; relationships group
+by type with added/removed endpoints and property changes; the coverage
+section lists modules whose `flow_covered` flipped and per-language summary
+changes, so a diff can also say the analyzer sees less than it used to.
+Renames report as remove plus add in this first cut. Artifacts recorded
+under different codec schemas refuse to diff (exit 2): field semantics may
+differ between schema versions, so the comparison would be meaningless.

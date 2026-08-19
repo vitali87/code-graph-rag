@@ -37,6 +37,7 @@ from .main import (
     update_model_settings,
 )
 from .parser_loader import load_parsers
+from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
 from .services.graph_service import MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
 from .services.provenance import (
@@ -755,6 +756,32 @@ def verify_index_command(
             )
         raise typer.Exit(1)
     _info(style(cs.CLI_MSG_VERIFY_OK.format(path=index_dir), cs.Color.GREEN))
+
+
+@app.command(
+    name="diff-index",
+    help=ch.CMD_DIFF_INDEX,
+    short_help=ch.CMD_DIFF_INDEX,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
+def diff_index_command(
+    old_dir: str = typer.Option(..., "--old", help=ch.HELP_DIFF_OLD),
+    new_dir: str = typer.Option(..., "--new", help=ch.HELP_DIFF_NEW),
+    json_out: str | None = typer.Option(None, "--json-out", help=ch.HELP_DIFF_JSON_OUT),
+) -> None:
+    try:
+        diff = diff_indexes(Path(old_dir), Path(new_dir))
+    except DiffError as error:
+        app_context.console.print(style(str(error), cs.Color.RED))
+        raise typer.Exit(2) from error
+    rendered = json.dumps(diff, indent=2, sort_keys=True)
+    if json_out is not None:
+        Path(json_out).write_text(rendered + "\n", encoding="utf-8")
+        _info(style(cs.CLI_MSG_DIFF_WRITTEN.format(path=json_out), cs.Color.CYAN))
+    else:
+        app_context.console.print(rendered)
+    if diff_is_empty(diff):
+        _info(style(cs.CLI_MSG_DIFF_EMPTY, cs.Color.GREEN))
 
 
 @app.command(
