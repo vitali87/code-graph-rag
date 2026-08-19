@@ -610,9 +610,12 @@ _SCALA_DESCRIPTOR = LanguageDescriptor(
     declaration_statement_type=None,
     macro_type=None,
     # Inert: no Scala member-read rows; env access is call-shaped (sys.env(k),
-    # System.getenv(k)). Wired to the real field_expression shape regardless.
+    # System.getenv(k)). member access is wired to the real field_expression
+    # shape; Scala spells subscripts as apply CALLS, so subscript_type must be
+    # a type that never occurs in expression position or the flow walk's
+    # member/subscript branch would swallow every nested source call.
     member_expression_type=cs.TS_SCALA_FIELD_EXPRESSION,
-    subscript_type=cs.TS_SCALA_CALL_EXPRESSION,
+    subscript_type=cs.TS_SCALA_TYPE_IDENTIFIER,
     object_field=cs.FIELD_VALUE,
     property_field=cs.FIELD_FIELD,
     subscript_index_field=cs.TS_FIELD_ARGUMENTS,

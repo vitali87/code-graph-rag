@@ -1,0 +1,20 @@
+{
+  "python": [
+    ["resource::ENV::TOKEN", "resource::STDOUT::<dynamic>", "resource"]
+  ],
+  "javascript": [
+    ["resource::ENV::TOKEN", "resource::STDOUT::<dynamic>", "resource"]
+  ],
+  "go": [
+    ["resource::ENV::TOKEN", "resource::STDOUT::<dynamic>", "resource"]
+  ],
+  "java": [
+    ["resource::ENV::TOKEN", "resource::STDOUT::<dynamic>", "resource"]
+  ],
+  "scala": [
+    ["resource::ENV::TOKEN", "resource::STDOUT::<dynamic>", "resource"]
+  ],
+  "dart": [
+    ["resource::ENV::TOKEN", "resource::STDOUT::<dynamic>", "resource"]
+  ]
+}
