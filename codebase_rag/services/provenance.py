@@ -203,11 +203,25 @@ def _load_manifest(manifest_path: Path) -> tuple[dict | None, list[str]]:
 
 
 def _check_trusted_digest(manifest_path: Path, trusted: str) -> list[str]:
-    actual = _sha256(manifest_path)
+    try:
+        actual = _sha256(manifest_path)
+    except OSError as error:
+        return [f"manifest unreadable: {error}"]
     if actual != trusted.lower():
         return [
             "manifest digest does not match the trusted digest: "
             f"expected {trusted.lower()} got {actual}"
+        ]
+    return []
+
+
+def _coverage_problems(index_dir: Path, manifest: dict) -> list[str]:
+    claimed = manifest.get("coverage")
+    actual_coverage = _coverage_summary(index_dir)
+    if claimed != actual_coverage:
+        return [
+            "coverage summary disagrees with the graph: "
+            f"manifest {claimed} vs graph {actual_coverage}"
         ]
     return []
 
@@ -260,12 +274,7 @@ def verify_index(
     if manifest is None:
         return problems
     if trusted_manifest_sha256 is not None:
-        try:
-            digest_problems = _check_trusted_digest(
-                manifest_path, trusted_manifest_sha256
-            )
-        except OSError as error:
-            return [f"manifest unreadable: {error}"]
+        digest_problems = _check_trusted_digest(manifest_path, trusted_manifest_sha256)
         if digest_problems:
             return digest_problems
     artifacts = manifest.get("artifacts")
@@ -274,11 +283,5 @@ def verify_index(
         artifacts = {}
     problems.extend(_check_artifacts(index_dir, artifacts))
     if not problems:
-        claimed = manifest.get("coverage")
-        actual_coverage = _coverage_summary(index_dir)
-        if claimed != actual_coverage:
-            problems.append(
-                "coverage summary disagrees with the graph: "
-                f"manifest {claimed} vs graph {actual_coverage}"
-            )
+        problems.extend(_coverage_problems(index_dir, manifest))
     return problems
