@@ -202,7 +202,7 @@ def run_python_frontend(repo_path: Path, files: list[Path]) -> SemanticFacts:
         try:
             source = file_path.read_text(encoding=cs.ENCODING_UTF8)
             tree = ast.parse(source)
-        except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
+        except (OSError, SyntaxError, ValueError):
             continue
         collector = _CallSite()
         collector.visit(tree)

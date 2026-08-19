@@ -22,7 +22,9 @@ class PythonJediFrontend:
         return python_frontend_available()
 
     def applies(self, repo_path: Path) -> bool:
-        return True
+        # Effectively always true: the updater gates on parsed .py files
+        # anyway, so existence is the only meaningful precondition.
+        return repo_path.exists()
 
     def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts:
         return run_python_frontend(repo_path, list(files))
