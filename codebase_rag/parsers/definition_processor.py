@@ -18,6 +18,7 @@ from ..types_defs import (
     FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
+    PropertyDict,
     RustTraitImpl,
     SimpleNameLookup,
 )
@@ -31,6 +32,7 @@ from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .handlers import get_handler
+from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .utils import safe_decode_with_fallback, sorted_captures
 
@@ -174,6 +176,9 @@ class DefinitionProcessor(
         # discipline; the resolver reads these references directly.
         self.python_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
         self.python_external_sites: set[CallSiteKey] = set()
+        # Repo-relative prefixes of annotation-processor output (issue #1140):
+        # modules under one are stamped generated with a processor hint.
+        self.generated_source_prefixes: list[str] = []
         # (rel_file, type_start_line, type_start_col) -> (class qn, node label)
         # for every ingested Go type. Go's type_spec start_point IS the name
         # token, so the frontend's pair positions join here directly (no alias).
@@ -353,19 +358,23 @@ class DefinitionProcessor(
             ):
                 self.go_package_names[module_qn] = package_name
 
-            self.ingestor.ensure_node_batch(
-                cs.NodeLabel.MODULE,
-                {
-                    cs.KEY_QUALIFIED_NAME: module_qn,
-                    cs.KEY_NAME: file_path.name,
-                    cs.KEY_PATH: relative_path_str,
-                    cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
-                    cs.KEY_FLOW_COVERED: (
-                        self.flow_capture_enabled
-                        and language in FLOW_REGISTERED_LANGUAGES
-                    ),
-                },
-            )
+            module_props: PropertyDict = {
+                cs.KEY_QUALIFIED_NAME: module_qn,
+                cs.KEY_NAME: file_path.name,
+                cs.KEY_PATH: relative_path_str,
+                cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
+                cs.KEY_FLOW_COVERED: (
+                    self.flow_capture_enabled and language in FLOW_REGISTERED_LANGUAGES
+                ),
+            }
+            if self.generated_source_prefixes and (
+                hint := generator_hint(
+                    relative_path_str, self.generated_source_prefixes
+                )
+            ):
+                module_props[cs.KEY_GENERATED] = True
+                module_props[cs.KEY_GENERATOR] = hint
+            self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
 
             parent_rel_path = relative_path.parent
             parent_container_qn = structural_elements.get(parent_rel_path)

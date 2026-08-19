@@ -60,6 +60,11 @@ from .parsers.factory import ProcessorFactory
 from .parsers.frontends import FRONTENDS, SemanticFacts
 from .parsers.frontends.protocol import QueryCall
 from .parsers.go_frontend import find_go_module
+from .parsers.java_generated import (
+    discover_generated_source_roots,
+    generated_prefixes_for,
+    unignore_patterns_for,
+)
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -1984,6 +1989,26 @@ class GraphUpdater:
                 return False
         return True
 
+    def _register_generated_sources(self) -> None:
+        # Annotation-processor output next to a build file (issue #1140):
+        # carve those exact subtrees out of the target/build prune, register
+        # them as Java import-probe roots, and stamp their modules generated.
+        # Recomputed per run so a build that appears between watch runs is
+        # picked up; no roots leaves everything exactly as before.
+        roots = discover_generated_source_roots(self.repo_path)
+        dp = self.factory.definition_processor
+        dp.generated_source_prefixes = generated_prefixes_for(roots)
+        self.factory.import_processor.set_java_generated_roots(roots)
+        if not roots:
+            return
+        patterns = unignore_patterns_for(roots)
+        self.unignore_paths = (
+            frozenset(self.unignore_paths) | patterns
+            if self.unignore_paths
+            else patterns
+        )
+        logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
+
     def _collect_eligible_files(self) -> list[tuple[Path, str]]:
         if self._single_file is not None:
             if not should_skip_path(
@@ -2053,6 +2078,7 @@ class GraphUpdater:
         _touch_empty_json(cache_path)
         _touch_empty_json(dir_mtimes_path)
 
+        self._register_generated_sources()
         eligible_files = self._collect_eligible_files()
 
         if not is_full_build:
