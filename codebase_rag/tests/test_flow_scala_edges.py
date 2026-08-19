@@ -7,6 +7,7 @@ shapes."""
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -76,3 +77,14 @@ def test_scala_constant_never_flows(tmp_path: Path) -> None:
         "}\n"
     )
     assert _run_flow(tmp_path, source) == set()
+
+
+def test_scala_node_constants_register_coverage() -> None:
+    # Constants modules import before coverage starts collecting, so their
+    # lines never record without a reload (Sonar new-coverage gate).
+    from codebase_rag.constants import ast_scala
+
+    importlib.reload(ast_scala)
+    assert ast_scala.TS_SCALA_TYPE_IDENTIFIER == "type_identifier"
+    assert ast_scala.TS_SCALA_STRING == "string"
+    assert ast_scala.TS_SCALA_INSTANCE_EXPRESSION == "instance_expression"
