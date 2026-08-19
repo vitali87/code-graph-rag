@@ -6,6 +6,7 @@
 # bundled tool and skips when `go` is absent.
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -240,3 +241,176 @@ def test_gotypes_tool_emits_implements_and_skips_generics(tmp_path: Path) -> Non
     assert facts.implements == [
         GoImplements("main.go", dog_line, dog_col, "main.go", iface_line, iface_col)
     ]
+
+
+class _FakeToolRun:
+    """Captures per-module-root tool invocations and returns canned payloads
+    keyed by the invoked directory's repo-relative posix path."""
+
+    def __init__(self, repo: Path, payloads: dict[str, dict]) -> None:
+        self.repo = repo
+        self.payloads = payloads
+        self.invoked: list[str] = []
+
+    def __call__(self, cmd, **kwargs):
+        root = Path(cmd[1])
+        rel = "" if root == self.repo else root.relative_to(self.repo).as_posix()
+        self.invoked.append(rel)
+        payload = self.payloads.get(rel, {"calls": [], "externals": []})
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+
+def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Issue #1227: `./...` never descends into a nested go.mod, so the tool
+    # must run once per module root; each run emits module-relative paths
+    # that re-anchor to the repo root before merging.
+    repo = tmp_path / "repo"
+    (repo / "sub" / "tool").mkdir(parents=True)
+    (repo / "go.mod").write_text("module example.com/root\n\ngo 1.22\n")
+    (repo / "sub" / "tool" / "go.mod").write_text(
+        "module example.com/tool\n\ngo 1.22\n"
+    )
+    import codebase_rag.parsers.go_frontend.frontend as fe
+
+    monkeypatch.setattr(fe.shutil, "which", lambda _name: "/usr/bin/go")
+    monkeypatch.setattr(fe, "_build_tool", lambda _go: Path("/fake/gotypes"))
+    fake = _FakeToolRun(
+        repo,
+        {
+            "": {
+                "calls": [
+                    {
+                        "file": "main.go",
+                        "line": 5,
+                        "col": 2,
+                        "name": "Run",
+                        "tfile": "lib.go",
+                        "tline": 3,
+                        "tcol": 5,
+                    }
+                ],
+                "externals": [],
+            },
+            "sub/tool": {
+                "calls": [
+                    {
+                        "file": "cmd.go",
+                        "line": 8,
+                        "col": 1,
+                        "name": "Go",
+                        "tfile": "cmd.go",
+                        "tline": 2,
+                        "tcol": 5,
+                    }
+                ],
+                "externals": [
+                    {"file": "cmd.go", "line": 9, "col": 1, "name": "Printf"}
+                ],
+                "implements": [
+                    {
+                        "file": "cmd.go",
+                        "line": 12,
+                        "col": 5,
+                        "ifile": "iface.go",
+                        "iline": 4,
+                        "icol": 5,
+                    }
+                ],
+            },
+        },
+    )
+    monkeypatch.setattr(fe.subprocess, "run", fake)
+
+    facts = run_go_frontend(repo)
+
+    assert sorted(fake.invoked) == ["", "sub/tool"]
+    assert facts.call_sites[("main.go", 5, 2, "Run")] == GoCallSite(
+        "Run", "lib.go", 3, 5
+    )
+    assert facts.call_sites[("sub/tool/cmd.go", 8, 1, "Go")] == GoCallSite(
+        "Go", "sub/tool/cmd.go", 2, 5
+    )
+    assert facts.external_sites == {("sub/tool/cmd.go", 9, 1, "Printf")}
+    assert facts.implements == [
+        GoImplements("sub/tool/cmd.go", 12, 5, "sub/tool/iface.go", 4, 5)
+    ]
+
+
+def test_ignored_directories_never_get_a_tool_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "vendor" / "dep").mkdir(parents=True)
+    (repo / "go.mod").write_text("module example.com/root\n\ngo 1.22\n")
+    (repo / "vendor" / "dep" / "go.mod").write_text(
+        "module example.com/dep\n\ngo 1.22\n"
+    )
+    import codebase_rag.parsers.go_frontend.frontend as fe
+
+    monkeypatch.setattr(fe.shutil, "which", lambda _name: "/usr/bin/go")
+    monkeypatch.setattr(fe, "_build_tool", lambda _go: Path("/fake/gotypes"))
+    fake = _FakeToolRun(repo, {})
+    monkeypatch.setattr(fe.subprocess, "run", fake)
+
+    run_go_frontend(repo)
+
+    assert fake.invoked == [""]
+
+
+def test_one_failing_module_degrades_only_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A per-module tool failure (timeout, crash) must drop only that
+    # module's facts to tree-sitter; the sibling module's facts survive.
+    repo = tmp_path / "repo"
+    (repo / "sub").mkdir(parents=True)
+    (repo / "go.mod").write_text("module example.com/root\n\ngo 1.22\n")
+    (repo / "sub" / "go.mod").write_text("module example.com/sub\n\ngo 1.22\n")
+    import codebase_rag.parsers.go_frontend.frontend as fe
+
+    monkeypatch.setattr(fe.shutil, "which", lambda _name: "/usr/bin/go")
+    monkeypatch.setattr(fe, "_build_tool", lambda _go: Path("/fake/gotypes"))
+
+    invoked: list[Path] = []
+
+    def _run(cmd, **kwargs):
+        root = Path(cmd[1])
+        invoked.append(root)
+        if root == repo:
+            raise subprocess.TimeoutExpired(cmd, 1)
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "calls": [
+                        {
+                            "file": "s.go",
+                            "line": 3,
+                            "col": 1,
+                            "name": "Do",
+                            "tfile": "s.go",
+                            "tline": 1,
+                            "tcol": 5,
+                        }
+                    ],
+                    "externals": [],
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(fe.subprocess, "run", _run)
+
+    facts = run_go_frontend(repo)
+
+    assert facts.call_sites == {
+        ("sub/s.go", 3, 1, "Do"): GoCallSite("Do", "sub/s.go", 1, 5)
+    }
+    assert facts.external_sites == set()
+    assert facts.implements == []
+    assert invoked == [repo, repo / "sub"]

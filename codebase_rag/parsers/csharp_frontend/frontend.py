@@ -15,7 +15,6 @@ import os
 import re
 import shutil
 import subprocess
-import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -25,6 +24,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
+from ..build_lock import acquire_build_lock, release_build_lock
 
 # Base-classification join key: (rel_file, type_start_line) -> {base_simple_name: kind}.
 BaseKindMap = dict[tuple[str, int], dict[str, str]]
@@ -197,21 +197,6 @@ def _dll_fresh(dll: Path) -> bool:
     return dll.is_file() and dll.stat().st_mtime >= _newest_source_mtime()
 
 
-def _acquire_build_lock(lock: Path, dll: Path) -> bool:
-    # Serialise the one build across parallel workers. Returns True holding the
-    # lock (caller must rmdir); False if it gave up because another worker
-    # already produced a fresh DLL or the tries ran out.
-    for _ in range(_LOCK_TRIES):
-        try:
-            lock.mkdir()
-            return True
-        except FileExistsError:
-            time.sleep(_LOCK_POLL_SECONDS)
-            if _dll_fresh(dll):
-                return False
-    return False
-
-
 def _compile_tool(dotnet: str, src: Path, out: Path) -> bool:
     src.mkdir(parents=True, exist_ok=True)
     for name in _TOOL_SOURCES:
@@ -247,13 +232,16 @@ def _build_tool(dotnet: str) -> Path | None:
         return dll
     cache.mkdir(parents=True, exist_ok=True)
     lock = cache / _BUILD_LOCK
-    if not _acquire_build_lock(lock, dll):
+    handle = acquire_build_lock(
+        lock, lambda: _dll_fresh(dll), _LOCK_TRIES, _LOCK_POLL_SECONDS
+    )
+    if handle is None:
         return dll if _dll_fresh(dll) else None
     try:
         if not _dll_fresh(dll) and not _compile_tool(dotnet, src, out):
             return None
     finally:
-        lock.rmdir()
+        release_build_lock(handle)
     return dll if _dll_fresh(dll) else None
 
 

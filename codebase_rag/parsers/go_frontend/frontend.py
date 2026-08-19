@@ -13,7 +13,6 @@ import json
 import os
 import shutil
 import subprocess
-import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -22,6 +21,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
+from ..build_lock import acquire_build_lock, release_build_lock
 from ..go.module_paths import discover_go_module_paths
 
 # Call-site join key: (rel_file, name_token_line, name_token_byte_col, simple_name).
@@ -138,21 +138,6 @@ def _binary_fresh(binary: Path) -> bool:
     return binary.is_file() and binary.stat().st_mtime >= _newest_source_mtime()
 
 
-def _acquire_build_lock(lock: Path, binary: Path) -> bool:
-    # Serialise the one build across parallel workers. Returns True holding the
-    # lock (caller must rmdir); False if it gave up because another worker
-    # already produced a fresh binary or the tries ran out.
-    for _ in range(_LOCK_TRIES):
-        try:
-            lock.mkdir()
-            return True
-        except FileExistsError:
-            time.sleep(_LOCK_POLL_SECONDS)
-            if _binary_fresh(binary):
-                return False
-    return False
-
-
 def _compile_tool(go: str, src: Path, out: Path) -> bool:
     # Build from a copy in the writable cache, never the bundled source dir,
     # which is read-only under a pip install (the build writes nothing there,
@@ -183,13 +168,16 @@ def _build_tool(go: str) -> Path | None:
         return binary
     cache.mkdir(parents=True, exist_ok=True)
     lock = cache / _BUILD_LOCK
-    if not _acquire_build_lock(lock, binary):
+    handle = acquire_build_lock(
+        lock, lambda: _binary_fresh(binary), _LOCK_TRIES, _LOCK_POLL_SECONDS
+    )
+    if handle is None:
         return binary if _binary_fresh(binary) else None
     try:
         if not _binary_fresh(binary) and not _compile_tool(go, src, out):
             return None
     finally:
-        lock.rmdir()
+        release_build_lock(handle)
     return binary if _binary_fresh(binary) else None
 
 
@@ -256,19 +244,50 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts:
     return facts
 
 
-def run_go_frontend(repo_path: Path) -> GoSemanticFacts:
-    go = shutil.which(_GO)
-    if go is None:
-        return _empty_facts()
-    if find_go_module(repo_path) is None:
-        return _empty_facts()
-    binary = _build_tool(go)
-    if binary is None:
-        logger.warning(ls.GO_FRONTEND_BUILD_FAILED.format(stderr=""))
-        return _empty_facts()
+def _module_anchors(repo_path: Path) -> list[Path]:
+    # One tool invocation per module root: `./...` never descends into a
+    # nested go.mod (its own module boundary), so a single root run would
+    # silently miss every nested module's local calls (issue #1227).
+    anchors = {anchor for _, _, anchor in discover_go_module_paths(repo_path)}
+    return sorted(anchors)
+
+
+def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
+    if not prefix:
+        return facts
+
+    def _rel(path: str) -> str:
+        return f"{prefix}/{path}"
+
+    return GoSemanticFacts(
+        call_sites={
+            (_rel(file), line, col, name): GoCallSite(
+                site.name, _rel(site.target_file), site.target_line, site.target_col
+            )
+            for (file, line, col, name), site in facts.call_sites.items()
+        },
+        external_sites={
+            (_rel(file), line, col, name)
+            for file, line, col, name in facts.external_sites
+        },
+        implements=[
+            GoImplements(
+                _rel(pair.impl_file),
+                pair.impl_line,
+                pair.impl_col,
+                _rel(pair.iface_file),
+                pair.iface_line,
+                pair.iface_col,
+            )
+            for pair in facts.implements
+        ],
+    )
+
+
+def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts:
     try:
         proc = subprocess.run(
-            [str(binary), str(repo_path)],
+            [str(binary), str(module_root)],
             capture_output=True,
             text=True,
             check=False,
@@ -283,3 +302,24 @@ def run_go_frontend(repo_path: Path) -> GoSemanticFacts:
         logger.warning(ls.GO_FRONTEND_RUN_FAILED.format(error=error))
         return _empty_facts()
     return _parse_payload(proc.stdout, proc.stderr)
+
+
+def run_go_frontend(repo_path: Path) -> GoSemanticFacts:
+    go = shutil.which(_GO)
+    if go is None:
+        return _empty_facts()
+    anchors = _module_anchors(repo_path)
+    if not anchors:
+        return _empty_facts()
+    binary = _build_tool(go)
+    if binary is None:
+        logger.warning(ls.GO_FRONTEND_BUILD_FAILED.format(stderr=""))
+        return _empty_facts()
+    merged = _empty_facts()
+    for anchor in anchors:
+        prefix = "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
+        facts = _prefix_facts(_run_tool_once(binary, anchor), prefix)
+        merged.call_sites.update(facts.call_sites)
+        merged.external_sites.update(facts.external_sites)
+        merged.implements.extend(facts.implements)
+    return merged
