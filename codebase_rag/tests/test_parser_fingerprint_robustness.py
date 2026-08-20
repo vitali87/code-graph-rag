@@ -24,6 +24,19 @@ class _UnreadableDistribution:
         raise TypeError("'NoneType' object is not subscriptable")
 
 
+class _UnreadableVersionDistribution:
+    """A grammar distribution whose NAME reads fine but whose version does
+    not: the guard must cover the second read too, not just the first."""
+
+    @property
+    def name(self) -> str:
+        return f"{cs.GRAMMAR_DIST_PREFIX}rust"
+
+    @property
+    def version(self) -> str:
+        raise TypeError("'NoneType' object is not subscriptable")
+
+
 class _GrammarDistribution:
     def __init__(self, name: str, version: str) -> None:
         self.name = name
@@ -51,3 +64,15 @@ def test_fingerprint_survives_an_unreadable_distribution(
     )
     fingerprint = pf.compute_parser_fingerprint(repo_path=tmp_path)
     assert fingerprint
+
+
+def test_unreadable_version_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    good = _GrammarDistribution(f"{cs.GRAMMAR_DIST_PREFIX}python", "0.23.0")
+    monkeypatch.setattr(
+        pf.metadata,
+        "distributions",
+        lambda: iter([_UnreadableVersionDistribution(), good]),
+    )
+    assert pf._grammar_versions() == [
+        cs.GRAMMAR_VERSION_FMT.format(name=good.name.lower(), version=good.version)
+    ]
