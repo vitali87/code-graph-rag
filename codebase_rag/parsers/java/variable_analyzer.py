@@ -24,6 +24,32 @@ if TYPE_CHECKING:
     from ...types_defs import ASTCacheProtocol
 
 
+def _java_literal_type(expr_node: ASTNode) -> str | None:
+    # A literal's type is fixed by its node type, and for the numeric ones by
+    # its suffix: `1L` is a long, `1.5f` a float.
+    node_type = expr_node.type
+    if node_type == cs.TS_STRING_LITERAL:
+        return cs.JAVA_TYPE_STRING
+    if node_type == cs.TS_JAVA_CHARACTER_LITERAL:
+        return cs.JAVA_TYPE_CHAR
+    if node_type in (cs.TS_TRUE, cs.TS_FALSE):
+        return cs.JAVA_TYPE_BOOLEAN
+    text = safe_decode_text(expr_node) or ""
+    if node_type in cs.TS_JAVA_FLOATING_POINT_LITERALS:
+        return (
+            cs.JAVA_TYPE_FLOAT
+            if text.endswith(cs.JAVA_FLOAT_SUFFIXES)
+            else cs.JAVA_TYPE_DOUBLE
+        )
+    if node_type in cs.TS_JAVA_INTEGER_LITERALS:
+        return (
+            cs.JAVA_TYPE_LONG_PRIMITIVE
+            if text.endswith(cs.JAVA_LONG_SUFFIXES)
+            else cs.JAVA_TYPE_INT
+        )
+    return None
+
+
 class JavaVariableAnalyzerMixin:
     __slots__ = ()
     ast_cache: ASTCacheProtocol
@@ -340,6 +366,11 @@ class JavaVariableAnalyzerMixin:
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
+        # Literals carry their type in the node itself, with no lookup and no
+        # scope: keeping them out of this switch keeps it readable.
+        if (literal := _java_literal_type(expr_node)) is not None:
+            return literal
+
         match expr_node.type:
             case cs.TS_OBJECT_CREATION_EXPRESSION:
                 if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):
@@ -362,31 +393,6 @@ class JavaVariableAnalyzerMixin:
             case cs.TS_FIELD_ACCESS:
                 return self._infer_java_field_access_type(
                     expr_node, module_qn, local_var_types
-                )
-
-            case cs.TS_STRING_LITERAL:
-                return cs.JAVA_TYPE_STRING
-
-            case cs.TS_JAVA_CHARACTER_LITERAL:
-                return cs.JAVA_TYPE_CHAR
-
-            case node_type if node_type in cs.TS_JAVA_FLOATING_POINT_LITERALS:
-                text = safe_decode_text(expr_node) or ""
-                return (
-                    cs.JAVA_TYPE_FLOAT
-                    if text.endswith(cs.JAVA_FLOAT_SUFFIXES)
-                    else cs.JAVA_TYPE_DOUBLE
-                )
-
-            case cs.TS_TRUE | cs.TS_FALSE:
-                return cs.JAVA_TYPE_BOOLEAN
-
-            case node_type if node_type in cs.TS_JAVA_INTEGER_LITERALS:
-                text = safe_decode_text(expr_node) or ""
-                return (
-                    cs.JAVA_TYPE_LONG_PRIMITIVE
-                    if text.endswith(cs.JAVA_LONG_SUFFIXES)
-                    else cs.JAVA_TYPE_INT
                 )
 
             case cs.TS_ARRAY_CREATION_EXPRESSION:
