@@ -14,6 +14,7 @@ from ..utils import safe_decode_text
 from .utils import (
     extract_class_info,
     extract_method_call_info,
+    extract_method_info,
     get_class_context_from_qn,
 )
 
@@ -78,6 +79,34 @@ def _java_param_type_names(qn: str) -> list[str]:
         p.split(cs.CHAR_ANGLE_OPEN, 1)[0].rsplit(cs.SEPARATOR_DOT, 1)[-1].strip()
         for p in parts
     ]
+
+
+def _simple_type_name(type_text: str) -> str:
+    return (
+        type_text.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        .rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        .strip()
+    )
+
+
+def _pick_declared_overload(
+    declarations: list[ASTNode], param_types: tuple[str, ...]
+) -> ASTNode | None:
+    # Without a signature to match, the first declaration is all there is. With
+    # one, prefer the declaration whose parameter types match it: overloads may
+    # differ in return type, and the caller has already chosen which one it is.
+    if not declarations:
+        return None
+    if not param_types:
+        return declarations[0]
+    for declaration in declarations:
+        declared = tuple(
+            _simple_type_name(text)
+            for text in extract_method_info(declaration)[cs.KEY_PARAMETERS]
+        )
+        if declared == param_types:
+            return declaration
+    return declarations[0]
 
 
 def _overload_matches_arg_types(qn: str, arg_types: tuple[str | None, ...]) -> bool:
@@ -563,7 +592,12 @@ class JavaMethodResolverMixin:
 
         return self._heuristic_method_return_type(method_call)
 
-    def _find_method_return_type(self, class_qn: str, method_name: str) -> str | None:
+    def _find_method_return_type(
+        self,
+        class_qn: str,
+        method_name: str,
+        param_types: tuple[str, ...] = (),
+    ) -> str | None:
         if not class_qn or not method_name:
             return None
 
@@ -574,41 +608,62 @@ class JavaMethodResolverMixin:
             return None
 
         return self._find_method_return_type_in_ast(
-            ctx.root_node, ctx.target_class_name, method_name, ctx.module_qn
+            ctx.root_node,
+            ctx.target_class_name,
+            method_name,
+            ctx.module_qn,
+            param_types,
         )
 
     def _find_method_return_type_in_ast(
-        self, node: ASTNode, class_name: str, method_name: str, module_qn: str
+        self,
+        node: ASTNode,
+        class_name: str,
+        method_name: str,
+        module_qn: str,
+        param_types: tuple[str, ...] = (),
     ) -> str | None:
-        if node.type == cs.TS_CLASS_DECLARATION:
+        # Interfaces, enums and records declare methods too, and instance-method
+        # lookup already binds through them, so a chain whose inner call is
+        # declared on one must be typeable the same way.
+        if node.type in cs.JAVA_CLASS_NODE_TYPES:
             if (
                 name_node := node.child_by_field_name(cs.KEY_NAME)
             ) and safe_decode_text(name_node) == class_name:
                 if body_node := node.child_by_field_name(cs.FIELD_BODY):
                     return self._search_methods_in_class_body(
-                        body_node, method_name, module_qn
+                        body_node, method_name, module_qn, param_types
                     )
 
         for child in node.children:
             if result := self._find_method_return_type_in_ast(
-                child, class_name, method_name, module_qn
+                child, class_name, method_name, module_qn, param_types
             ):
                 return result
 
         return None
 
     def _search_methods_in_class_body(
-        self, body_node: ASTNode, method_name: str, module_qn: str
+        self,
+        body_node: ASTNode,
+        method_name: str,
+        module_qn: str,
+        param_types: tuple[str, ...] = (),
     ) -> str | None:
-        for child in body_node.children:
-            if child.type == cs.TS_METHOD_DECLARATION:
-                if (
-                    name_node := child.child_by_field_name(cs.KEY_NAME)
-                ) and safe_decode_text(name_node) == method_name:
-                    if (type_node := child.child_by_field_name(cs.KEY_TYPE)) and (
-                        return_type := safe_decode_text(type_node)
-                    ):
-                        return self._resolve_java_type_name(return_type, module_qn)
+        named = [
+            child
+            for child in body_node.children
+            if child.type == cs.TS_METHOD_DECLARATION
+            and (name_node := child.child_by_field_name(cs.KEY_NAME)) is not None
+            and safe_decode_text(name_node) == method_name
+        ]
+        chosen = _pick_declared_overload(named, param_types)
+        if chosen is None:
+            return None
+        if (type_node := chosen.child_by_field_name(cs.KEY_TYPE)) and (
+            return_type := safe_decode_text(type_node)
+        ):
+            return self._resolve_java_type_name(return_type, module_qn)
         return None
 
     def _heuristic_method_return_type(self, method_call: str) -> str | None:
@@ -694,7 +749,12 @@ class JavaMethodResolverMixin:
         class_qn, _, method_name = unsignatured.rpartition(cs.SEPARATOR_DOT)
         if not class_qn or not method_name:
             return None
-        return self._find_method_return_type(class_qn, method_name)
+        # The signature of the OVERLOAD the inner call resolved to: overloads
+        # may declare different return types, and a name-only lookup would type
+        # the chain from whichever one is declared first.
+        return self._find_method_return_type(
+            class_qn, method_name, tuple(_java_param_type_names(method_qn))
+        )
 
     def _do_resolve_java_method_call(
         self,

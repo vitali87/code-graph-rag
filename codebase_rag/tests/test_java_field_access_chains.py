@@ -529,3 +529,70 @@ public class Main {
     assert "proj.src.Main.Builder.with(String)" in targets
     assert "proj.src.Main.Builder.with(String,String)" in targets
     assert "proj.src.Main.Builder.build()" in targets
+
+
+def test_chain_types_from_the_selected_overload_not_the_first(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Overloads may declare different return types, so the chain must be typed
+    # from the overload the inner call actually resolved to, not from whichever
+    # one the class declares first.
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class Wrong {
+    public void selectedOnly() { }
+}
+class Selected {
+    public void selectedOnly() { }
+}
+class Factory {
+    public Wrong create(Integer wrongArg) { return new Wrong(); }
+    public Selected create(String selectedArg) { return new Selected(); }
+}
+public class Main {
+    public static void main(String[] args) {
+        Factory factory = new Factory();
+        String selectedArg = "pick me";
+        factory.create(selectedArg).selectedOnly();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+    targets = _call_targets(mock_ingestor)
+    assert "proj.src.Main.Factory.create(String)" in targets
+    assert "proj.src.Main.Selected.selectedOnly()" in targets
+    assert "proj.src.Main.Wrong.selectedOnly()" not in targets
+
+
+def test_chain_through_an_interface_declared_method(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Instance-method lookup already binds through interfaces, so a chain whose
+    # inner call is declared on one must be typeable the same way.
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class Builder {
+    public void build() { }
+}
+interface Factory {
+    Builder query();
+}
+class RealFactory implements Factory {
+    public Builder query() { return new Builder(); }
+}
+public class Main {
+    public static void run(Factory factory) {
+        factory.query().build();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+    assert "proj.src.Main.Builder.build()" in _call_targets(mock_ingestor)
