@@ -2700,16 +2700,54 @@ class FlowProcessor:
         )
         return flows.get(key, {}) if key is not None else {}
 
-    @staticmethod
-    def _csharp_callee_name_node(call_node: Node) -> Node | None:
-        # The callee NAME token, matching the Roslyn tool's key: the member
-        # name for `obj.M(x)`, the bare identifier for `M(x)`.
-        func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-        if func is None:
+    @classmethod
+    def _csharp_callee_name_node(cls, call_node: Node) -> Node | None:
+        # The callee NAME token, mirroring the Roslyn tool's CalleeNameToken
+        # arm for arm: member access and member binding (`c?.Handle(x)`) take
+        # their `name`, and a generic name (`Method<T>(x)`) reduces to its
+        # bare identifier -- otherwise the keys would never match and those
+        # call sites would silently lose their facts.
+        return cls._csharp_name_token(
+            call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        )
+
+    @classmethod
+    def _csharp_name_token(cls, node: Node | None) -> Node | None:
+        if node is None:
             return None
-        if func.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            return func.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-        return func
+        if node.type in (
+            cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+            cs.TS_CSHARP_MEMBER_BINDING_EXPRESSION,
+        ):
+            named = node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+            if named is None:
+                # member_binding_expression exposes its name as the sole
+                # named child in some grammar versions.
+                named = next(iter(node.named_children), None)
+            return cls._csharp_name_token(named)
+        if node.type == cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION:
+            # `c?.Handle(x)`: the invoked name lives in the trailing
+            # member_binding_expression, not in a named field.
+            return cls._csharp_name_token(
+                next(
+                    (
+                        child
+                        for child in node.named_children
+                        if child.type == cs.TS_CSHARP_MEMBER_BINDING_EXPRESSION
+                    ),
+                    None,
+                )
+            )
+        if node.type == cs.TS_CSHARP_GENERIC_NAME:
+            return next(
+                (
+                    child
+                    for child in node.named_children
+                    if child.type == cs.TS_CSHARP_IDENTIFIER
+                ),
+                None,
+            )
+        return node
 
     def _js_return_taint(
         self, node: Node, tainted: _TaintMap, jc: _JsCtx

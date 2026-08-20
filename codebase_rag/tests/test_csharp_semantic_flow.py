@@ -121,3 +121,49 @@ def test_untainted_local_never_gains_a_flow(tmp_path: Path) -> None:
         "    }\n}\n"
     )
     assert _flows(tmp_path / "c", clean, cs.CSharpFrontend.HYBRID) == set()
+
+
+def test_callee_name_token_matches_every_roslyn_shape() -> None:
+    # The Python key must mirror the tool's CalleeNameToken arm for arm, or
+    # these call sites silently lose their facts (review on #1338).
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.flow_access.processor import FlowProcessor
+
+    parsers, _queries = load_parsers()
+    parser = parsers[cs.SupportedLanguage.CSHARP]
+    tree = parser.parse(
+        b"class A { void M(C c, string t) { c?.Handle(t); Gen<int>(t);"
+        b" c.Obj.Do<T>(t); Plain(t); } }"
+    )
+    names: list[str] = []
+
+    def walk(node) -> None:
+        if node.type == "invocation_expression":
+            token = FlowProcessor._csharp_callee_name_node(node)
+            assert token is not None
+            names.append(token.text.decode("utf-8"))
+        for child in node.children:
+            walk(child)
+
+    walk(tree.root_node)
+    assert names == ["Handle", "Gen", "Do", "Plain"]
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_inspected_local_never_fabricates_a_flow(tmp_path: Path) -> None:
+    # A tainted local merely INSPECTED contributes no value to the result:
+    # DataFlowsIn excludes it, so no edge is fabricated (review on #1338).
+    source = (
+        "using System;\n\n"
+        "public class Inspect\n{\n"
+        "    public void Run()\n    {\n"
+        '        var token = Environment.GetEnvironmentVariable("K");\n'
+        '        var verdict = token == null ? "missing" : "present";\n'
+        "        Console.WriteLine(verdict);\n"
+        "    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "d", source, cs.CSharpFrontend.HYBRID
+    )

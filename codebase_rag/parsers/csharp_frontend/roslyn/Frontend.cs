@@ -295,6 +295,22 @@ public static class Frontend
         // The locals/parameters whose values reach this expression region.
         private static List<string> FlowSymbols(SemanticModel model, SyntaxNode region)
         {
+            // A conditional's CONDITION is read but never becomes the value, and
+            // AnalyzeDataFlow counts every read; analysing the branches instead
+            // keeps the same rule the flow walk already applies to `a ? b : c`,
+            // so inspecting a tainted local cannot fabricate a flow.
+            if (region is ParenthesizedExpressionSyntax parenthesized)
+            {
+                return FlowSymbols(model, parenthesized.Expression);
+            }
+            if (region is ConditionalExpressionSyntax conditional)
+            {
+                return FlowSymbols(model, conditional.WhenTrue)
+                    .Concat(FlowSymbols(model, conditional.WhenFalse))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToList();
+            }
             DataFlowAnalysis analysis;
             try
             {
@@ -310,8 +326,17 @@ public static class Frontend
             {
                 return new List<string>();
             }
+            // DataFlowsIn ONLY: it is exactly "assigned outside, read inside",
+            // i.e. the values that genuinely reach this region. ReadInside
+            // would also catch a local merely INSPECTED without contributing
+            // (`secret == null ? "ok" : "ok"`), fabricating taint. Symbols
+            // declared inside the region (lambda parameters, `out` and
+            // pattern declarations) are excluded so a same-named enclosing
+            // variable cannot leak in through them.
+            var declaredInside = new HashSet<ISymbol>(
+                analysis.VariablesDeclared, SymbolEqualityComparer.Default);
             return analysis.DataFlowsIn
-                .Concat(analysis.ReadInside)
+                .Where(s => !declaredInside.Contains(s))
                 .Where(s => s.Kind is SymbolKind.Local or SymbolKind.Parameter)
                 .Select(s => s.Name)
                 .Where(n => !string.IsNullOrEmpty(n))
