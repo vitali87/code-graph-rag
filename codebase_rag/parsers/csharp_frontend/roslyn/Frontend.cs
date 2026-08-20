@@ -401,8 +401,19 @@ public static class Frontend
             for (var index = 0; index < arguments.Value.Count; index++)
             {
                 var argument = arguments.Value[index];
-                if (!argument.RefKindKeyword.IsKind(SyntaxKind.OutKeyword)
-                    && !argument.RefKindKeyword.IsKind(SyntaxKind.RefKeyword))
+                // `out` is written by the language's own rule: a method must
+                // definitely assign every out parameter before it returns.
+                // `ref` only PERMITS a write, so it has to be proven, or a
+                // read-only ref helper would fabricate a flow into the caller's
+                // variable.
+                if (argument.RefKindKeyword.IsKind(SyntaxKind.RefKeyword))
+                {
+                    if (!RefParameterIsWritten(model, invocation, index))
+                    {
+                        continue;
+                    }
+                }
+                else if (!argument.RefKindKeyword.IsKind(SyntaxKind.OutKeyword))
                 {
                     continue;
                 }
@@ -416,6 +427,34 @@ public static class Frontend
                 }
                 _outWrites.Add(new OutWriteFact(rel, line, col, name, index, symbol));
             }
+        }
+
+        // Does the callee actually assign this `ref` parameter? Answerable only
+        // for a first-party body: an external ref callee cannot be inspected,
+        // so it is treated as read-only rather than assumed to write.
+        private static bool RefParameterIsWritten(
+            SemanticModel model,
+            InvocationExpressionSyntax invocation,
+            int index)
+        {
+            if (model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol method
+                || index >= method.Parameters.Length)
+            {
+                return false;
+            }
+            var declaration = method.DeclaringSyntaxReferences.FirstOrDefault();
+            if (declaration?.GetSyntax() is not MethodDeclarationSyntax declared
+                || declared.Body is not { } body)
+            {
+                return false;
+            }
+            var calleeModel = model.Compilation.GetSemanticModel(declared.SyntaxTree);
+            if (calleeModel.AnalyzeDataFlow(body) is not { Succeeded: true } flow)
+            {
+                return false;
+            }
+            return flow.WrittenInside.Contains(
+                method.Parameters[index], SymbolEqualityComparer.Default);
         }
 
         // `out var n` declares the variable inline, so the symbol comes from the

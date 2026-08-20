@@ -281,3 +281,31 @@ def test_a_clean_out_parameter_never_gains_a_flow(tmp_path: Path) -> None:
         "    }\n}\n"
     )
     assert _flows(tmp_path / "c2", clean, cs.CSharpFrontend.HYBRID) == set()
+
+
+# A `ref` parameter the callee never assigns: `ref` PERMITS a write, it does
+# not promise one, so treating every ref argument as written would invent an
+# ENV -> STDOUT flow through a variable the helper only reads.
+_READ_ONLY_REF = (
+    "using System;\n\n"
+    "public class Helper\n{\n"
+    "    public void Inspect(string src, ref string other)\n    {\n"
+    "        Console.Error.WriteLine(src.Length + other.Length);\n    }\n}\n\n"
+    "public class Fine\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        var helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Inspect(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_read_only_ref_parameter_never_gains_a_flow(tmp_path: Path) -> None:
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "r2", _READ_ONLY_REF, cs.CSharpFrontend.HYBRID
+    )
