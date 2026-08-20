@@ -1330,7 +1330,7 @@ def dead_code(
         False, "--fail-on-found", help=ch.HELP_DEADCODE_FAIL_ON_FOUND
     ),
 ) -> None:
-    from .dead_code import collect_dead_code
+    from .dead_code import collect_dead_code_with_coverage
 
     show_progress = output_format == cs.DeadCodeFormat.TABLE and output is None
     if show_progress:
@@ -1339,13 +1339,14 @@ def dead_code(
     projects: list[str] = []
     resolved: str | None = None
     rows: list[ResultRow] = []
+    structural_tier_symbols = 0
     try:
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             resolved = _resolve_dead_code_project(project_name, projects)
             if resolved is not None:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
-                rows = collect_dead_code(
+                rows, structural_tier_symbols = collect_dead_code_with_coverage(
                     ingestor,
                     resolved,
                     _dead_code_config(
@@ -1372,6 +1373,17 @@ def dead_code(
         _to_dead_code_row(row) for row in _filter_excluded_rows(rows, exclude)
     ]
     _emit_dead_code(candidates, output_format, output, resolved)
+    # Printed after the result (including "none found") so the report never
+    # implies coverage of languages the structural tier cannot analyze.
+    if structural_tier_symbols and output_format == cs.DeadCodeFormat.TABLE:
+        app_context.console.print(
+            style(
+                cs.CLI_DEADCODE_STRUCTURAL_TIER_SKIPPED.format(
+                    count=structural_tier_symbols
+                ),
+                cs.Color.YELLOW,
+            )
+        )
 
     if fail_on_found and candidates:
         raise typer.Exit(1)

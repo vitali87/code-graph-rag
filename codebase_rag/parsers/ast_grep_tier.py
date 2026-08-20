@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -59,6 +60,21 @@ def load_pattern_configs() -> dict[str, _LangConfig]:
         for extension in extensions:
             configs[extension] = config
     return configs
+
+
+@cache
+def structural_tier_extensions() -> frozenset[str]:
+    """File extensions handled by this tier, for consumers that must skip them.
+
+    Analyses built on the call graph (dead code) cannot say anything about a
+    language parsed here, since the tier emits no CALLS edges. Reading the
+    shipped configs keeps those consumers correct as languages are added.
+    Returns empty if the [ast-grep] extra is absent, matching the disabled tier.
+    """
+    try:
+        return frozenset(load_pattern_configs())
+    except Exception:  # noqa: BLE001
+        return frozenset()
 
 
 def _strip_quotes(text: str) -> str:
