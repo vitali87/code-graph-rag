@@ -151,3 +151,4 @@ TYPE_INFERENCE_BASE_MODEL = "BaseModel"
 
 ATTR_TYPE_INFERENCE_IN_PROGRESS = "_type_inference_in_progress"
 GUARD_INHERITED_METHOD = "_inherited_method_guard"
+GUARD_NESTED_JAVA_CALL = "_nested_java_call_guard"
