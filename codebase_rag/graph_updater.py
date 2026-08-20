@@ -548,6 +548,35 @@ class GraphUpdater:
             )
         )
 
+    def _run_java_frontend(self) -> None:
+        # The javac frontend (issue #1181) runs AFTER Pass 2, like the Jedi one:
+        # its call facts join against the function_locations Pass 2 just filled,
+        # including the name-token alias the Java method registration adds.
+        # Reset first so a reused updater (watch mode) that previously ran the
+        # frontend does not keep applying stale facts on a later run with it
+        # off; the maps are mutated in place because the type-inference engine
+        # holds a reference.
+        dp = self.factory.definition_processor
+        dp.java_call_sites.clear()
+        dp.java_external_sites.clear()
+        if settings.JAVA_FRONTEND == cs.JavaFrontend.HEURISTIC:
+            return
+        frontend = FRONTENDS.get(cs.SupportedLanguage.JAVA)
+        if frontend is None or not frontend.applies(self.repo_path):
+            return
+        if not frontend.available():
+            logger.warning(ls.JAVA_FRONTEND_UNAVAILABLE)
+            return
+        facts = frontend.run(self.repo_path, ())
+        dp.java_call_sites.update(facts.resolved_call_sites)
+        dp.java_external_sites.update(facts.external_sites)
+        logger.info(
+            ls.JAVA_FRONTEND_FACTS.format(
+                calls=len(facts.resolved_call_sites),
+                externals=len(facts.external_sites),
+            )
+        )
+
     def _run_python_frontend(self) -> None:
         # In-process Jedi facts (issue #1183): exact first-party callees
         # through re-exports/decorators and external proofs for calls leaving
@@ -883,6 +912,10 @@ class GraphUpdater:
         # calls against the function_locations Pass 2 just filled) and needs
         # the parsed-file list, which Pass 2 produced (issue #1183).
         self._run_python_frontend()
+
+        # Same posture for Java (issue #1181): the facts resolve against the
+        # method name-token locations Pass 2 registered.
+        self._run_java_frontend()
 
         # HYBRID must run after Pass 2: an incremental run deletes each
         # changed file's Module subtree before re-parsing it, so macro

@@ -170,12 +170,24 @@ class TestSemanticFrontendReruns:
         mock_updater._rehydrate_csharp_type_locations.assert_called_once()
         mock_updater._join_csharp_partials.assert_called_once()
 
+    def test_java_change_reruns_the_javac_frontend(
+        self, event_handler: CodeChangeEventHandler, mock_updater: MagicMock
+    ) -> None:
+        # javac facts are keyed by (file, line, byte col): an edit that shifts
+        # a call would otherwise keep binding through the previous run's
+        # positions, and a stale external proof would keep suppressing an edge.
+        self._fire(event_handler, mock_updater.repo_path / "Svc.java")
+        mock_updater._run_java_frontend.assert_called_once()
+        mock_updater._rehydrate_function_locations.assert_called_once()
+        mock_updater._run_go_frontend.assert_not_called()
+
     def test_python_change_touches_no_semantic_frontend(
         self, event_handler: CodeChangeEventHandler, mock_updater: MagicMock
     ) -> None:
         self._fire(event_handler, mock_updater.repo_path / "app.py")
         mock_updater._run_go_frontend.assert_not_called()
         mock_updater._run_csharp_frontend.assert_not_called()
+        mock_updater._run_java_frontend.assert_not_called()
 
     def test_go_deletion_also_reruns_the_frontend(
         self, event_handler: CodeChangeEventHandler, mock_updater: MagicMock

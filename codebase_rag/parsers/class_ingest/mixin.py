@@ -1621,15 +1621,18 @@ class ClassIngestMixin:
             # this pass's twin.
             if ingested_qn is not None and module_qn is not None:
                 span = function_span_key(module_qn, method_node)
+                location = FunctionLocation(
+                    label=cs.NodeLabel.METHOD.value,
+                    qualified_name=ingested_qn,
+                    container_qn=class_qn,
+                )
                 if (
                     language != cs.SupportedLanguage.RUST
                     or span not in self.function_locations
                 ):
-                    self.function_locations[span] = FunctionLocation(
-                        label=cs.NodeLabel.METHOD.value,
-                        qualified_name=ingested_qn,
-                        container_qn=class_qn,
-                    )
+                    self.function_locations[span] = location
+                if language == cs.SupportedLanguage.JAVA:
+                    self._register_java_name_alias(module_qn, method_node, location)
             if (
                 language == cs.SupportedLanguage.CSHARP
                 and ingested_qn is not None
@@ -1664,6 +1667,25 @@ class ClassIngestMixin:
                     self.method_return_types[
                         f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
                     ] = return_type
+
+    def _register_java_name_alias(
+        self, module_qn: str, method_node: Node, location: FunctionLocation
+    ) -> None:
+        # The javac frontend (issue #1181) keys a call target at the callee NAME
+        # token, but function_span_key keys at the declaration start -- the
+        # modifiers, so `    public String handle(` records col 4 while the tool
+        # reports the col of `handle`. Register a SECOND location at the name so
+        # the semantic join resolves, mirroring the Go alias.
+        # setdefault, not assignment: two methods sharing a line could put this
+        # alias on another method's span key, and the span record is the
+        # authoritative one.
+        name_node = method_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None:
+            return
+        self.function_locations.setdefault(
+            (module_qn, name_node.start_point[0] + 1, name_node.start_point[1]),
+            location,
+        )
 
     def _process_inline_modules(
         self,

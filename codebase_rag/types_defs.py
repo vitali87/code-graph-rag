@@ -631,6 +631,16 @@ class FunctionLocations(dict[FunctionSpanKey, FunctionLocation]):
         for key, value in other.items():
             self[key] = value
 
+    def setdefault(  # type: ignore[override]
+        self, key: FunctionSpanKey, default: FunctionLocation
+    ) -> FunctionLocation:
+        # dict.setdefault bypasses __setitem__ just like dict.update does, so a
+        # record written through it would be invisible to the module index and
+        # survive drop_module -- the stale-record bug this map exists to stop.
+        if key not in self:
+            self[key] = default
+        return self[key]
+
     def drop_module(self, module_qn: str) -> None:
         """Forget every span record a module contributed, before it re-parses."""
         for key in self._by_module.pop(module_qn, ()):

@@ -36,6 +36,7 @@ from .go import type_inference as go_ti
 from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
+from .java import type_inference as java_ti
 from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
@@ -3310,9 +3311,19 @@ class CallProcessor:
                 if callee_info is None:
                     continue
             elif is_java and call_node.type == method_invocation_type:
-                callee_info = resolver.resolve_java_method_call(
-                    call_node, module_qn, local_var_types, caller_qn
-                )
+                # The javac frontend (issue #1181): a HIT is the declaration the
+                # compiler bound this call to, which the ARGUMENT TYPES select
+                # and name-and-arity matching cannot; the external sentinel is
+                # its proof that the call leaves the repo, so no first-party
+                # edge is fabricated. Any miss (incl. the frontend being off, so
+                # both fact maps are empty) falls back to today's Java resolver.
+                callee_info = resolver.resolve_java_call_site(call_node, module_qn)
+                if callee_info == java_ti.JAVA_EXTERNAL_TARGET:
+                    callee_info = None
+                elif callee_info is None:
+                    callee_info = resolver.resolve_java_method_call(
+                        call_node, module_qn, local_var_types, caller_qn
+                    )
             elif is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
                 callee_info = resolver.resolve_csharp_method_call(
                     call_node, module_qn, call_var_types, caller_qn

@@ -137,6 +137,8 @@ class ProcessorFactory:
                 python_call_sites=self.definition_processor.python_call_sites,
                 python_external_sites=self.definition_processor.python_external_sites,
                 go_external_sites=self.definition_processor.go_external_sites,
+                java_call_sites=self.definition_processor.java_call_sites,
+                java_external_sites=self.definition_processor.java_external_sites,
                 csharp_partial_groups=self.definition_processor.csharp_partial_groups,
                 csharp_extension_methods=self.definition_processor.csharp_extension_methods,
                 csharp_call_sites=self.definition_processor.csharp_call_sites,

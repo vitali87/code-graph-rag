@@ -331,6 +331,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self.updater._rehydrate_csharp_type_locations()
             self.updater._rehydrate_function_locations()
             self.updater._join_csharp_partials()
+        elif changed_language == SupportedLanguage.JAVA:
+            # The javac facts (issue #1181) are keyed by (file, line, byte
+            # col), so an edit that shifts a call by even one byte would
+            # otherwise keep binding it through the previous run's positions,
+            # and a stale external proof would keep suppressing a live edge.
+            self.updater._run_java_frontend()
+            self.updater._rehydrate_function_locations()
         elif changed_language == SupportedLanguage.PYTHON:
             # The Jedi facts (issue #1183) are position-keyed against the
             # repo-wide import graph, so an edit can rebind call sites in
