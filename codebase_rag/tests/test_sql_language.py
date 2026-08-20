@@ -59,7 +59,7 @@ class TestSqlLanguageRegistration:
             *spec.module_node_types,
             *spec.call_node_types,
         ):
-            language.query(f"({node_type}) @capture")
+            tree_sitter.Query(language, f"({node_type}) @capture")
 
 
 class TestSqlGetName:
