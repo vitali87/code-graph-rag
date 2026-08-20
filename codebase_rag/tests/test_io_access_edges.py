@@ -544,6 +544,63 @@ def test_python_os_environ_subscript_global_receiver_is_env(
     assert _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
 
 
+def test_python_os_environ_subscript_global_rebind_before_read_not_env(
+    tmp_path: Path,
+) -> None:
+    # A `global`-declared name keeps its module binding only until a REBIND:
+    # once `os = Fake()` executes, a later subscript hits the rebound value,
+    # not the imported module (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'TOKEN': 'x'}\n\n"
+            "def leak():\n"
+            "    global os\n"
+            "    os = Fake()\n"
+            "    return os.environ['TOKEN']\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+    assert not _has(rels, "m.leak", WRITES_TO, "resource::ENV::TOKEN"), rels
+
+
+def test_python_os_environ_subscript_augmented_assignment_shadow_not_env(
+    tmp_path: Path,
+) -> None:
+    # `os += v` binds `os` locally for the whole function exactly like a plain
+    # assignment, so the subscript is not an env read (Greptile review on
+    # PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak(v):\n"
+            "    os += v\n"
+            "    return os.environ['TOKEN']\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+    assert not _has(rels, "m.leak", WRITES_TO, "resource::ENV::TOKEN"), rels
+
+
+def test_python_os_environ_subscript_walrus_shadow_not_env(tmp_path: Path) -> None:
+    # The walrus `(os := v)` binds `os` locally for the whole function, so the
+    # subscript is not an env read (Greptile review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n"
+            "    (os := source())\n"
+            "    return os.environ['TOKEN']\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+    assert not _has(rels, "m.leak", WRITES_TO, "resource::ENV::TOKEN"), rels
+
+
 def test_python_os_environ_subscript_local_shadow_is_not_env(tmp_path: Path) -> None:
     # A name bound anywhere in the scope shadows the module-level import for
     # the whole scope, so a local `os = Fake()` never reads the env mapping.

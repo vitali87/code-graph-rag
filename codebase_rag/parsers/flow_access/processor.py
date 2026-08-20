@@ -44,7 +44,7 @@ from ..io_access import (
     match_normalised,
     normalise,
     positional_arg_node,
-    python_locally_assigned_names,
+    python_name_shadowed_at,
     registry_match,
     rust_unwrap_result,
     scope_seed_nodes,
@@ -3098,7 +3098,10 @@ class FlowProcessor:
         # like the lean member walks. The written receiver head must be an
         # imported name (an unimported `os` is a local or a NameError, never
         # the stdlib module), and a name assigned anywhere in the enclosing
-        # Python scope is local for the whole scope, shadowing the import.
+        # Python scope is local for the whole scope, shadowing the import --
+        # except a `global`-declared name, whose rebinding only shadows reads
+        # AFTER the rebind in source order (reads before it still see the
+        # imported module).
         obj = node.child_by_field_name(cs.FIELD_VALUE)
         if obj is None or obj.text is None:
             return None
@@ -3107,7 +3110,9 @@ class FlowProcessor:
         if ctx.import_map.get(raw_head) is None:
             return None
         scope = self._py_scope_of(node)
-        if scope is not None and raw_head in python_locally_assigned_names(scope):
+        if scope is not None and python_name_shadowed_at(
+            scope, raw_head, node.start_byte or 0
+        ):
             return None
         normalised = normalise(obj_text, ctx.import_map)
         if normalised is None:

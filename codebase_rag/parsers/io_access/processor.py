@@ -41,6 +41,7 @@ from .extract import (
     match_normalised,
     normalise,
     positional_arg_node,
+    python_globally_rebound_before,
     python_locally_assigned_names,
     registry_match,
     rust_unwrap_result,
@@ -387,7 +388,7 @@ class IOAccessProcessor:
                 self._emit_call(node, caller_spec, import_map, sink_by_name, handles)
             elif node.type == cs.TS_PY_SUBSCRIPT:
                 self._emit_py_env_subscript(
-                    node, caller_spec, import_map, locally_assigned
+                    node, caller_spec, import_map, caller_node, locally_assigned
                 )
             stack.extend(reversed(node.children))
 
@@ -2063,6 +2064,7 @@ class IOAccessProcessor:
         node: Node,
         caller_spec: tuple[str, str, str],
         import_map: dict[str, str],
+        scope_node: Node,
         in_scope: set[str],
     ) -> None:
         # `os.environ['K']` reads (and, on an assignment's LHS, writes) the
@@ -2073,7 +2075,8 @@ class IOAccessProcessor:
         # reads `os.environ`. The receiver head must be an imported name (an
         # unimported `os` is a local or a NameError, never the stdlib module),
         # and a name bound anywhere in the enclosing scope is local for the
-        # whole scope, shadowing the import.
+        # whole scope, shadowing the import -- except a `global`-declared name,
+        # whose rebinding only shadows reads AFTER the rebind in source order.
         member_reads = IO_MEMBER_READS.get(cs.SupportedLanguage.PYTHON, ())
         if not member_reads:
             return
@@ -2082,7 +2085,13 @@ class IOAccessProcessor:
             return
         obj_text = obj.text.decode(cs.ENCODING_UTF8)
         raw_head, _, _ = obj_text.partition(cs.SEPARATOR_DOT)
-        if import_map.get(raw_head) is None or raw_head in in_scope:
+        if (
+            import_map.get(raw_head) is None
+            or raw_head in in_scope
+            or python_globally_rebound_before(
+                scope_node, raw_head, node.start_byte or 0
+            )
+        ):
             return
         normalised = normalise(obj_text, import_map)
         if normalised is None:
