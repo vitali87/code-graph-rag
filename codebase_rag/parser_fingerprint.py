@@ -8,7 +8,10 @@ import hashlib
 from importlib import metadata
 from pathlib import Path
 
+from loguru import logger
+
 from . import constants as cs
+from . import logs as ls
 
 
 def compute_parser_fingerprint(
@@ -99,9 +102,27 @@ def _fingerprint_sources(root: Path) -> list[Path]:
     return sorted(sources)
 
 
+def _grammar_entry(dist: metadata.Distribution) -> str | None:
+    # Reading a distribution's metadata can raise, not just return None: a
+    # half-written or malformed dist-info anywhere in site-packages makes
+    # importlib_metadata fail inside the `name` property. That must not abort
+    # the whole index run, so an unreadable distribution is skipped -- it can
+    # only be one this fingerprint would have listed, and a MISSING grammar
+    # entry changes the fingerprint, which already surfaces as the
+    # stale-graph warning rather than a silent wrong answer (issue #1339).
+    try:
+        name = dist.name
+        if not name or not name.lower().startswith(cs.GRAMMAR_DIST_PREFIX):
+            return None
+        return cs.GRAMMAR_VERSION_FMT.format(name=name.lower(), version=dist.version)
+    except Exception:
+        logger.debug(ls.FINGERPRINT_DIST_UNREADABLE)
+        return None
+
+
 def _grammar_versions() -> list[str]:
     return sorted(
-        cs.GRAMMAR_VERSION_FMT.format(name=dist.name.lower(), version=dist.version)
+        entry
         for dist in metadata.distributions()
-        if dist.name and dist.name.lower().startswith(cs.GRAMMAR_DIST_PREFIX)
+        if (entry := _grammar_entry(dist)) is not None
     )
