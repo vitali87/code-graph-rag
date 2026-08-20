@@ -25,6 +25,7 @@ from codebase_rag.dead_code import (
 from codebase_rag.types_defs import PropertyValue, ResultRow
 
 _FUNCTION = cs.NodeLabel.FUNCTION.value
+_METHOD = cs.NodeLabel.METHOD.value
 _CLASS = cs.NodeLabel.CLASS.value
 _MODULE = cs.NodeLabel.MODULE.value
 _CALLS = cs.RelationshipType.CALLS.value
@@ -77,6 +78,16 @@ def _ruby_and_python_nodes() -> list[ResultRow]:
             "lib/orders.rb",
             is_exported=True,
         ),
+        # Method is counted alongside Function and Class, so it belongs in the
+        # fixture: without it, dropping Method from the counted labels would
+        # not fail a single test.
+        _node(
+            _METHOD,
+            "proj.lib.orders.Order.total",
+            "total",
+            "lib/orders.rb",
+            is_exported=True,
+        ),
         _node(_MODULE, "proj.app", "app.py", "app.py"),
         _node(_FUNCTION, "proj.app.orphan", "orphan", "app.py"),
     ]
@@ -88,7 +99,7 @@ class TestCountStructuralTierSymbols:
         # Ruby module node is not a candidate symbol either.
         count = count_structural_tier_symbols(_ruby_and_python_nodes())
 
-        assert count == 2
+        assert count == 3
 
     def test_zero_when_no_structural_tier_files(self) -> None:
         nodes = [
@@ -128,7 +139,7 @@ class TestCountStructuralTierSymbols:
         ast_grep_tier.structural_tier_extensions.cache_clear()
         try:
             with patch.dict(sys.modules, {"ast_grep_py": None}):
-                assert count_structural_tier_symbols(_ruby_and_python_nodes()) == 2
+                assert count_structural_tier_symbols(_ruby_and_python_nodes()) == 3
         finally:
             ast_grep_tier.structural_tier_extensions.cache_clear()
 
@@ -141,7 +152,7 @@ class TestCountStructuralTierSymbols:
         rows = collect_dead_code(FakeIngestor(nodes, []), "proj", config)
 
         assert [row["qualified_name"] for row in rows] == ["proj.app.orphan"]
-        assert count_structural_tier_symbols(nodes) == 2
+        assert count_structural_tier_symbols(nodes) == 3
 
     def test_extensions_track_the_tier_pattern_configs(self) -> None:
         # The count must follow whatever languages the tier ships, so adding a
@@ -244,7 +255,7 @@ class TestDeadCodeCommandNotice:
 
         assert result.exit_code == 0
         saved = _plain_text((tmp_path / "report.txt").read_text(encoding="utf-8"))
-        assert "2 symbol(s) in structural-tier languages were not analyzed" in saved
+        assert "3 symbol(s) in structural-tier languages were not analyzed" in saved
 
     def test_saved_json_report_stays_parseable(self, tmp_path: Path) -> None:
         # The JSON artifact must remain machine-readable, so the notice belongs
