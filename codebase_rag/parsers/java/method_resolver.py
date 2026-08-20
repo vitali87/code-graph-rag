@@ -665,6 +665,37 @@ class JavaMethodResolverMixin:
             arg_types.append(var_type or None)
         return tuple(arg_types)
 
+    @staticmethod
+    def _has_call_receiver(call_node: ASTNode) -> bool:
+        receiver = call_node.child_by_field_name(cs.TS_FIELD_OBJECT)
+        return receiver is not None and receiver.type == cs.TS_METHOD_INVOCATION
+
+    def _chained_receiver_type(
+        self,
+        call_node: ASTNode,
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> str | None:
+        receiver = call_node.child_by_field_name(cs.TS_FIELD_OBJECT)
+        if receiver is None:
+            return None
+        # Recursion walks the chain leftwards; the leftmost receiver is an
+        # identifier or field access, which the existing paths already type.
+        resolved = self._do_resolve_java_method_call(
+            receiver, local_var_types, module_qn
+        )
+        if not resolved:
+            return None
+        return self._declared_return_type_of(resolved[1])
+
+    def _declared_return_type_of(self, method_qn: str) -> str | None:
+        open_idx = method_qn.find(cs.CHAR_PAREN_OPEN)
+        unsignatured = method_qn[:open_idx] if open_idx >= 0 else method_qn
+        class_qn, _, method_name = unsignatured.rpartition(cs.SEPARATOR_DOT)
+        if not class_qn or not method_name:
+            return None
+        return self._find_method_return_type(class_qn, method_name)
+
     def _do_resolve_java_method_call(
         self,
         call_node: ASTNode,
@@ -689,6 +720,25 @@ class JavaMethodResolverMixin:
             return None
 
         logger.debug(ls.JAVA_RESOLVING_CALL, method=method_name, object=object_ref)
+
+        # A chained step (`from(..).where(..)`) has a method_invocation receiver,
+        # which carries no name to look up. Typing it means resolving the inner
+        # call first and reading its DECLARED return type -- the same thing the
+        # compiler does, and what makes `return this;` builders resolve.
+        if self._has_call_receiver(call_node):
+            if chained_type := self._chained_receiver_type(
+                call_node, local_var_types, module_qn
+            ):
+                logger.debug(ls.JAVA_OBJ_TYPE_RESOLVED, type=chained_type)
+                return self._resolve_instance_method(
+                    chained_type, str(method_name), module_qn, arg_count, arg_types
+                )
+            # An untypeable receiver (a call into a third-party type) leaves the
+            # step unresolved. It must not reach the unqualified path below:
+            # `expr().m()` is never `this.m()`, and that scan binds by name
+            # alone, which is how the chain used to land on an unrelated class.
+            logger.debug(ls.JAVA_OBJ_TYPE_UNKNOWN, object=method_name)
+            return None
 
         if not object_ref:
             logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
