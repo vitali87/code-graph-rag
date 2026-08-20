@@ -65,6 +65,11 @@ from .parsers.java_generated import (
     generated_prefixes_for,
     unignore_patterns_for,
 )
+from .parsers.java_lombok import (
+    build_delombok_overlay,
+    current_lombok_identity,
+    overlay_identity,
+)
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -166,6 +171,39 @@ def _load_hash_cache(cache_path: Path) -> FileHashCache:
     except (json.JSONDecodeError, OSError) as e:
         logger.warning(ls.HASH_CACHE_LOAD_FAILED, path=cache_path, error=e)
     return {}
+
+
+_EMPTY_DELOMBOK_STATE: dict = {"identity": "", "keys": [], "lombok": ""}
+
+
+def _load_delombok_state(state_path: Path) -> dict:
+    try:
+        loaded = json.loads(state_path.read_text(encoding=cs.ENCODING_UTF8))
+    except (OSError, json.JSONDecodeError):
+        return _EMPTY_DELOMBOK_STATE.copy()
+    if not isinstance(loaded, dict):
+        return _EMPTY_DELOMBOK_STATE.copy()
+    identity = loaded.get("identity")
+    keys = loaded.get("keys")
+    lombok = loaded.get("lombok")
+    return {
+        "identity": identity if isinstance(identity, str) else "",
+        "keys": (
+            sorted(key for key in keys if isinstance(key, str))
+            if isinstance(keys, list)
+            else []
+        ),
+        "lombok": lombok if isinstance(lombok, str) else "",
+    }
+
+
+def _save_delombok_state(state_path: Path, state: dict) -> None:
+    try:
+        state_path.write_text(
+            json.dumps(state, sort_keys=True), encoding=cs.ENCODING_UTF8
+        )
+    except OSError:
+        return None
 
 
 def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
@@ -283,6 +321,10 @@ class GraphUpdater:
         self._frontend_owned_qns: dict[str, set[str]] = {}
         self.unignore_paths = unignore_paths
         self._configured_unignore_paths = unignore_paths
+        self._delombok_overlay: dict[str, bytes] = {}
+        self._delombok_state_changed = False
+        self._delombok_stale_keys: set[str] = set()
+        self._delombok_state_candidate: dict = _EMPTY_DELOMBOK_STATE.copy()
         self.exclude_paths = exclude_paths
         # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
         # callers (MCP, workspace sync) opt out without a CLI flag.
@@ -981,6 +1023,16 @@ class GraphUpdater:
         self._prune_orphan_nodes()
 
         self._generate_semantic_embeddings()
+
+        # The delombok state commits ONLY here, after every pass and the
+        # graph flush succeeded: a run that dies mid-way must not convince
+        # its successor that the overlay-affected files were reprocessed.
+        # Single-file runs never commit it.
+        if self._delombok_state_changed and self._single_file is None:
+            _save_delombok_state(
+                self.repo_path / cs.DELOMBOK_STATE_FILENAME,
+                self._delombok_state_candidate,
+            )
 
     def _emit_pending_endpoints(self) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -1954,6 +2006,10 @@ class GraphUpdater:
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
 
     def _is_already_in_sync(self) -> bool:
+        if self._delombok_state_changed:
+            # The overlay's effect changed while the checked-in bytes did
+            # not; the affected files must reparse.
+            return False
         if self._single_file is not None:
             return False
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
@@ -2022,6 +2078,32 @@ class GraphUpdater:
         self.factory.structure_processor.unignore_paths = resolved
         if roots:
             logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
+        # Delombok overlay (issue #1140 tier 1): rebuilt per run so a jar or
+        # annotation appearing between watch runs is picked up; empty means
+        # raw parsing everywhere, exactly as before. The persisted identity
+        # detects overlay CHANGES (jar appears/vanishes, version bump): the
+        # affected files' cached hashes still match the checked-in source,
+        # so without forcing them through a reparse the graph would keep
+        # stale (or never gain) generated members.
+        self._delombok_overlay = build_delombok_overlay(self.repo_path)
+        previous = _load_delombok_state(self.repo_path / cs.DELOMBOK_STATE_FILENAME)
+        current = {
+            "identity": overlay_identity(self._delombok_overlay),
+            "keys": sorted(self._delombok_overlay),
+            # Two Lombok versions can expand identically today and diverge on
+            # the next annotation edit; the version keeps the state honest.
+            "lombok": current_lombok_identity(),
+        }
+        self._delombok_state_changed = previous != current
+        self._delombok_stale_keys = (
+            set(previous.get("keys", ())) | set(current["keys"])
+            if self._delombok_state_changed
+            else set()
+        )
+        # Held in memory until the run SUCCEEDS: persisting now would let a
+        # crashed run convince its successor that the stale files were
+        # already reprocessed. Single-file runs never commit it either.
+        self._delombok_state_candidate = current
 
     def _collect_eligible_files(self) -> list[tuple[Path, str]]:
         if self._single_file is not None:
@@ -2083,6 +2165,8 @@ class GraphUpdater:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
+        for stale_key in self._delombok_stale_keys:
+            old_hashes.pop(stale_key, None)
         is_full_build = (force or not old_hashes) and self._single_file is None
         self._is_full_build = is_full_build
         cache_mtime = cache_path.stat().st_mtime if cache_path.is_file() else 0.0
@@ -2137,6 +2221,10 @@ class GraphUpdater:
                 unreadable_keys.add(file_key)
                 continue
             current_hash, file_bytes = hashed
+            # The hash keys the CHECKED-IN source (cache invalidation follows
+            # edits); the PARSE may consume the delomboked expansion instead,
+            # so Lombok-generated members become real graph nodes (#1140).
+            file_bytes = self._delombok_overlay.get(file_key, file_bytes)
 
             current_file_keys.add(file_key)
             new_hashes[file_key] = current_hash
@@ -2189,6 +2277,7 @@ class GraphUpdater:
                 caller_bytes = caller_path.read_bytes()
             except OSError:
                 continue
+            caller_bytes = self._delombok_overlay.get(caller_key, caller_bytes)
             changed_entries.append((caller_path, caller_key, False, caller_bytes))
             present.add(caller_key)
             affected += 1
@@ -2380,6 +2469,8 @@ class GraphUpdater:
             return None
         try:
             file_bytes = file_path.read_bytes()
+            overlay_key = cached_relative_path(file_path, self.repo_path).as_posix()
+            file_bytes = self._delombok_overlay.get(overlay_key, file_bytes)
         except OSError as e:
             logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
             return None

@@ -920,3 +920,5 @@ PY_FRONTEND_BUDGET_DEGRADED = (
 GENERATED_SOURCES_REGISTERED = (
     "Indexing {count} annotation-processor generated source root(s)"
 )
+DELOMBOK_RUN_FAILED = "delombok run failed ({error}); parsing raw source"
+DELOMBOK_OVERLAY_BUILT = "Delombok overlay covers {count} Lombok-affected file(s)"
