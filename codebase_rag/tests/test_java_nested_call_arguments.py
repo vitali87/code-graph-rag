@@ -118,3 +118,38 @@ public class Main {
     )
     assert "proj.src.Main.Factory.take(String)" in targets
     assert "proj.src.Main.Factory.echo(String)" in targets
+
+
+def test_field_access_argument_uses_the_active_methods_locals(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `holder` is declared in TWO methods with different types. The base of a
+    # field-access argument must resolve through the CALLER's locals, not a
+    # module-wide name lookup that can land on the other method's variable.
+    targets = _targets(
+        temp_repo / "proj",
+        mock_ingestor,
+        """
+class Wrong { }
+class Right { }
+class WrongHolder { public Wrong target = new Wrong(); }
+class RightHolder { public Right target = new Right(); }
+class Factory {
+    public void take(Wrong wrong) { }
+    public void take(Right right) { }
+}
+public class Main {
+    public void run() {
+        RightHolder holder = new RightHolder();
+        Factory factory = new Factory();
+        factory.take(holder.target);
+    }
+    public void other() {
+        WrongHolder holder = new WrongHolder();
+        System.out.println(holder);
+    }
+}
+""",
+    )
+    assert "proj.src.Main.Factory.take(Right)" in targets
+    assert "proj.src.Main.Factory.take(Wrong)" not in targets

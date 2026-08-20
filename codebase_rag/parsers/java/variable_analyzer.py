@@ -352,10 +352,17 @@ class JavaVariableAnalyzerMixin:
 
             case cs.TS_IDENTIFIER:
                 if var_name := safe_decode_text(expr_node):
+                    # The caller's own locals first: the module-wide lookup is
+                    # name-keyed across every method, so a same-named local in
+                    # another method would answer for this one (issue #1348).
+                    if local_var_types and var_name in local_var_types:
+                        return local_var_types[var_name]
                     return self._lookup_variable_type(var_name, module_qn)
 
             case cs.TS_FIELD_ACCESS:
-                return self._infer_java_field_access_type(expr_node, module_qn)
+                return self._infer_java_field_access_type(
+                    expr_node, module_qn, local_var_types
+                )
 
             case cs.TS_STRING_LITERAL:
                 return cs.JAVA_TYPE_STRING
@@ -443,7 +450,10 @@ class JavaVariableAnalyzerMixin:
         return self._do_resolve_java_method_call(call_node, local_var_types, module_qn)
 
     def _infer_java_field_access_type(
-        self, field_access_node: ASTNode, module_qn: str
+        self,
+        field_access_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         object_node = field_access_node.child_by_field_name(cs.FIELD_OBJECT)
         field_node = field_access_node.child_by_field_name(cs.FIELD_FIELD)
@@ -459,10 +469,12 @@ class JavaVariableAnalyzerMixin:
         # recurse to infer that inner type before the outer field, so multi-level
         # access resolves instead of failing on a non-variable name.
         if object_node.type == cs.TS_FIELD_ACCESS:
-            object_type = self._infer_java_field_access_type(object_node, module_qn)
+            object_type = self._infer_java_field_access_type(
+                object_node, module_qn, local_var_types
+            )
         elif object_name := safe_decode_text(object_node):
             object_type = self._resolve_field_access_base_type(
-                object_name, field_access_node, module_qn
+                object_name, field_access_node, module_qn, local_var_types
             )
         else:
             object_type = None
@@ -472,8 +484,16 @@ class JavaVariableAnalyzerMixin:
         return None
 
     def _resolve_field_access_base_type(
-        self, object_name: str, field_access_node: ASTNode, module_qn: str
+        self,
+        object_name: str,
+        field_access_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> str | None:
+        # The caller's own locals win over the module-wide, name-keyed map,
+        # which cannot tell two methods' same-named variables apart.
+        if local_var_types and object_name in local_var_types:
+            return local_var_types[object_name]
         # `this`/`super` are receiver keywords, not variables: resolve them to the
         # containing class or its superclass so nested chains rooted at them
         # (e.g. `var c = this.address.city`) infer a type.
