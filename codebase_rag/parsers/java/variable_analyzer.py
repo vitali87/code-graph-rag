@@ -351,7 +351,7 @@ class JavaVariableAnalyzerMixin:
             case cs.TS_JAVA_CHARACTER_LITERAL:
                 return cs.JAVA_TYPE_CHAR
 
-            case cs.TS_DECIMAL_FLOATING_POINT_LITERAL:
+            case node_type if node_type in cs.TS_JAVA_FLOATING_POINT_LITERALS:
                 text = safe_decode_text(expr_node) or ""
                 return (
                     cs.JAVA_TYPE_FLOAT

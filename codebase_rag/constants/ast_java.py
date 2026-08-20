@@ -42,6 +42,10 @@ TS_JAVA_INTEGER_LITERALS = frozenset(
 )
 TS_JAVA_CHARACTER_LITERAL = "character_literal"
 TS_DECIMAL_FLOATING_POINT_LITERAL = "decimal_floating_point_literal"
+TS_HEX_FLOATING_POINT_LITERAL = "hex_floating_point_literal"
+TS_JAVA_FLOATING_POINT_LITERALS = frozenset(
+    {TS_DECIMAL_FLOATING_POINT_LITERAL, TS_HEX_FLOATING_POINT_LITERAL}
+)
 TS_ARRAY_CREATION_EXPRESSION = "array_creation_expression"
 TS_METHOD_DECLARATION = "method_declaration"
 TS_ENHANCED_FOR_STATEMENT = "enhanced_for_statement"

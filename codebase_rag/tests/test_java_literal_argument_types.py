@@ -229,3 +229,50 @@ def test_overload_rank_rejects_an_unreachable_parameter_type() -> None:
     from codebase_rag.parsers.java.method_resolver import _overload_rank
 
     assert _overload_rank("C.take(Widget)", ("int",)) is None
+
+
+def test_hex_floating_literal_is_a_double(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    targets = _targets(
+        temp_repo / "proj",
+        mock_ingestor,
+        _BOXED.format(param="double", literal="0x1.0p0"),
+    )
+    assert "proj.src.Main.Factory.take(double)" in targets
+
+
+def test_hex_floating_literal_honours_the_float_suffix(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    targets = _targets(
+        temp_repo / "proj",
+        mock_ingestor,
+        _BOXED.format(param="float", literal="0x1.0p0f"),
+    )
+    assert "proj.src.Main.Factory.take(float)" in targets
+
+
+def test_the_most_specific_overload_wins_in_either_declaration_order(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The specific overload declared FIRST must win too, so the ranking is not
+    # accidentally reproducing declaration order.
+    targets = _targets(
+        temp_repo / "proj",
+        mock_ingestor,
+        """
+class Factory {
+    public void take(Integer boxed) { }
+    public void take(Object any) { }
+}
+public class Main {
+    public static void main(String[] args) {
+        Factory factory = new Factory();
+        factory.take(42);
+    }
+}
+""",
+    )
+    assert "proj.src.Main.Factory.take(Integer)" in targets
+    assert "proj.src.Main.Factory.take(Object)" not in targets
