@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import subprocess
+import tomllib
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -286,3 +288,15 @@ def test_a_comment_inside_the_annotation_does_not_hide_it(tmp_path: Path) -> Non
     facts = run_java_frontend(repo)
     site = facts.call_sites[("src/main/java/com/app/Commented.java", 10, 15, "make")]
     assert site.target_line == 5
+
+
+def test_the_tool_source_ships_in_the_wheel() -> None:
+    # The provider builds from a bundled source file, so an installed wheel
+    # that omits it would report the frontend available and then fail to
+    # build it on every run.
+    root = Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    patterns = config["tool"]["setuptools"]["package-data"]["codebase_rag"]
+    source = java_frontend_module._TOOL_SRC / java_frontend_module._TOOL_SOURCE
+    relative = source.relative_to(root / "codebase_rag").as_posix()
+    assert any(fnmatch(relative, pattern) for pattern in patterns)

@@ -66,10 +66,10 @@ public final class Frontend {
     // JDK 17 floor `System.out` still encodes with the platform default, which
     // would mangle a non-ASCII identifier on a cp1252 host.
     private static void emit(String payload) {
-        PrintStream out = new PrintStream(
-                new FileOutputStream(FileDescriptor.out), true, StandardCharsets.UTF_8);
-        out.println(payload);
-        out.flush();
+        try (PrintStream out = new PrintStream(
+                new FileOutputStream(FileDescriptor.out), true, StandardCharsets.UTF_8)) {
+            out.println(payload);
+        }
     }
 
     private static String payload(String[] args) throws Exception {

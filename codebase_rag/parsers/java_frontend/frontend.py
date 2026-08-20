@@ -32,7 +32,7 @@ from ..build_lock import acquire_build_lock, release_build_lock
 from ..frontends.protocol import CallSiteKey
 
 _TOOL_SRC = Path(__file__).parent / "javac"
-_TOOL_SOURCE = "Frontend.java"
+_TOOL_SOURCE = "cgr/Frontend.java"
 _MAIN_CLASS = "cgr.Frontend"
 _CLASS_FILE = "cgr/Frontend.class"
 _BUILD_LOCK = ".build-lock"
