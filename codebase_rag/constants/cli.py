@@ -142,6 +142,10 @@ CLI_DEADCODE_LINE_RANGE = "{start}-{end}"
 CLI_DEADCODE_SUMMARY = "{count} candidate(s) for review."
 CLI_DEADCODE_NONE = "No unreachable functions or methods found."
 CLI_DEADCODE_WRITTEN = "Wrote {count} candidate(s) to {path}"
+CLI_DEADCODE_STRUCTURAL_TIER_SKIPPED = (
+    "{count} symbol(s) in structural-tier languages were not analyzed "
+    "(no call graph for these languages)."
+)
 CLI_ERR_DEADCODE_FAILED = "Failed to scan for dead code: {error}"
 CLI_ERR_DEADCODE_NO_PROJECTS = (
     "No projects found in the graph. Index a repository first with 'cgr start'."
