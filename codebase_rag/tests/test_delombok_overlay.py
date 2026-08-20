@@ -234,3 +234,41 @@ def test_maven_cache_prefers_the_numerically_newest_jar(
     monkeypatch.setattr(java_lombok.settings, "LOMBOK_JAR", None)
     jar = java_lombok.find_lombok_jar()
     assert jar is not None and jar.name == "lombok-1.18.30.jar"
+
+
+def test_jar_version_change_alone_marks_the_state_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Identical expansion under a different Lombok version still flips the
+    # persisted state: versions that agree today can diverge on the next
+    # annotation edit, so the files go through one honest reparse.
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    _fake_delombok(monkeypatch)
+    monkeypatch.setattr(
+        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok-1.18.30.jar")
+    )
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=MagicMock(),
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=ALL_ENABLED,
+    )
+    updater.run()
+    monkeypatch.setattr(
+        java_lombok, "find_lombok_jar", lambda: Path("/fake/lombok-1.18.42.jar")
+    )
+    updater.run()
+    assert updater._delombok_state_changed
+
+
+def test_corrupt_state_file_degrades_to_the_empty_state(tmp_path: Path) -> None:
+    from codebase_rag.graph_updater import _load_delombok_state
+
+    state = tmp_path / "state.json"
+    for payload in ('{"keys": null}', "[1, 2]", "not json", '{"identity": 5}'):
+        state.write_text(payload, encoding="utf-8")
+        loaded = _load_delombok_state(state)
+        assert loaded == {"identity": "", "keys": [], "lombok": ""}

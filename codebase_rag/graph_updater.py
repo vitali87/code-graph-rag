@@ -65,7 +65,11 @@ from .parsers.java_generated import (
     generated_prefixes_for,
     unignore_patterns_for,
 )
-from .parsers.java_lombok import build_delombok_overlay, overlay_identity
+from .parsers.java_lombok import (
+    build_delombok_overlay,
+    current_lombok_version,
+    overlay_identity,
+)
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -169,16 +173,27 @@ def _load_hash_cache(cache_path: Path) -> FileHashCache:
     return {}
 
 
+_EMPTY_DELOMBOK_STATE: dict = {"identity": "", "keys": [], "lombok": ""}
+
+
 def _load_delombok_state(state_path: Path) -> dict:
     try:
         loaded = json.loads(state_path.read_text(encoding=cs.ENCODING_UTF8))
     except (OSError, json.JSONDecodeError):
-        return {"identity": "", "keys": []}
+        return _EMPTY_DELOMBOK_STATE.copy()
     if not isinstance(loaded, dict):
-        return {"identity": "", "keys": []}
+        return _EMPTY_DELOMBOK_STATE.copy()
+    identity = loaded.get("identity")
+    keys = loaded.get("keys")
+    lombok = loaded.get("lombok")
     return {
-        "identity": loaded.get("identity", ""),
-        "keys": sorted(loaded.get("keys", [])),
+        "identity": identity if isinstance(identity, str) else "",
+        "keys": (
+            sorted(key for key in keys if isinstance(key, str))
+            if isinstance(keys, list)
+            else []
+        ),
+        "lombok": lombok if isinstance(lombok, str) else "",
     }
 
 
@@ -309,6 +324,7 @@ class GraphUpdater:
         self._delombok_overlay: dict[str, bytes] = {}
         self._delombok_state_changed = False
         self._delombok_stale_keys: set[str] = set()
+        self._delombok_state_candidate: dict = _EMPTY_DELOMBOK_STATE.copy()
         self.exclude_paths = exclude_paths
         # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
         # callers (MCP, workspace sync) opt out without a CLI flag.
@@ -2060,11 +2076,13 @@ class GraphUpdater:
         # so without forcing them through a reparse the graph would keep
         # stale (or never gain) generated members.
         self._delombok_overlay = build_delombok_overlay(self.repo_path)
-        state_path = self.repo_path / cs.DELOMBOK_STATE_FILENAME
-        previous = _load_delombok_state(state_path)
+        previous = _load_delombok_state(self.repo_path / cs.DELOMBOK_STATE_FILENAME)
         current = {
             "identity": overlay_identity(self._delombok_overlay),
             "keys": sorted(self._delombok_overlay),
+            # Two Lombok versions can expand identically today and diverge on
+            # the next annotation edit; the version keeps the state honest.
+            "lombok": current_lombok_version(),
         }
         self._delombok_state_changed = previous != current
         self._delombok_stale_keys = (
@@ -2072,8 +2090,10 @@ class GraphUpdater:
             if self._delombok_state_changed
             else set()
         )
-        if self._delombok_state_changed:
-            _save_delombok_state(state_path, current)
+        # Held in memory until the run SUCCEEDS: persisting now would let a
+        # crashed run convince its successor that the stale files were
+        # already reprocessed. Single-file runs never commit it either.
+        self._delombok_state_candidate = current
 
     def _collect_eligible_files(self) -> list[tuple[Path, str]]:
         if self._single_file is not None:
@@ -2341,6 +2361,11 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=unreadable_count)
 
         _save_hash_cache(cache_path, new_hashes)
+        if self._delombok_state_changed and self._single_file is None:
+            _save_delombok_state(
+                self.repo_path / cs.DELOMBOK_STATE_FILENAME,
+                self._delombok_state_candidate,
+            )
         _save_dir_mtimes(dir_mtimes_path, self._collected_dir_mtimes)
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry

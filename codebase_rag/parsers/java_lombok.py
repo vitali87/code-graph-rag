@@ -147,6 +147,14 @@ def build_delombok_overlay(repo_path: Path) -> dict[str, bytes]:
     return overlay
 
 
+def current_lombok_version() -> str:
+    # Module-global lookup on purpose: tests and callers patch
+    # find_lombok_jar on THIS module, and an import-by-value caller would
+    # bypass the patch (and the configured jar) silently.
+    jar = find_lombok_jar()
+    return lombok_jar_version(jar) if jar is not None else ""
+
+
 def overlay_identity(overlay: dict[str, bytes]) -> str:
     """A stable digest of the overlay's effect: which files it covers and what
     it expands them to. Any change (jar appearing/vanishing, version bump,
