@@ -348,14 +348,27 @@ class JavaVariableAnalyzerMixin:
             case cs.TS_STRING_LITERAL:
                 return cs.JAVA_TYPE_STRING
 
-            case cs.TS_INTEGER_LITERAL:
-                return cs.JAVA_TYPE_INT
+            case cs.TS_JAVA_CHARACTER_LITERAL:
+                return cs.JAVA_TYPE_CHAR
 
-            case cs.TS_DECIMAL_FLOATING_POINT_LITERAL:
-                return cs.JAVA_TYPE_DOUBLE
+            case node_type if node_type in cs.TS_JAVA_FLOATING_POINT_LITERALS:
+                text = safe_decode_text(expr_node) or ""
+                return (
+                    cs.JAVA_TYPE_FLOAT
+                    if text.endswith(cs.JAVA_FLOAT_SUFFIXES)
+                    else cs.JAVA_TYPE_DOUBLE
+                )
 
             case cs.TS_TRUE | cs.TS_FALSE:
                 return cs.JAVA_TYPE_BOOLEAN
+
+            case node_type if node_type in cs.TS_JAVA_INTEGER_LITERALS:
+                text = safe_decode_text(expr_node) or ""
+                return (
+                    cs.JAVA_TYPE_LONG_PRIMITIVE
+                    if text.endswith(cs.JAVA_LONG_SUFFIXES)
+                    else cs.JAVA_TYPE_INT
+                )
 
             case cs.TS_ARRAY_CREATION_EXPRESSION:
                 if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):

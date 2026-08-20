@@ -17,10 +17,11 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.java_frontend import java_frontend_available
 from codebase_rag.tests.conftest import get_relationships
 
-# Subtype dispatch: a String argument matches NEITHER parameter type by name,
-# and Java picks the most specific applicable overload (CharSequence). Name-and
-# -arity matching has nothing to go on and takes the first same-arity
-# declaration, so the two answers differ.
+# The argument is a call into the JDK, whose return type the tree-sitter side
+# cannot read: the argument stays untyped, so it is a wildcard and the pick
+# falls back to arity, taking the first same-arity declaration. javac knows
+# `substring` returns String and selects the most specific applicable overload
+# (CharSequence).
 _WIDGET = (
     "package com.app;\n\n"
     "public class Widget {\n"
@@ -34,7 +35,7 @@ _CALLER = (
     "    public String run() {\n"
     "        Widget widget = new Widget();\n"
     '        String text = "x";\n'
-    "        return widget.handle(text);\n    }\n}\n"
+    "        return widget.handle(text.substring(1));\n    }\n}\n"
 )
 
 

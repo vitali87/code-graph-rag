@@ -26,8 +26,26 @@ TS_ASSIGNMENT_EXPRESSION = "assignment_expression"
 TS_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
 TS_METHOD_INVOCATION = "method_invocation"
 TS_FIELD_ACCESS = "field_access"
-TS_INTEGER_LITERAL = "integer_literal"
+# tree-sitter-java names integer literals by BASE, never plain
+# `integer_literal`; a call site matching that name matches nothing.
+TS_DECIMAL_INTEGER_LITERAL = "decimal_integer_literal"
+TS_HEX_INTEGER_LITERAL = "hex_integer_literal"
+TS_OCTAL_INTEGER_LITERAL = "octal_integer_literal"
+TS_BINARY_INTEGER_LITERAL = "binary_integer_literal"
+TS_JAVA_INTEGER_LITERALS = frozenset(
+    {
+        TS_DECIMAL_INTEGER_LITERAL,
+        TS_HEX_INTEGER_LITERAL,
+        TS_OCTAL_INTEGER_LITERAL,
+        TS_BINARY_INTEGER_LITERAL,
+    }
+)
+TS_JAVA_CHARACTER_LITERAL = "character_literal"
 TS_DECIMAL_FLOATING_POINT_LITERAL = "decimal_floating_point_literal"
+TS_HEX_FLOATING_POINT_LITERAL = "hex_floating_point_literal"
+TS_JAVA_FLOATING_POINT_LITERALS = frozenset(
+    {TS_DECIMAL_FLOATING_POINT_LITERAL, TS_HEX_FLOATING_POINT_LITERAL}
+)
 TS_ARRAY_CREATION_EXPRESSION = "array_creation_expression"
 TS_METHOD_DECLARATION = "method_declaration"
 TS_ENHANCED_FOR_STATEMENT = "enhanced_for_statement"
@@ -113,6 +131,12 @@ JAVA_TYPE_INT = "int"
 JAVA_TYPE_DOUBLE = "double"
 JAVA_TYPE_BOOLEAN = "boolean"
 JAVA_TYPE_LONG = "java.lang.Long"
+JAVA_TYPE_LONG_PRIMITIVE = "long"
+JAVA_TYPE_FLOAT = "float"
+JAVA_TYPE_CHAR = "char"
+# A literal's type is fixed by its suffix: `1L` is a long, `1.5f` a float.
+JAVA_LONG_SUFFIXES = ("l", "L")
+JAVA_FLOAT_SUFFIXES = ("f", "F")
 JAVA_TYPE_STRING_FQN = "java.lang.String"
 JAVA_TYPE_OBJECT = "Object"
 
@@ -243,3 +267,49 @@ JAVA_MAVEN_SOURCE_ROOTS = (
     (JAVA_PATH_SRC, JAVA_PATH_MAIN, JAVA_PATH_JAVA),
     (JAVA_PATH_SRC, JAVA_PATH_TEST, JAVA_PATH_JAVA),
 )
+
+
+# Conversions the language performs invisibly at a call site, in the order it
+# prefers them (JLS 5.3): a widening primitive conversion first, then boxing,
+# then a widening REFERENCE conversion on the boxed type. `take(42)` is a legal
+# call to take(long), take(Integer), take(Number) and take(Object) alike, so an
+# exact simple-name comparison would reject every applicable overload and send
+# the call back to arity-only matching (issue #1344).
+JAVA_WIDENING_PRIMITIVES: dict[str, tuple[str, ...]] = {
+    "byte": ("short", "int", "long", "float", "double"),
+    "short": ("int", "long", "float", "double"),
+    "char": ("int", "long", "float", "double"),
+    "int": ("long", "float", "double"),
+    "long": ("float", "double"),
+    "float": ("double",),
+}
+JAVA_BOXED_TYPES: dict[str, str] = {
+    "byte": "Byte",
+    "short": "Short",
+    "char": "Character",
+    "int": "Integer",
+    "long": "Long",
+    "float": "Float",
+    "double": "Double",
+    "boolean": "Boolean",
+}
+# Reference supertypes of each boxed (or already reference) type, excluding
+# Object, which ranks last on its own because it is the least specific.
+JAVA_REFERENCE_SUPERTYPES: dict[str, tuple[str, ...]] = {
+    "Byte": ("Number", "Comparable", "Serializable"),
+    "Short": ("Number", "Comparable", "Serializable"),
+    "Character": ("Comparable", "Serializable"),
+    "Integer": ("Number", "Comparable", "Serializable"),
+    "Long": ("Number", "Comparable", "Serializable"),
+    "Float": ("Number", "Comparable", "Serializable"),
+    "Double": ("Number", "Comparable", "Serializable"),
+    "Boolean": ("Comparable", "Serializable"),
+    "String": ("CharSequence", "Comparable", "Serializable"),
+}
+JAVA_TYPE_OBJECT_NAME = "Object"
+# Lower is more specific; the resolver prefers the smallest total across args.
+JAVA_RANK_EXACT = 0
+JAVA_RANK_WIDENED = 1
+JAVA_RANK_BOXED = 2
+JAVA_RANK_SUPERTYPE = 3
+JAVA_RANK_OBJECT = 4
