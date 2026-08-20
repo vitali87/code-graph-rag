@@ -150,6 +150,7 @@ PARSER_FINGERPRINT_TOOL_GLOBS: tuple[str, ...] = ("*.cs", "*.csproj")
 PARSER_FINGERPRINT_TOOL_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("parsers/csharp_frontend/roslyn", ("*.cs", "*.csproj")),
     ("parsers/go_frontend/gotypes", ("*.go", "*.mod", "*.sum")),
+    ("parsers/java_frontend/javac", ("**/*.java",)),
 )
 GRAMMAR_DIST_PREFIX = "tree-sitter"
 GRAMMAR_VERSION_FMT = "{name}=={version}"

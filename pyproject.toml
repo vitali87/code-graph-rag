@@ -87,6 +87,7 @@ codebase_rag = [
     "parsers/go_frontend/gotypes/*.go",
     "parsers/go_frontend/gotypes/go.mod",
     "parsers/go_frontend/gotypes/go.sum",
+    "parsers/java_frontend/javac/cgr/*.java",
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
 ]

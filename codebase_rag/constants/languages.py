@@ -116,6 +116,15 @@ class CSharpFrontend(StrEnum):
     HYBRID = "hybrid"
 
 
+class JavaFrontend(StrEnum):
+    # HEURISTIC is the default: the tree-sitter walkers plus the name trie.
+    # JAVAC layers the Compiler Tree API's attributed facts on top (issue
+    # #1181); it degrades to HEURISTIC without a JDK, and the parser
+    # fingerprint records the RESOLVED mode.
+    HEURISTIC = "heuristic"
+    JAVAC = "javac"
+
+
 class PythonFrontend(StrEnum):
     # HEURISTIC is the default: the tree-sitter walkers plus the name trie.
     # JEDI layers in-process semantic facts on top (issue #1183); it degrades
@@ -433,3 +442,7 @@ IGNORE_SUFFIXES = frozenset(
 
 # pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"
+
+# JDK binaries the Java frontend probes and runs (issue #1181).
+JAVAC_BIN = "javac"
+JAVA_BIN = "java"
