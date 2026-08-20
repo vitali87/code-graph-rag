@@ -438,13 +438,30 @@ public static class Frontend
             ArgumentSyntax argument,
             int index)
         {
-            if (model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol method
-                || BoundParameter(method, argument, index) is not { } parameter)
+            if (model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol invoked)
+            {
+                return false;
+            }
+            // Normalize before touching parameters or syntax: a reduced
+            // extension method (`x.Ext(...)`) hides its real first parameter,
+            // and a partial method's symbol can point at the DEFINING part,
+            // which has no body. Both would otherwise look unprovable.
+            var method = invoked.ReducedFrom ?? invoked;
+            method = method.PartialImplementationPart ?? method;
+            if (BoundParameter(method, argument, index) is not { } parameter)
             {
                 return false;
             }
             var declaration = method.DeclaringSyntaxReferences.FirstOrDefault();
             if (CallableBody(declaration?.GetSyntax()) is not { } body)
+            {
+                return false;
+            }
+            // A body in a REFERENCED project belongs to another compilation;
+            // asking this one for its model throws. The collector holds no
+            // workspace, so that call cannot be proven here -- treat it as
+            // read-only, the same conservative answer as an external callee.
+            if (!model.Compilation.ContainsSyntaxTree(body.SyntaxTree))
             {
                 return false;
             }

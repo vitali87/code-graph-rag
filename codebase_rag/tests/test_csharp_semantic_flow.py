@@ -360,3 +360,35 @@ def test_named_ref_argument_binds_to_its_own_parameter(tmp_path: Path) -> None:
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "n1", _NAMED_REF_ARGUMENTS, cs.CSharpFrontend.HYBRID
     )
+
+
+_PARTIAL_REF = (
+    "using System;\n\n"
+    "public partial class Helper\n{\n"
+    "    public partial void Fill(string src, ref string dst);\n}\n\n"
+    "public partial class Helper\n{\n"
+    "    public partial void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        var helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_partial_method_ref_callee_resolves_to_the_implementing_part(
+    tmp_path: Path,
+) -> None:
+    # The invoked symbol can be the DEFINING part, which has no body; without
+    # normalizing to the implementation the write looks unprovable and a real
+    # flow disappears.
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "p1", _PARTIAL_REF, cs.CSharpFrontend.HYBRID
+    )
