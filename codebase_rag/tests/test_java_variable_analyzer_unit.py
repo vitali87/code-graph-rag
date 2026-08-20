@@ -356,7 +356,7 @@ class TestAnalyzeJavaConstructorAssignments:
 
     def test_nested_assignments(self, engine: JavaTypeInferenceEngine) -> None:
         left1 = create_mock_node(cs.TS_IDENTIFIER, "count")
-        right1 = create_mock_node(cs.TS_INTEGER_LITERAL, "42")
+        right1 = create_mock_node(cs.TS_DECIMAL_INTEGER_LITERAL, "42")
         assign1 = create_mock_node(
             cs.TS_ASSIGNMENT_EXPRESSION,
             fields={cs.FIELD_LEFT: left1, cs.FIELD_RIGHT: right1},
@@ -515,11 +515,20 @@ class TestInferJavaTypeFromExpression:
         assert result == "String"
 
     def test_integer_literal(self, engine: JavaTypeInferenceEngine) -> None:
-        expr = create_mock_node(cs.TS_INTEGER_LITERAL, "42")
+        # tree-sitter-java names integer literals by base, so the node type is
+        # `decimal_integer_literal`; the old `integer_literal` matched nothing.
+        expr = create_mock_node(cs.TS_DECIMAL_INTEGER_LITERAL, "42")
 
         result = engine._infer_java_type_from_expression(expr, "com.example")
 
         assert result == "int"
+
+    def test_long_suffixed_literal(self, engine: JavaTypeInferenceEngine) -> None:
+        expr = create_mock_node(cs.TS_DECIMAL_INTEGER_LITERAL, "42L")
+
+        result = engine._infer_java_type_from_expression(expr, "com.example")
+
+        assert result == "long"
 
     def test_decimal_floating_point_literal(
         self, engine: JavaTypeInferenceEngine

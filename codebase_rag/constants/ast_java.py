@@ -26,7 +26,21 @@ TS_ASSIGNMENT_EXPRESSION = "assignment_expression"
 TS_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
 TS_METHOD_INVOCATION = "method_invocation"
 TS_FIELD_ACCESS = "field_access"
-TS_INTEGER_LITERAL = "integer_literal"
+# tree-sitter-java names integer literals by BASE, never plain
+# `integer_literal`; a call site matching that name matches nothing.
+TS_DECIMAL_INTEGER_LITERAL = "decimal_integer_literal"
+TS_HEX_INTEGER_LITERAL = "hex_integer_literal"
+TS_OCTAL_INTEGER_LITERAL = "octal_integer_literal"
+TS_BINARY_INTEGER_LITERAL = "binary_integer_literal"
+TS_JAVA_INTEGER_LITERALS = frozenset(
+    {
+        TS_DECIMAL_INTEGER_LITERAL,
+        TS_HEX_INTEGER_LITERAL,
+        TS_OCTAL_INTEGER_LITERAL,
+        TS_BINARY_INTEGER_LITERAL,
+    }
+)
+TS_JAVA_CHARACTER_LITERAL = "character_literal"
 TS_DECIMAL_FLOATING_POINT_LITERAL = "decimal_floating_point_literal"
 TS_ARRAY_CREATION_EXPRESSION = "array_creation_expression"
 TS_METHOD_DECLARATION = "method_declaration"
@@ -113,6 +127,12 @@ JAVA_TYPE_INT = "int"
 JAVA_TYPE_DOUBLE = "double"
 JAVA_TYPE_BOOLEAN = "boolean"
 JAVA_TYPE_LONG = "java.lang.Long"
+JAVA_TYPE_LONG_PRIMITIVE = "long"
+JAVA_TYPE_FLOAT = "float"
+JAVA_TYPE_CHAR = "char"
+# A literal's type is fixed by its suffix: `1L` is a long, `1.5f` a float.
+JAVA_LONG_SUFFIXES = ("l", "L")
+JAVA_FLOAT_SUFFIXES = ("f", "F")
 JAVA_TYPE_STRING_FQN = "java.lang.String"
 JAVA_TYPE_OBJECT = "Object"
 
@@ -243,3 +263,21 @@ JAVA_MAVEN_SOURCE_ROOTS = (
     (JAVA_PATH_SRC, JAVA_PATH_MAIN, JAVA_PATH_JAVA),
     (JAVA_PATH_SRC, JAVA_PATH_TEST, JAVA_PATH_JAVA),
 )
+
+
+# An argument type is applicable to a parameter type it can reach by boxing or
+# by a widening primitive conversion, both invisible at the call site: an `int`
+# argument binds `Integer`, `long`, `float` and `double` parameters. Exact
+# simple-name comparison alone would reject the only applicable overload and
+# send the call back to arity-only matching (issue #1344).
+JAVA_ARGUMENT_WIDENINGS: dict[str, frozenset[str]] = {
+    "byte": frozenset({"Byte", "short", "int", "long", "float", "double"}),
+    "short": frozenset({"Short", "int", "long", "float", "double"}),
+    "char": frozenset({"Character", "int", "long", "float", "double"}),
+    "int": frozenset({"Integer", "long", "float", "double"}),
+    "long": frozenset({"Long", "float", "double"}),
+    "float": frozenset({"Float", "double"}),
+    "double": frozenset({"Double"}),
+    "boolean": frozenset({"Boolean"}),
+    "String": frozenset({"CharSequence", "Object"}),
+}

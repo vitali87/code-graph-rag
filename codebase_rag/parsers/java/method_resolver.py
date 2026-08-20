@@ -117,8 +117,15 @@ def _overload_matches_arg_types(qn: str, arg_types: tuple[str | None, ...]) -> b
     if len(params) != len(arg_types):
         return False
     return all(
-        at is None or at.split(cs.SEPARATOR_DOT)[-1] == pt
+        at is None or _argument_applicable(at.split(cs.SEPARATOR_DOT)[-1], pt)
         for at, pt in zip(arg_types, params, strict=False)
+    )
+
+
+def _argument_applicable(arg_type: str, param_type: str) -> bool:
+    # Exact match, or one the language reaches by boxing / widening.
+    return arg_type == param_type or param_type in cs.JAVA_ARGUMENT_WIDENINGS.get(
+        arg_type, frozenset()
     )
 
 
@@ -173,6 +180,11 @@ class JavaMethodResolverMixin:
 
     @abstractmethod
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
+
+    @abstractmethod
+    def _infer_java_type_from_expression(
+        self, expr_node: ASTNode, module_qn: str
+    ) -> str | None: ...
 
     @abstractmethod
     def _imported_class_qn(self, target: str, type_name: str) -> str: ...
@@ -700,9 +712,9 @@ class JavaMethodResolverMixin:
         self, call_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> tuple[str | None, ...]:
         # Infer the simple type of each argument so same-arity overloads can be told
-        # apart (isX(String) vs isX(Class)). Only identifier arguments whose type is
-        # known (local var or field) resolve; everything else is None (unknown),
-        # which _overload_matches_arg_types treats as a wildcard.
+        # apart (isX(String) vs isX(Class)). An argument whose type cannot be
+        # inferred is None (unknown), which _overload_matches_arg_types treats as
+        # a wildcard.
         args_node = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
         if not args_node:
             return ()
@@ -711,7 +723,12 @@ class JavaMethodResolverMixin:
             if child.type in cs.DELIMITER_TOKENS:
                 continue
             if child.type != cs.TS_IDENTIFIER:
-                arg_types.append(None)
+                # A literal carries its type in its node type, and a `new T()`
+                # or a call carries it in the expression: the shared inference
+                # types all of them (issue #1344).
+                arg_types.append(
+                    self._infer_java_type_from_expression(child, module_qn)
+                )
                 continue
             name = safe_decode_text(child)
             var_type = local_var_types.get(name) if name else None
