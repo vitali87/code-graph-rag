@@ -36,6 +36,7 @@ _TOOL_SOURCE = "Frontend.java"
 _MAIN_CLASS = "cgr.Frontend"
 _CLASS_FILE = "cgr/Frontend.class"
 _BUILD_LOCK = ".build-lock"
+_STAGING_DIR = "staging"
 _LOCK_TRIES = 600
 _LOCK_POLL_SECONDS = 0.5
 _BUILD_TIMEOUT = 120
@@ -127,29 +128,48 @@ def _build_tool(javac: str) -> Path | None:
     if handle is None:
         return out_dir if _class_fresh(out_dir) else None
     try:
-        if not _class_fresh(out_dir):
-            out_dir.mkdir(parents=True, exist_ok=True)
-            try:
-                proc = subprocess.run(
-                    [javac, "-d", str(out_dir), str(_TOOL_SRC / _TOOL_SOURCE)],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=_BUILD_TIMEOUT,
-                )
-            except (subprocess.SubprocessError, OSError) as error:
-                # A stalled toolchain must not hold indexing hostage: the
-                # frontend degrades to tree-sitter like every other failure.
-                logger.warning(ls.JAVA_FRONTEND_BUILD_FAILED.format(stderr=error))
-                return None
-            if proc.returncode != 0:
-                logger.warning(
-                    ls.JAVA_FRONTEND_BUILD_FAILED.format(stderr=proc.stderr.strip())
-                )
-                return None
+        if not _class_fresh(out_dir) and not _compile_tool(javac, cache, out_dir):
+            return None
     finally:
         release_build_lock(handle)
     return out_dir if _class_fresh(out_dir) else None
+
+
+def _compile_tool(javac: str, cache: Path, out_dir: Path) -> bool:
+    # Compile into a staging directory and publish by rename: a build killed
+    # mid-write would otherwise leave a truncated class file whose mtime looks
+    # fresh, and every later run would launch it, fail, and degrade -- for
+    # good. A crash between the two steps leaves no build at all, which the
+    # next run simply repeats.
+    staging = cache / _STAGING_DIR
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.run(
+            [javac, "-d", str(staging), str(_TOOL_SRC / _TOOL_SOURCE)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_BUILD_TIMEOUT,
+        )
+    except (subprocess.SubprocessError, OSError) as error:
+        # A stalled toolchain must not hold indexing hostage: the frontend
+        # degrades to tree-sitter like every other failure.
+        logger.warning(ls.JAVA_FRONTEND_BUILD_FAILED.format(stderr=error))
+        shutil.rmtree(staging, ignore_errors=True)
+        return False
+    if proc.returncode != 0:
+        logger.warning(ls.JAVA_FRONTEND_BUILD_FAILED.format(stderr=proc.stderr.strip()))
+        shutil.rmtree(staging, ignore_errors=True)
+        return False
+    try:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        staging.rename(out_dir)
+    except OSError as error:
+        logger.warning(ls.JAVA_FRONTEND_BUILD_FAILED.format(stderr=error))
+        shutil.rmtree(staging, ignore_errors=True)
+        return False
+    return True
 
 
 def _parse_payload(stdout: str, stderr: str = "") -> JavaSemanticFacts:

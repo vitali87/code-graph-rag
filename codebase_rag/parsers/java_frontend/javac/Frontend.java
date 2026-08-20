@@ -12,6 +12,7 @@
 // the same join contract the C# and Go frontends use.
 package cgr;
 
+import com.sun.source.tree.AnnotationTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.ExpressionTree;
 import com.sun.source.tree.IdentifierTree;
@@ -233,33 +234,59 @@ public final class Frontend {
             if (source == null) {
                 return null;
             }
-            int at = nameTokenOffset(source, name, (int) start, (int) Math.min(end, source.length()));
+            MethodTree method = (MethodTree) tree;
+            int at = nameTokenOffset(
+                    source,
+                    name,
+                    (int) start,
+                    (int) Math.min(end, source.length()),
+                    annotationRanges(declUnit, method));
             if (at < 0) {
                 return null;
             }
             return position(declUnit, declRel, at);
         }
 
+        // A MethodTree starts at its modifiers, so its annotations are part of
+        // the header text being searched. Their SOURCE RANGES come from the
+        // AST rather than a lexical scan: an annotation may share the method's
+        // name, carry parenthesised arguments, be qualified, or hold a comment
+        // between the '@' and the name, and the parser has already settled all
+        // of that.
+        private long[][] annotationRanges(CompilationUnitTree declUnit, MethodTree method) {
+            List<? extends AnnotationTree> annotations = method.getModifiers().getAnnotations();
+            long[][] ranges = new long[annotations.size()][2];
+            for (int i = 0; i < ranges.length; i++) {
+                AnnotationTree annotation = annotations.get(i);
+                ranges[i][0] = positions.getStartPosition(declUnit, annotation);
+                ranges[i][1] = positions.getEndPosition(declUnit, annotation);
+            }
+            return ranges;
+        }
+
         // The declaration's NAME token, matching the key the tree-sitter side
-        // produces. Annotations belong to the method header and may carry
-        // parenthesised arguments, so the first '(' is not a reliable bound:
-        // take the first identifier-bounded occurrence that a '(' follows.
-        private static int nameTokenOffset(String source, String name, int start, int end) {
+        // produces: the first identifier-bounded occurrence outside every
+        // annotation that a '(' follows.
+        private static int nameTokenOffset(
+                String source, String name, int start, int end, long[][] annotations) {
             for (int at = source.indexOf(name, start); at >= 0 && at < end;
                     at = source.indexOf(name, at + 1)) {
-                if (isDeclaredNameAt(source, name, at, end)) {
+                if (isDeclaredNameAt(source, name, at, end, annotations)) {
                     return at;
                 }
             }
             return -1;
         }
 
-        private static boolean isDeclaredNameAt(String source, String name, int at, int end) {
+        private static boolean isDeclaredNameAt(
+                String source, String name, int at, int end, long[][] annotations) {
             if (at > 0 && Character.isJavaIdentifierPart(source.charAt(at - 1))) {
                 return false;
             }
-            if (isAnnotationName(source, at)) {
-                return false;
+            for (long[] range : annotations) {
+                if (range[0] >= 0 && at >= range[0] && at < range[1]) {
+                    return false;
+                }
             }
             int after = at + name.length();
             while (after < end && Character.isWhitespace(source.charAt(after))) {
@@ -284,22 +311,6 @@ public final class Frontend {
                 return end < 0 ? -1 : end - name.length();
             }
             return positions.getStartPosition(unit, select);
-        }
-
-        // A declaration annotation may share the method's name and carry
-        // arguments (@make() String make()), so the '(' test alone would
-        // select the annotation type.
-        private static boolean isAnnotationName(String source, int at) {
-            int before = at - 1;
-            while (before >= 0
-                    && (Character.isJavaIdentifierPart(source.charAt(before))
-                            || source.charAt(before) == '.')) {
-                before--;
-            }
-            while (before >= 0 && Character.isWhitespace(source.charAt(before))) {
-                before--;
-            }
-            return before >= 0 && source.charAt(before) == '@';
         }
 
         private int[] lineStartsOf(CompilationUnitTree tree, String source) {
