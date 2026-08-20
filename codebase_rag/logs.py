@@ -934,6 +934,9 @@ JAVA_FRONTEND_RUN_FAILED = "javac frontend did not finish ({error}); using tree-
 JAVA_FRONTEND_PARSE_FAILED = (
     "javac frontend emitted unreadable output (stdout={stdout}, stderr={stderr})"
 )
+JAVA_FRONTEND_UNAVAILABLE = (
+    "JAVA_FRONTEND is set to javac but no working JDK was found; using tree-sitter"
+)
 JAVA_FRONTEND_FACTS = (
     "javac facts: {calls} resolved call sites, {externals} external sites"
 )

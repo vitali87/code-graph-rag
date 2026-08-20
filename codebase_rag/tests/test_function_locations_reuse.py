@@ -132,3 +132,34 @@ def test_unchanged_module_keeps_resolving_across_runs(
     live = f"{name}.src.foo.S.run"
     assert (live, f"{name}.src.alpha.helper") in calls, calls
     assert (f"{name}.src.foo.f", f"{name}.src.beta.helper") in calls, calls
+
+
+def test_setdefault_records_the_module_index() -> None:
+    # The Java name alias (issue #1181) writes through setdefault, and
+    # dict.setdefault bypasses the overridden __setitem__: a record it wrote
+    # would survive drop_module and shadow the live registration on a re-parse.
+    from codebase_rag.types_defs import FunctionLocation, FunctionLocations
+
+    locations = FunctionLocations()
+    location = FunctionLocation(
+        label="Method", qualified_name="m.C.f()", container_qn="m.C"
+    )
+    locations.setdefault(("m", 4, 18), location)
+    assert locations[("m", 4, 18)] is location
+    locations.drop_module("m")
+    assert ("m", 4, 18) not in locations
+
+
+def test_setdefault_keeps_the_existing_record() -> None:
+    from codebase_rag.types_defs import FunctionLocation, FunctionLocations
+
+    locations = FunctionLocations()
+    first = FunctionLocation(
+        label="Method", qualified_name="m.C.f()", container_qn="m.C"
+    )
+    second = FunctionLocation(
+        label="Method", qualified_name="m.C.g()", container_qn="m.C"
+    )
+    locations[("m", 4, 18)] = first
+    assert locations.setdefault(("m", 4, 18), second) is first
+    assert locations[("m", 4, 18)] is first

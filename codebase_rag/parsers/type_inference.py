@@ -48,6 +48,8 @@ class TypeInferenceEngine:
         "go_function_return_types",
         "go_call_sites",
         "go_external_sites",
+        "java_call_sites",
+        "java_external_sites",
         "python_call_sites",
         "python_external_sites",
         "csharp_partial_groups",
@@ -93,6 +95,8 @@ class TypeInferenceEngine:
         go_function_return_types: dict[str, str] | None = None,
         go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
         go_external_sites: set[CallSiteKey] | None = None,
+        java_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
+        java_external_sites: set[CallSiteKey] | None = None,
         python_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
         python_external_sites: set[CallSiteKey] | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
@@ -155,6 +159,10 @@ class TypeInferenceEngine:
         self.go_call_sites = go_call_sites if go_call_sites is not None else {}
         self.go_external_sites = (
             go_external_sites if go_external_sites is not None else set()
+        )
+        self.java_call_sites = java_call_sites if java_call_sites is not None else {}
+        self.java_external_sites = (
+            java_external_sites if java_external_sites is not None else set()
         )
         # Shared references, same discipline: the Jedi call-site facts and
         # external proofs (issue #1183), populated after construction.
@@ -267,6 +275,9 @@ class TypeInferenceEngine:
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 class_inheritance=self.class_inheritance,
                 simple_name_lookup=self.simple_name_lookup,
+                java_call_sites=self.java_call_sites,
+                java_external_sites=self.java_external_sites,
+                function_locations=self.function_locations,
             )
         return self._java_type_inference
 

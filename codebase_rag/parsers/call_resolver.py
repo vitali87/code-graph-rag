@@ -3046,6 +3046,15 @@ class CallResolver:
             call_node, module_qn
         )
 
+    def resolve_java_call_site(
+        self,
+        call_node: Node,
+        module_qn: str,
+    ) -> tuple[str, str] | None:
+        return self.type_inference.java_type_inference.resolve_java_call_site(
+            call_node, module_qn
+        )
+
     def resolve_python_call_site(
         self,
         call_node: Node,
