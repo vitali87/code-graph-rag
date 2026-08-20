@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
@@ -111,6 +112,22 @@ class TestCountStructuralTierSymbols:
                 side_effect=ImportError("no yaml"),
             ):
                 assert count_structural_tier_symbols(_ruby_and_python_nodes()) == 0
+        finally:
+            ast_grep_tier.structural_tier_extensions.cache_clear()
+
+    def test_counts_tier_symbols_without_ast_grep_py_installed(self) -> None:
+        # Partial install (pyyaml present, ast_grep_py absent) must NOT gate the
+        # count on the local import: the graph is shared, so a repo indexed
+        # where the extra WAS installed has real tier symbols in it. Reporting
+        # 0 here would hide them, which is the dishonest report this exists to
+        # prevent. Locally-indexed repos are unaffected -- a disabled tier
+        # emits no nodes, so there is nothing to count either way.
+        from codebase_rag.parsers import ast_grep_tier
+
+        ast_grep_tier.structural_tier_extensions.cache_clear()
+        try:
+            with patch.dict(sys.modules, {"ast_grep_py": None}):
+                assert count_structural_tier_symbols(_ruby_and_python_nodes()) == 2
         finally:
             ast_grep_tier.structural_tier_extensions.cache_clear()
 

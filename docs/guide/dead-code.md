@@ -27,7 +27,7 @@ That exemption is deliberate: without call edges every symbol would look
 unreachable. But it means a clean report says nothing about those languages, so
 the command prints how many symbols were skipped:
 
-```
+```text
 No unreachable functions or methods found.
 12 symbol(s) in structural-tier languages were not analyzed (no call graph for these languages).
 ```
