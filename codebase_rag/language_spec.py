@@ -72,6 +72,22 @@ def _generic_get_name(node: Node) -> str | None:
     return None
 
 
+def _sql_get_name(node: Node) -> str | None:
+    # `create_function` / `create_procedure` name the routine through an
+    # `object_reference` child, not a `name` field, so the generic extractor
+    # finds nothing. The reference may be schema-qualified (`app.usp_do_thing`);
+    # the last identifier is the routine name, which is what a caller writes
+    # when it invokes it by name.
+    for child in node.named_children:
+        if child.type != cs.TS_SQL_OBJECT_REFERENCE:
+            continue
+        if not child.text:
+            return None
+        reference = child.text.decode(cs.ENCODING_UTF8).strip()
+        return reference.rsplit(".", 1)[-1].strip('"') or None
+    return None
+
+
 def _generic_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
     try:
         rel = file_path.relative_to(repo_root)
@@ -276,6 +292,13 @@ LUA_FQN_SPEC = FQNSpec(
     file_to_module_parts=_generic_file_to_module,
 )
 
+SQL_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_SQL_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_SQL_FUNCTION_TYPES),
+    get_name=_sql_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 GO_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_GO_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_GO_FUNCTION_TYPES),
@@ -326,6 +349,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PHP: PHP_FQN_SPEC,
     cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
     cs.SupportedLanguage.DART: DART_FQN_SPEC,
+    cs.SupportedLanguage.SQL: SQL_FQN_SPEC,
 }
 
 
@@ -438,6 +462,14 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             .
             (token_tree . "("))
         """,
+    ),
+    cs.SupportedLanguage.SQL: LanguageSpec(
+        language=cs.SupportedLanguage.SQL,
+        file_extensions=cs.SQL_EXTENSIONS,
+        function_node_types=cs.SPEC_SQL_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_SQL_CLASS_TYPES,
+        module_node_types=cs.SPEC_SQL_MODULE_TYPES,
+        call_node_types=cs.SPEC_SQL_CALL_TYPES,
     ),
     cs.SupportedLanguage.GO: LanguageSpec(
         language=cs.SupportedLanguage.GO,
