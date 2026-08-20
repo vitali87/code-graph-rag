@@ -38,6 +38,9 @@ class JavaJavacFrontend:
         return repo_path.exists()
 
     def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts:
+        # Stage 1 attributes the whole repo in one javac run: a narrowed file
+        # list cannot bind calls whose targets live in the files it omits.
+        del files
         return _adapt_java_semantic_facts(run_java_frontend(repo_path))
 
 

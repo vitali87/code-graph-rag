@@ -10,6 +10,8 @@
 // discarded. Emits one JSON line: {"calls": [...], "externals": [...]},
 // each keyed on the callee NAME token as (file, line, byte col, name) --
 // the same join contract the C# and Go frontends use.
+package cgr;
+
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.ExpressionTree;
 import com.sun.source.tree.IdentifierTree;
@@ -22,7 +24,10 @@ import com.sun.source.util.SourcePositions;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -47,25 +52,38 @@ import javax.tools.ToolProvider;
 
 public final class Frontend {
 
+    private static final String EMPTY_PAYLOAD = "{\"calls\":[],\"externals\":[]}";
+
     private Frontend() {
     }
 
     public static void main(String[] args) throws Exception {
+        emit(payload(args));
+    }
+
+    // The payload is a wire format, so the stream is pinned to UTF-8: on the
+    // JDK 17 floor `System.out` still encodes with the platform default, which
+    // would mangle a non-ASCII identifier on a cp1252 host.
+    private static void emit(String payload) {
+        PrintStream out = new PrintStream(
+                new FileOutputStream(FileDescriptor.out), true, StandardCharsets.UTF_8);
+        out.println(payload);
+        out.flush();
+    }
+
+    private static String payload(String[] args) throws Exception {
         if (args.length < 1) {
-            System.out.println("{\"calls\":[],\"externals\":[]}");
-            return;
+            return EMPTY_PAYLOAD;
         }
         Path root = Paths.get(args[0]).toRealPath();
         Set<String> ignored = ignoredDirs();
         List<Path> sources = javaSources(root, ignored);
         if (sources.isEmpty()) {
-            System.out.println("{\"calls\":[],\"externals\":[]}");
-            return;
+            return EMPTY_PAYLOAD;
         }
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
-            System.out.println("{\"calls\":[],\"externals\":[]}");
-            return;
+            return EMPTY_PAYLOAD;
         }
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
         try (StandardJavaFileManager fileManager =
@@ -81,7 +99,7 @@ public final class Frontend {
             for (CompilationUnitTree unit : parsed) {
                 collector.collect(unit);
             }
-            System.out.println(collector.toJson());
+            return collector.toJson();
         }
     }
 
@@ -153,11 +171,11 @@ public final class Frontend {
 
         @Override
         public Void visitMethodInvocation(MethodInvocationTree node, Void ignored) {
-            record(node);
+            recordCall(node);
             return super.visitMethodInvocation(node, ignored);
         }
 
-        private void record(MethodInvocationTree node) {
+        private void recordCall(MethodInvocationTree node) {
             ExpressionTree select = node.getMethodSelect();
             String name = calleeName(select);
             if (name == null || name.equals("super") || name.equals("this")) {
@@ -229,21 +247,25 @@ public final class Frontend {
         private static int nameTokenOffset(String source, String name, int start, int end) {
             for (int at = source.indexOf(name, start); at >= 0 && at < end;
                     at = source.indexOf(name, at + 1)) {
-                if (at > 0 && Character.isJavaIdentifierPart(source.charAt(at - 1))) {
-                    continue;
-                }
-                if (isAnnotationName(source, at)) {
-                    continue;
-                }
-                int after = at + name.length();
-                while (after < end && Character.isWhitespace(source.charAt(after))) {
-                    after++;
-                }
-                if (after < end && source.charAt(after) == '(') {
+                if (isDeclaredNameAt(source, name, at, end)) {
                     return at;
                 }
             }
             return -1;
+        }
+
+        private static boolean isDeclaredNameAt(String source, String name, int at, int end) {
+            if (at > 0 && Character.isJavaIdentifierPart(source.charAt(at - 1))) {
+                return false;
+            }
+            if (isAnnotationName(source, at)) {
+                return false;
+            }
+            int after = at + name.length();
+            while (after < end && Character.isWhitespace(source.charAt(after))) {
+                after++;
+            }
+            return after < end && source.charAt(after) == '(';
         }
 
         private String calleeName(ExpressionTree select) {

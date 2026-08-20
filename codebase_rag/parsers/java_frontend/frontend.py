@@ -33,8 +33,8 @@ from ..frontends.protocol import CallSiteKey
 
 _TOOL_SRC = Path(__file__).parent / "javac"
 _TOOL_SOURCE = "Frontend.java"
-_MAIN_CLASS = "Frontend"
-_CLASS_FILE = "Frontend.class"
+_MAIN_CLASS = "cgr.Frontend"
+_CLASS_FILE = "cgr/Frontend.class"
 _BUILD_LOCK = ".build-lock"
 _LOCK_TRIES = 600
 _LOCK_POLL_SECONDS = 0.5
@@ -215,6 +215,8 @@ def run_java_frontend(repo_path: Path) -> JavaSemanticFacts:
             [java, "-cp", str(out_dir), _MAIN_CLASS, str(repo_path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=_RUN_TIMEOUT,
             env={

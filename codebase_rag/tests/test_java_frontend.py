@@ -176,3 +176,23 @@ def test_declaration_name_wins_over_a_same_named_annotation(tmp_path: Path) -> N
         "src/main/java/com/app/Annotated.java",
         5,
     )
+
+
+@pytest.mark.skipif(
+    not java_frontend_available(), reason="javac frontend needs a working JDK"
+)
+def test_non_ascii_identifiers_survive_the_wire(tmp_path: Path) -> None:
+    # The payload crosses a pipe, so both ends pin UTF-8: a platform-default
+    # encoder would mangle these names and drop the facts on the floor.
+    repo = tmp_path / "proj"
+    package = repo / "src/main/java/com/app"
+    package.mkdir(parents=True)
+    (package / "Grusse.java").write_text(
+        "package com.app;\n\npublic class Grusse {\n"
+        '    public String gr\u00fc\u00dfe() {\n        return "hi";\n    }\n\n'
+        "    public String call() {\n        return gr\u00fc\u00dfe();\n    }\n}\n",
+        encoding="utf-8",
+    )
+    facts = run_java_frontend(repo)
+    names = {key[3] for key in facts.call_sites}
+    assert "gr\u00fc\u00dfe" in names
