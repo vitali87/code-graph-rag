@@ -501,6 +501,7 @@ class GraphUpdater:
         dp.csharp_call_sites.clear()
         dp.csharp_arg_flows.clear()
         dp.csharp_bind_flows.clear()
+        dp.csharp_out_writes.clear()
         dp.csharp_external_sites.clear()
         self._csharp_partial_decls = []
         self._csharp_query_calls = []
@@ -513,6 +514,7 @@ class GraphUpdater:
         dp.csharp_call_sites.update(facts.resolved_call_sites)
         dp.csharp_arg_flows.update(facts.arg_flows)
         dp.csharp_bind_flows.update(facts.bind_flows)
+        dp.csharp_out_writes.update(facts.out_writes)
         dp.csharp_external_sites.update(facts.external_sites)
         self._csharp_partial_decls = facts.partial_groups
         self._csharp_query_calls = facts.query_calls

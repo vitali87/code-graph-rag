@@ -18,6 +18,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.csharp_frontend.frontend import (
     _arg_flows,
+    _out_writes,
     csharp_frontend_available,
 )
 
@@ -167,3 +168,116 @@ def test_inspected_local_never_fabricates_a_flow(tmp_path: Path) -> None:
     assert (_ENV_K, _STDOUT) not in _flows(
         tmp_path / "d", source, cs.CSharpFrontend.HYBRID
     )
+
+
+# An `out` argument is written BY the callee, so the lexical walk sees the
+# variable declared and never assigned: `parsed` looks clean and the sink it
+# feeds has no edge (slice 2 of issue #1187).
+_OUT_PARAM_LEAK = (
+    "using System;\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        if (int.TryParse(token, out var parsed))\n        {\n"
+    "            Console.WriteLine(parsed);\n        }\n"
+    "    }\n}\n"
+)
+_FIRST_PARTY_OUT_LEAK = (
+    "using System;\n\n"
+    "public class Helper\n{\n"
+    "    public bool TryCopy(string src, out string dst)\n    {\n"
+    "        dst = src;\n        return true;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        var helper = new Helper();\n"
+    "        if (helper.TryCopy(token, out var copied))\n        {\n"
+    "            Console.WriteLine(copied);\n        }\n"
+    "    }\n}\n"
+)
+_REF_LEAK = (
+    "using System;\n\n"
+    "public class Helper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        var helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+def test_out_write_rows_parse_and_malformed_rows_drop() -> None:
+    parsed = _out_writes(
+        [
+            {
+                "file": "a.cs",
+                "line": 7,
+                "col": 12,
+                "name": "TryParse",
+                "index": 1,
+                "symbol": "parsed",
+            },
+            {"file": "a.cs", "line": 9, "name": "Broken"},
+            {
+                "file": "a.cs",
+                "line": 7,
+                "col": 12,
+                "name": "TryParse",
+                "index": 2,
+                "symbol": 5,
+            },
+        ]
+    )
+    assert parsed == {("a.cs", 7, 12, "TryParse"): {1: "parsed"}}
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_out_parameter_write_back_needs_the_semantic_facts(tmp_path: Path) -> None:
+    # int.TryParse is EXTERNAL and still writes its out parameter, so the fact
+    # has to be emitted for external callees too.
+    lexical = _flows(tmp_path / "o1", _OUT_PARAM_LEAK, cs.CSharpFrontend.TREESITTER)
+    assert (_ENV_K, _STDOUT) not in lexical
+    semantic = _flows(tmp_path / "o2", _OUT_PARAM_LEAK, cs.CSharpFrontend.HYBRID)
+    assert (_ENV_K, _STDOUT) in semantic
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_first_party_out_parameter_write_back(tmp_path: Path) -> None:
+    lexical = _flows(
+        tmp_path / "f1", _FIRST_PARTY_OUT_LEAK, cs.CSharpFrontend.TREESITTER
+    )
+    assert (_ENV_K, _STDOUT) not in lexical
+    semantic = _flows(tmp_path / "f2", _FIRST_PARTY_OUT_LEAK, cs.CSharpFrontend.HYBRID)
+    assert (_ENV_K, _STDOUT) in semantic
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_ref_parameter_write_back(tmp_path: Path) -> None:
+    semantic = _flows(tmp_path / "r1", _REF_LEAK, cs.CSharpFrontend.HYBRID)
+    assert (_ENV_K, _STDOUT) in semantic
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_clean_out_parameter_never_gains_a_flow(tmp_path: Path) -> None:
+    clean = (
+        "using System;\n\n"
+        "public class Fine\n{\n"
+        "    public void Run()\n    {\n"
+        '        if (int.TryParse("42", out var parsed))\n        {\n'
+        "            Console.WriteLine(parsed);\n        }\n"
+        "    }\n}\n"
+    )
+    assert _flows(tmp_path / "c2", clean, cs.CSharpFrontend.HYBRID) == set()

@@ -94,6 +94,8 @@ public static class Frontend
         private readonly List<CallFact> _calls = new();
         private readonly List<ExternalFact> _externals = new();
         private readonly List<ArgFlowFact> _argFlows = new();
+        private readonly List<OutWriteFact> _outWrites = new();
+        private readonly HashSet<(string, int, int, string, int)> _seenOutWrites = new();
         private readonly List<BindFlowFact> _bindFlows = new();
         private readonly List<QueryFact> _queries = new();
         private readonly Dictionary<string, List<DeclLoc>> _partials = new(StringComparer.Ordinal);
@@ -159,7 +161,7 @@ public static class Frontend
             }
         }
 
-        public Payload ToPayload() => new(_types, _calls, _partials.Values.ToList(), _queries, _externals, _argFlows, _bindFlows);
+        public Payload ToPayload() => new(_types, _calls, _partials.Values.ToList(), _queries, _externals, _argFlows, _bindFlows, _outWrites);
 
         private string Rel(string path) =>
             Path.GetRelativePath(_rootFull, path).Replace(Path.DirectorySeparatorChar, '/');
@@ -233,6 +235,7 @@ public static class Frontend
             // Console.WriteLine is external, and that is exactly where knowing
             // which locals reach an argument matters (issue #1187).
             CollectArgFlows(model, invocation, rel, pos.Line + 1, col, name);
+            CollectOutWrites(model, invocation, rel, pos.Line + 1, col, name);
             var declared = DeclaredMethod(symbol);
             if (FirstPartyDecl(declared) is not { } target)
             {
@@ -375,6 +378,62 @@ public static class Frontend
                 }
                 _argFlows.Add(new ArgFlowFact(rel, line, col, name, index, symbols));
             }
+        }
+
+        // The mirror of an argument flow: an `out`/`ref` argument is written BY
+        // the callee, so the variable it names receives whatever the call
+        // produced. Without this `TryParse(s, out var n)` leaves n untouched and
+        // a sink fed from n has no edge. Emitted for external callees too --
+        // int.TryParse is external and still writes its out parameter.
+        private void CollectOutWrites(
+            SemanticModel model,
+            InvocationExpressionSyntax invocation,
+            string rel,
+            int line,
+            int col,
+            string name)
+        {
+            var arguments = invocation.ArgumentList?.Arguments;
+            if (arguments is null)
+            {
+                return;
+            }
+            for (var index = 0; index < arguments.Value.Count; index++)
+            {
+                var argument = arguments.Value[index];
+                if (!argument.RefKindKeyword.IsKind(SyntaxKind.OutKeyword)
+                    && !argument.RefKindKeyword.IsKind(SyntaxKind.RefKeyword))
+                {
+                    continue;
+                }
+                if (WrittenSymbol(model, argument.Expression) is not { } symbol)
+                {
+                    continue;
+                }
+                if (!_seenOutWrites.Add((rel, line, col, name, index)))
+                {
+                    continue;
+                }
+                _outWrites.Add(new OutWriteFact(rel, line, col, name, index, symbol));
+            }
+        }
+
+        // `out var n` declares the variable inline, so the symbol comes from the
+        // declaration rather than from a reference; a plain `out n` is an
+        // ordinary identifier.
+        private static string? WrittenSymbol(SemanticModel model, ExpressionSyntax expression)
+        {
+            if (expression is DeclarationExpressionSyntax declaration)
+            {
+                return declaration.Designation is SingleVariableDesignationSyntax single
+                    && model.GetDeclaredSymbol(single) is { } declared
+                    ? declared.Name
+                    : null;
+            }
+            var symbol = model.GetSymbolInfo(expression).Symbol;
+            return symbol is { Kind: SymbolKind.Local or SymbolKind.Parameter }
+                ? symbol.Name
+                : null;
         }
 
         // Query syntax desugars to operator method calls with no invocation nodes;
@@ -705,6 +764,14 @@ public static class Frontend
         [property: JsonPropertyName("index")] int Index,
         [property: JsonPropertyName("symbols")] List<string> Symbols);
 
+    private record OutWriteFact(
+        [property: JsonPropertyName("file")] string File,
+        [property: JsonPropertyName("line")] int Line,
+        [property: JsonPropertyName("col")] int Col,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("index")] int Index,
+        [property: JsonPropertyName("symbol")] string Symbol);
+
     private record BindFlowFact(
         [property: JsonPropertyName("file")] string File,
         [property: JsonPropertyName("line")] int Line,
@@ -719,5 +786,6 @@ public static class Frontend
         [property: JsonPropertyName("queries")] List<QueryFact> Queries,
         [property: JsonPropertyName("externals")] List<ExternalFact> Externals,
         [property: JsonPropertyName("arg_flows")] List<ArgFlowFact> ArgFlows,
-        [property: JsonPropertyName("bind_flows")] List<BindFlowFact> BindFlows);
+        [property: JsonPropertyName("bind_flows")] List<BindFlowFact> BindFlows,
+        [property: JsonPropertyName("out_writes")] List<OutWriteFact> OutWrites);
 }

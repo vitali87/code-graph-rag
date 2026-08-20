@@ -77,11 +77,17 @@ class CSharpSemanticFacts(NamedTuple):
     # the bound variable looks clean to every later read.
     bind_flows: dict[CallSiteKey, frozenset[str]]
 
+    # Per call site, the argument INDEX -> the local/parameter the callee writes
+    # through an `out`/`ref` parameter. The mirror of arg_flows: without these a
+    # variable filled by `TryParse(s, out var n)` looks untouched, so a sink fed
+    # from it has no edge.
+    out_writes: dict[CallSiteKey, dict[int, str]]
+
 
 def _empty_facts() -> CSharpSemanticFacts:
     # A fresh instance per failure path: the maps are handed to mutable
     # processor state, so a shared constant would alias across runs.
-    return CSharpSemanticFacts({}, {}, [], [], set(), {}, {})
+    return CSharpSemanticFacts({}, {}, [], [], set(), {}, {}, {})
 
 
 _DOTNET = "dotnet"
@@ -326,6 +332,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
         },
         arg_flows=_arg_flows(payload.get("arg_flows", [])),
         bind_flows=_bind_flows(payload.get("bind_flows", [])),
+        out_writes=_out_writes(payload.get("out_writes", [])),
     )
     if not any(facts) and stderr.strip():
         # A well-formed but entirely empty payload means the workspace load
@@ -380,6 +387,27 @@ def _bind_flows(rows: list) -> dict[CallSiteKey, frozenset[str]]:
         if symbols:
             flows[key] = symbols
     return flows
+
+
+def _out_writes(rows: list) -> dict[CallSiteKey, dict[int, str]]:
+    # Keyed exactly like the call facts. Malformed rows drop: worst case that
+    # argument keeps today's lexical behaviour.
+    writes: dict[CallSiteKey, dict[int, str]] = {}
+    for row in rows:
+        try:
+            key: CallSiteKey = (
+                row["file"],
+                int(row["line"]),
+                int(row["col"]),
+                row["name"],
+            )
+            index = int(row["index"])
+            symbol = row["symbol"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if isinstance(symbol, str) and symbol:
+            writes.setdefault(key, {})[index] = symbol
+    return writes
 
 
 def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:
