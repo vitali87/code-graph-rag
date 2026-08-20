@@ -24,7 +24,6 @@ from ..types_defs import (
     NodeType,
 )
 from ..utils.path_utils import cached_relative_path
-from .string_call import load_string_call_specs, string_call_target
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import utils as cpp_utils
@@ -43,6 +42,7 @@ from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
+from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
     cpp_parameter_names,
