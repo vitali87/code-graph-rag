@@ -1256,6 +1256,7 @@ def _emit_dead_code(
     output_format: cs.DeadCodeFormat,
     output: Path | None,
     project_name: str,
+    structural_tier_symbols: int = 0,
 ) -> None:
     if output_format == cs.DeadCodeFormat.JSON:
         payload = json.dumps(candidates, indent=2)
@@ -1271,25 +1272,40 @@ def _emit_dead_code(
         typer.echo(payload)
         return
 
+    # The coverage notice follows the table into whichever sink it goes, so a
+    # saved report (CI artifact, shared review) never reads as "all clean"
+    # when whole languages went unanalyzed.
+    notice = (
+        cs.CLI_DEADCODE_STRUCTURAL_TIER_SKIPPED.format(count=structural_tier_symbols)
+        if structural_tier_symbols
+        else ""
+    )
     table = _build_dead_code_table(candidates, project_name)
     if output is not None:
         with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
-            Console(file=fh).print(table)
+            file_console = Console(file=fh)
+            file_console.print(table)
+            if notice:
+                file_console.print(notice)
         app_context.console.print(
             style(
                 cs.CLI_DEADCODE_WRITTEN.format(count=len(candidates), path=output),
                 cs.Color.GREEN,
             )
         )
+        if notice:
+            app_context.console.print(style(notice, cs.Color.YELLOW))
         return
 
     if not candidates:
         app_context.console.print(style(cs.CLI_DEADCODE_NONE, cs.Color.GREEN))
-        return
-    app_context.console.print(table)
-    app_context.console.print(
-        style(cs.CLI_DEADCODE_SUMMARY.format(count=len(candidates)), cs.Color.GREEN)
-    )
+    else:
+        app_context.console.print(table)
+        app_context.console.print(
+            style(cs.CLI_DEADCODE_SUMMARY.format(count=len(candidates)), cs.Color.GREEN)
+        )
+    if notice:
+        app_context.console.print(style(notice, cs.Color.YELLOW))
 
 
 @app.command(
@@ -1372,18 +1388,9 @@ def dead_code(
     candidates = [
         _to_dead_code_row(row) for row in _filter_excluded_rows(rows, exclude)
     ]
-    _emit_dead_code(candidates, output_format, output, resolved)
-    # Printed after the result (including "none found") so the report never
-    # implies coverage of languages the structural tier cannot analyze.
-    if structural_tier_symbols and output_format == cs.DeadCodeFormat.TABLE:
-        app_context.console.print(
-            style(
-                cs.CLI_DEADCODE_STRUCTURAL_TIER_SKIPPED.format(
-                    count=structural_tier_symbols
-                ),
-                cs.Color.YELLOW,
-            )
-        )
+    _emit_dead_code(
+        candidates, output_format, output, resolved, structural_tier_symbols
+    )
 
     if fail_on_found and candidates:
         raise typer.Exit(1)

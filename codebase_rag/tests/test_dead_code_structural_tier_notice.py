@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
@@ -227,4 +228,36 @@ class TestDeadCodeCommandNotice:
 
         assert result.exit_code == 0
         payload = json.loads(result.output)
+        assert [row["qualified_name"] for row in payload] == ["proj.app.orphan"]
+
+    def test_saved_table_report_carries_the_notice(self, tmp_path: Path) -> None:
+        # A report read from a file (CI artifact, shared review) must carry the
+        # same disclaimer as the console: otherwise the saved copy shows an
+        # empty table and reads as "this code is clean".
+        with patch(
+            "codebase_rag.cli.connect_memgraph",
+            return_value=_mock_ingestor(_ruby_and_python_nodes()),
+        ):
+            result = CliRunner().invoke(
+                app, ["dead-code", "--output", str(tmp_path / "report.txt")]
+            )
+
+        assert result.exit_code == 0
+        saved = _plain_text((tmp_path / "report.txt").read_text(encoding="utf-8"))
+        assert "2 symbol(s) in structural-tier languages were not analyzed" in saved
+
+    def test_saved_json_report_stays_parseable(self, tmp_path: Path) -> None:
+        # The JSON artifact must remain machine-readable, so the notice belongs
+        # only in the human-facing table format.
+        out = tmp_path / "report.json"
+        with patch(
+            "codebase_rag.cli.connect_memgraph",
+            return_value=_mock_ingestor(_ruby_and_python_nodes()),
+        ):
+            result = CliRunner().invoke(
+                app, ["dead-code", "--format", "json", "--output", str(out)]
+            )
+
+        assert result.exit_code == 0
+        payload = json.loads(out.read_text(encoding="utf-8"))
         assert [row["qualified_name"] for row in payload] == ["proj.app.orphan"]
