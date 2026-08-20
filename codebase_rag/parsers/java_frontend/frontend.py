@@ -38,6 +38,7 @@ _CLASS_FILE = "Frontend.class"
 _BUILD_LOCK = ".build-lock"
 _LOCK_TRIES = 600
 _LOCK_POLL_SECONDS = 0.5
+_BUILD_TIMEOUT = 120
 _RUN_TIMEOUT = 900
 _PROBE_TIMEOUT = 10.0
 
@@ -128,12 +129,19 @@ def _build_tool(javac: str) -> Path | None:
     try:
         if not _class_fresh(out_dir):
             out_dir.mkdir(parents=True, exist_ok=True)
-            proc = subprocess.run(
-                [javac, "-d", str(out_dir), str(_TOOL_SRC / _TOOL_SOURCE)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            try:
+                proc = subprocess.run(
+                    [javac, "-d", str(out_dir), str(_TOOL_SRC / _TOOL_SOURCE)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=_BUILD_TIMEOUT,
+                )
+            except (subprocess.SubprocessError, OSError) as error:
+                # A stalled toolchain must not hold indexing hostage: the
+                # frontend degrades to tree-sitter like every other failure.
+                logger.warning(ls.JAVA_FRONTEND_BUILD_FAILED.format(stderr=error))
+                return None
             if proc.returncode != 0:
                 logger.warning(
                     ls.JAVA_FRONTEND_BUILD_FAILED.format(stderr=proc.stderr.strip())
@@ -157,8 +165,15 @@ def _parse_payload(stdout: str, stderr: str = "") -> JavaSemanticFacts:
     if not isinstance(payload, dict):
         logger.error(ls.JAVA_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
         return _empty_facts()
+    calls = payload.get("calls", [])
+    externals = payload.get("externals", [])
     facts = _empty_facts()
-    for site in payload.get("calls", []):
+    if not isinstance(calls, list) or not isinstance(externals, list):
+        # Well-formed JSON carrying the wrong types for the fact arrays: a
+        # tool contract violation, not a per-row defect.
+        logger.error(ls.JAVA_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
+        return facts
+    for site in calls:
         try:
             key: CallSiteKey = (
                 site["file"],
@@ -176,7 +191,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> JavaSemanticFacts:
             # A malformed row drops rather than failing the payload: those
             # sites fall back to the heuristics.
             continue
-    for site in payload.get("externals", []):
+    for site in externals:
         try:
             facts.external_sites.add(
                 (site["file"], int(site["line"]), int(site["col"]), site["name"])
@@ -209,5 +224,14 @@ def run_java_frontend(repo_path: Path) -> JavaSemanticFacts:
         )
     except (subprocess.SubprocessError, OSError) as error:
         logger.warning(ls.JAVA_FRONTEND_RUN_FAILED.format(error=error))
+        return _empty_facts()
+    if proc.returncode != 0:
+        # Partial JSON from a run that then failed would be a partial view of
+        # the repo presented as a complete one.
+        logger.warning(
+            ls.JAVA_FRONTEND_RUN_FAILED.format(
+                error=proc.stderr.strip() or proc.returncode
+            )
+        )
         return _empty_facts()
     return _parse_payload(proc.stdout, proc.stderr)

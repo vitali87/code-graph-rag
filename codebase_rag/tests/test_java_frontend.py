@@ -82,6 +82,13 @@ def test_parse_payload_drops_malformed_rows() -> None:
     assert facts.external_sites == set()
 
 
+def test_parse_payload_rejects_non_list_sections() -> None:
+    for payload in ('{"calls": null}', '{"externals": 5}', '{"calls": {}}'):
+        facts = _parse_payload(payload)
+        assert facts.call_sites == {}
+        assert facts.external_sites == set()
+
+
 def test_heuristic_is_the_default_resolution() -> None:
     assert resolve_java_frontend() == cs.JavaFrontend.HEURISTIC
 
@@ -139,3 +146,33 @@ def test_same_position_in_two_files_keeps_both_sites(tmp_path: Path) -> None:
         "src/main/java/com/app/Alpha.java": "src/main/java/com/app/Alpha.java",
         "src/main/java/com/app/Beta.java": "src/main/java/com/app/Beta.java",
     }
+
+
+@pytest.mark.skipif(
+    not java_frontend_available(), reason="javac frontend needs a working JDK"
+)
+def test_declaration_name_wins_over_a_same_named_annotation(tmp_path: Path) -> None:
+    # A declaration annotation belongs to the method header and may carry
+    # arguments, so an annotation type sharing the method's name looks exactly
+    # like the name token being searched for.
+    repo = tmp_path / "proj"
+    package = repo / "src/main/java/com/app"
+    package.mkdir(parents=True)
+    (package / "make.java").write_text(
+        "package com.app;\n\npublic @interface make {\n"
+        '    String value() default "";\n}\n',
+        encoding="utf-8",
+    )
+    (package / "Annotated.java").write_text(
+        "package com.app;\n\npublic class Annotated {\n"
+        '    @make("x")\n'
+        '    public String make() {\n        return "m";\n    }\n\n'
+        "    public String pick() {\n        return make();\n    }\n}\n",
+        encoding="utf-8",
+    )
+    facts = run_java_frontend(repo)
+    site = facts.call_sites[("src/main/java/com/app/Annotated.java", 10, 15, "make")]
+    assert (site.target_file, site.target_line) == (
+        "src/main/java/com/app/Annotated.java",
+        5,
+    )

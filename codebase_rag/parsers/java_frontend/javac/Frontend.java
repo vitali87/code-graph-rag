@@ -232,6 +232,9 @@ public final class Frontend {
                 if (at > 0 && Character.isJavaIdentifierPart(source.charAt(at - 1))) {
                     continue;
                 }
+                if (isAnnotationName(source, at)) {
+                    continue;
+                }
                 int after = at + name.length();
                 while (after < end && Character.isWhitespace(source.charAt(after))) {
                     after++;
@@ -259,6 +262,22 @@ public final class Frontend {
                 return end < 0 ? -1 : end - name.length();
             }
             return positions.getStartPosition(unit, select);
+        }
+
+        // A declaration annotation may share the method's name and carry
+        // arguments (@make() String make()), so the '(' test alone would
+        // select the annotation type.
+        private static boolean isAnnotationName(String source, int at) {
+            int before = at - 1;
+            while (before >= 0
+                    && (Character.isJavaIdentifierPart(source.charAt(before))
+                            || source.charAt(before) == '.')) {
+                before--;
+            }
+            while (before >= 0 && Character.isWhitespace(source.charAt(before))) {
+                before--;
+            }
+            return before >= 0 && source.charAt(before) == '@';
         }
 
         private int[] lineStartsOf(CompilationUnitTree tree, String source) {
