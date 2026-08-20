@@ -92,7 +92,17 @@ class CodeRetriever:
             if absolute_path_str and Path(absolute_path_str).is_file():
                 full_path = Path(absolute_path_str)
             else:
-                full_path = self.project_root / file_path_str
+                full_path = (self.project_root / file_path_str).resolve()
+                if not full_path.is_relative_to(self.project_root):
+                    return CodeSnippet(
+                        qualified_name=qualified_name,
+                        source_code="",
+                        file_path=file_path_str,
+                        line_start=0,
+                        line_end=0,
+                        found=False,
+                        error_message=te.CODE_MISSING_LOCATION,
+                    )
             if not full_path.is_file():
                 return CodeSnippet(
                     qualified_name=qualified_name,

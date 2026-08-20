@@ -149,6 +149,28 @@ class TestFindCodeSnippet:
         assert "missing location data" in result.error_message
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("path_kind", ["absolute", "traversal"])
+    async def test_returns_not_found_when_path_escapes_project_root(
+        self, mock_ingestor: MagicMock, tmp_path: Path, path_kind: str
+    ) -> None:
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        outside_file = tmp_path / "outside.py"
+        outside_file.write_text("secret\n", encoding="utf-8")
+        file_path = str(outside_file) if path_kind == "absolute" else "../outside.py"
+        mock_ingestor.fetch_all.return_value = [
+            {"path": file_path, "start": 1, "end": 1, "name": "func"}
+        ]
+        retriever = CodeRetriever(str(project_root), mock_ingestor)
+
+        result = await retriever.find_code_snippet("module.func")
+
+        assert result.found is False
+        assert result.source_code == ""
+        assert result.error_message is not None
+        assert "missing location data" in result.error_message
+
+    @pytest.mark.asyncio
     async def test_handles_ingestor_error(
         self, retriever: CodeRetriever, mock_ingestor: MagicMock
     ) -> None:
