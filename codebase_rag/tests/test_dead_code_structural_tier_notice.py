@@ -261,3 +261,35 @@ class TestDeadCodeCommandNotice:
         assert result.exit_code == 0
         payload = json.loads(out.read_text(encoding="utf-8"))
         assert [row["qualified_name"] for row in payload] == ["proj.app.orphan"]
+
+    def test_notice_alone_does_not_fail_the_build(self) -> None:
+        # The notice is informational: exempt symbols are not findings, so
+        # --fail-on-found must still exit 0 when nothing is actually dead.
+        # Otherwise indexing a Ruby file would break someone's CI gate.
+        ruby_only = [
+            _node(_MODULE, "proj.lib.orders", "orders.rb", "lib/orders.rb"),
+            _node(
+                _FUNCTION,
+                "proj.lib.orders.process_order",
+                "process_order",
+                "lib/orders.rb",
+                is_exported=True,
+            ),
+        ]
+        with patch(
+            "codebase_rag.cli.connect_memgraph", return_value=_mock_ingestor(ruby_only)
+        ):
+            result = CliRunner().invoke(app, ["dead-code", "--fail-on-found"])
+
+        assert result.exit_code == 0
+        assert "structural-tier" in _plain_text(result.output)
+
+    def test_real_candidate_still_fails_the_build(self) -> None:
+        # Guard the other direction: the notice must not mask a real finding.
+        with patch(
+            "codebase_rag.cli.connect_memgraph",
+            return_value=_mock_ingestor(_ruby_and_python_nodes()),
+        ):
+            result = CliRunner().invoke(app, ["dead-code", "--fail-on-found"])
+
+        assert result.exit_code == 1
