@@ -88,6 +88,16 @@ class SemanticFacts:
     # IMPLEMENTS edges for a structurally-typed language with no syntactic base
     # list (Go #1179); languages with a base list use `base_kinds` instead.
     implements_pairs: list[ImplementsPair] = field(default_factory=list)
+    # Per invocation argument, the locals/parameters the compiler proves
+    # reach it (C# Roslyn today, issue #1187). The flow walk unions their
+    # taint with its own syntactic evaluation, so an expression shape the
+    # walker cannot thread still propagates.
+    arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]] = field(
+        default_factory=dict
+    )
+    # Per local declarator (keyed at its name token), the locals/parameters
+    # the compiler proves reach its initializer.
+    bind_flows: dict[CallSiteKey, frozenset[str]] = field(default_factory=dict)
 
     def is_empty(self) -> bool:
         return not (
@@ -97,6 +107,8 @@ class SemanticFacts:
             or self.partial_groups
             or self.query_calls
             or self.implements_pairs
+            or self.arg_flows
+            or self.bind_flows
         )
 
 

@@ -140,6 +140,8 @@ class ProcessorFactory:
                 csharp_partial_groups=self.definition_processor.csharp_partial_groups,
                 csharp_extension_methods=self.definition_processor.csharp_extension_methods,
                 csharp_call_sites=self.definition_processor.csharp_call_sites,
+                csharp_arg_flows=self.definition_processor.csharp_arg_flows,
+                csharp_bind_flows=self.definition_processor.csharp_bind_flows,
                 csharp_external_sites=self.definition_processor.csharp_external_sites,
                 csharp_local_functions=self.definition_processor.csharp_local_functions,
                 csharp_generic_methods=self.definition_processor.csharp_generic_methods,

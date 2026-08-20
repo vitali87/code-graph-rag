@@ -93,11 +93,15 @@ public static class Frontend
         private readonly List<TypeFact> _types = new();
         private readonly List<CallFact> _calls = new();
         private readonly List<ExternalFact> _externals = new();
+        private readonly List<ArgFlowFact> _argFlows = new();
+        private readonly List<BindFlowFact> _bindFlows = new();
         private readonly List<QueryFact> _queries = new();
         private readonly Dictionary<string, List<DeclLoc>> _partials = new(StringComparer.Ordinal);
         private readonly HashSet<(string, int)> _seenTypes = new();
         private readonly HashSet<(string, int, int, string)> _seenCalls = new();
         private readonly HashSet<(string, int, int, string)> _seenExternals = new();
+        private readonly HashSet<(string, int, int, string, int)> _seenArgFlows = new();
+        private readonly HashSet<(string, int, int, string)> _seenBindFlows = new();
         private readonly HashSet<(string, int, int, string, int, string)> _seenQueries = new();
 
         private readonly HashSet<string> _firstPartyAssemblies;
@@ -146,13 +150,16 @@ public static class Frontend
                     case QueryExpressionSyntax query:
                         CollectQuery(model, query, rel);
                         break;
+                    case VariableDeclaratorSyntax declarator:
+                        CollectBindFlow(model, declarator, rel);
+                        break;
                     default:
                         break;
                 }
             }
         }
 
-        public Payload ToPayload() => new(_types, _calls, _partials.Values.ToList(), _queries, _externals);
+        public Payload ToPayload() => new(_types, _calls, _partials.Values.ToList(), _queries, _externals, _argFlows, _bindFlows);
 
         private string Rel(string path) =>
             Path.GetRelativePath(_rootFull, path).Replace(Path.DirectorySeparatorChar, '/');
@@ -222,6 +229,10 @@ public static class Frontend
             var pos = location.GetLineSpan().StartLinePosition;
             var col = ByteCol(location, pos);
             var name = nameToken.ValueText;
+            // Argument flow BEFORE the first-party/external split: a sink like
+            // Console.WriteLine is external, and that is exactly where knowing
+            // which locals reach an argument matters (issue #1187).
+            CollectArgFlows(model, invocation, rel, pos.Line + 1, col, name);
             var declared = DeclaredMethod(symbol);
             if (FirstPartyDecl(declared) is not { } target)
             {
@@ -252,6 +263,118 @@ public static class Frontend
                 return;
             }
             _calls.Add(new CallFact(rel, pos.Line + 1, col, name, target.File, target.Line, target.Col));
+        }
+
+        // Which locals/parameters reach a local's INITIALIZER, per the same
+        // analysis: without this the tainted value stops at the initializer
+        // expression and the bound variable looks clean, so a sink reading it
+        // reports nothing (issue #1187).
+        private void CollectBindFlow(
+            SemanticModel model, VariableDeclaratorSyntax declarator, string rel)
+        {
+            if (declarator.Initializer?.Value is not { } value)
+            {
+                return;
+            }
+            var symbols = FlowSymbols(model, value);
+            if (symbols.Count == 0)
+            {
+                return;
+            }
+            var location = declarator.Identifier.GetLocation();
+            var pos = location.GetLineSpan().StartLinePosition;
+            var col = ByteCol(location, pos);
+            var name = declarator.Identifier.ValueText;
+            if (!_seenBindFlows.Add((rel, pos.Line + 1, col, name)))
+            {
+                return;
+            }
+            _bindFlows.Add(new BindFlowFact(rel, pos.Line + 1, col, name, symbols));
+        }
+
+        // The locals/parameters whose values reach this expression region.
+        private static List<string> FlowSymbols(SemanticModel model, SyntaxNode region)
+        {
+            // A conditional's CONDITION is read but never becomes the value, and
+            // AnalyzeDataFlow counts every read; analysing the branches instead
+            // keeps the same rule the flow walk already applies to `a ? b : c`,
+            // so inspecting a tainted local cannot fabricate a flow.
+            if (region is ParenthesizedExpressionSyntax parenthesized)
+            {
+                return FlowSymbols(model, parenthesized.Expression);
+            }
+            if (region is ConditionalExpressionSyntax conditional)
+            {
+                return FlowSymbols(model, conditional.WhenTrue)
+                    .Concat(FlowSymbols(model, conditional.WhenFalse))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToList();
+            }
+            DataFlowAnalysis analysis;
+            try
+            {
+                analysis = model.AnalyzeDataFlow(region);
+            }
+            catch (ArgumentException)
+            {
+                // A region Roslyn rejects outright leaves the lexical walk in
+                // charge for that expression.
+                return new List<string>();
+            }
+            if (!analysis.Succeeded)
+            {
+                return new List<string>();
+            }
+            // DataFlowsIn ONLY: it is exactly "assigned outside, read inside",
+            // i.e. the values that genuinely reach this region. ReadInside
+            // would also catch a local merely INSPECTED without contributing
+            // (`secret == null ? "ok" : "ok"`), fabricating taint. Symbols
+            // declared inside the region (lambda parameters, `out` and
+            // pattern declarations) are excluded so a same-named enclosing
+            // variable cannot leak in through them.
+            var declaredInside = new HashSet<ISymbol>(
+                analysis.VariablesDeclared, SymbolEqualityComparer.Default);
+            return analysis.DataFlowsIn
+                .Where(s => !declaredInside.Contains(s))
+                .Where(s => s.Kind is SymbolKind.Local or SymbolKind.Parameter)
+                .Select(s => s.Name)
+                .Where(n => !string.IsNullOrEmpty(n))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(n => n, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        // Which locals/parameters actually reach each argument, per Roslyn's
+        // definite-assignment analysis: symbol-accurate where the lexical walk
+        // guesses from syntax, so shadowed names, builder chains, casts, and
+        // conditional expressions all thread correctly (issue #1187).
+        private void CollectArgFlows(
+            SemanticModel model,
+            InvocationExpressionSyntax invocation,
+            string rel,
+            int line,
+            int col,
+            string name)
+        {
+            var arguments = invocation.ArgumentList?.Arguments;
+            if (arguments is null)
+            {
+                return;
+            }
+            for (var index = 0; index < arguments.Value.Count; index++)
+            {
+                var symbols = FlowSymbols(model, arguments.Value[index].Expression);
+                if (symbols.Count == 0)
+                {
+                    continue;
+                }
+                if (!_seenArgFlows.Add((rel, line, col, name, index)))
+                {
+                    continue;
+                }
+                _argFlows.Add(new ArgFlowFact(rel, line, col, name, index, symbols));
+            }
         }
 
         // Query syntax desugars to operator method calls with no invocation nodes;
@@ -574,10 +697,27 @@ public static class Frontend
         [property: JsonPropertyName("col")] int Col,
         [property: JsonPropertyName("name")] string Name);
 
+    private record ArgFlowFact(
+        [property: JsonPropertyName("file")] string File,
+        [property: JsonPropertyName("line")] int Line,
+        [property: JsonPropertyName("col")] int Col,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("index")] int Index,
+        [property: JsonPropertyName("symbols")] List<string> Symbols);
+
+    private record BindFlowFact(
+        [property: JsonPropertyName("file")] string File,
+        [property: JsonPropertyName("line")] int Line,
+        [property: JsonPropertyName("col")] int Col,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("symbols")] List<string> Symbols);
+
     private record Payload(
         [property: JsonPropertyName("types")] List<TypeFact> Types,
         [property: JsonPropertyName("calls")] List<CallFact> Calls,
         [property: JsonPropertyName("partials")] List<List<DeclLoc>> Partials,
         [property: JsonPropertyName("queries")] List<QueryFact> Queries,
-        [property: JsonPropertyName("externals")] List<ExternalFact> Externals);
+        [property: JsonPropertyName("externals")] List<ExternalFact> Externals,
+        [property: JsonPropertyName("arg_flows")] List<ArgFlowFact> ArgFlows,
+        [property: JsonPropertyName("bind_flows")] List<BindFlowFact> BindFlows);
 }

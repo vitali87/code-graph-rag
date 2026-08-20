@@ -265,6 +265,8 @@ def _button_facts() -> object:
         partial_groups=[],
         query_calls=[],
         external_sites=set(),
+        arg_flows={},
+        bind_flows={},
     )
 
 
