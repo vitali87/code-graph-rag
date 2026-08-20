@@ -61,10 +61,11 @@ class CodeRetriever:
             file_path_str = res.get("path")
             start_line = res.get("start")
             end_line = res.get("end")
+            if not isinstance(file_path_str, str):
+                file_path_str = ""
 
             if (
-                not isinstance(file_path_str, str)
-                or not file_path_str.strip()
+                not file_path_str.strip()
                 or type(start_line) is not int
                 or type(end_line) is not int
                 or start_line < 1
@@ -73,7 +74,7 @@ class CodeRetriever:
                 return CodeSnippet(
                     qualified_name=qualified_name,
                     source_code="",
-                    file_path=file_path_str or "",
+                    file_path=file_path_str,
                     line_start=0,
                     line_end=0,
                     found=False,
