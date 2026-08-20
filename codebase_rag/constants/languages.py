@@ -48,6 +48,7 @@ EXT_PHP = ".php"
 EXT_LUA = ".lua"
 EXT_CS = ".cs"
 EXT_DART = ".dart"
+EXT_SQL = ".sql"
 
 # File extension tuples by language
 PY_EXTENSIONS = (EXT_PY,)
@@ -88,6 +89,7 @@ PHP_EXTENSIONS = (EXT_PHP,)
 LUA_EXTENSIONS = (EXT_LUA,)
 CS_EXTENSIONS = (EXT_CS,)
 DART_EXTENSIONS = (EXT_DART,)
+SQL_EXTENSIONS = (EXT_SQL,)
 
 # Package indicator files
 PKG_INIT_PY = "__init__.py"
@@ -241,6 +243,7 @@ class SupportedLanguage(StrEnum):
     LUA = "lua"
     CSHARP = "c_sharp"
     DART = "dart"
+    SQL = "sql"
 
 
 class LanguageStatus(StrEnum):
@@ -325,6 +328,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "Classes, mixins, extensions, enhanced enums, factory/named constructors, Flutter widgets, package/relative/dart: imports, part directives, pubspec dependencies",
         "Dart",
     ),
+    SupportedLanguage.SQL: LanguageMetadata(
+        LanguageStatus.DEV,
+        "Stored functions and procedures (CREATE FUNCTION/PROCEDURE), schema-qualified names, invocations between routines. PL/pgSQL bodies are not parsed in depth: the upstream grammar parses plain SQL statements only",
+        "SQL (PostgreSQL)",
+    ),
 }
 
 # Index file names
@@ -367,6 +375,7 @@ class TreeSitterModule(StrEnum):
     PHP = "tree_sitter_php"
     CSHARP = "tree_sitter_c_sharp"
     DART = "tree_sitter_dart"
+    SQL = "tree_sitter_sql"
 
 
 # Directory names with a context-dependent ignore: `bin` is build output
