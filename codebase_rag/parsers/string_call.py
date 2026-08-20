@@ -116,7 +116,13 @@ def string_call_target(
     """
     if not specs or not call_name:
         return None
-    last_segment = call_name.rsplit(".", 1)[-1]
+    # The call name can arrive decorated by the surrounding expression
+    # (`await callSp`, `new Dispatcher`); the callee is its last token, and the
+    # last dotted segment of that.
+    tokens = call_name.split()
+    if not tokens:
+        return None
+    last_segment = tokens[-1].rsplit(".", 1)[-1]
     for spec in specs:
         if last_segment != spec.callee:
             continue
