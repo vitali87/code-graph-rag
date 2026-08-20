@@ -922,3 +922,7 @@ GENERATED_SOURCES_REGISTERED = (
 )
 DELOMBOK_RUN_FAILED = "delombok run failed ({error}); parsing raw source"
 DELOMBOK_OVERLAY_BUILT = "Delombok overlay covers {count} Lombok-affected file(s)"
+FINGERPRINT_DIST_UNREADABLE = (
+    "Skipping a distribution whose metadata could not be read while computing "
+    "the parser fingerprint"
+)
