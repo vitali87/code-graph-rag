@@ -70,7 +70,13 @@ def extract_source_with_fallback(
 def validate_source_location(
     file_path: str | None, start_line: int | None, end_line: int | None
 ) -> tuple[bool, Path | None]:
-    if not all([file_path, start_line, end_line]):
+    if (
+        not file_path
+        or start_line is None
+        or end_line is None
+        or start_line < 1
+        or end_line < start_line
+    ):
         return False, None
 
     try:
