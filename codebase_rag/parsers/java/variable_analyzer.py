@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -30,6 +31,11 @@ class JavaVariableAnalyzerMixin:
     class_inheritance: dict[str, list[str]]
     _lookup_cache: dict[str, str | None]
     _lookup_in_progress: set[str]
+    # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
+    # in the MRO, so even an @abstractmethod stub here would SHADOW the real
+    # implementation and silently resolve every call to None.
+    _do_resolve_java_method_call: Callable[..., tuple[str, str] | None]
+    _declared_return_type_of: Callable[[str], str | None]
 
     @abstractmethod
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
@@ -420,18 +426,6 @@ class JavaVariableAnalyzerMixin:
             else str(method_name)
         )
         return self._resolve_java_method_return_type(call_string, module_qn)
-
-    @abstractmethod
-    def _do_resolve_java_method_call(
-        self,
-        call_node: ASTNode,
-        local_var_types: dict[str, str],
-        module_qn: str,
-        caller_qn: str | None = None,
-    ) -> tuple[str, str] | None: ...
-
-    @abstractmethod
-    def _declared_return_type_of(self, method_qn: str) -> str | None: ...
 
     @recursion_guard(
         key_func=lambda self, call_node, *_, **__: call_node.id,
