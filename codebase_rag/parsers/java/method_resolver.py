@@ -109,24 +109,40 @@ def _pick_declared_overload(
     return declarations[0]
 
 
-def _overload_matches_arg_types(qn: str, arg_types: tuple[str | None, ...]) -> bool:
-    # True when every KNOWN argument type equals the candidate's parameter type at
-    # that position (simple names). Unknown args (None) are wildcards. Picks the
-    # right same-arity overload (isX(String) vs isX(Class) for a String arg).
+def _overload_rank(qn: str, arg_types: tuple[str | None, ...]) -> int | None:
+    # How well a candidate fits the KNOWN argument types: the summed per-argument
+    # conversion rank, or None when some argument cannot reach its parameter at
+    # all. Unknown args (None) are wildcards and cost nothing. Summing lets the
+    # MOST SPECIFIC applicable overload win, so take(Integer) beats take(Object)
+    # for an int argument, the way the language resolves it.
     params = _java_param_type_names(qn)
     if len(params) != len(arg_types):
-        return False
-    return all(
-        at is None or _argument_applicable(at.split(cs.SEPARATOR_DOT)[-1], pt)
-        for at, pt in zip(arg_types, params, strict=False)
-    )
+        return None
+    total = 0
+    for at, pt in zip(arg_types, params, strict=False):
+        if at is None:
+            continue
+        rank = _argument_rank(at.split(cs.SEPARATOR_DOT)[-1], pt)
+        if rank is None:
+            return None
+        total += rank
+    return total
 
 
-def _argument_applicable(arg_type: str, param_type: str) -> bool:
-    # Exact match, or one the language reaches by boxing / widening.
-    return arg_type == param_type or param_type in cs.JAVA_ARGUMENT_WIDENINGS.get(
-        arg_type, frozenset()
-    )
+def _argument_rank(arg_type: str, param_type: str) -> int | None:
+    # The conversion the language would apply, ranked by preference (JLS 5.3).
+    if arg_type == param_type:
+        return cs.JAVA_RANK_EXACT
+    if param_type in cs.JAVA_WIDENING_PRIMITIVES.get(arg_type, ()):
+        return cs.JAVA_RANK_WIDENED
+    boxed = cs.JAVA_BOXED_TYPES.get(arg_type, arg_type)
+    if param_type == boxed:
+        return cs.JAVA_RANK_BOXED
+    if param_type in cs.JAVA_REFERENCE_SUPERTYPES.get(boxed, ()):
+        return cs.JAVA_RANK_SUPERTYPE
+    if param_type == cs.JAVA_TYPE_OBJECT_NAME:
+        return cs.JAVA_RANK_OBJECT
+    return None
 
 
 def _callable_visible_to_caller(
@@ -158,9 +174,14 @@ def _pick_overload(
     if not matches:
         return None
     if len(matches) > 1 and any(at is not None for at in arg_types):
-        for match in matches:
-            if _overload_matches_arg_types(match[1], arg_types):
-                return match
+        ranked = [
+            (rank, index, match)
+            for index, match in enumerate(matches)
+            if (rank := _overload_rank(match[1], arg_types)) is not None
+        ]
+        if ranked:
+            # Ties keep declaration order, so the choice stays deterministic.
+            return min(ranked)[2]
     if len(matches) > 1 and arg_count is not None:
         for match in matches:
             if _java_signature_arity(match[1]) == arg_count:
@@ -713,7 +734,7 @@ class JavaMethodResolverMixin:
     ) -> tuple[str | None, ...]:
         # Infer the simple type of each argument so same-arity overloads can be told
         # apart (isX(String) vs isX(Class)). An argument whose type cannot be
-        # inferred is None (unknown), which _overload_matches_arg_types treats as
+        # inferred is None (unknown), which _overload_rank treats as
         # a wildcard.
         args_node = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
         if not args_node:

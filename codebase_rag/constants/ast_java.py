@@ -265,19 +265,47 @@ JAVA_MAVEN_SOURCE_ROOTS = (
 )
 
 
-# An argument type is applicable to a parameter type it can reach by boxing or
-# by a widening primitive conversion, both invisible at the call site: an `int`
-# argument binds `Integer`, `long`, `float` and `double` parameters. Exact
-# simple-name comparison alone would reject the only applicable overload and
-# send the call back to arity-only matching (issue #1344).
-JAVA_ARGUMENT_WIDENINGS: dict[str, frozenset[str]] = {
-    "byte": frozenset({"Byte", "short", "int", "long", "float", "double"}),
-    "short": frozenset({"Short", "int", "long", "float", "double"}),
-    "char": frozenset({"Character", "int", "long", "float", "double"}),
-    "int": frozenset({"Integer", "long", "float", "double"}),
-    "long": frozenset({"Long", "float", "double"}),
-    "float": frozenset({"Float", "double"}),
-    "double": frozenset({"Double"}),
-    "boolean": frozenset({"Boolean"}),
-    "String": frozenset({"CharSequence", "Object"}),
+# Conversions the language performs invisibly at a call site, in the order it
+# prefers them (JLS 5.3): a widening primitive conversion first, then boxing,
+# then a widening REFERENCE conversion on the boxed type. `take(42)` is a legal
+# call to take(long), take(Integer), take(Number) and take(Object) alike, so an
+# exact simple-name comparison would reject every applicable overload and send
+# the call back to arity-only matching (issue #1344).
+JAVA_WIDENING_PRIMITIVES: dict[str, tuple[str, ...]] = {
+    "byte": ("short", "int", "long", "float", "double"),
+    "short": ("int", "long", "float", "double"),
+    "char": ("int", "long", "float", "double"),
+    "int": ("long", "float", "double"),
+    "long": ("float", "double"),
+    "float": ("double",),
 }
+JAVA_BOXED_TYPES: dict[str, str] = {
+    "byte": "Byte",
+    "short": "Short",
+    "char": "Character",
+    "int": "Integer",
+    "long": "Long",
+    "float": "Float",
+    "double": "Double",
+    "boolean": "Boolean",
+}
+# Reference supertypes of each boxed (or already reference) type, excluding
+# Object, which ranks last on its own because it is the least specific.
+JAVA_REFERENCE_SUPERTYPES: dict[str, tuple[str, ...]] = {
+    "Byte": ("Number", "Comparable", "Serializable"),
+    "Short": ("Number", "Comparable", "Serializable"),
+    "Character": ("Comparable", "Serializable"),
+    "Integer": ("Number", "Comparable", "Serializable"),
+    "Long": ("Number", "Comparable", "Serializable"),
+    "Float": ("Number", "Comparable", "Serializable"),
+    "Double": ("Number", "Comparable", "Serializable"),
+    "Boolean": ("Comparable", "Serializable"),
+    "String": ("CharSequence", "Comparable", "Serializable"),
+}
+JAVA_TYPE_OBJECT_NAME = "Object"
+# Lower is more specific; the resolver prefers the smallest total across args.
+JAVA_RANK_EXACT = 0
+JAVA_RANK_WIDENED = 1
+JAVA_RANK_BOXED = 2
+JAVA_RANK_SUPERTYPE = 3
+JAVA_RANK_OBJECT = 4

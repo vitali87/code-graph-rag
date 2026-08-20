@@ -110,3 +110,122 @@ def test_null_literal_stays_a_wildcard(
         _BOXED.format(param="Integer", literal="null"),
     )
     assert any(t.startswith("proj.src.Main.Factory.take(") for t in targets)
+
+
+def test_int_literal_reaches_object_after_boxing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Boxing followed by a widening reference conversion is legal (JLS 5.3),
+    # so take(Object) is applicable and take(String) is not.
+    targets = _targets(
+        temp_repo / "proj", mock_ingestor, _BOXED.format(param="Object", literal="42")
+    )
+    assert "proj.src.Main.Factory.take(Object)" in targets
+
+
+def test_int_literal_reaches_number_after_boxing(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    targets = _targets(
+        temp_repo / "proj", mock_ingestor, _BOXED.format(param="Number", literal="42")
+    )
+    assert "proj.src.Main.Factory.take(Number)" in targets
+
+
+_SPECIFICITY = """
+class Factory {{
+    public void take(Object value) {{ }}
+    public void take({param} value) {{ }}
+}}
+public class Main {{
+    public static void main(String[] args) {{
+        Factory factory = new Factory();
+        factory.take({literal});
+    }}
+}}
+"""
+
+
+def test_the_most_specific_applicable_overload_wins(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Object is applicable to everything, so preferring the first applicable
+    # candidate would always pick it; the language picks the most specific.
+    targets = _targets(
+        temp_repo / "proj",
+        mock_ingestor,
+        _SPECIFICITY.format(param="Integer", literal="42"),
+    )
+    assert "proj.src.Main.Factory.take(Integer)" in targets
+    assert "proj.src.Main.Factory.take(Object)" not in targets
+
+
+def test_widening_a_primitive_beats_boxing_it(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # JLS phase 1 considers widening primitive conversion before boxing.
+    targets = _targets(
+        temp_repo / "proj",
+        mock_ingestor,
+        """
+class Factory {
+    public void take(Integer boxed) { }
+    public void take(long widened) { }
+}
+public class Main {
+    public static void main(String[] args) {
+        Factory factory = new Factory();
+        factory.take(42);
+    }
+}
+""",
+    )
+    assert "proj.src.Main.Factory.take(long)" in targets
+
+
+def test_char_literal_selects_the_char_overload(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    targets = _targets(
+        temp_repo / "proj", mock_ingestor, _BOXED.format(param="char", literal="'x'")
+    )
+    assert "proj.src.Main.Factory.take(char)" in targets
+
+
+def test_float_suffixed_literal_selects_the_float_overload(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The suffix decides: 1.5f is a float, 1.5 a double.
+    targets = _targets(
+        temp_repo / "proj", mock_ingestor, _BOXED.format(param="float", literal="1.5f")
+    )
+    assert "proj.src.Main.Factory.take(float)" in targets
+
+
+def test_unsuffixed_floating_literal_is_a_double(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    targets = _targets(
+        temp_repo / "proj", mock_ingestor, _BOXED.format(param="double", literal="1.5")
+    )
+    assert "proj.src.Main.Factory.take(double)" in targets
+
+
+def test_overload_rank_rejects_an_arity_mismatch() -> None:
+    from codebase_rag.parsers.java.method_resolver import _overload_rank
+
+    assert _overload_rank("C.take(int,int)", ("int",)) is None
+
+
+def test_overload_rank_treats_an_unknown_argument_as_a_wildcard() -> None:
+    # An argument whose type could not be inferred must not exclude a
+    # candidate, or an unrelated expression would silently narrow the pick.
+    from codebase_rag.parsers.java.method_resolver import _overload_rank
+
+    assert _overload_rank("C.take(String,int)", (None, "int")) == 0
+
+
+def test_overload_rank_rejects_an_unreachable_parameter_type() -> None:
+    from codebase_rag.parsers.java.method_resolver import _overload_rank
+
+    assert _overload_rank("C.take(Widget)", ("int",)) is None
