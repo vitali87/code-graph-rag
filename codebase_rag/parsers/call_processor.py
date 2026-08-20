@@ -3186,8 +3186,11 @@ class CallProcessor:
                     call_node, call_name, self._string_call_specs
                 )
                 if target_name:
+                    # find_ending_with takes the BARE last segment: it indexes
+                    # last segments and adds the dot itself, so passing
+                    # ".usp_x" searches for "..usp_x" and always misses.
                     for target_qn in resolver.function_registry.find_ending_with(
-                        f"{cs.SEPARATOR_DOT}{target_name}"
+                        target_name
                     ):
                         ensure_rel(
                             caller_spec,
