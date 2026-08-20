@@ -7,6 +7,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
+from ...decorators import recursion_guard
 from ...types_defs import ASTNode
 from ..utils import safe_decode_text
 from .utils import (
@@ -159,7 +160,7 @@ class JavaVariableAnalyzerMixin:
 
         if value_node := declarator_node.child_by_field_name(cs.FIELD_VALUE):
             if inferred_type := self._infer_java_type_from_expression(
-                value_node, module_qn
+                value_node, module_qn, local_var_types
             ):
                 resolved_type = self._resolve_java_type_name(inferred_type, module_qn)
                 local_var_types[var_name] = resolved_type
@@ -229,7 +230,7 @@ class JavaVariableAnalyzerMixin:
             return
 
         if inferred_type := self._infer_java_type_from_expression(
-            right_node, module_qn
+            right_node, module_qn, local_var_types
         ):
             resolved_type = self._resolve_java_type_name(inferred_type, module_qn)
             local_var_types[var_name] = resolved_type
@@ -328,7 +329,10 @@ class JavaVariableAnalyzerMixin:
                         break
 
     def _infer_java_type_from_expression(
-        self, expr_node: ASTNode, module_qn: str
+        self,
+        expr_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         match expr_node.type:
             case cs.TS_OBJECT_CREATION_EXPRESSION:
@@ -336,7 +340,9 @@ class JavaVariableAnalyzerMixin:
                     return safe_decode_text(type_node)
 
             case cs.TS_METHOD_INVOCATION:
-                return self._infer_java_method_return_type(expr_node, module_qn)
+                return self._infer_java_method_return_type(
+                    expr_node, module_qn, local_var_types
+                )
 
             case cs.TS_IDENTIFIER:
                 if var_name := safe_decode_text(expr_node):
@@ -381,7 +387,10 @@ class JavaVariableAnalyzerMixin:
         return None
 
     def _infer_java_method_return_type(
-        self, method_call_node: ASTNode, module_qn: str
+        self,
+        method_call_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         call_info = extract_method_call_info(method_call_node)
         if not call_info:
@@ -391,6 +400,19 @@ class JavaVariableAnalyzerMixin:
         if not method_name:
             return None
 
+        # Resolve the nested call properly first: it is overload-sensitive, and
+        # the name-only lookup below takes the FIRST declaration's return type,
+        # so `take(make("x"))` could be typed from `make(int)`. The resolved qn
+        # carries the SELECTED signature, which reads back the right return
+        # type. Needs the caller's variable types, or the receiver of an
+        # instance call cannot be typed (issue #1348).
+        if (
+            resolved := self._resolve_nested_java_call(
+                method_call_node, module_qn, local_var_types or {}
+            )
+        ) and (declared := self._declared_return_type_of(resolved[1])):
+            return declared
+
         object_ref = call_info[cs.FIELD_OBJECT]
         call_string = (
             f"{object_ref}{cs.SEPARATOR_DOT}{method_name}"
@@ -398,6 +420,33 @@ class JavaVariableAnalyzerMixin:
             else str(method_name)
         )
         return self._resolve_java_method_return_type(call_string, module_qn)
+
+    @abstractmethod
+    def _do_resolve_java_method_call(
+        self,
+        call_node: ASTNode,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None = None,
+    ) -> tuple[str, str] | None: ...
+
+    @abstractmethod
+    def _declared_return_type_of(self, method_qn: str) -> str | None: ...
+
+    @recursion_guard(
+        key_func=lambda self, call_node, *_, **__: call_node.id,
+        guard_name=cs.GUARD_NESTED_JAVA_CALL,
+    )
+    def _resolve_nested_java_call(
+        self,
+        call_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str],
+    ) -> tuple[str, str] | None:
+        # Guarded: resolution infers its ARGUMENT types, and typing an argument
+        # comes back here, so a call nested in its own argument list would
+        # recurse without a brake.
+        return self._do_resolve_java_method_call(call_node, local_var_types, module_qn)
 
     def _infer_java_field_access_type(
         self, field_access_node: ASTNode, module_qn: str

@@ -204,7 +204,10 @@ class JavaMethodResolverMixin:
 
     @abstractmethod
     def _infer_java_type_from_expression(
-        self, expr_node: ASTNode, module_qn: str
+        self,
+        expr_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> str | None: ...
 
     @abstractmethod
@@ -748,7 +751,9 @@ class JavaMethodResolverMixin:
                 # or a call carries it in the expression: the shared inference
                 # types all of them (issue #1344).
                 arg_types.append(
-                    self._infer_java_type_from_expression(child, module_qn)
+                    self._infer_java_type_from_expression(
+                        child, module_qn, local_var_types
+                    )
                 )
                 continue
             name = safe_decode_text(child)
