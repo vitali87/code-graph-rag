@@ -309,3 +309,54 @@ def test_a_read_only_ref_parameter_never_gains_a_flow(tmp_path: Path) -> None:
     assert (_ENV_K, _STDOUT) not in _flows(
         tmp_path / "r2", _READ_ONLY_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_EXPRESSION_BODIED_REF = (
+    "using System;\n\n"
+    "public class Helper\n{\n"
+    "    public void Fill(string src, ref string dst) => dst = src;\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        var helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+_NAMED_REF_ARGUMENTS = (
+    "using System;\n\n"
+    "public class Helper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        var helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(dst: ref sink, src: token);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_expression_bodied_ref_callee_still_writes_back(tmp_path: Path) -> None:
+    # `=> dst = src` has no block body; rejecting it would treat a writing
+    # callee as read-only and silently drop the edge.
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "e1", _EXPRESSION_BODIED_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_named_ref_argument_binds_to_its_own_parameter(tmp_path: Path) -> None:
+    # Named arguments are reordered: `dst` sits at source index 0 while its
+    # parameter is ordinal 1, so an ordinal lookup would analyse `src`.
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "n1", _NAMED_REF_ARGUMENTS, cs.CSharpFrontend.HYBRID
+    )

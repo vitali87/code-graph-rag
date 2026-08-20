@@ -408,7 +408,7 @@ public static class Frontend
                 // variable.
                 if (argument.RefKindKeyword.IsKind(SyntaxKind.RefKeyword))
                 {
-                    if (!RefParameterIsWritten(model, invocation, index))
+                    if (!RefParameterIsWritten(model, invocation, argument, index))
                     {
                         continue;
                     }
@@ -435,27 +435,51 @@ public static class Frontend
         private static bool RefParameterIsWritten(
             SemanticModel model,
             InvocationExpressionSyntax invocation,
+            ArgumentSyntax argument,
             int index)
         {
             if (model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol method
-                || index >= method.Parameters.Length)
+                || BoundParameter(method, argument, index) is not { } parameter)
             {
                 return false;
             }
             var declaration = method.DeclaringSyntaxReferences.FirstOrDefault();
-            if (declaration?.GetSyntax() is not MethodDeclarationSyntax declared
-                || declared.Body is not { } body)
+            if (CallableBody(declaration?.GetSyntax()) is not { } body)
             {
                 return false;
             }
-            var calleeModel = model.Compilation.GetSemanticModel(declared.SyntaxTree);
+            var calleeModel = model.Compilation.GetSemanticModel(body.SyntaxTree);
             if (calleeModel.AnalyzeDataFlow(body) is not { Succeeded: true } flow)
             {
                 return false;
             }
-            return flow.WrittenInside.Contains(
-                method.Parameters[index], SymbolEqualityComparer.Default);
+            return flow.WrittenInside.Contains(parameter, SymbolEqualityComparer.Default);
         }
+
+        // A NAMED argument (`Fill(dst: ref sink, src: token)`) does not sit at
+        // its parameter's ordinal, so the source-order index is only valid for
+        // positional arguments.
+        private static IParameterSymbol? BoundParameter(
+            IMethodSymbol method, ArgumentSyntax argument, int index)
+        {
+            if (argument.NameColon?.Name.Identifier.ValueText is { } named)
+            {
+                return method.Parameters.FirstOrDefault(p => p.Name == named);
+            }
+            return index < method.Parameters.Length ? method.Parameters[index] : null;
+        }
+
+        // Both callable forms and both body shapes: a method or a local
+        // function, written as a block or as an expression body. Rejecting the
+        // expression forms would silently treat a writing callee as read-only.
+        private static SyntaxNode? CallableBody(SyntaxNode? declaration) => declaration switch
+        {
+            MethodDeclarationSyntax method =>
+                (SyntaxNode?)method.Body ?? method.ExpressionBody?.Expression,
+            LocalFunctionStatementSyntax local =>
+                (SyntaxNode?)local.Body ?? local.ExpressionBody?.Expression,
+            _ => null,
+        };
 
         // `out var n` declares the variable inline, so the symbol comes from the
         // declaration rather than from a reference; a plain `out n` is an
