@@ -119,6 +119,7 @@ public final class Frontend {
         private final Set<String> externals = new LinkedHashSet<>();
         private final Set<String> seenCalls = new HashSet<>();
         private final Map<String, String> sourceCache = new HashMap<>();
+        private final Map<String, int[]> lineStartCache = new HashMap<>();
         private CompilationUnitTree unit;
         private String rel;
 
@@ -192,7 +193,7 @@ public final class Frontend {
             if (target == null) {
                 return;
             }
-            String key = site.line + ":" + site.col + ":" + name;
+            String key = site.file + ":" + site.line + ":" + site.col + ":" + name;
             if (!seenCalls.add(key)) {
                 return;
             }
@@ -214,15 +215,32 @@ public final class Frontend {
             if (source == null) {
                 return null;
             }
-            // The declaration's NAME token, matching the tree-sitter side's
-            // key: search the header (never the body) for the identifier.
-            int header = source.indexOf('(', (int) start);
-            int limit = header < 0 ? (int) Math.min(end, source.length()) : header;
-            int at = source.lastIndexOf(name, limit);
-            if (at < (int) start) {
+            int at = nameTokenOffset(source, name, (int) start, (int) Math.min(end, source.length()));
+            if (at < 0) {
                 return null;
             }
             return position(declUnit, declRel, at);
+        }
+
+        // The declaration's NAME token, matching the key the tree-sitter side
+        // produces. Annotations belong to the method header and may carry
+        // parenthesised arguments, so the first '(' is not a reliable bound:
+        // take the first identifier-bounded occurrence that a '(' follows.
+        private static int nameTokenOffset(String source, String name, int start, int end) {
+            for (int at = source.indexOf(name, start); at >= 0 && at < end;
+                    at = source.indexOf(name, at + 1)) {
+                if (at > 0 && Character.isJavaIdentifierPart(source.charAt(at - 1))) {
+                    continue;
+                }
+                int after = at + name.length();
+                while (after < end && Character.isWhitespace(source.charAt(after))) {
+                    after++;
+                }
+                if (after < end && source.charAt(after) == '(') {
+                    return at;
+                }
+            }
+            return -1;
         }
 
         private String calleeName(ExpressionTree select) {
@@ -241,6 +259,27 @@ public final class Frontend {
                 return end < 0 ? -1 : end - name.length();
             }
             return positions.getStartPosition(unit, select);
+        }
+
+        private int[] lineStartsOf(CompilationUnitTree tree, String source) {
+            String key = tree.getSourceFile().toUri().toString();
+            int[] cached = lineStartCache.get(key);
+            if (cached != null) {
+                return cached;
+            }
+            List<Integer> starts = new ArrayList<>();
+            starts.add(0);
+            for (int i = 0; i < source.length(); i++) {
+                if (source.charAt(i) == '\n') {
+                    starts.add(i + 1);
+                }
+            }
+            int[] offsets = new int[starts.size()];
+            for (int i = 0; i < offsets.length; i++) {
+                offsets[i] = starts.get(i);
+            }
+            lineStartCache.put(key, offsets);
+            return offsets;
         }
 
         private String sourceOf(CompilationUnitTree tree) {
@@ -266,15 +305,13 @@ public final class Frontend {
             if (source == null || offset < 0 || offset > source.length()) {
                 return null;
             }
-            int line = 1;
-            int lineStart = 0;
-            for (int i = 0; i < offset; i++) {
-                if (source.charAt(i) == '\n') {
-                    line++;
-                    lineStart = i + 1;
-                }
-            }
-            String prefix = source.substring(lineStart, (int) offset);
+            // Binary search over cached line starts: a linear rescan per call
+            // site is quadratic in the size of a large source file.
+            int[] lineStarts = lineStartsOf(tree, source);
+            int found = Arrays.binarySearch(lineStarts, (int) offset);
+            int index = found >= 0 ? found : -found - 2;
+            int line = index + 1;
+            String prefix = source.substring(lineStarts[index], (int) offset);
             int byteCol = prefix.getBytes(StandardCharsets.UTF_8).length;
             return new Position(relPath, line, byteCol);
         }

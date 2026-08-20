@@ -36,6 +36,16 @@ _CALLER = (
 )
 
 
+# Byte-identical geometry in two files: the same callee name at the same line
+# and column, each binding inside its own file.
+_TWIN = (
+    "package com.app;\n\n"
+    "public class {name} {{\n"
+    "    public String pick() {{\n        return make();\n    }}\n\n"
+    '    public String make() {{\n        return "x";\n    }}\n}}\n'
+)
+
+
 def _write_repo(repo: Path) -> None:
     package = repo / "src/main/java/com/app"
     package.mkdir(parents=True)
@@ -106,3 +116,26 @@ def test_jdk_calls_become_external_proofs(tmp_path: Path) -> None:
     assert {"add", "valueOf"} <= external_names
     # A proven-external site must never also carry a first-party target.
     assert not {key for key in facts.call_sites if key in facts.external_sites}
+
+
+@pytest.mark.skipif(
+    not java_frontend_available(), reason="javac frontend needs a working JDK"
+)
+def test_same_position_in_two_files_keeps_both_sites(tmp_path: Path) -> None:
+    # The dedup key spans the whole repo, so it must carry the file: two
+    # files laid out alike put an identical call at an identical position.
+    repo = tmp_path / "proj"
+    package = repo / "src/main/java/com/app"
+    package.mkdir(parents=True)
+    for name in ("Alpha", "Beta"):
+        (package / f"{name}.java").write_text(_TWIN.format(name=name), encoding="utf-8")
+    facts = run_java_frontend(repo)
+    bound = {
+        key[0]: site.target_file
+        for key, site in facts.call_sites.items()
+        if key[3] == "make"
+    }
+    assert bound == {
+        "src/main/java/com/app/Alpha.java": "src/main/java/com/app/Alpha.java",
+        "src/main/java/com/app/Beta.java": "src/main/java/com/app/Beta.java",
+    }
