@@ -155,6 +155,20 @@ def current_lombok_version() -> str:
     return lombok_jar_version(jar) if jar is not None else ""
 
 
+def current_lombok_identity() -> str:
+    """Version plus a content digest: a same-named configured jar
+    (/tools/lombok.jar) replaced in place must still flip the persisted
+    state, or its unchanged expansions would never reparse."""
+    jar = find_lombok_jar()
+    if jar is None:
+        return ""
+    try:
+        digest = hashlib.sha256(jar.read_bytes()).hexdigest()[:16]
+    except OSError:
+        digest = "unreadable"
+    return f"{lombok_jar_version(jar)}:{digest}"
+
+
 def overlay_identity(overlay: dict[str, bytes]) -> str:
     """A stable digest of the overlay's effect: which files it covers and what
     it expands them to. Any change (jar appearing/vanishing, version bump,

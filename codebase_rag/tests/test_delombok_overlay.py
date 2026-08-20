@@ -233,7 +233,8 @@ def test_maven_cache_prefers_the_numerically_newest_jar(
     monkeypatch.setattr(java_lombok.Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.setattr(java_lombok.settings, "LOMBOK_JAR", None)
     jar = java_lombok.find_lombok_jar()
-    assert jar is not None and jar.name == "lombok-1.18.30.jar"
+    assert jar is not None
+    assert jar.name == "lombok-1.18.30.jar"
 
 
 def test_jar_version_change_alone_marks_the_state_changed(
@@ -272,3 +273,42 @@ def test_corrupt_state_file_degrades_to_the_empty_state(tmp_path: Path) -> None:
         state.write_text(payload, encoding="utf-8")
         loaded = _load_delombok_state(state)
         assert loaded == {"identity": "", "keys": [], "lombok": ""}
+
+
+def test_replaced_same_named_jar_flips_the_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A configured /tools/lombok.jar replaced in place keeps its name, so
+    # the identity must digest the CONTENT.
+    jar = tmp_path / "lombok.jar"
+    jar.write_bytes(b"first")
+    monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: jar)
+    first = java_lombok.current_lombok_identity()
+    jar.write_bytes(b"second")
+    assert java_lombok.current_lombok_identity() != first
+
+
+def test_failed_run_never_commits_the_overlay_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from codebase_rag import constants as cs
+
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    _fake_delombok(monkeypatch)
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=MagicMock(),
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=ALL_ENABLED,
+    )
+    monkeypatch.setattr(
+        updater,
+        "_generate_semantic_embeddings",
+        lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    with pytest.raises(RuntimeError):
+        updater.run()
+    assert not (repo / cs.DELOMBOK_STATE_FILENAME).exists()

@@ -67,7 +67,7 @@ from .parsers.java_generated import (
 )
 from .parsers.java_lombok import (
     build_delombok_overlay,
-    current_lombok_version,
+    current_lombok_identity,
     overlay_identity,
 )
 from .parsers.utils import sorted_captures
@@ -1023,6 +1023,16 @@ class GraphUpdater:
         self._prune_orphan_nodes()
 
         self._generate_semantic_embeddings()
+
+        # The delombok state commits ONLY here, after every pass and the
+        # graph flush succeeded: a run that dies mid-way must not convince
+        # its successor that the overlay-affected files were reprocessed.
+        # Single-file runs never commit it.
+        if self._delombok_state_changed and self._single_file is None:
+            _save_delombok_state(
+                self.repo_path / cs.DELOMBOK_STATE_FILENAME,
+                self._delombok_state_candidate,
+            )
 
     def _emit_pending_endpoints(self) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -2082,7 +2092,7 @@ class GraphUpdater:
             "keys": sorted(self._delombok_overlay),
             # Two Lombok versions can expand identically today and diverge on
             # the next annotation edit; the version keeps the state honest.
-            "lombok": current_lombok_version(),
+            "lombok": current_lombok_identity(),
         }
         self._delombok_state_changed = previous != current
         self._delombok_stale_keys = (
@@ -2361,11 +2371,6 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=unreadable_count)
 
         _save_hash_cache(cache_path, new_hashes)
-        if self._delombok_state_changed and self._single_file is None:
-            _save_delombok_state(
-                self.repo_path / cs.DELOMBOK_STATE_FILENAME,
-                self._delombok_state_candidate,
-            )
         _save_dir_mtimes(dir_mtimes_path, self._collected_dir_mtimes)
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry
