@@ -499,6 +499,8 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         dp.csharp_base_kinds = {}
         dp.csharp_call_sites.clear()
+        dp.csharp_arg_flows.clear()
+        dp.csharp_bind_flows.clear()
         dp.csharp_external_sites.clear()
         self._csharp_partial_decls = []
         self._csharp_query_calls = []
@@ -509,6 +511,8 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         dp.csharp_base_kinds = facts.base_kinds
         dp.csharp_call_sites.update(facts.resolved_call_sites)
+        dp.csharp_arg_flows.update(facts.arg_flows)
+        dp.csharp_bind_flows.update(facts.bind_flows)
         dp.csharp_external_sites.update(facts.external_sites)
         self._csharp_partial_decls = facts.partial_groups
         self._csharp_query_calls = facts.query_calls

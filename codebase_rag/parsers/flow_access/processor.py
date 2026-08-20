@@ -61,6 +61,7 @@ from ..io_access.registry import (
     IO_TYPE_HANDLE_CONSTRUCTORS,
     LIBC_STD_STREAMS,
 )
+from ..semantic_call_join import call_site_key
 from ..utils import (
     c_positional_parameter_slots,
     cpp_declarator_name,
@@ -1346,7 +1347,13 @@ class FlowProcessor:
                 if spread
                 else (values[index] if index < len(values) else None)
             )
-            computed.append((name, self._js_expr_taint(rhs, tainted, jc), rhs))
+            taint = self._js_expr_taint(rhs, tainted, jc)
+            # Roslyn proved which locals reach this initializer (issue #1187):
+            # union their taint so a value the syntactic reader cannot thread
+            # (builder chain, cast, conditional) still taints the binding.
+            for symbol in self._csharp_bind_symbols(node, name, jc):
+                taint = _merge_optional_taints(taint, tainted.get(symbol))
+            computed.append((name, taint, rhs))
         for name, taint, rhs in computed:
             if taint is not None:
                 tainted[name] = taint
@@ -2626,14 +2633,83 @@ class FlowProcessor:
         # C# wraps each arg in an `argument` node, so unwrap to the real
         # expression before reading its taint (no-op for the bare-arg grammars).
         wrapper = jc.descriptor.argument_wrapper_type
+        semantic = self._csharp_arg_symbols(node, jc)
         for index, child in enumerate(self._named_no_comments(args)):
-            out.append(
-                (
-                    VIA_ARG_FORMAT.format(index=index),
-                    self._js_expr_taint(unwrap_argument(child, wrapper), tainted, jc),
-                )
-            )
+            taint = self._js_expr_taint(unwrap_argument(child, wrapper), tainted, jc)
+            # Roslyn proved which locals reach this argument (issue #1187):
+            # union their taint with the syntactic reading, so a builder
+            # chain, cast, or conditional the walker cannot thread still
+            # propagates. Additive only -- never removes a lexical edge.
+            for symbol in semantic.get(index, ()):  # type: ignore[union-attr]
+                taint = _merge_optional_taints(taint, tainted.get(symbol))
+            out.append((VIA_ARG_FORMAT.format(index=index), taint))
         return out
+
+    def _csharp_bind_symbols(self, node: Node, name: str, jc: _JsCtx) -> frozenset[str]:
+        # The bind-flow fact for THIS declarator, matched on its name token;
+        # empty for every other language and whenever the frontend is off.
+        flows = self._resolver.type_inference.csharp_bind_flows
+        if not flows or jc.flow.language != cs.SupportedLanguage.CSHARP:
+            return frozenset()
+        name_node = self._csharp_declarator_name_node(node, name)
+        if name_node is None:
+            return frozenset()
+        key = call_site_key(
+            name_node,
+            name,
+            jc.flow.module_qn,
+            self._resolver.type_inference.module_qn_to_file_path,
+            self._resolver.type_inference.repo_path,
+        )
+        return flows.get(key, frozenset()) if key is not None else frozenset()
+
+    @staticmethod
+    def _csharp_declarator_name_node(node: Node, name: str) -> Node | None:
+        candidate = node.child_by_field_name(cs.TS_FIELD_NAME)
+        if (
+            candidate is not None
+            and candidate.text
+            and candidate.text.decode(cs.ENCODING_UTF8) == name
+        ):
+            return candidate
+        for child in node.named_children:
+            if (
+                child.type == cs.TS_CSHARP_IDENTIFIER
+                and child.text
+                and child.text.decode(cs.ENCODING_UTF8) == name
+            ):
+                return child
+        return None
+
+    def _csharp_arg_symbols(self, node: Node, jc: _JsCtx) -> dict[int, frozenset[str]]:
+        # The Roslyn argument-flow facts for THIS call site, keyed exactly
+        # like the call facts; empty for every other language and whenever
+        # the frontend is off.
+        flows = self._resolver.type_inference.csharp_arg_flows
+        if not flows or jc.flow.language != cs.SupportedLanguage.CSHARP:
+            return {}
+        name_node = self._csharp_callee_name_node(node)
+        if name_node is None or not name_node.text:
+            return {}
+        key = call_site_key(
+            name_node,
+            name_node.text.decode(cs.ENCODING_UTF8),
+            jc.flow.module_qn,
+            self._resolver.type_inference.module_qn_to_file_path,
+            self._resolver.type_inference.repo_path,
+        )
+        return flows.get(key, {}) if key is not None else {}
+
+    @staticmethod
+    def _csharp_callee_name_node(call_node: Node) -> Node | None:
+        # The callee NAME token, matching the Roslyn tool's key: the member
+        # name for `obj.M(x)`, the bare identifier for `M(x)`.
+        func = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is None:
+            return None
+        if func.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            return func.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+        return func
 
     def _js_return_taint(
         self, node: Node, tainted: _TaintMap, jc: _JsCtx

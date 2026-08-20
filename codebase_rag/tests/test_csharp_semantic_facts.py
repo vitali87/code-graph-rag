@@ -173,6 +173,8 @@ def test_call_fact_resolves_chained_receiver_to_exact_overload(
         partial_groups=[],
         query_calls=[],
         external_sites=set(),
+        arg_flows={},
+        bind_flows={},
     )
     _hybrid(monkeypatch, facts)
 
@@ -212,6 +214,8 @@ def test_call_fact_resolves_conditional_access_invocation(
         partial_groups=[],
         query_calls=[],
         external_sites=set(),
+        arg_flows={},
+        bind_flows={},
     )
     _hybrid(monkeypatch, facts)
 
@@ -263,6 +267,8 @@ def test_call_fact_suppresses_same_arity_family_fanout(
         partial_groups=[],
         query_calls=[],
         external_sites=set(),
+        arg_flows={},
+        bind_flows={},
     )
     _hybrid(monkeypatch, facts)
 
@@ -317,6 +323,8 @@ def test_external_site_fact_suppresses_name_trie_fallback(
         partial_groups=[],
         query_calls=[],
         external_sites={("Code.cs", call_line, call_col, "Dispose")},
+        arg_flows={},
+        bind_flows={},
     )
     _hybrid(monkeypatch, facts)
 
@@ -386,6 +394,8 @@ def test_partial_fact_merges_parts_across_directories(
         partial_groups=[[("dirA/Part1.cs", line_a), ("dirB/Part2.cs", line_b)]],
         query_calls=[],
         external_sites=set(),
+        arg_flows={},
+        bind_flows={},
     )
     _hybrid(monkeypatch, facts)
 
@@ -452,6 +462,8 @@ def test_query_fact_emits_calls_edge_for_linq_operator(
             )
         ],
         external_sites=set(),
+        arg_flows={},
+        bind_flows={},
     )
     _hybrid(monkeypatch, facts)
 
@@ -488,6 +500,8 @@ def test_query_fact_edge_respects_capture_excluding_calls(
             )
         ],
         external_sites=set(),
+        arg_flows={},
+        bind_flows={},
     )
     _hybrid(monkeypatch, facts)
 

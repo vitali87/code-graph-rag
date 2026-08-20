@@ -68,12 +68,20 @@ class CSharpSemanticFacts(NamedTuple):
     # declaration): the compiler proof that the call leaves the repo, so
     # the name-trie fallback must not fabricate a first-party edge there.
     external_sites: set[CallSiteKey]
+    # Per invocation argument, the locals/parameters Roslyn's definite-
+    # assignment analysis proves reach it (issue #1187): the compiler's
+    # answer where the lexical flow walk guesses from syntax.
+    arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]]
+    # Per local declarator, the locals/parameters that reach its INITIALIZER:
+    # without these the tainted value stops at the initializer expression and
+    # the bound variable looks clean to every later read.
+    bind_flows: dict[CallSiteKey, frozenset[str]]
 
 
 def _empty_facts() -> CSharpSemanticFacts:
     # A fresh instance per failure path: the maps are handed to mutable
     # processor state, so a shared constant would alias across runs.
-    return CSharpSemanticFacts({}, {}, [], [], set())
+    return CSharpSemanticFacts({}, {}, [], [], set(), {}, {})
 
 
 _DOTNET = "dotnet"
@@ -316,6 +324,8 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
             (site["file"], int(site["line"]), int(site["col"]), site["name"])
             for site in payload.get("externals", [])
         },
+        arg_flows=_arg_flows(payload.get("arg_flows", [])),
+        bind_flows=_bind_flows(payload.get("bind_flows", [])),
     )
     if not any(facts) and stderr.strip():
         # A well-formed but entirely empty payload means the workspace load
@@ -323,6 +333,53 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
         # tool's diagnostics instead of looking identical to success.
         logger.warning(ls.CSHARP_FRONTEND_NO_FACTS.format(stderr=stderr.strip()))
     return facts
+
+
+def _arg_flows(rows: list) -> dict[CallSiteKey, dict[int, frozenset[str]]]:
+    # Keyed exactly like the call facts, so the resolver's existing
+    # location join applies unchanged. A malformed row is dropped rather
+    # than failing the whole payload: worst case those arguments fall back
+    # to the lexical evaluation.
+    flows: dict[CallSiteKey, dict[int, frozenset[str]]] = {}
+    for row in rows:
+        try:
+            key: CallSiteKey = (
+                row["file"],
+                int(row["line"]),
+                int(row["col"]),
+                row["name"],
+            )
+            index = int(row["index"])
+            symbols = frozenset(
+                symbol for symbol in row["symbols"] if isinstance(symbol, str)
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if symbols:
+            flows.setdefault(key, {})[index] = symbols
+    return flows
+
+
+def _bind_flows(rows: list) -> dict[CallSiteKey, frozenset[str]]:
+    # Keyed at the declarator's NAME token, the same (file, line, byte col,
+    # name) shape as every other family. Malformed rows drop.
+    flows: dict[CallSiteKey, frozenset[str]] = {}
+    for row in rows:
+        try:
+            key: CallSiteKey = (
+                row["file"],
+                int(row["line"]),
+                int(row["col"]),
+                row["name"],
+            )
+            symbols = frozenset(
+                symbol for symbol in row["symbols"] if isinstance(symbol, str)
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if symbols:
+            flows[key] = symbols
+    return flows
 
 
 def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:

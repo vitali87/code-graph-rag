@@ -29,6 +29,8 @@ def _adapt_csharp_semantic_facts(facts: CSharpSemanticFacts) -> SemanticFacts:
             for key, site in facts.call_sites.items()
         },
         external_sites=set(facts.external_sites),
+        arg_flows=facts.arg_flows,
+        bind_flows=facts.bind_flows,
         base_kinds=facts.base_kinds,
         partial_groups=facts.partial_groups,
         query_calls=[
