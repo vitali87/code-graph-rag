@@ -32,7 +32,7 @@ class DirectoryLister:
             if not target_path.is_dir():
                 return te.DIRECTORY_INVALID.format(path=directory_path)
 
-            if contents := os.listdir(target_path):
+            if contents := sorted(os.listdir(target_path)):
                 return "\n".join(contents)
             return te.DIRECTORY_EMPTY.format(path=directory_path)
 
