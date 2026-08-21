@@ -8,8 +8,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import typer
 
 from evals import constants as ec
+from evals import inheritance as inh
 from evals.inheritance import (
     java_cgr_inheritance,
     java_oracle_inheritance,
@@ -81,3 +83,24 @@ def test_no_overrides_row_is_emitted_for_java(tmp_path: Path) -> None:
 def test_the_java_label_differs_from_the_python_one() -> None:
     # A Java 1.0 must not be readable as the Python 1.0: different unit.
     assert ec.JAVA_SUPERTYPES_LABEL != ec.INHERITS_LABEL
+
+
+def test_missing_java_toolchain_exits_instead_of_scoring_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without a JDK the oracle yields no edges. Scoring that would write a
+    # header-only CSV and an empty diff and exit 0, which reads as "this repo
+    # has no inheritance" rather than "the grader never ran" -- a measurement
+    # that silently means nothing is worse than no measurement.
+    repo = tmp_path / "proj"
+    _write(repo)
+    monkeypatch.setattr(inh, "java_available", lambda: False)
+    with pytest.raises(typer.Exit) as exit_info:
+        inh.main(
+            target=repo,
+            project_name="proj",
+            out_dir=tmp_path / "out",
+            language=ec.InheritanceLanguage.JAVA,
+        )
+    assert exit_info.value.exit_code == 1
+    assert not (tmp_path / "out").exists()

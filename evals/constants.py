@@ -112,8 +112,6 @@ ROUND_DIGITS = 4
 # Go structure eval: cgr nodes graded against the go/ast oracle
 # (evals/oracles/go_ast.go), joined on (kind, file, start_line).
 GO_SUFFIX = ".go"
-JAVA_SUFFIX = ".java"
-LOCATION_KEY_SEPARATOR = ":"
 GO_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
     cs.NodeLabel.FUNCTION,
     cs.NodeLabel.METHOD,

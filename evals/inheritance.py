@@ -18,7 +18,7 @@ from . import constants as ec
 from . import logs as ls
 from .ast_oracle import _from_base_parts, _iter_py_files, _module_dotted
 from .cgr_graph import _capture
-from .oracles.java_oracle import run_java_oracle
+from .oracles.java_oracle import java_available, run_java_oracle
 from .score import _prf
 from .structure_report import render, write_outputs
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
@@ -313,6 +313,12 @@ def main(
     logger.info(ls.INHERITANCE_TARGET.format(target=target, project=project))
 
     if language == ec.InheritanceLanguage.JAVA:
+        # Without a JDK the oracle yields nothing, and scoring that would write
+        # a header-only CSV and an empty diff while exiting 0 -- reporting "no
+        # gradeable edges" when the truth is "the grader never ran".
+        if not java_available():
+            logger.error(ls.JAVA_ORACLE_MISSING)
+            raise typer.Exit(code=1)
         # The javac oracle names supertypes by SIMPLE name while it pins the
         # subclass to a location, so the row carries its own label: a Java 1.0
         # is not measuring the same unit as the Python one (issue #1190).
