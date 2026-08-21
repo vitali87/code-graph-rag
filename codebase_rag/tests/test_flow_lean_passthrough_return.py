@@ -9,8 +9,8 @@ its own `_dart_rhs` path and needed the same token there.
 
 Lua and Scala are NOT covered: neither has a lean parameter-slot extractor
 (`_lean_parameter_slots` returns no slots for them), so no parameter is ever
-seeded and there is nothing for the token to compose against. Rust has an
-extractor, so no parameter is ever seeded. Both are tracked in #1365.
+seeded and there is nothing for the token to compose against. Both are tracked
+in #1365.
 
 Rust needed two further fixes: it spells a `return x;` node `return_expression`
 (so the shared `TS_RETURN_STATEMENT` never matched and NO Rust return summary
