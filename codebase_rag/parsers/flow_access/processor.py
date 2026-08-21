@@ -2065,7 +2065,14 @@ class FlowProcessor:
                     self._return_edge_candidates.append(
                         (callee[0], callee[1], jc.flow.caller_spec)
                     )
-                    return Taint(frozenset(), frozenset({callee[1]})), frozenset()
+                    # Dart resolves a call's value here rather than through
+                    # _js_expr_taint, so it needs the same per-call pass-through
+                    # token to compose a helper's returned parameter (#1363).
+                    token = _passthrough_result_token(jc.flow.caller_qn, call_sel)
+                    return (
+                        Taint(frozenset(), frozenset({callee[1], token})),
+                        frozenset(),
+                    )
             return None, frozenset()
         if len(rhs) == 1 and rhs[0].type == cs.TS_DART_IDENTIFIER and rhs[0].text:
             alias = rhs[0].text.decode(cs.ENCODING_UTF8)

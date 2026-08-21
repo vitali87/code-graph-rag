@@ -376,10 +376,13 @@ module is re-exported under its own name. A project that does
   a tainted argument into such a parameter folds that argument's origins into the callee's
   return summary, so a caller consuming the return (`y = redact(secret); print(y)`)
   resolves the secret to the sink. The composition is keyed by the individual call site,
-  so a second call to the same helper with a clean argument keeps a clean result. Every
-  language composes a DIRECT pass-through (`return v`). Chaining it transitively through
-  another call (`return other(p)`) is Python-only; a lean-walk callee that returns the
-  result of a further call ends the chain there.
+  so a second call to the same helper with a clean argument keeps a clean result. A DIRECT
+  pass-through (`return v`) composes in Python, JavaScript, TypeScript, Java, C#, Go, PHP,
+  C, C++ and Dart. It does NOT compose in Lua or Scala, which have no lean parameter-slot
+  extractor, so no parameter is seeded for the composition to match; Rust has an extractor
+  but does not compose either. Chaining transitively through another call
+  (`return other(p)`) is Python-only; a lean-walk callee that returns the result of a
+  further call ends the chain there.
 - The `kind = arg` edge itself is still recorded one level deep — it marks that a
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.

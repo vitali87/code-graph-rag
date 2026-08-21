@@ -3,8 +3,14 @@ Python a callee's return summary keyed by a per-call token, so a tainted
 argument entering a parameter that reaches the return carries through to the
 caller's use of the result. The lean walk built every part of that -- parameter
 seeding, the token on the call-site record, the return-param closure -- but its
-call-result Taint omitted the token, so the composition never joined and every
-lean language silently lost pass-through taint."""
+call-result Taint omitted the token, so the composition never joined and the
+lean languages silently lost pass-through taint. Dart resolves a call's value on
+its own `_dart_rhs` path and needed the same token there.
+
+Lua and Scala are NOT covered: neither has a lean parameter-slot extractor
+(`_lean_parameter_slots` returns no slots for them), so no parameter is ever
+seeded and there is nothing for the token to compose against. Rust has an
+extractor but still does not compose; both gaps are tracked separately."""
 
 from __future__ import annotations
 
@@ -28,6 +34,7 @@ _FILENAMES = {
     "c_sharp": "A.cs",
     "go": "m.go",
     "rust": "m.rs",
+    "dart": "m.dart",
 }
 
 
@@ -80,6 +87,14 @@ _PASSTHROUGH = {
         "    var s = Forward(t);\n"
         "    Console.WriteLine(s);\n"
         "  }\n"
+        "}\n"
+    ),
+    "dart": (
+        "String forward(String v) { return v; }\n"
+        "void run() {\n"
+        "  var t = Platform.environment['SECRET'];\n"
+        "  var s = forward(t);\n"
+        "  print(s);\n"
         "}\n"
     ),
     "go": (
