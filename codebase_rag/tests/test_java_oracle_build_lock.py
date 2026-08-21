@@ -48,11 +48,26 @@ def test_concurrent_callers_compile_the_oracle_once(
     # last writer can be mid-write while another worker execs the JVM.
     calls: list[float] = []
     monkeypatch.setattr(java_oracle.subprocess, "run", _slow_compiler(calls, dwell=0.3))
-    threads = [threading.Thread(target=java_oracle._ensure_compiled) for _ in range(6)]
+    # A bare Thread swallows whatever its target raises, and join(timeout=...)
+    # reports nothing when it expires, so "exactly one compile happened" would
+    # hold equally if five workers had died and the sixth did the work. Record
+    # failures and prove every worker finished before believing the count.
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            java_oracle._ensure_compiled()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(6)]
     for t in threads:
         t.start()
     for t in threads:
         t.join(timeout=30)
+    unfinished = [t for t in threads if t.is_alive()]
+    assert not unfinished, f"{len(unfinished)} workers never finished"
+    assert not errors, f"workers raised: {errors!r}"
     assert len(calls) == 1
     assert (staged_oracle / "Oracle.class").read_bytes() == b"compiled"
 
