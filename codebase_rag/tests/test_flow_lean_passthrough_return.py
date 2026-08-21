@@ -10,7 +10,12 @@ its own `_dart_rhs` path and needed the same token there.
 Lua and Scala are NOT covered: neither has a lean parameter-slot extractor
 (`_lean_parameter_slots` returns no slots for them), so no parameter is ever
 seeded and there is nothing for the token to compose against. Rust has an
-extractor but still does not compose; both gaps are tracked separately."""
+extractor, so no parameter is ever seeded. Both are tracked in #1365.
+
+Rust needed two further fixes: it spells a `return x;` node `return_expression`
+(so the shared `TS_RETURN_STATEMENT` never matched and NO Rust return summary
+was recorded at all), and its idiomatic return is a block's trailing expression
+with no return node whatsoever."""
 
 from __future__ import annotations
 
@@ -97,6 +102,14 @@ _PASSTHROUGH = {
         "  print(s);\n"
         "}\n"
     ),
+    "rust": (
+        "fn forward(v: String) -> String { return v; }\n"
+        "fn run() {\n"
+        '    let t = std::env::var("SECRET").unwrap();\n'
+        "    let s = forward(t);\n"
+        '    println!("{}", s);\n'
+        "}\n"
+    ),
     "go": (
         "package main\n\n"
         'import (\n\t"fmt"\n\t"os"\n)\n\n'
@@ -169,3 +182,62 @@ def test_one_call_site_taint_does_not_leak_into_another(tmp_path: Path) -> None:
         "}\n"
     )
     assert (_ENV, _STDOUT) not in _flows(tmp_path, "javascript", source)
+
+
+def test_rust_tail_expression_is_a_return(tmp_path: Path) -> None:
+    # `fn f(v: T) -> T { v }` is the idiomatic Rust return and carries no return
+    # node at all, so the walk has to read the block's trailing expression.
+    source = (
+        "fn forward(v: String) -> String { v }\n"
+        "fn run() {\n"
+        '    let t = std::env::var("SECRET").unwrap();\n'
+        "    let s = forward(t);\n"
+        '    println!("{}", s);\n'
+        "}\n"
+    )
+    assert (_ENV, _STDOUT) in _flows(tmp_path, "rust", source)
+
+
+def test_rust_own_read_return_reaches_the_caller(tmp_path: Path) -> None:
+    # No parameter is involved: this is the plain return summary that was lost
+    # for every Rust function while return_expression went unrecognised.
+    source = (
+        'fn fetch() -> String { return std::env::var("SECRET").unwrap(); }\n'
+        "fn run() {\n"
+        "    let s = fetch();\n"
+        '    println!("{}", s);\n'
+        "}\n"
+    )
+    assert (_ENV, _STDOUT) in _flows(tmp_path, "rust", source)
+
+
+def test_a_rust_tail_expression_that_derives_an_unrelated_value_stays_clean(
+    tmp_path: Path,
+) -> None:
+    # The tail expression is the function's value, but `v.len()` is a LENGTH, not
+    # the secret. Treating any trailing expression mentioning a parameter as a
+    # pass-through is the false positive this mechanism could introduce.
+    source = (
+        "fn size(v: String) -> usize { v.len() }\n"
+        "fn run() {\n"
+        '    let t = std::env::var("SECRET").unwrap();\n'
+        "    let s = size(t);\n"
+        '    println!("{}", s);\n'
+        "}\n"
+    )
+    assert (_ENV, _STDOUT) not in _flows(tmp_path, "rust", source)
+
+
+def test_a_rust_body_ending_in_a_statement_returns_nothing(tmp_path: Path) -> None:
+    # A trailing SEMICOLON makes the block yield `()`. The helper never writes
+    # anywhere, so a bogus return summary is the only thing that could produce an
+    # edge here: this pins the statement-versus-expression distinction itself.
+    source = (
+        "fn discard(v: String) { let _x = v; }\n"
+        "fn run() {\n"
+        '    let t = std::env::var("SECRET").unwrap();\n'
+        "    let s = discard(t);\n"
+        '    println!("{:?}", s);\n'
+        "}\n"
+    )
+    assert (_ENV, _STDOUT) not in _flows(tmp_path, "rust", source)
