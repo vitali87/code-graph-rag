@@ -442,16 +442,26 @@ public static class Frontend
             {
                 return false;
             }
-            // Normalize before touching parameters or syntax: a reduced
-            // extension method (`x.Ext(...)`) hides its real first parameter,
-            // and a partial method's symbol can point at the DEFINING part,
-            // which has no body. Both would otherwise look unprovable.
-            var method = invoked.ReducedFrom ?? invoked;
-            method = method.PartialImplementationPart ?? method;
-            if (BoundParameter(method, argument, index) is not { } parameter)
+            // Bind the argument against the INVOKED symbol, before any
+            // normalization: in receiver style (`token.Fill(ref sink)`) the
+            // reduced symbol is what the source indices line up with, while
+            // ReducedFrom carries an extra receiver parameter at ordinal 0.
+            if (BoundParameter(invoked, argument, index) is not { } bound)
             {
                 return false;
             }
+            // Only now normalize to the symbol that OWNS a body: ReducedFrom
+            // for an extension method, then the implementing half of a partial
+            // (the defining half has no body and would look unprovable).
+            var reduced = invoked.ReducedFrom;
+            var method = reduced ?? invoked;
+            method = method.PartialImplementationPart ?? method;
+            var ordinal = bound.Ordinal + (reduced is null ? 0 : 1);
+            if (ordinal >= method.Parameters.Length)
+            {
+                return false;
+            }
+            var parameter = method.Parameters[ordinal];
             var declaration = method.DeclaringSyntaxReferences.FirstOrDefault();
             if (CallableBody(declaration?.GetSyntax()) is not { } body)
             {

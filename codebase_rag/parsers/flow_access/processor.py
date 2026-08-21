@@ -2703,6 +2703,13 @@ class FlowProcessor:
             if index in writes:
                 continue
             inputs = _merge_optional_taints(inputs, taint)
+        # An extension method called in receiver style (`token.Fill(ref sink)`)
+        # takes its source from the RECEIVER, which is not in the argument list
+        # at all; for an ordinary instance call the receiver is usually clean
+        # and contributes nothing.
+        inputs = _merge_optional_taints(
+            inputs, self._js_receiver_taint(node, tainted, jc)
+        )
         if inputs is None:
             return
         for symbol in writes.values():
@@ -2710,6 +2717,15 @@ class FlowProcessor:
                 merged := _merge_optional_taints(tainted.get(symbol), inputs)
             ) is not None:
                 tainted[symbol] = merged
+
+    def _js_receiver_taint(
+        self, node: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is None:
+            return None
+        receiver = func.child_by_field_name(jc.descriptor.object_field)
+        return None if receiver is None else self._js_expr_taint(receiver, tainted, jc)
 
     def _csharp_out_write_symbols(self, node: Node, jc: _JsCtx) -> dict[int, str]:
         writes = self._resolver.type_inference.csharp_out_writes

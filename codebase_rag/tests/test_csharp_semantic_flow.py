@@ -392,3 +392,31 @@ def test_partial_method_ref_callee_resolves_to_the_implementing_part(
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "p1", _PARTIAL_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_EXTENSION_REF = (
+    "using System;\n\n"
+    "public static class Extensions\n{\n"
+    "    public static void Fill(this string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    '        var sink = "";\n'
+    "        token.Fill(ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_receiver_style_extension_ref_argument_writes_back(tmp_path: Path) -> None:
+    # Receiver style hides a parameter: `ref sink` is source index 0 on the
+    # REDUCED symbol, but ordinal 1 on ReducedFrom, whose ordinal 0 is the
+    # receiver. Binding after normalizing analyses the wrong parameter. The
+    # taint source is the receiver too, which is not an argument at all.
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "x1", _EXTENSION_REF, cs.CSharpFrontend.HYBRID
+    )
