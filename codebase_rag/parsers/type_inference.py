@@ -57,6 +57,7 @@ class TypeInferenceEngine:
         "csharp_call_sites",
         "csharp_arg_flows",
         "csharp_bind_flows",
+        "csharp_out_writes",
         "csharp_external_sites",
         "csharp_local_functions",
         "csharp_generic_methods",
@@ -105,6 +106,7 @@ class TypeInferenceEngine:
         csharp_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
         csharp_arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]] | None = None,
         csharp_bind_flows: dict[CallSiteKey, frozenset[str]] | None = None,
+        csharp_out_writes: dict[CallSiteKey, dict[int, str]] | None = None,
         csharp_external_sites: set[CallSiteKey] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
@@ -195,6 +197,9 @@ class TypeInferenceEngine:
         # Shared reference (as with csharp_call_sites): Roslyn argument-flow
         # facts, read by the C# path of the lean flow walk (issue #1187).
         self.csharp_arg_flows = csharp_arg_flows if csharp_arg_flows is not None else {}
+        self.csharp_out_writes = (
+            csharp_out_writes if csharp_out_writes is not None else {}
+        )
         self.csharp_bind_flows = (
             csharp_bind_flows if csharp_bind_flows is not None else {}
         )

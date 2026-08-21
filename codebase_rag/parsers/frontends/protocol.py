@@ -99,6 +99,11 @@ class SemanticFacts:
     # the compiler proves reach its initializer.
     bind_flows: dict[CallSiteKey, frozenset[str]] = field(default_factory=dict)
 
+    # Per call site, the argument INDEX -> the local/parameter the callee writes
+    # through an `out`/`ref` parameter: the mirror of arg_flows, so a variable
+    # filled by the call carries what the call produced.
+    out_writes: dict[CallSiteKey, dict[int, str]] = field(default_factory=dict)
+
     def is_empty(self) -> bool:
         return not (
             self.resolved_call_sites
@@ -109,6 +114,7 @@ class SemanticFacts:
             or self.implements_pairs
             or self.arg_flows
             or self.bind_flows
+            or self.out_writes
         )
 
 

@@ -1509,6 +1509,7 @@ class FlowProcessor:
         args = self._js_arg_taints(node, tainted, jc)
         if not args:
             return
+        self._apply_csharp_out_writes(node, args, tainted, jc)
         if (sink := self._js_match_sink(raw, jc.flow.write_sinks, jc)) is not None:
             dst_identity = literal_target(
                 node,
@@ -2680,6 +2681,67 @@ class FlowProcessor:
             ):
                 return child
         return None
+
+    def _apply_csharp_out_writes(
+        self,
+        node: Node,
+        args: list[tuple[str, Taint | None]],
+        tainted: _TaintMap,
+        jc: _JsCtx,
+    ) -> None:
+        # Roslyn proved the callee writes these locals through `out`/`ref`
+        # parameters (issue #1187), so each receives what the call was GIVEN:
+        # `TryParse(raw, out var n)` makes n carry raw's taint. Without this the
+        # written variable looks untouched and a sink fed from it has no edge.
+        # Additive only, and the written argument's own prior taint is excluded
+        # so a variable cannot reinforce itself.
+        writes = self._csharp_out_write_symbols(node, jc)
+        if not writes:
+            return
+        inputs: Taint | None = None
+        for index, (_via, taint) in enumerate(args):
+            if index in writes:
+                continue
+            inputs = _merge_optional_taints(inputs, taint)
+        # An extension method called in receiver style (`token.Fill(ref sink)`)
+        # takes its source from the RECEIVER, which is not in the argument list
+        # at all; for an ordinary instance call the receiver is usually clean
+        # and contributes nothing.
+        inputs = _merge_optional_taints(
+            inputs, self._js_receiver_taint(node, tainted, jc)
+        )
+        if inputs is None:
+            return
+        for symbol in writes.values():
+            if (
+                merged := _merge_optional_taints(tainted.get(symbol), inputs)
+            ) is not None:
+                tainted[symbol] = merged
+
+    def _js_receiver_taint(
+        self, node: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is None:
+            return None
+        receiver = func.child_by_field_name(jc.descriptor.object_field)
+        return None if receiver is None else self._js_expr_taint(receiver, tainted, jc)
+
+    def _csharp_out_write_symbols(self, node: Node, jc: _JsCtx) -> dict[int, str]:
+        writes = self._resolver.type_inference.csharp_out_writes
+        if not writes or jc.flow.language != cs.SupportedLanguage.CSHARP:
+            return {}
+        name_node = self._csharp_callee_name_node(node)
+        if name_node is None or not name_node.text:
+            return {}
+        key = call_site_key(
+            name_node,
+            name_node.text.decode(cs.ENCODING_UTF8),
+            jc.flow.module_qn,
+            self._resolver.type_inference.module_qn_to_file_path,
+            self._resolver.type_inference.repo_path,
+        )
+        return writes.get(key, {}) if key is not None else {}
 
     def _csharp_arg_symbols(self, node: Node, jc: _JsCtx) -> dict[int, frozenset[str]]:
         # The Roslyn argument-flow facts for THIS call site, keyed exactly

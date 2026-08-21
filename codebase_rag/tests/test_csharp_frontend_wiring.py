@@ -267,6 +267,7 @@ def _button_facts() -> object:
         external_sites=set(),
         arg_flows={},
         bind_flows={},
+        out_writes={},
     )
 
 

@@ -164,6 +164,7 @@ class DefinitionProcessor(
         # argument index, the locals/parameters the compiler proves reach it.
         self.csharp_arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]] = {}
         self.csharp_bind_flows: dict[CallSiteKey, frozenset[str]] = {}
+        self.csharp_out_writes: dict[CallSiteKey, dict[int, str]] = {}
         # Go go/types frontend (issue #1179): the same two call families as C#
         # -- per-invocation exact first-party call targets keyed on the callee
         # NAME token location, and sites the compiler resolved OUTSIDE the module

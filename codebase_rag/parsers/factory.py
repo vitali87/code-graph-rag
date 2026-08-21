@@ -144,6 +144,7 @@ class ProcessorFactory:
                 csharp_call_sites=self.definition_processor.csharp_call_sites,
                 csharp_arg_flows=self.definition_processor.csharp_arg_flows,
                 csharp_bind_flows=self.definition_processor.csharp_bind_flows,
+                csharp_out_writes=self.definition_processor.csharp_out_writes,
                 csharp_external_sites=self.definition_processor.csharp_external_sites,
                 csharp_local_functions=self.definition_processor.csharp_local_functions,
                 csharp_generic_methods=self.definition_processor.csharp_generic_methods,

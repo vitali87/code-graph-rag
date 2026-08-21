@@ -31,6 +31,7 @@ def _adapt_csharp_semantic_facts(facts: CSharpSemanticFacts) -> SemanticFacts:
         external_sites=set(facts.external_sites),
         arg_flows=facts.arg_flows,
         bind_flows=facts.bind_flows,
+        out_writes=facts.out_writes,
         base_kinds=facts.base_kinds,
         partial_groups=facts.partial_groups,
         query_calls=[
