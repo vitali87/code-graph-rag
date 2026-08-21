@@ -164,3 +164,19 @@ def test_terminal_method_on_a_tainted_receiver_emits_no_flow(tmp_path: Path) -> 
         "        Console.WriteLine(token.Length);\n    }\n}\n"
     )
     assert (_ENV_K, _STDOUT) not in _run_flow(tmp_path, {"Program.cs": source})
+
+
+def test_value_task_as_task_preserves_taint(tmp_path: Path) -> None:
+    # `AsTask` converts a ValueTask to a Task without changing the value, so it
+    # belongs in the transparent set for the same reason as ConfigureAwait.
+    source = (
+        "using System;\nusing System.Threading.Tasks;\n\n"
+        "public class Leaky\n{\n"
+        "    private async ValueTask<string> FetchAsync()\n    {\n"
+        "        await Task.Delay(1);\n"
+        '        return Environment.GetEnvironmentVariable("K");\n    }\n\n'
+        "    public async Task Run()\n    {\n"
+        "        var token = await FetchAsync().AsTask();\n"
+        "        Console.WriteLine(token);\n    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})
