@@ -280,3 +280,46 @@ def test_discard_slot_consumes_its_position(tmp_path: Path) -> None:
         "        Console.WriteLine(secret);\n    }\n}\n"
     )
     assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})
+
+
+def test_is_pattern_binds_the_tested_value(tmp_path: Path) -> None:
+    # `o is string s` guarantees `s` IS the tested value, so it inherits its
+    # taint; without this the bound name reads as clean inside the very branch
+    # that established what it is.
+    source = (
+        "using System;\n\n"
+        "public class Leaky\n{\n"
+        "    public void Run()\n    {\n"
+        '        object o = Environment.GetEnvironmentVariable("K");\n'
+        "        if (o is string s)\n        {\n"
+        "            Console.WriteLine(s);\n        }\n    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})
+
+
+def test_is_pattern_on_a_clean_subject_emits_no_flow(tmp_path: Path) -> None:
+    # The guard: the binding must carry the SUBJECT's taint, not simply mark
+    # every pattern-bound name as tainted.
+    source = (
+        "using System;\n\n"
+        "public class Fine\n{\n"
+        "    public void Run()\n    {\n"
+        '        object o = "constant";\n'
+        "        if (o is string s)\n        {\n"
+        "            Console.WriteLine(s);\n        }\n    }\n}\n"
+    )
+    assert _run_flow(tmp_path, {"Program.cs": source}) == set()
+
+
+def test_is_pattern_without_a_binding_is_ignored(tmp_path: Path) -> None:
+    # `o is string` binds nothing, so there is no name to taint and the walk
+    # must not fall over reaching for one.
+    source = (
+        "using System;\n\n"
+        "public class Fine\n{\n"
+        "    public void Run()\n    {\n"
+        '        object o = Environment.GetEnvironmentVariable("K");\n'
+        "        if (o is string)\n        {\n"
+        '            Console.WriteLine("safe");\n        }\n    }\n}\n'
+    )
+    assert (_ENV_K, _STDOUT) not in _run_flow(tmp_path, {"Program.cs": source})

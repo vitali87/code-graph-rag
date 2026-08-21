@@ -132,6 +132,12 @@ class LanguageDescriptor:
     # each bound name in its own declaration node. None where the grammar has
     # no such form.
     declaration_expression_type: str | None = None
+
+    # Type-test pattern that BINDS a name to the tested value
+    # (`if (o is string s)`): the bound name must inherit the subject's taint,
+    # or it reads as clean inside the branch that guarantees it is the value.
+    pattern_test_type: str | None = None
+    pattern_declaration_type: str | None = None
     # True when a declarator binds its initialiser as the LAST unfielded named child
     # rather than a `value`/`right` field (C# `variable_declarator` is `name = <expr>`
     # with the expression unfielded). Lets the handle-binding walk read the RHS.
@@ -468,6 +474,8 @@ _CSHARP_DESCRIPTOR = LanguageDescriptor(
     tuple_pattern_type=cs.TS_CSHARP_TUPLE_PATTERN,
     tuple_value_type=cs.TS_CSHARP_TUPLE_EXPRESSION,
     declaration_expression_type=cs.TS_CSHARP_DECLARATION_EXPRESSION,
+    pattern_test_type=cs.TS_CSHARP_IS_PATTERN,
+    pattern_declaration_type=cs.TS_CSHARP_DECLARATION_PATTERN,
     # `var r = new StreamReader("x")` binds the initialiser as the declarator's
     # last unfielded named child (no `value` field), so the handle walk reads it.
     declarator_value_is_last_child=True,
