@@ -71,6 +71,7 @@ CMD_WORKSPACE_REMOVE_REPO = "Remove a repository from a workspace by path"
 CMD_TRACE = "Ingest runtime call traces as dynamic CALLS edges"
 CMD_TRACE_GROUP = CMD_TRACE
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
+CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
 CMD_STOP = "Stop the shared stack (alias for cgr daemon down)"
 CMD_STATUS = "Show stack state and the last sync time for each project"
@@ -110,6 +111,96 @@ HELP_TRACE_PROJECT_NAME = (
 )
 EXAMPLES_TRACE_INGEST = (
     "EXAMPLE\n\n  pytest --cgr-trace\n\n"
+    "  cgr trace ingest cgr-trace.jsonl --repo-path ./my-repo"
+)
+HELP_TRACE_OUTPUT = "Where to write the converted trace file."
+HELP_TRACE_WORKLOAD = "Workload label to attach to every converted record."
+HELP_TRACE_INCLUDE = (
+    "Comma-separated namespace prefixes to keep (dotnet-trace speedscope "
+    "profiles carry no file paths, so scoping is by name)."
+)
+HELP_TRACE_LANGUAGE = (
+    "Override the auto-detected source language. Rust pprof profiles share Go's "
+    "gzipped-protobuf format, so pass 'rust' to demangle them as Rust. For an "
+    "eBPF profile of a managed runtime, pass '--format ebpf --language python' "
+    "(or '--language jvm') together to resolve the in-kernel-unwound source "
+    "frames against that language's graph ('python' and 'jvm' are eBPF-only "
+    "overrides)."
+)
+HELP_TRACE_FORMAT = (
+    "Force a profile format instead of auto-detecting it. Use 'ebpf' for pprof "
+    "profiles from an eBPF continuous profiler (Parca, Pyroscope, OTel, perf)."
+)
+HELP_TRACE_PATH_MAP = (
+    "Re-anchor a production build path to the repo, as BUILD_PREFIX=REPO_PREFIX. "
+    "Repeatable; applied before the in-repo check (ebpf format)."
+)
+HELP_TRACE_BUILD_ID = (
+    "Keep only frames from the mapping with this build id or binary filename "
+    "(ebpf format); other binaries are seen through."
+)
+HELP_TRACE_SERVICE = (
+    "Keep only samples whose label matches, as KEY=VALUE (ebpf format)."
+)
+HELP_TRACE_LABEL = (
+    "Sample label whose value becomes each edge's workload (ebpf format)."
+)
+HELP_TRACE_COMMIT = (
+    "The commit the profiled binary was built from; warns if it differs from "
+    "the repository HEAD at convert time (ebpf format)."
+)
+CMD_TRACE_PULL = (
+    "Download a pprof profile from an eBPF continuous profiler over HTTP and "
+    "convert it (Parca download, Pyroscope render?format=pprof, or any URL)."
+)
+HELP_TRACE_PULL_SAVE = (
+    "Keep the downloaded pprof at this path; by default it is removed after conversion."
+)
+HELP_TRACE_PULL_HEADER = (
+    "Extra HTTP request header as NAME=VALUE (e.g. Authorization=Bearer TOKEN); "
+    "repeatable."
+)
+HELP_TRACE_PULL_TIMEOUT = "HTTP request timeout in seconds (default 60)."
+ERR_TRACE_PULL_BAD_URL = "Unsupported URL {url}; expected an http:// or https:// URL."
+# The header value can be a bearer token, so it is never echoed back.
+ERR_TRACE_PULL_BAD_HEADER = (
+    "Invalid --header; expected NAME=VALUE (for example Authorization=Bearer TOKEN)."
+)
+ERR_TRACE_PULL_FAILED = "Could not download {url}: {error}."
+ERR_TRACE_PULL_TOO_LARGE = (
+    "Profile at {url} exceeds the maximum download size (256 MB)."
+)
+ERR_TRACE_PULL_SAVE_EQUALS_OUTPUT = (
+    "--save and --output must be different paths (--output holds the converted "
+    "trace, --save the downloaded profile)."
+)
+EXAMPLES_TRACE_PULL = (
+    "EXAMPLE\n\n"
+    "  cgr trace pull https://parca.example/api/... \\\n"
+    "      --repo-path ./my-repo --build-id 8f3a \\\n"
+    "      --path-map /build/src/=./my-repo/src/ \\\n"
+    "      --header Authorization=Bearer $TOKEN\n\n"
+    "  cgr trace ingest cgr-trace.jsonl --repo-path ./my-repo"
+)
+ERR_TRACE_CONVERT_BAD_FORMAT = "Unknown --format '{format}'; supported: ebpf."
+ERR_TRACE_CONVERT_BAD_PATH_MAP = (
+    "Invalid --path-map '{value}'; expected BUILD_PREFIX=REPO_PREFIX."
+)
+ERR_TRACE_CONVERT_BAD_SERVICE = "Invalid --service '{value}'; expected KEY=VALUE."
+MSG_TRACE_COMMIT_MISMATCH = (
+    "Profiled commit {profiled} differs from repository HEAD {head}; edges may "
+    "resolve against moved or renamed code."
+)
+ERR_TRACE_CONVERT_BAD_LANGUAGE = (
+    "Unknown --language '{language}'; supported override values: {supported}."
+)
+ERR_TRACE_CONVERT_NEEDS_REPO = "V8 cpuprofiles need --repo-path to scope frames."
+ERR_TRACE_CONVERT_NEEDS_INCLUDE = (
+    "speedscope profiles need --include namespace prefixes to scope frames."
+)
+EXAMPLES_TRACE_CONVERT = (
+    "EXAMPLE\n\n  node --cpu-prof --cpu-prof-name=run.cpuprofile app.js\n\n"
+    "  cgr trace convert run.cpuprofile --repo-path ./my-repo\n\n"
     "  cgr trace ingest cgr-trace.jsonl --repo-path ./my-repo"
 )
 
@@ -260,3 +351,13 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DOCTOR: CMD_DOCTOR,
     CLICommandName.HELP: CMD_HELP,
 }
+CMD_VERIFY_INDEX = "Verify a protobuf index against its provenance manifest"
+HELP_VERIFY_INDEX_DIR = "Directory holding the index artifacts and manifest.json."
+HELP_TRUSTED_MANIFEST_SHA = (
+    "Externally trusted sha256 of manifest.json (e.g. from an attestation); "
+    "anchors verification beyond local self-consistency."
+)
+CMD_DIFF_INDEX = "Structural diff between two protobuf index snapshots"
+HELP_DIFF_OLD = "Directory holding the OLD snapshot artifacts."
+HELP_DIFF_NEW = "Directory holding the NEW snapshot artifacts."
+HELP_DIFF_JSON_OUT = "Write the JSON delta to FILE instead of stdout."

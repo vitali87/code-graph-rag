@@ -837,9 +837,41 @@ def _row_qn(row: ResultRow) -> str:
     return str(row.get(cs.KEY_QUALIFIED_NAME) or "")
 
 
+def count_structural_tier_symbols(node_rows: list[ResultRow]) -> int:
+    """Count symbols the reachability walk could never have reported.
+
+    The ast-grep tier emits no CALLS edges and marks its symbols exported, so
+    they are unconditional roots. Reporting this count keeps a "no dead code"
+    result honest about the languages that were never analyzed.
+    """
+    from .parsers.ast_grep_tier import structural_tier_extensions
+
+    extensions = structural_tier_extensions()
+    if not extensions:
+        return 0
+    symbol_labels = {_FUNCTION, _METHOD, _CLASS}
+    return sum(
+        1
+        for row in node_rows
+        if str(row.get(cs.KEY_LABEL) or "") in symbol_labels
+        and str(row.get(cs.KEY_PATH) or "").endswith(tuple(extensions))
+    )
+
+
 def collect_dead_code(
     ingestor: GraphQueryClient, project_name: str, config: DeadCodeConfig
 ) -> list[ResultRow]:
+    return collect_dead_code_with_coverage(ingestor, project_name, config)[0]
+
+
+def collect_dead_code_with_coverage(
+    ingestor: GraphQueryClient, project_name: str, config: DeadCodeConfig
+) -> tuple[list[ResultRow], int]:
+    """Dead-code rows plus the count of symbols no analysis could cover.
+
+    The count rides along here because it needs the unfiltered node rows, which
+    only this fetch has; recomputing it in the CLI would mean a second query.
+    """
     prefix = project_name + cs.SEPARATOR_DOT
     params: dict[str, PropertyValue] = {cs.KEY_PROJECT_PREFIX: prefix}
 
@@ -863,4 +895,4 @@ def collect_dead_code(
     dead = dead_code_from_graph(nodes, rels, prefix, config)
     rows = [row for row in node_rows if _row_qn(row) in dead]
     rows.sort(key=_row_qn)
-    return rows
+    return rows, count_structural_tier_symbols(node_rows)

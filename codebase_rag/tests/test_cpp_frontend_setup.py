@@ -32,7 +32,7 @@ def test_cpp_extra_declares_libclang() -> None:
     assert pyproject["project"]["optional-dependencies"]["cpp"] == ["libclang>=18.1.1"]
 
 
-def test_missing_libclang_logs_install_hint_once(
+def test_missing_libclang_logs_install_hint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     warning_messages: list[str],
@@ -43,7 +43,6 @@ def test_missing_libclang_logs_install_hint_once(
     updater = gu.GraphUpdater(MagicMock(), repo, {}, {})
 
     updater._run_cpp_frontend()
-    updater._run_cpp_frontend()
 
     matching = [
         message for message in warning_messages if "code-graph-rag[cpp]" in message
@@ -51,7 +50,7 @@ def test_missing_libclang_logs_install_hint_once(
     assert len(matching) == 1, warning_messages
 
 
-def test_missing_compile_database_logs_generation_hints_once(
+def test_missing_compile_database_logs_generation_hints(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     warning_messages: list[str],
@@ -62,7 +61,6 @@ def test_missing_compile_database_logs_generation_hints_once(
     monkeypatch.setattr(gu, "find_compile_commands", lambda _path: None)
     updater = gu.GraphUpdater(MagicMock(), repo, {}, {})
 
-    updater._run_cpp_frontend()
     updater._run_cpp_frontend()
 
     matching = [

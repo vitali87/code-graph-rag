@@ -16,6 +16,22 @@ reached only through dynamic dispatch, reflection, string-keyed lookups, or an
 external framework that the static graph cannot see may still be reported. Read
 each candidate before removing it.
 
+## Language Coverage
+
+Detection needs a call graph, so it covers only the
+[fully supported languages](../architecture/language-support.md). Languages
+served by the structural (ast-grep) tier, such as Ruby, produce no `CALLS`
+edges, so their symbols are always treated as reachable and never reported.
+
+That exemption is deliberate: without call edges every symbol would look
+unreachable. But it means a clean report says nothing about those languages, so
+the command prints how many symbols were skipped:
+
+```text
+No unreachable functions or methods found.
+12 symbol(s) in structural-tier languages were not analyzed (no call graph for these languages).
+```
+
 ## Prerequisites
 
 Index the repository first, so the graph exists in Memgraph:

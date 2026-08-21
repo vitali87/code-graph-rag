@@ -471,3 +471,132 @@ def test_loop_variable_return_types(
 
     if missing_calls:
         pytest.fail(f"Missing loop variable return type calls: {missing_calls}")
+
+
+def test_generic_return_annotation_types_loop_variables(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `-> list[Widget]` annotation is the only evidence here: the bodies
+    # return through opaque calls, so body inference yields nothing and the
+    # loop variables can only type through the parsed generic (issue #1304).
+    project_path = tmp_path / "generic_annotation_test"
+    project_path.mkdir()
+    (project_path / "__init__.py").write_text(encoding="utf-8", data="")
+    (project_path / "app.py").write_text(
+        encoding="utf-8",
+        data="""import json
+
+class Widget:
+    def render(self) -> str:
+        return "w"
+
+class Banner:
+    # Decoy: shares the method name so the bare-name fallback is ambiguous
+    # and only a typed receiver can bind the calls below.
+    def render(self) -> str:
+        return "b"
+
+def load_widgets() -> list[Widget]:
+    return json.loads("[]")
+
+def fetch_widgets() -> "Sequence[Widget]":
+    return json.loads("[]")
+
+def stream_widgets() -> tuple[Widget, ...]:
+    return json.loads("[]")
+
+def opt_widgets() -> Optional[list[Widget]]:
+    return json.loads("[]")
+
+class Screen:
+    def __init__(self):
+        self.widgets = load_widgets()
+
+    def draw_direct(self):
+        for w in load_widgets():
+            w.render()
+
+    def draw_stored(self):
+        widgets = load_widgets()
+        for w in widgets:
+            w.render()
+
+    def draw_sequence(self):
+        for w in fetch_widgets():
+            w.render()
+
+    def draw_attribute(self):
+        for w in self.widgets:
+            w.render()
+
+    def draw_homogeneous_tuple(self):
+        for w in stream_widgets():
+            w.render()
+
+    def draw_optional(self):
+        for w in opt_widgets():
+            w.render()
+
+    def load_more(self) -> list[Widget]:
+        return json.loads("[]")
+
+    def draw_self_method(self):
+        for w in self.load_more():
+            w.render()
+""",
+    )
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project_path,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    project_name = project_path.name
+    found_method_calls = {
+        (c[0][0][2], c[0][2][2])
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeType.METHOD
+    }
+    render = f"{project_name}.app.Widget.render"
+    decoy = f"{project_name}.app.Banner.render"
+    missing = [
+        (caller, render)
+        for method in (
+            "draw_direct",
+            "draw_stored",
+            "draw_sequence",
+            "draw_attribute",
+            "draw_homogeneous_tuple",
+            "draw_optional",
+            "draw_self_method",
+        )
+        if ((caller := f"{project_name}.app.Screen.{method}"), render)
+        not in found_method_calls
+    ]
+    if missing:
+        pytest.fail(f"Missing generic-annotation loop calls: {missing}")
+    # The annotation names Widget, so the decoy must never be linked.
+    assert not any(callee == decoy for _caller, callee in found_method_calls)
+
+
+def test_homogeneous_element_rules():
+    # A heterogeneous tuple guarantees nothing about a given element, so it
+    # must never type a loop variable as its first member (the untyped frame
+    # then falls to the resolver's pre-existing bare-name behaviour).
+    from codebase_rag.parsers.py.ast_analyzer import _homogeneous_element
+
+    assert _homogeneous_element("tuple", "Widget") == "Widget"
+    assert _homogeneous_element("tuple", "Widget, ...") == "Widget"
+    assert _homogeneous_element("tuple", "Widget, Banner") is None
+    assert _homogeneous_element("Tuple", "Widget, Banner, Panel") is None
+    assert _homogeneous_element("Generator", "Widget, None, None") == "Widget"
+    assert _homogeneous_element("Generator", "Widget, None, None, X") is None
+    # AsyncGenerator takes yield and send types only, never a return type.
+    assert _homogeneous_element("AsyncGenerator", "Widget, None") == "Widget"
+    assert _homogeneous_element("AsyncGenerator", "Widget, None, None") is None
+    assert _homogeneous_element("list", "Widget") == "Widget"
+    assert _homogeneous_element("list", "Widget, Banner") is None

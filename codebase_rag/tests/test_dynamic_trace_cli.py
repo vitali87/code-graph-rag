@@ -10,7 +10,11 @@ from click.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag.trace.cli import cli
-from codebase_rag.trace.records import TraceHeader, write_trace_file
+from codebase_rag.trace.records import (
+    TraceHeader,
+    read_trace_file,
+    write_trace_file,
+)
 
 
 class _RecordingGraph:
@@ -71,6 +75,249 @@ def test_ingest_command_prints_summary(tmp_path, monkeypatch):
     assert "records:          0" in result.output
     assert "edges written:    0" in result.output
     assert len(graph.queries) == 2
+
+
+def test_convert_command_writes_interchange_trace(tmp_path):
+    import json as jsonlib
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    profile = {
+        "nodes": [
+            {
+                "id": 1,
+                "callFrame": {
+                    "functionName": "runAll",
+                    "url": (repo / "main.js").as_uri(),
+                    "lineNumber": 2,
+                    "columnNumber": 0,
+                },
+                "hitCount": 1,
+                "children": [2],
+            },
+            {
+                "id": 2,
+                "callFrame": {
+                    "functionName": "helper",
+                    "url": (repo / "main.js").as_uri(),
+                    "lineNumber": 6,
+                    "columnNumber": 0,
+                },
+                "hitCount": 3,
+                "children": [],
+            },
+        ],
+        "startTime": 0,
+        "endTime": 1,
+        "samples": [],
+        "timeDeltas": [],
+    }
+    profile_path = tmp_path / "main.cpuprofile"
+    profile_path.write_text(jsonlib.dumps(profile))
+    output = tmp_path / "trace.jsonl"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "convert",
+            str(profile_path),
+            "--repo-path",
+            str(repo),
+            "--output",
+            str(output),
+            "--workload",
+            "suite",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    header, records = read_trace_file(output)
+    assert header.language == cs.TRACE_LANGUAGE_JS
+    (record,) = list(records)
+    assert (record.caller.qualname, record.callee.qualname) == ("runAll", "helper")
+    assert record.workloads == ("suite",)
+    assert "1" in result.output
+
+
+def test_convert_command_fails_cleanly_on_malformed_profile(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    profile_path = tmp_path / "broken.cpuprofile"
+    profile_path.write_text("{}")
+
+    result = CliRunner().invoke(
+        cli,
+        ["convert", str(profile_path), "--repo-path", str(repo)],
+    )
+
+    assert result.exit_code == 1
+    assert "cpuprofile" in result.output.lower()
+
+
+def test_convert_command_fails_cleanly_on_non_utf8_profile(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    profile_path = tmp_path / "invalid.profile"
+    profile_path.write_bytes(b"\xff\xfe\x00\x01")
+
+    result = CliRunner().invoke(
+        cli,
+        ["convert", str(profile_path), "--repo-path", str(repo)],
+    )
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_convert_command_sniffs_speedscope_and_requires_include(tmp_path):
+    import json as jsonlib
+
+    speedscope = {
+        "shared": {
+            "frames": [
+                {"name": "MyApp!MyApp.Program.Main()"},
+                {"name": "MyApp!MyApp.Registry.Handle()"},
+            ]
+        },
+        "profiles": [
+            {
+                "type": "sampled",
+                "samples": [[0, 1]],
+                "weights": [3],
+            }
+        ],
+    }
+    profile_path = tmp_path / "trace.speedscope.json"
+    profile_path.write_text(jsonlib.dumps(speedscope))
+    output = tmp_path / "trace.jsonl"
+
+    missing_include = CliRunner().invoke(
+        cli, ["convert", str(profile_path), "--output", str(output)]
+    )
+    assert missing_include.exit_code == 1
+    assert "--include" in missing_include.output
+
+    # An include that normalises to nothing (commas/whitespace only) is
+    # rejected rather than silently producing an empty trace.
+    empty_include = CliRunner().invoke(
+        cli,
+        ["convert", str(profile_path), "--include", " , ", "--output", str(output)],
+    )
+    assert empty_include.exit_code == 1
+    assert "--include" in empty_include.output
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "convert",
+            str(profile_path),
+            "--include",
+            "MyApp",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    header, records = read_trace_file(output)
+    assert header.language == cs.TRACE_LANGUAGE_DOTNET
+    (record,) = list(records)
+    assert (record.caller.qualname, record.callee.qualname) == (
+        "MyApp.Program.Main",
+        "MyApp.Registry.Handle",
+    )
+
+
+def test_convert_command_requires_repo_path_for_cpuprofiles(tmp_path):
+    import json as jsonlib
+
+    profile_path = tmp_path / "main.cpuprofile"
+    profile_path.write_text(jsonlib.dumps({"nodes": [], "samples": []}))
+
+    result = CliRunner().invoke(cli, ["convert", str(profile_path)])
+
+    assert result.exit_code == 1
+    assert "--repo-path" in result.output
+
+
+def test_convert_command_fails_cleanly_on_unreadable_xt(tmp_path, monkeypatch):
+    trace_path = tmp_path / "run.xt"
+    trace_path.write_text("File format: 4\n")
+
+    def _deny(*args, **kwargs):
+        raise PermissionError(f"denied: {trace_path}")
+
+    monkeypatch.setattr("codebase_rag.trace.xdebug.convert_xdebug_trace", _deny)
+    result = CliRunner().invoke(cli, ["convert", str(trace_path)])
+
+    assert result.exit_code == 1
+    assert "denied" in result.output
+
+
+def test_convert_command_sniffs_pprof_and_requires_repo_path(tmp_path):
+    import gzip as gziplib
+
+    profile_path = tmp_path / "cpu.out"
+    profile_path.write_bytes(gziplib.compress(b"\x00"))
+
+    result = CliRunner().invoke(cli, ["convert", str(profile_path)])
+
+    assert result.exit_code == 1
+    assert "--repo-path" in result.output
+
+
+def test_convert_command_language_rust_routes_to_rust_and_requires_repo(tmp_path):
+    # Rust pprof is gzipped protobuf like Go's, so --language forces the Rust
+    # demangler; the Rust converter still needs --repo-path to scope frames.
+    import gzip as gziplib
+
+    profile_path = tmp_path / "cpu.pb.gz"
+    profile_path.write_bytes(gziplib.compress(b"\x00"))
+
+    result = CliRunner().invoke(
+        cli, ["convert", str(profile_path), "--language", "rust"]
+    )
+
+    assert result.exit_code == 1
+    assert "--repo-path" in result.output
+
+
+def test_convert_command_rejects_unknown_language(tmp_path):
+    import gzip as gziplib
+
+    profile_path = tmp_path / "cpu.pb.gz"
+    profile_path.write_bytes(gziplib.compress(b"\x00"))
+
+    result = CliRunner().invoke(
+        cli, ["convert", str(profile_path), "--language", "cobol"]
+    )
+
+    assert result.exit_code == 1
+    assert "cobol" in result.output
+
+
+def test_convert_command_sniffs_addrs_and_requires_repo_path(tmp_path):
+    addrs_path = tmp_path / "cgr-trace.addrs"
+    addrs_path.write_text("exe /bin/app\nslide 0\n1000 2000 1\n")
+
+    result = CliRunner().invoke(cli, ["convert", str(addrs_path)])
+
+    assert result.exit_code == 1
+    assert "--repo-path" in result.output
+
+
+def test_convert_command_fails_cleanly_on_bad_addrs_number(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    addrs_path = tmp_path / "cgr-trace.addrs"
+    addrs_path.write_text("exe /bin/app\nslide 0\nZZZZ 2000 1\n")
+
+    result = CliRunner().invoke(
+        cli, ["convert", str(addrs_path), "--repo-path", str(repo)]
+    )
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
 def test_ingest_command_fails_cleanly_on_malformed_trace(tmp_path, monkeypatch):

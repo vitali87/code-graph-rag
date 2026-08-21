@@ -9,7 +9,14 @@ import json
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.trace.records import TraceFormatError, read_trace_file
+from codebase_rag.trace.records import (
+    CallRecord,
+    FramePoint,
+    TraceFormatError,
+    TraceHeader,
+    read_trace_file,
+    write_trace_file,
+)
 
 
 def _frame(line: object = 3) -> dict[str, object]:
@@ -95,8 +102,9 @@ def test_empty_file_is_rejected(tmp_path):
     ],
 )
 def test_malformed_header_is_rejected(tmp_path, first_line):
+    trace_path = _write_raw(tmp_path, first_line)
     with pytest.raises(TraceFormatError):
-        read_trace_file(_write_raw(tmp_path, first_line))
+        read_trace_file(trace_path)
 
 
 def test_unsupported_version_is_rejected(tmp_path):
@@ -110,10 +118,9 @@ def test_unsupported_version_is_rejected(tmp_path):
 
 
 def test_non_string_header_field_is_rejected(tmp_path):
+    trace_path = _write_raw(tmp_path, _header_line(**{cs.TRACE_KEY_LANGUAGE: 7}))
     with pytest.raises(TraceFormatError):
-        read_trace_file(
-            _write_raw(tmp_path, _header_line(**{cs.TRACE_KEY_LANGUAGE: 7}))
-        )
+        read_trace_file(trace_path)
 
 
 @pytest.mark.parametrize("record_line", ["{broken", "42", json.dumps({"kind": "call"})])
@@ -133,3 +140,56 @@ def test_blank_lines_are_skipped(tmp_path):
     _header, records = read_trace_file(trace_path)
 
     assert list(records) == []
+
+
+@pytest.mark.parametrize("sampled", [True, False])
+def test_sampled_flag_round_trips(tmp_path, sampled):
+    trace_path = tmp_path / "trace.jsonl"
+    header = TraceHeader(
+        version=cs.TRACE_FORMAT_VERSION,
+        language=cs.TRACE_LANGUAGE_GO,
+        repo_root="/repo",
+        tracer=cs.TRACE_TOOL_NAME_PPROF,
+        sampled=sampled,
+    )
+    record = CallRecord(
+        caller=FramePoint(path="/repo/a.go", qualname="a", line=1),
+        callee=FramePoint(path="/repo/b.go", qualname="b", line=2),
+        count=1,
+        workloads=(),
+        receiver_types=(),
+    )
+    write_trace_file(trace_path, header, [record])
+    parsed, _records = read_trace_file(trace_path)
+    assert parsed.sampled is sampled
+
+
+def test_header_without_sampled_key_reads_as_exact(tmp_path):
+    # Pre-flag trace files omit `sampled`; they must remain readable and be
+    # treated as exact rather than rejected.
+    trace_path = _write_raw(tmp_path, _header_line())
+    header, _records = read_trace_file(trace_path)
+    assert header.sampled is False
+
+
+@pytest.mark.parametrize("sampled", ["true", 1, 0, None])
+def test_non_bool_sampled_is_rejected(tmp_path, sampled):
+    trace_path = _write_raw(tmp_path, _header_line(**{cs.TRACE_KEY_SAMPLED: sampled}))
+    with pytest.raises(TraceFormatError):
+        read_trace_file(trace_path)
+
+
+def test_lua_language_tag_constant():
+    # The Lua tracer's subprocess tests skip without an interpreter, and a
+    # module-level constant only executes at import (before this test runs), so
+    # reload the module here to record the definition line under coverage.
+    import importlib
+
+    from codebase_rag.constants import trace as trace_constants
+
+    importlib.reload(trace_constants)
+    assert trace_constants.TRACE_LANGUAGE_LUA == "lua"
+    assert trace_constants.TRACE_LANGUAGE_GO == "go"
+    assert trace_constants.TRACE_LANGUAGE_DART == "dart"
+    assert trace_constants.TRACE_LANGUAGE_RUST == "rust"
+    assert trace_constants.TRACE_LANGUAGE_CPP == "cpp"

@@ -61,12 +61,20 @@ class CodeRetriever:
             file_path_str = res.get("path")
             start_line = res.get("start")
             end_line = res.get("end")
+            if not isinstance(file_path_str, str):
+                file_path_str = ""
 
-            if not all([file_path_str, start_line, end_line]):
+            if (
+                not file_path_str.strip()
+                or type(start_line) is not int
+                or type(end_line) is not int
+                or start_line < 1
+                or end_line < start_line
+            ):
                 return CodeSnippet(
                     qualified_name=qualified_name,
                     source_code="",
-                    file_path=file_path_str or "",
+                    file_path=file_path_str,
                     line_start=0,
                     line_end=0,
                     found=False,
@@ -85,7 +93,17 @@ class CodeRetriever:
             if absolute_path_str and Path(absolute_path_str).is_file():
                 full_path = Path(absolute_path_str)
             else:
-                full_path = self.project_root / file_path_str
+                full_path = (self.project_root / file_path_str).resolve()
+                if not full_path.is_relative_to(self.project_root):
+                    return CodeSnippet(
+                        qualified_name=qualified_name,
+                        source_code="",
+                        file_path=file_path_str,
+                        line_start=0,
+                        line_end=0,
+                        found=False,
+                        error_message=te.CODE_MISSING_LOCATION,
+                    )
             if not full_path.is_file():
                 return CodeSnippet(
                     qualified_name=qualified_name,
@@ -100,6 +118,17 @@ class CodeRetriever:
                 )
             with full_path.open("r", encoding=ENCODING_UTF8) as f:
                 all_lines = f.readlines()
+
+            if end_line > len(all_lines):
+                return CodeSnippet(
+                    qualified_name=qualified_name,
+                    source_code="",
+                    file_path=file_path_str,
+                    line_start=0,
+                    line_end=0,
+                    found=False,
+                    error_message=te.CODE_MISSING_LOCATION,
+                )
 
             snippet_lines = all_lines[start_line - 1 : end_line]
             source_code = "".join(snippet_lines)

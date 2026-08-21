@@ -18,6 +18,7 @@ from . import constants as ec
 from . import logs as ls
 from .ast_oracle import _from_base_parts, _iter_py_files, _module_dotted
 from .cgr_graph import _capture
+from .oracles.java_oracle import java_available, run_java_oracle
 from .score import _prf
 from .structure_report import render, write_outputs
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
@@ -27,6 +28,7 @@ console_target = Path(ec.INHERITANCE_DEFAULT_TARGET)
 _CLASS = cs.NodeLabel.CLASS.value
 _METHOD = cs.NodeLabel.METHOD.value
 _INHERITS = cs.RelationshipType.INHERITS.value
+_IMPLEMENTS = cs.RelationshipType.IMPLEMENTS.value
 _OVERRIDES = cs.RelationshipType.OVERRIDES.value
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
@@ -202,7 +204,66 @@ def _override_repr(edge: OverrideEdge) -> str:
     return ec.OVERRIDES_EDGE_REPR.format(sub=edge[0], base=edge[1], method=edge[2])
 
 
-def score_inheritance(cgr: CgrResult, oracle: OracleResult) -> ScoreResult:
+def _location_key(file: str, line: int) -> str:
+    # Subclass identity by LOCATION, not by name: the javac oracle names a
+    # supertype by simple name but pins the subclass to a file and line, and
+    # matching the subclass exactly keeps the looseness confined to one side of
+    # the comparison.
+    return f"{file}{ec.LOCATION_KEY_SEPARATOR}{line}"
+
+
+def java_oracle_inheritance(target: Path) -> OracleResult:
+    # The javac oracle already emits extends/implements as `name_edges`; no
+    # oracle-side work is needed (issue #1190). It emits no OVERRIDES, so that
+    # category stays empty and _prf omits the row rather than scoring a
+    # category the oracle cannot adjudicate.
+    graph = run_java_oracle(target)
+    inherits: set[InheritEdge] = set()
+    subclasses: set[str] = set()
+    for edge in graph.name_edges:
+        if edge.rel_type not in (_INHERITS, _IMPLEMENTS):
+            continue
+        key = _location_key(edge.source.file, edge.source.start_line)
+        subclasses.add(key)
+        inherits.add((key, edge.target_name))
+    return OracleResult(
+        inherits=inherits,
+        overrides=set(),
+        top_classes=frozenset(subclasses),
+        override_scope=frozenset(),
+    )
+
+
+def java_cgr_inheritance(target: Path, project: str) -> CgrResult:
+    ingestor = _capture(target, project)
+    props_by_node = {
+        (label, str(uid)): props for (label, uid), props in ingestor.nodes.items()
+    }
+    inherits: set[InheritEdge] = set()
+    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
+        if rel_type not in (_INHERITS, _IMPLEMENTS):
+            continue
+        props = props_by_node.get((from_label, str(from_val)))
+        path = str(props.get(cs.KEY_PATH, "")) if props else ""
+        if not path.endswith(ec.JAVA_SUFFIX):
+            continue
+        line = props.get(cs.KEY_START_LINE) if props else None
+        # Node properties are a heterogeneous union; a non-integer start_line
+        # is unusable as a location key, so skip rather than coerce it.
+        if not isinstance(line, int):
+            continue
+        # The oracle names the supertype simply, so the qn is reduced to its
+        # last segment to compare like with like.
+        base = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        inherits.add((_location_key(path, line), base))
+    return CgrResult(inherits=inherits, overrides=set())
+
+
+def score_inheritance(
+    cgr: CgrResult,
+    oracle: OracleResult,
+    inherits_label: str = ec.INHERITS_LABEL,
+) -> ScoreResult:
     # Restrict cgr to the oracle's gradeable universe: top-level subclasses for
     # INHERITS, single-base subclasses for OVERRIDES. This drops nested-class
     # and multi-base-MRO edges the oracle cannot adjudicate, rather than scoring
@@ -214,10 +275,10 @@ def score_inheritance(cgr: CgrResult, oracle: OracleResult) -> ScoreResult:
     rows: list[ScoreRow] = []
     diff: dict[str, DiffBucket] = {}
 
-    inh_row = _prf(ec.Category.EDGE.value, ec.INHERITS_LABEL, cgr_inh, oracle_inh)
+    inh_row = _prf(ec.Category.EDGE.value, inherits_label, cgr_inh, oracle_inh)
     if inh_row is not None:
         rows.append(inh_row)
-        diff[ec.INHERITANCE_DIFF_PREFIX + ec.INHERITS_LABEL] = DiffBucket(
+        diff[ec.INHERITANCE_DIFF_PREFIX + inherits_label] = DiffBucket(
             missing=[_inherit_repr(e) for e in sorted(oracle_inh - cgr_inh)],
             extra=[_inherit_repr(e) for e in sorted(cgr_inh - oracle_inh)],
         )
@@ -243,10 +304,37 @@ def main(
     out_dir: Annotated[
         Path, typer.Option(help="Directory for inheritance_scores.csv and diff json.")
     ] = Path(ec.DEFAULT_OUT_DIR),
+    language: Annotated[
+        ec.InheritanceLanguage, typer.Option(help=ec.INHERITANCE_LANGUAGE_HELP)
+    ] = ec.InheritanceLanguage.PYTHON,
 ) -> None:
     target = target.resolve()
     project = project_name or target.name
     logger.info(ls.INHERITANCE_TARGET.format(target=target, project=project))
+
+    if language == ec.InheritanceLanguage.JAVA:
+        # Without a JDK the oracle yields nothing, and scoring that would write
+        # a header-only CSV and an empty diff while exiting 0 -- reporting "no
+        # gradeable edges" when the truth is "the grader never ran".
+        if not java_available():
+            logger.error(ls.JAVA_ORACLE_MISSING)
+            raise typer.Exit(code=1)
+        # The javac oracle names supertypes by SIMPLE name while it pins the
+        # subclass to a location, so the row carries its own label: a Java 1.0
+        # is not measuring the same unit as the Python one (issue #1190).
+        result = score_inheritance(
+            java_cgr_inheritance(target, project),
+            java_oracle_inheritance(target),
+            inherits_label=ec.JAVA_SUPERTYPES_LABEL,
+        )
+        write_outputs(
+            result,
+            out_dir,
+            ec.INHERITANCE_SCORES_FILENAME,
+            ec.INHERITANCE_DIFF_FILENAME,
+        )
+        render(result, ec.INHERITANCE_TITLE)
+        return
 
     oracle = oracle_inheritance(target, project)
     logger.success(

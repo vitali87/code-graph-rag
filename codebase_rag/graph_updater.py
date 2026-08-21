@@ -60,6 +60,16 @@ from .parsers.factory import ProcessorFactory
 from .parsers.frontends import FRONTENDS, SemanticFacts
 from .parsers.frontends.protocol import QueryCall
 from .parsers.go_frontend import find_go_module
+from .parsers.java_generated import (
+    discover_generated_source_roots,
+    generated_prefixes_for,
+    unignore_patterns_for,
+)
+from .parsers.java_lombok import (
+    build_delombok_overlay,
+    current_lombok_identity,
+    overlay_identity,
+)
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -68,6 +78,7 @@ from .types_defs import (
     CppDefinitionSpan,
     EmbeddingQueryResult,
     FunctionLocation,
+    FunctionLocations,
     LanguageQueries,
     NodeType,
     PendingExpansionCall,
@@ -78,12 +89,21 @@ from .types_defs import (
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
+    cached_file_identity_posix,
     cached_relative_path,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
 )
 from .utils.source_extraction import extract_source_with_fallback
+
+
+def _persisted_int(value: object) -> int | None:
+    # bool is an int subclass; a stray True would key as 1 and shadow a real
+    # entry, so it is rejected explicitly (same discipline as the C# path).
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
 
 
 def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
@@ -151,6 +171,39 @@ def _load_hash_cache(cache_path: Path) -> FileHashCache:
     except (json.JSONDecodeError, OSError) as e:
         logger.warning(ls.HASH_CACHE_LOAD_FAILED, path=cache_path, error=e)
     return {}
+
+
+_EMPTY_DELOMBOK_STATE: dict = {"identity": "", "keys": [], "lombok": ""}
+
+
+def _load_delombok_state(state_path: Path) -> dict:
+    try:
+        loaded = json.loads(state_path.read_text(encoding=cs.ENCODING_UTF8))
+    except (OSError, json.JSONDecodeError):
+        return _EMPTY_DELOMBOK_STATE.copy()
+    if not isinstance(loaded, dict):
+        return _EMPTY_DELOMBOK_STATE.copy()
+    identity = loaded.get("identity")
+    keys = loaded.get("keys")
+    lombok = loaded.get("lombok")
+    return {
+        "identity": identity if isinstance(identity, str) else "",
+        "keys": (
+            sorted(key for key in keys if isinstance(key, str))
+            if isinstance(keys, list)
+            else []
+        ),
+        "lombok": lombok if isinstance(lombok, str) else "",
+    }
+
+
+def _save_delombok_state(state_path: Path, state: dict) -> None:
+    try:
+        state_path.write_text(
+            json.dumps(state, sort_keys=True), encoding=cs.ENCODING_UTF8
+        )
+    except OSError:
+        return None
 
 
 def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
@@ -267,6 +320,11 @@ class GraphUpdater:
         # spare foreign files' entries (issue #1025).
         self._frontend_owned_qns: dict[str, set[str]] = {}
         self.unignore_paths = unignore_paths
+        self._configured_unignore_paths = unignore_paths
+        self._delombok_overlay: dict[str, bytes] = {}
+        self._delombok_state_changed = False
+        self._delombok_stale_keys: set[str] = set()
+        self._delombok_state_candidate: dict = _EMPTY_DELOMBOK_STATE.copy()
         self.exclude_paths = exclude_paths
         # None defers to the CGR_SKIP_EMBEDDINGS setting so env-configured
         # callers (MCP, workspace sync) opt out without a CLI flag.
@@ -276,7 +334,6 @@ class GraphUpdater:
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
-        self._cpp_frontend_warnings: set[str] = set()
         # Hybrid-mode macro uses awaiting a caller: attribution needs the
         # tree-sitter definition spans, which exist only after Pass 2.
         self._pending_cpp_macro_calls: list[PendingMacroCall] = []
@@ -320,12 +377,6 @@ class GraphUpdater:
             self._sink, self.repo_path, self.capture
         )
 
-    def _warn_cpp_frontend_once(self, message: str) -> None:
-        if message in self._cpp_frontend_warnings:
-            return
-        self._cpp_frontend_warnings.add(message)
-        logger.warning(message)
-
     def _run_cpp_frontend(self) -> None:
         # Optional libclang C++ pre-pass when a compile_commands.json is
         # discoverable. LIBCLANG: emit macro-accurate C/C++ nodes/edges
@@ -348,11 +399,11 @@ class GraphUpdater:
             # compile_commands.json on every index of a Python/Go project.
             return
         if not cpp_frontend_available():
-            self._warn_cpp_frontend_once(ls.CPP_FRONTEND_UNAVAILABLE)
+            logger.warning(ls.CPP_FRONTEND_UNAVAILABLE)
             return
         compdb_dir = find_compile_commands(self.repo_path)
         if compdb_dir is None:
-            self._warn_cpp_frontend_once(ls.CPP_FRONTEND_NO_COMPDB)
+            logger.warning(ls.CPP_FRONTEND_NO_COMPDB)
             return
         logger.info(ls.CPP_FRONTEND_RUNNING.format(path=compdb_dir))
         if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
@@ -448,6 +499,9 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         dp.csharp_base_kinds = {}
         dp.csharp_call_sites.clear()
+        dp.csharp_arg_flows.clear()
+        dp.csharp_bind_flows.clear()
+        dp.csharp_out_writes.clear()
         dp.csharp_external_sites.clear()
         self._csharp_partial_decls = []
         self._csharp_query_calls = []
@@ -458,6 +512,9 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         dp.csharp_base_kinds = facts.base_kinds
         dp.csharp_call_sites.update(facts.resolved_call_sites)
+        dp.csharp_arg_flows.update(facts.arg_flows)
+        dp.csharp_bind_flows.update(facts.bind_flows)
+        dp.csharp_out_writes.update(facts.out_writes)
         dp.csharp_external_sites.update(facts.external_sites)
         self._csharp_partial_decls = facts.partial_groups
         self._csharp_query_calls = facts.query_calls
@@ -488,6 +545,66 @@ class GraphUpdater:
         self._apply_go_semantic_facts(facts)
         logger.info(
             ls.GO_FRONTEND_FACTS.format(
+                calls=len(facts.resolved_call_sites),
+                externals=len(facts.external_sites),
+            )
+        )
+
+    def _run_java_frontend(self) -> None:
+        # The javac frontend (issue #1181) runs AFTER Pass 2, like the Jedi one:
+        # its call facts join against the function_locations Pass 2 just filled,
+        # including the name-token alias the Java method registration adds.
+        # Reset first so a reused updater (watch mode) that previously ran the
+        # frontend does not keep applying stale facts on a later run with it
+        # off; the maps are mutated in place because the type-inference engine
+        # holds a reference.
+        dp = self.factory.definition_processor
+        dp.java_call_sites.clear()
+        dp.java_external_sites.clear()
+        if settings.JAVA_FRONTEND == cs.JavaFrontend.HEURISTIC:
+            return
+        frontend = FRONTENDS.get(cs.SupportedLanguage.JAVA)
+        if frontend is None or not frontend.applies(self.repo_path):
+            return
+        if not frontend.available():
+            logger.warning(ls.JAVA_FRONTEND_UNAVAILABLE)
+            return
+        facts = frontend.run(self.repo_path, ())
+        dp.java_call_sites.update(facts.resolved_call_sites)
+        dp.java_external_sites.update(facts.external_sites)
+        logger.info(
+            ls.JAVA_FRONTEND_FACTS.format(
+                calls=len(facts.resolved_call_sites),
+                externals=len(facts.external_sites),
+            )
+        )
+
+    def _run_python_frontend(self) -> None:
+        # In-process Jedi facts (issue #1183): exact first-party callees
+        # through re-exports/decorators and external proofs for calls leaving
+        # the repo. Off (HEURISTIC) or unavailable degrades to the tree-sitter
+        # heuristics; reset first so a reused updater does not keep stale
+        # facts when the setting flips between runs.
+        dp = self.factory.definition_processor
+        dp.python_call_sites.clear()
+        dp.python_external_sites.clear()
+        if settings.PYTHON_FRONTEND == cs.PythonFrontend.HEURISTIC:
+            return
+        frontend = FRONTENDS.get(cs.SupportedLanguage.PYTHON)
+        if frontend is None or not frontend.available():
+            logger.warning(ls.PY_FRONTEND_UNAVAILABLE)
+            return
+        files = [
+            fp for fp, lang in self._parsed_files if lang == cs.SupportedLanguage.PYTHON
+        ]
+        if not files:
+            return
+        logger.info(ls.PY_FRONTEND_RUNNING)
+        facts = frontend.run(self.repo_path, files)
+        dp.python_call_sites.update(facts.resolved_call_sites)
+        dp.python_external_sites.update(facts.external_sites)
+        logger.info(
+            ls.PY_FRONTEND_FACTS.format(
                 calls=len(facts.resolved_call_sites),
                 externals=len(facts.external_sites),
             )
@@ -737,6 +854,10 @@ class GraphUpdater:
             self._drop_cache_if_graph_lost()
             self._warn_if_parser_changed()
 
+        # Discovery must precede the in-sync check: a build that appeared
+        # since the cached run changes the eligible set, and the check walks
+        # with the same unignore patterns the indexing pass will use.
+        self._register_generated_sources()
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
@@ -775,6 +896,11 @@ class GraphUpdater:
         # project-wide query would be wasted work -- skip it.
         if not force and not self._is_full_build:
             self._rehydrate_csharp_type_locations()
+            # Same posture for the col-keyed indexes (issue #1240): the Go
+            # IMPLEMENTS and semantic-call joins below resolve against
+            # locations Pass 2 filled only for re-parsed files.
+            self._rehydrate_go_type_locations()
+            self._rehydrate_function_locations()
 
         # Partial groups join AFTER Pass 2: the Roslyn declaration
         # locations resolve against the Class qns Pass 2 just registered.
@@ -783,6 +909,15 @@ class GraphUpdater:
         # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
         # resolve against the go_type_locations index Pass 2 just registered.
         self._join_go_implements()
+
+        # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
+        # calls against the function_locations Pass 2 just filled) and needs
+        # the parsed-file list, which Pass 2 produced (issue #1183).
+        self._run_python_frontend()
+
+        # Same posture for Java (issue #1181): the facts resolve against the
+        # method name-token locations Pass 2 registered.
+        self._run_java_frontend()
 
         # HYBRID must run after Pass 2: an incremental run deletes each
         # changed file's Module subtree before re-parsing it, so macro
@@ -927,6 +1062,16 @@ class GraphUpdater:
         self._prune_orphan_nodes()
 
         self._generate_semantic_embeddings()
+
+        # The delombok state commits ONLY here, after every pass and the
+        # graph flush succeeded: a run that dies mid-way must not convince
+        # its successor that the overlay-affected files were reprocessed.
+        # Single-file runs never commit it.
+        if self._delombok_state_changed and self._single_file is None:
+            _save_delombok_state(
+                self.repo_path / cs.DELOMBOK_STATE_FILENAME,
+                self._delombok_state_candidate,
+            )
 
     def _emit_pending_endpoints(self) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -1399,6 +1544,145 @@ class GraphUpdater:
         if restored:
             logger.info(ls.CSHARP_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
 
+    def _rehydrate_go_type_locations(self) -> None:
+        # Incremental runs fill go_type_locations only from re-parsed files,
+        # but _join_go_implements resolves BOTH ends of each pair against it.
+        # Restore (path, line, col) -> (qn, label) for types in unchanged .go
+        # files from the persisted graph (issue #1240). A pre-#1240 graph has
+        # no start_col: those rows are skipped and behavior degrades to
+        # today's until a re-index.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        locations = self.factory.definition_processor.go_type_locations
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        restored = 0
+        for row in rows:
+            path = row.get(cs.KEY_PATH)
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            label = row.get(cs.KEY_LABEL)
+            start_line = _persisted_int(row.get(cs.KEY_START_LINE))
+            start_col = _persisted_int(row.get(cs.KEY_START_COL))
+            if not (
+                isinstance(path, str)
+                and path.endswith(cs.EXT_GO)
+                and isinstance(qn, str)
+                and isinstance(label, str)
+                and start_line is not None
+                and start_col is not None
+            ):
+                continue
+            key = (path, start_line, start_col)
+            if key not in locations:
+                locations[key] = (qn, label)
+                restored += 1
+        if restored:
+            logger.info(ls.GO_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
+
+    def _rehydrate_function_locations(self) -> None:
+        # The C#/Go semantic call + LINQ joins resolve targets against
+        # function_locations, keyed (module_qn, line, col) at the definition
+        # START; Go's join additionally keys at the NAME token, whose column
+        # is persisted separately (issue #1240). Fresh Pass-2 entries win;
+        # rehydrated records serve the joins only (Pass 3 touches re-parsed
+        # files exclusively), so a METHOD's container comes from the query
+        # and is_named stays True (generated qns never persist under Module
+        # DEFINES).
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        locations = self.factory.definition_processor.function_locations
+        params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
+        restored = 0
+        for query in (
+            cs.CYPHER_ALL_FUNCTION_LOCATIONS,
+            cs.CYPHER_ALL_METHOD_LOCATIONS,
+        ):
+            try:
+                rows = self.ingestor.fetch_all(query, params)
+            except Exception:
+                if not self._is_full_build:
+                    raise
+                logger.warning(ls.REHYDRATE_QUERY_FAILED)
+                return
+            restored += self._restore_function_rows(rows, locations)
+        if restored:
+            logger.info(ls.FUNCTION_LOCATIONS_REHYDRATED.format(count=restored))
+
+    @staticmethod
+    def _restore_function_rows(
+        rows: list[ResultRow], locations: FunctionLocations
+    ) -> int:
+        restored = 0
+        for row in rows:
+            module_qn = row.get("module_qn")
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            label = row.get(cs.KEY_LABEL)
+            container = row.get("container_qn")
+            start_line = _persisted_int(row.get(cs.KEY_START_LINE))
+            start_col = _persisted_int(row.get(cs.KEY_START_COL))
+            name_line = _persisted_int(row.get(cs.KEY_NAME_START_LINE))
+            name_col = _persisted_int(row.get(cs.KEY_NAME_START_COL))
+            if not (
+                isinstance(module_qn, str)
+                and isinstance(qn, str)
+                and isinstance(label, str)
+                and start_line is not None
+                and start_col is not None
+            ):
+                continue
+            record = FunctionLocation(
+                label=label,
+                qualified_name=qn,
+                container_qn=container if isinstance(container, str) else None,
+            )
+            keys = {(module_qn, start_line, start_col)}
+            if name_col is not None:
+                # The NAME token can sit on a LATER line than the declaration
+                # start (a multiline Go receiver), so the alias keys at its
+                # own persisted line, never the declaration's.
+                keys.add((module_qn, name_line or start_line, name_col))
+            for key in keys:
+                if key not in locations:
+                    locations[key] = record
+                    restored += 1
+        return restored
+
+    def _affected_caller_keys(self, reindexed_keys: list[str]) -> list[str]:
+        """Relative paths of files whose code depends on a re-indexed file.
+
+        One level deep is complete: an affected caller's own DEFINITIONS are
+        unchanged, so bindings in ITS callers cannot move. A failed read
+        degrades to today's verbatim restore, never worse.
+        """
+        if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_AFFECTED_CALLER_PATHS,
+                {
+                    cs.CYPHER_PARAM_PATHS: reindexed_keys,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="affected callers")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+            }
+        )
+
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # Record the reference edges unchanged files point at the re-indexed
         # files, BEFORE those files' subtrees (and thus the inbound edges) are
@@ -1761,6 +2045,10 @@ class GraphUpdater:
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
 
     def _is_already_in_sync(self) -> bool:
+        if self._delombok_state_changed:
+            # The overlay's effect changed while the checked-in bytes did
+            # not; the affected files must reparse.
+            return False
         if self._single_file is not None:
             return False
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
@@ -1800,6 +2088,61 @@ class GraphUpdater:
             if _hash_file(Path(file_path_str)) != old_hash:
                 return False
         return True
+
+    def _register_generated_sources(self) -> None:
+        # Annotation-processor output next to a build file (issue #1140):
+        # carve those exact subtrees out of the target/build prune, register
+        # them as Java import-probe roots, and stamp their modules generated.
+        # Recomputed per run so a build that appears between watch runs is
+        # picked up; no roots leaves everything exactly as before.
+        roots = discover_generated_source_roots(self.repo_path)
+        dp = self.factory.definition_processor
+        dp.generated_source_prefixes = generated_prefixes_for(roots)
+        self.factory.import_processor.set_java_generated_roots(roots)
+        # Rebuilt from the CONFIGURED base every run, never accumulated: a
+        # root that vanished (target/ cleaned) must stop rescuing its subtree.
+        patterns = unignore_patterns_for(roots)
+        base = (
+            frozenset(self._configured_unignore_paths)
+            if self._configured_unignore_paths
+            else frozenset()
+        )
+        combined = base | patterns
+        resolved = combined if combined else None
+        self.unignore_paths = resolved
+        # The factory-owned processors hold their own copies for structure
+        # traversal and import-time walks; they must prune identically or a
+        # sweep could read files the indexer skipped (issue #1088 invariant).
+        self.factory.import_processor.unignore_paths = resolved
+        self.factory.structure_processor.unignore_paths = resolved
+        if roots:
+            logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
+        # Delombok overlay (issue #1140 tier 1): rebuilt per run so a jar or
+        # annotation appearing between watch runs is picked up; empty means
+        # raw parsing everywhere, exactly as before. The persisted identity
+        # detects overlay CHANGES (jar appears/vanishes, version bump): the
+        # affected files' cached hashes still match the checked-in source,
+        # so without forcing them through a reparse the graph would keep
+        # stale (or never gain) generated members.
+        self._delombok_overlay = build_delombok_overlay(self.repo_path)
+        previous = _load_delombok_state(self.repo_path / cs.DELOMBOK_STATE_FILENAME)
+        current = {
+            "identity": overlay_identity(self._delombok_overlay),
+            "keys": sorted(self._delombok_overlay),
+            # Two Lombok versions can expand identically today and diverge on
+            # the next annotation edit; the version keeps the state honest.
+            "lombok": current_lombok_identity(),
+        }
+        self._delombok_state_changed = previous != current
+        self._delombok_stale_keys = (
+            set(previous.get("keys", ())) | set(current["keys"])
+            if self._delombok_state_changed
+            else set()
+        )
+        # Held in memory until the run SUCCEEDS: persisting now would let a
+        # crashed run convince its successor that the stale files were
+        # already reprocessed. Single-file runs never commit it either.
+        self._delombok_state_candidate = current
 
     def _collect_eligible_files(self) -> list[tuple[Path, str]]:
         if self._single_file is not None:
@@ -1861,6 +2204,8 @@ class GraphUpdater:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
+        for stale_key in self._delombok_stale_keys:
+            old_hashes.pop(stale_key, None)
         is_full_build = (force or not old_hashes) and self._single_file is None
         self._is_full_build = is_full_build
         cache_mtime = cache_path.stat().st_mtime if cache_path.is_file() else 0.0
@@ -1915,6 +2260,10 @@ class GraphUpdater:
                 unreadable_keys.add(file_key)
                 continue
             current_hash, file_bytes = hashed
+            # The hash keys the CHECKED-IN source (cache invalidation follows
+            # edits); the PARSE may consume the delomboked expansion instead,
+            # so Lombok-generated members become real graph nodes (#1140).
+            file_bytes = self._delombok_overlay.get(file_key, file_bytes)
 
             current_file_keys.add(file_key)
             new_hashes[file_key] = current_hash
@@ -1947,6 +2296,35 @@ class GraphUpdater:
         reindexed_keys = sorted(
             file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
         )
+        # A file depending on a re-indexed one can have its bindings moved by
+        # the change (a new override shadowing an inherited method); restoring
+        # its old edges verbatim would freeze the stale binding, so it joins
+        # the re-parse set BEFORE capture: the capture query then excludes
+        # edges among the expanded set and Pass 3 recomputes them, while its
+        # own inbound edges are captured and restored like any re-indexed
+        # file's (issue #1229 phase 4).
+        present = {file_key for _fp, file_key, _new, _b in changed_entries}
+        eligible_by_key = {file_key: fp for fp, file_key in eligible_files}
+        affected = 0
+        for caller_key in self._affected_caller_keys(reindexed_keys):
+            if caller_key in present:
+                continue
+            caller_path = eligible_by_key.get(caller_key)
+            if caller_path is None or not caller_path.is_file():
+                continue
+            try:
+                caller_bytes = caller_path.read_bytes()
+            except OSError:
+                continue
+            caller_bytes = self._delombok_overlay.get(caller_key, caller_bytes)
+            changed_entries.append((caller_path, caller_key, False, caller_bytes))
+            present.add(caller_key)
+            affected += 1
+        if affected:
+            logger.info(ls.INCREMENTAL_AFFECTED_CALLERS, count=affected)
+            reindexed_keys = sorted(
+                file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
+            )
         captured_inbound = self._capture_inbound_edges(reindexed_keys)
         self._reparsed_file_keys = {
             file_key for _fp, file_key, _new, _b in changed_entries
@@ -2130,6 +2508,8 @@ class GraphUpdater:
             return None
         try:
             file_bytes = file_path.read_bytes()
+            overlay_key = cached_relative_path(file_path, self.repo_path).as_posix()
+            file_bytes = self._delombok_overlay.get(overlay_key, file_bytes)
         except OSError as e:
             logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
             return None
@@ -2219,6 +2599,7 @@ class GraphUpdater:
         ]
 
         read_failed = False
+        legacy_file_keys: list[tuple[str, str]] = []
         for query_all, delete_query, label in prune_specs:
             try:
                 rows = self.ingestor.fetch_all(query_all)
@@ -2242,6 +2623,17 @@ class GraphUpdater:
                 if isinstance(abs_path, str) and not (
                     abs_path == repo_abs or abs_path.startswith(repo_abs + "/")
                 ):
+                    # An out-of-repo File key the containment gate would leak
+                    # forever: legacy pre-GHSA-85gg nodes were keyed on a
+                    # symlink's dereferenced TARGET. A key that disagrees with
+                    # the identity derivable from the relative path is such a
+                    # record; one that agrees is a file under a symlinked
+                    # ancestor directory, legitimate under the current scheme
+                    # (issue #1156).
+                    if label == "File" and abs_path != (
+                        cached_file_identity_posix(self.repo_path / path)
+                    ):
+                        legacy_file_keys.append((path, abs_path))
                     continue
                 if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
                     continue
@@ -2275,6 +2667,8 @@ class GraphUpdater:
             # for the next healthy run.
             return
 
+        total_pruned += self._sweep_legacy_file_identities(legacy_file_keys)
+
         # Drop external import-target modules that no module imports anymore,
         # e.g. an imported name renamed/removed on an incremental rebuild.
         self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
@@ -2287,6 +2681,64 @@ class GraphUpdater:
             logger.info(ls.PRUNE_COMPLETE, count=total_pruned)
         else:
             logger.info(ls.PRUNE_SKIP)
+
+    def _sweep_legacy_file_identities(self, candidates: list[tuple[str, str]]) -> int:
+        """Delete legacy target-resolved File records, sparing shared keys.
+
+        File nodes MERGE globally on absolute_path, so the stale key can be
+        the very node another project legitimately owns (its repo contains
+        the old link's target); any container from outside this repository
+        vetoes the delete (issue #1156).
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return 0
+        swept = 0
+        for path, abs_path in candidates:
+            if not self._file_key_owned_only_by_this_project(abs_path):
+                continue
+            logger.debug(ls.PRUNE_DELETING, label="File", path=path)
+            self.ingestor.execute_write(cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: abs_path})
+            swept += 1
+        if swept:
+            logger.info(ls.PRUNE_LEGACY_IDENTITIES, count=swept)
+        return swept
+
+    def _file_key_owned_only_by_this_project(self, abs_path: str) -> bool:
+        """Positive attribution: every container is this project's, and at
+        least one exists. A sibling project's node can share both the key
+        and the relative path (issue #897), and a node whose containers are
+        missing or unreadable offers no evidence of sole ownership, so both
+        veto the sweep.
+        """
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_FILE_CONTAINERS, {cs.KEY_PATH: abs_path}
+            )
+        except Exception:
+            # Unreadable ownership is unknown ownership: never delete a
+            # globally merged key on a failed read, and never let the
+            # failure escape mid-update.
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="File containers")
+            return False
+        repo_abs = self.repo_path.resolve().as_posix()
+        if not all(self._container_is_ours(row, repo_abs) for row in rows):
+            return False
+        return bool(rows)
+
+    def _container_is_ours(self, row: ResultRow, repo_abs: str) -> bool:
+        """Whether one container row proves THIS project's ownership.
+
+        A foreign Project or Folder, and equally a container with no usable
+        identity, reads as not-ours: partial evidence must never delete a
+        globally merged key.
+        """
+        labels = row.get("labels")
+        if isinstance(labels, list) and cs.NodeLabel.PROJECT.value in labels:
+            return row.get("name") == self.project_name
+        container_abs = row.get("absolute_path")
+        if isinstance(container_abs, str) and container_abs:
+            return container_abs == repo_abs or container_abs.startswith(repo_abs + "/")
+        return False
 
     def _generate_semantic_embeddings(self) -> None:
         if self.skip_embeddings:

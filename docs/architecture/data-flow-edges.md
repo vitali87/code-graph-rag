@@ -384,8 +384,12 @@ module is re-exported under its own name. A project that does
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.
 - The source/sink registry covers Python, JavaScript, TypeScript (including TSX),
-  Go, Java, Rust, C, C++, C#, Lua, PHP, and Dart; a language not in the registry emits no
-  I/O or flow edges until its table is added. PHP models `$_GET`/`$_POST`/
+  Go, Java, Rust, C, C++, C#, Lua, PHP, Dart, and Scala; a language not in the registry
+  emits no I/O or flow edges until its table is added. Scala models Predef console
+  output (`println`/`print`/`printf`, `Console.err.*`), `scala.io.Source.fromFile`/
+  `fromURL` and `scala.io.StdIn.readLine` reads, the `sys.env`/`sys.props` apply
+  calls and `System.getenv`/`get`/`set`/`clearProperty` (→ ENV), and the
+  `java.nio.file.Files` interop read/write surface. PHP models `$_GET`/`$_POST`/
   `$_REQUEST`/`$_COOKIE` (untrusted HTTP input → NETWORK) and `$_ENV`/`$_SERVER`
   (→ ENV) superglobal sources, `getenv`/`file_get_contents` reads,
   `file_put_contents` and `echo`/`print` (keyword STDOUT sinks) writes, and
@@ -427,13 +431,14 @@ it applies rather than broad and noisy.
 
 ## Language coverage
 
-`FLOWS_TO` covers **13 of the 14 supported languages** — every language whose
+`FLOWS_TO` covers **all 14 supported languages** — every language whose
 source/sink table is registered in `FLOW_REGISTERED_LANGUAGES`
 (`codebase_rag/parsers/io_access/registry.py`). Python uses the deep,
-path-sensitive walk; the rest use the descriptor-driven lean walk. A language
-outside this set is still parsed into the graph — it simply emits no `FLOWS_TO`
-edges, so a reachability question over it returns `UNKNOWN` rather than
-`NO_FLOW` (see the three-verdict query below).
+path-sensitive walk; the rest use the descriptor-driven lean walk. A file whose
+language falls outside this set (an unsupported extension) is still parsed into
+the graph where a grammar exists — it simply emits no `FLOWS_TO` edges, so a
+reachability question over it returns `UNKNOWN` rather than `NO_FLOW` (see the
+three-verdict query below).
 
 | Language | `FLOWS_TO` | Walk |
 | --- | --- | --- |
@@ -449,7 +454,7 @@ edges, so a reachability question over it returns `UNKNOWN` rather than
 | C# | ✅ | lean descriptor |
 | Lua | ✅ | lean descriptor |
 | PHP | ✅ | lean descriptor |
-| Scala | ❌ | not covered — no sink table |
+| Scala | ✅ | lean descriptor |
 | Dart | ✅ | lean descriptor + Dart selector-chain path |
 
 ## Coverage metadata and the three-verdict query

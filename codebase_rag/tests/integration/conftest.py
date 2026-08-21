@@ -36,7 +36,9 @@ def memgraph_container() -> Generator[dict[str, str | int], None, None]:
     from testcontainers.core.container import DockerContainer
     from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
-    container = DockerContainer("memgraph/memgraph:latest")
+    # Same engine line the packaged stack pins (issue #1257): integration
+    # tests must exercise the syntax the shipped Memgraph actually accepts.
+    container = DockerContainer("memgraph/memgraph:3.3.0")
     container.with_exposed_ports(7687)
     container.waiting_for(LogMessageWaitStrategy("You are running Memgraph"))
 

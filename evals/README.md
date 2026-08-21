@@ -1041,6 +1041,47 @@ uv run python -m evals.csharp_l1 --target /path/to/csharp/repo --project-name my
 
 Validated on `App-vNext/Polly` (~6,550 nodes): nodes/DEFINES/DEFINES_METHOD 0.9998, INHERITS and IMPLEMENTS exact 1.0 (224 and 147 edges, same-scope arity pairs included per #764), spans 0.9997. The residual is exactly the documented preprocessor-split artifact.
 
+## FLOWS_TO — hand-labelled corpus (ground truth stage 1)
+
+Nothing graded `FLOWS_TO` before this (issue #1190): the newest and subtlest
+edge type had zero ground truth. Stage 1 is a small per-language corpus in
+`evals/flows_corpus/` where every source->sink flow AND every deliberate
+non-flow was labelled by hand in `expected.json`; each language directory is
+indexed as its own repo and the emitted `(source_resource, sink_resource,
+kind)` triples are scored precision/recall against the labels.
+
+```bash
+uv run python -m evals.flow_ground_truth
+```
+
+Writes `evals/results/flows.csv`. Guarded by `test_eval_flows.py`
+(precision == recall == 1.0 per language). The corpus is deliberately small so
+the labels stay reviewable; compiler-generated ground truth at scale (Roslyn
+`AnalyzeDataFlow`, `go/ssa` def-use) is the staged follow-up tracked in #1190.
+It caught two real defects on its first run: the Scala descriptor's
+`subscript_type` mis-wiring (zero Scala `FLOWS_TO`) and the Python deep
+walk's `os.environ[...]` subscript-source gap.
+
+Current corpus scope: Python (deep walk), JavaScript, Go, Java, Scala (lean
+walk), Dart (leaf path) — one ENV -> STDOUT flow plus one labelled non-flow
+each.
+
+## Per-metric language scope
+
+A 1.0 in the tables below must never be read wider than it was measured.
+The measurement scope of each metric family:
+
+| Metric family | Languages measured | Ground truth |
+|---|---|---|
+| L1 structure (definitions/containment) | Python, Go, Rust, TS, JS, Java, Lua, PHP, C#, C, C++, Scala | native AST oracles (`evals/oracles/`, Python: stdlib `ast`) |
+| Import resolution (internal/external, 1.0/1.0) | Python only | stdlib `ast` |
+| Inheritance / overrides (resolved, 1.0/1.0) | Python only | stdlib `ast` + MRO |
+| Module-call attribution (L2) | Python only | stdlib `ast` import-time model |
+| CALLS retrieval (file-level, simple-name, first-party) | Go, Rust, Java, TS, JS, PHP, Lua, C, C++, Scala, C# | per-language compiler/parser oracles |
+| Instantiation (file-level) | Python only | stdlib `ast` |
+| FLOWS_TO (stage-1 corpus) | Python, JS, Go, Java, Scala, Dart | hand-labelled `flows_corpus` |
+| No oracle yet | Dart (beyond flows corpus), Ruby | tracked in #1190 |
+
 ## Latest results (target: `codebase_rag`)
 
 Committed snapshots live in `evals/results/` — `scores.csv` (L1), `diff.json` (L1 per-label missing/extra), `calls_diff.json` (L3 missed edges). Regenerate with the commands above.

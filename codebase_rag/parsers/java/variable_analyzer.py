@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
+from ...decorators import recursion_guard
 from ...types_defs import ASTNode
 from ..utils import safe_decode_text
 from .utils import (
@@ -22,6 +24,32 @@ if TYPE_CHECKING:
     from ...types_defs import ASTCacheProtocol
 
 
+def _java_literal_type(expr_node: ASTNode) -> str | None:
+    # A literal's type is fixed by its node type, and for the numeric ones by
+    # its suffix: `1L` is a long, `1.5f` a float.
+    node_type = expr_node.type
+    if node_type == cs.TS_STRING_LITERAL:
+        return cs.JAVA_TYPE_STRING
+    if node_type == cs.TS_JAVA_CHARACTER_LITERAL:
+        return cs.JAVA_TYPE_CHAR
+    if node_type in (cs.TS_TRUE, cs.TS_FALSE):
+        return cs.JAVA_TYPE_BOOLEAN
+    text = safe_decode_text(expr_node) or ""
+    if node_type in cs.TS_JAVA_FLOATING_POINT_LITERALS:
+        return (
+            cs.JAVA_TYPE_FLOAT
+            if text.endswith(cs.JAVA_FLOAT_SUFFIXES)
+            else cs.JAVA_TYPE_DOUBLE
+        )
+    if node_type in cs.TS_JAVA_INTEGER_LITERALS:
+        return (
+            cs.JAVA_TYPE_LONG_PRIMITIVE
+            if text.endswith(cs.JAVA_LONG_SUFFIXES)
+            else cs.JAVA_TYPE_INT
+        )
+    return None
+
+
 class JavaVariableAnalyzerMixin:
     __slots__ = ()
     ast_cache: ASTCacheProtocol
@@ -29,6 +57,11 @@ class JavaVariableAnalyzerMixin:
     class_inheritance: dict[str, list[str]]
     _lookup_cache: dict[str, str | None]
     _lookup_in_progress: set[str]
+    # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
+    # in the MRO, so even an @abstractmethod stub here would SHADOW the real
+    # implementation and silently resolve every call to None.
+    _do_resolve_java_method_call: Callable[..., tuple[str, str] | None]
+    _declared_return_type_of: Callable[[str], str | None]
 
     @abstractmethod
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
@@ -159,7 +192,7 @@ class JavaVariableAnalyzerMixin:
 
         if value_node := declarator_node.child_by_field_name(cs.FIELD_VALUE):
             if inferred_type := self._infer_java_type_from_expression(
-                value_node, module_qn
+                value_node, module_qn, local_var_types
             ):
                 resolved_type = self._resolve_java_type_name(inferred_type, module_qn)
                 local_var_types[var_name] = resolved_type
@@ -229,7 +262,7 @@ class JavaVariableAnalyzerMixin:
             return
 
         if inferred_type := self._infer_java_type_from_expression(
-            right_node, module_qn
+            right_node, module_qn, local_var_types
         ):
             resolved_type = self._resolve_java_type_name(inferred_type, module_qn)
             local_var_types[var_name] = resolved_type
@@ -328,34 +361,39 @@ class JavaVariableAnalyzerMixin:
                         break
 
     def _infer_java_type_from_expression(
-        self, expr_node: ASTNode, module_qn: str
+        self,
+        expr_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> str | None:
+        # Literals carry their type in the node itself, with no lookup and no
+        # scope: keeping them out of this switch keeps it readable.
+        if (literal := _java_literal_type(expr_node)) is not None:
+            return literal
+
         match expr_node.type:
             case cs.TS_OBJECT_CREATION_EXPRESSION:
                 if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):
                     return safe_decode_text(type_node)
 
             case cs.TS_METHOD_INVOCATION:
-                return self._infer_java_method_return_type(expr_node, module_qn)
+                return self._infer_java_method_return_type(
+                    expr_node, module_qn, local_var_types
+                )
 
             case cs.TS_IDENTIFIER:
                 if var_name := safe_decode_text(expr_node):
+                    # The caller's own locals first: the module-wide lookup is
+                    # name-keyed across every method, so a same-named local in
+                    # another method would answer for this one (issue #1348).
+                    if local_var_types and var_name in local_var_types:
+                        return local_var_types[var_name]
                     return self._lookup_variable_type(var_name, module_qn)
 
             case cs.TS_FIELD_ACCESS:
-                return self._infer_java_field_access_type(expr_node, module_qn)
-
-            case cs.TS_STRING_LITERAL:
-                return cs.JAVA_TYPE_STRING
-
-            case cs.TS_INTEGER_LITERAL:
-                return cs.JAVA_TYPE_INT
-
-            case cs.TS_DECIMAL_FLOATING_POINT_LITERAL:
-                return cs.JAVA_TYPE_DOUBLE
-
-            case cs.TS_TRUE | cs.TS_FALSE:
-                return cs.JAVA_TYPE_BOOLEAN
+                return self._infer_java_field_access_type(
+                    expr_node, module_qn, local_var_types
+                )
 
             case cs.TS_ARRAY_CREATION_EXPRESSION:
                 if type_node := expr_node.child_by_field_name(cs.FIELD_TYPE):
@@ -368,7 +406,10 @@ class JavaVariableAnalyzerMixin:
         return None
 
     def _infer_java_method_return_type(
-        self, method_call_node: ASTNode, module_qn: str
+        self,
+        method_call_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         call_info = extract_method_call_info(method_call_node)
         if not call_info:
@@ -378,6 +419,19 @@ class JavaVariableAnalyzerMixin:
         if not method_name:
             return None
 
+        # Resolve the nested call properly first: it is overload-sensitive, and
+        # the name-only lookup below takes the FIRST declaration's return type,
+        # so `take(make("x"))` could be typed from `make(int)`. The resolved qn
+        # carries the SELECTED signature, which reads back the right return
+        # type. Needs the caller's variable types, or the receiver of an
+        # instance call cannot be typed (issue #1348).
+        if (
+            resolved := self._resolve_nested_java_call(
+                method_call_node, module_qn, local_var_types or {}
+            )
+        ) and (declared := self._declared_return_type_of(resolved[1])):
+            return declared
+
         object_ref = call_info[cs.FIELD_OBJECT]
         call_string = (
             f"{object_ref}{cs.SEPARATOR_DOT}{method_name}"
@@ -386,8 +440,26 @@ class JavaVariableAnalyzerMixin:
         )
         return self._resolve_java_method_return_type(call_string, module_qn)
 
+    @recursion_guard(
+        key_func=lambda self, call_node, *_, **__: call_node.id,
+        guard_name=cs.GUARD_NESTED_JAVA_CALL,
+    )
+    def _resolve_nested_java_call(
+        self,
+        call_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str],
+    ) -> tuple[str, str] | None:
+        # Guarded: resolution infers its ARGUMENT types, and typing an argument
+        # comes back here, so a call nested in its own argument list would
+        # recurse without a brake.
+        return self._do_resolve_java_method_call(call_node, local_var_types, module_qn)
+
     def _infer_java_field_access_type(
-        self, field_access_node: ASTNode, module_qn: str
+        self,
+        field_access_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         object_node = field_access_node.child_by_field_name(cs.FIELD_OBJECT)
         field_node = field_access_node.child_by_field_name(cs.FIELD_FIELD)
@@ -403,10 +475,12 @@ class JavaVariableAnalyzerMixin:
         # recurse to infer that inner type before the outer field, so multi-level
         # access resolves instead of failing on a non-variable name.
         if object_node.type == cs.TS_FIELD_ACCESS:
-            object_type = self._infer_java_field_access_type(object_node, module_qn)
+            object_type = self._infer_java_field_access_type(
+                object_node, module_qn, local_var_types
+            )
         elif object_name := safe_decode_text(object_node):
             object_type = self._resolve_field_access_base_type(
-                object_name, field_access_node, module_qn
+                object_name, field_access_node, module_qn, local_var_types
             )
         else:
             object_type = None
@@ -416,8 +490,16 @@ class JavaVariableAnalyzerMixin:
         return None
 
     def _resolve_field_access_base_type(
-        self, object_name: str, field_access_node: ASTNode, module_qn: str
+        self,
+        object_name: str,
+        field_access_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> str | None:
+        # The caller's own locals win over the module-wide, name-keyed map,
+        # which cannot tell two methods' same-named variables apart.
+        if local_var_types and object_name in local_var_types:
+            return local_var_types[object_name]
         # `this`/`super` are receiver keywords, not variables: resolve them to the
         # containing class or its superclass so nested chains rooted at them
         # (e.g. `var c = this.address.city`) infer a type.

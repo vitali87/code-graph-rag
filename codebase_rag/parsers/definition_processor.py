@@ -18,6 +18,7 @@ from ..types_defs import (
     FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
+    PropertyDict,
     RustTraitImpl,
     SimpleNameLookup,
 )
@@ -31,6 +32,7 @@ from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .handlers import get_handler
+from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .utils import safe_decode_with_fallback, sorted_captures
 
@@ -158,6 +160,11 @@ class DefinitionProcessor(
         # name-trie fabricate a first-party edge. Same in-place mutation
         # discipline as csharp_call_sites.
         self.csharp_external_sites: set[CallSiteKey] = set()
+        # Roslyn argument-flow facts (issue #1187): per call site and
+        # argument index, the locals/parameters the compiler proves reach it.
+        self.csharp_arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]] = {}
+        self.csharp_bind_flows: dict[CallSiteKey, frozenset[str]] = {}
+        self.csharp_out_writes: dict[CallSiteKey, dict[int, str]] = {}
         # Go go/types frontend (issue #1179): the same two call families as C#
         # -- per-invocation exact first-party call targets keyed on the callee
         # NAME token location, and sites the compiler resolved OUTSIDE the module
@@ -165,10 +172,23 @@ class DefinitionProcessor(
         # engine holds the reference.
         self.go_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
         self.go_external_sites: set[CallSiteKey] = set()
+        # javac frontend facts (issue #1181): an exact first-party callee the
+        # name-and-arity heuristics cannot pick, and the proofs that a call
+        # leaves the repo. Empty when the frontend is off.
+        self.java_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
+        self.java_external_sites: set[CallSiteKey] = set()
         # go/types-proven implementer->interface pairs (each end a declaring
         # identifier position), stashed here at frontend time and resolved to
         # IMPLEMENTS edges after Pass 2 fills go_type_locations below.
         self.go_implements: list[ImplementsPair] = []
+        # Jedi Python frontend (issue #1183): the same two call families,
+        # keyed on the callee NAME token like C#/Go. Same in-place mutation
+        # discipline; the resolver reads these references directly.
+        self.python_call_sites: dict[CallSiteKey, ResolvedCallSite] = {}
+        self.python_external_sites: set[CallSiteKey] = set()
+        # Repo-relative prefixes of annotation-processor output (issue #1140):
+        # modules under one are stamped generated with a processor hint.
+        self.generated_source_prefixes: list[str] = []
         # (rel_file, type_start_line, type_start_col) -> (class qn, node label)
         # for every ingested Go type. Go's type_spec start_point IS the name
         # token, so the frontend's pair positions join here directly (no alias).
@@ -348,19 +368,23 @@ class DefinitionProcessor(
             ):
                 self.go_package_names[module_qn] = package_name
 
-            self.ingestor.ensure_node_batch(
-                cs.NodeLabel.MODULE,
-                {
-                    cs.KEY_QUALIFIED_NAME: module_qn,
-                    cs.KEY_NAME: file_path.name,
-                    cs.KEY_PATH: relative_path_str,
-                    cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
-                    cs.KEY_FLOW_COVERED: (
-                        self.flow_capture_enabled
-                        and language in FLOW_REGISTERED_LANGUAGES
-                    ),
-                },
-            )
+            module_props: PropertyDict = {
+                cs.KEY_QUALIFIED_NAME: module_qn,
+                cs.KEY_NAME: file_path.name,
+                cs.KEY_PATH: relative_path_str,
+                cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
+                cs.KEY_FLOW_COVERED: (
+                    self.flow_capture_enabled and language in FLOW_REGISTERED_LANGUAGES
+                ),
+            }
+            if self.generated_source_prefixes and (
+                hint := generator_hint(
+                    relative_path_str, self.generated_source_prefixes
+                )
+            ):
+                module_props[cs.KEY_GENERATED] = True
+                module_props[cs.KEY_GENERATOR] = hint
+            self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
 
             parent_rel_path = relative_path.parent
             parent_container_qn = structural_elements.get(parent_rel_path)

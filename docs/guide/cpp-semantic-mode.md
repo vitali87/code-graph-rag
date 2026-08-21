@@ -4,58 +4,38 @@ description: "Enable compiler-backed C and C++ facts with libclang and a compila
 
 # C/C++ Semantic Mode
 
-Code-Graph-RAG defaults to the `hybrid` C/C++ frontend. Tree-sitter remains the structural backbone while libclang adds compiler-derived macro functions, macro-expansion calls, and `#include` relationships. If libclang or a compilation database is unavailable, indexing continues with Tree-sitter and logs the exact setup step that is missing.
+The C/C++ frontend has three modes, selected with the `CPP_FRONTEND` environment variable. The default is `hybrid`.
 
-## Install libclang
+| Mode | What runs | What you get |
+|---|---|---|
+| `treesitter` | Tree-sitter only | Definitions, calls, classes for every `.c`/`.cpp`/`.h` file. No preprocessor awareness. |
+| `hybrid` (default) | Tree-sitter backbone plus libclang | Everything above, plus macro `Function` nodes, macro-expansion `CALLS` edges, `#include` `IMPORTS` edges, and `using`/`typedef` alias `Type` nodes. Nothing is skipped when libclang cannot parse a file; tree-sitter still covers it. |
+| `libclang` | libclang only | Compiler-accurate parsing of the translation units listed in the compile database; files outside it are not covered. |
 
-Install the optional C/C++ semantic dependency:
+## Requirements for `hybrid` and `libclang`
 
-```bash
-pip install "code-graph-rag[cpp]"
-```
+Both semantic modes need two things:
 
-For full Tree-sitter language coverage and C/C++ semantic facts together:
+1. **The libclang bindings.** They ship as an optional extra:
 
-```bash
-pip install "code-graph-rag[treesitter-full,cpp]"
-```
+    ```bash
+    pip install "code-graph-rag[cpp]"
+    ```
 
-From a source checkout, use:
+    Without them the frontend automatically falls back to tree-sitter and logs a warning naming this extra.
 
-```bash
-uv sync --extra treesitter-full --extra cpp
-```
+2. **A `compile_commands.json`.** libclang parses translation units with the exact flags your build uses, discovered from a compile database in the indexed directory, any ancestor, or a conventional `build/` subdirectory beside either. Generate one with:
 
-## Choose a Frontend
+    ```bash
+    cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -B build
+    # or, for non-CMake builds:
+    bear -- make
+    ```
 
-Set `CPP_FRONTEND` to one of these modes:
+    Without it the frontend falls back to tree-sitter and logs a warning with these commands.
 
-| Mode | Behaviour | Requirements |
-|------|-----------|--------------|
-| `treesitter` | Uses only Tree-sitter syntax facts. | The C/C++ Tree-sitter grammars, available through `treesitter-full`. |
-| `libclang` | Requests libclang as the C/C++ frontend and falls back to Tree-sitter with a diagnostic when a requirement is unavailable. | The `cpp` extra and `compile_commands.json`. |
-| `hybrid` | Keeps Tree-sitter as the backbone and layers compiler-derived facts on top. This is the default. | The `cpp` extra and `compile_commands.json` for the semantic layer; otherwise it falls back to Tree-sitter. |
+A repository with no C/C++ files skips all of this silently; the warnings only fire when there is C/C++ source to lose fidelity on.
 
-For example:
+## Staleness
 
-```bash
-export CPP_FRONTEND=hybrid
-```
-
-Changing the effective frontend or adding, removing, relocating, or materially changing the discovered `compile_commands.json` invalidates the parser fingerprint, so the next sync warns when an existing graph needs a clean rebuild.
-
-## Generate `compile_commands.json`
-
-For CMake projects, configure a build directory with compilation database export enabled:
-
-```bash
-cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-```
-
-For Make-based projects, generate the database with Bear:
-
-```bash
-bear -- make
-```
-
-Code-Graph-RAG searches the indexed directory and its parents for `compile_commands.json`, including a conventional `build/` directory at each level.
+The parser fingerprint records the resolved mode and whether a compile database is discoverable, not just the configured setting: a graph indexed while libclang was missing reads as stale after you install the `cpp` extra, and one indexed before you generated `compile_commands.json` reads as stale after you do, so the next `--update-graph` rebuilds with the hybrid facts included.

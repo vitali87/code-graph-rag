@@ -61,6 +61,37 @@ class TestFindCodeSnippet:
         assert "missing location data" in result.error_message
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("file_path", ["", "   "])
+    async def test_returns_not_found_when_path_is_blank(
+        self, retriever: CodeRetriever, mock_ingestor: MagicMock, file_path: str
+    ) -> None:
+        mock_ingestor.fetch_all.return_value = [
+            {"path": file_path, "start": 1, "end": 10, "name": "func"}
+        ]
+
+        result = await retriever.find_code_snippet("module.func")
+
+        assert result.found is False
+        assert result.error_message is not None
+        assert "missing location data" in result.error_message
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("file_path", [123, {"path": "module.py"}])
+    async def test_returns_not_found_when_path_is_not_a_string(
+        self, retriever: CodeRetriever, mock_ingestor: MagicMock, file_path: object
+    ) -> None:
+        mock_ingestor.fetch_all.return_value = [
+            {"path": file_path, "start": 1, "end": 1, "name": "func"}
+        ]
+
+        result = await retriever.find_code_snippet("module.func")
+
+        assert result.found is False
+        assert result.file_path == ""
+        assert result.error_message is not None
+        assert "missing location data" in result.error_message
+
+    @pytest.mark.asyncio
     async def test_returns_not_found_when_missing_start_line(
         self, retriever: CodeRetriever, mock_ingestor: MagicMock
     ) -> None:
@@ -83,6 +114,77 @@ class TestFindCodeSnippet:
         result = await retriever.find_code_snippet("module.func")
 
         assert result.found is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("start_line", "end_line"),
+        [(-1, 2), (2, -1), (3, 2), (True, 2), (1, False)],
+    )
+    async def test_returns_not_found_for_invalid_line_range(
+        self,
+        mock_ingestor: MagicMock,
+        tmp_path: Path,
+        start_line: int,
+        end_line: int,
+    ) -> None:
+        source_file = tmp_path / "module.py"
+        source_file.write_text("line1\nline2\n", encoding="utf-8")
+        mock_ingestor.fetch_all.return_value = [
+            {
+                "path": "module.py",
+                "start": start_line,
+                "end": end_line,
+                "name": "func",
+            }
+        ]
+        retriever = CodeRetriever(str(tmp_path), mock_ingestor)
+
+        result = await retriever.find_code_snippet("module.func")
+
+        assert result.found is False
+        assert result.source_code == ""
+        assert result.error_message is not None
+        assert "missing location data" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_returns_not_found_when_line_range_exceeds_file(
+        self, mock_ingestor: MagicMock, tmp_path: Path
+    ) -> None:
+        source_file = tmp_path / "module.py"
+        source_file.write_text("line1\nline2\n", encoding="utf-8")
+        mock_ingestor.fetch_all.return_value = [
+            {"path": "module.py", "start": 1, "end": 3, "name": "func"}
+        ]
+        retriever = CodeRetriever(str(tmp_path), mock_ingestor)
+
+        result = await retriever.find_code_snippet("module.func")
+
+        assert result.found is False
+        assert result.source_code == ""
+        assert result.error_message is not None
+        assert "missing location data" in result.error_message
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path_kind", ["absolute", "traversal"])
+    async def test_returns_not_found_when_path_escapes_project_root(
+        self, mock_ingestor: MagicMock, tmp_path: Path, path_kind: str
+    ) -> None:
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        outside_file = tmp_path / "outside.py"
+        outside_file.write_text("secret\n", encoding="utf-8")
+        file_path = str(outside_file) if path_kind == "absolute" else "../outside.py"
+        mock_ingestor.fetch_all.return_value = [
+            {"path": file_path, "start": 1, "end": 1, "name": "func"}
+        ]
+        retriever = CodeRetriever(str(project_root), mock_ingestor)
+
+        result = await retriever.find_code_snippet("module.func")
+
+        assert result.found is False
+        assert result.source_code == ""
+        assert result.error_message is not None
+        assert "missing location data" in result.error_message
 
     @pytest.mark.asyncio
     async def test_handles_ingestor_error(

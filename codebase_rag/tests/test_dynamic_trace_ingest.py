@@ -126,12 +126,13 @@ def _record(repo: Path, caller, callee, count, workloads=()):
     )
 
 
-def _write_trace(repo: Path, trace_path: Path, records) -> None:
+def _write_trace(repo: Path, trace_path: Path, records, sampled: bool = False) -> None:
     header = TraceHeader(
         version=cs.TRACE_FORMAT_VERSION,
         language=cs.TRACE_LANGUAGE_PYTHON,
         repo_root=str(repo),
         tracer=cs.TRACE_TOOL_NAME,
+        sampled=sampled,
     )
     write_trace_file(trace_path, header, records)
 
@@ -183,9 +184,37 @@ def test_ingest_confirms_static_and_flags_missed_edges(tmp_path):
     assert confirmed[cs.TRACE_PROP_DYNAMIC] is True
     assert confirmed[cs.TRACE_PROP_STATIC_MISSED] is False
     assert confirmed[cs.TRACE_PROP_CALL_COUNT] == 4
+    # An exact tracer's edges are not flagged approximate.
+    assert confirmed[cs.TRACE_PROP_SAMPLED] is False
     assert missed[cs.TRACE_PROP_STATIC_MISSED] is True
     assert missed[cs.TRACE_PROP_WORKLOADS] == ["t::one", "t::two"]
     assert missed[cs.TRACE_PROP_WORKLOAD_COUNT] == 2
+
+
+def test_ingest_flags_sampled_trace_edges_as_approximate(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        repo,
+        trace_path,
+        [
+            _record(
+                repo,
+                ("pkg/registry.py", "handle", 5),
+                ("pkg/registry.py", "greet", 9),
+                4,
+            ),
+        ],
+        sampled=True,
+    )
+    graph = _graph()
+
+    ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    (props,) = [props for (_frm, _rel, _to, props) in graph.edges]
+    assert props[cs.TRACE_PROP_SAMPLED] is True
+    assert props[cs.TRACE_PROP_DYNAMIC] is True
 
 
 def test_ingest_aggregates_same_edge_and_is_idempotent(tmp_path):
@@ -311,6 +340,178 @@ def test_ingest_dispatches_jvm_traces_to_jvm_resolution(tmp_path):
     assert frm[2].endswith("Foo.run()")
     assert to[2].endswith("Foo.bar()")
     assert props[cs.TRACE_PROP_CALL_COUNT] == 3
+
+
+def test_ingest_dispatches_dotnet_traces_to_name_resolution(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    graph = _FakeGraph(
+        [
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.Worker.MyApp.Worker.RunAsync",
+                "Worker.cs",
+                3,
+                20,
+            ),
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.Worker.MyApp.Worker.Step",
+                "Worker.cs",
+                22,
+                30,
+            ),
+        ],
+        [],
+    )
+    header = TraceHeader(
+        version=cs.TRACE_FORMAT_VERSION,
+        language=cs.TRACE_LANGUAGE_DOTNET,
+        repo_root="",
+        tracer=cs.TRACE_TOOL_NAME_SPEEDSCOPE,
+    )
+    # .NET frames have no paths or lines; only CLR-name demangling can join.
+    write_trace_file(
+        trace_path,
+        header,
+        [
+            CallRecord(
+                caller=FramePoint(
+                    path="", qualname="MyApp.Worker+<RunAsync>d__3.MoveNext", line=0
+                ),
+                callee=FramePoint(path="", qualname="MyApp.Worker.Step", line=0),
+                count=4,
+                workloads=("dotnet-test",),
+                receiver_types=(),
+            )
+        ],
+    )
+
+    summary = ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    assert summary.edges == 1
+    assert summary.unresolved == 0
+    ((frm, _rel, to, _props),) = graph.edges
+    assert frm[2].endswith("MyApp.Worker.RunAsync")
+    assert to[2].endswith("MyApp.Worker.Step")
+
+
+def test_ingest_dispatches_dart_traces_to_span_resolution(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    graph = _FakeGraph(
+        [
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.lib.registry.Registry.handle",
+                "lib/registry.dart",
+                8,
+                12,
+            ),
+            _callable_row(
+                cs.NodeLabel.FUNCTION,
+                f"{_PROJECT}.lib.registry.greet",
+                "lib/registry.dart",
+                14,
+                16,
+            ),
+        ],
+        [],
+    )
+    header = TraceHeader(
+        version=cs.TRACE_FORMAT_VERSION,
+        language=cs.TRACE_LANGUAGE_DART,
+        repo_root=str(repo),
+        tracer="cgr-trace-dart",
+    )
+    write_trace_file(
+        trace_path,
+        header,
+        [
+            CallRecord(
+                caller=FramePoint(
+                    path=str(repo / "lib/registry.dart"), qualname="handle", line=8
+                ),
+                callee=FramePoint(
+                    path=str(repo / "lib/registry.dart"), qualname="greet", line=14
+                ),
+                count=5,
+                workloads=("dart-run",),
+                receiver_types=(),
+            )
+        ],
+    )
+
+    summary = ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    assert summary.edges == 1
+    assert summary.unresolved == 0
+    ((frm, _rel, to, _props),) = graph.edges
+    assert frm[2].endswith("Registry.handle")
+    assert to[2].endswith("registry.greet")
+
+
+def test_ingest_dispatches_rust_traces_to_span_resolution(tmp_path):
+    # A dyn Trait dispatch: the demangled callee `speak` resolves by span to the
+    # Dog::speak node, and the runtime-only edge is flagged sampled + missed.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    graph = _FakeGraph(
+        [
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.src.svc.Registry.handle",
+                "src/svc.rs",
+                19,
+                22,
+            ),
+            _callable_row(
+                cs.NodeLabel.METHOD,
+                f"{_PROJECT}.src.svc.Dog.speak",
+                "src/svc.rs",
+                24,
+                26,
+            ),
+        ],
+        [],
+    )
+    header = TraceHeader(
+        version=cs.TRACE_FORMAT_VERSION,
+        language=cs.TRACE_LANGUAGE_RUST,
+        repo_root=str(repo),
+        tracer=cs.TRACE_TOOL_NAME_RUST_PPROF,
+        sampled=True,
+    )
+    write_trace_file(
+        trace_path,
+        header,
+        [
+            CallRecord(
+                caller=FramePoint(
+                    path=str(repo / "src/svc.rs"), qualname="handle", line=19
+                ),
+                callee=FramePoint(
+                    path=str(repo / "src/svc.rs"), qualname="speak", line=24
+                ),
+                count=6,
+                workloads=("cargo-test",),
+                receiver_types=(),
+            )
+        ],
+    )
+
+    summary = ingest_trace(trace_path, graph, repo, _PROJECT)
+
+    assert summary.edges == 1
+    assert summary.unresolved == 0
+    ((frm, _rel, to, props),) = graph.edges
+    assert frm[2].endswith("Registry.handle")
+    assert to[2].endswith("Dog.speak")
+    assert props[cs.TRACE_PROP_SAMPLED] is True
+    assert props[cs.TRACE_PROP_STATIC_MISSED] is True
 
 
 def test_ingest_counts_unresolved_frames(tmp_path):

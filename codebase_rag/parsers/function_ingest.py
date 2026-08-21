@@ -50,6 +50,20 @@ if TYPE_CHECKING:
     from .handlers import LanguageHandler
 
 
+def _name_start_point(func_node: Node) -> tuple[int, int]:
+    """(line, column) of the definition's NAME token, falling back to the
+    node start.
+
+    Go's semantic call join keys targets at the name identifier while the
+    span key sits at the `func` keyword; the name can even sit on a LATER
+    line (a multiline receiver), so both coordinates persist and the
+    incremental rehydration rebuilds the alias exactly (issue #1240).
+    """
+    name_node = func_node.child_by_field_name(cs.FIELD_NAME)
+    anchor = name_node if name_node is not None else func_node
+    return anchor.start_point[0] + 1, anchor.start_point[1]
+
+
 def _nearest_preceding_csharp_type(
     func_node: Node, class_node_types: frozenset[str]
 ) -> Node | None:
@@ -763,6 +777,9 @@ class FunctionIngestMixin:
                 cs.KEY_MODIFIERS: modifiers,
                 cs.KEY_DECORATORS: decorators,
                 cs.KEY_START_LINE: func_node.start_point[0] + 1,
+                cs.KEY_START_COL: func_node.start_point[1],
+                cs.KEY_NAME_START_LINE: _name_start_point(func_node)[0],
+                cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
                 cs.KEY_END_LINE: func_node.end_point[0] + 1,
                 cs.KEY_DOCSTRING: self._get_docstring(func_node),
             }
@@ -1403,6 +1420,9 @@ class FunctionIngestMixin:
             cs.KEY_MODIFIERS: modifiers,
             cs.KEY_DECORATORS: decorators,
             cs.KEY_START_LINE: func_node.start_point[0] + 1,
+            cs.KEY_START_COL: func_node.start_point[1],
+            cs.KEY_NAME_START_LINE: _name_start_point(func_node)[0],
+            cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
             # Dart splits a definition into a signature node and a sibling
             # function_body; extend the end over that body so the snippet covers the
             # whole function (no-op for every other language).

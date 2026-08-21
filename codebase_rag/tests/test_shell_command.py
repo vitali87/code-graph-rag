@@ -84,24 +84,101 @@ class TestIsDangerousCommand:
         assert is_dangerous is False
 
 
+class TestGitConfigExecKeyBlocked:
+    """GHSA-2rr7-8xrw-gmhr: git config writes to shell-executing keys are
+    blocked outright at execution time, regardless of approval."""
+
+    def test_core_sshcommand_backdoor_blocked(self) -> None:
+        available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+        payload = (
+            "git config --global core.sshCommand "
+            '"sh -c \'echo pwned; exec ssh \\"$@\\"\'"'
+        )
+        error = _validate_segment(payload, available)
+        assert error is not None
+        assert "core.sshcommand" in error.lower()
+
+    def test_exec_keys_blocked_every_scope(self) -> None:
+        for key in ("core.sshCommand", "core.pager", "core.hooksPath"):
+            for scope in ("--global", "--system", "--local", ""):
+                parts = ["git", "config"]
+                if scope:
+                    parts.append(scope)
+                parts += [key, "value"]
+                is_dangerous, _ = _is_dangerous_command(parts, " ".join(parts))
+                assert is_dangerous is True, (key, scope)
+
+    def test_credential_helper_and_alias_blocked(self) -> None:
+        for key in ("credential.helper", "credential.https://x.helper", "alias.x"):
+            is_dangerous, _ = _is_dangerous_command(
+                ["git", "config", key, "!sh -c evil"], f"git config {key} ..."
+            )
+            assert is_dangerous is True, key
+
+    def test_reads_and_unset_allowed(self) -> None:
+        # A victim must be able to inspect and clear a planted backdoor.
+        for args in (
+            ["git", "config", "--get", "core.sshCommand"],
+            ["git", "config", "--list"],
+            ["git", "config", "--global", "--unset", "core.sshCommand"],
+        ):
+            is_dangerous, _ = _is_dangerous_command(args, " ".join(args))
+            assert is_dangerous is False, args
+
+    def test_benign_config_write_not_blocked_here(self) -> None:
+        # Not an exec key -> not blocked by THIS guard (approval still applies).
+        is_dangerous, _ = _is_dangerous_command(
+            ["git", "config", "--global", "user.name", "x"],
+            "git config --global user.name x",
+        )
+        assert is_dangerous is False
+
+
 class TestRequiresApproval:
     def test_read_only_commands_no_approval(self) -> None:
         for cmd in settings.SHELL_READ_ONLY_COMMANDS:
             assert _requires_approval(cmd) is False
 
     def test_read_only_with_args_no_approval(self) -> None:
-        assert _requires_approval("ls -la") is False
-        assert _requires_approval("cat file.txt") is False
-        assert _requires_approval("find . -name '*.py'") is False
+        assert _requires_approval("pwd") is False
+        assert _requires_approval("echo hello") is False
+
+    def test_filesystem_reads_require_approval(self) -> None:
+        assert _requires_approval("ls -la") is True
+        assert _requires_approval("cat file.txt") is True
+        assert _requires_approval("cat /etc/passwd") is True
+        assert _requires_approval("cat ../outside.txt") is True
+        assert _requires_approval("find . -name '*.py'") is True
+        assert _requires_approval("rg secret ~/.config") is True
+        assert _requires_approval("head -10 /tmp/outside.txt") is True
+
+    def test_find_mutating_actions_require_approval(self) -> None:
+        # Every action that runs a command or deletes files gates `find` behind
+        # approval, not just -exec/-delete.
+        for action in ("-delete", "-exec", "-execdir", "-ok", "-okdir"):
+            command = f"find . -name '*.py' {action} rm {{}} ;"
+            assert _requires_approval(command) is True, command
 
     def test_safe_git_subcommands_no_approval(self) -> None:
-        for subcmd in settings.SHELL_SAFE_GIT_SUBCOMMANDS:
-            assert _requires_approval(f"git {subcmd}") is False
+        assert not settings.SHELL_SAFE_GIT_SUBCOMMANDS
+
+    def test_git_reads_require_approval_because_git_can_escape_project(self) -> None:
+        assert _requires_approval("git status") is True
+        assert _requires_approval("git -C ../other log") is True
+        assert (
+            _requires_approval("git --git-dir=../other/.git show HEAD:secret") is True
+        )
 
     def test_unsafe_git_subcommands_require_approval(self) -> None:
         assert _requires_approval("git push") is True
         assert _requires_approval("git commit -m 'msg'") is True
         assert _requires_approval("git reset --hard") is True
+        assert _requires_approval("git branch -D topic") is True
+        assert _requires_approval("git config core.sshCommand malicious") is True
+
+    def test_mutating_find_forms_require_approval(self) -> None:
+        assert _requires_approval("find . -delete") is True
+        assert _requires_approval("find . -exec rm {} +") is True
 
     def test_write_commands_require_approval(self) -> None:
         assert _requires_approval("rm file.txt") is True
@@ -232,14 +309,23 @@ class TestCreateShellCommandTool:
 
 
 class TestToolApprovalBehavior:
-    async def test_read_only_command_no_approval_needed(
+    async def test_pathless_command_no_approval_needed(
         self, shell_commander: ShellCommander
     ) -> None:
         tool = create_shell_command_tool(shell_commander)
         mock_ctx = MagicMock()
         mock_ctx.tool_call_approved = False
-        result = await tool.function(mock_ctx, "ls")
+        result = await tool.function(mock_ctx, "pwd")
         assert result.return_code == 0, result.stderr
+
+    async def test_filesystem_read_requires_approval(
+        self, shell_commander: ShellCommander
+    ) -> None:
+        tool = create_shell_command_tool(shell_commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        with pytest.raises(ApprovalRequired):
+            await tool.function(mock_ctx, "ls")
 
     async def test_write_command_requires_approval(
         self, shell_commander: ShellCommander
@@ -390,9 +476,9 @@ class TestRequiresApprovalWithRedirects:
     def test_heredoc_requires_approval(self) -> None:
         assert _requires_approval("cat << EOF") is True
 
-    def test_read_only_without_redirect_no_approval(self) -> None:
-        assert _requires_approval("ls -la") is False
-        assert _requires_approval("cat file.txt") is False
+    def test_pathless_command_without_redirect_no_approval(self) -> None:
+        assert _requires_approval("pwd") is False
+        assert _requires_approval("echo hello") is False
 
 
 class TestHasSubshell:
@@ -617,10 +703,10 @@ class TestShellOperators:
 
 
 class TestPipedCommandApproval:
-    def test_all_read_only_no_approval(self) -> None:
-        assert _requires_approval("ls | wc -l") is False
-        assert _requires_approval("find . -name '*.py' | head -10") is False
-        assert _requires_approval("cat file.txt | rg pattern | wc -l") is False
+    def test_filesystem_read_in_pipeline_requires_approval(self) -> None:
+        assert _requires_approval("ls | wc -l") is True
+        assert _requires_approval("find . -name '*.py' | head -10") is True
+        assert _requires_approval("cat file.txt | rg pattern | wc -l") is True
 
     def test_write_command_in_pipe_requires_approval(self) -> None:
         assert _requires_approval("ls | tee output.txt") is True

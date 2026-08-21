@@ -52,6 +52,16 @@ def is_feature_theme(theme: str) -> bool:
     return NON_FEATURE_THEME.search(theme) is None
 
 
+def _normalize_dashes(text: str) -> str:
+    """Replace em-dashes and en-dashes with a hyphen; house style forbids them.
+
+    The generator prompts already ask the model to avoid them, but a prompt is
+    not a guarantee, so every bullet written into NEWS.md is normalised here.
+    ``chr`` keeps the dash characters out of this source file too.
+    """
+    return text.replace(chr(0x2014), "-").replace(chr(0x2013), "-")
+
+
 def extract_bullets(fragment: str) -> list[str]:
     """Return the well-formed, feature-themed news bullets in a fragment.
 
@@ -61,7 +71,7 @@ def extract_bullets(fragment: str) -> list[str]:
     """
     bullets: list[str] = []
     for line in fragment.splitlines():
-        stripped = line.rstrip()
+        stripped = _normalize_dashes(line.rstrip())
         match = BULLET_PATTERN.match(stripped)
         if match and is_feature_theme(match.group("theme")):
             bullets.append(stripped)

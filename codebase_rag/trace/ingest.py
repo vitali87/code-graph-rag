@@ -22,12 +22,16 @@ from ..services import IngestorProtocol, QueryProtocol
 from .records import read_trace_file
 from .resolution import (
     CallableNode,
+    DotnetFrameResolver,
     FrameResolver,
+    JsFrameResolver,
     JvmFrameResolver,
+    PhpFrameResolver,
     ResolutionStats,
 )
 
 if TYPE_CHECKING:
+    from ..flow_verdict import QueryFn
     from ..types_defs import PropertyValue, ResultRow
     from .records import FramePoint, TraceHeader
     from .resolution import ResolvedFrame
@@ -46,6 +50,22 @@ def _resolver_for(
 ) -> FrameResolverProtocol:
     if header.language == cs.TRACE_LANGUAGE_JVM:
         return JvmFrameResolver(nodes)
+    if header.language in (
+        cs.TRACE_LANGUAGE_JS,
+        cs.TRACE_LANGUAGE_LUA,
+        cs.TRACE_LANGUAGE_DART,
+        cs.TRACE_LANGUAGE_GO,
+        cs.TRACE_LANGUAGE_CPP,
+        cs.TRACE_LANGUAGE_RUST,
+    ):
+        # Lua-agent and Dart-collector frames share V8's shape: repo paths,
+        # bare runtime names, 1-based definition lines, <module>/<anonymous>
+        # markers. Rust pprof frames reduce to the same shape after demangling.
+        return JsFrameResolver(repo_root, nodes)
+    if header.language == cs.TRACE_LANGUAGE_DOTNET:
+        return DotnetFrameResolver(nodes)
+    if header.language == cs.TRACE_LANGUAGE_PHP:
+        return PhpFrameResolver(repo_root, nodes)
     return FrameResolver(repo_root, nodes)
 
 
@@ -73,10 +93,13 @@ class TraceIngestSummary:
         return self.resolution.total
 
 
-def _load_callables(
-    ingestor: TraceGraphProtocol, project_prefix: str
-) -> list[CallableNode]:
-    rows: list[ResultRow] = ingestor.fetch_all(
+def load_callables(fetch_all: QueryFn, project_prefix: str) -> list[CallableNode]:
+    """The Function/Method/Module nodes of one project, ready for resolution.
+
+    Shared with the crash-correlation query layer, which resolves traceback
+    frames against the same node shapes trace ingestion does.
+    """
+    rows: list[ResultRow] = fetch_all(
         CYPHER_TRACE_CALLABLES, {cs.KEY_PREFIX: project_prefix}
     )
     nodes: list[CallableNode] = []
@@ -120,7 +143,7 @@ def _load_existing_calls(
 
 
 def _edge_properties(
-    stats: _EdgeStats, static_missed: bool
+    stats: _EdgeStats, static_missed: bool, sampled: bool
 ) -> dict[str, PropertyValue]:
     workloads = sorted(stats.workloads)[: cs.TRACE_MAX_WORKLOADS_PER_EDGE]
     receivers = sorted(stats.receiver_types)[: cs.TRACE_MAX_RECEIVER_TYPES_PER_EDGE]
@@ -131,6 +154,7 @@ def _edge_properties(
         cs.TRACE_PROP_WORKLOADS: workloads,
         cs.TRACE_PROP_RECEIVER_TYPES: receivers,
         cs.TRACE_PROP_STATIC_MISSED: static_missed,
+        cs.TRACE_PROP_SAMPLED: sampled,
     }
 
 
@@ -145,7 +169,7 @@ def ingest_trace(
     repo_root = repo_path.resolve() if repo_path else Path(header.repo_root)
     project_prefix = project_name + cs.SEPARATOR_DOT
 
-    nodes = _load_callables(ingestor, project_prefix)
+    nodes = load_callables(ingestor.fetch_all, project_prefix)
     existing = _load_existing_calls(ingestor, project_prefix)
     resolver = _resolver_for(header, repo_root, nodes)
 
@@ -176,7 +200,7 @@ def ingest_trace(
             (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
             cs.RelationshipType.CALLS,
             (callee.label, cs.KEY_QUALIFIED_NAME, callee.qualified_name),
-            properties=_edge_properties(stats, static_missed),
+            properties=_edge_properties(stats, static_missed, header.sampled),
         )
     ingestor.flush_all()
     logger.info(

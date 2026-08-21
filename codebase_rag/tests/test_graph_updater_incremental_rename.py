@@ -54,7 +54,102 @@ class InMemoryGraph:
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
+        if query == cs.CYPHER_AFFECTED_CALLER_PATHS:
+            request = params or {}
+            return self._affected_caller_rows(
+                request.get("paths") or [], request.get(cs.KEY_PROJECT_PREFIX)
+            )
+        if query == cs.CYPHER_ALL_MODULE_QNS:
+            return self._module_qn_rows((params or {}).get(cs.KEY_PROJECT_PREFIX))
+        if query == cs.CYPHER_ALL_DEFINITION_QNS:
+            return self._definition_rows((params or {}).get(cs.KEY_PROJECT_PREFIX))
         return []
+
+    def _definition_rows(self, prefix: PropertyValue) -> list[ResultRow]:
+        # Mirrors production registry rehydration: definitions in UNCHANGED
+        # files (a base class, an overridden method) must be resolvable when
+        # a re-parsed subclass or caller references them.
+        if not isinstance(prefix, str):
+            return []
+        definition_labels = {
+            "Function",
+            "Method",
+            "Class",
+            "Interface",
+            "Enum",
+            "Type",
+            "Union",
+        }
+        rows: list[ResultRow] = []
+        for (label, _uid), props in self.nodes.items():
+            if label not in definition_labels:
+                continue
+            qn = props.get(cs.KEY_QUALIFIED_NAME)
+            if not isinstance(qn, str) or not qn.startswith(prefix):
+                continue
+            rows.append(
+                {
+                    cs.KEY_QUALIFIED_NAME: qn,
+                    cs.KEY_LABEL: label,
+                    cs.KEY_IS_PROPERTY: props.get(cs.KEY_IS_PROPERTY),
+                    "is_macro": props.get("is_macro"),
+                    cs.KEY_PATH: props.get(cs.KEY_PATH),
+                    cs.KEY_START_LINE: props.get(cs.KEY_START_LINE),
+                    cs.KEY_END_LINE: props.get(cs.KEY_END_LINE),
+                }
+            )
+        return rows
+
+    def _module_qn_rows(self, prefix: PropertyValue) -> list[ResultRow]:
+        # Mirrors production module-qn rehydration: without it, a re-parsed
+        # file's import of an UNCHANGED internal module fails deferred
+        # verification and grows a phantom ExternalModule node.
+        if not isinstance(prefix, str):
+            return []
+        rows: list[ResultRow] = []
+        for (label, _uid), props in self.nodes.items():
+            if label not in ("Module", "ModuleInterface"):
+                continue
+            qn = props.get(cs.KEY_QUALIFIED_NAME)
+            if isinstance(qn, str) and qn.startswith(prefix):
+                rows.append({cs.KEY_QUALIFIED_NAME: qn, cs.KEY_LABEL: label})
+        return rows
+
+    def _affected_caller_rows(
+        self, paths: PropertyValue, prefix: PropertyValue
+    ) -> list[ResultRow]:
+        # Answers the phase-4 dependency query from the stored graph: callers
+        # with an edge into any target whose path is being re-indexed, both
+        # endpoints scoped to the requesting project.
+        if not isinstance(prefix, str):
+            return []
+        path_set = {str(p) for p in paths} if isinstance(paths, list) else set()
+        dependency_rels = {"CALLS", "REFERENCES", "INSTANTIATES", "IMPORTS", "INHERITS"}
+        out: set[str] = set()
+        for fl, fk, fv, rel, tl, tk, tv in self.rels:
+            if rel not in dependency_rels:
+                continue
+            target = self.nodes.get((tl, tv))
+            caller = self.nodes.get((fl, fv))
+            if target is None or caller is None:
+                continue
+            target_path = target.get(cs.KEY_PATH)
+            caller_path = caller.get(cs.KEY_PATH)
+            target_qn = target.get(cs.KEY_QUALIFIED_NAME)
+            caller_qn = caller.get(cs.KEY_QUALIFIED_NAME)
+            if (
+                isinstance(target_path, str)
+                and target_path in path_set
+                and isinstance(caller_path, str)
+                and caller_path
+                and caller_path not in path_set
+                and isinstance(target_qn, str)
+                and target_qn.startswith(prefix)
+                and isinstance(caller_qn, str)
+                and caller_qn.startswith(prefix)
+            ):
+                out.add(caller_path)
+        return [{cs.KEY_CALLER_PATH: path} for path in sorted(out)]
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         params = params or {}
@@ -212,3 +307,52 @@ class TestIncrementalRenameStaleEntities:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def _write_override_tree(root: Path, with_override: bool) -> None:
+    (root / "base.py").write_text(
+        "class A:\n    def m(self):\n        return 1\n", encoding="utf-8"
+    )
+    override = "    def m(self):\n        return 2\n" if with_override else "    pass\n"
+    (root / "derived.py").write_text(
+        f"from base import A\n\nclass B(A):\n{override}", encoding="utf-8"
+    )
+    (root / "caller.py").write_text(
+        "from derived import B\n\n\ndef use():\n    b = B()\n    b.m()\n",
+        encoding="utf-8",
+    )
+
+
+class TestAffectedCallerReprocessing:
+    def test_new_override_rebinds_the_unchanged_callers_call(
+        self, tmp_path: Path
+    ) -> None:
+        # Issue #1229 phase 4: only derived.py changes (B gains an override of
+        # m), so caller.py is not re-parsed by the hash diff; its old edge to
+        # A.m would be restored verbatim while the correct binding is now B.m.
+        # Dependency expansion re-parses caller.py and the graphs converge.
+        golden_root = tmp_path / "golden"
+        golden_root.mkdir()
+        _write_override_tree(golden_root, with_override=True)
+        golden_graph = InMemoryGraph()
+        _make_updater(golden_root, golden_graph).run(force=True)
+        golden_nodes, golden_rels = golden_graph.snapshot()
+
+        incr_root = tmp_path / "incr"
+        incr_root.mkdir()
+        _write_override_tree(incr_root, with_override=False)
+        incr_graph = InMemoryGraph()
+        _make_updater(incr_root, incr_graph).run(force=True)
+
+        _write_override_tree(incr_root, with_override=True)
+        _make_updater(incr_root, incr_graph).run(force=False)
+        incr_nodes, incr_rels = incr_graph.snapshot()
+
+        assert incr_nodes == golden_nodes, {
+            "stale_extra_nodes": sorted(map(str, incr_nodes - golden_nodes)),
+            "missing_nodes": sorted(map(str, golden_nodes - incr_nodes)),
+        }
+        assert incr_rels == golden_rels, {
+            "stale_extra_rels": sorted(map(str, incr_rels - golden_rels)),
+            "missing_rels": sorted(map(str, golden_rels - incr_rels)),
+        }

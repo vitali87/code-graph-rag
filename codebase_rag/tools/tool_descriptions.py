@@ -215,6 +215,37 @@ MCP_FLOW_VERDICT = (
 MCP_PARAM_SOURCE_QN = "Qualified name of the flow source (function/method)"
 MCP_PARAM_SINK_QN = "Qualified name of the flow sink (function/method)"
 
+MCP_EXPLAIN_TRACEBACK = (
+    "Correlate a Python traceback with the code graph: each frame is "
+    "resolved to its Function/Method/Module node and returned with its "
+    "graph neighbourhood (callers, callees, and FLOWS_TO sources feeding "
+    "it). Frames outside the repository or unknown to the graph carry an "
+    "unresolved reason instead. Use this to ground a failure report in "
+    "the indexed code before deciding where to look."
+)
+
+MCP_RANK_ROOT_CAUSES = (
+    "Rank the sites that can explain a Python traceback's failure, best "
+    "first. The anchor (failing) is the innermost frame the graph "
+    "resolves; anchor_is_crash_site is false when the actual crash line "
+    "sits deeper (a library frame, or a frame the graph cannot match), so "
+    "the ranking reads as relative to the deepest resolvable frame. "
+    "Candidates score by three additive signals: being a FLOWS_TO source "
+    "into the failing frame (a possible producer of the failing value), "
+    "sitting on the crashing stack itself, and reaching the failing frame "
+    "through CALLS edges (closer callers score higher). Each candidate "
+    "carries its file, definition line, reasons, and the call path to the "
+    "failure. When the project has no FLOWS_TO edges the ranking degrades "
+    "to a CALLS-only walk and flow_used is false; flow_gaps always names "
+    "the files outside flow-analysis coverage."
+)
+
+MCP_PARAM_TRACEBACK_TEXT = (
+    "The traceback text exactly as Python printed it (the 'Traceback "
+    "(most recent call last):' block; chained tracebacks are fine, the "
+    "final propagated section is used)"
+)
+
 MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.LIST_PROJECTS: MCP_LIST_PROJECTS,
     MCPToolName.DELETE_PROJECT: MCP_DELETE_PROJECT,
@@ -232,6 +263,8 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.STRUCTURAL_REPLACE: MCP_STRUCTURAL_REPLACE,
     MCPToolName.ASK_AGENT: MCP_ASK_AGENT,
     MCPToolName.FLOW_VERDICT: MCP_FLOW_VERDICT,
+    MCPToolName.EXPLAIN_TRACEBACK: MCP_EXPLAIN_TRACEBACK,
+    MCPToolName.RANK_ROOT_CAUSES: MCP_RANK_ROOT_CAUSES,
 }
 
 AGENTIC_TOOLS: dict[AgenticToolName, str] = {

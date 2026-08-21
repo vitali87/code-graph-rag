@@ -8,6 +8,7 @@ from __future__ import annotations
 import collections
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_audit as ga
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, PropertyDict
 
@@ -271,7 +272,7 @@ class TestLiveGraphAudit:
     def test_clean_live_graph_passes(self) -> None:
         fetch = self._fetch_factory(
             {
-                "NOT (n)--()": [],
+                cq.CYPHER_AUDIT_ORPHANS: [],
                 "UNWIND labels(n)": [],
                 "type(r)": [],
             }
@@ -280,7 +281,7 @@ class TestLiveGraphAudit:
 
     def test_live_orphans_flagged(self) -> None:
         fetch = self._fetch_factory(
-            {"NOT (n)--()": [{"label": "Method", "orphans": 427}]}
+            {cq.CYPHER_AUDIT_ORPHANS: [{"label": "Method", "orphans": 427}]}
         )
         violations = ga.collect_live_violations(fetch)
         checks = [v.check for v in violations]

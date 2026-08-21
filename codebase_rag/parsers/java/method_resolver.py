@@ -14,6 +14,7 @@ from ..utils import safe_decode_text
 from .utils import (
     extract_class_info,
     extract_method_call_info,
+    extract_method_info,
     get_class_context_from_qn,
 )
 
@@ -80,17 +81,68 @@ def _java_param_type_names(qn: str) -> list[str]:
     ]
 
 
-def _overload_matches_arg_types(qn: str, arg_types: tuple[str | None, ...]) -> bool:
-    # True when every KNOWN argument type equals the candidate's parameter type at
-    # that position (simple names). Unknown args (None) are wildcards. Picks the
-    # right same-arity overload (isX(String) vs isX(Class) for a String arg).
+def _simple_type_name(type_text: str) -> str:
+    return (
+        type_text.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        .rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        .strip()
+    )
+
+
+def _pick_declared_overload(
+    declarations: list[ASTNode], param_types: tuple[str, ...]
+) -> ASTNode | None:
+    # Without a signature to match, the first declaration is all there is. With
+    # one, prefer the declaration whose parameter types match it: overloads may
+    # differ in return type, and the caller has already chosen which one it is.
+    if not declarations:
+        return None
+    if not param_types:
+        return declarations[0]
+    for declaration in declarations:
+        declared = tuple(
+            _simple_type_name(text)
+            for text in extract_method_info(declaration)[cs.KEY_PARAMETERS]
+        )
+        if declared == param_types:
+            return declaration
+    return declarations[0]
+
+
+def _overload_rank(qn: str, arg_types: tuple[str | None, ...]) -> int | None:
+    # How well a candidate fits the KNOWN argument types: the summed per-argument
+    # conversion rank, or None when some argument cannot reach its parameter at
+    # all. Unknown args (None) are wildcards and cost nothing. Summing lets the
+    # MOST SPECIFIC applicable overload win, so take(Integer) beats take(Object)
+    # for an int argument, the way the language resolves it.
     params = _java_param_type_names(qn)
     if len(params) != len(arg_types):
-        return False
-    return all(
-        at is None or at.split(cs.SEPARATOR_DOT)[-1] == pt
-        for at, pt in zip(arg_types, params, strict=False)
-    )
+        return None
+    total = 0
+    for at, pt in zip(arg_types, params, strict=False):
+        if at is None:
+            continue
+        rank = _argument_rank(at.split(cs.SEPARATOR_DOT)[-1], pt)
+        if rank is None:
+            return None
+        total += rank
+    return total
+
+
+def _argument_rank(arg_type: str, param_type: str) -> int | None:
+    # The conversion the language would apply, ranked by preference (JLS 5.3).
+    if arg_type == param_type:
+        return cs.JAVA_RANK_EXACT
+    if param_type in cs.JAVA_WIDENING_PRIMITIVES.get(arg_type, ()):
+        return cs.JAVA_RANK_WIDENED
+    boxed = cs.JAVA_BOXED_TYPES.get(arg_type, arg_type)
+    if param_type == boxed:
+        return cs.JAVA_RANK_BOXED
+    if param_type in cs.JAVA_REFERENCE_SUPERTYPES.get(boxed, ()):
+        return cs.JAVA_RANK_SUPERTYPE
+    if param_type == cs.JAVA_TYPE_OBJECT_NAME:
+        return cs.JAVA_RANK_OBJECT
+    return None
 
 
 def _callable_visible_to_caller(
@@ -122,9 +174,14 @@ def _pick_overload(
     if not matches:
         return None
     if len(matches) > 1 and any(at is not None for at in arg_types):
-        for match in matches:
-            if _overload_matches_arg_types(match[1], arg_types):
-                return match
+        ranked = [
+            (rank, index, match)
+            for index, match in enumerate(matches)
+            if (rank := _overload_rank(match[1], arg_types)) is not None
+        ]
+        if ranked:
+            # Ties keep declaration order, so the choice stays deterministic.
+            return min(ranked)[2]
     if len(matches) > 1 and arg_count is not None:
         for match in matches:
             if _java_signature_arity(match[1]) == arg_count:
@@ -144,6 +201,14 @@ class JavaMethodResolverMixin:
 
     @abstractmethod
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
+
+    @abstractmethod
+    def _infer_java_type_from_expression(
+        self,
+        expr_node: ASTNode,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+    ) -> str | None: ...
 
     @abstractmethod
     def _imported_class_qn(self, target: str, type_name: str) -> str: ...
@@ -563,7 +628,12 @@ class JavaMethodResolverMixin:
 
         return self._heuristic_method_return_type(method_call)
 
-    def _find_method_return_type(self, class_qn: str, method_name: str) -> str | None:
+    def _find_method_return_type(
+        self,
+        class_qn: str,
+        method_name: str,
+        param_types: tuple[str, ...] = (),
+    ) -> str | None:
         if not class_qn or not method_name:
             return None
 
@@ -574,41 +644,62 @@ class JavaMethodResolverMixin:
             return None
 
         return self._find_method_return_type_in_ast(
-            ctx.root_node, ctx.target_class_name, method_name, ctx.module_qn
+            ctx.root_node,
+            ctx.target_class_name,
+            method_name,
+            ctx.module_qn,
+            param_types,
         )
 
     def _find_method_return_type_in_ast(
-        self, node: ASTNode, class_name: str, method_name: str, module_qn: str
+        self,
+        node: ASTNode,
+        class_name: str,
+        method_name: str,
+        module_qn: str,
+        param_types: tuple[str, ...] = (),
     ) -> str | None:
-        if node.type == cs.TS_CLASS_DECLARATION:
+        # Interfaces, enums and records declare methods too, and instance-method
+        # lookup already binds through them, so a chain whose inner call is
+        # declared on one must be typeable the same way.
+        if node.type in cs.JAVA_CLASS_NODE_TYPES:
             if (
                 name_node := node.child_by_field_name(cs.KEY_NAME)
             ) and safe_decode_text(name_node) == class_name:
                 if body_node := node.child_by_field_name(cs.FIELD_BODY):
                     return self._search_methods_in_class_body(
-                        body_node, method_name, module_qn
+                        body_node, method_name, module_qn, param_types
                     )
 
         for child in node.children:
             if result := self._find_method_return_type_in_ast(
-                child, class_name, method_name, module_qn
+                child, class_name, method_name, module_qn, param_types
             ):
                 return result
 
         return None
 
     def _search_methods_in_class_body(
-        self, body_node: ASTNode, method_name: str, module_qn: str
+        self,
+        body_node: ASTNode,
+        method_name: str,
+        module_qn: str,
+        param_types: tuple[str, ...] = (),
     ) -> str | None:
-        for child in body_node.children:
-            if child.type == cs.TS_METHOD_DECLARATION:
-                if (
-                    name_node := child.child_by_field_name(cs.KEY_NAME)
-                ) and safe_decode_text(name_node) == method_name:
-                    if (type_node := child.child_by_field_name(cs.KEY_TYPE)) and (
-                        return_type := safe_decode_text(type_node)
-                    ):
-                        return self._resolve_java_type_name(return_type, module_qn)
+        named = [
+            child
+            for child in body_node.children
+            if child.type == cs.TS_METHOD_DECLARATION
+            and (name_node := child.child_by_field_name(cs.KEY_NAME)) is not None
+            and safe_decode_text(name_node) == method_name
+        ]
+        chosen = _pick_declared_overload(named, param_types)
+        if chosen is None:
+            return None
+        if (type_node := chosen.child_by_field_name(cs.KEY_TYPE)) and (
+            return_type := safe_decode_text(type_node)
+        ):
+            return self._resolve_java_type_name(return_type, module_qn)
         return None
 
     def _heuristic_method_return_type(self, method_call: str) -> str | None:
@@ -645,9 +736,9 @@ class JavaMethodResolverMixin:
         self, call_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> tuple[str | None, ...]:
         # Infer the simple type of each argument so same-arity overloads can be told
-        # apart (isX(String) vs isX(Class)). Only identifier arguments whose type is
-        # known (local var or field) resolve; everything else is None (unknown),
-        # which _overload_matches_arg_types treats as a wildcard.
+        # apart (isX(String) vs isX(Class)). An argument whose type cannot be
+        # inferred is None (unknown), which _overload_rank treats as
+        # a wildcard.
         args_node = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
         if not args_node:
             return ()
@@ -656,7 +747,14 @@ class JavaMethodResolverMixin:
             if child.type in cs.DELIMITER_TOKENS:
                 continue
             if child.type != cs.TS_IDENTIFIER:
-                arg_types.append(None)
+                # A literal carries its type in its node type, and a `new T()`
+                # or a call carries it in the expression: the shared inference
+                # types all of them (issue #1344).
+                arg_types.append(
+                    self._infer_java_type_from_expression(
+                        child, module_qn, local_var_types
+                    )
+                )
                 continue
             name = safe_decode_text(child)
             var_type = local_var_types.get(name) if name else None
@@ -664,6 +762,42 @@ class JavaMethodResolverMixin:
                 var_type = self._lookup_variable_type(name, module_qn)
             arg_types.append(var_type or None)
         return tuple(arg_types)
+
+    @staticmethod
+    def _has_call_receiver(call_node: ASTNode) -> bool:
+        receiver = call_node.child_by_field_name(cs.TS_FIELD_OBJECT)
+        return receiver is not None and receiver.type == cs.TS_METHOD_INVOCATION
+
+    def _chained_receiver_type(
+        self,
+        call_node: ASTNode,
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> str | None:
+        receiver = call_node.child_by_field_name(cs.TS_FIELD_OBJECT)
+        if receiver is None:
+            return None
+        # Recursion walks the chain leftwards; the leftmost receiver is an
+        # identifier or field access, which the existing paths already type.
+        resolved = self._do_resolve_java_method_call(
+            receiver, local_var_types, module_qn
+        )
+        if not resolved:
+            return None
+        return self._declared_return_type_of(resolved[1])
+
+    def _declared_return_type_of(self, method_qn: str) -> str | None:
+        open_idx = method_qn.find(cs.CHAR_PAREN_OPEN)
+        unsignatured = method_qn[:open_idx] if open_idx >= 0 else method_qn
+        class_qn, _, method_name = unsignatured.rpartition(cs.SEPARATOR_DOT)
+        if not class_qn or not method_name:
+            return None
+        # The signature of the OVERLOAD the inner call resolved to: overloads
+        # may declare different return types, and a name-only lookup would type
+        # the chain from whichever one is declared first.
+        return self._find_method_return_type(
+            class_qn, method_name, tuple(_java_param_type_names(method_qn))
+        )
 
     def _do_resolve_java_method_call(
         self,
@@ -689,6 +823,25 @@ class JavaMethodResolverMixin:
             return None
 
         logger.debug(ls.JAVA_RESOLVING_CALL, method=method_name, object=object_ref)
+
+        # A chained step (`from(..).where(..)`) has a method_invocation receiver,
+        # which carries no name to look up. Typing it means resolving the inner
+        # call first and reading its DECLARED return type -- the same thing the
+        # compiler does, and what makes `return this;` builders resolve.
+        if self._has_call_receiver(call_node):
+            if chained_type := self._chained_receiver_type(
+                call_node, local_var_types, module_qn
+            ):
+                logger.debug(ls.JAVA_OBJ_TYPE_RESOLVED, type=chained_type)
+                return self._resolve_instance_method(
+                    chained_type, str(method_name), module_qn, arg_count, arg_types
+                )
+            # An untypeable receiver (a call into a third-party type) leaves the
+            # step unresolved. It must not reach the unqualified path below:
+            # `expr().m()` is never `this.m()`, and that scan binds by name
+            # alone, which is how the chain used to land on an unrelated class.
+            logger.debug(ls.JAVA_OBJ_TYPE_UNKNOWN, object=method_name)
+            return None
 
         if not object_ref:
             logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)

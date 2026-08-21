@@ -37,6 +37,7 @@ class TraceHeader:
     language: str
     repo_root: str
     tracer: str
+    sampled: bool = False
 
 
 @dataclass(slots=True)
@@ -77,12 +78,13 @@ def write_trace_file(
     output: Path, header: TraceHeader, records: Iterable[CallRecord]
 ) -> None:
     with output.open("w", encoding="utf-8") as fh:
-        header_row: dict[str, str | int] = {
+        header_row: dict[str, str | int | bool] = {
             cs.TRACE_KEY_KIND: cs.TRACE_KIND_HEADER,
             cs.TRACE_KEY_VERSION: header.version,
             cs.TRACE_KEY_LANGUAGE: header.language,
             cs.TRACE_KEY_REPO_ROOT: header.repo_root,
             cs.TRACE_KEY_TRACER: header.tracer,
+            cs.TRACE_KEY_SAMPLED: header.sampled,
         }
         fh.write(json.dumps(header_row) + "\n")
         for record in records:
@@ -116,14 +118,22 @@ def _parse_header(trace_path: Path, line: str) -> TraceHeader:
     language = raw.get(cs.TRACE_KEY_LANGUAGE)
     repo_root = raw.get(cs.TRACE_KEY_REPO_ROOT)
     tracer = raw.get(cs.TRACE_KEY_TRACER)
+    # Pre-flag trace files omit `sampled`; they read back as exact. A present
+    # value must be a real boolean, not a truthy string or number.
+    sampled = raw.get(cs.TRACE_KEY_SAMPLED, False)
     if (
         not isinstance(language, str)
         or not isinstance(repo_root, str)
         or not isinstance(tracer, str)
+        or not isinstance(sampled, bool)
     ):
         raise TraceFormatError(cs.TRACE_ERR_BAD_HEADER.format(path=trace_path))
     return TraceHeader(
-        version=version, language=language, repo_root=repo_root, tracer=tracer
+        version=version,
+        language=language,
+        repo_root=repo_root,
+        tracer=tracer,
+        sampled=sampled,
     )
 
 

@@ -15,7 +15,6 @@ import os
 import re
 import shutil
 import subprocess
-import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -25,6 +24,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
+from ..build_lock import acquire_build_lock, release_build_lock
 
 # Base-classification join key: (rel_file, type_start_line) -> {base_simple_name: kind}.
 BaseKindMap = dict[tuple[str, int], dict[str, str]]
@@ -68,12 +68,26 @@ class CSharpSemanticFacts(NamedTuple):
     # declaration): the compiler proof that the call leaves the repo, so
     # the name-trie fallback must not fabricate a first-party edge there.
     external_sites: set[CallSiteKey]
+    # Per invocation argument, the locals/parameters Roslyn's definite-
+    # assignment analysis proves reach it (issue #1187): the compiler's
+    # answer where the lexical flow walk guesses from syntax.
+    arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]]
+    # Per local declarator, the locals/parameters that reach its INITIALIZER:
+    # without these the tainted value stops at the initializer expression and
+    # the bound variable looks clean to every later read.
+    bind_flows: dict[CallSiteKey, frozenset[str]]
+
+    # Per call site, the argument INDEX -> the local/parameter the callee writes
+    # through an `out`/`ref` parameter. The mirror of arg_flows: without these a
+    # variable filled by `TryParse(s, out var n)` looks untouched, so a sink fed
+    # from it has no edge.
+    out_writes: dict[CallSiteKey, dict[int, str]]
 
 
 def _empty_facts() -> CSharpSemanticFacts:
     # A fresh instance per failure path: the maps are handed to mutable
     # processor state, so a shared constant would alias across runs.
-    return CSharpSemanticFacts({}, {}, [], [], set())
+    return CSharpSemanticFacts({}, {}, [], [], set(), {}, {}, {})
 
 
 _DOTNET = "dotnet"
@@ -197,21 +211,6 @@ def _dll_fresh(dll: Path) -> bool:
     return dll.is_file() and dll.stat().st_mtime >= _newest_source_mtime()
 
 
-def _acquire_build_lock(lock: Path, dll: Path) -> bool:
-    # Serialise the one build across parallel workers. Returns True holding the
-    # lock (caller must rmdir); False if it gave up because another worker
-    # already produced a fresh DLL or the tries ran out.
-    for _ in range(_LOCK_TRIES):
-        try:
-            lock.mkdir()
-            return True
-        except FileExistsError:
-            time.sleep(_LOCK_POLL_SECONDS)
-            if _dll_fresh(dll):
-                return False
-    return False
-
-
 def _compile_tool(dotnet: str, src: Path, out: Path) -> bool:
     src.mkdir(parents=True, exist_ok=True)
     for name in _TOOL_SOURCES:
@@ -247,13 +246,16 @@ def _build_tool(dotnet: str) -> Path | None:
         return dll
     cache.mkdir(parents=True, exist_ok=True)
     lock = cache / _BUILD_LOCK
-    if not _acquire_build_lock(lock, dll):
+    handle = acquire_build_lock(
+        lock, lambda: _dll_fresh(dll), _LOCK_TRIES, _LOCK_POLL_SECONDS
+    )
+    if handle is None:
         return dll if _dll_fresh(dll) else None
     try:
         if not _dll_fresh(dll) and not _compile_tool(dotnet, src, out):
             return None
     finally:
-        lock.rmdir()
+        release_build_lock(handle)
     return dll if _dll_fresh(dll) else None
 
 
@@ -328,6 +330,9 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
             (site["file"], int(site["line"]), int(site["col"]), site["name"])
             for site in payload.get("externals", [])
         },
+        arg_flows=_arg_flows(payload.get("arg_flows", [])),
+        bind_flows=_bind_flows(payload.get("bind_flows", [])),
+        out_writes=_out_writes(payload.get("out_writes", [])),
     )
     if not any(facts) and stderr.strip():
         # A well-formed but entirely empty payload means the workspace load
@@ -335,6 +340,74 @@ def _parse_payload(stdout: str, stderr: str = "") -> CSharpSemanticFacts:
         # tool's diagnostics instead of looking identical to success.
         logger.warning(ls.CSHARP_FRONTEND_NO_FACTS.format(stderr=stderr.strip()))
     return facts
+
+
+def _arg_flows(rows: list) -> dict[CallSiteKey, dict[int, frozenset[str]]]:
+    # Keyed exactly like the call facts, so the resolver's existing
+    # location join applies unchanged. A malformed row is dropped rather
+    # than failing the whole payload: worst case those arguments fall back
+    # to the lexical evaluation.
+    flows: dict[CallSiteKey, dict[int, frozenset[str]]] = {}
+    for row in rows:
+        try:
+            key: CallSiteKey = (
+                row["file"],
+                int(row["line"]),
+                int(row["col"]),
+                row["name"],
+            )
+            index = int(row["index"])
+            symbols = frozenset(
+                symbol for symbol in row["symbols"] if isinstance(symbol, str)
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if symbols:
+            flows.setdefault(key, {})[index] = symbols
+    return flows
+
+
+def _bind_flows(rows: list) -> dict[CallSiteKey, frozenset[str]]:
+    # Keyed at the declarator's NAME token, the same (file, line, byte col,
+    # name) shape as every other family. Malformed rows drop.
+    flows: dict[CallSiteKey, frozenset[str]] = {}
+    for row in rows:
+        try:
+            key: CallSiteKey = (
+                row["file"],
+                int(row["line"]),
+                int(row["col"]),
+                row["name"],
+            )
+            symbols = frozenset(
+                symbol for symbol in row["symbols"] if isinstance(symbol, str)
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if symbols:
+            flows[key] = symbols
+    return flows
+
+
+def _out_writes(rows: list) -> dict[CallSiteKey, dict[int, str]]:
+    # Keyed exactly like the call facts. Malformed rows drop: worst case that
+    # argument keeps today's lexical behaviour.
+    writes: dict[CallSiteKey, dict[int, str]] = {}
+    for row in rows:
+        try:
+            key: CallSiteKey = (
+                row["file"],
+                int(row["line"]),
+                int(row["col"]),
+                row["name"],
+            )
+            index = int(row["index"])
+            symbol = row["symbol"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if isinstance(symbol, str) and symbol:
+            writes.setdefault(key, {})[index] = symbol
+    return writes
 
 
 def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:

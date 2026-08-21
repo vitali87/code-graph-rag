@@ -309,6 +309,42 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 path, path.name
             )
 
+        # Semantic facts are location-keyed against the compiler's view of
+        # the WHOLE module, so this change can rebind calls in UNCHANGED
+        # files; the applicable frontend re-runs (each resets its own facts)
+        # and its joins re-emit before the call recompute (issue #1229
+        # phase 3). Deletions count too: removing a file changes the
+        # module's bindings just as an edit does.
+        changed_spec = get_language_spec(path.suffix)
+        changed_language = changed_spec.language if changed_spec else None
+        if changed_language == SupportedLanguage.GO:
+            self.updater._run_go_frontend()
+            # A watch process that did not perform the full build itself has
+            # no in-memory locations for unchanged files; restoring them from
+            # the persisted graph matches the incremental flow and costs
+            # nothing when live state already holds them (fresh entries win).
+            self.updater._rehydrate_go_type_locations()
+            self.updater._rehydrate_function_locations()
+            self.updater._join_go_implements()
+        elif changed_language == SupportedLanguage.CSHARP:
+            self.updater._run_csharp_frontend()
+            self.updater._rehydrate_csharp_type_locations()
+            self.updater._rehydrate_function_locations()
+            self.updater._join_csharp_partials()
+        elif changed_language == SupportedLanguage.JAVA:
+            # The javac facts (issue #1181) are keyed by (file, line, byte
+            # col), so an edit that shifts a call by even one byte would
+            # otherwise keep binding it through the previous run's positions,
+            # and a stale external proof would keep suppressing a live edge.
+            self.updater._run_java_frontend()
+            self.updater._rehydrate_function_locations()
+        elif changed_language == SupportedLanguage.PYTHON:
+            # The Jedi facts (issue #1183) are position-keyed against the
+            # repo-wide import graph, so an edit can rebind call sites in
+            # unchanged files; same rerun-then-rehydrate posture as Go/C#.
+            self.updater._run_python_frontend()
+            self.updater._rehydrate_function_locations()
+
         # Rust inline-mod import maps retract at the end of every parse
         # and only re-commit through arbitration; run() is not on this
         # path, so arbitrate here before calls recompute through the maps.

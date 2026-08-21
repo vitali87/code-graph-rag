@@ -100,6 +100,10 @@ class LanguageDescriptor:
     # a handle constructor (`new FileWriter("x")`); None where handles are only
     # call-shaped (issue #714 handle walk).
     new_expression_type: str | None = None
+    # True when a same-file declaration OUTSIDE the caller's own scope (a
+    # sibling object at the template/module level) also shadows a sink head;
+    # the walk then seeds the enclosing scopes' declaration names (Scala).
+    enclosing_scope_shadows: bool = False
     # Stream-extraction operator (C++ `>>`): on a bound stream handle it is a
     # READ of that handle's resource. None where the language has none.
     stream_extract_operator: str | None = None
@@ -569,6 +573,62 @@ _PHP_DESCRIPTOR = LanguageDescriptor(
 
 # Non-Python languages with a direct-sink descriptor. Python keeps its own
 # handle-aware walk; each new language lands one entry (plus registry rows).
+_SCALA_DESCRIPTOR = LanguageDescriptor(
+    # Scala calls are ordinary `call_expression` nodes whose `function` field
+    # text is already the dotted callee (`Console.err.println`), so the
+    # standard lean walk applies with no leaf path (issue #1256).
+    call_type=cs.TS_SCALA_CALL_EXPRESSION,
+    string_type=cs.TS_SCALA_STRING,
+    # A Scala `string` has no content child at all; string_literal() reads a
+    # childless string inline from node.text with the quotes stripped.
+    string_content_type=cs.TS_SCALA_STRING,
+    keyword_arg_type=None,
+    # object/class/trait definitions are separate scopes AND shadowing heads:
+    # a local `object Source` must suppress the scala.io.Source rows.
+    nested_scope_types=frozenset(
+        {
+            cs.TS_SCALA_FUNCTION_DEFINITION,
+            cs.TS_SCALA_LAMBDA_EXPRESSION,
+            cs.TS_SCALA_OBJECT_DEFINITION,
+            cs.TS_SCALA_CLASS_DEFINITION,
+            cs.TS_SCALA_TRAIT_DEFINITION,
+        }
+    ),
+    # Scala is declare-at-point (`val x = ...` shadows only later uses). Sink
+    # heads (println, Console, System, Files, sys) are Predef/JDK effective
+    # globals, so the catalog is not import-gated.
+    identifier_type=cs.TS_SCALA_IDENTIFIER,
+    declarator_type=cs.TS_SCALA_VAL_DEFINITION,
+    params_field=cs.FIELD_PARAMETERS,
+    block_scope_type=cs.TS_SCALA_BLOCK,
+    extra_declarator_types=frozenset({cs.TS_SCALA_VAR_DEFINITION}),
+    loop_declarator_types=frozenset(),
+    statement_container_type=None,
+    sinks_require_import=False,
+    hoisted_declarations=False,
+    decl_in_own_initializer=False,
+    declaration_statement_type=None,
+    macro_type=None,
+    # Inert: no Scala member-read rows; env access is call-shaped (sys.env(k),
+    # System.getenv(k)). member access is wired to the real field_expression
+    # shape; Scala spells subscripts as apply CALLS, so subscript_type must be
+    # a type that never occurs in expression position or the flow walk's
+    # member/subscript branch would swallow every nested source call.
+    member_expression_type=cs.TS_SCALA_FIELD_EXPRESSION,
+    subscript_type=cs.TS_SCALA_TYPE_IDENTIFIER,
+    object_field=cs.FIELD_VALUE,
+    property_field=cs.FIELD_FIELD,
+    subscript_index_field=cs.TS_FIELD_ARGUMENTS,
+    new_expression_type=cs.TS_SCALA_INSTANCE_EXPRESSION,
+    # `val w = new PrintWriter(..)` binds through the `pattern` name field and
+    # the `value` field, like Rust's let.
+    declarator_name_field=cs.TS_FIELD_PATTERN,
+    # A same-file `object Source`/`val Files` declared OUTSIDE the caller
+    # (template body or module top level) still shadows a sink head, so the
+    # walk seeds the enclosing scopes' declarations too.
+    enclosing_scope_shadows=True,
+)
+
 LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.JS: _JS_TS_DESCRIPTOR,
     cs.SupportedLanguage.TS: _JS_TS_DESCRIPTOR,
@@ -585,4 +645,5 @@ LANGUAGE_DESCRIPTORS: dict[cs.SupportedLanguage, LanguageDescriptor] = {
     cs.SupportedLanguage.LUA: _LUA_DESCRIPTOR,
     cs.SupportedLanguage.PHP: _PHP_DESCRIPTOR,
     cs.SupportedLanguage.DART: _DART_DESCRIPTOR,
+    cs.SupportedLanguage.SCALA: _SCALA_DESCRIPTOR,
 }

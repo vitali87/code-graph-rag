@@ -54,31 +54,38 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
 
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
         if node.type == cs.TS_PY_CALL:
-            func_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            if (
-                func_node
-                and func_node.type == cs.TS_PY_IDENTIFIER
-                and func_node.text is not None
-                and (class_name := safe_decode_text(func_node))
-                and class_name[0].isupper()
+            return self._infer_call_expression_type(node, module_qn)
+        if node.type == cs.TS_PY_LIST_COMPREHENSION and (
+            body_node := node.child_by_field_name(cs.TS_FIELD_BODY)
+        ):
+            return self._infer_type_from_expression(body_node, module_qn)
+        return None
+
+    def _infer_call_expression_type(self, node: Node, module_qn: str) -> str | None:
+        func_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if (
+            func_node
+            and func_node.type == cs.TS_PY_IDENTIFIER
+            and func_node.text is not None
+            and (callee := safe_decode_text(func_node))
+        ):
+            if callee[0].isupper():
+                return callee
+            # A lowercase callee is a free-function factory: type from its
+            # return (annotation first), so `self.widgets = load_widgets()`
+            # seeds the attribute for methods that only read it.
+            return self._infer_free_function_return_type(callee, module_qn)
+
+        if (
+            func_node
+            and func_node.type == cs.TS_PY_ATTRIBUTE
+            and (method_call_text := self._extract_full_method_call(func_node))
+        ):
+            if inferred := self._infer_method_call_return_type(
+                method_call_text, module_qn, None
             ):
-                return class_name
-
-            if (
-                func_node
-                and func_node.type == cs.TS_PY_ATTRIBUTE
-                and (method_call_text := self._extract_full_method_call(func_node))
-            ):
-                if inferred := self._infer_method_call_return_type(
-                    method_call_text, module_qn, None
-                ):
-                    return inferred
-                return self._attribute_constructor_type(method_call_text)
-
-        elif node.type == cs.TS_PY_LIST_COMPREHENSION:
-            if body_node := node.child_by_field_name(cs.TS_FIELD_BODY):
-                return self._infer_type_from_expression(body_node, module_qn)
-
+                return inferred
+            return self._attribute_constructor_type(method_call_text)
         return None
 
     def _attribute_constructor_type(self, method_call_text: str) -> str | None:

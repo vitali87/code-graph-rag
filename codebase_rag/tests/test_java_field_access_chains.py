@@ -387,3 +387,212 @@ def test_generic_scoped_superclass_extraction() -> None:
         f"generic superclass should extract the base name; "
         f"got {generic_simple.get('superclass')!r}"
     )
+
+
+def test_fluent_chain_binds_each_step_to_the_receivers_return_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A chained step's receiver is a method_invocation, which was never typed,
+    # so every step after the first fell through to the module-wide name scan
+    # and bound to whichever class declared a matching name first (issue #1334).
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class Decoy {
+    public Decoy where(String c) { return this; }
+    public void execute() { }
+}
+class QueryBuilder {
+    public QueryBuilder from(String table) { return this; }
+    public QueryBuilder where(String condition) { return this; }
+    public void execute() { }
+}
+public class Main {
+    public static void main(String[] args) {
+        QueryBuilder obj = new QueryBuilder();
+        obj.from("users").where("id = 1").execute();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+    targets = _call_targets(mock_ingestor)
+    assert "proj.src.Main.QueryBuilder.from(String)" in targets
+    assert "proj.src.Main.QueryBuilder.where(String)" in targets
+    assert "proj.src.Main.QueryBuilder.execute()" in targets
+    assert not {t for t in targets if "Decoy" in t}
+
+
+def test_chain_across_files_types_each_step(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The inner call's declared return type names a class in another file, so
+    # the step after it can only bind once that type is resolved.
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Rows.java").write_text(
+        """
+public class Rows {
+    public Rows limit(int n) { return this; }
+    public int count() { return 0; }
+}
+""",
+        encoding="utf-8",
+    )
+    (project / "src" / "Session.java").write_text(
+        """
+public class Session {
+    public Rows query(String sql) { return new Rows(); }
+}
+""",
+        encoding="utf-8",
+    )
+    (project / "src" / "Other.java").write_text(
+        """
+public class Other {
+    public Other limit(int n) { return this; }
+    public int count() { return 1; }
+}
+""",
+        encoding="utf-8",
+    )
+    (project / "src" / "Main.java").write_text(
+        """
+public class Main {
+    public static void main(String[] args) {
+        Session s = new Session();
+        s.query("select 1").limit(10).count();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+    targets = _call_targets(mock_ingestor)
+    assert "proj.src.Session.Session.query(String)" in targets
+    assert "proj.src.Rows.Rows.limit(int)" in targets
+    assert "proj.src.Rows.Rows.count()" in targets
+    assert not {t for t in targets if "Other" in t}
+
+
+def test_an_unresolvable_inner_call_falls_back_instead_of_fabricating(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The receiver is a call into an unknown third-party type: there is no
+    # declared return type to read, so the step must stay unresolved rather
+    # than bind to a same-named method elsewhere in the module.
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class Local {
+    public void trim() { }
+}
+public class Main {
+    public static void main(String[] args) {
+        java.util.List<String> raw = new java.util.ArrayList<>();
+        raw.get(0).trim();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+    assert "proj.src.Main.Local.trim()" not in _call_targets(mock_ingestor)
+
+
+def test_overloaded_chain_steps_bind_by_arity(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class Builder {
+    public Builder with(String a) { return this; }
+    public Builder with(String a, String b) { return this; }
+    public void build() { }
+}
+public class Main {
+    public static void main(String[] args) {
+        Builder b = new Builder();
+        b.with("a").with("b", "c").build();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+    targets = _call_targets(mock_ingestor)
+    assert "proj.src.Main.Builder.with(String)" in targets
+    assert "proj.src.Main.Builder.with(String,String)" in targets
+    assert "proj.src.Main.Builder.build()" in targets
+
+
+def test_chain_types_from_the_selected_overload_not_the_first(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Overloads may declare different return types, so the chain must be typed
+    # from the overload the inner call actually resolved to, not from whichever
+    # one the class declares first.
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class Wrong {
+    public void selectedOnly() { }
+}
+class Selected {
+    public void selectedOnly() { }
+}
+class Factory {
+    public Wrong create(Integer wrongArg) { return new Wrong(); }
+    public Selected create(String selectedArg) { return new Selected(); }
+}
+public class Main {
+    public static void main(String[] args) {
+        Factory factory = new Factory();
+        String selectedArg = "pick me";
+        factory.create(selectedArg).selectedOnly();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+    targets = _call_targets(mock_ingestor)
+    assert "proj.src.Main.Factory.create(String)" in targets
+    assert "proj.src.Main.Selected.selectedOnly()" in targets
+    assert "proj.src.Main.Wrong.selectedOnly()" not in targets
+
+
+def test_chain_through_an_interface_declared_method(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Instance-method lookup already binds through interfaces, so a chain whose
+    # inner call is declared on one must be typeable the same way.
+    project = temp_repo / "proj"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "Main.java").write_text(
+        """
+class Builder {
+    public void build() { }
+}
+interface Factory {
+    Builder query();
+}
+class RealFactory implements Factory {
+    public Builder query() { return new Builder(); }
+}
+public class Main {
+    public static void run(Factory factory) {
+        factory.query().build();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    _run(project, mock_ingestor)
+    assert "proj.src.Main.Builder.build()" in _call_targets(mock_ingestor)

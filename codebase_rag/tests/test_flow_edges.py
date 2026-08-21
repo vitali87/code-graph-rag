@@ -1135,13 +1135,13 @@ def test_capture_taint_reaches_sink_in_nested_function(tmp_path: Path) -> None:
     assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
 
 
-def test_capture_taint_survives_reassignment_after_the_def(tmp_path: Path) -> None:
-    # MAY semantics (issue #1197): the capture is recorded from the def-site state,
-    # where `token` is tainted. A closure captures a cell, and the walk does not model
-    # call order, so the tool cannot assume the later reassignment precedes every
-    # invocation -- the closure may run with the tainted value. Reporting the flow is
-    # the safe over-approximation (no false negative); precise call-relative cell
-    # tracking is a separate follow-up.
+def test_direct_call_after_unconditional_clean_reassign_is_silent(
+    tmp_path: Path,
+) -> None:
+    # Call-relative cell semantics (issue #1211): the closure's only direct
+    # invocation runs after `token` was unconditionally reassigned clean, so
+    # the cell holds no taint at any call and no flow is reported. (The
+    # def-site MAY snapshot of #1197 still governs escaped closures below.)
     files = {
         "m.py": (
             "import os\n\n"
@@ -1150,6 +1150,70 @@ def test_capture_taint_survives_reassignment_after_the_def(tmp_path: Path) -> No
             "    def send():\n        print(token)\n"
             "    token = 'clean'\n"
             "    send()\n"
+        )
+    }
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_direct_call_before_clean_reassign_still_flows(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    send()\n"
+            "    token = 'clean'\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_escaped_closure_keeps_the_def_site_may_snapshot(tmp_path: Path) -> None:
+    # Stored closures may run at any time with any cell value: the walk cannot
+    # order their invocations, so the def-site MAY snapshot stands even though
+    # the reassignment precedes the store (issue #1211).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "callbacks = []\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    callbacks.append(send)\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_branch_local_clean_reassign_keeps_the_flow(tmp_path: Path) -> None:
+    # The reassignment cleans only one path; the merge unions the states, so a
+    # call after it still sees the MAY-tainted cell.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler(flag):\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    if flag:\n"
+            "        token = 'clean'\n"
+            "    send()\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_never_called_closure_keeps_the_def_site_snapshot(tmp_path: Path) -> None:
+    # A closure with no local call is still reachable through its qn; the
+    # def-site MAY snapshot keeps its capture summary composable.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
         )
     }
     assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
@@ -1287,3 +1351,86 @@ def test_capture_composes_for_duplicate_named_nested_defs(tmp_path: Path) -> Non
         )
     }
     assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_attribute_assigned_closure_escapes(tmp_path: Path) -> None:
+    # `holder.callback = send` stores the closure on an object: it may run
+    # later with any cell value, so the def-site MAY snapshot stands even
+    # though the only direct call happens after the clean reassign.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class H:\n    pass\n\n"
+            "def handler(holder):\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    holder.callback = send\n"
+            "    send()\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_returned_closure_escapes(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    return send\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_conditionally_returned_closure_escapes(tmp_path: Path) -> None:
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler(flag):\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    return send if flag else None\n"
+        )
+    }
+    assert _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_assigned_call_result_is_not_an_escape(tmp_path: Path) -> None:
+    # `x = send()` is a direct invocation whose RESULT is stored, not an
+    # escape of the closure itself: the call-relative path governs, so a
+    # call after the unconditional clean reassign stays silent.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    x = send()\n"
+            "    return x\n"
+        )
+    }
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))
+
+
+def test_keyword_argument_label_is_not_an_escape(tmp_path: Path) -> None:
+    # `other(send=None)` names a PARAMETER of other; the closure never
+    # travels, so the call-relative silence after the clean reassign holds.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def other(send=None):\n    return send\n\n"
+            "def handler():\n"
+            "    token = os.getenv('K')\n"
+            "    def send():\n        print(token)\n"
+            "    token = 'clean'\n"
+            "    other(send=None)\n"
+            "    send()\n"
+        )
+    }
+    assert not _has_env_k_to_stdout_flow(_run_flow(tmp_path, files))

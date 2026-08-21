@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.632"
+version = "0.0.703"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -50,11 +50,12 @@ dependencies = [
     "rich>=14.2.0",
     "prompt-toolkit>=3.0.52",
     "diff-match-patch>=20241021",
-    "click>=8.3.1",
+    "click>=8.3.3",
     "protobuf>=6.33.5",
     "defusedxml>=0.7.1",
     "huggingface-hub[hf-xet]>=1.7.2",
     "pathspec>=1.0.4",
+    "pygments>=2.20.0",
 ]
 
 [project.scripts]
@@ -86,16 +87,14 @@ codebase_rag = [
     "parsers/go_frontend/gotypes/*.go",
     "parsers/go_frontend/gotypes/go.mod",
     "parsers/go_frontend/gotypes/go.sum",
+    "parsers/java_frontend/javac/cgr/*.java",
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
 ]
 
 [project.optional-dependencies]
-cpp = [
-    "libclang>=18.1.1",
-]
-
 test = [
+    "jedi>=0.19",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=4.0.0",
@@ -105,6 +104,10 @@ test = [
     "filelock>=3.12",
     "ast-grep-py>=0.44.0",
     "pyyaml>=6.0",
+]
+
+cpp = [
+    "libclang>=18.1.1",
 ]
 
 treesitter-full = [
@@ -137,6 +140,9 @@ ast-grep = [
     "ast-grep-py>=0.44.0",
     "pyyaml>=6.0",
 ]
+python-semantics = [
+    "jedi>=0.19",
+]
 
 [tool.ruff]
 line-length = 88
@@ -150,6 +156,7 @@ ignore = [
     "PLR2004",  # magic value comparison (too noisy)
     "PLC0415",  # import not at top-level (intentional lazy imports)
     "PLR0913",  # too many arguments (often unavoidable)
+    "PLR0917",  # too many positional arguments (often unavoidable)
     "PLR0911",  # too many return statements
     "PLR0912",  # too many branches
     "PLR0915",  # too many statements
@@ -160,6 +167,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["T201"]
 "benchmarks/**" = ["T201"]
+"evals/flows_corpus/**" = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"

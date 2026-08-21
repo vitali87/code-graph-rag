@@ -491,6 +491,74 @@ _DART_SINKS: tuple[IOSink, ...] = (
     IOSink("stderr.writeln", ResourceKind.STDERR, IODirection.WRITE),
     IOSink("http.get", ResourceKind.NETWORK, IODirection.READ, target_arg=0),
     IOSink("http.post", ResourceKind.NETWORK, IODirection.WRITE, target_arg=0),
+    # Subprocess execution (issue #1224): the command (arg 0) is the resource
+    # identity, the argument list (arg 1) the injectable payload.
+    IOSink("Process.run", ResourceKind.PROCESS, IODirection.WRITE, target_arg=0),
+    IOSink("Process.start", ResourceKind.PROCESS, IODirection.WRITE, target_arg=0),
+)
+
+# Scala direct-call I/O sinks (issue #1256). Keyed by the dotted callee text of
+# call_expression's `function` field (`println`, `Console.err.println`,
+# `scala.io.Source.fromFile`). println/print/printf are Predef globals,
+# Console/System/Files/sys are effective globals, so the catalog is not
+# import-gated. Scala interops with java.* I/O, so the java.nio Files rows and
+# the System property/env rows mirror the Java catalog under both the short and
+# fully-qualified spellings. `sys.env("K")` is an apply call, hence call-shaped.
+_SCALA_CONSOLE_PREFIXES: tuple[str, ...] = ("Console", "scala.Console")
+_SCALA_SOURCE_PREFIXES: tuple[str, ...] = ("Source", "scala.io.Source")
+_SCALA_STDIN_PREFIXES: tuple[str, ...] = ("StdIn", "scala.io.StdIn")
+_SCALA_SYSTEM_PREFIXES: tuple[str, ...] = ("System", "java.lang.System")
+
+_SCALA_SINKS: tuple[IOSink, ...] = (
+    IOSink("println", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("print", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("printf", ResourceKind.STDOUT, IODirection.WRITE),
+    *(
+        IOSink(f"{prefix}.{method}", ResourceKind.STDOUT, IODirection.WRITE)
+        for prefix in _SCALA_CONSOLE_PREFIXES
+        for method in ("println", "print", "printf", "out.println", "out.print")
+    ),
+    *(
+        IOSink(f"{prefix}.err.{method}", ResourceKind.STDERR, IODirection.WRITE)
+        for prefix in _SCALA_CONSOLE_PREFIXES
+        for method in ("println", "print", "printf")
+    ),
+    *(
+        IOSink(f"{prefix}.fromFile", ResourceKind.FILE, IODirection.READ, target_arg=0)
+        for prefix in _SCALA_SOURCE_PREFIXES
+    ),
+    *(
+        IOSink(
+            f"{prefix}.fromURL", ResourceKind.NETWORK, IODirection.READ, target_arg=0
+        )
+        for prefix in _SCALA_SOURCE_PREFIXES
+    ),
+    *(
+        IOSink(f"{prefix}.readLine", ResourceKind.STDIN, IODirection.READ)
+        for prefix in _SCALA_STDIN_PREFIXES
+    ),
+    *(
+        IOSink(f"{prefix}.getenv", ResourceKind.ENV, IODirection.READ, target_arg=0)
+        for prefix in _SCALA_SYSTEM_PREFIXES
+    ),
+    *(
+        IOSink(
+            f"{prefix}.getProperty", ResourceKind.ENV, IODirection.READ, target_arg=0
+        )
+        for prefix in _SCALA_SYSTEM_PREFIXES
+    ),
+    *(
+        IOSink(f"{prefix}.{method}", ResourceKind.ENV, IODirection.WRITE, target_arg=0)
+        for prefix in _SCALA_SYSTEM_PREFIXES
+        for method in ("setProperty", "clearProperty")
+    ),
+    IOSink("sys.env", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    IOSink("sys.props", ResourceKind.ENV, IODirection.READ, target_arg=0),
+    *(
+        IOSink(f"{prefix}.{method}", ResourceKind.FILE, direction, target_arg=0)
+        for method, direction in _JAVA_FILES_METHODS
+        for prefix in _JAVA_FILES_PREFIXES
+    ),
 )
 
 IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
@@ -511,6 +579,7 @@ IO_SINKS: dict[cs.SupportedLanguage, tuple[IOSink, ...]] = {
     cs.SupportedLanguage.LUA: _LUA_SINKS,
     cs.SupportedLanguage.PHP: _PHP_SINKS,
     cs.SupportedLanguage.DART: _DART_SINKS,
+    cs.SupportedLanguage.SCALA: _SCALA_SINKS,
 }
 
 # The languages the flow/I-O analysis covers at all: a Module in any other
@@ -813,6 +882,9 @@ IO_LEAN_HANDLE_CONSTRUCTORS: dict[
     # (issue #1173). The read/write mode is per-method, so may-write by default.
     cs.SupportedLanguage.DART: (
         HandleConstructor("File", ResourceKind.FILE, target_arg=0),
+        # `var s = await Socket.connect(host, port)` binds a SOCKET handle
+        # whose identity is the host (issue #1224).
+        HandleConstructor("Socket.connect", ResourceKind.SOCKET, target_arg=0),
     ),
 }
 
@@ -1189,5 +1261,36 @@ IO_LEAN_HANDLE_METHODS: dict[
             "writeAsBytes": IODirection.WRITE,
             "writeAsBytesSync": IODirection.WRITE,
         },
+        # Socket handle methods (issue #1224): listen consumes the stream,
+        # the add/write family sends on it.
+        ResourceKind.SOCKET: {
+            "listen": IODirection.READ,
+            "add": IODirection.WRITE,
+            "addStream": IODirection.WRITE,
+            "write": IODirection.WRITE,
+            "writeln": IODirection.WRITE,
+        },
     },
 }
+
+# Scala runs on the JVM and drives the java.io/java.nio/java.sql handle surface
+# directly (`new java.io.PrintWriter(path)`, `Files.newBufferedWriter`), so it
+# reuses the Java handle tables verbatim (issue #1256).
+IO_LEAN_HANDLE_CONSTRUCTORS[cs.SupportedLanguage.SCALA] = IO_LEAN_HANDLE_CONSTRUCTORS[
+    cs.SupportedLanguage.JAVA
+]
+IO_NEW_HANDLE_CONSTRUCTORS[cs.SupportedLanguage.SCALA] = IO_NEW_HANDLE_CONSTRUCTORS[
+    cs.SupportedLanguage.JAVA
+]
+IO_NEW_HANDLE_WRAPPERS[cs.SupportedLanguage.SCALA] = IO_NEW_HANDLE_WRAPPERS[
+    cs.SupportedLanguage.JAVA
+]
+IO_LEAN_HANDLE_METHODS[cs.SupportedLanguage.SCALA] = IO_LEAN_HANDLE_METHODS[
+    cs.SupportedLanguage.JAVA
+]
+IO_IDENTITY_UNWRAP_CALLS[cs.SupportedLanguage.SCALA] = IO_IDENTITY_UNWRAP_CALLS[
+    cs.SupportedLanguage.JAVA
+]
+IO_IDENTITY_UNWRAP_NEW_TYPES[cs.SupportedLanguage.SCALA] = IO_IDENTITY_UNWRAP_NEW_TYPES[
+    cs.SupportedLanguage.JAVA
+]

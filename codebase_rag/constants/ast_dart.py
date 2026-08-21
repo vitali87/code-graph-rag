@@ -23,6 +23,10 @@ TS_DART_LABEL = "label"
 # Python's `conditional_expression` node TYPE but orders operands
 # [condition, consequence, alternative], not [body, condition, alternative].
 TS_DART_LIST_LITERAL = "list_literal"
+# `await expr` parses as unary_expression > await_expression > chain; the
+# awaited value carries the chain's taint and handle (issue #1224).
+TS_DART_UNARY_EXPRESSION = "unary_expression"
+TS_DART_AWAIT_EXPRESSION = "await_expression"
 TS_DART_SET_OR_MAP_LITERAL = "set_or_map_literal"
 # Inside a set_or_map_literal: a MAP entry is a `pair` whose `value` field
 # holds the stored expression; `type_arguments` (`<String, T>{...}`) carry
@@ -65,6 +69,7 @@ DART_PATTERN_NODE_SUFFIX = "_pattern"
 # swallows a trailing ternary as its LAST named child.
 DART_EXPRESSION_NODE_SUFFIX = "_expression"
 TS_DART_FUNCTION_EXPRESSION = "function_expression"
+TS_DART_FUNCTION_EXPRESSION_BODY = "function_expression_body"
 TS_DART_LOCAL_FUNCTION_DECLARATION = "local_function_declaration"
 
 # Nodes opening their OWN variable scope: the local-type walk must not descend,
@@ -93,6 +98,8 @@ TS_DART_FORMAL_PARAMETER_LIST = "formal_parameter_list"
 TS_DART_SWITCH_STATEMENT_CASE = "switch_statement_case"
 TS_DART_SWITCH_STATEMENT_DEFAULT = "switch_statement_default"
 TS_DART_TEMPLATE_SUBSTITUTION = "template_substitution"
+# The bare `$name` interpolation form wraps its name in this node type.
+TS_DART_IDENTIFIER_DOLLAR_ESCAPED = "identifier_dollar_escaped"
 # `[String m]` (optional positional) and `{String? m}` (named) both wrap their
 # `formal_parameter`s in an `optional_formal_parameters` node (issue #1173).
 TS_DART_OPTIONAL_FORMAL_PARAMETERS = "optional_formal_parameters"

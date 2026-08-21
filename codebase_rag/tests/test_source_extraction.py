@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from codebase_rag.utils.source_extraction import (
     extract_source_lines,
     extract_source_with_fallback,
@@ -239,6 +241,22 @@ class TestExtractSourceWithFallback:
 
 
 class TestValidateSourceLocation:
+    @pytest.mark.parametrize(
+        ("start_line", "end_line"),
+        [
+            pytest.param(0, 10, id="zero-start"),
+            pytest.param(1, 0, id="zero-end"),
+            pytest.param(-1, 10, id="negative-start"),
+            pytest.param(1, -10, id="negative-end"),
+            pytest.param(10, 1, id="reversed-range"),
+        ],
+    )
+    def test_rejects_invalid_line_range(self, start_line: int, end_line: int) -> None:
+        valid, path = validate_source_location("/path/to/file.py", start_line, end_line)
+
+        assert valid is False
+        assert path is None
+
     def test_returns_true_for_valid_location(self) -> None:
         valid, path = validate_source_location("/path/to/file.py", 1, 10)
 

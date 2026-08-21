@@ -56,17 +56,36 @@ public static class Frontend
             .Select(p => p.AssemblyName)
             .Where(n => !string.IsNullOrEmpty(n))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var collector = new FactCollector(rootFull, IgnoredDirs(), firstPartyAssemblies);
+        // Materialize every compilation FIRST and index each syntax tree by its
+        // owner. A callee body can live in a REFERENCED project, and asking the
+        // caller's compilation for a model of a tree it does not own throws, so
+        // without this index a cross-project `ref` write cannot be proven and
+        // the fact is silently dropped (issue #1353). The workspace already
+        // caches these compilations behind its solution snapshot, so holding
+        // the list adds little over building them one at a time.
+        // GetCompilationAsync runs source generators, so symbols that resolve
+        // only through generated members still bind; the generated trees
+        // themselves have no first-party path and never become facts.
+        var compilations = new List<Compilation>();
         foreach (var project in projects)
         {
-            // GetCompilationAsync runs source generators, so symbols that resolve
-            // only through generated members still bind; the generated trees
-            // themselves have no first-party path and never become facts.
-            var compilation = await project.GetCompilationAsync();
-            if (compilation is null)
+            if (await project.GetCompilationAsync() is { } built)
             {
-                continue;
+                compilations.Add(built);
             }
+        }
+        var treeOwners = new Dictionary<SyntaxTree, Compilation>();
+        foreach (var built in compilations)
+        {
+            foreach (var tree in built.SyntaxTrees)
+            {
+                treeOwners.TryAdd(tree, built);
+            }
+        }
+        var collector = new FactCollector(
+            rootFull, IgnoredDirs(), firstPartyAssemblies, treeOwners);
+        foreach (var compilation in compilations)
+        {
             foreach (var tree in compilation.SyntaxTrees)
             {
                 var path = tree.FilePath;
@@ -93,20 +112,32 @@ public static class Frontend
         private readonly List<TypeFact> _types = new();
         private readonly List<CallFact> _calls = new();
         private readonly List<ExternalFact> _externals = new();
+        private readonly List<ArgFlowFact> _argFlows = new();
+        private readonly List<OutWriteFact> _outWrites = new();
+        private readonly HashSet<(string, int, int, string, int)> _seenOutWrites = new();
+        private readonly List<BindFlowFact> _bindFlows = new();
         private readonly List<QueryFact> _queries = new();
         private readonly Dictionary<string, List<DeclLoc>> _partials = new(StringComparer.Ordinal);
         private readonly HashSet<(string, int)> _seenTypes = new();
         private readonly HashSet<(string, int, int, string)> _seenCalls = new();
         private readonly HashSet<(string, int, int, string)> _seenExternals = new();
+        private readonly HashSet<(string, int, int, string, int)> _seenArgFlows = new();
+        private readonly HashSet<(string, int, int, string)> _seenBindFlows = new();
         private readonly HashSet<(string, int, int, string, int, string)> _seenQueries = new();
 
         private readonly HashSet<string> _firstPartyAssemblies;
+        private readonly IReadOnlyDictionary<SyntaxTree, Compilation> _treeOwners;
 
-        public FactCollector(string rootFull, HashSet<string> ignoredDirs, HashSet<string> firstPartyAssemblies)
+        public FactCollector(
+            string rootFull,
+            HashSet<string> ignoredDirs,
+            HashSet<string> firstPartyAssemblies,
+            IReadOnlyDictionary<SyntaxTree, Compilation> treeOwners)
         {
             _rootFull = rootFull;
             _ignoredDirs = ignoredDirs;
             _firstPartyAssemblies = firstPartyAssemblies;
+            _treeOwners = treeOwners;
         }
 
         public bool IsFirstParty(string path)
@@ -146,13 +177,16 @@ public static class Frontend
                     case QueryExpressionSyntax query:
                         CollectQuery(model, query, rel);
                         break;
+                    case VariableDeclaratorSyntax declarator:
+                        CollectBindFlow(model, declarator, rel);
+                        break;
                     default:
                         break;
                 }
             }
         }
 
-        public Payload ToPayload() => new(_types, _calls, _partials.Values.ToList(), _queries, _externals);
+        public Payload ToPayload() => new(_types, _calls, _partials.Values.ToList(), _queries, _externals, _argFlows, _bindFlows, _outWrites);
 
         private string Rel(string path) =>
             Path.GetRelativePath(_rootFull, path).Replace(Path.DirectorySeparatorChar, '/');
@@ -222,6 +256,11 @@ public static class Frontend
             var pos = location.GetLineSpan().StartLinePosition;
             var col = ByteCol(location, pos);
             var name = nameToken.ValueText;
+            // Argument flow BEFORE the first-party/external split: a sink like
+            // Console.WriteLine is external, and that is exactly where knowing
+            // which locals reach an argument matters (issue #1187).
+            CollectArgFlows(model, invocation, rel, pos.Line + 1, col, name);
+            CollectOutWrites(model, invocation, rel, pos.Line + 1, col, name);
             var declared = DeclaredMethod(symbol);
             if (FirstPartyDecl(declared) is not { } target)
             {
@@ -252,6 +291,280 @@ public static class Frontend
                 return;
             }
             _calls.Add(new CallFact(rel, pos.Line + 1, col, name, target.File, target.Line, target.Col));
+        }
+
+        // Which locals/parameters reach a local's INITIALIZER, per the same
+        // analysis: without this the tainted value stops at the initializer
+        // expression and the bound variable looks clean, so a sink reading it
+        // reports nothing (issue #1187).
+        private void CollectBindFlow(
+            SemanticModel model, VariableDeclaratorSyntax declarator, string rel)
+        {
+            if (declarator.Initializer?.Value is not { } value)
+            {
+                return;
+            }
+            var symbols = FlowSymbols(model, value);
+            if (symbols.Count == 0)
+            {
+                return;
+            }
+            var location = declarator.Identifier.GetLocation();
+            var pos = location.GetLineSpan().StartLinePosition;
+            var col = ByteCol(location, pos);
+            var name = declarator.Identifier.ValueText;
+            if (!_seenBindFlows.Add((rel, pos.Line + 1, col, name)))
+            {
+                return;
+            }
+            _bindFlows.Add(new BindFlowFact(rel, pos.Line + 1, col, name, symbols));
+        }
+
+        // The locals/parameters whose values reach this expression region.
+        private static List<string> FlowSymbols(SemanticModel model, SyntaxNode region)
+        {
+            // A conditional's CONDITION is read but never becomes the value, and
+            // AnalyzeDataFlow counts every read; analysing the branches instead
+            // keeps the same rule the flow walk already applies to `a ? b : c`,
+            // so inspecting a tainted local cannot fabricate a flow.
+            if (region is ParenthesizedExpressionSyntax parenthesized)
+            {
+                return FlowSymbols(model, parenthesized.Expression);
+            }
+            if (region is ConditionalExpressionSyntax conditional)
+            {
+                return FlowSymbols(model, conditional.WhenTrue)
+                    .Concat(FlowSymbols(model, conditional.WhenFalse))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToList();
+            }
+            DataFlowAnalysis analysis;
+            try
+            {
+                analysis = model.AnalyzeDataFlow(region);
+            }
+            catch (ArgumentException)
+            {
+                // A region Roslyn rejects outright leaves the lexical walk in
+                // charge for that expression.
+                return new List<string>();
+            }
+            if (!analysis.Succeeded)
+            {
+                return new List<string>();
+            }
+            // DataFlowsIn ONLY: it is exactly "assigned outside, read inside",
+            // i.e. the values that genuinely reach this region. ReadInside
+            // would also catch a local merely INSPECTED without contributing
+            // (`secret == null ? "ok" : "ok"`), fabricating taint. Symbols
+            // declared inside the region (lambda parameters, `out` and
+            // pattern declarations) are excluded so a same-named enclosing
+            // variable cannot leak in through them.
+            var declaredInside = new HashSet<ISymbol>(
+                analysis.VariablesDeclared, SymbolEqualityComparer.Default);
+            return analysis.DataFlowsIn
+                .Where(s => !declaredInside.Contains(s))
+                .Where(s => s.Kind is SymbolKind.Local or SymbolKind.Parameter)
+                .Select(s => s.Name)
+                .Where(n => !string.IsNullOrEmpty(n))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(n => n, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        // Which locals/parameters actually reach each argument, per Roslyn's
+        // definite-assignment analysis: symbol-accurate where the lexical walk
+        // guesses from syntax, so shadowed names, builder chains, casts, and
+        // conditional expressions all thread correctly (issue #1187).
+        private void CollectArgFlows(
+            SemanticModel model,
+            InvocationExpressionSyntax invocation,
+            string rel,
+            int line,
+            int col,
+            string name)
+        {
+            var arguments = invocation.ArgumentList?.Arguments;
+            if (arguments is null)
+            {
+                return;
+            }
+            for (var index = 0; index < arguments.Value.Count; index++)
+            {
+                var symbols = FlowSymbols(model, arguments.Value[index].Expression);
+                if (symbols.Count == 0)
+                {
+                    continue;
+                }
+                if (!_seenArgFlows.Add((rel, line, col, name, index)))
+                {
+                    continue;
+                }
+                _argFlows.Add(new ArgFlowFact(rel, line, col, name, index, symbols));
+            }
+        }
+
+        // The mirror of an argument flow: an `out`/`ref` argument is written BY
+        // the callee, so the variable it names receives whatever the call
+        // produced. Without this `TryParse(s, out var n)` leaves n untouched and
+        // a sink fed from n has no edge. Emitted for external callees too --
+        // int.TryParse is external and still writes its out parameter.
+        private void CollectOutWrites(
+            SemanticModel model,
+            InvocationExpressionSyntax invocation,
+            string rel,
+            int line,
+            int col,
+            string name)
+        {
+            var arguments = invocation.ArgumentList?.Arguments;
+            if (arguments is null)
+            {
+                return;
+            }
+            for (var index = 0; index < arguments.Value.Count; index++)
+            {
+                var argument = arguments.Value[index];
+                // `out` is written by the language's own rule: a method must
+                // definitely assign every out parameter before it returns.
+                // `ref` only PERMITS a write, so it has to be proven, or a
+                // read-only ref helper would fabricate a flow into the caller's
+                // variable.
+                if (argument.RefKindKeyword.IsKind(SyntaxKind.RefKeyword))
+                {
+                    if (!RefParameterIsWritten(model, invocation, argument, index))
+                    {
+                        continue;
+                    }
+                }
+                else if (!argument.RefKindKeyword.IsKind(SyntaxKind.OutKeyword))
+                {
+                    continue;
+                }
+                if (WrittenSymbol(model, argument.Expression) is not { } symbol)
+                {
+                    continue;
+                }
+                if (!_seenOutWrites.Add((rel, line, col, name, index)))
+                {
+                    continue;
+                }
+                _outWrites.Add(new OutWriteFact(rel, line, col, name, index, symbol));
+            }
+        }
+
+        // Does the callee actually assign this `ref` parameter? Answerable only
+        // for a first-party body: an external ref callee cannot be inspected,
+        // so it is treated as read-only rather than assumed to write.
+        private bool RefParameterIsWritten(
+            SemanticModel model,
+            InvocationExpressionSyntax invocation,
+            ArgumentSyntax argument,
+            int index)
+        {
+            if (model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol invoked)
+            {
+                return false;
+            }
+            // Bind the argument against the INVOKED symbol, before any
+            // normalization: in receiver style (`token.Fill(ref sink)`) the
+            // reduced symbol is what the source indices line up with, while
+            // ReducedFrom carries an extra receiver parameter at ordinal 0.
+            if (BoundParameter(invoked, argument, index) is not { } bound)
+            {
+                return false;
+            }
+            // Only now normalize to the symbol that OWNS a body: ReducedFrom
+            // for an extension method, then the implementing half of a partial
+            // (the defining half has no body and would look unprovable).
+            var reduced = invoked.ReducedFrom;
+            // OriginalDefinition too: a CONSTRUCTED generic method
+            // (`Fill<string>`) carries substituted parameter symbols, while the
+            // WrittenInside set comes from the declaration and holds the
+            // originals, so comparing the two reports no write.
+            var method = (reduced ?? invoked).OriginalDefinition;
+            method = method.PartialImplementationPart ?? method;
+            var ordinal = bound.Ordinal + (reduced is null ? 0 : 1);
+            if (ordinal >= method.Parameters.Length)
+            {
+                return false;
+            }
+            var parameter = method.Parameters[ordinal];
+            var declaration = method.DeclaringSyntaxReferences.FirstOrDefault();
+            if (CallableBody(declaration?.GetSyntax()) is not { } body)
+            {
+                return false;
+            }
+            // A body in a REFERENCED project belongs to ANOTHER compilation, and
+            // asking this one for a model of a tree it does not own throws. The
+            // owner index covers every loaded project, so a cross-project callee
+            // is now provable instead of silently treated as read-only. A tree
+            // from outside the solution has no owner and stays unprovable.
+            if (ResolveOwner(model.Compilation, body.SyntaxTree) is not { } owner)
+            {
+                return false;
+            }
+            var calleeModel = owner.GetSemanticModel(body.SyntaxTree);
+            if (calleeModel.AnalyzeDataFlow(body) is not { Succeeded: true } flow)
+            {
+                return false;
+            }
+            return flow.WrittenInside.Contains(parameter, SymbolEqualityComparer.Default);
+        }
+
+        // A NAMED argument (`Fill(dst: ref sink, src: token)`) does not sit at
+        // its parameter's ordinal, so the source-order index is only valid for
+        // positional arguments.
+        private static IParameterSymbol? BoundParameter(
+            IMethodSymbol method, ArgumentSyntax argument, int index)
+        {
+            if (argument.NameColon?.Name.Identifier.ValueText is { } named)
+            {
+                return method.Parameters.FirstOrDefault(p => p.Name == named);
+            }
+            return index < method.Parameters.Length ? method.Parameters[index] : null;
+        }
+
+        // Both callable forms and both body shapes: a method or a local
+        // function, written as a block or as an expression body. Rejecting the
+        // expression forms would silently treat a writing callee as read-only.
+        private static SyntaxNode? CallableBody(SyntaxNode? declaration) => declaration switch
+        {
+            MethodDeclarationSyntax method =>
+                (SyntaxNode?)method.Body ?? method.ExpressionBody?.Expression,
+            LocalFunctionStatementSyntax local =>
+                (SyntaxNode?)local.Body ?? local.ExpressionBody?.Expression,
+            _ => null,
+        };
+
+        // The compilation that owns a tree: the caller's own when it contains
+        // the tree, otherwise the project the index attributes it to.
+        private Compilation? ResolveOwner(Compilation caller, SyntaxTree tree)
+        {
+            if (caller.ContainsSyntaxTree(tree))
+            {
+                return caller;
+            }
+            return _treeOwners.TryGetValue(tree, out var owner) ? owner : null;
+        }
+
+        // `out var n` declares the variable inline, so the symbol comes from the
+        // declaration rather than from a reference; a plain `out n` is an
+        // ordinary identifier.
+        private static string? WrittenSymbol(SemanticModel model, ExpressionSyntax expression)
+        {
+            if (expression is DeclarationExpressionSyntax declaration)
+            {
+                return declaration.Designation is SingleVariableDesignationSyntax single
+                    && model.GetDeclaredSymbol(single) is { } declared
+                    ? declared.Name
+                    : null;
+            }
+            var symbol = model.GetSymbolInfo(expression).Symbol;
+            return symbol is { Kind: SymbolKind.Local or SymbolKind.Parameter }
+                ? symbol.Name
+                : null;
         }
 
         // Query syntax desugars to operator method calls with no invocation nodes;
@@ -574,10 +887,36 @@ public static class Frontend
         [property: JsonPropertyName("col")] int Col,
         [property: JsonPropertyName("name")] string Name);
 
+    private record ArgFlowFact(
+        [property: JsonPropertyName("file")] string File,
+        [property: JsonPropertyName("line")] int Line,
+        [property: JsonPropertyName("col")] int Col,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("index")] int Index,
+        [property: JsonPropertyName("symbols")] List<string> Symbols);
+
+    private record OutWriteFact(
+        [property: JsonPropertyName("file")] string File,
+        [property: JsonPropertyName("line")] int Line,
+        [property: JsonPropertyName("col")] int Col,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("index")] int Index,
+        [property: JsonPropertyName("symbol")] string Symbol);
+
+    private record BindFlowFact(
+        [property: JsonPropertyName("file")] string File,
+        [property: JsonPropertyName("line")] int Line,
+        [property: JsonPropertyName("col")] int Col,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("symbols")] List<string> Symbols);
+
     private record Payload(
         [property: JsonPropertyName("types")] List<TypeFact> Types,
         [property: JsonPropertyName("calls")] List<CallFact> Calls,
         [property: JsonPropertyName("partials")] List<List<DeclLoc>> Partials,
         [property: JsonPropertyName("queries")] List<QueryFact> Queries,
-        [property: JsonPropertyName("externals")] List<ExternalFact> Externals);
+        [property: JsonPropertyName("externals")] List<ExternalFact> Externals,
+        [property: JsonPropertyName("arg_flows")] List<ArgFlowFact> ArgFlows,
+        [property: JsonPropertyName("bind_flows")] List<BindFlowFact> BindFlows,
+        [property: JsonPropertyName("out_writes")] List<OutWriteFact> OutWrites);
 }

@@ -24,6 +24,9 @@ class ResourceKind(StrEnum):
     STDERR = "STDERR"
     ENV = "ENV"
     SOCKET = "SOCKET"
+    # Subprocess execution (issue #1224): the resource is the command being
+    # run, so a tainted argument reaching it models command injection.
+    PROCESS = "PROCESS"
     ENDPOINT = "ENDPOINT"
     # A codegen contract operation (issue #912): client stubs and server
     # implementations of the same contract meet at one shared node keyed

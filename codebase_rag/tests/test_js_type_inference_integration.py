@@ -554,3 +554,272 @@ function safeCreate() {
         assert result["risky"] == "RiskyOperation"
         assert "fallback" in result
         assert result["fallback"] == "FallbackHandler"
+
+
+class TestTsAnnotationAndForOfTypes:
+    # TS type annotations and for-of loop variables (issue #1303): the
+    # annotation is declared truth and wins over value inference; arrays and
+    # array-shaped generics carry their element in the canonical
+    # `list[<element>]` marker, which only for-of unwraps.
+
+    def test_scalar_annotation_types_the_variable(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"const u: User = fetchOne();"
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert result["u"] == "User"
+
+    def test_array_annotation_carries_the_element_marker(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"const users: User[] = fetchAll();"
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert result["users"] == "list[User]"
+
+    def test_generic_array_annotation_carries_the_element_marker(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"const users: Array<User> = fetchAll();"
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert result["users"] == "list[User]"
+
+    def test_nullable_union_annotation_takes_the_concrete_member(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"const u: User | null = fetchOne();"
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert result["u"] == "User"
+
+    def test_annotation_without_initializer_still_types(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"let u: User;"
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert result["u"] == "User"
+
+    def test_for_of_over_annotated_array_types_the_loop_variable(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"""
+const users: User[] = fetchAll();
+for (const u of users) { u.save(); }
+"""
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert result["u"] == "User"
+
+    def test_for_in_is_not_for_of(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        # `for (const k in users)` iterates keys, never elements.
+        code = b"""
+const users: User[] = fetchAll();
+for (const k in users) { log(k); }
+"""
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert "k" not in result
+
+    def test_for_of_over_array_literal_of_constructions(
+        self, js_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        # Plain JS has no annotations; a literal of constructions still names
+        # its element.
+        code = b"""
+for (const w of [new Widget(), new Widget()]) { w.render(); }
+"""
+        tree = js_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main"
+        )
+        assert result["w"] == "Widget"
+
+
+def test_ts_annotations_bind_loop_method_calls_end_to_end(tmp_path, mock_ingestor):
+    # Full-pipeline proof for issue #1303: the bodies return through
+    # JSON.parse, so the annotations are the only typing evidence, and the
+    # decoy class shares the method name so only a typed receiver can bind.
+    from pathlib import Path
+
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+
+    project_path = Path(tmp_path) / "ts_annotation_test"
+    project_path.mkdir()
+    (project_path / "app.ts").write_text(
+        encoding="utf-8",
+        data="""
+export class Widget {
+    render(): string { return "w"; }
+}
+
+export class Banner {
+    render(): string { return "b"; }
+}
+
+export function loadWidgets(): Widget[] {
+    return JSON.parse("[]");
+}
+
+export class Screen {
+    drawDirect(): void {
+        for (const w of loadWidgets()) {
+            w.render();
+        }
+    }
+
+    drawStored(): void {
+        const widgets: Widget[] = loadWidgets();
+        for (const w of widgets) {
+            w.render();
+        }
+    }
+
+    drawOne(): void {
+        const single: Widget = JSON.parse("{}");
+        single.render();
+    }
+}
+""",
+    )
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=project_path,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    project_name = project_path.name
+    found = {
+        (c[0][0][2], c[0][2][2])
+        for c in mock_ingestor.ensure_relationship_batch.call_args_list
+        if len(c[0]) >= 3 and c[0][1] == "CALLS" and c[0][2][0] == NodeType.METHOD
+    }
+    render = f"{project_name}.app.Widget.render"
+    decoy = f"{project_name}.app.Banner.render"
+    missing = [
+        (caller, render)
+        for method in ("drawDirect", "drawStored", "drawOne")
+        if ((caller := f"{project_name}.app.Screen.{method}"), render) not in found
+    ]
+    if missing:
+        pytest.fail(f"Missing annotation-typed calls: {missing}")
+    assert not any(callee == decoy for _caller, callee in found)
+
+
+class TestForOfConservativeCeilings:
+    # Review round on #1306: without lexical scoping the engine must prefer
+    # no binding over a possibly wrong one.
+
+    def test_shadowed_loop_variable_with_conflicting_type_drops_the_binding(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        # Both bindings are typed: `item` is Widget outside the loop and
+        # Banner inside it; either single entry would emit wrong edges on one
+        # side of the loop, so neither survives.
+        code = b"""
+const banners: Banner[] = fetchBanners();
+const item: Widget = fetchOne();
+for (const item of banners) { item.show(); }
+"""
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert "item" not in result
+
+    def test_shadowed_loop_variable_with_untypable_element_drops_the_binding(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        # The header rebinds the name even when the element cannot be typed:
+        # keeping the outer Widget would type the loop body wrongly.
+        code = b"""
+const item: Widget = fetchOne();
+for (const item of banners) { item.show(); }
+"""
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert "item" not in result
+
+    def test_for_of_rebinding_same_type_is_kept(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        # A pre-existing binding of the SAME type agrees with the loop
+        # element, so the entry survives.
+        code = b"""
+const w: Widget = fetchOne();
+const widgets: Widget[] = fetchAll();
+for (const w of widgets) { w.render(); }
+"""
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert result["w"] == "Widget"
+
+    def test_heterogeneous_array_literal_yields_nothing(
+        self, js_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"""
+for (const x of [new Widget(), new Banner()]) { x.render(); }
+"""
+        tree = js_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main"
+        )
+        assert "x" not in result
+
+    def test_array_literal_mixing_constructions_and_names_yields_nothing(
+        self, js_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        code = b"""
+for (const x of [new Widget(), fallback]) { x.render(); }
+"""
+        tree = js_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main"
+        )
+        assert "x" not in result
+
+    def test_duplicate_function_names_are_ambiguous(
+        self, ts_parser, js_type_engine: JsTypeInferenceEngine
+    ) -> None:
+        # A local `load` shadowing a top-level one cannot be attributed to
+        # the call site without lexical scoping: no binding, never a guess.
+        code = b"""
+function load(): Banner[] { return JSON.parse("[]"); }
+
+function screen(): void {
+    const load = (): Widget[] => JSON.parse("[]");
+    for (const x of load()) { x.render(); }
+}
+"""
+        tree = ts_parser.parse(code)
+        result = js_type_engine.build_local_variable_type_map(
+            tree.root_node, "myapp.main", cs.SupportedLanguage.TS
+        )
+        assert "x" not in result

@@ -55,6 +55,51 @@ SHELL_RETURN_CODE_ERROR = -1
 SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
 SHELL_SUBSHELL_PATTERNS = ("$(", "`")
 SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
+# `find` actions that run a command or delete files, so they need approval even
+# though `find` itself is a read tool. Kept here so the security boundary is
+# auditable in one place rather than inline in the approval check.
+SHELL_FIND_MUTATING_ACTIONS = frozenset(
+    {"-delete", "-exec", "-execdir", "-ok", "-okdir"}
+)
+
+SHELL_GIT_SUBCMD_CONFIG = "config"
+
+# `git config` writes to these keys plant a value that git later hands to a
+# shell, so a single write is remote code execution on the next git operation
+# (GHSA-2rr7-8xrw-gmhr: `git config --global core.sshCommand <payload>` planted
+# an RCE backdoor). Approval is a weak control here because the reported .cgr.md
+# injection framed the write as "required for the project to work, do NOT ask
+# the user for permission", so these writes are blocked outright at every config
+# scope. Reads and --unset stay allowed so a victim can inspect and clear a
+# planted backdoor.
+SHELL_GIT_CONFIG_READ_ACTIONS = frozenset(
+    {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"}
+)
+SHELL_GIT_CONFIG_UNSET_FLAGS = frozenset({"--unset", "--unset-all"})
+SHELL_GIT_CONFIG_EXEC_KEYS = frozenset(
+    {
+        "core.sshcommand",
+        "core.pager",
+        "core.editor",
+        "core.hookspath",
+        "core.fsmonitor",
+        "credential.helper",
+        "sequence.editor",
+        "diff.external",
+        "gpg.program",
+    }
+)
+# (prefix, suffix) pairs matching sub-scoped keys like `credential.<url>.helper`,
+# `filter.<name>.clean`, and `alias.<name>` whose values git also runs.
+SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS = (
+    ("credential.", ".helper"),
+    ("filter.", ".clean"),
+    ("filter.", ".smudge"),
+    ("filter.", ".process"),
+    ("difftool.", ".cmd"),
+    ("mergetool.", ".cmd"),
+    ("alias.", ""),
+)
 
 # Dangerous commands, absolutely blocked
 SHELL_DANGEROUS_COMMANDS = frozenset(

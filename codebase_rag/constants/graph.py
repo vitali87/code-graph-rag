@@ -27,6 +27,13 @@ KEY_IS_MACRO = "is_macro"
 KEY_QUERY = "query"
 KEY_RESPONSE = "response"
 KEY_START_LINE = "start_line"
+# Column of the definition's own start token, and of its NAME token where the
+# two differ (Go keys semantic call targets at the name identifier while span
+# keys sit at the `func` keyword). Persisted so incremental runs can rehydrate
+# the col-keyed location indexes for unchanged files (issue #1240).
+KEY_START_COL = "start_col"
+KEY_NAME_START_LINE = "name_start_line"
+KEY_NAME_START_COL = "name_start_col"
 KEY_END_LINE = "end_line"
 KEY_PATH = "path"
 KEY_ABSOLUTE_PATH = "absolute_path"
@@ -34,6 +41,8 @@ KEY_ABSOLUTE_PATH = "absolute_path"
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
 # the three-verdict flow reachability query (issue #1050).
 KEY_FLOW_COVERED = "flow_covered"
+KEY_GENERATED = "generated"
+KEY_GENERATOR = "generator"
 KEY_EXTENSION = "extension"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"
@@ -372,8 +381,15 @@ CYPHER_DELETE_FOLDER = "MATCH (f:Folder {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 # Removes external import-target Module nodes that no module imports anymore
 # (e.g. an imported name that was renamed/removed on an incremental rebuild).
+# OPTIONAL MATCH + count instead of `WHERE NOT (m)<--()`: Memgraph 3.x
+# rejects pattern expressions inside WHERE, and this form is accepted by
+# both 2.x and 3.x (issue #1257).
 CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
-    "MATCH (m:ExternalModule) WHERE NOT (m)<--() DETACH DELETE m"
+    "MATCH (m:ExternalModule) "
+    "OPTIONAL MATCH (x)-->(m) "
+    "WITH m, count(x) AS inbound "
+    "WHERE inbound = 0 "
+    "DETACH DELETE m"
 )
 CYPHER_PROJECT_MODULE_PATHS = (
     # The bare-name alternative covers the repository-root __init__.py,
@@ -391,6 +407,14 @@ CYPHER_COUNT_PROJECT_MODULES = (
 # Queries for orphan pruning: return all paths stored in the graph
 CYPHER_ALL_FILE_PATHS = (
     "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+# Containers of one File key, for legacy-identity sweep attribution: File
+# nodes MERGE globally on absolute_path, so a key can be shared with another
+# project and must not be deleted from under it (issue #1156).
+CYPHER_FILE_CONTAINERS = (
+    "MATCH (p)-[:CONTAINS_FILE]->(f:File {absolute_path: $path}) "
+    "RETURN labels(p) AS labels, p.name AS name, "
+    "p.absolute_path AS absolute_path"
 )
 CYPHER_ALL_MODULE_PATHS_INTERNAL = (
     "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
@@ -437,6 +461,19 @@ CYPHER_INBOUND_EDGES = (
     "caller.qualified_name AS caller_qn, type(r) AS rel, "
     "head(labels(target)) AS target_label, target.qualified_name AS target_qn"
 )
+# Files whose code DEPENDS on a re-indexed file (issue #1229 phase 4): a
+# change there can rebind their calls (a new override shadowing an inherited
+# method), so restoring their old edges verbatim would freeze a stale
+# binding. They are re-parsed instead, one level deep: their own definitions
+# are unchanged, so their callers' bindings cannot move.
+CYPHER_AFFECTED_CALLER_PATHS = (
+    "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS]->(target) "
+    "WHERE target.path IN $paths AND caller.path IS NOT NULL "
+    "AND NOT caller.path IN $paths "
+    "AND caller.qualified_name STARTS WITH $project_prefix "
+    "AND target.qualified_name STARTS WITH $project_prefix "
+    "RETURN DISTINCT caller.path AS caller_path"
+)
 # Rehydrate class_inheritance on an incremental run: every INHERITS edge
 # (child -> base) with resolved qns, so protocol dispatch and inherited-method
 # resolution still see the hierarchy of classes defined in files that were not
@@ -466,11 +503,39 @@ CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
     "RETURN n.qualified_name AS qualified_name, n.path AS path, "
     "n.start_line AS start_line"
 )
+
+# Col-keyed location rehydration fetches (issue #1240). Both guard for
+# start_col's absence in Python: a pre-#1240 graph has none and degrades to
+# today's behavior until re-indexed.
+CYPHER_ALL_GO_TYPE_LOCATIONS = (
+    "MATCH (n) WHERE (n:Class OR n:Interface OR n:Enum OR n:Type OR n:Union) "
+    "AND n.qualified_name STARTS WITH $project_prefix "
+    "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
+    "n.path AS path, n.start_line AS start_line, n.start_col AS start_col"
+)
+CYPHER_ALL_FUNCTION_LOCATIONS = (
+    "MATCH (m:Module)-[:DEFINES]->(f:Function) "
+    "WHERE m.qualified_name STARTS WITH $project_prefix "
+    "RETURN labels(f)[0] AS label, f.qualified_name AS qualified_name, "
+    "m.qualified_name AS module_qn, f.start_line AS start_line, "
+    "f.start_col AS start_col, f.name_start_line AS name_start_line, "
+    "f.name_start_col AS name_start_col"
+)
+CYPHER_ALL_METHOD_LOCATIONS = (
+    "MATCH (m:Module)-[:DEFINES]->(c)-[:DEFINES_METHOD]->(f:Method) "
+    "WHERE m.qualified_name STARTS WITH $project_prefix "
+    "RETURN labels(f)[0] AS label, f.qualified_name AS qualified_name, "
+    "c.qualified_name AS container_qn, "
+    "m.qualified_name AS module_qn, f.start_line AS start_line, "
+    "f.start_col AS start_col, f.name_start_line AS name_start_line, "
+    "f.name_start_col AS name_start_col"
+)
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"
 KEY_BASE_INDEX = "base_index"
 
 CYPHER_PARAM_PATHS = "paths"
+KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
 KEY_REL = "rel"

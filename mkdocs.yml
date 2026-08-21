@@ -86,6 +86,7 @@ nav:
     - Interactive Querying: guide/interactive-querying.md
     - Code Optimization: guide/code-optimization.md
     - Dead Code Detection: guide/dead-code.md
+    - C/C++ Semantic Mode: guide/cpp-semantic-mode.md
     - Dynamic Call Tracing: guide/dynamic-tracing.md
     - Graph Export: guide/graph-export.md
     - Real-Time Updates: guide/realtime-updates.md
@@ -114,7 +115,6 @@ nav:
 # Internal analysis artifacts kept in the repo but not published to the doc site nav.
 not_in_nav: |
   /reports/
-  /TODO.md
 
 extra_css:
   - stylesheets/extra.css

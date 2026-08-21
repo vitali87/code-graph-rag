@@ -194,6 +194,10 @@ message GraphCodeIndex {
     // source/sink registry and the FLOWS_TO capture group was enabled at
     // indexing (issue #1050).
     bool flow_covered = 7;
+    // Annotation-processor provenance (issue #1140): true for modules parsed
+    // from generated output, with the path-derived processor hint.
+    bool generated = 8;
+    string generator = 9;
   }
 
   message ExternalModule {

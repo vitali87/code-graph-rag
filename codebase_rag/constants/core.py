@@ -118,8 +118,14 @@ KEYWORD_CONSTRUCTOR = "constructor"
 HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
+DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 CGR_STATE_FILENAMES: frozenset[str] = frozenset(
-    {HASH_CACHE_FILENAME, DIR_MTIMES_FILENAME, PARSER_FINGERPRINT_FILENAME}
+    {
+        HASH_CACHE_FILENAME,
+        DIR_MTIMES_FILENAME,
+        PARSER_FINGERPRINT_FILENAME,
+        DELOMBOK_STATE_FILENAME,
+    }
 )
 
 # Inputs to the parser fingerprint: everything that changes how source files
@@ -144,6 +150,7 @@ PARSER_FINGERPRINT_TOOL_GLOBS: tuple[str, ...] = ("*.cs", "*.csproj")
 PARSER_FINGERPRINT_TOOL_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("parsers/csharp_frontend/roslyn", ("*.cs", "*.csproj")),
     ("parsers/go_frontend/gotypes", ("*.go", "*.mod", "*.sum")),
+    ("parsers/java_frontend/javac", ("**/*.java",)),
 )
 GRAMMAR_DIST_PREFIX = "tree-sitter"
 GRAMMAR_VERSION_FMT = "{name}=={version}"

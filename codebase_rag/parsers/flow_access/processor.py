@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Node
@@ -60,6 +61,7 @@ from ..io_access.registry import (
     IO_TYPE_HANDLE_CONSTRUCTORS,
     LIBC_STD_STREAMS,
 )
+from ..semantic_call_join import call_site_key
 from ..utils import (
     c_positional_parameter_slots,
     cpp_declarator_name,
@@ -522,6 +524,20 @@ class _JsCtx(NamedTuple):
     type_ctors: dict[str, ResourceKind]
 
 
+@dataclass
+class _PendingCapture:
+    """A nested def whose captured-cell composition is deferred until the walk
+    learns HOW the closure is used (issue #1211)."""
+
+    nested_qn: str
+    def_node: Node
+    caller_qn: str
+    free_vars: tuple[str, ...]
+    snapshot: dict[str, Taint]
+    called: bool = False
+    escaped: bool = False
+
+
 class FlowProcessor:
     """Detects intra-procedural value flow in a function body and emits FLOWS_TO
     edges: resource->resource (a read source reaches a write sink), caller->callee
@@ -604,6 +620,7 @@ class FlowProcessor:
         # element is the per-call-site pass-through token (issue #1168). Composed
         # against the parameter-sink closure in finalize to emit origin -> sink.
         self._param_call_sites: list[tuple[Taint, str, str, str]] = []
+        self._pending_captures: dict[str, _PendingCapture] = {}
         # Per-function positional parameter slots so a call site's arg:<index>
         # resolves to the right callee parameter. The Python path truncates at
         # the first variadic/keyword-only boundary (self/cls dropped) and has no
@@ -702,8 +719,10 @@ class FlowProcessor:
         for fv in python_free_variable_names(caller_node):
             if fv not in tainted:
                 tainted[fv] = Taint(frozenset(), frozenset(), frozenset({fv}))
+        self._pending_captures.clear()
         for node in scope_seed_nodes(caller_node):
             tainted = self._walk_stmt(node, tainted, ctx)
+        self._flush_pending_captures()
 
         if self._acc_returns_taint:
             self._summaries[caller_qn] = self._acc_return_taint
@@ -1328,7 +1347,13 @@ class FlowProcessor:
                 if spread
                 else (values[index] if index < len(values) else None)
             )
-            computed.append((name, self._js_expr_taint(rhs, tainted, jc), rhs))
+            taint = self._js_expr_taint(rhs, tainted, jc)
+            # Roslyn proved which locals reach this initializer (issue #1187):
+            # union their taint so a value the syntactic reader cannot thread
+            # (builder chain, cast, conditional) still taints the binding.
+            for symbol in self._csharp_bind_symbols(node, name, jc):
+                taint = _merge_optional_taints(taint, tainted.get(symbol))
+            computed.append((name, taint, rhs))
         for name, taint, rhs in computed:
             if taint is not None:
                 tainted[name] = taint
@@ -1484,6 +1509,7 @@ class FlowProcessor:
         args = self._js_arg_taints(node, tainted, jc)
         if not args:
             return
+        self._apply_csharp_out_writes(node, args, tainted, jc)
         if (sink := self._js_match_sink(raw, jc.flow.write_sinks, jc)) is not None:
             dst_identity = literal_target(
                 node,
@@ -1952,6 +1978,15 @@ class FlowProcessor:
         # project-callee return (pending), or a plain identifier alias.
         if not rhs:
             return None, frozenset()
+        if len(rhs) == 1 and rhs[0].type in (
+            cs.TS_DART_UNARY_EXPRESSION,
+            cs.TS_DART_AWAIT_EXPRESSION,
+        ):
+            # `await Socket.connect(...)` wraps the chain one node deep per
+            # level; the awaited (or negated) value carries the chain's taint
+            # and handle, so unwrap and re-evaluate (issue #1224).
+            inner = [c for c in rhs[0].named_children if c.type != cs.TS_COMMENT]
+            return self._dart_rhs(inner, tainted, handles, jc)
         source = self._dart_member_source(rhs, jc)
         if source is not None:
             return Taint(frozenset({source}), frozenset()), frozenset()
@@ -1976,6 +2011,9 @@ class FlowProcessor:
                         ),
                         frozenset(),
                     )
+                handle_read = self._dart_handle_read_taint(raw, handles, jc)
+                if handle_read is not None:
+                    return handle_read, frozenset()
                 callee = self._resolve(
                     raw,
                     jc.flow.module_qn,
@@ -1993,7 +2031,167 @@ class FlowProcessor:
         if len(rhs) == 1 and rhs[0].type == cs.TS_DART_IDENTIFIER and rhs[0].text:
             alias = rhs[0].text.decode(cs.ENCODING_UTF8)
             return tainted.get(alias), handles.get(alias, frozenset())
+        if len(rhs) == 1 and rhs[0].type == cs.TS_DART_STRING_LITERAL:
+            return self._dart_interpolation_taint(rhs[0], tainted, jc), frozenset()
         return None, frozenset()
+
+    def _dart_interpolation_taint(
+        self, literal: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        # `'$k'` and `'${a.b}'` embed expressions inside the literal; shell
+        # payloads are routinely built this way, so each substitution is
+        # evaluated and the taints merged (issue #1224 review). The bare
+        # `$k` form parses its name as identifier_dollar_escaped, which the
+        # alias path does not recognise, so it is looked up by text.
+        merged: Taint | None = None
+        for child in literal.named_children:
+            if child.type != cs.TS_DART_TEMPLATE_SUBSTITUTION:
+                continue
+            inner = [c for c in child.named_children if c.type != cs.TS_COMMENT]
+            if (
+                len(inner) == 1
+                and inner[0].type == cs.TS_DART_IDENTIFIER_DOLLAR_ESCAPED
+                and inner[0].text
+            ):
+                taint = tainted.get(inner[0].text.decode(cs.ENCODING_UTF8))
+            else:
+                taint, _ = self._dart_rhs(inner, tainted, {}, jc)
+            if taint is not None:
+                merged = taint if merged is None else _merge_taint(merged, taint)
+        return merged
+
+    def _dart_walk_read_callbacks(
+        self,
+        raw: str,
+        selector: Node,
+        tainted: _TaintMap,
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> None:
+        # `s.listen((data) { ... })` delivers data FROM the handle's resource
+        # into the callback parameter. The lean walk skips nested callable
+        # bodies by design, so the callback block is walked here with a COPY
+        # of the state whose parameters are seeded by the handle's bindings
+        # (issue #1316); the copy keeps the seeding scoped to the lambda.
+        recv, sep, method = raw.rpartition(jc.descriptor.handle_method_separator)
+        if not sep:
+            return
+        origins = {
+            binding
+            for binding in handles.get(recv, frozenset())
+            if jc.handle_methods.get(binding.kind, {}).get(method) == IODirection.READ
+        }
+        if not origins:
+            return
+        arguments = self._dart_arguments(selector)
+        if arguments is None:
+            return
+        seed = Taint(frozenset(origins), frozenset())
+        for arg in arguments.named_children:
+            if arg.type != cs.TS_DART_ARGUMENT:
+                continue
+            fn = next(
+                (
+                    c
+                    for c in arg.named_children
+                    if c.type == cs.TS_DART_FUNCTION_EXPRESSION
+                ),
+                None,
+            )
+            if fn is None:
+                continue
+            names = self._dart_lambda_param_names(fn)
+            inner = dict(tainted)
+            inner_handles = dict(handles)
+            added_locals = [n for n in names if n not in jc.local_names]
+            for name in names:
+                # The parameter SHADOWS every outer meaning of the name: a
+                # same-named outer handle must not receive the callback's
+                # calls, and a parameter named after a builtin sink must not
+                # match it (review on #1317).
+                inner[name] = seed
+                inner_handles.pop(name, None)
+                jc.local_names.add(name)
+            try:
+                state = _LeanState(taint=inner, handles=inner_handles)
+                for stmt in self._dart_lambda_body_statements(fn):
+                    state = self._walk_flat_stmt(stmt, state, jc)
+            finally:
+                for name in added_locals:
+                    jc.local_names.discard(name)
+
+    @staticmethod
+    def _dart_lambda_param_names(fn: Node) -> list[str]:
+        plist = next(
+            (
+                c
+                for c in fn.named_children
+                if c.type == cs.TS_DART_FORMAL_PARAMETER_LIST
+            ),
+            None,
+        )
+        if plist is None:
+            return []
+        # Optional-positional (`[data]`) and named (`{data}`) parameters sit
+        # under wrapper nodes, so the list is walked recursively; a typed
+        # parameter's NAME is its last identifier (`String data`), never the
+        # type (review on #1317).
+        names: list[str] = []
+        stack = list(plist.named_children)
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_DART_FORMAL_PARAMETER:
+                idents = [
+                    c
+                    for c in node.named_children
+                    if c.type == cs.TS_DART_IDENTIFIER and c.text
+                ]
+                if idents:
+                    names.append(idents[-1].text.decode(cs.ENCODING_UTF8))
+            elif node.type == cs.TS_DART_IDENTIFIER and node.text:
+                names.append(node.text.decode(cs.ENCODING_UTF8))
+            else:
+                stack.extend(node.named_children)
+        return names
+
+    @staticmethod
+    def _dart_lambda_body_statements(fn: Node) -> list[Node]:
+        body = next(
+            (
+                c
+                for c in fn.named_children
+                if c.type == cs.TS_DART_FUNCTION_EXPRESSION_BODY
+            ),
+            None,
+        )
+        if body is None:
+            return []
+        block = next(
+            (c for c in body.named_children if c.type == cs.TS_DART_BLOCK), None
+        )
+        if block is not None:
+            return list(block.named_children)
+        return [body]
+
+    def _dart_handle_read_taint(
+        self, raw: str, handles: _HandleMap, jc: _JsCtx
+    ) -> Taint | None:
+        # A read METHOD on a bound handle yields data FROM the resource
+        # (`var d = f.readAsString()`), the read mirror of
+        # `_emit_handle_write` (issue #1316). READ_WRITE methods count: a DB
+        # execute's result is resource data too.
+        recv, sep, method = raw.rpartition(jc.descriptor.handle_method_separator)
+        if not sep:
+            return None
+        origins = {
+            binding
+            for binding in handles.get(recv, frozenset())
+            if jc.handle_methods.get(binding.kind, {}).get(method)
+            in (IODirection.READ, IODirection.READ_WRITE)
+        }
+        if not origins:
+            return None
+        return Taint(frozenset(origins), frozenset())
 
     def _dart_member_source(
         self, nodes: list[Node], jc: _JsCtx
@@ -2054,6 +2252,7 @@ class FlowProcessor:
             return
         if handles and self._emit_handle_write(raw, args, handles, jc):
             return
+        self._dart_walk_read_callbacks(raw, selector, tainted, handles, jc)
         callee = self._resolve(
             raw,
             jc.flow.module_qn,
@@ -2148,8 +2347,29 @@ class FlowProcessor:
             else:
                 continue
             taint, _ = self._dart_rhs(chain, tainted, {}, jc)
+            if (
+                taint is None
+                and len(chain) == 1
+                and chain[0].type == cs.TS_DART_LIST_LITERAL
+            ):
+                taint = self._dart_list_literal_taint(chain[0], tainted, jc)
             out.append((via, taint))
         return out
+
+    def _dart_list_literal_taint(
+        self, literal: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        # A `Process.run('sh', ['-c', k])`-style call carries its payload
+        # INSIDE a list literal; each element expression is evaluated on its
+        # own so a tainted element taints the argument (issue #1224).
+        merged: Taint | None = None
+        for element in literal.named_children:
+            if element.type == cs.TS_COMMENT:
+                continue
+            taint, _ = self._dart_rhs([element], tainted, {}, jc)
+            if taint is not None:
+                merged = taint if merged is None else _merge_taint(merged, taint)
+        return merged
 
     def _dart_return_taint(
         self, node: Node, tainted: _TaintMap, jc: _JsCtx
@@ -2414,14 +2634,182 @@ class FlowProcessor:
         # C# wraps each arg in an `argument` node, so unwrap to the real
         # expression before reading its taint (no-op for the bare-arg grammars).
         wrapper = jc.descriptor.argument_wrapper_type
+        semantic = self._csharp_arg_symbols(node, jc)
         for index, child in enumerate(self._named_no_comments(args)):
-            out.append(
-                (
-                    VIA_ARG_FORMAT.format(index=index),
-                    self._js_expr_taint(unwrap_argument(child, wrapper), tainted, jc),
+            taint = self._js_expr_taint(unwrap_argument(child, wrapper), tainted, jc)
+            # Roslyn proved which locals reach this argument (issue #1187):
+            # union their taint with the syntactic reading, so a builder
+            # chain, cast, or conditional the walker cannot thread still
+            # propagates. Additive only -- never removes a lexical edge.
+            for symbol in semantic.get(index, ()):  # type: ignore[union-attr]
+                taint = _merge_optional_taints(taint, tainted.get(symbol))
+            out.append((VIA_ARG_FORMAT.format(index=index), taint))
+        return out
+
+    def _csharp_bind_symbols(self, node: Node, name: str, jc: _JsCtx) -> frozenset[str]:
+        # The bind-flow fact for THIS declarator, matched on its name token;
+        # empty for every other language and whenever the frontend is off.
+        flows = self._resolver.type_inference.csharp_bind_flows
+        if not flows or jc.flow.language != cs.SupportedLanguage.CSHARP:
+            return frozenset()
+        name_node = self._csharp_declarator_name_node(node, name)
+        if name_node is None:
+            return frozenset()
+        key = call_site_key(
+            name_node,
+            name,
+            jc.flow.module_qn,
+            self._resolver.type_inference.module_qn_to_file_path,
+            self._resolver.type_inference.repo_path,
+        )
+        return flows.get(key, frozenset()) if key is not None else frozenset()
+
+    @staticmethod
+    def _csharp_declarator_name_node(node: Node, name: str) -> Node | None:
+        candidate = node.child_by_field_name(cs.TS_FIELD_NAME)
+        if (
+            candidate is not None
+            and candidate.text
+            and candidate.text.decode(cs.ENCODING_UTF8) == name
+        ):
+            return candidate
+        for child in node.named_children:
+            if (
+                child.type == cs.TS_CSHARP_IDENTIFIER
+                and child.text
+                and child.text.decode(cs.ENCODING_UTF8) == name
+            ):
+                return child
+        return None
+
+    def _apply_csharp_out_writes(
+        self,
+        node: Node,
+        args: list[tuple[str, Taint | None]],
+        tainted: _TaintMap,
+        jc: _JsCtx,
+    ) -> None:
+        # Roslyn proved the callee writes these locals through `out`/`ref`
+        # parameters (issue #1187), so each receives what the call was GIVEN:
+        # `TryParse(raw, out var n)` makes n carry raw's taint. Without this the
+        # written variable looks untouched and a sink fed from it has no edge.
+        # Additive only, and the written argument's own prior taint is excluded
+        # so a variable cannot reinforce itself.
+        writes = self._csharp_out_write_symbols(node, jc)
+        if not writes:
+            return
+        inputs: Taint | None = None
+        for index, (_via, taint) in enumerate(args):
+            if index in writes:
+                continue
+            inputs = _merge_optional_taints(inputs, taint)
+        # An extension method called in receiver style (`token.Fill(ref sink)`)
+        # takes its source from the RECEIVER, which is not in the argument list
+        # at all; for an ordinary instance call the receiver is usually clean
+        # and contributes nothing.
+        inputs = _merge_optional_taints(
+            inputs, self._js_receiver_taint(node, tainted, jc)
+        )
+        if inputs is None:
+            return
+        for symbol in writes.values():
+            if (
+                merged := _merge_optional_taints(tainted.get(symbol), inputs)
+            ) is not None:
+                tainted[symbol] = merged
+
+    def _js_receiver_taint(
+        self, node: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is None:
+            return None
+        receiver = func.child_by_field_name(jc.descriptor.object_field)
+        return None if receiver is None else self._js_expr_taint(receiver, tainted, jc)
+
+    def _csharp_out_write_symbols(self, node: Node, jc: _JsCtx) -> dict[int, str]:
+        writes = self._resolver.type_inference.csharp_out_writes
+        if not writes or jc.flow.language != cs.SupportedLanguage.CSHARP:
+            return {}
+        name_node = self._csharp_callee_name_node(node)
+        if name_node is None or not name_node.text:
+            return {}
+        key = call_site_key(
+            name_node,
+            name_node.text.decode(cs.ENCODING_UTF8),
+            jc.flow.module_qn,
+            self._resolver.type_inference.module_qn_to_file_path,
+            self._resolver.type_inference.repo_path,
+        )
+        return writes.get(key, {}) if key is not None else {}
+
+    def _csharp_arg_symbols(self, node: Node, jc: _JsCtx) -> dict[int, frozenset[str]]:
+        # The Roslyn argument-flow facts for THIS call site, keyed exactly
+        # like the call facts; empty for every other language and whenever
+        # the frontend is off.
+        flows = self._resolver.type_inference.csharp_arg_flows
+        if not flows or jc.flow.language != cs.SupportedLanguage.CSHARP:
+            return {}
+        name_node = self._csharp_callee_name_node(node)
+        if name_node is None or not name_node.text:
+            return {}
+        key = call_site_key(
+            name_node,
+            name_node.text.decode(cs.ENCODING_UTF8),
+            jc.flow.module_qn,
+            self._resolver.type_inference.module_qn_to_file_path,
+            self._resolver.type_inference.repo_path,
+        )
+        return flows.get(key, {}) if key is not None else {}
+
+    @classmethod
+    def _csharp_callee_name_node(cls, call_node: Node) -> Node | None:
+        # The callee NAME token, mirroring the Roslyn tool's CalleeNameToken
+        # arm for arm: member access and member binding (`c?.Handle(x)`) take
+        # their `name`, and a generic name (`Method<T>(x)`) reduces to its
+        # bare identifier -- otherwise the keys would never match and those
+        # call sites would silently lose their facts.
+        return cls._csharp_name_token(
+            call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        )
+
+    @classmethod
+    def _csharp_name_token(cls, node: Node | None) -> Node | None:
+        if node is None:
+            return None
+        if node.type in (
+            cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+            cs.TS_CSHARP_MEMBER_BINDING_EXPRESSION,
+        ):
+            named = node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+            if named is None:
+                # member_binding_expression exposes its name as the sole
+                # named child in some grammar versions.
+                named = next(iter(node.named_children), None)
+            return cls._csharp_name_token(named)
+        if node.type == cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION:
+            # `c?.Handle(x)`: the invoked name lives in the trailing
+            # member_binding_expression, not in a named field.
+            return cls._csharp_name_token(
+                next(
+                    (
+                        child
+                        for child in node.named_children
+                        if child.type == cs.TS_CSHARP_MEMBER_BINDING_EXPRESSION
+                    ),
+                    None,
                 )
             )
-        return out
+        if node.type == cs.TS_CSHARP_GENERIC_NAME:
+            return next(
+                (
+                    child
+                    for child in node.named_children
+                    if child.type == cs.TS_CSHARP_IDENTIFIER
+                ),
+                None,
+            )
+        return node
 
     def _js_return_taint(
         self, node: Node, tainted: _TaintMap, jc: _JsCtx
@@ -2809,6 +3197,11 @@ class FlowProcessor:
     def _apply_assignment(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:
         left = node.child_by_field_name(cs.TS_FIELD_LEFT)
         right = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+        # A closure carried ANYWHERE in the RHS (holder.callback = send,
+        # d[k] = (send), x = send if c else other) escapes, even when the
+        # non-identifier target makes the assignment otherwise untrackable
+        # (issue #1211 review); direct-call callees are exempt.
+        self._note_capture_escapes_in(right)
         if (
             left is None
             or right is None
@@ -2833,7 +3226,12 @@ class FlowProcessor:
         # return, and value-selection forms (`a if c else b`, `a or b`,
         # `a and b`) union their operands (the result MAY be either).
         if node.type == cs.TS_PY_IDENTIFIER and node.text is not None:
-            return tainted.get(node.text.decode(cs.ENCODING_UTF8))
+            text = node.text.decode(cs.ENCODING_UTF8)
+            # A VALUE use of a locally-defined closure name escapes it: it may
+            # be stored/passed/returned and run later with any cell value, so
+            # its capture falls back to the def-site MAY snapshot (#1211).
+            self._note_capture_escape(text)
+            return tainted.get(text)
         if node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
             inner = next(iter(node.named_children), None)
             return self._py_value_taint(inner, tainted, ctx) if inner else None
@@ -2890,6 +3288,9 @@ class FlowProcessor:
         raw = call_name(node)
         if raw is None:
             return
+        # BEFORE the no-args early return: a zero-arg `send()` is exactly the
+        # direct closure invocation whose cell state matters (issue #1211).
+        self._note_capture_call(raw, tainted)
         # Evaluate every argument through the value-taint evaluator, so a source
         # or tainted callee written inline -- log_it(os.getenv("K")) -- is seen,
         # not only a bare tainted identifier (CodeRabbit review on PR #1167).
@@ -3003,6 +3404,9 @@ class FlowProcessor:
         result = _EMPTY_TAINT
         tainted_here = False
         for child in _return_value_nodes(node):
+            # Any returned expression may hand the closure to the caller
+            # (`return send`, `return send if c else other`): it escapes.
+            self._note_capture_escapes_in(child)
             if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
                 name = child.text.decode(cs.ENCODING_UTF8)
                 if (taint := tainted.get(name)) is not None:
@@ -3315,13 +3719,13 @@ class FlowProcessor:
 
     def _record_captures(self, def_node: Node, state: _TaintMap, ctx: _FlowCtx) -> None:
         # A nested function may capture tainted enclosing-scope variables through
-        # its environment. For each free variable tainted at the definition site,
-        # record a capture keyed by the nested function's qn and via kw:<name>, so
-        # the existing parameter-summary finalize composes it exactly as a keyword
-        # argument would (issue #1197). A capture carrying concrete origins/pending
-        # is a resolvable call site; one carrying only the enclosing function's own
-        # parameters records a transitive flow edge, so a variable captured through
-        # two nested levels still composes.
+        # its environment. A closure captures a CELL, not a value, so the state
+        # that matters is the cell's value when the closure RUNS (issue #1211):
+        # a direct same-scope call commits the capture from the state AT that
+        # call, while a closure that escapes (stored, passed, returned) or is
+        # never called locally keeps the def-site MAY snapshot of #1197 -- the
+        # walk cannot know when an escaped closure runs, so the safe
+        # over-approximation stands. Redefinition commits the old record first.
         resolved = self._nested_def_name(def_node)
         if resolved is None:
             return
@@ -3335,16 +3739,100 @@ class FlowProcessor:
             if loc is not None
             else f"{ctx.caller_qn}{cs.SEPARATOR_DOT}{name}"
         )
-        for fv in python_free_variable_names(inner):
-            taint = state.get(fv)
+        free_vars = tuple(python_free_variable_names(inner))
+        if not free_vars:
+            return
+        if (previous := self._pending_captures.pop(name, None)) is not None:
+            self._commit_pending_capture(previous)
+        snapshot = {
+            fv: taint for fv in free_vars if (taint := state.get(fv)) is not None
+        }
+        self._pending_captures[name] = _PendingCapture(
+            nested_qn=nested_qn,
+            def_node=def_node,
+            caller_qn=ctx.caller_qn,
+            free_vars=free_vars,
+            snapshot=snapshot,
+        )
+
+    def _commit_capture_state(
+        self, record: _PendingCapture, cell_state: dict[str, Taint]
+    ) -> None:
+        # Keyed by the nested function's qn and via kw:<name>, so the existing
+        # parameter-summary finalize composes it exactly as a keyword argument
+        # would (issue #1197). A capture carrying concrete origins/pending is a
+        # resolvable call site; one carrying only the enclosing function's own
+        # parameters records a transitive flow edge, so a variable captured
+        # through two nested levels still composes.
+        for fv in record.free_vars:
+            taint = cell_state.get(fv)
             if taint is None:
                 continue
             via = VIA_KW_FORMAT.format(name=fv)
             if taint.origins or taint.pending:
-                token = _passthrough_result_token(ctx.caller_qn, def_node)
-                self._param_call_sites.append((taint, nested_qn, via, token))
+                token = _passthrough_result_token(record.caller_qn, record.def_node)
+                self._param_call_sites.append((taint, record.nested_qn, via, token))
             for pname in taint.params:
-                self._param_flow_edges.append((ctx.caller_qn, pname, nested_qn, via))
+                self._param_flow_edges.append(
+                    (record.caller_qn, pname, record.nested_qn, via)
+                )
+
+    def _commit_pending_capture(self, record: _PendingCapture) -> None:
+        self._commit_capture_state(record, record.snapshot)
+
+    def _note_capture_call(self, raw: str, state: _TaintMap) -> None:
+        # A direct call of a locally-defined closure: the cell holds the
+        # CURRENT threaded state, so this invocation composes with it -- the
+        # path-sensitive branch copies make a partially-cleaned merge stay MAY.
+        record = self._pending_captures.get(raw)
+        if record is None:
+            return
+        record.called = True
+        cell_state = {
+            fv: taint for fv in record.free_vars if (taint := state.get(fv)) is not None
+        }
+        self._commit_capture_state(record, cell_state)
+
+    def _note_capture_escape(self, name: str) -> None:
+        record = self._pending_captures.get(name)
+        if record is not None:
+            record.escaped = True
+
+    def _note_capture_escapes_in(self, expr: Node | None) -> None:
+        # Every identifier VALUE anywhere in this expression escapes its
+        # closure: wrappers, conditionals, containers, and call ARGUMENTS all
+        # hand the function object onward. The one exception is a call's
+        # callee position -- `send()` is the direct invocation the
+        # call-relative path handles -- so calls recurse into arguments only.
+        # Over-marking is conservative-safe (escape means the def-site MAY
+        # snapshot), never a lost flow.
+        if expr is None:
+            return
+        if expr.type == cs.TS_PY_CALL:
+            self._note_capture_escapes_in(
+                expr.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+            )
+            return
+        if expr.type == cs.TS_PY_IDENTIFIER and expr.text is not None:
+            self._note_capture_escape(expr.text.decode(cs.ENCODING_UTF8))
+            return
+        if expr.type == cs.TS_PY_KEYWORD_ARGUMENT:
+            # `other(send=None)`: the label names a PARAMETER, not the
+            # closure; only the value can carry it onward.
+            self._note_capture_escapes_in(expr.child_by_field_name(cs.FIELD_VALUE))
+            return
+        for child in expr.named_children:
+            self._note_capture_escapes_in(child)
+
+    def _flush_pending_captures(self) -> None:
+        # Scope end: an escaped closure may run at ANY time with any cell
+        # value, and a never-called one may still be reached through its qn,
+        # so both keep the def-site MAY snapshot (#1197 semantics). A closure
+        # only ever called directly already committed per-invocation states.
+        for record in self._pending_captures.values():
+            if record.escaped or not record.called:
+                self._commit_pending_capture(record)
+        self._pending_captures.clear()
 
     def _param_name_for_via(self, callee_qn: str, via: str) -> str | None:
         # Map an argument's `via` tag to the callee's parameter name: `kw:<name>`

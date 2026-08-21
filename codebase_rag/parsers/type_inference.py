@@ -48,9 +48,16 @@ class TypeInferenceEngine:
         "go_function_return_types",
         "go_call_sites",
         "go_external_sites",
+        "java_call_sites",
+        "java_external_sites",
+        "python_call_sites",
+        "python_external_sites",
         "csharp_partial_groups",
         "csharp_extension_methods",
         "csharp_call_sites",
+        "csharp_arg_flows",
+        "csharp_bind_flows",
+        "csharp_out_writes",
         "csharp_external_sites",
         "csharp_local_functions",
         "csharp_generic_methods",
@@ -89,10 +96,17 @@ class TypeInferenceEngine:
         go_function_return_types: dict[str, str] | None = None,
         go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
         go_external_sites: set[CallSiteKey] | None = None,
+        java_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
+        java_external_sites: set[CallSiteKey] | None = None,
+        python_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
+        python_external_sites: set[CallSiteKey] | None = None,
         csharp_partial_groups: dict[str, list[str]] | None = None,
         csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
         | None = None,
         csharp_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
+        csharp_arg_flows: dict[CallSiteKey, dict[int, frozenset[str]]] | None = None,
+        csharp_bind_flows: dict[CallSiteKey, frozenset[str]] | None = None,
+        csharp_out_writes: dict[CallSiteKey, dict[int, str]] | None = None,
         csharp_external_sites: set[CallSiteKey] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
@@ -148,6 +162,18 @@ class TypeInferenceEngine:
         self.go_external_sites = (
             go_external_sites if go_external_sites is not None else set()
         )
+        self.java_call_sites = java_call_sites if java_call_sites is not None else {}
+        self.java_external_sites = (
+            java_external_sites if java_external_sites is not None else set()
+        )
+        # Shared references, same discipline: the Jedi call-site facts and
+        # external proofs (issue #1183), populated after construction.
+        self.python_call_sites = (
+            python_call_sites if python_call_sites is not None else {}
+        )
+        self.python_external_sites = (
+            python_external_sites if python_external_sites is not None else set()
+        )
         self._go_free_fn_index: dict[tuple[str, str], str] = {}
         self._go_free_fn_index_size = -1
         # Shared reference (as with class_field_types): C# partial-class part
@@ -167,6 +193,15 @@ class TypeInferenceEngine:
         # after construction and read by the C# resolver's semantic path.
         self.csharp_call_sites = (
             csharp_call_sites if csharp_call_sites is not None else {}
+        )
+        # Shared reference (as with csharp_call_sites): Roslyn argument-flow
+        # facts, read by the C# path of the lean flow walk (issue #1187).
+        self.csharp_arg_flows = csharp_arg_flows if csharp_arg_flows is not None else {}
+        self.csharp_out_writes = (
+            csharp_out_writes if csharp_out_writes is not None else {}
+        )
+        self.csharp_bind_flows = (
+            csharp_bind_flows if csharp_bind_flows is not None else {}
         )
         self.csharp_external_sites = (
             csharp_external_sites if csharp_external_sites is not None else set()
@@ -245,6 +280,9 @@ class TypeInferenceEngine:
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 class_inheritance=self.class_inheritance,
                 simple_name_lookup=self.simple_name_lookup,
+                java_call_sites=self.java_call_sites,
+                java_external_sites=self.java_external_sites,
+                function_locations=self.function_locations,
             )
         return self._java_type_inference
 

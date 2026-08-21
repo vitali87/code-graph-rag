@@ -434,6 +434,31 @@ class MCPToolsRegistry:
             returns_json=True,
         )
 
+        traceback_schema = MCPInputSchema(
+            type=cs.MCPSchemaType.OBJECT,
+            properties={
+                cs.MCPParamName.TRACEBACK_TEXT: MCPInputSchemaProperty(
+                    type=cs.MCPSchemaType.STRING,
+                    description=td.MCP_PARAM_TRACEBACK_TEXT,
+                )
+            },
+            required=[cs.MCPParamName.TRACEBACK_TEXT],
+        )
+        self._tools[cs.MCPToolName.EXPLAIN_TRACEBACK] = ToolMetadata(
+            name=cs.MCPToolName.EXPLAIN_TRACEBACK,
+            description=td.MCP_TOOLS[cs.MCPToolName.EXPLAIN_TRACEBACK],
+            input_schema=traceback_schema,
+            handler=self.explain_traceback,
+            returns_json=True,
+        )
+        self._tools[cs.MCPToolName.RANK_ROOT_CAUSES] = ToolMetadata(
+            name=cs.MCPToolName.RANK_ROOT_CAUSES,
+            description=td.MCP_TOOLS[cs.MCPToolName.RANK_ROOT_CAUSES],
+            input_schema=traceback_schema,
+            handler=self.rank_root_causes,
+            returns_json=True,
+        )
+
     @property
     def rag_agent(self) -> Agent:
         if self._rag_agent is None:
@@ -487,6 +512,47 @@ class MCPToolsRegistry:
             "verdict": result.verdict,
             "path": list(result.path),
             "gaps": list(result.gaps),
+        }
+
+    async def explain_traceback(self, traceback_text: str) -> dict:
+        from codebase_rag.crash_correlation import explain_traceback
+
+        project = derive_project_name(Path(self.project_root))
+        async with self._ingestor_lock:
+            report = await asyncio.to_thread(
+                explain_traceback,
+                self.ingestor.fetch_all,
+                project,
+                Path(self.project_root),
+                traceback_text,
+            )
+        return {
+            "exception_type": report.exception_type,
+            "exception_message": report.exception_message,
+            "frames": [frame._asdict() for frame in report.frames],
+            "flow_gaps": list(report.flow_gaps),
+        }
+
+    async def rank_root_causes(self, traceback_text: str) -> dict:
+        from codebase_rag.crash_correlation import rank_root_causes
+
+        project = derive_project_name(Path(self.project_root))
+        async with self._ingestor_lock:
+            report = await asyncio.to_thread(
+                rank_root_causes,
+                self.ingestor.fetch_all,
+                project,
+                Path(self.project_root),
+                traceback_text,
+            )
+        return {
+            "exception_type": report.exception_type,
+            "exception_message": report.exception_message,
+            "failing": report.failing,
+            "anchor_is_crash_site": report.anchor_is_crash_site,
+            "candidates": [candidate._asdict() for candidate in report.candidates],
+            "flow_used": report.flow_used,
+            "flow_gaps": list(report.flow_gaps),
         }
 
     async def list_projects(self) -> ListProjectsResult:
