@@ -98,6 +98,8 @@ def _parse_rule(raw: object, path_name: str, section: str) -> _Rule:
             )
         if has_child and not kind:
             raise ValueError(f"{path_name}: 'has_child' applies to 'kind' rules only")
+        if name_child and not kind:
+            raise ValueError(f"{path_name}: 'name_child' applies to 'kind' rules only")
         return _Rule(
             pattern=str(pattern) if pattern else None,
             kind=str(kind) if kind else None,

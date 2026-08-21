@@ -445,3 +445,37 @@ def test_same_line_declarations_both_get_defines_edges(tmp_path: Path) -> None:
     defined = _defined(_run(tmp_path, {"S.kt": "fun first() {}; fun second() {}\n"}))
     assert any(qn.endswith(".first") for qn in defined), defined
     assert any(qn.endswith(".second") for qn in defined), defined
+
+
+def test_name_child_on_pattern_rule_raises(tmp_path: Path, monkeypatch) -> None:
+    # name_child is ignored by the pattern branch, so a config setting both
+    # would silently do nothing; reject it instead.
+    try:
+        _load_from(
+            tmp_path,
+            monkeypatch,
+            HEADER + "functions:\n  - pattern: 'def $NAME'\n    name_child: variable\n",
+        )
+    except ValueError as exc:
+        assert "name_child" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for name_child on a pattern rule")
+
+
+KOTLIN_OBJECTS = """object Plain { fun a() = 1 }
+private object Hidden { fun b() = 2 }
+object Delegating : Service { fun c() = 3 }
+"""
+
+
+def test_kotlin_object_modifier_and_delegation_forms(tmp_path: Path) -> None:
+    # a plain `object X { }` is an object_literal (pattern-only), while
+    # modifier and delegation forms are object_declaration (kind-only), so
+    # the config needs both rules to cover all three.
+    names = _node_names(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), CLASS)
+    assert {"Plain", "Hidden", "Delegating"} <= names, names
+
+
+def test_kotlin_object_members_still_extracted(tmp_path: Path) -> None:
+    names = _node_names(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), FUNCTION)
+    assert {"a", "b", "c"} <= names, names

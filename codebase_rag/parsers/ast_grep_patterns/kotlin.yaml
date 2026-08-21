@@ -14,7 +14,11 @@ functions:
 classes:
   # one kind for class, interface, data class, sealed class and enum class
   - kind: class_declaration
-  # `object Registry { }` is not a class_declaration in this grammar
+  # objects are neither class_declaration nor one single kind: a modifier or
+  # delegation form (`private object R`, `object R : Service`) is an
+  # object_declaration, while a plain `object R { }` parses as an
+  # object_literal that only the pattern reaches. Both are needed.
+  - kind: object_declaration
   - "object $NAME { $$$ }"
 imports:
   - kind: import_header

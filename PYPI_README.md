@@ -19,7 +19,7 @@ Point it at a repository and it reads every source file, extracts functions, cla
 
 ## Supported Languages
 
-Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and Dart are fully supported. Scala is in development, and Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash, and Nix have structural support (modules, functions, classes, and imports) through the pluggable ast-grep tier, which requires the `ast-grep` extra (`pip install 'code-graph-rag[ast-grep]'`).
+Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and Dart are fully supported. Scala is in development, and Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash, and Nix have structural support (modules, functions, classes where the language has them, and imports) through the pluggable ast-grep tier, which requires the `ast-grep` extra (`pip install 'code-graph-rag[ast-grep]'`).
 
 ## Install
 

@@ -32,7 +32,9 @@ Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified
 These languages have no hand-written tree-sitter parser in cgr. They are
 handled by the pluggable [ast-grep](https://ast-grep.github.io/) tier, which
 emits `Module`, `Function` and `Class` nodes plus `IMPORTS` edges from a
-single YAML pattern file per language.
+single YAML pattern file per language. Which node kinds a language yields
+depends on its config: the `-` entries below mark constructs the language
+does not have (Bash and Nix declare no class-like types).
 
 This is a **basic** tier: names are flat (no nested-namespace qualification)
 and there is **no call-graph (`CALLS`) resolution**, so call-graph analyses
