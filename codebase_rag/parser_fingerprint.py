@@ -13,6 +13,19 @@ from loguru import logger
 from . import constants as cs
 from . import logs as ls
 
+_FILE_HASH_CHUNK_SIZE = 1024 * 1024
+
+
+def _digest_file(path: Path) -> str:
+    # compile_commands.json is repository-controlled and can be very large,
+    # so stream it in bounded chunks: reading it whole lets an oversized
+    # database exhaust memory and fail indexing (issue #1177 review).
+    hasher = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as stream:
+        while chunk := stream.read(_FILE_HASH_CHUNK_SIZE):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
 
 def compute_parser_fingerprint(
     package_root: Path | None = None, repo_path: Path | None = None
@@ -54,7 +67,7 @@ def _repo_frontend_inputs(repo_path: Path | None) -> list[str]:
         return ["CPP_COMPDB=absent"]
     database = compdb_dir / "compile_commands.json"
     try:
-        digest = hashlib.md5(database.read_bytes(), usedforsecurity=False).hexdigest()
+        digest = _digest_file(database)
     except OSError:
         return ["CPP_COMPDB=absent"]
     return [f"CPP_COMPDB={database.as_posix()}:{digest}"]

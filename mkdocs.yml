@@ -90,6 +90,7 @@ nav:
     - Dynamic Call Tracing: guide/dynamic-tracing.md
     - Graph Export: guide/graph-export.md
     - Real-Time Updates: guide/realtime-updates.md
+    - C/C++ Semantic Mode: guide/cpp-semantic-mode.md
     - MCP Server: guide/mcp-server.md
     - Multi-Project Graphs: guide/multi-project.md
   - Python SDK:

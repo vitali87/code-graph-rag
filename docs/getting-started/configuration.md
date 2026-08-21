@@ -115,6 +115,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | `LAB_PORT` | `3000` | Memgraph Lab port |
 | `MEMGRAPH_BATCH_SIZE` | `1000` | Batch size for Memgraph operations |
 | `TARGET_REPO_PATH` | `.` | Default repository path |
+| `CPP_FRONTEND` | `hybrid` | C/C++ frontend mode: `treesitter`, `libclang`, or `hybrid`. The libclang-backed modes require the [`cpp` extra and a compilation database](../guide/cpp-semantic-mode.md). |
 | `CGR_CAPTURE_LOCAL_DEFINITIONS` | `true` | Capture methods of classes defined inside function bodies (function-local definitions). On by default for exhaustive structure capture; set to `false` to keep the graph free of throwaway helpers and test mocks. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for the local Ollama server (`/v1` is appended for the OpenAI-compatible endpoint) |
 

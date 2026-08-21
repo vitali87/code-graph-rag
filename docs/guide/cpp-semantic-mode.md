@@ -1,3 +1,7 @@
+---
+description: "Enable compiler-backed C and C++ facts with libclang and a compilation database."
+---
+
 # C/C++ Semantic Mode
 
 The C/C++ frontend has three modes, selected with the `CPP_FRONTEND` environment variable. The default is `hybrid`.

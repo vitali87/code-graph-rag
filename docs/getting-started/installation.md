@@ -62,6 +62,14 @@ With both full language support and semantic search:
 pip install 'code-graph-rag[treesitter-full,semantic]'
 ```
 
+With compiler-backed C/C++ facts:
+
+```bash
+pip install 'code-graph-rag[treesitter-full,cpp]'
+```
+
+The `cpp` extra installs libclang. Semantic C/C++ indexing also needs a `compile_commands.json`; see [C/C++ Semantic Mode](../guide/cpp-semantic-mode.md) for frontend modes and setup commands.
+
 ## Install from Source
 
 ```bash
@@ -79,6 +87,12 @@ For full multi-language support:
 
 ```bash
 uv sync --extra treesitter-full
+```
+
+For full multi-language support with compiler-backed C/C++ facts:
+
+```bash
+uv sync --extra treesitter-full --extra cpp
 ```
 
 For development (including tests and pre-commit hooks):

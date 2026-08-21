@@ -6,6 +6,7 @@
 # later sync against a different parser warns loudly until a clean rebuild.
 from collections.abc import Iterator
 from pathlib import Path
+from typing import IO
 from unittest.mock import MagicMock
 
 import pytest
@@ -155,6 +156,51 @@ class TestComputeParserFingerprint:
         before = compute_parser_fingerprint()
         monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
         assert compute_parser_fingerprint() != before
+
+    def test_streams_compilation_database_digest_in_bounded_chunks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # compile_commands.json is repository-controlled and can be very
+        # large, so the digest is streamed in bounded chunks: reading it whole
+        # lets an oversized database exhaust memory and fail indexing
+        # (issue #1177 review).
+        import codebase_rag.parser_fingerprint as pf
+        from codebase_rag.config import settings as cfg
+        from codebase_rag.parsers.cpp_frontend import frontend
+
+        payload = b"x" * (pf._FILE_HASH_CHUNK_SIZE * 2 + 17)
+        (tmp_path / "compile_commands.json").write_bytes(payload)
+        monkeypatch.setattr(cfg, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+        monkeypatch.setattr(frontend, "cpp_frontend_available", lambda: True)
+
+        read_sizes: list[int] = []
+        original_open = Path.open
+
+        class RecordingStream:
+            def __init__(self, stream: IO[bytes]) -> None:
+                self._stream = stream
+
+            def read(self, size: int = -1) -> bytes:
+                read_sizes.append(size)
+                return self._stream.read(size)
+
+            def __enter__(self) -> "RecordingStream":
+                return self
+
+            def __exit__(self, *_exc: object) -> None:
+                self._stream.close()
+
+        def tracked_open(self: Path, mode: str = "rb") -> RecordingStream:
+            return RecordingStream(original_open(self, "rb"))
+
+        monkeypatch.setattr(Path, "open", tracked_open)
+        entries = pf._repo_frontend_inputs(tmp_path)
+
+        assert any(entry.startswith("CPP_COMPDB=") for entry in entries), entries
+        assert read_sizes, "compile_commands.json was never streamed"
+        assert all(0 < size <= pf._FILE_HASH_CHUNK_SIZE for size in read_sizes), (
+            read_sizes
+        )
 
 
 class TestFingerprintStamping:
