@@ -472,10 +472,12 @@ def test_kotlin_object_modifier_and_delegation_forms(tmp_path: Path) -> None:
     # a plain `object X { }` is an object_literal (pattern-only), while
     # modifier and delegation forms are object_declaration (kind-only), so
     # the config needs both rules to cover all three.
+    # equality, not a subset: the two overlapping object rules must not
+    # double-emit, and no unrelated node may leak into this fixture.
     names = _node_names(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), CLASS)
-    assert {"Plain", "Hidden", "Delegating"} <= names, names
+    assert names == {"Plain", "Hidden", "Delegating"}, names
 
 
 def test_kotlin_object_members_still_extracted(tmp_path: Path) -> None:
     names = _node_names(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), FUNCTION)
-    assert {"a", "b", "c"} <= names, names
+    assert names == {"a", "b", "c"}, names
