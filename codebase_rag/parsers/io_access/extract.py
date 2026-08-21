@@ -475,6 +475,51 @@ def lean_binding_values(
     return [node]
 
 
+def _deconstruction_children(
+    node: Node, descriptor: LanguageDescriptor
+) -> tuple[Node, Node] | None:
+    # A deconstructing declarator (`var (a, b) = (x, y)`) carries neither a
+    # `name` nor a `value` field, only a pattern child and a tuple child.
+    pattern = next(
+        (c for c in node.named_children if c.type == descriptor.tuple_pattern_type),
+        None,
+    )
+    value = next(
+        (c for c in node.named_children if c.type == descriptor.tuple_value_type),
+        None,
+    )
+    return None if pattern is None or value is None else (pattern, value)
+
+
+def _is_tuple_assignment(
+    left: Node, right: Node | None, descriptor: LanguageDescriptor
+) -> bool:
+    # `(string a, int b) = (x, y)` is an ASSIGNMENT whose left is a tuple rather
+    # than a declarator, so it never reaches the deconstruction branch that
+    # handles `var (a, b) = ...`.
+    return (
+        descriptor.tuple_value_type is not None
+        and left.type == descriptor.tuple_value_type
+        and right is not None
+        and right.type == descriptor.tuple_value_type
+    )
+
+
+def _deconstruction_slot(target: Node, descriptor: LanguageDescriptor) -> Node:
+    # One pattern slot, unwrapped to the node that actually names the binding:
+    # both SIDES wrap their elements (a C# tuple wraps each slot in an
+    # `argument`, pattern side as well as value side), and an explicitly typed
+    # slot (`string a`) wraps its name one level deeper again.
+    target = unwrap_argument(target, descriptor.argument_wrapper_type)
+    if (
+        descriptor.declaration_expression_type is not None
+        and target.type == descriptor.declaration_expression_type
+        and target.named_children
+    ):
+        return target.named_children[-1]
+    return target
+
+
 def _deconstruction_pairs(
     pattern: Node, value: Node, descriptor: LanguageDescriptor
 ) -> tuple[list[str | None], list[Node]]:
@@ -494,15 +539,7 @@ def _deconstruction_pairs(
         element = elements[index] if index < len(elements) else None
         if element is None:
             continue
-        # Both SIDES wrap their elements: a C# tuple wraps each slot in an
-        # `argument`, on the pattern side as well as the value side.
-        target = unwrap_argument(target, descriptor.argument_wrapper_type)
-        # An explicitly typed slot (`string a`) wraps its name one level deeper.
-        if (
-            descriptor.declaration_expression_type is not None
-            and target.type == descriptor.declaration_expression_type
-        ):
-            target = target.named_children[-1] if target.named_children else target
+        target = _deconstruction_slot(target, descriptor)
         nested_pattern = target.type in (
             descriptor.tuple_pattern_type,
             descriptor.tuple_value_type,
@@ -529,15 +566,8 @@ def binding_targets_values(
     left = node.child_by_field_name(cs.FIELD_LEFT)
     if left is not None:
         right = node.child_by_field_name(cs.FIELD_RIGHT)
-        # `(string a, int b) = (x, y)` is an ASSIGNMENT whose left is a tuple,
-        # not a declarator, so it never reaches the deconstruction branch below.
-        if (
-            descriptor.tuple_value_type is not None
-            and left.type == descriptor.tuple_value_type
-            and right is not None
-            and right.type == descriptor.tuple_value_type
-        ):
-            return _deconstruction_pairs(left, right, descriptor)
+        if _is_tuple_assignment(left, right, descriptor):
+            return _deconstruction_pairs(left, right, descriptor)  # type: ignore[arg-type]
         return (
             lean_binding_targets(left, descriptor),
             lean_binding_values(node.child_by_field_name(cs.FIELD_RIGHT), descriptor),
@@ -566,16 +596,9 @@ def binding_targets_values(
         # binding is skipped entirely -- every deconstructed name stays untainted.
         # Pattern names and tuple elements pair BY POSITION, which is exactly
         # what the caller already does for a multi-target binding.
-        pattern = next(
-            (c for c in node.named_children if c.type == descriptor.tuple_pattern_type),
-            None,
-        )
-        tuple_value = next(
-            (c for c in node.named_children if c.type == descriptor.tuple_value_type),
-            None,
-        )
-        if pattern is not None and tuple_value is not None:
-            return _deconstruction_pairs(pattern, tuple_value, descriptor)
+        pair = _deconstruction_children(node, descriptor)
+        if pair is not None:
+            return _deconstruction_pairs(pair[0], pair[1], descriptor)
 
     if (
         descriptor.binding_target_container_type is not None
