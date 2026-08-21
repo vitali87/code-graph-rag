@@ -420,3 +420,31 @@ def test_receiver_style_extension_ref_argument_writes_back(tmp_path: Path) -> No
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "x1", _EXTENSION_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_GENERIC_REF = (
+    "using System;\n\n"
+    "public class Helper\n{\n"
+    "    public void Fill<T>(T src, ref T dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        var helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_generic_ref_callee_writes_back(tmp_path: Path) -> None:
+    # A CONSTRUCTED generic method has substituted parameter symbols, while
+    # WrittenInside holds the declaration's originals, so an unnormalized
+    # comparison silently reports no write.
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "g1", _GENERIC_REF, cs.CSharpFrontend.HYBRID
+    )

@@ -454,7 +454,11 @@ public static class Frontend
             // for an extension method, then the implementing half of a partial
             // (the defining half has no body and would look unprovable).
             var reduced = invoked.ReducedFrom;
-            var method = reduced ?? invoked;
+            // OriginalDefinition too: a CONSTRUCTED generic method
+            // (`Fill<string>`) carries substituted parameter symbols, while the
+            // WrittenInside set comes from the declaration and holds the
+            // originals, so comparing the two reports no write.
+            var method = (reduced ?? invoked).OriginalDefinition;
             method = method.PartialImplementationPart ?? method;
             var ordinal = bound.Ordinal + (reduced is null ? 0 : 1);
             if (ordinal >= method.Parameters.Length)
