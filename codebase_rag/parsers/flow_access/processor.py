@@ -1508,7 +1508,13 @@ class FlowProcessor:
                 self._return_edge_candidates.append(
                     (callee[0], callee[1], jc.flow.caller_spec)
                 )
-                return Taint(frozenset(), frozenset({callee[1]}))
+                # The result also carries a per-call-site pass-through token so a
+                # tainted argument to a return-parameter reaches THIS call's
+                # consumers only (issue #1363, mirroring the Python path from
+                # #1168); it resolves to nothing when the callee is not a
+                # pass-through, so non-pass-through calls are unaffected.
+                token = _passthrough_result_token(jc.flow.caller_qn, node)
+                return Taint(frozenset(), frozenset({callee[1], token}))
             # A method chain: recurse the receiver ONLY through a taint-transparent
             # method -- Rust Result unwrapping (`std::env::var("X").unwrap()`) or a
             # value-preserving conversion (`s.as_bytes()`). A terminal method that

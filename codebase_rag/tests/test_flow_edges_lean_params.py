@@ -1,9 +1,9 @@
 """Forward parameter-taint composition for the lean walk in Java, C#, Rust, and C
 (issue #1195, following #1169's Go/JS/TS/C++). A secret handed to a wrapper whose
 parameter reaches a sink must connect the source resource to the sink resource,
-and the argument must map to the RIGHT positional parameter. Return composition
-stays Python-only (a lean callee's return does not forward taint), so only the
-parameter-to-sink direction is asserted here."""
+and the argument must map to the RIGHT positional parameter. Only the
+parameter-to-sink direction is asserted here; the return direction is covered by
+test_flow_lean_passthrough_return.py (issue #1363)."""
 
 from __future__ import annotations
 
