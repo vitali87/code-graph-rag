@@ -1298,8 +1298,10 @@ class FlowProcessor:
             self._bind_lean_type_decl(node, handles, jc)
             return
         if d.pattern_test_type is not None and node_type == d.pattern_test_type:
+            # Bind, then fall THROUGH to the normal traversal: the tested
+            # subject can be a call (`Forward(secret) is string s`), whose own
+            # argument and parameter-to-sink flows are emitted by walking it.
             self._bind_pattern_test(node, tainted, jc)
-            return
         if node_type == d.declarator_type or node_type in (
             cs.TS_ASSIGNMENT_EXPRESSION,
             cs.TS_GO_ASSIGNMENT_STATEMENT,
