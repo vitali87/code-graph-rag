@@ -1,0 +1,17 @@
+# ast-grep pattern config for Swift (issue #1352).
+language: swift
+ast_grep_id: swift
+extensions:
+  - ".swift"
+functions:
+  # covers func, static func, and modifier-prefixed declarations
+  - kind: function_declaration
+  - kind: init_declaration
+  # requirements inside a protocol body are their own kind
+  - kind: protocol_function_declaration
+classes:
+  # class, struct, enum and extension all share this kind in the grammar
+  - kind: class_declaration
+  - kind: protocol_declaration
+imports:
+  - kind: import_declaration

@@ -30,7 +30,47 @@ imports:                # patterns whose match becomes an IMPORTS edge
   - "require_relative $PATH"
 ```
 
-`extensions` and `ast_grep_id` are required; the pattern lists are optional.
+`extensions` and `ast_grep_id` are required; the rule lists are optional.
+
+## Rule forms
+
+Each entry in `functions`, `classes` and `imports` is either a **pattern**
+(a plain string, as above) or a **kind rule** (a mapping). A rule must set
+exactly one of `pattern` or `kind`.
+
+```yaml
+functions:
+  - "def $NAME"                  # pattern rule
+  - kind: function_declaration   # kind rule
+```
+
+Prefer a **kind rule** when modifiers or keywords can precede the construct.
+A pattern is a fixed shape, so `fun $NAME` matches `fun f()` but *not*
+`private suspend fun f()`; both are the same `function_declaration` node, so
+one kind rule covers every modifier combination. Prefer a **pattern** when the
+language has no dedicated node for the construct (Elixir definitions are all
+generic `call` nodes) or when the value you want is a literal rather than an
+identifier (a Solidity import path).
+
+Kind rules take the name from the node's `name` field, falling back to its
+first identifier-like child. Three optional keys handle the rest:
+
+| Key | Applies to | Effect |
+|---|---|---|
+| `name_child` | `kind` | take the name from this child kind instead of the default lookup |
+| `has_child` | `kind` | skip matches with no child of this kind |
+| `name_head` | `pattern` | keep only the leading identifier of the capture |
+
+`has_child` disambiguates a node type that covers several concepts. A Nix
+`binding` is a function only when its value is a `function_expression`;
+without the guard, every attribute in a set would be emitted as a Function.
+Likewise a Haskell type signature (`speak :: a -> String`) parses as a
+`function` node, so requiring a `match` child keeps the type variable `a`
+out of the graph.
+
+`name_head` trims a capture down to the bare name. Elixir's zero-arg and
+guarded defs match no parenthesised pattern, so the do-block fallback
+captures `guarded(x) when is_integer(x)`; `name_head` reduces it to `guarded`.
 
 ## Metavariable conventions
 

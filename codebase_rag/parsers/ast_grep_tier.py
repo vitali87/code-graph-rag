@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .. import constants as cs
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
@@ -23,17 +25,103 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PATTERNS_DIR = Path(__file__).parent / "ast_grep_patterns"
+# leading bare name of a captured signature, for `name_head` rules
+_LEADING_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*[!?]?")
 # Metavar conventions contributors must follow in the YAML patterns.
 _NAME_METAVAR = "NAME"
 _PATH_METAVAR = "PATH"
+# Child node kinds that carry a declaration's name, tried in order when a
+# kind rule's node exposes no `name` field. Grammars differ on which one
+# they use (kotlin: simple_identifier, haskell/solidity: identifier or a
+# *_id node), so the fallback list spans them rather than per-language.
+_NAME_CHILD_KINDS = (
+    "name",
+    "identifier",
+    "simple_identifier",
+    "type_identifier",
+    "constructor",
+    "module_id",
+    "variable",
+)
+
+
+@dataclass(frozen=True)
+class _Rule:
+    """One matcher from a config: either an ast-grep pattern or a node kind.
+
+    A pattern captures its result in the $NAME/$PATH metavar. A `kind` rule
+    matches a node type instead, which is what grammars need when modifiers
+    sit outside the matched construct (`private suspend fun f()` is still a
+    kotlin `function_declaration`, but no fixed pattern spells every modifier
+    combination). Kind rules take the name from the node's `name` field, or
+    else its first `_NAME_CHILD_KINDS` child.
+    """
+
+    pattern: str | None = None
+    kind: str | None = None
+    # for kind rules whose name lives on a non-standard child kind
+    name_child: str | None = None
+    # kind rules only: skip matches without a child of this kind. Needed when
+    # one grammar node covers several concepts (a nix `binding` is a function
+    # only when its value is a `function_expression`; without this every
+    # attribute in a set would be emitted as a Function).
+    has_child: str | None = None
+    # pattern rules only: keep just the leading identifier of the capture.
+    # Elixir defs are macro calls, so the only pattern that matches a
+    # zero-arg or guarded `def` captures the whole signature
+    # (`guarded(x) when is_integer(x)`); this trims it to `guarded`.
+    name_head: bool = False
+
+    @property
+    def label(self) -> str:
+        return self.pattern if self.pattern is not None else f"kind={self.kind}"
+
+
+def _parse_rule(raw: object, path_name: str, section: str) -> _Rule:
+    if isinstance(raw, str):
+        return _Rule(pattern=raw)
+    if isinstance(raw, Mapping):
+        fields = cast("Mapping[str, object]", raw)
+        pattern = fields.get("pattern")
+        kind = fields.get("kind")
+        if bool(pattern) == bool(kind):
+            raise ValueError(
+                f"{path_name}: each {section} rule needs exactly one of "
+                f"'pattern' or 'kind'"
+            )
+        name_child = fields.get("name_child")
+        has_child = fields.get("has_child")
+        name_head = bool(fields.get("name_head"))
+        if name_head and not pattern:
+            raise ValueError(
+                f"{path_name}: 'name_head' applies to 'pattern' rules only"
+            )
+        if has_child and not kind:
+            raise ValueError(f"{path_name}: 'has_child' applies to 'kind' rules only")
+        return _Rule(
+            pattern=str(pattern) if pattern else None,
+            kind=str(kind) if kind else None,
+            name_child=str(name_child) if name_child else None,
+            has_child=str(has_child) if has_child else None,
+            name_head=name_head,
+        )
+    raise ValueError(f"{path_name}: {section} rules must be a string or a mapping")
+
+
+def _parse_rules(raw: object, path_name: str, section: str) -> tuple[_Rule, ...]:
+    if not raw:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError(f"{path_name}: '{section}' must be a list of rules")
+    return tuple(_parse_rule(item, path_name, section) for item in raw)
 
 
 @dataclass(frozen=True)
 class _LangConfig:
     ast_grep_id: str
-    functions: tuple[str, ...]
-    classes: tuple[str, ...]
-    imports: tuple[str, ...]
+    functions: tuple[_Rule, ...]
+    classes: tuple[_Rule, ...]
+    imports: tuple[_Rule, ...]
 
 
 def load_pattern_configs() -> dict[str, _LangConfig]:
@@ -53,9 +141,9 @@ def load_pattern_configs() -> dict[str, _LangConfig]:
             extensions = [ext.strip() for ext in extensions.split(",") if ext.strip()]
         config = _LangConfig(
             ast_grep_id=str(ast_grep_id),
-            functions=tuple(data.get("functions") or ()),
-            classes=tuple(data.get("classes") or ()),
-            imports=tuple(data.get("imports") or ()),
+            functions=_parse_rules(data.get("functions"), path.name, "functions"),
+            classes=_parse_rules(data.get("classes"), path.name, "classes"),
+            imports=_parse_rules(data.get("imports"), path.name, "imports"),
         )
         for extension in extensions:
             configs[extension] = config
@@ -75,6 +163,17 @@ def structural_tier_extensions() -> frozenset[str]:
         return frozenset(load_pattern_configs())
     except Exception:  # noqa: BLE001
         return frozenset()
+
+
+def _leading_identifier(text: str) -> str | None:
+    """The bare name at the head of a captured signature.
+
+    `guarded(x) when is_integer(x)` -> `guarded`, `zero_arg` -> `zero_arg`.
+    Returns None when the capture does not start with an identifier, so a
+    stray match is dropped rather than emitted under a junk name.
+    """
+    match = _LEADING_IDENTIFIER_RE.match(text.strip())
+    return match.group(0) if match else None
 
 
 def _strip_quotes(text: str) -> str:
@@ -136,14 +235,14 @@ class AstGrepTier:
         # Functions then classes; dedupe by start line PER label so a specific
         # pattern (def self.$NAME) wins over a general one (def $NAME) on the
         # same line, while a class and function sharing a line both still land.
-        for label, patterns in (
+        for label, rules in (
             (cs.NodeLabel.FUNCTION, config.functions),
             (cs.NodeLabel.CLASS, config.classes),
         ):
             self._extract_definitions(
                 root,
                 label,
-                patterns,
+                rules,
                 file_path,
                 module_qn,
                 relative_path,
@@ -155,17 +254,17 @@ class AstGrepTier:
         self,
         root: SgNode,
         label: cs.NodeLabel,
-        patterns: tuple[str, ...],
+        rules: tuple[_Rule, ...],
         file_path: Path,
         module_qn: str,
         relative_path: str,
         absolute_path: str,
     ) -> None:
         claimed: set[int] = set()
-        for pattern in patterns:
-            for node in self._find_all(root, pattern, file_path):
-                name_node = node.get_match(_NAME_METAVAR)
-                if name_node is None:
+        for rule in rules:
+            for node in self._find_all(root, rule, file_path):
+                name = self._definition_name(node, rule)
+                if name is None:
                     continue
                 line = node.range().start.line
                 if line in claimed:
@@ -173,32 +272,69 @@ class AstGrepTier:
                 claimed.add(line)
                 self._emit_definition(
                     label,
-                    name_node.text(),
+                    name,
                     node,
                     module_qn,
                     relative_path,
                     absolute_path,
                 )
 
+    def _definition_name(self, node: SgNode, rule: _Rule) -> str | None:
+        """The declared name of a matched node, or None if it has none."""
+        if rule.pattern is not None:
+            name_node = node.get_match(_NAME_METAVAR)
+            if name_node is None:
+                return None
+            text = name_node.text()
+            return _leading_identifier(text) if rule.name_head else text
+        # kind rule: prefer the grammar's `name` field, then a named child of
+        # a known identifier kind. A config may pin an explicit child kind
+        # when a grammar puts something else first.
+        if rule.name_child:
+            for child in node.children():
+                if child.kind() == rule.name_child:
+                    return child.text()
+            return None
+        field = node.field("name")
+        if field is not None:
+            return field.text()
+        for child in node.children():
+            if child.kind() in _NAME_CHILD_KINDS:
+                return child.text()
+        return None
+
     def _extract_imports(
         self,
         root: SgNode,
-        patterns: tuple[str, ...],
+        rules: tuple[_Rule, ...],
         file_path: Path,
         module_qn: str,
     ) -> None:
-        for pattern in patterns:
-            for node in self._find_all(root, pattern, file_path):
-                target_node = node.get_match(_PATH_METAVAR)
-                if target_node is not None:
-                    self._emit_import(_strip_quotes(target_node.text()), module_qn)
+        for rule in rules:
+            for node in self._find_all(root, rule, file_path):
+                if rule.pattern is not None:
+                    target_node = node.get_match(_PATH_METAVAR)
+                    target = target_node.text() if target_node is not None else None
+                else:
+                    target = self._definition_name(node, rule)
+                if target:
+                    self._emit_import(_strip_quotes(target), module_qn)
 
-    def _find_all(self, root: SgNode, pattern: str, file_path: Path) -> list[SgNode]:
+    def _find_all(self, root: SgNode, rule: _Rule, file_path: Path) -> list[SgNode]:
         try:
-            return root.find_all(pattern=pattern)
+            if rule.pattern is not None:
+                return root.find_all(pattern=rule.pattern)
+            matches = root.find_all(kind=rule.kind)
+            if rule.has_child:
+                matches = [
+                    node
+                    for node in matches
+                    if any(c.kind() == rule.has_child for c in node.children())
+                ]
+            return matches
         except RuntimeError as exc:
             logger.warning(
-                "bad ast-grep pattern %r for %s: %s", pattern, file_path, exc
+                "bad ast-grep rule %s for %s: %s", rule.label, file_path, exc
             )
             return []
 

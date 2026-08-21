@@ -1,0 +1,20 @@
+# ast-grep pattern config for Kotlin (issue #1352).
+# Kind rules do the heavy lifting here: modifiers (`private suspend fun f()`)
+# sit OUTSIDE the construct a pattern can spell, but the node is still a
+# `function_declaration`, so matching by kind catches every modifier
+# combination instead of enumerating them.
+language: kotlin
+ast_grep_id: kotlin
+extensions:
+  - ".kt"
+  - ".kts"
+functions:
+  # covers fun/suspend fun/private fun/override fun and companion-object members
+  - kind: function_declaration
+classes:
+  # one kind for class, interface, data class, sealed class and enum class
+  - kind: class_declaration
+  # `object Registry { }` is not a class_declaration in this grammar
+  - "object $NAME { $$$ }"
+imports:
+  - kind: import_header
