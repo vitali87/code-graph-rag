@@ -180,3 +180,103 @@ def test_value_task_as_task_preserves_taint(tmp_path: Path) -> None:
         "        Console.WriteLine(token);\n    }\n}\n"
     )
     assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})
+
+
+_TUPLE_SRC = (
+    "using System;\n\n"
+    "public class Leaky\n{{\n"
+    "    public void Run()\n    {{\n"
+    '        var (secret, plain) = (Environment.GetEnvironmentVariable("K"), "clean");\n'
+    "        Console.WriteLine({read});\n    }}\n}}\n"
+)
+
+
+def test_tuple_deconstruction_binds_the_tainted_element(tmp_path: Path) -> None:
+    # A deconstructing declarator carries no name/value field, so the binding
+    # was skipped entirely and every deconstructed name stayed untainted.
+    flows = _run_flow(tmp_path, {"Program.cs": _TUPLE_SRC.format(read="secret")})
+    assert (_ENV_K, _STDOUT) in flows
+
+
+def test_tuple_deconstruction_leaves_the_clean_element_clean(tmp_path: Path) -> None:
+    # The precision half: pattern names and tuple elements pair BY POSITION, so
+    # reading the untainted element must emit nothing. Asserted as the EXACT set
+    # rather than one absent pair, so no other fabricated edge can hide either.
+    flows = _run_flow(tmp_path, {"Program.cs": _TUPLE_SRC.format(read="plain")})
+    assert flows == set()
+
+
+def test_tuple_deconstruction_taints_only_the_matching_position(tmp_path: Path) -> None:
+    # Mirror of the above with the taint in the SECOND slot, so a fix that
+    # simply spread the first value across all names would fail here.
+    source = (
+        "using System;\n\n"
+        "public class Leaky\n{\n"
+        "    public void Run()\n    {\n"
+        '        var (plain, secret) = ("clean", Environment.GetEnvironmentVariable("K"));\n'
+        "        Console.WriteLine(secret);\n"
+        "        Console.Error.WriteLine(plain);\n    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})
+
+
+def test_nested_deconstruction_binds_the_inner_name(tmp_path: Path) -> None:
+    # `tuple_pattern` nests, and the value nests with it; the pair walk descends
+    # both together so an inner name still takes its own element.
+    source = (
+        "using System;\n\n"
+        "public class Leaky\n{\n"
+        "    public void Run()\n    {\n"
+        '        var (a, (b, c)) = ("clean", (Environment.GetEnvironmentVariable("K"), 1));\n'
+        "        Console.WriteLine(b);\n    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})
+
+
+def test_nested_deconstruction_keeps_the_outer_clean_name_clean(tmp_path: Path) -> None:
+    source = (
+        "using System;\n\n"
+        "public class Leaky\n{\n"
+        "    public void Run()\n    {\n"
+        '        var (a, (b, c)) = ("clean", (Environment.GetEnvironmentVariable("K"), 1));\n'
+        "        Console.WriteLine(a);\n    }\n}\n"
+    )
+    assert _run_flow(tmp_path, {"Program.cs": source}) == set()
+
+
+def test_typed_deconstruction_assignment_binds(tmp_path: Path) -> None:
+    # `(string a, int b) = (x, y)` is an ASSIGNMENT whose left is a tuple, not a
+    # declarator, so it reaches the pair walk by a different route entirely.
+    source = (
+        "using System;\n\n"
+        "public class Leaky\n{\n"
+        "    public void Run()\n    {\n"
+        '        (string a, int b) = (Environment.GetEnvironmentVariable("K"), 1);\n'
+        "        Console.WriteLine(a);\n    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})
+
+
+def test_predeclared_deconstruction_assignment_binds(tmp_path: Path) -> None:
+    source = (
+        "using System;\n\n"
+        "public class Leaky\n{\n"
+        "    public void Run()\n    {\n"
+        "        string a; int b;\n"
+        '        (a, b) = (Environment.GetEnvironmentVariable("K"), 1);\n'
+        "        Console.WriteLine(a);\n    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})
+
+
+def test_discard_slot_consumes_its_position(tmp_path: Path) -> None:
+    # `_` binds nothing, but it must still CONSUME its slot or every later name
+    # would pair with the wrong element.
+    source = (
+        "using System;\n\n"
+        "public class Leaky\n{\n"
+        "    public void Run()\n    {\n"
+        '        var (_, secret) = ("clean", Environment.GetEnvironmentVariable("K"));\n'
+        "        Console.WriteLine(secret);\n    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})

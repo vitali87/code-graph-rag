@@ -118,6 +118,20 @@ class LanguageDescriptor:
     # the expression. When set, the positional-arg picker unwraps it to reach the
     # string literal / nested handle. None where args are bare expressions.
     argument_wrapper_type: str | None = None
+
+    # Deconstructing declaration shapes: a declarator that binds SEVERAL names
+    # from a tuple carries neither a `name` nor a `value` field, only a pattern
+    # child and a value child (C# `var (a, b) = (x, y)`). Naming both lets the
+    # shared extractor pair them positionally, which is what the taint walk
+    # already does for Go's multi-assign. None where the grammar has no such
+    # form (issue #1187).
+    tuple_pattern_type: str | None = None
+    tuple_value_type: str | None = None
+
+    # An explicitly typed deconstruction slot (`(string a, int b) = t`) wraps
+    # each bound name in its own declaration node. None where the grammar has
+    # no such form.
+    declaration_expression_type: str | None = None
     # True when a declarator binds its initialiser as the LAST unfielded named child
     # rather than a `value`/`right` field (C# `variable_declarator` is `name = <expr>`
     # with the expression unfielded). Lets the handle-binding walk read the RHS.
@@ -451,6 +465,9 @@ _CSHARP_DESCRIPTOR = LanguageDescriptor(
     new_expression_type=cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
     # C# wraps every call argument in an `argument` node.
     argument_wrapper_type=cs.TS_CSHARP_ARGUMENT,
+    tuple_pattern_type=cs.TS_CSHARP_TUPLE_PATTERN,
+    tuple_value_type=cs.TS_CSHARP_TUPLE_EXPRESSION,
+    declaration_expression_type=cs.TS_CSHARP_DECLARATION_EXPRESSION,
     # `var r = new StreamReader("x")` binds the initialiser as the declarator's
     # last unfielded named child (no `value` field), so the handle walk reads it.
     declarator_value_is_last_child=True,
