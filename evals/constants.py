@@ -112,6 +112,8 @@ ROUND_DIGITS = 4
 # Go structure eval: cgr nodes graded against the go/ast oracle
 # (evals/oracles/go_ast.go), joined on (kind, file, start_line).
 GO_SUFFIX = ".go"
+JAVA_SUFFIX = ".java"
+LOCATION_KEY_SEPARATOR = ":"
 GO_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
     cs.NodeLabel.FUNCTION,
     cs.NodeLabel.METHOD,
@@ -392,6 +394,7 @@ JS_DIFF_FILENAME = "js_diff.json"
 # Java structure eval: cgr nodes graded against the JDK Compiler Tree API
 # oracle (evals/oracles/java_oracle/Oracle.java), joined on (kind, file, line).
 JAVA_SUFFIX = ".java"
+LOCATION_KEY_SEPARATOR = ":"
 JAVA_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
     cs.NodeLabel.FUNCTION,
     cs.NodeLabel.METHOD,
@@ -650,3 +653,18 @@ INSTANTIATION_DIFF_PREFIX = "instantiation:"
 INSTANTIATES_LABEL = "instantiates"
 INSTANTIATION_EDGE_REPR = "{file} -> {cls}"
 INSTANTIATION_TITLE = "cgr instantiation eval: file-level INSTANTIATES vs ast oracle"
+
+# Java inheritance grading (issue #1190). The oracle names supertypes by SIMPLE
+# name, so the row is labelled to say what it measures rather than borrowing the
+# Python row's label.
+JAVA_SUPERTYPES_LABEL = "supertypes(simple-name)"
+
+
+class InheritanceLanguage(StrEnum):
+    PYTHON = "python"
+    JAVA = "java"
+
+
+INHERITANCE_LANGUAGE_HELP = (
+    "Language to grade: python (ast oracle) or java (javac oracle)."
+)
