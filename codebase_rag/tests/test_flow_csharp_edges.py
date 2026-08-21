@@ -180,3 +180,41 @@ def test_value_task_as_task_preserves_taint(tmp_path: Path) -> None:
         "        Console.WriteLine(token);\n    }\n}\n"
     )
     assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})
+
+
+_TUPLE_SRC = (
+    "using System;\n\n"
+    "public class Leaky\n{{\n"
+    "    public void Run()\n    {{\n"
+    '        var (secret, plain) = (Environment.GetEnvironmentVariable("K"), "clean");\n'
+    "        Console.WriteLine({read});\n    }}\n}}\n"
+)
+
+
+def test_tuple_deconstruction_binds_the_tainted_element(tmp_path: Path) -> None:
+    # A deconstructing declarator carries no name/value field, so the binding
+    # was skipped entirely and every deconstructed name stayed untainted.
+    flows = _run_flow(tmp_path, {"Program.cs": _TUPLE_SRC.format(read="secret")})
+    assert (_ENV_K, _STDOUT) in flows
+
+
+def test_tuple_deconstruction_leaves_the_clean_element_clean(tmp_path: Path) -> None:
+    # The precision half: pattern names and tuple elements pair BY POSITION, so
+    # reading the untainted element must emit nothing. Without this the fix
+    # would be an over-approximation that taints every deconstructed name.
+    flows = _run_flow(tmp_path, {"Program.cs": _TUPLE_SRC.format(read="plain")})
+    assert (_ENV_K, _STDOUT) not in flows
+
+
+def test_tuple_deconstruction_taints_only_the_matching_position(tmp_path: Path) -> None:
+    # Mirror of the above with the taint in the SECOND slot, so a fix that
+    # simply spread the first value across all names would fail here.
+    source = (
+        "using System;\n\n"
+        "public class Leaky\n{\n"
+        "    public void Run()\n    {\n"
+        '        var (plain, secret) = ("clean", Environment.GetEnvironmentVariable("K"));\n'
+        "        Console.WriteLine(secret);\n"
+        "        Console.Error.WriteLine(plain);\n    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})

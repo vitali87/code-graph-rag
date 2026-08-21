@@ -504,6 +504,34 @@ def binding_targets_values(
             node.child_by_field_name(cs.FIELD_VALUE), descriptor
         )
     if (
+        descriptor.tuple_pattern_type is not None
+        and descriptor.tuple_value_type is not None
+        and node.type == descriptor.declarator_type
+    ):
+        # A deconstructing declarator (`var (a, b) = (x, y)`) has neither a
+        # `name` nor a `value` field, so the branches above find nothing and the
+        # binding is skipped entirely -- every deconstructed name stays untainted.
+        # Pattern names and tuple elements pair BY POSITION, which is exactly
+        # what the caller already does for a multi-target binding.
+        pattern = next(
+            (c for c in node.named_children if c.type == descriptor.tuple_pattern_type),
+            None,
+        )
+        tuple_value = next(
+            (c for c in node.named_children if c.type == descriptor.tuple_value_type),
+            None,
+        )
+        if pattern is not None and tuple_value is not None:
+            names: list[str | None] = []
+            for child in pattern.named_children:
+                names.extend(lean_binding_targets(child, descriptor))
+            elements = [
+                unwrap_argument(child, descriptor.argument_wrapper_type)
+                for child in tuple_value.named_children
+            ]
+            return names, [e for e in elements if e is not None]
+
+    if (
         descriptor.binding_target_container_type is not None
         and node.type == descriptor.declarator_type
     ):
