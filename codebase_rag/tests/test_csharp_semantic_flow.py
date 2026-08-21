@@ -553,17 +553,15 @@ def test_ref_write_back_across_a_project_reference(tmp_path: Path) -> None:
 @pytest.mark.skipif(
     not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
 )
-def test_cross_project_ref_emits_the_write_fact_itself(tmp_path: Path) -> None:
+def test_cross_project_ref_emits_the_write_fact_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # The sibling test asserts the downstream EDGE, which could in principle
     # survive for an unrelated reason. This one pins the fact the frontend
     # actually produces: argument index 1 of `Fill` writes `sink`.
     repo = tmp_path / "facts"
     _write_cross_project_repo(repo)
-    previous = settings.CSHARP_FRONTEND
-    settings.CSHARP_FRONTEND = cs.CSharpFrontend.HYBRID
-    try:
-        facts = run_csharp_frontend(repo)
-    finally:
-        settings.CSHARP_FRONTEND = previous
+    monkeypatch.setattr(settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+    facts = run_csharp_frontend(repo)
     writes = {key[3]: value for key, value in facts.out_writes.items()}
     assert writes.get("Fill") == {1: "sink"}
