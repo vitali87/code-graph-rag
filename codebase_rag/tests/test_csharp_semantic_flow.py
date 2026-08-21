@@ -16,6 +16,7 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.csharp_frontend import run_csharp_frontend
 from codebase_rag.parsers.csharp_frontend.frontend import (
     _arg_flows,
     _out_writes,
@@ -473,3 +474,94 @@ def test_local_function_ref_callee_writes_back(tmp_path: Path) -> None:
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "lf1", _LOCAL_FUNCTION_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_LIB_CSPROJ = (
+    '<Project Sdk="Microsoft.NET.Sdk">\n'
+    "  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>\n"
+    "</Project>\n"
+)
+_APP_CSPROJ = (
+    '<Project Sdk="Microsoft.NET.Sdk">\n'
+    "  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>\n"
+    "  <ItemGroup>\n"
+    '    <ProjectReference Include="../Lib/Lib.csproj" />\n'
+    "  </ItemGroup>\n"
+    "</Project>\n"
+)
+_LIB_HELPER = (
+    "namespace Lib;\n\n"
+    "public class Helper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n"
+)
+_APP_PROGRAM = (
+    "using System;\nusing Lib;\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        var helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+def _write_cross_project_repo(repo: Path) -> None:
+    (repo / "Lib").mkdir(parents=True)
+    (repo / "App").mkdir(parents=True)
+    (repo / "Lib" / "Lib.csproj").write_text(_LIB_CSPROJ, encoding="utf-8")
+    (repo / "Lib" / "Helper.cs").write_text(_LIB_HELPER, encoding="utf-8")
+    (repo / "App" / "App.csproj").write_text(_APP_CSPROJ, encoding="utf-8")
+    (repo / "App" / "Program.cs").write_text(_APP_PROGRAM, encoding="utf-8")
+
+
+def _cross_project_flows(repo: Path) -> set[tuple[str, str]]:
+    _write_cross_project_repo(repo)
+    parsers, queries = load_parsers()
+    previous = settings.CSHARP_FRONTEND
+    settings.CSHARP_FRONTEND = cs.CSharpFrontend.HYBRID
+    try:
+        mock = MagicMock()
+        GraphUpdater(
+            ingestor=mock,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+            capture=_CAPTURE_IO,
+        ).run()
+    finally:
+        settings.CSHARP_FRONTEND = previous
+    return {
+        (c.args[0][2], c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == FLOWS_TO
+    }
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_ref_write_back_across_a_project_reference(tmp_path: Path) -> None:
+    # The callee body lives in a REFERENCED project, so it belongs to another
+    # compilation; asking the caller's for a model of that tree throws, and the
+    # write was previously unprovable and silently dropped (issue #1353).
+    assert (_ENV_K, _STDOUT) in _cross_project_flows(tmp_path / "sln")
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_cross_project_ref_emits_the_write_fact_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The sibling test asserts the downstream EDGE, which could in principle
+    # survive for an unrelated reason. This one pins the fact the frontend
+    # actually produces: argument index 1 of `Fill` writes `sink`.
+    repo = tmp_path / "facts"
+    _write_cross_project_repo(repo)
+    monkeypatch.setattr(settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+    facts = run_csharp_frontend(repo)
+    writes = {key[3]: value for key, value in facts.out_writes.items()}
+    assert writes.get("Fill") == {1: "sink"}

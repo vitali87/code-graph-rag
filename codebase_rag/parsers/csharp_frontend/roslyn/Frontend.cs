@@ -56,17 +56,36 @@ public static class Frontend
             .Select(p => p.AssemblyName)
             .Where(n => !string.IsNullOrEmpty(n))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var collector = new FactCollector(rootFull, IgnoredDirs(), firstPartyAssemblies);
+        // Materialize every compilation FIRST and index each syntax tree by its
+        // owner. A callee body can live in a REFERENCED project, and asking the
+        // caller's compilation for a model of a tree it does not own throws, so
+        // without this index a cross-project `ref` write cannot be proven and
+        // the fact is silently dropped (issue #1353). The workspace already
+        // caches these compilations behind its solution snapshot, so holding
+        // the list adds little over building them one at a time.
+        // GetCompilationAsync runs source generators, so symbols that resolve
+        // only through generated members still bind; the generated trees
+        // themselves have no first-party path and never become facts.
+        var compilations = new List<Compilation>();
         foreach (var project in projects)
         {
-            // GetCompilationAsync runs source generators, so symbols that resolve
-            // only through generated members still bind; the generated trees
-            // themselves have no first-party path and never become facts.
-            var compilation = await project.GetCompilationAsync();
-            if (compilation is null)
+            if (await project.GetCompilationAsync() is { } built)
             {
-                continue;
+                compilations.Add(built);
             }
+        }
+        var treeOwners = new Dictionary<SyntaxTree, Compilation>();
+        foreach (var built in compilations)
+        {
+            foreach (var tree in built.SyntaxTrees)
+            {
+                treeOwners.TryAdd(tree, built);
+            }
+        }
+        var collector = new FactCollector(
+            rootFull, IgnoredDirs(), firstPartyAssemblies, treeOwners);
+        foreach (var compilation in compilations)
+        {
             foreach (var tree in compilation.SyntaxTrees)
             {
                 var path = tree.FilePath;
@@ -107,12 +126,18 @@ public static class Frontend
         private readonly HashSet<(string, int, int, string, int, string)> _seenQueries = new();
 
         private readonly HashSet<string> _firstPartyAssemblies;
+        private readonly IReadOnlyDictionary<SyntaxTree, Compilation> _treeOwners;
 
-        public FactCollector(string rootFull, HashSet<string> ignoredDirs, HashSet<string> firstPartyAssemblies)
+        public FactCollector(
+            string rootFull,
+            HashSet<string> ignoredDirs,
+            HashSet<string> firstPartyAssemblies,
+            IReadOnlyDictionary<SyntaxTree, Compilation> treeOwners)
         {
             _rootFull = rootFull;
             _ignoredDirs = ignoredDirs;
             _firstPartyAssemblies = firstPartyAssemblies;
+            _treeOwners = treeOwners;
         }
 
         public bool IsFirstParty(string path)
@@ -432,7 +457,7 @@ public static class Frontend
         // Does the callee actually assign this `ref` parameter? Answerable only
         // for a first-party body: an external ref callee cannot be inspected,
         // so it is treated as read-only rather than assumed to write.
-        private static bool RefParameterIsWritten(
+        private bool RefParameterIsWritten(
             SemanticModel model,
             InvocationExpressionSyntax invocation,
             ArgumentSyntax argument,
@@ -471,15 +496,16 @@ public static class Frontend
             {
                 return false;
             }
-            // A body in a REFERENCED project belongs to another compilation;
-            // asking this one for its model throws. The collector holds no
-            // workspace, so that call cannot be proven here -- treat it as
-            // read-only, the same conservative answer as an external callee.
-            if (!model.Compilation.ContainsSyntaxTree(body.SyntaxTree))
+            // A body in a REFERENCED project belongs to ANOTHER compilation, and
+            // asking this one for a model of a tree it does not own throws. The
+            // owner index covers every loaded project, so a cross-project callee
+            // is now provable instead of silently treated as read-only. A tree
+            // from outside the solution has no owner and stays unprovable.
+            if (ResolveOwner(model.Compilation, body.SyntaxTree) is not { } owner)
             {
                 return false;
             }
-            var calleeModel = model.Compilation.GetSemanticModel(body.SyntaxTree);
+            var calleeModel = owner.GetSemanticModel(body.SyntaxTree);
             if (calleeModel.AnalyzeDataFlow(body) is not { Succeeded: true } flow)
             {
                 return false;
@@ -511,6 +537,17 @@ public static class Frontend
                 (SyntaxNode?)local.Body ?? local.ExpressionBody?.Expression,
             _ => null,
         };
+
+        // The compilation that owns a tree: the caller's own when it contains
+        // the tree, otherwise the project the index attributes it to.
+        private Compilation? ResolveOwner(Compilation caller, SyntaxTree tree)
+        {
+            if (caller.ContainsSyntaxTree(tree))
+            {
+                return caller;
+            }
+            return _treeOwners.TryGetValue(tree, out var owner) ? owner : null;
+        }
 
         // `out var n` declares the variable inline, so the symbol comes from the
         // declaration rather than from a reference; a plain `out n` is an
