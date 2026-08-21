@@ -260,16 +260,22 @@ class AstGrepTier:
         relative_path: str,
         absolute_path: str,
     ) -> None:
-        claimed: set[int] = set()
+        claimed: set[tuple[int, int]] = set()
         for rule in rules:
             for node in self._find_all(root, rule, file_path):
                 name = self._definition_name(node, rule)
                 if name is None:
                     continue
-                line = node.range().start.line
-                if line in claimed:
+                start = node.range().start
+                # Keyed on (line, column), not line alone: overlapping rules
+                # for the SAME declaration start at the same column, so the
+                # specific rule still wins over the general one, while two
+                # distinct declarations sharing a line (`fun a() {}; fun b()
+                # {}`) keep their own nodes instead of the second vanishing.
+                position = (start.line, start.column)
+                if position in claimed:
                     continue
-                claimed.add(line)
+                claimed.add(position)
                 self._emit_definition(
                     label,
                     name,

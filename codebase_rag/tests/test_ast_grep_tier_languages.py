@@ -431,3 +431,17 @@ def test_rule_of_unsupported_type_raises(tmp_path: Path, monkeypatch) -> None:
         assert "string or a mapping" in str(exc)
     else:
         raise AssertionError("expected ValueError for a non-string, non-mapping rule")
+
+
+def test_two_same_line_declarations_both_land(tmp_path: Path) -> None:
+    # definitions are deduped by (line, column); keying on line alone dropped
+    # the second declaration whenever two shared a source line.
+    mock = _run(tmp_path, {"S.kt": "fun first() {}; fun second() {}\n"})
+    names = _node_names(mock, FUNCTION)
+    assert {"first", "second"} <= names, names
+
+
+def test_same_line_declarations_both_get_defines_edges(tmp_path: Path) -> None:
+    defined = _defined(_run(tmp_path, {"S.kt": "fun first() {}; fun second() {}\n"}))
+    assert any(qn.endswith(".first") for qn in defined), defined
+    assert any(qn.endswith(".second") for qn in defined), defined
