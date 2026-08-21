@@ -448,3 +448,28 @@ def test_generic_ref_callee_writes_back(tmp_path: Path) -> None:
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "g1", _GENERIC_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_LOCAL_FUNCTION_REF = (
+    "using System;\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    '        var sink = "";\n'
+    "        void Fill(string src, ref string dst)\n        {\n"
+    "            dst = src;\n        }\n"
+    "        Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_local_function_ref_callee_writes_back(tmp_path: Path) -> None:
+    # CallableBody handles LocalFunctionStatementSyntax, but nothing exercised
+    # it until now (issue #1353).
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "lf1", _LOCAL_FUNCTION_REF, cs.CSharpFrontend.HYBRID
+    )
