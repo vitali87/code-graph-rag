@@ -5,6 +5,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from filelock import FileLock
+
 from codebase_rag import constants as cs
 
 from .. import constants as ec
@@ -48,21 +50,34 @@ def java_available() -> bool:
     return _toolchain_runs(ec.JAVAC_BIN) and _toolchain_runs(ec.JAVA_BIN)
 
 
+def _class_is_fresh() -> bool:
+    return _CLASS.is_file() and _CLASS.stat().st_mtime >= _SOURCE.stat().st_mtime
+
+
 def _ensure_compiled() -> None:
     # Recompile when the class is missing or older than the source, so an
     # edited Oracle.java is never shadowed by a stale (gitignored) .class.
-    if _CLASS.is_file() and _CLASS.stat().st_mtime >= _SOURCE.stat().st_mtime:
+    # The freshness test is a check-then-act and javac writes the class in
+    # place, so parallel `pytest -n auto` workers would otherwise exec the JVM
+    # against a class file another worker is mid-write (issue #1366). Lock the
+    # build and re-test inside it, as the Rust and C# oracles already do; every
+    # path that runs the JVM comes through here, so a caller that waits on the
+    # lock only proceeds once the class is complete.
+    if _class_is_fresh():
         return
     javac = shutil.which(ec.JAVAC_BIN)
     if javac is None:
         return
-    subprocess.run(
-        [javac, str(_SOURCE)],
-        cwd=str(_ORACLE_DIR),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    with FileLock(str(_ORACLE_DIR / ec.JAVA_ORACLE_BUILD_LOCK)):
+        if _class_is_fresh():
+            return
+        subprocess.run(
+            [javac, str(_SOURCE)],
+            cwd=str(_ORACLE_DIR),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
 
 
 def _run_java_oracle_payload(target: Path) -> OraclePayload:
