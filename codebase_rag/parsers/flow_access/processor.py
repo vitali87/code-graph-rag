@@ -196,6 +196,25 @@ def _lean_parameter_slots(
     return [], None
 
 
+# A Rust block's final child is the function's value only when it is an
+# expression: a statement or declaration yields `()` and returns nothing.
+_RUST_NON_VALUE_TAIL = frozenset({cs.TS_EXPRESSION_STATEMENT, cs.TS_RS_LET_DECLARATION})
+
+
+def _rust_tail_expression(func_node: Node) -> Node | None:
+    # The value a Rust body yields with no `return` keyword and no trailing
+    # semicolon -- the idiomatic form, which carries no return node at all and
+    # so reaches none of the return branches in the walk (issue #1365).
+    body = func_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None or body.type != cs.TS_RS_BLOCK:
+        return None
+    children = [c for c in body.named_children if c.type != cs.TS_COMMENT]
+    if not children:
+        return None
+    tail = children[-1]
+    return None if tail.type in _RUST_NON_VALUE_TAIL else tail
+
+
 class Taint(NamedTuple):
     # What is tainting a variable: resolved resource origins plus the set of
     # callee QNs whose (possibly not-yet-processed) return value it carries. A
@@ -799,6 +818,15 @@ class FlowProcessor:
             # not leak its shadow past the join.
             for node in statements:
                 state = self._walk_flat_stmt(node, state, jc)
+        if ctx.language == cs.SupportedLanguage.RUST:
+            tail = _rust_tail_expression(caller_node)
+            if tail is not None:
+                returned = self._js_expr_taint(tail, state.taint, jc)
+                if returned is not None:
+                    self._acc_returns_taint = True
+                    self._acc_return_taint = _merge_taint(
+                        self._acc_return_taint, returned
+                    )
         if self._acc_returns_taint:
             self._summaries[ctx.caller_qn] = self._acc_return_taint
 
@@ -1322,7 +1350,9 @@ class FlowProcessor:
             self._flow_stream(node, tainted, handles, jc)
         elif d.keyword_stdout_write_types and node_type in d.keyword_stdout_write_types:
             self._flow_keyword_write(node, tainted, jc)
-        elif node_type == cs.TS_RETURN_STATEMENT:
+        elif node_type in (cs.TS_RETURN_STATEMENT, cs.TS_RS_RETURN_EXPRESSION):
+            # Rust names this node return_expression, so matching only
+            # return_statement dropped every Rust return summary (issue #1365).
             returned = self._js_return_taint(node, tainted, jc)
             if returned is not None:
                 self._acc_returns_taint = True
@@ -1508,7 +1538,13 @@ class FlowProcessor:
                 self._return_edge_candidates.append(
                     (callee[0], callee[1], jc.flow.caller_spec)
                 )
-                return Taint(frozenset(), frozenset({callee[1]}))
+                # The result also carries a per-call-site pass-through token so a
+                # tainted argument to a return-parameter reaches THIS call's
+                # consumers only (issue #1363, mirroring the Python path from
+                # #1168); it resolves to nothing when the callee is not a
+                # pass-through, so non-pass-through calls are unaffected.
+                token = _passthrough_result_token(jc.flow.caller_qn, node)
+                return Taint(frozenset(), frozenset({callee[1], token}))
             # A method chain: recurse the receiver ONLY through a taint-transparent
             # method -- Rust Result unwrapping (`std::env::var("X").unwrap()`) or a
             # value-preserving conversion (`s.as_bytes()`). A terminal method that
@@ -2059,7 +2095,14 @@ class FlowProcessor:
                     self._return_edge_candidates.append(
                         (callee[0], callee[1], jc.flow.caller_spec)
                     )
-                    return Taint(frozenset(), frozenset({callee[1]})), frozenset()
+                    # Dart resolves a call's value here rather than through
+                    # _js_expr_taint, so it needs the same per-call pass-through
+                    # token to compose a helper's returned parameter (#1363).
+                    token = _passthrough_result_token(jc.flow.caller_qn, call_sel)
+                    return (
+                        Taint(frozenset(), frozenset({callee[1], token})),
+                        frozenset(),
+                    )
             return None, frozenset()
         if len(rhs) == 1 and rhs[0].type == cs.TS_DART_IDENTIFIER and rhs[0].text:
             alias = rhs[0].text.decode(cs.ENCODING_UTF8)

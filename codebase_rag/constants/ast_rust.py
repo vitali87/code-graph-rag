@@ -351,3 +351,6 @@ RS_ITER_MAP = "map"
 RS_ITER_COLLECT = "collect"
 TS_RS_ARRAY_TYPE = "array_type"
 RS_FIELD_ELEMENT = "element"
+# Rust spells a `return x;` node return_expression, NOT return_statement:
+# the shared TS_RETURN_STATEMENT never matches it (issue #1365).
+TS_RS_RETURN_EXPRESSION = "return_expression"
