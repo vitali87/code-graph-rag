@@ -1297,6 +1297,11 @@ class FlowProcessor:
             # below skips so it is not re-bound to no handle (issue #1220).
             self._bind_lean_type_decl(node, handles, jc)
             return
+        if d.pattern_test_type is not None and node_type == d.pattern_test_type:
+            # Bind, then fall THROUGH to the normal traversal: the tested
+            # subject can be a call (`Forward(secret) is string s`), whose own
+            # argument and parameter-to-sink flows are emitted by walking it.
+            self._bind_pattern_test(node, tainted, jc)
         if node_type == d.declarator_type or node_type in (
             cs.TS_ASSIGNMENT_EXPRESSION,
             cs.TS_GO_ASSIGNMENT_STATEMENT,
@@ -1322,6 +1327,34 @@ class FlowProcessor:
             if returned is not None:
                 self._acc_returns_taint = True
                 self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
+
+    def _bind_pattern_test(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
+        # `o is string s` binds `s` to the SUBJECT's value, so the bound name
+        # inherits the subject's taint. The name is only in scope where the test
+        # held, so binding it here needs no branch tracking.
+        d = jc.descriptor
+        subject = node.named_children[0] if node.named_children else None
+        pattern = next(
+            (
+                child
+                for child in node.named_children
+                if child.type == d.pattern_declaration_type
+            ),
+            None,
+        )
+        if subject is None or pattern is None:
+            return
+        name_node = pattern.named_children[-1] if pattern.named_children else None
+        if name_node is None or name_node.type != d.identifier_type:
+            return
+        name = name_node.text.decode(cs.ENCODING_UTF8) if name_node.text else None
+        if not name:
+            return
+        taint = self._js_expr_taint(subject, tainted, jc)
+        if taint is not None:
+            tainted[name] = taint
+        else:
+            tainted.pop(name, None)
 
     def _lean_bind(
         self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx

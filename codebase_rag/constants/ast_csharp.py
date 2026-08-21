@@ -334,3 +334,7 @@ CSHARP_TAINT_TRANSPARENT_METHODS = frozenset(
 TS_CSHARP_TUPLE_PATTERN = "tuple_pattern"
 TS_CSHARP_TUPLE_EXPRESSION = "tuple_expression"
 TS_CSHARP_DECLARATION_EXPRESSION = "declaration_expression"
+# `if (o is string s)` binds `s` to the SUBJECT's value, so taint has to cross
+# the pattern or the bound name looks clean inside the branch.
+TS_CSHARP_IS_PATTERN = "is_pattern_expression"
+TS_CSHARP_DECLARATION_PATTERN = "declaration_pattern"
