@@ -7,6 +7,7 @@
 # and the forms it would WRONGLY claim (type signatures, plain attributes).
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -39,6 +40,15 @@ def _node_names(mock: MagicMock, label: str) -> set[str]:
         for c in mock.ensure_node_batch.call_args_list
         if str(c.args[0]) == label
     }
+
+
+def _node_name_counts(mock: MagicMock, label: str) -> Counter[str]:
+    """Emission counts per name, to catch a node emitted more than once."""
+    return Counter(
+        c.args[1].get(cs.KEY_NAME)
+        for c in mock.ensure_node_batch.call_args_list
+        if str(c.args[0]) == label
+    )
 
 
 def _import_targets(mock: MagicMock) -> set[str]:
@@ -472,12 +482,15 @@ def test_kotlin_object_modifier_and_delegation_forms(tmp_path: Path) -> None:
     # a plain `object X { }` is an object_literal (pattern-only), while
     # modifier and delegation forms are object_declaration (kind-only), so
     # the config needs both rules to cover all three.
-    # equality, not a subset: the two overlapping object rules must not
-    # double-emit, and no unrelated node may leak into this fixture.
-    names = _node_names(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), CLASS)
-    assert names == {"Plain", "Hidden", "Delegating"}, names
+    # Counts, not a set: the object_declaration kind rule and the
+    # object_literal pattern cover disjoint spellings today, so each name
+    # lands once. Asserting counts pins that -- if either rule widens to
+    # overlap the other, a set comparison would silently hide the resulting
+    # duplicate emission.
+    counts = _node_name_counts(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), CLASS)
+    assert counts == Counter({"Plain": 1, "Hidden": 1, "Delegating": 1}), counts
 
 
 def test_kotlin_object_members_still_extracted(tmp_path: Path) -> None:
-    names = _node_names(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), FUNCTION)
-    assert names == {"a", "b", "c"}, names
+    counts = _node_name_counts(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), FUNCTION)
+    assert counts == Counter({"a": 1, "b": 1, "c": 1}), counts
