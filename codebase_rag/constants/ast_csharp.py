@@ -333,3 +333,4 @@ CSHARP_TAINT_TRANSPARENT_METHODS = frozenset(
 # child and a tuple child rather than the usual name/value fields.
 TS_CSHARP_TUPLE_PATTERN = "tuple_pattern"
 TS_CSHARP_TUPLE_EXPRESSION = "tuple_expression"
+TS_CSHARP_DECLARATION_EXPRESSION = "declaration_expression"

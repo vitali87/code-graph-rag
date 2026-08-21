@@ -475,6 +475,49 @@ def lean_binding_values(
     return [node]
 
 
+def _deconstruction_pairs(
+    pattern: Node, value: Node, descriptor: LanguageDescriptor
+) -> tuple[list[str | None], list[Node]]:
+    # Walk the pattern and the tuple in LOCKSTEP so each name is paired with the
+    # element at its own position, descending together where both sides nest
+    # (`var (a, (b, c)) = (x, (y, z))`). A discard or an unrecognised position
+    # yields None, which consumes the slot without binding anything -- the miss
+    # direction, never a wrong binding.
+    names: list[str | None] = []
+    values: list[Node] = []
+    targets = list(pattern.named_children)
+    elements = [
+        unwrap_argument(child, descriptor.argument_wrapper_type)
+        for child in value.named_children
+    ]
+    for index, target in enumerate(targets):
+        element = elements[index] if index < len(elements) else None
+        if element is None:
+            continue
+        # Both SIDES wrap their elements: a C# tuple wraps each slot in an
+        # `argument`, on the pattern side as well as the value side.
+        target = unwrap_argument(target, descriptor.argument_wrapper_type)
+        # An explicitly typed slot (`string a`) wraps its name one level deeper.
+        if (
+            descriptor.declaration_expression_type is not None
+            and target.type == descriptor.declaration_expression_type
+        ):
+            target = target.named_children[-1] if target.named_children else target
+        nested_pattern = target.type in (
+            descriptor.tuple_pattern_type,
+            descriptor.tuple_value_type,
+        )
+        if nested_pattern and element.type == descriptor.tuple_value_type:
+            sub_names, sub_values = _deconstruction_pairs(target, element, descriptor)
+            names.extend(sub_names)
+            values.extend(sub_values)
+            continue
+        bound = lean_binding_targets(target, descriptor)
+        names.append(bound[0] if bound else None)
+        values.append(element)
+    return names, values
+
+
 def binding_targets_values(
     node: Node, descriptor: LanguageDescriptor
 ) -> tuple[list[str | None], list[Node]]:
@@ -485,6 +528,16 @@ def binding_targets_values(
     # (unwrapped through pointer/reference declarators).
     left = node.child_by_field_name(cs.FIELD_LEFT)
     if left is not None:
+        right = node.child_by_field_name(cs.FIELD_RIGHT)
+        # `(string a, int b) = (x, y)` is an ASSIGNMENT whose left is a tuple,
+        # not a declarator, so it never reaches the deconstruction branch below.
+        if (
+            descriptor.tuple_value_type is not None
+            and left.type == descriptor.tuple_value_type
+            and right is not None
+            and right.type == descriptor.tuple_value_type
+        ):
+            return _deconstruction_pairs(left, right, descriptor)
         return (
             lean_binding_targets(left, descriptor),
             lean_binding_values(node.child_by_field_name(cs.FIELD_RIGHT), descriptor),
@@ -522,14 +575,7 @@ def binding_targets_values(
             None,
         )
         if pattern is not None and tuple_value is not None:
-            names: list[str | None] = []
-            for child in pattern.named_children:
-                names.extend(lean_binding_targets(child, descriptor))
-            elements = [
-                unwrap_argument(child, descriptor.argument_wrapper_type)
-                for child in tuple_value.named_children
-            ]
-            return names, [e for e in elements if e is not None]
+            return _deconstruction_pairs(pattern, tuple_value, descriptor)
 
     if (
         descriptor.binding_target_container_type is not None
