@@ -118,3 +118,65 @@ def test_csharp_untainted_value_emits_no_flow(tmp_path: Path) -> None:
     }
     flows = _run_flow(tmp_path, files)
     assert flows == set(), flows
+
+
+_ENV_K = "resource::ENV::K"
+_STDOUT = "resource::STDOUT::<dynamic>"
+_AWAIT_PLUMBING = (
+    "using System;\nusing System.Threading.Tasks;\n\n"
+    "public class Leaky\n{\n"
+    "    private async Task<string> FetchAsync()\n    {\n"
+    "        await Task.Delay(1);\n"
+    '        return Environment.GetEnvironmentVariable("K");\n    }\n\n'
+    "    public async Task Run()\n    {\n"
+    "        var token = await FetchAsync().ConfigureAwait(false);\n"
+    "        Console.WriteLine(token);\n    }\n}\n"
+)
+
+
+def test_configure_await_preserves_taint(tmp_path: Path) -> None:
+    # `ConfigureAwait` returns the SAME value in a different wrapper. Without it
+    # in the transparent set the walk stops at the receiver and a very common
+    # library-code shape loses its edge entirely (issue #1187).
+    flows = _run_flow(tmp_path, {"Program.cs": _AWAIT_PLUMBING})
+    assert (_ENV_K, _STDOUT) in flows
+
+
+def test_await_plumbing_chain_preserves_taint(tmp_path: Path) -> None:
+    # The blocking form of the same plumbing: GetAwaiter().GetResult().
+    source = _AWAIT_PLUMBING.replace(
+        "var token = await FetchAsync().ConfigureAwait(false);",
+        "var token = FetchAsync().GetAwaiter().GetResult();",
+    ).replace("public async Task Run()", "public void Run()")
+    flows = _run_flow(tmp_path, {"Program.cs": source})
+    assert (_ENV_K, _STDOUT) in flows
+
+
+def test_terminal_method_on_a_tainted_receiver_emits_no_flow(tmp_path: Path) -> None:
+    # The guard on the other side: a method that does NOT return the receiver's
+    # value must not propagate taint, or the transparent set becomes a blanket
+    # "any method preserves taint" rule.
+    source = (
+        "using System;\n\n"
+        "public class Fine\n{\n"
+        "    public void Run()\n    {\n"
+        '        var token = Environment.GetEnvironmentVariable("K");\n'
+        "        Console.WriteLine(token.Length);\n    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) not in _run_flow(tmp_path, {"Program.cs": source})
+
+
+def test_value_task_as_task_preserves_taint(tmp_path: Path) -> None:
+    # `AsTask` converts a ValueTask to a Task without changing the value, so it
+    # belongs in the transparent set for the same reason as ConfigureAwait.
+    source = (
+        "using System;\nusing System.Threading.Tasks;\n\n"
+        "public class Leaky\n{\n"
+        "    private async ValueTask<string> FetchAsync()\n    {\n"
+        "        await Task.Delay(1);\n"
+        '        return Environment.GetEnvironmentVariable("K");\n    }\n\n'
+        "    public async Task Run()\n    {\n"
+        "        var token = await FetchAsync().AsTask();\n"
+        "        Console.WriteLine(token);\n    }\n}\n"
+    )
+    assert (_ENV_K, _STDOUT) in _run_flow(tmp_path, {"Program.cs": source})

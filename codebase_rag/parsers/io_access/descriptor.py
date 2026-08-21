@@ -406,6 +406,7 @@ _CPP_DESCRIPTOR = LanguageDescriptor(
 )
 
 _CSHARP_DESCRIPTOR = LanguageDescriptor(
+    taint_transparent_methods=cs.CSHARP_TAINT_TRANSPARENT_METHODS,
     call_type=cs.TS_CSHARP_INVOCATION_EXPRESSION,
     string_type=cs.TS_CSHARP_STRING_LITERAL,
     string_content_type=cs.TS_CSHARP_STRING_LITERAL_CONTENT,

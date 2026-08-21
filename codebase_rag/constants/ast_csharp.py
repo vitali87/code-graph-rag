@@ -312,3 +312,18 @@ CSHARP_RESERVED_KEYWORDS = frozenset(
         "while",
     }
 )
+
+
+# Await plumbing that returns the SAME value in a different wrapper: the flow
+# walk recurses a method-call receiver only through these, so without them
+# `await FetchAsync().ConfigureAwait(false)` loses the receiver's taint and a
+# sink fed from it has no edge. `ConfigureAwait` is near-universal in library
+# code, so this shape is common rather than exotic (issue #1187).
+CSHARP_TAINT_TRANSPARENT_METHODS = frozenset(
+    {
+        "ConfigureAwait",
+        "GetAwaiter",
+        "GetResult",
+        "AsTask",
+    }
+)
