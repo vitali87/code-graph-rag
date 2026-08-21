@@ -1,0 +1,21 @@
+# ast-grep pattern config for Solidity (issue #1352).
+language: solidity
+ast_grep_id: solidity
+extensions:
+  - ".sol"
+functions:
+  # visibility/mutability keywords follow the name, so the kind rule catches
+  # public/internal/pure/view variants uniformly
+  - kind: function_definition
+  - kind: constructor_definition
+  - kind: modifier_definition
+classes:
+  - kind: contract_declaration
+  - kind: interface_declaration
+  - kind: library_declaration
+imports:
+  # the imported path is a string literal, not an identifier, so patterns
+  # capture it via $PATH (quotes are stripped by the tier)
+  - "import $PATH;"
+  - "import {$$$} from $PATH;"
+  - "import $PATH as $ALIAS;"

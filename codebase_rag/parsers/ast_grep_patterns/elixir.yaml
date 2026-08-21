@@ -1,0 +1,32 @@
+# ast-grep pattern config for Elixir (issue #1352).
+# Elixir definitions are macro CALLS, not distinct grammar nodes (every one
+# is a `call`), so this config is pattern-driven. Ordering matters: the
+# `($$$)` forms come first because they capture the bare name, while the
+# `do`-block fallback captures the whole signature for zero-arg and guarded
+# defs, which the tier then trims.
+language: elixir
+ast_grep_id: elixir
+extensions:
+  - ".ex"
+  - ".exs"
+functions:
+  - "def $NAME($$$)"
+  - "defp $NAME($$$)"
+  - "defmacro $NAME($$$)"
+  - "defmacrop $NAME($$$)"
+  # zero-arg (`def run do`) and guarded (`def f(x) when ...`) defs match no
+  # parenthesised form, so these fall back to the do-block spelling and trim
+  # the captured signature down to the leading name
+  - pattern: "def $NAME do\n$$$\nend"
+    name_head: true
+  - pattern: "defp $NAME do\n$$$\nend"
+    name_head: true
+classes:
+  - "defmodule $NAME do\n$$$\nend"
+  - "defprotocol $NAME do\n$$$\nend"
+  - "defimpl $NAME do\n$$$\nend"
+imports:
+  - "import $PATH"
+  - "alias $PATH"
+  - "require $PATH"
+  - "use $PATH"

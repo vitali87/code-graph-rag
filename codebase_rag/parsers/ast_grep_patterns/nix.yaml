@@ -1,0 +1,14 @@
+# ast-grep pattern config for Nix (issue #1352).
+language: nix
+ast_grep_id: nix
+extensions:
+  - ".nix"
+functions:
+  # a `binding` is only a function when its value is a lambda; has_child
+  # keeps plain attributes (name = "p";) out of the Function set
+  - kind: binding
+    name_child: attrpath
+    has_child: function_expression
+classes: []
+imports:
+  - "import $PATH"

@@ -1,0 +1,14 @@
+# ast-grep pattern config for Bash/shell (issue #1352).
+language: bash
+ast_grep_id: bash
+extensions:
+  - ".sh"
+  - ".bash"
+functions:
+  # one kind covers all three spellings: `f() {}`, `function f {}`,
+  # `function f() {}`
+  - kind: function_definition
+classes: []
+imports:
+  - "source $PATH"
+  - ". $PATH"

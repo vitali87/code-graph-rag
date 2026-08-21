@@ -27,6 +27,37 @@ Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
 <!-- /SECTION:supported_languages -->
 
+## Structural Support (ast-grep tier)
+
+These languages have no hand-written tree-sitter parser in cgr. They are
+handled by the pluggable [ast-grep](https://ast-grep.github.io/) tier, which
+emits `Module`, `Function` and `Class` nodes plus `IMPORTS` edges from a
+single YAML pattern file per language. Which node kinds a language yields
+depends on its config: the `-` entries below mark constructs the language
+does not have (Bash and Nix declare no class-like types).
+
+This is a **basic** tier: names are flat (no nested-namespace qualification)
+and there is **no call-graph (`CALLS`) resolution**, so call-graph analyses
+such as dead-code detection skip these files. It requires the `ast-grep`
+extra (`pip install 'code-graph-rag[ast-grep]'`).
+
+| Language | Extensions | Functions | Classes/Types | Imports |
+|---|---|---|---|---|
+| Ruby | .rb | methods, singleton methods | classes, modules | require, require_relative |
+| Kotlin | .kt, .kts | functions incl. suspend/private/override, companion members | classes, interfaces, data classes, objects, enums | import |
+| Swift | .swift | functions, initializers, protocol requirements | classes, structs, enums, extensions, protocols | import |
+| Elixir | .ex, .exs | def, defp, defmacro incl. zero-arg and guarded | defmodule, defprotocol, defimpl | import, alias, require, use |
+| Haskell | .hs | equations and nullary binds | data, newtype, type, class | import |
+| Solidity | .sol | functions, constructors, modifiers | contracts, interfaces, libraries | import |
+| Bash | .sh, .bash | all three `function`/`()` spellings | - | source, . |
+| Nix | .nix | lambda bindings | - | import |
+
+To add another language, drop a YAML file into
+`codebase_rag/parsers/ast_grep_patterns/`; see the
+[README](https://github.com/vitali87/code-graph-rag/blob/main/codebase_rag/parsers/ast_grep_patterns/README.md)
+there for the rule format. Only languages with an ast-grep built-in grammar
+are supported.
+
 ## Language-Agnostic Design
 
 All languages share a unified graph schema, meaning queries work the same way regardless of language. You can query across languages in the same knowledge graph when analysing polyglot repositories.

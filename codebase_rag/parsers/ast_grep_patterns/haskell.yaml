@@ -1,0 +1,26 @@
+# ast-grep pattern config for Haskell (issue #1352).
+language: haskell
+ast_grep_id: haskell
+extensions:
+  - ".hs"
+functions:
+  # `function` is an equation with parameters (greet name = ...); `bind` is a
+  # nullary binding (main = ...). Type signatures are a separate `signature`
+  # kind and are deliberately NOT matched, so a function is emitted once.
+  # has_child: match excludes function TYPES inside a signature
+  # (`speak :: a -> String` also parses as a `function` node, whose name
+  # would be the type variable `a`, not a definition).
+  - kind: function
+    name_child: variable
+    has_child: match
+  - kind: bind
+    name_child: variable
+    has_child: match
+classes:
+  - kind: data_type
+  - kind: newtype
+  - kind: type_synomym
+  - kind: class
+imports:
+  - kind: import
+    name_child: module
