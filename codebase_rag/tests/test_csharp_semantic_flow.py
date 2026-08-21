@@ -16,6 +16,7 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.csharp_frontend import run_csharp_frontend
 from codebase_rag.parsers.csharp_frontend.frontend import (
     _arg_flows,
     _out_writes,
@@ -507,13 +508,17 @@ _APP_PROGRAM = (
 )
 
 
-def _cross_project_flows(repo: Path) -> set[tuple[str, str]]:
+def _write_cross_project_repo(repo: Path) -> None:
     (repo / "Lib").mkdir(parents=True)
     (repo / "App").mkdir(parents=True)
     (repo / "Lib" / "Lib.csproj").write_text(_LIB_CSPROJ, encoding="utf-8")
     (repo / "Lib" / "Helper.cs").write_text(_LIB_HELPER, encoding="utf-8")
     (repo / "App" / "App.csproj").write_text(_APP_CSPROJ, encoding="utf-8")
     (repo / "App" / "Program.cs").write_text(_APP_PROGRAM, encoding="utf-8")
+
+
+def _cross_project_flows(repo: Path) -> set[tuple[str, str]]:
+    _write_cross_project_repo(repo)
     parsers, queries = load_parsers()
     previous = settings.CSHARP_FRONTEND
     settings.CSHARP_FRONTEND = cs.CSharpFrontend.HYBRID
@@ -543,3 +548,22 @@ def test_ref_write_back_across_a_project_reference(tmp_path: Path) -> None:
     # compilation; asking the caller's for a model of that tree throws, and the
     # write was previously unprovable and silently dropped (issue #1353).
     assert (_ENV_K, _STDOUT) in _cross_project_flows(tmp_path / "sln")
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_cross_project_ref_emits_the_write_fact_itself(tmp_path: Path) -> None:
+    # The sibling test asserts the downstream EDGE, which could in principle
+    # survive for an unrelated reason. This one pins the fact the frontend
+    # actually produces: argument index 1 of `Fill` writes `sink`.
+    repo = tmp_path / "facts"
+    _write_cross_project_repo(repo)
+    previous = settings.CSHARP_FRONTEND
+    settings.CSHARP_FRONTEND = cs.CSharpFrontend.HYBRID
+    try:
+        facts = run_csharp_frontend(repo)
+    finally:
+        settings.CSHARP_FRONTEND = previous
+    writes = {key[3]: value for key, value in facts.out_writes.items()}
+    assert writes.get("Fill") == {1: "sink"}
