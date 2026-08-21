@@ -6,6 +6,7 @@ already lock for exactly this reason; these tests pin that Java does too."""
 
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 import time
@@ -88,16 +89,17 @@ def test_a_stale_class_is_rebuilt(
     staged_oracle: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A class OLDER than the source must still be recompiled, or an edited
-    # Oracle.java would be silently shadowed by a stale artifact.
+    # Oracle.java would be silently shadowed by a stale artifact. Age the CLASS
+    # rather than post-dating the source: a source stamped in the future would
+    # leave the rebuilt class stale too, so the rebuild would never converge and
+    # a second call would compile again. Calling twice proves it settles.
     class_file = staged_oracle / "Oracle.class"
     class_file.write_bytes(b"stale")
-    source = staged_oracle / "Oracle.java"
-    future = time.time() + 60
-    import os
-
-    os.utime(source, (future, future))
+    past = time.time() - 60
+    os.utime(class_file, (past, past))
     calls: list[float] = []
     monkeypatch.setattr(java_oracle.subprocess, "run", _slow_compiler(calls, dwell=0.0))
+    java_oracle._ensure_compiled()
     java_oracle._ensure_compiled()
     assert len(calls) == 1
     assert class_file.read_bytes() == b"compiled"
