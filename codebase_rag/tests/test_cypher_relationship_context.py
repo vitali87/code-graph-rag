@@ -59,3 +59,12 @@ class TestCypherPromptRelationshipGuidance:
 
     def test_local_prompt_requires_relationship_in_return(self) -> None:
         assert "RETURN THE RELATIONSHIP TYPE" in build_local_cypher_system_prompt()
+
+    def test_local_prompt_short_name_rule_allows_qualified_suffix(self) -> None:
+        # The local prompt must not contradict the caller example: a flat
+        # "never qualified_name for short names" rule invites name-equality
+        # caller queries that conflate same-named symbols (CodeRabbit review
+        # on PR #1386).
+        prompt = build_local_cypher_system_prompt()
+        assert "ENDS WITH '.VatManager'" in prompt
+        assert "NOT `qualified_name`" not in prompt
