@@ -71,7 +71,7 @@ class ArcadeDBDialect:
 
     def apply_query_limit(self, query: str, mb: int) -> str:
         # No per-query memory cap exists here. ArcadeDBIngestor bounds reads
-        # with a transaction timeout instead; see settings.QUERY_TIMEOUT_S.
+        # with a transaction timeout instead; see settings.ARCADEDB_TX_TIMEOUT_S.
         return query
 
     @property

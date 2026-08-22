@@ -177,6 +177,11 @@ class AppConfig(BaseSettings):
     ARCADEDB_PASSWORD: str | None = None
     # ArcadeDB is multi-database; Memgraph is not. Required when selected.
     ARCADEDB_DATABASE: str = "codegraph"
+    # Server-side transaction ceiling for ArcadeDB Bolt queries. Distinct from
+    # QUERY_TIMEOUT_S, which is the agent-side wall-clock bound applied to any
+    # backend in tools/codebase_query.py. This one substitutes for Memgraph's
+    # QUERY MEMORY LIMIT, which ArcadeDB cannot parse.
+    ARCADEDB_TX_TIMEOUT_S: float = Field(default=600.0, gt=0)
 
     AGENT_RETRIES: int = 3
     ORCHESTRATOR_OUTPUT_RETRIES: int = 100
@@ -342,9 +347,7 @@ class AppConfig(BaseSettings):
     QUERY_RESULT_MAX_TOKENS: int = Field(default=16000, gt=0)
     QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
     QUERY_MEMORY_LIMIT_MB: int = Field(default=4096, gt=0)
-    # 600s matches Memgraph's own query ceiling (see cypher_queries.py); the
-    # ArcadeDB ingestor's transaction timeout also draws on this value.
-    QUERY_TIMEOUT_S: float = Field(default=600.0, gt=0)
+    QUERY_TIMEOUT_S: float = Field(default=60.0, gt=0)
 
     OLLAMA_HEALTH_TIMEOUT: float = 5.0
     LITELLM_HEALTH_TIMEOUT: float = 5.0
