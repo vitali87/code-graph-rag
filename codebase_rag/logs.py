@@ -363,6 +363,16 @@ MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
 MG_EXPORTING = "Exporting graph data..."
 MG_EXPORTED = "Exported {nodes} nodes and {rels} relationships"
 
+# ArcadeDB logs
+ARCADE_CONNECTING = "Connecting to ArcadeDB at {uri}..."
+ARCADE_CONNECTED = "ArcadeDB connection established."
+ARCADE_DISCONNECTED = "ArcadeDB connection closed."
+ARCADE_EXCEPTION = "Exception during ArcadeDB session: {error}"
+ARCADE_FETCH_QUERY = "Executing ArcadeDB read query"
+ARCADE_WRITE_QUERY = "Executing ArcadeDB write query"
+ARCADE_ENSURING_SCHEMA = "Ensuring ArcadeDB schema (types, properties, indexes)..."
+ARCADE_SCHEMA_DONE = "ArcadeDB schema ready."
+
 # Graph dialect logs
 GRAPH_RETRY_TRANSIENT = (
     "Transient write conflict (attempt {attempt}/{attempts}), "

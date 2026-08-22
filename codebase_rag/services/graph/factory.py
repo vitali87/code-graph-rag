@@ -42,10 +42,11 @@ def get_ingestor(
             )
         if not settings.ARCADEDB_USERNAME or not settings.ARCADEDB_PASSWORD:
             raise ValueError(ex.GRAPH_BACKEND_AUTH_REQUIRED.format(backend=resolved))
-        # TODO: remove ty: ignore once services/graph/arcadedb.py exists (Task 11)
-        from .arcadedb import ArcadeDBIngestor  # ty: ignore[unresolved-import]
+        from .arcadedb import ArcadeDBIngestor
 
-        return ArcadeDBIngestor(
+        # TODO: remove ty: ignore once ArcadeDBIngestor implements the full
+        # GraphIngestor protocol (flush/admin ops land in Tasks 12-13).
+        return ArcadeDBIngestor(  # ty: ignore[invalid-return-type]
             host=settings.ARCADEDB_HOST,
             bolt_port=settings.ARCADEDB_BOLT_PORT,
             http_port=settings.ARCADEDB_HTTP_PORT,

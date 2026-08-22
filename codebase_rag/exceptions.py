@@ -117,6 +117,11 @@ ARCADE_NO_HTTP_CLIENT = (
     "ArcadeDBDialect needs an HTTP client to run schema DDL; construct it "
     "with ArcadeDBDialect(http=ArcadeHttpClient(...))."
 )
+ARCADE_CREDENTIALS_REQUIRED = (
+    "ArcadeDB requires credentials (a username and password): its Bolt "
+    "listener rejects the 'none' auth scheme."
+)
+ARCADE_NOT_CONNECTED = "Not connected to ArcadeDB."
 
 
 # Exception classes

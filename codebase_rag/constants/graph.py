@@ -608,6 +608,7 @@ Important: MAGE procedures named `nxalg.*` and several others operate on the **e
 # ArcadeDB HTTP: Bolt accepts Cypher only, so schema DDL (which is SQL)
 # goes over the REST endpoint instead.
 ARCADE_HTTP_SCHEME = "http"
+ARCADE_BOLT_SCHEME = "bolt"
 ARCADE_COMMAND_PATH = "/api/v1/command/{database}"
 ARCADE_LANG_SQL = "sql"
 ARCADE_KEY_LANGUAGE = "language"

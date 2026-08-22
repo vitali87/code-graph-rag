@@ -431,6 +431,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+arcadedb = [
+    { name = "neo4j" },
+]
 ast-grep = [
     { name = "ast-grep-py" },
     { name = "pyyaml" },
@@ -519,6 +522,7 @@ requires-dist = [
     { name = "libclang", marker = "extra == 'test'", specifier = ">=18.1.1" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mcp", specifier = ">=1.28.1" },
+    { name = "neo4j", marker = "extra == 'arcadedb'", specifier = ">=5.28,<6" },
     { name = "pathspec", specifier = ">=1.0.4" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "protobuf", specifier = ">=6.33.5" },
@@ -560,7 +564,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.21.1" },
     { name = "watchdog", specifier = ">=6.0.0" },
 ]
-provides-extras = ["test", "cpp", "treesitter-full", "semantic", "milvus", "ast-grep", "python-semantics"]
+provides-extras = ["test", "cpp", "treesitter-full", "semantic", "milvus", "ast-grep", "python-semantics", "arcadedb"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1891,6 +1895,18 @@ wheels = [
 ]
 
 [[package]]
+name = "neo4j"
+version = "5.28.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/62/aa/83baca8f9e5e5ba1a00722067a4bf3c088c5c02019a7b485e94c8cf05d39/neo4j-5.28.4.tar.gz", hash = "sha256:4a2d8d6eb8c2da0bc87a30e96e2c179fbc0045665626482901ca3dcc9c2b1811", size = 232608, upload-time = "2026-05-04T08:00:55.426Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/fd/d46f29f4089a00a7d4894f5e1739288c2a42622b72ea7161a226b73ff4fa/neo4j-5.28.4-py3-none-any.whl", hash = "sha256:ba87c423fd2a1fbe6a116c47ac96cfbe7d8c419d24d2f5611e5674283dddf7b9", size = 313927, upload-time = "2026-05-04T08:00:52.005Z" },
+]
+
+[[package]]
 name = "networkx"
 version = "3.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3031,6 +3047,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/64/7e/9b35ad8f3d9ca680f7c87a88f19612fdd8da9796c4d3b46e560ac79dcc4a/python_multipart-0.0.31.tar.gz", hash = "sha256:fc631183bb13e56db3158a4909908dfb2e23565286744e798241e63750e5d680", size = 46689, upload-time = "2026-06-04T08:27:49.014Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/1e/7f7f299527a5a8ad90acd5f2f78dfa6c8495c6301a3205106ea68a84de96/python_multipart-0.0.31-py3-none-any.whl", hash = "sha256:8408153d68a9773291fc1da39a8b85a50044bddbabd2dd72e9229776b7b15e28", size = 29996, upload-time = "2026-06-04T08:27:47.804Z" },
+]
+
+[[package]]
+name = "pytz"
+version = "2026.3.post1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fb/48/fb042503b6ca6cd271261dc559fd6432f7d8c713153e9ec5c591af4dfc1c/pytz-2026.3.post1.tar.gz", hash = "sha256:2211d3fcf9a797d3405cac96ac7f61d80e6a644f72a3309607282fe8a2010c5d", size = 319745, upload-time = "2026-07-25T15:12:07.385Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0f/7b/39c34ca613b0b198cb866466651b26b045e2009864c5183c979a3b83f383/pytz-2026.3.post1-py2.py3-none-any.whl", hash = "sha256:dd95840dd199baea12d9cc096a1d452caa6596a1c1e4b5f3dbd1541855d5e815", size = 508283, upload-time = "2026-07-25T15:12:05.782Z" },
 ]
 
 [[package]]

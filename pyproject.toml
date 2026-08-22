@@ -145,6 +145,10 @@ python-semantics = [
     "jedi>=0.19",
 ]
 
+arcadedb = [
+    "neo4j>=5.28,<6",
+]
+
 [tool.ruff]
 line-length = 88
 target-version = "py312"
