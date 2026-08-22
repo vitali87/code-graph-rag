@@ -204,32 +204,6 @@ jobs:
           | sed -e '/<think>/,/<\/think>/d' \
           | perl -CSD -pe 's/[\x{2014}\x{2013}]/-/g' > /tmp/highlights.md
 
-      - name: Generate news bullets
-        if: steps.decide.outputs.release == 'true'
-        continue-on-error: true
-        env:
-          HIGHLIGHTS_API_URL: ${{ secrets.HIGHLIGHTS_API_URL }}
-          HIGHLIGHTS_API_TOKEN: ${{ secrets.HIGHLIGHTS_API_TOKEN }}
-          HIGHLIGHTS_RESOLVE: ${{ secrets.HIGHLIGHTS_RESOLVE }}
-        run: |
-          [ -n "$HIGHLIGHTS_API_URL" ] || exit 0
-          RESOLVE_ARGS=()
-          [ -n "$HIGHLIGHTS_RESOLVE" ] && RESOLVE_ARGS=(--resolve "$HIGHLIGHTS_RESOLVE")
-          sed -E 's| by @[^ ]+ in https://[^ ]+||' /tmp/notes.md > /tmp/titles.md
-          grep -E '^- \*\*' NEWS.md | head -8 > /tmp/known.md || true
-          jq -n --rawfile notes /tmp/titles.md --rawfile known /tmp/known.md \
-            '{model: "default", temperature: 0.3, max_tokens: 600, messages: [
-              {role: "user", content: ("Write news entries for a software project README: a markdown bullet list of at most 3 items, each line in exactly the format \"- **Theme**: sentence.\" with a short bold theme of one to four words followed by a colon and one plain-English sentence aimed at users. Cover substantial new user-facing product features and capabilities grounded strictly in the pull request titles below: new language support, new code analysis, new querying or graph capabilities, new integrations, and new runtime capabilities exposed to users. Treat every distinct new feature as eligible, including one that extends or complements a capability from a previous release; when more than three qualify, choose the three most significant. You MUST NOT include CI, developer experience, build or release automation, refactors, performance work, documentation, tests, dependency bumps, or bug fixes of any kind. Do not invent anything. Skip a feature only when its bold theme is already listed verbatim here; a related but distinct capability (for example a new kind of tracing alongside an existing tracing entry) is still a new entry to include:\n\n" + $known + "\nIf no new feature qualifies, output nothing at all. Use British English. Never use em-dashes or en-dashes. Output only the bullet lines.\n\nPull request titles:\n\n" + $notes)}
-            ]}' > /tmp/newsreq.json
-          curl -sf --max-time 1500 "${RESOLVE_ARGS[@]}" \
-            -H "Authorization: Bearer ${HIGHLIGHTS_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d @/tmp/newsreq.json \
-            "${HIGHLIGHTS_API_URL}/v1/chat/completions" \
-          | jq -er '.choices[0].message.content // empty' \
-          | sed -e '/<think>/,/<\/think>/d' \
-          | perl -CSD -pe 's/[\x{2014}\x{2013}]/-/g' > /tmp/newsbullets.md
-
       - name: Install uv
         if: steps.decide.outputs.release == 'true'
         uses: astral-sh/setup-uv@f98e06938123ccabd21905ea5d0069192241f9f1 # v8.3.1
@@ -241,9 +215,15 @@ jobs:
         if: steps.decide.outputs.release == 'true'
         continue-on-error: true
         run: |
+          # News is derived from the generated Highlights rather than a second
+          # model call: a dedicated news prompt that carried the previous NEWS
+          # entries as dedup context made the model paraphrase those old entries
+          # into fake news (v0.0.720), while the Highlights for the same run
+          # were accurate. update_news.py normalises the bullet marker, drops
+          # non-feature themes, dedups against NEWS.md, and caps at three.
           # A NEWS.md change without the README re-render would drift from the
           # generate-README pre-commit hook, so revert both if the render fails.
-          python3 scripts/update_news.py /tmp/newsbullets.md
+          python3 scripts/update_news.py /tmp/highlights.md
           if ! git diff --quiet NEWS.md; then
             if ! (uv sync --frozen && uv run --frozen python scripts/generate_readme.py); then
               git checkout -- NEWS.md README.md

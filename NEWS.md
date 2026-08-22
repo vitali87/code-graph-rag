@@ -6,12 +6,13 @@ They are NOT for CI, developer tooling, release or build automation, refactors,
 documentation, tests, or bug fixes; leave that kind out. The top three entries
 are rendered into the README's "Latest News" section by
 `scripts/generate_readme.py`, so edit them here rather than in the README. The
-release workflow also prepends feature entries via `scripts/update_news.py`
-(which drops non-feature themes); hand edits remain welcome between releases.
+release workflow also prepends feature entries via `scripts/update_news.py`,
+derived from the release's generated Highlights (dropping non-feature themes);
+hand edits remain welcome between releases.
 
-- **Language Support**: The system now supports Ruby, bringing enhanced code analysis capabilities to your Ruby projects.
-- **Structural Analysis**: You can now find and rewrite code based on AST patterns using structural search and replace.
-- **Data Flow Tracking**: Enhanced data-flow tracing is now available for C#, Java, C, and Go, providing more comprehensive visibility into data movement.
+- **Java Taint Improvements**: Enhanced taint tracking in Java, including handling JDK shims, chained call receivers, literal arguments, and type-test patterns.
+- **C# Taint Propagation**: Improved taint propagation in C# with refinements to argument binding, tuple deconstruction, and await plumbing methods.
+- **Semantic Frontend Enhancements**: Added in-process Jedi semantic frontend for Python and re-run semantic frontends on the watch path for more accurate analysis.
 - **Runtime Call Tracing**: A dynamic tracer runs your code (typically the test suite) and merges the calls that actually happened into the graph as `CALLS` edges (flagged where static analysis missed them), so dispatch through interfaces, virtual methods, function pointers, reflection, and framework routing becomes visible. Convert a run from Python, the JVM, Node.js, .NET, PHP, Lua, Dart, Go, Rust, or C/C++ with `cgr trace`, or ingest production pprof profiles from an eBPF continuous profiler (Parca, Pyroscope, OpenTelemetry) with `cgr trace convert --format ebpf`.
 - **Ruby Support**: Ruby joins the graph through a new pluggable ast-grep tier that adds a language from a single YAML pattern file, emitting `Module`, `Function`, and `Class` nodes plus import edges without a hand-written parser.
 - **Structural Search & Replace**: Find and rewrite code by AST pattern with ast-grep, exposed as agent tools so you can match and transform structure across the whole codebase instead of relying on text or regex.

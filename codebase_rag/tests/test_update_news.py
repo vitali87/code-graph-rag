@@ -23,9 +23,21 @@ class TestExtractBullets:
         fragment = (
             "## Highlights\n"
             "- **Web Search**: The agent can now search the web.\n"
-            "* **Wrong Marker**: star bullets are not the NEWS format.\n"
             "- **Empty Body**: \n"
             "- plain bullet without a theme\n"
+        )
+        assert extract_bullets(fragment) == [
+            "- **Web Search**: The agent can now search the web."
+        ]
+
+    def test_normalises_highlights_star_bullets(self) -> None:
+        # News is derived from the release's "## Highlights" section, whose
+        # bullets use "* "; they must come through in the NEWS.md "- " format.
+        fragment = (
+            "## Highlights\n"
+            "* **Web Search**: The agent can now search the web.\n"
+            "* **CI Speedups**: builds now finish faster.\n"
+            "* plain star bullet without a theme\n"
         )
         assert extract_bullets(fragment) == [
             "- **Web Search**: The agent can now search the web."

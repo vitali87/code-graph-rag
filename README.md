@@ -51,9 +51,9 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowl
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Language Support**: The system now supports Ruby, bringing enhanced code analysis capabilities to your Ruby projects.
-- **Structural Analysis**: You can now find and rewrite code based on AST patterns using structural search and replace.
-- **Data Flow Tracking**: Enhanced data-flow tracing is now available for C#, Java, C, and Go, providing more comprehensive visibility into data movement.
+- **Java Taint Improvements**: Enhanced taint tracking in Java, including handling JDK shims, chained call receivers, literal arguments, and type-test patterns.
+- **C# Taint Propagation**: Improved taint propagation in C# with refinements to argument binding, tuple deconstruction, and await plumbing methods.
+- **Semantic Frontend Enhancements**: Added in-process Jedi semantic frontend for Python and re-run semantic frontends on the watch path for more accurate analysis.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.

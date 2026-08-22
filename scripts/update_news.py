@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Prepend release news bullets to NEWS.md.
 
-Reads a markdown fragment (the AI-generated bullets for the release being cut)
-and inserts every bullet whose bold theme is not already present in NEWS.md
-above the existing entries, keeping the hand-written header intact. Bullets
-must match the NEWS.md entry format exactly: `- **Theme**: sentence`. Anything
-else in the fragment is ignored, so a malformed or empty AI response degrades
+Reads a markdown fragment and inserts every bullet whose bold theme is not
+already present in NEWS.md above the existing entries, keeping the hand-written
+header intact. The fragment is the release's generated "## Highlights" section:
+a dedicated news generation once fed the previous NEWS entries to the model as
+dedup context, and the model paraphrased those old entries into fake "news"
+(v0.0.720 re-announced Ruby, structural search, and data-flow tracing), so news
+is now derived from the Highlights, whose prompt carries no old entries to
+anchor on. Bullets may use either `- ` or the Highlights' `* ` marker and are
+normalised to the NEWS.md entry format `- **Theme**: sentence`. Anything else
+in the fragment is ignored, so a malformed or empty AI response degrades
 to a no-op instead of corrupting the file. Exit code 0 always signals NEWS.md
 is in a valid state; the caller decides whether a no-op warrants skipping the
 follow-up README regeneration. Standard library only, so the release workflow
@@ -67,11 +72,14 @@ def extract_bullets(fragment: str) -> list[str]:
 
     A bullet must match the NEWS.md entry format AND name a product feature;
     non-feature themes (CI/devx/release/bug/etc.) are discarded here so neither
-    the count cap nor the dedup downstream ever considers them.
+    the count cap nor the dedup downstream ever considers them. Highlights-style
+    `* ` bullets are accepted and normalised to the NEWS.md `- ` marker.
     """
     bullets: list[str] = []
     for line in fragment.splitlines():
         stripped = _normalize_dashes(line.rstrip())
+        if stripped.startswith("* "):
+            stripped = f"- {stripped[2:]}"
         match = BULLET_PATTERN.match(stripped)
         if match and is_feature_theme(match.group("theme")):
             bullets.append(stripped)
