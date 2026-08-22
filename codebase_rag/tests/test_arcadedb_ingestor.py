@@ -160,6 +160,102 @@ def test_execute_write_runs_the_query_and_returns_none() -> None:
         ingestor.__exit__(None, None, None)
 
 
+def test_node_buffer_flushes_at_batch_size() -> None:
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase"):
+        ingestor = _ingestor(batch_size=2)
+        ingestor.__enter__()
+        # ArcadeDBIngestor is __slots__-only (no instance __dict__), so the
+        # mock must patch the class rather than the instance attribute; see
+        # the identical constraint noted in
+        # test_ensure_constraints_runs_the_schema_ddl above.
+        with patch.object(ArcadeDBIngestor, "flush_nodes") as flush:
+            ingestor.ensure_node_batch("Function", {"qualified_name": "a"})
+            flush.assert_not_called()
+            ingestor.ensure_node_batch("Function", {"qualified_name": "b"})
+            flush.assert_called_once()
+        ingestor.__exit__(None, None, None)
+
+
+def test_flush_nodes_sends_an_unwound_merge() -> None:
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.return_value = iter([])
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        ingestor.ensure_node_batch("Function", {"qualified_name": "a", "name": "a"})
+        ingestor.flush_nodes()
+
+        # session.run's first positional arg is a neo4j.Query object (needed
+        # to carry the timeout, see test_fetch_all_carries_the_timeout_on_the_
+        # query_object) rather than a bare string, so the query text is read
+        # off its .text attribute.
+        query = session.run.call_args[0][0].text
+        assert query.startswith("UNWIND $batch AS row")
+        assert "MERGE (n:Function {qualified_name: row.id})" in query
+        assert session.run.call_args.kwargs["batch"] == [
+            {"id": "a", "props": {"name": "a"}}
+        ]
+        ingestor.__exit__(None, None, None)
+
+
+def test_flush_relationships_splits_by_merge_key_signature() -> None:
+    # Issue #722: rows carrying different distinguishing props must not
+    # share a MERGE key, or parallel FLOWS_TO edges collapse into one.
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.return_value = iter([{"created": 1}])
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        for via in ("arg", "ret"):
+            ingestor.ensure_relationship_batch(
+                ("Function", "qualified_name", "a"),
+                "FLOWS_TO",
+                ("Function", "qualified_name", "b"),
+                {"via": via, "kind": "direct"},
+            )
+        ingestor.flush_relationships()
+
+        merged = [c[0][0].text for c in session.run.call_args_list]
+        assert any("via: row.props.via" in q for q in merged)
+        ingestor.__exit__(None, None, None)
+
+
+def test_flush_retries_a_concurrent_modification_error() -> None:
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.side_effect = [
+            RuntimeError("Concurrent modification of record #1:0"),
+            iter([]),
+        ]
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        ingestor.ensure_node_batch("Function", {"qualified_name": "a"})
+        ingestor.flush_nodes()  # must not raise
+
+        assert session.run.call_count == 2
+        ingestor.__exit__(None, None, None)
+
+
+def test_flush_reraises_a_permanent_error() -> None:
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.side_effect = RuntimeError("Syntax error at line 1")
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        ingestor.ensure_node_batch("Function", {"qualified_name": "a"})
+        with pytest.raises(RuntimeError, match="Syntax error"):
+            ingestor.flush_nodes()
+        ingestor.__exit__(None, None, None)
+
+
 def test_ensure_constraints_runs_the_schema_ddl() -> None:
     # ArcadeDBDialect is __slots__-only (no instance __dict__), so the mock
     # must patch the class rather than `ingestor._dialect` directly; a

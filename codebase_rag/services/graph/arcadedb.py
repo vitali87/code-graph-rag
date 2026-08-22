@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import types
-from collections.abc import Generator
+from collections import defaultdict
+from collections.abc import Generator, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -21,16 +23,43 @@ from ...constants import (
     ARCADE_DDL_VERTEX_TYPE,
     ARCADE_PROCEDURE_CATALOG,
     ARCADE_RETRYABLE_SUBSTRINGS,
+    MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
     GraphBackend,
     NodeLabel,
     RelationshipType,
 )
-from ...types_defs import PropertyValue, ResultRow
+from ...cypher_queries import (
+    build_create_node_query,
+    build_create_relationship_query,
+    build_merge_node_query,
+    build_merge_relationship_query,
+    wrap_with_unwind,
+)
+from ...types_defs import (
+    BatchParams,
+    NodeBatchRow,
+    PropertyValue,
+    RelBatchRow,
+    ResultRow,
+)
 from .arcade_http import ArcadeHttpClient
+from .retry import retry_on_transient
 
 if TYPE_CHECKING:
     from .protocol import GraphIngestor
+
+
+def _count_created(results: list[ResultRow]) -> int:
+    # ResultRow values are the broad ResultValue union (list/dict included),
+    # so int() on the raw value doesn't type-check; narrow with isinstance
+    # instead, matching MemgraphIngestor._flush_rel_pattern_group.
+    total = 0
+    for row in results:
+        created = row.get("created", 0)
+        if isinstance(created, int):
+            total += created
+    return total
 
 
 def build_arcade_schema_statements() -> list[str]:
@@ -107,10 +136,11 @@ class ArcadeDBIngestor:
     ArcadeDB's Bolt listener accepts Cypher only, so the two transports are
     not a choice — index creation is SQL and has nowhere else to go.
 
-    This covers connection lifecycle and the read/write query surface only.
-    Batching, flush, and admin operations (clean_database, list_projects,
-    delete_project, export_graph_to_dict, ...) are not implemented yet, so
-    this class does not yet satisfy the full `GraphIngestor` protocol.
+    This covers connection lifecycle, the read/write query surface, and the
+    buffered ingestion path (ensure_*_batch / flush_*). Admin operations
+    (clean_database, list_projects, delete_project, export_graph_to_dict,
+    ...) are not implemented yet, so this class does not yet satisfy the
+    full `GraphIngestor` protocol.
     """
 
     __slots__ = (
@@ -118,13 +148,17 @@ class ArcadeDBIngestor:
         "_database",
         "_dialect",
         "_driver",
+        "_executor",
         "_host",
         "_http",
         "_http_port",
         "_password",
+        "_rel_count",
+        "_rel_groups",
         "_use_merge",
         "_username",
         "batch_size",
+        "node_buffer",
     )
 
     def __init__(
@@ -157,6 +191,12 @@ class ArcadeDBIngestor:
         self.batch_size = batch_size
         self._use_merge = use_merge
         self._driver: Any | None = None
+        self._executor: ThreadPoolExecutor | None = None
+        self.node_buffer: list[tuple[str, dict[str, PropertyValue]]] = []
+        self._rel_count = 0
+        self._rel_groups: defaultdict[
+            tuple[str, str, str, str, str], list[RelBatchRow]
+        ] = defaultdict(list)
         self._http = ArcadeHttpClient(
             host=host,
             port=http_port,
@@ -175,6 +215,7 @@ class ArcadeDBIngestor:
         self._driver = GraphDatabase.driver(
             self._bolt_uri, auth=(self._username, self._password)
         )
+        self._executor = ThreadPoolExecutor(max_workers=settings.FLUSH_THREAD_POOL_SIZE)
         logger.info(ls.ARCADE_CONNECTED)
         return self
 
@@ -184,12 +225,26 @@ class ArcadeDBIngestor:
         exc_val: Exception | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
-        if exc_type:
-            logger.exception(ls.ARCADE_EXCEPTION.format(error=exc_val))
-        if self._driver:
-            self._driver.close()
-            self._driver = None
-            logger.info(ls.ARCADE_DISCONNECTED)
+        try:
+            if exc_type:
+                logger.exception(ls.ARCADE_EXCEPTION.format(error=exc_val))
+                # Best-effort flush: persist buffered nodes/relationships even
+                # when an exception occurred. Catch broad Exception so a
+                # secondary flush failure never masks the original.
+                try:
+                    self.flush_all()
+                except Exception as flush_err:
+                    logger.error(ls.ARCADE_FLUSH_ERROR.format(error=flush_err))
+            else:
+                self.flush_all()
+        finally:
+            if self._executor:
+                self._executor.shutdown(wait=True)
+                self._executor = None
+            if self._driver:
+                self._driver.close()
+                self._driver = None
+                logger.info(ls.ARCADE_DISCONNECTED)
 
     async def __aenter__(self) -> ArcadeDBIngestor:
         return self.__enter__()
@@ -247,3 +302,212 @@ class ArcadeDBIngestor:
         # GraphIngestor protocol (flush/admin ops land in Tasks 12-13).
         self._dialect.ensure_schema(self)  # ty: ignore[invalid-argument-type]
         logger.info(ls.ARCADE_SCHEMA_DONE)
+
+    def ensure_node_batch(
+        self, label: str, properties: dict[str, PropertyValue]
+    ) -> None:
+        self.node_buffer.append((label, properties))
+        if len(self.node_buffer) >= self.batch_size:
+            self.flush_nodes()
+
+    def ensure_relationship_batch(
+        self,
+        from_spec: tuple[str, str, PropertyValue],
+        rel_type: str,
+        to_spec: tuple[str, str, PropertyValue],
+        properties: dict[str, PropertyValue] | None = None,
+    ) -> None:
+        from_label, from_key, from_val = from_spec
+        to_label, to_key, to_val = to_spec
+        pattern = (from_label, from_key, rel_type, to_label, to_key)
+        self._rel_groups[pattern].append(
+            RelBatchRow(from_val=from_val, to_val=to_val, props=properties or {})
+        )
+        self._rel_count += 1
+        if self._rel_count >= self.batch_size:
+            self.flush_nodes()
+            self.flush_relationships()
+
+    def _execute_batch(
+        self, query: str, rows: Sequence[BatchParams]
+    ) -> list[ResultRow]:
+        if not rows:
+            return []
+
+        def run() -> list[ResultRow]:
+            with self._session() as session:
+                # See the identical LiteralString stub note in _run above.
+                unwound = wrap_with_unwind(query)
+                result = session.run(
+                    Query(unwound, timeout=settings.ARCADEDB_TX_TIMEOUT_S),  # ty: ignore[invalid-argument-type]
+                    batch=list(rows),
+                )
+                return [dict(record) for record in result]
+
+        try:
+            return retry_on_transient(run, self._dialect)
+        except Exception as e:
+            if not self._dialect.is_benign_error(e):
+                logger.error(ls.ARCADE_BATCH_ERROR.format(error=e))
+                logger.error(ls.ARCADE_CYPHER_QUERY.format(query=query))
+            raise
+
+    def _flush_node_label_group(
+        self, label: str, props_list: list[dict[str, PropertyValue]]
+    ) -> tuple[int, int]:
+        id_key = NODE_UNIQUE_CONSTRAINTS.get(label)
+        if not id_key:
+            logger.warning(ls.ARCADE_NO_CONSTRAINT.format(label=label))
+            return 0, len(props_list)
+
+        rows: list[NodeBatchRow] = []
+        skipped = 0
+        for props in props_list:
+            if id_key not in props:
+                skipped += 1
+                continue
+            rows.append(
+                NodeBatchRow(
+                    id=props[id_key],
+                    props={k: v for k, v in props.items() if k != id_key},
+                )
+            )
+        if not rows:
+            return 0, skipped
+
+        build = build_merge_node_query if self._use_merge else build_create_node_query
+        self._execute_batch(build(label, id_key), rows)
+        return len(rows), skipped
+
+    def _flush_rel_pattern_group(
+        self,
+        pattern: tuple[str, str, str, str, str],
+        rows: list[RelBatchRow],
+    ) -> tuple[int, int]:
+        from_label, from_key, rel_type, to_label, to_key = pattern
+
+        if not self._use_merge:
+            query = build_create_relationship_query(
+                from_label,
+                from_key,
+                rel_type,
+                to_label,
+                to_key,
+                any(r["props"] for r in rows),
+            )
+            results = self._execute_batch(query, rows)
+            return len(rows), _count_created(results)
+
+        # Issue #722: rows for the same endpoints may carry different
+        # distinguishing props. Flushing each merge-key signature separately
+        # stops a prop absent from one row being dropped from the key for the
+        # rest, which would re-collapse parallel provenance edges.
+        candidate = MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
+        by_keys: defaultdict[tuple[str, ...], list[RelBatchRow]] = defaultdict(list)
+        for row in rows:
+            props = row["props"] or {}
+            by_keys[tuple(p for p in candidate if p in props)].append(row)
+
+        attempted = 0
+        created = 0
+        for merge_key_props, group in by_keys.items():
+            query = build_merge_relationship_query(
+                from_label,
+                from_key,
+                rel_type,
+                to_label,
+                to_key,
+                any(r["props"] for r in group),
+                merge_key_props=merge_key_props,
+            )
+            results = self._execute_batch(query, group)
+            attempted += len(group)
+            created += _count_created(results)
+        return attempted, created
+
+    def flush_nodes(self) -> None:
+        if not self.node_buffer:
+            return
+        by_label: defaultdict[str, list[dict[str, PropertyValue]]] = defaultdict(list)
+        for label, props in self.node_buffer:
+            by_label[label].append(props)
+
+        total = len(self.node_buffer)
+        flushed = 0
+        first_error: Exception | None = None
+
+        # neo4j.Driver pools sessions internally, so unlike the Memgraph path
+        # there is no per-group connection to create and close — each worker
+        # just calls _execute_batch, which takes a session from the pool.
+        if self._executor and len(by_label) > 1:
+            futures = {
+                self._executor.submit(self._flush_node_label_group, label, props): label
+                for label, props in by_label.items()
+            }
+            for future in as_completed(futures):
+                try:
+                    count, _ = future.result()
+                    flushed += count
+                except Exception as e:
+                    logger.error(ls.ARCADE_BATCH_ERROR.format(error=e))
+                    first_error = first_error or e
+        else:
+            for label, props in by_label.items():
+                try:
+                    count, _ = self._flush_node_label_group(label, props)
+                    flushed += count
+                except Exception as e:
+                    logger.error(ls.ARCADE_BATCH_ERROR.format(error=e))
+                    first_error = first_error or e
+
+        logger.info(ls.ARCADE_NODES_FLUSHED.format(flushed=flushed, total=total))
+        self.node_buffer.clear()
+        if first_error is not None:
+            raise first_error
+
+    def flush_relationships(self) -> None:
+        if not self._rel_count:
+            return
+        total = self._rel_count
+        attempted = 0
+        created = 0
+        first_error: Exception | None = None
+
+        if self._executor and len(self._rel_groups) > 1:
+            futures = {
+                self._executor.submit(
+                    self._flush_rel_pattern_group, pattern, rows
+                ): pattern
+                for pattern, rows in self._rel_groups.items()
+            }
+            for future in as_completed(futures):
+                try:
+                    a, c = future.result()
+                    attempted += a
+                    created += c
+                except Exception as e:
+                    logger.error(ls.ARCADE_BATCH_ERROR.format(error=e))
+                    first_error = first_error or e
+        else:
+            for pattern, rows in self._rel_groups.items():
+                try:
+                    a, c = self._flush_rel_pattern_group(pattern, rows)
+                    attempted += a
+                    created += c
+                except Exception as e:
+                    logger.error(ls.ARCADE_BATCH_ERROR.format(error=e))
+                    first_error = first_error or e
+
+        logger.info(
+            ls.ARCADE_RELS_FLUSHED.format(
+                total=total, success=created, failed=attempted - created
+            )
+        )
+        self._rel_count = 0
+        self._rel_groups.clear()
+        if first_error is not None:
+            raise first_error
+
+    def flush_all(self) -> None:
+        self.flush_nodes()
+        self.flush_relationships()

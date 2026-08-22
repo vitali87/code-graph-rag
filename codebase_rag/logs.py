@@ -368,10 +368,20 @@ ARCADE_CONNECTING = "Connecting to ArcadeDB at {uri}..."
 ARCADE_CONNECTED = "ArcadeDB connection established."
 ARCADE_DISCONNECTED = "ArcadeDB connection closed."
 ARCADE_EXCEPTION = "Exception during ArcadeDB session: {error}"
+ARCADE_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
 ARCADE_FETCH_QUERY = "Executing ArcadeDB read query"
 ARCADE_WRITE_QUERY = "Executing ArcadeDB write query"
 ARCADE_ENSURING_SCHEMA = "Ensuring ArcadeDB schema (types, properties, indexes)..."
 ARCADE_SCHEMA_DONE = "ArcadeDB schema ready."
+ARCADE_BATCH_ERROR = "!!! Batch Cypher Error: {error}"
+ARCADE_CYPHER_QUERY = "    Query: {query}"
+ARCADE_NO_CONSTRAINT = (
+    "No unique constraint defined for label '{label}'. Skipping flush."
+)
+ARCADE_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
+ARCADE_RELS_FLUSHED = (
+    "Flushed {total} relationships ({success} successful, {failed} failed)."
+)
 
 # Graph dialect logs
 GRAPH_RETRY_TRANSIENT = (
