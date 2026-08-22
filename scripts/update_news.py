@@ -28,8 +28,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)\*\*: \S.*$")
 
-MAX_ENTRIES = 3
-
 # Latest News is for user-facing features, never CI, developer tooling,
 # release/build automation, refactors, docs, tests, or bug fixes. Any bullet
 # whose theme names that kind of work is dropped so it can never reach the
@@ -101,8 +99,8 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
     Returns the updated NEWS.md content and the bullets that were inserted.
     Bullets whose theme already appears anywhere in NEWS.md or earlier in the
     same fragment are dropped, which makes a rerun of the same release
-    idempotent, and at most MAX_ENTRIES bullets are accepted per fragment so
-    an over-long AI response cannot flood the file.
+    idempotent. Every remaining Highlights bullet is accepted: the fragment is
+    the release's curated Highlights section, so all of it is news.
     """
     themes = existing_themes(news)
     fresh: list[str] = []
@@ -115,8 +113,6 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
             continue
         fresh.append(bullet)
         themes.add(theme)
-        if len(fresh) == MAX_ENTRIES:
-            break
     if not fresh:
         return news, []
 

@@ -220,7 +220,8 @@ jobs:
           # entries as dedup context made the model paraphrase those old entries
           # into fake news (v0.0.720), while the Highlights for the same run
           # were accurate. update_news.py normalises the bullet marker, drops
-          # non-feature themes, dedups against NEWS.md, and caps at three.
+          # non-feature themes, and dedups against NEWS.md; every remaining
+          # highlight becomes a news entry.
           # A NEWS.md change without the README re-render would drift from the
           # generate-README pre-commit hook, so revert both if the render fails.
           python3 scripts/update_news.py /tmp/highlights.md

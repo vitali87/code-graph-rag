@@ -5,8 +5,8 @@
 # data-flow tracing for C#/Java/C/Go, none of which shipped in that window,
 # while the Highlights generated in the same run from the same PR titles were
 # accurate. News is therefore derived from the Highlights fragment, with all
-# filtering, marker normalisation, dedup, and the three-entry cap handled
-# deterministically by scripts/update_news.py. Guard against reintroducing a
+# filtering, marker normalisation, and dedup handled deterministically by
+# scripts/update_news.py. Guard against reintroducing a
 # dedicated news generation or feeding old entries back to the model.
 
 from __future__ import annotations
