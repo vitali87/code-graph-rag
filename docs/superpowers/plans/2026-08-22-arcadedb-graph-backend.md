@@ -2271,7 +2271,17 @@ ARCADE_NO_HTTP_CLIENT = (
 )
 ```
 
-Add `QUERY_TIMEOUT_S: float = 600.0` to `AppConfig` in `config.py`, matching the 600s Memgraph query ceiling referenced in `cypher_queries.py`.
+**CORRECTION (found in Task 10):** the plan previously said to add `QUERY_TIMEOUT_S: float = 600.0`. That setting ALREADY EXISTS at `60.0` and is consumed by `codebase_rag/tools/codebase_query.py` as the asyncio wall-clock ceiling on every LLM-generated graph query, for BOTH backends. Changing it would be a 10x behaviour change for existing Memgraph users, violating the identical-behaviour constraint. Leave `QUERY_TIMEOUT_S` alone.
+
+Instead add a separate, ArcadeDB-only setting to `AppConfig`:
+
+```python
+    # Server-side transaction ceiling for ArcadeDB Bolt queries. Distinct from
+    # QUERY_TIMEOUT_S, which is the agent-side wall-clock bound applied to any
+    # backend in tools/codebase_query.py. This one substitutes for Memgraph's
+    # QUERY MEMORY LIMIT, which ArcadeDB cannot parse.
+    ARCADEDB_TX_TIMEOUT_S: float = Field(default=600.0, gt=0)
+```
 
 - [ ] **Step 5: Remove the xfail markers from Task 3's tests**
 
@@ -2607,7 +2617,7 @@ class ArcadeDBIngestor:
         # runaway LLM-generated queries once QUERY MEMORY LIMIT is gone.
         with self._session() as session:
             result = session.run(
-                Query(query, timeout=settings.QUERY_TIMEOUT_S), **(params or {})
+                Query(query, timeout=settings.ARCADEDB_TX_TIMEOUT_S), **(params or {})
             )
             return [dict(record) for record in result]
 
@@ -2885,7 +2895,7 @@ Append to `ArcadeDBIngestor`:
         def run() -> list[ResultRow]:
             with self._session() as session:
                 result = session.run(
-                    Query(wrap_with_unwind(query), timeout=settings.QUERY_TIMEOUT_S),
+                    Query(wrap_with_unwind(query), timeout=settings.ARCADEDB_TX_TIMEOUT_S),
                     batch=list(rows),
                 )
                 return [dict(record) for record in result]
