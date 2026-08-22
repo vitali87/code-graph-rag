@@ -604,3 +604,13 @@ MAGE_PROCEDURE_CATALOG = """- **Strongly connected components / recursion cluste
 - **Path expansion (bounded BFS over filtered edges)**: `CALL path.expand(start, relationships, labels, minHops, maxHops) YIELD path`
 
 Important: MAGE procedures named `nxalg.*` and several others operate on the **entire graph**, ignoring edge-type filters. To restrict to a specific edge type (e.g., only `CALLS`), follow the procedure call with a `WHERE` clause that checks `EXISTS((a)-[:CALLS]->(b))` or use `path.expand` which accepts a relationship-type filter."""
+
+# ArcadeDB HTTP: Bolt accepts Cypher only, so schema DDL (which is SQL)
+# goes over the REST endpoint instead.
+ARCADE_HTTP_SCHEME = "http"
+ARCADE_COMMAND_PATH = "/api/v1/command/{database}"
+ARCADE_LANG_SQL = "sql"
+ARCADE_KEY_LANGUAGE = "language"
+ARCADE_KEY_COMMAND = "command"
+ARCADE_KEY_RESULT = "result"
+ARCADE_HTTP_TIMEOUT_S = 30.0

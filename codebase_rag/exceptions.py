@@ -110,6 +110,9 @@ GRAPH_BACKEND_AUTH_REQUIRED = (
     "Backend '{backend}' requires credentials: set ARCADEDB_USERNAME and "
     "ARCADEDB_PASSWORD. Its Bolt listener rejects unauthenticated connections."
 )
+ARCADE_HTTP_FAILED = (
+    "ArcadeDB HTTP command failed ({status}): {detail}\nCommand: {command}"
+)
 
 
 # Exception classes
@@ -119,3 +122,7 @@ class LLMGenerationError(Exception):
 
 class GraphBackendUnavailableError(RuntimeError):
     """The selected graph backend's driver is not installed."""
+
+
+class ArcadeHttpError(RuntimeError):
+    """A non-2xx response from ArcadeDB's HTTP command endpoint."""
