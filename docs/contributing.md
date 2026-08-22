@@ -77,12 +77,13 @@ All pull requests are validated by CI, which runs in parallel:
 difference is the CREDENTIAL used to push the tag, which is easy to miss when
 reading the workflows:
 
-```bash
-git tag "v${NEW}"
-if [ release == "true" ]; then
-  git push origin "v${NEW}"                                   # SSH deploy key
+```yaml
+git tag "v${{ steps.bump_version.outputs.new }}"
+if [ "${{ steps.decide.outputs.release }}" = "true" ]; then
+  git push origin "v${{ steps.bump_version.outputs.new }}"          # SSH deploy key
 else
-  git push "https://x-access-token:${GITHUB_TOKEN}@..." "v${NEW}"
+  git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+    "v${{ steps.bump_version.outputs.new }}"
 fi
 ```
 
@@ -92,12 +93,15 @@ events pushed with `GITHUB_TOKEN`. Interim tags therefore land on the remote and
 publish nothing, while release tags go out over the SSH deploy key and do trigger
 the publish.
 
-A release happens on the every-50 cadence, or immediately when the `decide` step
+A release happens every 50 versions, or immediately when the `decide` step
 sees a security fix (a GHSA id in the commit message, an explicit `[security]`
 marker, or an associated PR labelled `security`).
 
-If you are ever debugging "the tag exists but PyPI did not update", this is why,
-and the tag not publishing is the intended behaviour rather than a failure.
+If you are ever debugging "the tag exists but PyPI did not update", check WHICH
+kind of tag it is first. For an interim tag this is the intended behaviour and
+there is nothing to fix. For a release tag it is a real failure: that one is
+pushed over the SSH deploy key and must trigger `publish.yml`, so investigate
+the workflow run rather than assuming the cadence explains it.
 
 ### Automated Code Review
 
