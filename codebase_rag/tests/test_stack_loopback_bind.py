@@ -181,3 +181,23 @@ class TestPublicPortWarning:
 @pytest.mark.parametrize("service", ["memgraph", "lab", "qdrant"])
 def test_each_service_is_covered(service: str) -> None:
     assert any(name == service for name, _mapping in _published_ports())
+
+
+SECURITY_DOC = REPO_ROOT / "docs" / "architecture" / "security.md"
+
+
+def test_the_security_guide_describes_the_loopback_default() -> None:
+    # The guide kept claiming the ports were "currently network-reachable" and
+    # pointed at #1012 as still tracking a fix, for months after #1012 shipped
+    # the loopback bind (issue #1372, found in an external field-test review).
+    # A security document that overstates exposure is not harmlessly out of
+    # date: a reader cannot tell which parts of it are still true.
+    doc = SECURITY_DOC.read_text(encoding="utf-8")
+    assert "network-reachable" not in doc, (
+        "security.md still describes the pre-#1012 exposure; the compose file "
+        f"now binds every published port to {LOOPBACK} by default"
+    )
+    assert cs.COMPOSE_BIND_HOST_VAR in doc, (
+        f"security.md must name {cs.COMPOSE_BIND_HOST_VAR}, since widening the "
+        "bind is the operation that re-creates the exposure"
+    )
