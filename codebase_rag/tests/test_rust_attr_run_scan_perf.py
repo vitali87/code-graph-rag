@@ -43,14 +43,14 @@ def test_unbroken_attribute_run_scans_linearly() -> None:
     # at 3.6-4.9x and the #1089 pattern this guards against measures 16.7x, so
     # the bound separates them with room on both sides.
     assert large < small * 10, (small, large)
-    # A deliberate second bound, and NOT the kind just removed. The ratio cannot
-    # see a uniform slowdown: if some change made every scan 100x slower, 4x
-    # input still costs 4x time and the ratio stays healthy while the scan is
-    # unusable. This catches that. It survives where the old absolute bound did
-    # not because of the margin: `large` measures ~17ms, so the ceiling sits
-    # ~120x above it, against the ~6x inflation a loaded runner produced in
-    # issue #1382.
-    assert large < 2.0, large
+    # No absolute ceiling here on purpose. One used to sit below this line to
+    # catch a UNIFORM slowdown, which the ratio cannot see: if every scan got
+    # 100x slower, 4x input would still cost 4x time. It was removed anyway,
+    # because a sustained-contention runner can delay EVERY sample, so even a
+    # best-of-N minimum is not an uncontended measurement, and no wall-clock
+    # number distinguishes "the scanner regressed" from "the runner is busy".
+    # That coverage belongs in a controlled benchmark environment rather than a
+    # unit test on shared CI (issue #1382).
 
 
 def test_attribute_block_above_declaration_still_redirects() -> None:
