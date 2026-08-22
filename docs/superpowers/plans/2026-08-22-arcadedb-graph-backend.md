@@ -6,7 +6,7 @@
 
 **Architecture:** Extract the storage layer behind a `GraphIngestor` protocol (which extends the `IngestorProtocol` and `QueryProtocol` that already exist in `codebase_rag/services/__init__.py`) plus a six-member `GraphDialect` holding only what genuinely differs between engines. `MemgraphIngestor` moves under a new `services/graph/` package and keeps working unchanged; `ArcadeDBIngestor` is added beside it, speaking Cypher over Bolt via the `neo4j` driver and SQL over HTTP for schema DDL.
 
-**Tech Stack:** Python 3.13, pydantic-settings, pytest + pytest-xdist (`--dist=loadgroup`), testcontainers, `pymgclient` (Memgraph, hard dep), `neo4j>=5.28` (ArcadeDB, optional extra), Docker Compose profiles.
+**Tech Stack:** Python 3.12, pydantic-settings, pytest + pytest-xdist (`--dist=loadgroup`), testcontainers, `pymgclient` (Memgraph, hard dep), `neo4j>=5.28,<6` (ArcadeDB, optional extra), Docker Compose profiles.
 
 **Spec:** `docs/superpowers/specs/2026-08-22-arcadedb-graph-backend-design.md`
 
@@ -18,7 +18,7 @@
 - **Commit messages are single-line.** The `single-line-commit` pre-commit hook rejects anything else, including trailers. Conventional Commit prefix required (`feat:`, `refactor:`, `test:`, `docs:`, `chore:`).
 - **Never rename the `MEMGRAPH_*` settings.** Six settings (`MEMGRAPH_HOST`, `MEMGRAPH_PORT`, `MEMGRAPH_HTTP_PORT`, `MEMGRAPH_USERNAME`, `MEMGRAPH_PASSWORD`, `MEMGRAPH_BATCH_SIZE`) are user-facing `.env` keys.
 - **No literal strings in code.** This codebase keeps every user-visible string in `codebase_rag/constants/`, `codebase_rag/logs.py`, or `codebase_rag/exceptions.py`. Follow it.
-- **Version floors:** `neo4j>=5.28`. ArcadeDB server `>=26.2.1` (first release with the Bolt plugin); verified against `26.8.1`.
+- **Version floors:** `neo4j>=5.28,<6` — the 6.x driver line postdates ArcadeDB's published Bolt certification matrix (protocol 3.0/4.0/4.4/5.0-5.4), so stay inside it. Widen only with conformance evidence. ArcadeDB server `>=26.2.1` (first release with the Bolt plugin); verified against `26.8.1`.
 - **Default ports:** ArcadeDB Bolt `7687`, ArcadeDB HTTP `2480`, Memgraph Bolt `7687`. Memgraph and ArcadeDB collide on 7687 and must never run unprofiled together.
 - **Run before every commit:** `make lint && make typecheck && $(uv run) pytest -n auto -m "not integration"`.
 
@@ -2317,7 +2317,7 @@ In `pyproject.toml` under `[project.optional-dependencies]`:
 
 ```toml
 arcadedb = [
-    "neo4j>=5.28",
+    "neo4j>=5.28,<6",
 ]
 ```
 
@@ -2414,7 +2414,30 @@ def test_fetch_all_does_not_append_a_memory_limit() -> None:
         ingestor.__enter__()
         ingestor.fetch_all("MATCH (n) RETURN n")
         sent = session.run.call_args[0][0]
-        assert "QUERY MEMORY LIMIT" not in sent
+        assert "QUERY MEMORY LIMIT" not in str(sent)
+        ingestor.__exit__(None, None, None)
+
+
+def test_fetch_all_carries_the_timeout_on_the_query_object() -> None:
+    # Session.run(query, parameters=None, **kwargs) means a bare timeout=
+    # kwarg becomes a Cypher parameter and bounds nothing. This timeout is
+    # the only guard left after QUERY MEMORY LIMIT, so pin the vehicle.
+    from neo4j import Query
+
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        result = MagicMock()
+        result.__iter__.return_value = iter([])
+        session = MagicMock()
+        session.run.return_value = result
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        ingestor.fetch_all("MATCH (n) RETURN n")
+        sent = session.run.call_args[0][0]
+        assert isinstance(sent, Query)
+        assert sent.timeout is not None
+        assert "timeout" not in session.run.call_args.kwargs
         ingestor.__exit__(None, None, None)
 
 
@@ -2577,8 +2600,15 @@ class ArcadeDBIngestor:
     def _run(
         self, query: str, params: dict[str, Any] | None = None
     ) -> list[ResultRow]:
+        # The timeout MUST ride on a Query object. Session.run's signature is
+        # run(query, parameters=None, **kwargs), so a bare `timeout=` kwarg
+        # would be sent as a Cypher parameter named "timeout" and silently
+        # apply no bound at all — and this timeout is the only guard left on
+        # runaway LLM-generated queries once QUERY MEMORY LIMIT is gone.
         with self._session() as session:
-            result = session.run(query, timeout=settings.QUERY_TIMEOUT_S, **(params or {}))
+            result = session.run(
+                Query(query, timeout=settings.QUERY_TIMEOUT_S), **(params or {})
+            )
             return [dict(record) for record in result]
 
     def fetch_all(
@@ -2615,7 +2645,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from loguru import logger
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, Query
 
 from ... import exceptions as ex
 from ... import logs as ls
@@ -2855,8 +2885,7 @@ Append to `ArcadeDBIngestor`:
         def run() -> list[ResultRow]:
             with self._session() as session:
                 result = session.run(
-                    wrap_with_unwind(query),
-                    timeout=settings.QUERY_TIMEOUT_S,
+                    Query(wrap_with_unwind(query), timeout=settings.QUERY_TIMEOUT_S),
                     batch=list(rows),
                 )
                 return [dict(record) for record in result]
@@ -3296,7 +3325,7 @@ from __future__ import annotations
 
 import argparse
 
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, Query
 
 CANDIDATES = [
     "algo.pageRank",
@@ -3388,7 +3417,7 @@ For every name the probe accepted, discover its real output columns:
 
 ```bash
 uv run python - <<'PY'
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, Query
 driver = GraphDatabase.driver("bolt://localhost:7687", auth=("root", "cgrtestpassword1!"))
 with driver.session(database="cgrtest") as s:
     s.run("CREATE (a:Probe {k:'a'})-[:LINK]->(b:Probe {k:'b'})")
@@ -3614,7 +3643,7 @@ In `stack/health.py`:
 
 ```python
 def _arcade_bolt_reachable(host: str, port: int) -> bool:
-    from neo4j import GraphDatabase
+    from neo4j import GraphDatabase, Query
     from codebase_rag.config import settings
 
     try:
