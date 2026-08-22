@@ -2361,6 +2361,15 @@ def _ingestor(**kw: Any) -> ArcadeDBIngestor:
     return ArcadeDBIngestor(**{**defaults, **kw})
 
 
+# CORRECTION (found in Task 11): ArcadeDBIngestor does not satisfy the full
+# GraphIngestor protocol until Task 13 adds the admin operations (flush_nodes,
+# flush_relationships, clean_database, list_projects, list_project_roots,
+# delete_project, export_graph_to_dict). strict=True means this FAILS if it
+# ever passes early, so Task 13 is forced to remove the marker rather than
+# leaving a stale xfail behind.
+@pytest.mark.xfail(
+    strict=True, reason="GraphIngestor protocol is completed in Task 13"
+)
 def test_satisfies_the_graph_ingestor_protocol() -> None:
     assert isinstance(_ingestor(), GraphIngestor)
 
@@ -3092,6 +3101,8 @@ git commit -m "feat: add ArcadeDB batching, parallel flush, and transient-confli
 **Files:**
 - Modify: `codebase_rag/services/graph/arcadedb.py`
 - Modify: `codebase_rag/tests/test_arcadedb_ingestor.py`
+
+**Also required in this task:** remove the `@pytest.mark.xfail(strict=True, ...)` from `test_satisfies_the_graph_ingestor_protocol` in `codebase_rag/tests/test_arcadedb_ingestor.py`. Adding the admin operations here is what finally satisfies the full `GraphIngestor` protocol, so the marker must go — and because it is `strict=True`, leaving it in place turns the now-passing test red.
 
 **Interfaces:**
 - Consumes: `CYPHER_DELETE_ALL`, `CYPHER_LIST_PROJECTS`, `CYPHER_DELETE_PROJECT`, `CYPHER_EXPORT_NODES`, `CYPHER_EXPORT_RELATIONSHIPS`, `CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES` from the shared query modules; `prune_unanchored_resources` from `services/resource_cleanup.py`; `project_roots_from_rows` from `utils/path_utils.py`
