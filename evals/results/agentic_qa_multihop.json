@@ -1,0 +1,1881 @@
+{
+  "corpus": "django",
+  "commit": "9e7cc2b628fe8fd3895986af9b7fc9525034c1b0",
+  "qtype": "multihop",
+  "sample": 40,
+  "seed": 0,
+  "summary": {
+    "graph": {
+      "questions": 40,
+      "mean_f1": 0.9777,
+      "exact_rate": 0.95,
+      "errors": 0,
+      "mean_seconds": 29.31,
+      "p50_seconds": 28.99,
+      "p95_seconds": 39.35,
+      "mean_input_tokens": 35205,
+      "mean_output_tokens": 1662
+    },
+    "grep": {
+      "questions": 40,
+      "mean_f1": 0.9777,
+      "exact_rate": 0.95,
+      "errors": 0,
+      "mean_seconds": 29.26,
+      "p50_seconds": 26.97,
+      "p95_seconds": 49.59,
+      "mean_input_tokens": 17865,
+      "mean_output_tokens": 1280
+    }
+  },
+  "records": [
+    {
+      "condition": "graph",
+      "name": "ASGIHandler",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 26.19,
+      "input_tokens": 31280,
+      "output_tokens": 1520,
+      "answered": [
+        "django/core/asgi.py",
+        "tests/asgi/tests.py",
+        "tests/staticfiles_tests/test_handlers.py"
+      ],
+      "expected": [
+        "django/core/asgi.py",
+        "tests/asgi/tests.py",
+        "tests/staticfiles_tests/test_handlers.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "DisallowedHost",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 27.34,
+      "input_tokens": 32619,
+      "output_tokens": 1954,
+      "answered": [
+        "django/contrib/auth/views.py",
+        "django/contrib/sites/models.py",
+        "django/contrib/sites/requests.py",
+        "django/http/request.py",
+        "django/middleware/common.py",
+        "django/middleware/csrf.py",
+        "django/middleware/security.py",
+        "django/views/i18n.py",
+        "tests/logging_tests/views.py",
+        "tests/requests_tests/tests.py",
+        "tests/test_client/views.py"
+      ],
+      "expected": [
+        "django/contrib/auth/views.py",
+        "django/contrib/sites/models.py",
+        "django/contrib/sites/requests.py",
+        "django/http/request.py",
+        "django/middleware/common.py",
+        "django/middleware/csrf.py",
+        "django/middleware/security.py",
+        "django/views/i18n.py",
+        "tests/logging_tests/views.py",
+        "tests/requests_tests/tests.py",
+        "tests/test_client/views.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "InvalidTemplateLibrary",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 23.3,
+      "input_tokens": 13913,
+      "output_tokens": 954,
+      "answered": [
+        "django/template/backends/django.py",
+        "django/template/engine.py",
+        "django/template/library.py"
+      ],
+      "expected": [
+        "django/template/backends/django.py",
+        "django/template/engine.py",
+        "django/template/library.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "WKTWriter",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 36.66,
+      "input_tokens": 45700,
+      "output_tokens": 1870,
+      "answered": [
+        "django/contrib/gis/geos/geometry.py",
+        "django/contrib/gis/geos/prototypes/io.py",
+        "tests/gis_tests/geos_tests/test_io.py"
+      ],
+      "expected": [
+        "django/contrib/gis/geos/geometry.py",
+        "django/contrib/gis/geos/prototypes/io.py",
+        "tests/gis_tests/geos_tests/test_io.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "autodiscover_modules",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 24.07,
+      "input_tokens": 31536,
+      "output_tokens": 1465,
+      "answered": [
+        "django/contrib/admin/__init__.py",
+        "django/contrib/admin/apps.py",
+        "tests/admin_autodiscover/tests.py",
+        "tests/utils_tests/test_module_loading.py"
+      ],
+      "expected": [
+        "django/contrib/admin/__init__.py",
+        "django/contrib/admin/apps.py",
+        "tests/admin_autodiscover/tests.py",
+        "tests/utils_tests/test_module_loading.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "backwards_plan",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 28.46,
+      "input_tokens": 29536,
+      "output_tokens": 1558,
+      "answered": [
+        "django/core/management/base.py",
+        "django/core/management/commands/migrate.py",
+        "django/db/migrations/executor.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_graph.py"
+      ],
+      "expected": [
+        "django/core/management/base.py",
+        "django/core/management/commands/migrate.py",
+        "django/db/migrations/executor.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_graph.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "base64_hmac",
+      "f1": 0.3077,
+      "exact": false,
+      "seconds": 36.05,
+      "input_tokens": 57782,
+      "output_tokens": 2036,
+      "answered": [
+        "django/core/signing.py",
+        "tests/signing/tests.py"
+      ],
+      "expected": [
+        "django/contrib/auth/__init__.py",
+        "django/core/checks/security/csrf.py",
+        "django/core/checks/urls.py",
+        "django/core/signing.py",
+        "django/db/models/expressions.py",
+        "django/template/base.py",
+        "django/utils/inspect.py",
+        "tests/basic/tests.py",
+        "tests/signing/tests.py",
+        "tests/template_tests/syntax_tests/i18n/test_blocktranslate.py",
+        "tests/template_tests/syntax_tests/i18n/test_translate.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "build_lookup",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 27.48,
+      "input_tokens": 23153,
+      "output_tokens": 1315,
+      "answered": [
+        "django/db/models/query_utils.py",
+        "django/db/models/sql/query.py",
+        "tests/lookup/tests.py"
+      ],
+      "expected": [
+        "django/db/models/query_utils.py",
+        "django/db/models/sql/query.py",
+        "tests/lookup/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "format_html_join",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 33.85,
+      "input_tokens": 37827,
+      "output_tokens": 2119,
+      "answered": [
+        "django/contrib/admin/helpers.py",
+        "django/contrib/auth/password_validation.py",
+        "django/forms/utils.py",
+        "django/forms/widgets.py",
+        "tests/forms_tests/tests/test_utils.py",
+        "tests/utils_tests/test_html.py"
+      ],
+      "expected": [
+        "django/contrib/admin/helpers.py",
+        "django/contrib/auth/password_validation.py",
+        "django/forms/utils.py",
+        "django/forms/widgets.py",
+        "tests/forms_tests/tests/test_utils.py",
+        "tests/utils_tests/test_html.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "func_supports_parameter",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 38.73,
+      "input_tokens": 60696,
+      "output_tokens": 2378,
+      "answered": [
+        "django/contrib/admin/views/main.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_filters/tests.py",
+        "tests/modeladmin/tests.py",
+        "tests/utils_tests/test_inspect.py"
+      ],
+      "expected": [
+        "django/contrib/admin/views/main.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_filters/tests.py",
+        "tests/modeladmin/tests.py",
+        "tests/utils_tests/test_inspect.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_branch",
+      "f1": 0.8,
+      "exact": false,
+      "seconds": 18.99,
+      "input_tokens": 26582,
+      "output_tokens": 1192,
+      "answered": [
+        "docs/conf.py",
+        "tests/sphinx/test_github_links.py"
+      ],
+      "expected": [
+        "docs/_ext/github_links.py",
+        "docs/conf.py",
+        "tests/sphinx/test_github_links.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_changelist",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 35.0,
+      "input_tokens": 59184,
+      "output_tokens": 2102,
+      "answered": [
+        "django/contrib/admin/options.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_changelist/tests.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/options.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_changelist/tests.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_elided_page_range",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 33.63,
+      "input_tokens": 29126,
+      "output_tokens": 1992,
+      "answered": [
+        "django/contrib/admin/options.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "tests/admin_changelist/tests.py",
+        "tests/pagination/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/options.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "tests/admin_changelist/tests.py",
+        "tests/pagination/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_fields_from_path",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 34.96,
+      "input_tokens": 46129,
+      "output_tokens": 2096,
+      "answered": [
+        "django/contrib/admin/checks.py",
+        "django/contrib/admin/helpers.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "django/contrib/admin/utils.py",
+        "django/contrib/admin/views/main.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_utils/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/checks.py",
+        "django/contrib/admin/helpers.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "django/contrib/admin/utils.py",
+        "django/contrib/admin/views/main.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_utils/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_hasher",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 39.35,
+      "input_tokens": 67181,
+      "output_tokens": 1835,
+      "answered": [
+        "django/contrib/auth/base_user.py",
+        "django/contrib/auth/forms.py",
+        "django/contrib/auth/hashers.py",
+        "django/contrib/auth/models.py",
+        "tests/auth_tests/test_forms.py",
+        "tests/auth_tests/test_hashers.py",
+        "tests/auth_tests/test_models.py"
+      ],
+      "expected": [
+        "django/contrib/auth/base_user.py",
+        "django/contrib/auth/forms.py",
+        "django/contrib/auth/hashers.py",
+        "django/contrib/auth/models.py",
+        "tests/auth_tests/test_forms.py",
+        "tests/auth_tests/test_hashers.py",
+        "tests/auth_tests/test_models.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_inlines",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 22.86,
+      "input_tokens": 27505,
+      "output_tokens": 1498,
+      "answered": [
+        "django/contrib/admin/options.py",
+        "tests/generic_inline_admin/tests.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/options.py",
+        "tests/generic_inline_admin/tests.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_list_display_links",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 28.99,
+      "input_tokens": 64322,
+      "output_tokens": 2143,
+      "answered": [
+        "django/contrib/admin/options.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_changelist/tests.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/options.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_changelist/tests.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_lookups",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 44.3,
+      "input_tokens": 43426,
+      "output_tokens": 2380,
+      "answered": [
+        "django/db/models/fields/reverse_related.py",
+        "django/db/models/query_utils.py",
+        "django/db/models/sql/compiler.py",
+        "django/db/models/sql/query.py",
+        "tests/custom_lookups/tests.py",
+        "tests/gis_tests/rasterapp/test_rasterfield.py"
+      ],
+      "expected": [
+        "django/db/models/fields/reverse_related.py",
+        "django/db/models/query_utils.py",
+        "django/db/models/sql/compiler.py",
+        "django/db/models/sql/query.py",
+        "tests/custom_lookups/tests.py",
+        "tests/gis_tests/rasterapp/test_rasterfield.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_mod_func",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 32.77,
+      "input_tokens": 29883,
+      "output_tokens": 1657,
+      "answered": [
+        "django/contrib/admindocs/views.py",
+        "django/middleware/csrf.py",
+        "django/urls/resolvers.py",
+        "django/urls/utils.py",
+        "tests/urlpatterns_reverse/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admindocs/views.py",
+        "django/middleware/csrf.py",
+        "django/urls/resolvers.py",
+        "django/urls/utils.py",
+        "tests/urlpatterns_reverse/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_references",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 30.46,
+      "input_tokens": 33197,
+      "output_tokens": 1694,
+      "answered": [
+        "django/db/migrations/operations/fields.py",
+        "django/db/migrations/operations/models.py",
+        "django/db/migrations/state.py",
+        "django/db/migrations/utils.py",
+        "tests/migrations/test_state.py"
+      ],
+      "expected": [
+        "django/db/migrations/operations/fields.py",
+        "django/db/migrations/operations/models.py",
+        "django/db/migrations/state.py",
+        "django/db/migrations/utils.py",
+        "tests/migrations/test_state.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_resultclass",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 21.45,
+      "input_tokens": 20718,
+      "output_tokens": 1071,
+      "answered": [
+        "django/test/runner.py",
+        "tests/test_runner/test_debug_sql.py",
+        "tests/test_runner/test_discover_runner.py",
+        "tests/test_runner/tests.py"
+      ],
+      "expected": [
+        "django/test/runner.py",
+        "tests/test_runner/test_debug_sql.py",
+        "tests/test_runner/test_discover_runner.py",
+        "tests/test_runner/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "get_warning_for_invalid_pattern",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 29.55,
+      "input_tokens": 32707,
+      "output_tokens": 1828,
+      "answered": [
+        "django/core/checks/urls.py",
+        "django/urls/resolvers.py",
+        "tests/check_framework/test_urls.py"
+      ],
+      "expected": [
+        "django/core/checks/urls.py",
+        "django/urls/resolvers.py",
+        "tests/check_framework/test_urls.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "handle_uncaught_exception",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 34.28,
+      "input_tokens": 37202,
+      "output_tokens": 1992,
+      "answered": [
+        "django/contrib/staticfiles/handlers.py",
+        "django/core/handlers/asgi.py",
+        "django/core/handlers/exception.py",
+        "tests/file_uploads/tests.py"
+      ],
+      "expected": [
+        "django/contrib/staticfiles/handlers.py",
+        "django/core/handlers/asgi.py",
+        "django/core/handlers/exception.py",
+        "tests/file_uploads/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "has_table",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 38.8,
+      "input_tokens": 53626,
+      "output_tokens": 2101,
+      "answered": [
+        "django/core/management/commands/migrate.py",
+        "django/core/management/commands/showmigrations.py",
+        "django/db/migrations/executor.py",
+        "django/db/migrations/loader.py",
+        "django/db/migrations/recorder.py",
+        "tests/migrations/test_commands.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_loader.py"
+      ],
+      "expected": [
+        "django/core/management/commands/migrate.py",
+        "django/core/management/commands/showmigrations.py",
+        "django/db/migrations/executor.py",
+        "django/db/migrations/loader.py",
+        "django/db/migrations/recorder.py",
+        "tests/migrations/test_commands.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_loader.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "is_same_domain",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 21.48,
+      "input_tokens": 18377,
+      "output_tokens": 1041,
+      "answered": [
+        "django/http/request.py",
+        "django/middleware/csrf.py",
+        "django/test/testcases.py",
+        "tests/csrf_tests/tests.py",
+        "tests/utils_tests/test_http.py"
+      ],
+      "expected": [
+        "django/http/request.py",
+        "django/middleware/csrf.py",
+        "django/test/testcases.py",
+        "tests/csrf_tests/tests.py",
+        "tests/utils_tests/test_http.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "iter_test_cases",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 40.85,
+      "input_tokens": 48850,
+      "output_tokens": 2843,
+      "answered": [
+        "django/test/runner.py",
+        "django/test/utils.py",
+        "tests/test_runner/test_discover_runner.py",
+        "tests/test_runner/tests.py"
+      ],
+      "expected": [
+        "django/test/runner.py",
+        "django/test/utils.py",
+        "tests/test_runner/test_discover_runner.py",
+        "tests/test_runner/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "last_executed_query",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 23.82,
+      "input_tokens": 28418,
+      "output_tokens": 1508,
+      "answered": [
+        "django/db/backends/postgresql/base.py",
+        "django/db/backends/utils.py",
+        "tests/backends/sqlite/tests.py",
+        "tests/backends/tests.py"
+      ],
+      "expected": [
+        "django/db/backends/postgresql/base.py",
+        "django/db/backends/utils.py",
+        "tests/backends/sqlite/tests.py",
+        "tests/backends/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "load_disk",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 26.86,
+      "input_tokens": 21565,
+      "output_tokens": 1181,
+      "answered": [
+        "django/db/migrations/executor.py",
+        "django/db/migrations/loader.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_loader.py"
+      ],
+      "expected": [
+        "django/db/migrations/executor.py",
+        "django/db/migrations/loader.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_loader.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "log_deletion",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 23.54,
+      "input_tokens": 26701,
+      "output_tokens": 1413,
+      "answered": [
+        "django/contrib/admin/actions.py",
+        "django/contrib/admin/options.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/actions.py",
+        "django/contrib/admin/options.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "lookup_field",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 35.64,
+      "input_tokens": 55947,
+      "output_tokens": 2329,
+      "answered": [
+        "django/contrib/admin/helpers.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "tests/admin_utils/tests.py",
+        "tests/admin_views/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/helpers.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "tests/admin_utils/tests.py",
+        "tests/admin_views/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "model_format_dict",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 22.29,
+      "input_tokens": 15346,
+      "output_tokens": 1054,
+      "answered": [
+        "django/contrib/admin/actions.py",
+        "django/contrib/admin/options.py",
+        "django/contrib/admin/utils.py"
+      ],
+      "expected": [
+        "django/contrib/admin/actions.py",
+        "django/contrib/admin/options.py",
+        "django/contrib/admin/utils.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "paragraph",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 25.19,
+      "input_tokens": 29776,
+      "output_tokens": 1159,
+      "answered": [
+        "django/template/defaulttags.py",
+        "django/utils/lorem_ipsum.py",
+        "tests/utils_tests/test_lorem_ipsum.py"
+      ],
+      "expected": [
+        "django/template/defaulttags.py",
+        "django/utils/lorem_ipsum.py",
+        "tests/utils_tests/test_lorem_ipsum.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "parse_etags",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 30.28,
+      "input_tokens": 32731,
+      "output_tokens": 1683,
+      "answered": [
+        "django/middleware/http.py",
+        "django/utils/cache.py",
+        "django/views/decorators/http.py",
+        "tests/utils_tests/test_http.py"
+      ],
+      "expected": [
+        "django/middleware/http.py",
+        "django/utils/cache.py",
+        "django/views/decorators/http.py",
+        "tests/utils_tests/test_http.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "punycode",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 29.9,
+      "input_tokens": 37509,
+      "output_tokens": 1662,
+      "answered": [
+        "django/core/mail/backends/smtp.py",
+        "django/core/mail/message.py",
+        "django/core/mail/utils.py",
+        "tests/mail/tests.py"
+      ],
+      "expected": [
+        "django/core/mail/backends/smtp.py",
+        "django/core/mail/message.py",
+        "django/core/mail/utils.py",
+        "tests/mail/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "render_template",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 32.95,
+      "input_tokens": 30360,
+      "output_tokens": 1441,
+      "answered": [
+        "tests/staticfiles_tests/cases.py",
+        "tests/staticfiles_tests/test_storage.py",
+        "tests/staticfiles_tests/test_templatetags.py"
+      ],
+      "expected": [
+        "tests/staticfiles_tests/cases.py",
+        "tests/staticfiles_tests/test_storage.py",
+        "tests/staticfiles_tests/test_templatetags.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "start_django",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 14.46,
+      "input_tokens": 18114,
+      "output_tokens": 760,
+      "answered": [
+        "django/core/management/commands/runserver.py",
+        "django/utils/autoreload.py",
+        "tests/utils_tests/test_autoreload.py"
+      ],
+      "expected": [
+        "django/core/management/commands/runserver.py",
+        "django/utils/autoreload.py",
+        "tests/utils_tests/test_autoreload.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "static_template_snippet",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 19.48,
+      "input_tokens": 21604,
+      "output_tokens": 1158,
+      "answered": [
+        "tests/staticfiles_tests/cases.py",
+        "tests/staticfiles_tests/test_storage.py",
+        "tests/staticfiles_tests/test_templatetags.py"
+      ],
+      "expected": [
+        "tests/staticfiles_tests/cases.py",
+        "tests/staticfiles_tests/test_storage.py",
+        "tests/staticfiles_tests/test_templatetags.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "strip_tags",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 28.82,
+      "input_tokens": 28162,
+      "output_tokens": 1484,
+      "answered": [
+        "django/template/defaultfilters.py",
+        "tests/template_tests/filter_tests/test_striptags.py",
+        "tests/utils_tests/test_html.py"
+      ],
+      "expected": [
+        "django/template/defaultfilters.py",
+        "tests/template_tests/filter_tests/test_striptags.py",
+        "tests/utils_tests/test_html.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "timeuntil",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 27.96,
+      "input_tokens": 41032,
+      "output_tokens": 1693,
+      "answered": [
+        "django/contrib/humanize/templatetags/humanize.py",
+        "django/template/defaultfilters.py",
+        "tests/template_tests/filter_tests/test_timeuntil.py",
+        "tests/utils_tests/test_timesince.py"
+      ],
+      "expected": [
+        "django/contrib/humanize/templatetags/humanize.py",
+        "django/template/defaultfilters.py",
+        "tests/template_tests/filter_tests/test_timeuntil.py",
+        "tests/utils_tests/test_timesince.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "graph",
+      "name": "token_kwargs",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 21.28,
+      "input_tokens": 18881,
+      "output_tokens": 1303,
+      "answered": [
+        "django/contrib/admin/templatetags/base.py",
+        "django/template/defaulttags.py",
+        "django/template/library.py",
+        "django/template/loader_tags.py",
+        "django/templatetags/i18n.py"
+      ],
+      "expected": [
+        "django/contrib/admin/templatetags/base.py",
+        "django/template/defaulttags.py",
+        "django/template/library.py",
+        "django/template/loader_tags.py",
+        "django/templatetags/i18n.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "ASGIHandler",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 29.04,
+      "input_tokens": 17450,
+      "output_tokens": 1612,
+      "answered": [
+        "django/core/asgi.py",
+        "tests/asgi/tests.py",
+        "tests/staticfiles_tests/test_handlers.py"
+      ],
+      "expected": [
+        "django/core/asgi.py",
+        "tests/asgi/tests.py",
+        "tests/staticfiles_tests/test_handlers.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "DisallowedHost",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 33.49,
+      "input_tokens": 27280,
+      "output_tokens": 1424,
+      "answered": [
+        "django/contrib/auth/views.py",
+        "django/contrib/sites/models.py",
+        "django/contrib/sites/requests.py",
+        "django/http/request.py",
+        "django/middleware/common.py",
+        "django/middleware/csrf.py",
+        "django/middleware/security.py",
+        "django/views/i18n.py",
+        "tests/logging_tests/views.py",
+        "tests/requests_tests/tests.py",
+        "tests/test_client/views.py"
+      ],
+      "expected": [
+        "django/contrib/auth/views.py",
+        "django/contrib/sites/models.py",
+        "django/contrib/sites/requests.py",
+        "django/http/request.py",
+        "django/middleware/common.py",
+        "django/middleware/csrf.py",
+        "django/middleware/security.py",
+        "django/views/i18n.py",
+        "tests/logging_tests/views.py",
+        "tests/requests_tests/tests.py",
+        "tests/test_client/views.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "InvalidTemplateLibrary",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 26.82,
+      "input_tokens": 12551,
+      "output_tokens": 1050,
+      "answered": [
+        "django/template/backends/django.py",
+        "django/template/engine.py",
+        "django/template/library.py"
+      ],
+      "expected": [
+        "django/template/backends/django.py",
+        "django/template/engine.py",
+        "django/template/library.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "WKTWriter",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 23.2,
+      "input_tokens": 13624,
+      "output_tokens": 1254,
+      "answered": [
+        "django/contrib/gis/geos/geometry.py",
+        "django/contrib/gis/geos/prototypes/io.py",
+        "tests/gis_tests/geos_tests/test_io.py"
+      ],
+      "expected": [
+        "django/contrib/gis/geos/geometry.py",
+        "django/contrib/gis/geos/prototypes/io.py",
+        "tests/gis_tests/geos_tests/test_io.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "autodiscover_modules",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 13.96,
+      "input_tokens": 5956,
+      "output_tokens": 627,
+      "answered": [
+        "django/contrib/admin/__init__.py",
+        "django/contrib/admin/apps.py",
+        "tests/admin_autodiscover/tests.py",
+        "tests/utils_tests/test_module_loading.py"
+      ],
+      "expected": [
+        "django/contrib/admin/__init__.py",
+        "django/contrib/admin/apps.py",
+        "tests/admin_autodiscover/tests.py",
+        "tests/utils_tests/test_module_loading.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "backwards_plan",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 24.51,
+      "input_tokens": 13812,
+      "output_tokens": 1113,
+      "answered": [
+        "django/core/management/base.py",
+        "django/core/management/commands/migrate.py",
+        "django/db/migrations/executor.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_graph.py"
+      ],
+      "expected": [
+        "django/core/management/base.py",
+        "django/core/management/commands/migrate.py",
+        "django/db/migrations/executor.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_graph.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "base64_hmac",
+      "f1": 0.3077,
+      "exact": false,
+      "seconds": 19.04,
+      "input_tokens": 12740,
+      "output_tokens": 815,
+      "answered": [
+        "django/core/signing.py",
+        "tests/signing/tests.py"
+      ],
+      "expected": [
+        "django/contrib/auth/__init__.py",
+        "django/core/checks/security/csrf.py",
+        "django/core/checks/urls.py",
+        "django/core/signing.py",
+        "django/db/models/expressions.py",
+        "django/template/base.py",
+        "django/utils/inspect.py",
+        "tests/basic/tests.py",
+        "tests/signing/tests.py",
+        "tests/template_tests/syntax_tests/i18n/test_blocktranslate.py",
+        "tests/template_tests/syntax_tests/i18n/test_translate.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "build_lookup",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 25.53,
+      "input_tokens": 11632,
+      "output_tokens": 1119,
+      "answered": [
+        "django/db/models/query_utils.py",
+        "django/db/models/sql/query.py",
+        "tests/lookup/tests.py"
+      ],
+      "expected": [
+        "django/db/models/query_utils.py",
+        "django/db/models/sql/query.py",
+        "tests/lookup/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "format_html_join",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 26.24,
+      "input_tokens": 13522,
+      "output_tokens": 1506,
+      "answered": [
+        "django/contrib/admin/helpers.py",
+        "django/contrib/auth/password_validation.py",
+        "django/forms/utils.py",
+        "django/forms/widgets.py",
+        "tests/forms_tests/tests/test_utils.py",
+        "tests/utils_tests/test_html.py"
+      ],
+      "expected": [
+        "django/contrib/admin/helpers.py",
+        "django/contrib/auth/password_validation.py",
+        "django/forms/utils.py",
+        "django/forms/widgets.py",
+        "tests/forms_tests/tests/test_utils.py",
+        "tests/utils_tests/test_html.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "func_supports_parameter",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 19.72,
+      "input_tokens": 15113,
+      "output_tokens": 956,
+      "answered": [
+        "django/contrib/admin/views/main.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_filters/tests.py",
+        "tests/modeladmin/tests.py",
+        "tests/utils_tests/test_inspect.py"
+      ],
+      "expected": [
+        "django/contrib/admin/views/main.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_filters/tests.py",
+        "tests/modeladmin/tests.py",
+        "tests/utils_tests/test_inspect.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_branch",
+      "f1": 0.8,
+      "exact": false,
+      "seconds": 14.56,
+      "input_tokens": 10254,
+      "output_tokens": 498,
+      "answered": [
+        "docs/conf.py",
+        "tests/sphinx/test_github_links.py"
+      ],
+      "expected": [
+        "docs/_ext/github_links.py",
+        "docs/conf.py",
+        "tests/sphinx/test_github_links.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_changelist",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 31.39,
+      "input_tokens": 36700,
+      "output_tokens": 1559,
+      "answered": [
+        "django/contrib/admin/options.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_changelist/tests.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/options.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_changelist/tests.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_elided_page_range",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 31.29,
+      "input_tokens": 16108,
+      "output_tokens": 1265,
+      "answered": [
+        "django/contrib/admin/options.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "tests/admin_changelist/tests.py",
+        "tests/pagination/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/options.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "tests/admin_changelist/tests.py",
+        "tests/pagination/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_fields_from_path",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 49.59,
+      "input_tokens": 30441,
+      "output_tokens": 2700,
+      "answered": [
+        "django/contrib/admin/checks.py",
+        "django/contrib/admin/helpers.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "django/contrib/admin/utils.py",
+        "django/contrib/admin/views/main.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_utils/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/checks.py",
+        "django/contrib/admin/helpers.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "django/contrib/admin/utils.py",
+        "django/contrib/admin/views/main.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_utils/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_hasher",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 27.81,
+      "input_tokens": 22165,
+      "output_tokens": 1545,
+      "answered": [
+        "django/contrib/auth/base_user.py",
+        "django/contrib/auth/forms.py",
+        "django/contrib/auth/hashers.py",
+        "django/contrib/auth/models.py",
+        "tests/auth_tests/test_forms.py",
+        "tests/auth_tests/test_hashers.py",
+        "tests/auth_tests/test_models.py"
+      ],
+      "expected": [
+        "django/contrib/auth/base_user.py",
+        "django/contrib/auth/forms.py",
+        "django/contrib/auth/hashers.py",
+        "django/contrib/auth/models.py",
+        "tests/auth_tests/test_forms.py",
+        "tests/auth_tests/test_hashers.py",
+        "tests/auth_tests/test_models.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_inlines",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 24.82,
+      "input_tokens": 9921,
+      "output_tokens": 892,
+      "answered": [
+        "django/contrib/admin/options.py",
+        "tests/generic_inline_admin/tests.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/options.py",
+        "tests/generic_inline_admin/tests.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_list_display_links",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 29.54,
+      "input_tokens": 26262,
+      "output_tokens": 1175,
+      "answered": [
+        "django/contrib/admin/options.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_changelist/tests.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/options.py",
+        "tests/admin_changelist/test_date_hierarchy.py",
+        "tests/admin_changelist/tests.py",
+        "tests/admin_filters/tests.py",
+        "tests/admin_views/test_templatetags.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_lookups",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 29.43,
+      "input_tokens": 13902,
+      "output_tokens": 1700,
+      "answered": [
+        "django/db/models/fields/reverse_related.py",
+        "django/db/models/query_utils.py",
+        "django/db/models/sql/compiler.py",
+        "django/db/models/sql/query.py",
+        "tests/custom_lookups/tests.py",
+        "tests/gis_tests/rasterapp/test_rasterfield.py"
+      ],
+      "expected": [
+        "django/db/models/fields/reverse_related.py",
+        "django/db/models/query_utils.py",
+        "django/db/models/sql/compiler.py",
+        "django/db/models/sql/query.py",
+        "tests/custom_lookups/tests.py",
+        "tests/gis_tests/rasterapp/test_rasterfield.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_mod_func",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 33.44,
+      "input_tokens": 23814,
+      "output_tokens": 1400,
+      "answered": [
+        "django/contrib/admindocs/views.py",
+        "django/middleware/csrf.py",
+        "django/urls/resolvers.py",
+        "django/urls/utils.py",
+        "tests/urlpatterns_reverse/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admindocs/views.py",
+        "django/middleware/csrf.py",
+        "django/urls/resolvers.py",
+        "django/urls/utils.py",
+        "tests/urlpatterns_reverse/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_references",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 25.94,
+      "input_tokens": 19909,
+      "output_tokens": 1329,
+      "answered": [
+        "django/db/migrations/operations/fields.py",
+        "django/db/migrations/operations/models.py",
+        "django/db/migrations/state.py",
+        "django/db/migrations/utils.py",
+        "tests/migrations/test_state.py"
+      ],
+      "expected": [
+        "django/db/migrations/operations/fields.py",
+        "django/db/migrations/operations/models.py",
+        "django/db/migrations/state.py",
+        "django/db/migrations/utils.py",
+        "tests/migrations/test_state.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_resultclass",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 24.68,
+      "input_tokens": 11828,
+      "output_tokens": 865,
+      "answered": [
+        "django/test/runner.py",
+        "tests/test_runner/test_debug_sql.py",
+        "tests/test_runner/test_discover_runner.py",
+        "tests/test_runner/tests.py"
+      ],
+      "expected": [
+        "django/test/runner.py",
+        "tests/test_runner/test_debug_sql.py",
+        "tests/test_runner/test_discover_runner.py",
+        "tests/test_runner/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "get_warning_for_invalid_pattern",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 26.48,
+      "input_tokens": 19317,
+      "output_tokens": 1201,
+      "answered": [
+        "django/core/checks/urls.py",
+        "django/urls/resolvers.py",
+        "tests/check_framework/test_urls.py"
+      ],
+      "expected": [
+        "django/core/checks/urls.py",
+        "django/urls/resolvers.py",
+        "tests/check_framework/test_urls.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "handle_uncaught_exception",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 20.76,
+      "input_tokens": 9902,
+      "output_tokens": 1471,
+      "answered": [
+        "django/contrib/staticfiles/handlers.py",
+        "django/core/handlers/asgi.py",
+        "django/core/handlers/exception.py",
+        "tests/file_uploads/tests.py"
+      ],
+      "expected": [
+        "django/contrib/staticfiles/handlers.py",
+        "django/core/handlers/asgi.py",
+        "django/core/handlers/exception.py",
+        "tests/file_uploads/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "has_table",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 57.35,
+      "input_tokens": 37619,
+      "output_tokens": 3470,
+      "answered": [
+        "django/core/management/commands/migrate.py",
+        "django/core/management/commands/showmigrations.py",
+        "django/db/migrations/executor.py",
+        "django/db/migrations/loader.py",
+        "django/db/migrations/recorder.py",
+        "tests/migrations/test_commands.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_loader.py"
+      ],
+      "expected": [
+        "django/core/management/commands/migrate.py",
+        "django/core/management/commands/showmigrations.py",
+        "django/db/migrations/executor.py",
+        "django/db/migrations/loader.py",
+        "django/db/migrations/recorder.py",
+        "tests/migrations/test_commands.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_loader.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "is_same_domain",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 20.62,
+      "input_tokens": 13541,
+      "output_tokens": 942,
+      "answered": [
+        "django/http/request.py",
+        "django/middleware/csrf.py",
+        "django/test/testcases.py",
+        "tests/csrf_tests/tests.py",
+        "tests/utils_tests/test_http.py"
+      ],
+      "expected": [
+        "django/http/request.py",
+        "django/middleware/csrf.py",
+        "django/test/testcases.py",
+        "tests/csrf_tests/tests.py",
+        "tests/utils_tests/test_http.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "iter_test_cases",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 40.1,
+      "input_tokens": 29020,
+      "output_tokens": 2065,
+      "answered": [
+        "django/test/runner.py",
+        "django/test/utils.py",
+        "tests/test_runner/test_discover_runner.py",
+        "tests/test_runner/tests.py"
+      ],
+      "expected": [
+        "django/test/runner.py",
+        "django/test/utils.py",
+        "tests/test_runner/test_discover_runner.py",
+        "tests/test_runner/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "last_executed_query",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 29.58,
+      "input_tokens": 19925,
+      "output_tokens": 1567,
+      "answered": [
+        "django/db/backends/postgresql/base.py",
+        "django/db/backends/utils.py",
+        "tests/backends/sqlite/tests.py",
+        "tests/backends/tests.py"
+      ],
+      "expected": [
+        "django/db/backends/postgresql/base.py",
+        "django/db/backends/utils.py",
+        "tests/backends/sqlite/tests.py",
+        "tests/backends/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "load_disk",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 26.97,
+      "input_tokens": 17310,
+      "output_tokens": 1030,
+      "answered": [
+        "django/db/migrations/executor.py",
+        "django/db/migrations/loader.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_loader.py"
+      ],
+      "expected": [
+        "django/db/migrations/executor.py",
+        "django/db/migrations/loader.py",
+        "tests/migrations/test_executor.py",
+        "tests/migrations/test_loader.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "log_deletion",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 13.15,
+      "input_tokens": 5422,
+      "output_tokens": 668,
+      "answered": [
+        "django/contrib/admin/actions.py",
+        "django/contrib/admin/options.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/actions.py",
+        "django/contrib/admin/options.py",
+        "tests/modeladmin/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "lookup_field",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 28.27,
+      "input_tokens": 23492,
+      "output_tokens": 1528,
+      "answered": [
+        "django/contrib/admin/helpers.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "tests/admin_utils/tests.py",
+        "tests/admin_views/tests.py"
+      ],
+      "expected": [
+        "django/contrib/admin/helpers.py",
+        "django/contrib/admin/templatetags/admin_list.py",
+        "tests/admin_utils/tests.py",
+        "tests/admin_views/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "model_format_dict",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 26.38,
+      "input_tokens": 11434,
+      "output_tokens": 837,
+      "answered": [
+        "django/contrib/admin/actions.py",
+        "django/contrib/admin/options.py",
+        "django/contrib/admin/utils.py"
+      ],
+      "expected": [
+        "django/contrib/admin/actions.py",
+        "django/contrib/admin/options.py",
+        "django/contrib/admin/utils.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "paragraph",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 109.76,
+      "input_tokens": 25369,
+      "output_tokens": 1083,
+      "answered": [
+        "django/template/defaulttags.py",
+        "django/utils/lorem_ipsum.py",
+        "tests/utils_tests/test_lorem_ipsum.py"
+      ],
+      "expected": [
+        "django/template/defaulttags.py",
+        "django/utils/lorem_ipsum.py",
+        "tests/utils_tests/test_lorem_ipsum.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "parse_etags",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 14.35,
+      "input_tokens": 11467,
+      "output_tokens": 652,
+      "answered": [
+        "django/middleware/http.py",
+        "django/utils/cache.py",
+        "django/views/decorators/http.py",
+        "tests/utils_tests/test_http.py"
+      ],
+      "expected": [
+        "django/middleware/http.py",
+        "django/utils/cache.py",
+        "django/views/decorators/http.py",
+        "tests/utils_tests/test_http.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "punycode",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 29.28,
+      "input_tokens": 16251,
+      "output_tokens": 1140,
+      "answered": [
+        "django/core/mail/backends/smtp.py",
+        "django/core/mail/message.py",
+        "django/core/mail/utils.py",
+        "tests/mail/tests.py"
+      ],
+      "expected": [
+        "django/core/mail/backends/smtp.py",
+        "django/core/mail/message.py",
+        "django/core/mail/utils.py",
+        "tests/mail/tests.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "render_template",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 29.77,
+      "input_tokens": 25369,
+      "output_tokens": 1488,
+      "answered": [
+        "tests/staticfiles_tests/cases.py",
+        "tests/staticfiles_tests/test_storage.py",
+        "tests/staticfiles_tests/test_templatetags.py"
+      ],
+      "expected": [
+        "tests/staticfiles_tests/cases.py",
+        "tests/staticfiles_tests/test_storage.py",
+        "tests/staticfiles_tests/test_templatetags.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "start_django",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 14.53,
+      "input_tokens": 7856,
+      "output_tokens": 578,
+      "answered": [
+        "django/core/management/commands/runserver.py",
+        "django/utils/autoreload.py",
+        "tests/utils_tests/test_autoreload.py"
+      ],
+      "expected": [
+        "django/core/management/commands/runserver.py",
+        "django/utils/autoreload.py",
+        "tests/utils_tests/test_autoreload.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "static_template_snippet",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 31.86,
+      "input_tokens": 21959,
+      "output_tokens": 1195,
+      "answered": [
+        "tests/staticfiles_tests/cases.py",
+        "tests/staticfiles_tests/test_storage.py",
+        "tests/staticfiles_tests/test_templatetags.py"
+      ],
+      "expected": [
+        "tests/staticfiles_tests/cases.py",
+        "tests/staticfiles_tests/test_storage.py",
+        "tests/staticfiles_tests/test_templatetags.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "strip_tags",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 25.33,
+      "input_tokens": 11851,
+      "output_tokens": 1133,
+      "answered": [
+        "django/template/defaultfilters.py",
+        "tests/template_tests/filter_tests/test_striptags.py",
+        "tests/utils_tests/test_html.py"
+      ],
+      "expected": [
+        "django/template/defaultfilters.py",
+        "tests/template_tests/filter_tests/test_striptags.py",
+        "tests/utils_tests/test_html.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "timeuntil",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 32.05,
+      "input_tokens": 24482,
+      "output_tokens": 1427,
+      "answered": [
+        "django/contrib/humanize/templatetags/humanize.py",
+        "django/template/defaultfilters.py",
+        "tests/template_tests/filter_tests/test_timeuntil.py",
+        "tests/utils_tests/test_timesince.py"
+      ],
+      "expected": [
+        "django/contrib/humanize/templatetags/humanize.py",
+        "django/template/defaultfilters.py",
+        "tests/template_tests/filter_tests/test_timeuntil.py",
+        "tests/utils_tests/test_timesince.py"
+      ],
+      "error": ""
+    },
+    {
+      "condition": "grep",
+      "name": "token_kwargs",
+      "f1": 1.0,
+      "exact": true,
+      "seconds": 29.66,
+      "input_tokens": 18047,
+      "output_tokens": 1313,
+      "answered": [
+        "django/contrib/admin/templatetags/base.py",
+        "django/template/defaulttags.py",
+        "django/template/library.py",
+        "django/template/loader_tags.py",
+        "django/templatetags/i18n.py"
+      ],
+      "expected": [
+        "django/contrib/admin/templatetags/base.py",
+        "django/template/defaulttags.py",
+        "django/template/library.py",
+        "django/template/loader_tags.py",
+        "django/templatetags/i18n.py"
+      ],
+      "error": ""
+    }
+  ]
+}

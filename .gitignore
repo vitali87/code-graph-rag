@@ -50,3 +50,8 @@ evals/oracles/scala_oracle/.bsp/
 
 # Runtime call traces (pytest --cgr-trace default output)
 cgr-trace.jsonl
+
+# Indexing-benchmark corpus checkouts (pinned clones, see evals/indexing_bench.py)
+evals/results/corpora/
+evals/results/**/agentic_qa*records*.jsonl
+evals/results/logs/
