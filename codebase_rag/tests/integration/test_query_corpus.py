@@ -17,6 +17,11 @@ pytestmark = [pytest.mark.integration]
 
 _FN = NodeLabel.FUNCTION.value
 _MOD = NodeLabel.MODULE.value
+_CLASS = NodeLabel.CLASS.value
+_METHOD = NodeLabel.METHOD.value
+_PATTERN = NodeLabel.PATTERN.value
+_CODE_SMELL = NodeLabel.CODE_SMELL.value
+_SECURITY_ISSUE = NodeLabel.SECURITY_ISSUE.value
 _QN = "qualified_name"
 
 # (query, params, expected column names). Params use values the seeded
@@ -112,6 +117,61 @@ def seeded(graph_ingestor: GraphIngestor) -> GraphIngestor:
             "extension": ".md",
         },
     )
+    # A second File that satisfies CYPHER_EXAMPLE_PYTHON_FILES'
+    # `extension = '.py'` and CYPHER_EXAMPLE_FILES_IN_FOLDER's
+    # `path STARTS WITH 'services'`, converting both from parse-only to a
+    # real column assertion.
+    graph_ingestor.ensure_node_batch(
+        NodeLabel.FILE.value,
+        {
+            "absolute_path": "/tmp/alpha/services/handler.py",
+            "path": "services/handler.py",
+            "name": "handler.py",
+            "extension": ".py",
+        },
+    )
+    # CYPHER_EXAMPLE_PROJECT_SCOPED filters on qualified_name STARTS WITH
+    # 'myproject.' and CYPHER_EXAMPLE_CLASS_METHODS filters on name =
+    # 'UserService'; one Class satisfies both literal predicates.
+    graph_ingestor.ensure_node_batch(
+        _CLASS,
+        {_QN: "myproject.services.UserService", "name": "UserService"},
+    )
+    graph_ingestor.ensure_node_batch(
+        _METHOD,
+        {_QN: "myproject.services.UserService.get_user", "name": "get_user"},
+    )
+    # CYPHER_EXAMPLE_FIND_PATTERN filters on p.name = 'singleton'.
+    graph_ingestor.ensure_node_batch(
+        _PATTERN,
+        {
+            _QN: "alpha.mod.pattern.singleton",
+            "name": "singleton",
+            "start_line": 10,
+            "message": "Singleton pattern detected",
+        },
+    )
+    # CYPHER_EXAMPLE_SECURITY_ISSUES and CYPHER_EXAMPLE_CODE_SMELLS carry no
+    # name filter -- any Module-anchored node of the right label satisfies
+    # them.
+    graph_ingestor.ensure_node_batch(
+        _SECURITY_ISSUE,
+        {
+            _QN: "alpha.mod.security.hardcoded_secret",
+            "name": "hardcoded-secret",
+            "start_line": 20,
+            "message": "Hardcoded secret found",
+        },
+    )
+    graph_ingestor.ensure_node_batch(
+        _CODE_SMELL,
+        {
+            _QN: "alpha.mod.smell.long_method",
+            "name": "long-method",
+            "start_line": 30,
+            "message": "Method is too long",
+        },
+    )
     graph_ingestor.flush_nodes()
     graph_ingestor.ensure_relationship_batch(
         (NodeLabel.PROJECT.value, "name", "alpha"),
@@ -122,6 +182,36 @@ def seeded(graph_ingestor: GraphIngestor) -> GraphIngestor:
         (_MOD, _QN, "alpha.mod"),
         RelationshipType.DEFINES.value,
         (_FN, _QN, "alpha.mod.fn"),
+    )
+    graph_ingestor.ensure_relationship_batch(
+        (NodeLabel.PROJECT.value, "name", "alpha"),
+        RelationshipType.CONTAINS_FILE.value,
+        (NodeLabel.FILE.value, "absolute_path", "/tmp/alpha/services/handler.py"),
+    )
+    graph_ingestor.ensure_relationship_batch(
+        (_MOD, _QN, "alpha.mod"),
+        RelationshipType.DEFINES.value,
+        (_CLASS, _QN, "myproject.services.UserService"),
+    )
+    graph_ingestor.ensure_relationship_batch(
+        (_CLASS, _QN, "myproject.services.UserService"),
+        RelationshipType.DEFINES_METHOD.value,
+        (_METHOD, _QN, "myproject.services.UserService.get_user"),
+    )
+    graph_ingestor.ensure_relationship_batch(
+        (_MOD, _QN, "alpha.mod"),
+        RelationshipType.IMPLEMENTS_PATTERN.value,
+        (_PATTERN, _QN, "alpha.mod.pattern.singleton"),
+    )
+    graph_ingestor.ensure_relationship_batch(
+        (_MOD, _QN, "alpha.mod"),
+        RelationshipType.HAS_VULNERABILITY.value,
+        (_SECURITY_ISSUE, _QN, "alpha.mod.security.hardcoded_secret"),
+    )
+    graph_ingestor.ensure_relationship_batch(
+        (_MOD, _QN, "alpha.mod"),
+        RelationshipType.HAS_SMELL.value,
+        (_CODE_SMELL, _QN, "alpha.mod.smell.long_method"),
     )
     graph_ingestor.flush_all()
     return graph_ingestor
