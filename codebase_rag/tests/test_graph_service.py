@@ -369,10 +369,28 @@ class TestEnsureConstraints:
 
         # One SHOW, two damage probes, a create-constraint and a
         # create-index per label, plus a name index per non-name-keyed label.
-        expected_queries = (
-            3 + len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(NODE_NAME_INDEXES)
-        )
+        expected_queries = 3 + len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(NODE_NAME_INDEXES)
         assert call_count == expected_queries
+
+    def test_continues_on_name_index_error(self) -> None:
+        # A failing name-index CREATE (e.g. the index already exists) must not
+        # abort the loop: every remaining name index is still attempted.
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed_queries: list[str] = []
+
+        def fail_first_name_index(query: str) -> list[dict]:
+            executed_queries.append(query)
+            if query == f"CREATE INDEX ON :{NODE_NAME_INDEXES[0]}(name);":
+                raise RuntimeError("Index already exists")
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=fail_first_name_index
+        ):
+            ingestor.ensure_constraints()
+
+        for label in NODE_NAME_INDEXES:
+            assert f"CREATE INDEX ON :{label}(name);" in executed_queries
 
 
 class TestLegacyPathKeyMigration:
