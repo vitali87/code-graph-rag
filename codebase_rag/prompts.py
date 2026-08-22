@@ -69,6 +69,7 @@ If a question cannot be expressed as a bounded Cypher pattern or as a single MAG
 
 def build_cypher_query_rules(procedure_catalog: str) -> str:
     return f"""**2. Critical Cypher Query Rules**
+
 {_CYPHER_RULES_BODY}
 
 **2b. Graph Algorithm Procedures**

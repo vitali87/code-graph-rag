@@ -1,7 +1,10 @@
 import pytest
 
 from codebase_rag.exceptions import LLMGenerationError
-from codebase_rag.prompts import build_graph_schema_and_rules
+from codebase_rag.prompts import (
+    _format_active_projects_block,
+    build_graph_schema_and_rules,
+)
 from codebase_rag.services.graph.memgraph import MemgraphDialect
 from codebase_rag.services.llm import _validate_call_procedures
 
@@ -25,6 +28,24 @@ def test_prompt_embeds_the_dialect_catalog() -> None:
 def test_prompt_does_not_name_a_specific_engine() -> None:
     out = build_graph_schema_and_rules(MemgraphDialect())
     assert "Memgraph" not in out
+
+
+@pytest.mark.parametrize(
+    "active_projects",
+    [None, [], ["alpha"], ["alpha", "beta"]],
+    ids=["none", "empty", "single", "multiple"],
+)
+def test_active_projects_block_does_not_name_a_specific_engine(
+    active_projects: list[str] | None,
+) -> None:
+    out = _format_active_projects_block(active_projects)
+    assert "Memgraph" not in out
+    assert "**Project Scope**" in out
+
+
+def test_active_projects_block_without_projects_calls_it_a_knowledge_graph() -> None:
+    out = _format_active_projects_block(None)
+    assert "This knowledge graph may contain multiple" in out
 
 
 def test_validate_call_procedures_allows_dialect_prefix() -> None:
