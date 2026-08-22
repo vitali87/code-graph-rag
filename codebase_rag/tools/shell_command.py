@@ -541,13 +541,47 @@ _ESCAPING_PATH_ARG = re.compile(r"(?:^|=)[/~]")
 def _noninteractive_write_form(parts: list[str]) -> bool:
     # Write-capable invocations of otherwise read-only commands: `sort -o` /
     # `--output[=]` writes a file, and uniq's SECOND positional operand is an
-    # output file (CodeRabbit review on PR #1388).
+    # output file -- counted through `--`, after which every argument is an
+    # operand (CodeRabbit and Greptile reviews on PR #1388).
     if parts[0] == "sort":
         return any(
             arg.startswith("-o") or arg.startswith("--output") for arg in parts[1:]
         )
     if parts[0] == "uniq":
-        return len([arg for arg in parts[1:] if not arg.startswith("-")]) > 1
+        operands = 0
+        operands_only = False
+        for arg in parts[1:]:
+            if not operands_only and arg == "--":
+                operands_only = True
+                continue
+            if operands_only or not arg.startswith("-"):
+                operands += 1
+        return operands > 1
+    return False
+
+
+_FOLLOW_LONG_FLAGS = ("--follow", "--dereference")
+_SHORT_CLUSTER = re.compile(r"-[A-Za-z]+")
+
+
+def _follows_symlinks(parts: list[str]) -> bool:
+    # Symlink-following traversal (`find -L .`, `rg -L pat .`, `ls -RL`)
+    # reads through outward symlinks the per-operand containment check never
+    # sees, because no explicit operand names the escaped target (Greptile
+    # review on PR #1388).
+    cmd = parts[0]
+    if cmd not in ("find", "rg", "ls"):
+        return False
+    for arg in parts[1:]:
+        if arg == "--":
+            break
+        if cmd == "find":
+            if arg in ("-L", "-follow"):
+                return True
+        elif arg in _FOLLOW_LONG_FLAGS or (
+            _SHORT_CLUSTER.fullmatch(arg) and "L" in arg
+        ):
+            return True
     return False
 
 
@@ -585,6 +619,10 @@ def _noninteractive_denial(command: str, project_root: Path) -> str | None:
             if _noninteractive_write_form(parts):
                 return te.COMMAND_NONINTERACTIVE_DENIED.format(
                     command=segment, reason=te.NONINTERACTIVE_WRITE_FORM
+                )
+            if _follows_symlinks(parts):
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_FOLLOW_SYMLINKS
                 )
             if _has_redirect_operators(parts):
                 return te.COMMAND_NONINTERACTIVE_DENIED.format(

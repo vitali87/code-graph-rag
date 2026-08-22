@@ -598,6 +598,50 @@ class TestNoninteractiveMode:
         assert result.return_code == 0, result.stderr
         assert "payload" in result.stdout
 
+    async def test_denies_uniq_output_after_double_dash(
+        self, temp_project_root: Path
+    ) -> None:
+        # `uniq -- input.txt -keep_me.txt` hides the output operand behind
+        # `--` (Greptile review on PR #1388).
+        keep = temp_project_root / "-keep_me.txt"
+        keep.write_text("hi", encoding="utf-8")
+        (temp_project_root / "input.txt").write_text("a\na\n", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "uniq -- input.txt -keep_me.txt")
+        assert result.return_code != 0
+        assert keep.read_text() == "hi"
+
+    async def test_denies_symlink_following_traversal_flags(
+        self, tmp_path: Path
+    ) -> None:
+        # `find -L .` / `rg -L pat .` follow an outward symlink DURING
+        # traversal, reaching files no explicit operand names (Greptile
+        # review on PR #1388).
+        root = tmp_path / "proj"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("OUTSIDE_SECRET", encoding="utf-8")
+        (root / "link").symlink_to(outside)
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        for cmd in (
+            "find -L .",
+            "find . -follow",
+            "rg -L OUTSIDE_SECRET .",
+            "rg --follow OUTSIDE_SECRET .",
+            "ls -RL .",
+            "ls --dereference link",
+        ):
+            result = await tool.function(mock_ctx, cmd)
+            assert result.return_code != 0, cmd
+            assert "OUTSIDE_SECRET" not in result.stdout, cmd
+
 
 class TestHasRedirectOperators:
     def test_output_redirect(self) -> None:

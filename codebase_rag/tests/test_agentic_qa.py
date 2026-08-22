@@ -333,3 +333,22 @@ class TestCollectCallSiteScopes:
         sites = self._sites("def caller_fn():\n    return default_factory()\n")
         (site,) = sites
         assert site.func == "caller_fn"
+
+
+def test_run_fingerprint_includes_backend_identity() -> None:
+    # The same model id served through a different provider, endpoint, or
+    # region has different latency and token behavior, so records from one
+    # backend must not resume into a run on another (Greptile review on
+    # PR #1388).
+    from codebase_rag.config import ModelConfig
+    from evals.agentic_qa import _run_fingerprint
+
+    base = ModelConfig(provider="anthropic", model_id="m1", endpoint=None)
+    other = ModelConfig(
+        provider="openai", model_id="m1", endpoint="https://proxy.example"
+    )
+    fp_base = _run_fingerprint("django", "abc", "calls", 2, 0, base)
+    fp_other = _run_fingerprint("django", "abc", "calls", 2, 0, other)
+    assert fp_base != fp_other
+    assert fp_base["provider"] == "anthropic"
+    assert fp_other["endpoint"] == "https://proxy.example"

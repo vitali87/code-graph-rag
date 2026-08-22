@@ -460,6 +460,34 @@ def summarize_qa_records(records: list[QARecord]) -> dict[str, float]:
     }
 
 
+def _run_fingerprint(
+    corpus: str,
+    commit: str,
+    qtype: str,
+    sample: int,
+    seed: int,
+    config: object,
+) -> dict[str, object]:
+    # Backend identity beyond the model id: the same model served through a
+    # different provider, endpoint, provider type, project, or region has
+    # different latency and token behavior, so records from one backend must
+    # never resume into a run on another (Greptile review on PR #1388). All
+    # fields are non-secret configuration.
+    return {
+        "corpus": corpus,
+        "commit": commit,
+        "qtype": qtype,
+        "sample": sample,
+        "seed": seed,
+        "model": getattr(config, "model_id", None),
+        "provider": getattr(config, "provider", None),
+        "endpoint": getattr(config, "endpoint", None),
+        "provider_type": getattr(config, "provider_type", None),
+        "project": getattr(config, "project_id", None),
+        "region": getattr(config, "region", None),
+    }
+
+
 def _init_records_file(
     records_path: Path, fingerprint: dict[str, object], resume: bool
 ) -> dict[str, list[QARecord]]:
@@ -595,14 +623,9 @@ def main(
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = "" if QType(qtype) is QType.CALLS else f"_{qtype}"
     records_path = out_dir / ec.AGENTIC_RECORDS_FILE.format(suffix=suffix)
-    fingerprint: dict[str, object] = {
-        "corpus": corpus,
-        "commit": spec.commit,
-        "qtype": qtype,
-        "sample": sample,
-        "seed": seed,
-        "model": settings.active_orchestrator_config.model_id,
-    }
+    fingerprint = _run_fingerprint(
+        corpus, spec.commit, qtype, sample, seed, settings.active_orchestrator_config
+    )
     prior = _init_records_file(records_path, fingerprint, resume)
     done = {(c, r["name"]) for c, rs in prior.items() for r in rs}
 
