@@ -8,6 +8,7 @@ for the MCP HTTP server by defaulting to a loopback bind.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -214,22 +215,40 @@ def test_the_security_guide_describes_the_loopback_default() -> None:
         "security.md must warn that a pre-fix ~/.cgr/docker-compose.yaml keeps "
         "its bare mappings; StackManager warns but does not migrate it"
     )
-    # ORDER is the whole point, not the presence of the command: a guide saying
-    # "delete the file, then run cgr daemon down" contains the same words and
-    # leaves the reader exposed. Compare positions rather than pinning the
-    # sentence, so rewording the guide does not break the test but reversing the
-    # steps does.
-    stop_at = doc.find("cgr daemon down")
-    delete_at = doc.find("delete the file")
-    assert stop_at != -1, (
-        "the remediation must stop the stack first: ensure_running() returns "
+    # Parse the remediation as an ORDERED LIST rather than hunting substrings.
+    # Position matching kept measuring the wrong occurrence, because the same
+    # paragraph names `cgr daemon up` both as the command that merely warns and
+    # as the re-render step. Numbered steps are unambiguous to a reader and to
+    # this test, which is why the guide states them that way.
+    anchor = "remediate in this order:"
+    assert anchor in doc, (
+        "security.md must introduce the remediation with a stable anchor so "
+        f"this guard reads the right list; expected {anchor!r}"
+    )
+    # Anchor the parse: the guide contains OTHER numbered lists (the security
+    # invariants), and matching numbered lines document-wide read those instead.
+    steps = re.findall(r"^\d+\. (.+)$", doc.split(anchor, 1)[1], flags=re.MULTILINE)
+    assert len(steps) >= 3, (
+        "security.md must give the remediation as numbered steps; prose lets "
+        "the stop/delete/re-render order drift without any test noticing"
+    )
+    stop, delete, rerender = steps[0], steps[1], steps[2]
+    assert "cgr daemon down" in stop, (
+        f"step 1 must stop the stack, got {stop!r}: ensure_running() returns "
         "early on a healthy stack, so deleting the compose file while it is up "
         "neither re-renders the file nor replaces the exposed containers"
     )
-    assert delete_at != -1, "the remediation must tell the reader to delete the file"
-    assert stop_at < delete_at, (
-        "security.md tells the reader to delete the compose file before "
-        "stopping the stack, which does nothing: the running containers keep "
-        "their old bindings and 'cgr daemon up' returns early without "
-        "re-rendering"
+    assert "delete" in delete, f"step 2 must delete the compose file, got {delete!r}"
+    assert "cgr daemon up" in rerender, (
+        f"step 3 must re-render, got {rerender!r}; stopping and deleting alone "
+        "leaves no compose file at all"
+    )
+    # The manual alternative needs its OWN sentence checked: `127.0.0.1:` also
+    # appears earlier, where the guide tells the reader what to look for, so a
+    # document-wide search stays green even if the remedy itself is deleted.
+    tail = doc.split(anchor, 1)[1]
+    manual = next((line for line in tail.splitlines() if "by hand" in line), "")
+    assert f"{LOOPBACK}:" in manual, (
+        "security.md must offer the manual fix of adding the "
+        f"'{LOOPBACK}:' prefix by hand, for a compose file carrying local edits"
     )
