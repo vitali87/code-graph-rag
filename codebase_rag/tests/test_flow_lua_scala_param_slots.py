@@ -180,3 +180,47 @@ def test_lua_named_parameter_before_a_vararg_still_maps(tmp_path: Path) -> None:
         'local function caller() local s = os.getenv("SECRET") logIt(s) end\n'
     )
     assert (_ENV, _STDOUT) in _flows(tmp_path, "lua", source)
+
+
+def test_a_scala_unit_method_does_not_return_its_last_expression(
+    tmp_path: Path,
+) -> None:
+    # `Unit` DISCARDS the body's value, so summarising the trailing expression
+    # would invent a return the caller can never observe and report a flow that
+    # does not exist. The read still happens; it just does not reach the sink
+    # through the call's result.
+    source = (
+        "object M {\n"
+        '  def hold(): Unit = { System.getenv("SECRET") }\n'
+        "  def caller(): Unit = { println(hold()) }\n"
+        "}\n"
+    )
+    assert (_ENV, _STDOUT) not in _flows(tmp_path, "scala", source)
+
+
+def test_a_scala_method_returning_a_value_still_composes(tmp_path: Path) -> None:
+    # The control for the Unit rule: the same body under a String return type
+    # MUST still reach the sink, or the exclusion would be silently swallowing
+    # real flows.
+    source = (
+        "object M {\n"
+        '  def fetch(): String = { System.getenv("SECRET") }\n'
+        "  def caller(): Unit = { println(fetch()) }\n"
+        "}\n"
+    )
+    assert (_ENV, _STDOUT) in _flows(tmp_path, "scala", source)
+
+
+def test_scala_3_indented_body_composes(tmp_path: Path) -> None:
+    # Scala 3 significant indentation spells the body `indented_block` rather
+    # than `block`; matching only the braced form would silently miss every
+    # Scala 3 helper.
+    source = (
+        "object M:\n"
+        "  def forward(v: String): String =\n"
+        "    v\n"
+        "  def caller(): Unit =\n"
+        '    val s = System.getenv("SECRET")\n'
+        "    println(forward(s))\n"
+    )
+    assert (_ENV, _STDOUT) in _flows(tmp_path, "scala", source)

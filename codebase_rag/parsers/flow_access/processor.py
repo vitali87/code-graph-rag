@@ -217,10 +217,24 @@ def _scala_body_value(func_node: Node) -> Node | None:
     # Scala has no return keyword in idiomatic code: a def's BODY is its value,
     # whether that is a bare expression (`def f(v: String) = v`), a call, or a
     # block whose final expression is the result (issue #1365).
+    #
+    # A def DECLARED `Unit` is the exception: its body's value is discarded, so
+    # summarising it would invent a return the caller can never observe and a
+    # sink consuming `f()` would report a flow that does not exist. Only an
+    # explicit annotation is trusted here; an inferred type is unknown to the
+    # walk and left alone.
+    return_type = func_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
+    if (
+        return_type is not None
+        and return_type.text is not None
+        and return_type.text.decode(cs.ENCODING_UTF8) == cs.SCALA_UNIT_TYPE
+    ):
+        return None
     body = func_node.child_by_field_name(cs.FIELD_BODY)
     if body is None:
         return None
-    if body.type != cs.TS_SCALA_BLOCK:
+    # Scala 3 significant indentation spells the same block `indented_block`.
+    if body.type not in (cs.TS_SCALA_BLOCK, cs.TS_SCALA_INDENTED_BLOCK):
         return body
     children = [c for c in body.named_children if c.type != cs.TS_COMMENT]
     if not children:

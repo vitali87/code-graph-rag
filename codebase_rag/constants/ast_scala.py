@@ -29,3 +29,6 @@ TS_SCALA_TYPE_IDENTIFIER = "type_identifier"
 # parameter (`xs: String*`) is spelled as the parameter's TYPE node.
 TS_SCALA_PARAMETER = "parameter"
 TS_SCALA_REPEATED_PARAMETER_TYPE = "repeated_parameter_type"
+TS_SCALA_INDENTED_BLOCK = "indented_block"
+# A def declared `Unit` discards its body's value, so no return summary.
+SCALA_UNIT_TYPE = "Unit"

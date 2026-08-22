@@ -361,8 +361,9 @@ module is re-exported under its own name. A project that does
   summaries are resolved by a worklist fixpoint once every file has been walked, so
   a callee defined after (or in a different file from) its caller is still known to
   return a tainted value at the caller's site.
-- Forward argument taint composes into callee **sinks** for Python and the lean-walk
-  languages with a parameter-name extractor (Go, JavaScript, TypeScript/TSX, C++): a
+- Forward argument taint composes into callee **sinks** for Python and every lean-walk
+  language with a parameter-name extractor, which is now all of them: Go, JavaScript,
+  TypeScript/TSX, C++, Java, C#, Rust, C, PHP, Dart, Lua and Scala. A
   parameter that reaches a write sink inside its body is recorded as a per-function
   parameter-sink summary (closed over transitive parameter hand-offs by the same
   finalize fixpoint), so a tainted argument passed at a call site emits the full
