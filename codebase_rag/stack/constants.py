@@ -58,7 +58,10 @@ COMPOSE_BIND_HOST_VAR = "CGR_STACK_BIND_HOST"
 WARN_COMPOSE_PORTS_PUBLIC = (
     "The compose file at {path} publishes these ports on ALL interfaces, so "
     "any host on your network can read the code graph from these "
-    "unauthenticated services: {mappings}. Delete the file and run "
-    "'cgr daemon up' again to re-render it with the loopback bind, or add a "
-    "'127.0.0.1:' prefix to each published port listed above."
+    "unauthenticated services: {mappings}. Run 'cgr daemon down' first, then "
+    "delete the file and run 'cgr daemon up' to re-render it with the loopback "
+    "bind, or add a '127.0.0.1:' prefix to each published port listed above. "
+    "Deleting the file while the stack is UP changes nothing: the running "
+    "containers keep the old bindings and 'cgr daemon up' returns early "
+    "without re-rendering."
 )

@@ -214,3 +214,8 @@ def test_the_security_guide_describes_the_loopback_default() -> None:
         "security.md must warn that a pre-fix ~/.cgr/docker-compose.yaml keeps "
         "its bare mappings; StackManager warns but does not migrate it"
     )
+    assert "cgr daemon down" in doc, (
+        "the remediation must stop the stack first: ensure_running() returns "
+        "early on a healthy stack, so deleting the compose file while it is up "
+        "neither re-renders the file nor replaces the exposed containers"
+    )
