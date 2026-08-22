@@ -24,6 +24,23 @@ class TestCallerExampleQuery:
     def test_result_rows_are_bounded(self) -> None:
         assert f"LIMIT {CYPHER_DEFAULT_LIMIT}" in CYPHER_EXAMPLE_FUNCTION_CALLERS
 
+    def test_callee_filter_uses_qualified_name_suffix(self) -> None:
+        # Bare `name` equality both breaks the prompt's own ENDS-WITH rule and
+        # conflates every same-named symbol (Greptile review on PR #1386).
+        assert (
+            "callee.qualified_name ENDS WITH '.process_payment'"
+            in CYPHER_EXAMPLE_FUNCTION_CALLERS
+        )
+        assert "callee.name" not in CYPHER_EXAMPLE_FUNCTION_CALLERS
+
+    def test_returns_callee_identity(self) -> None:
+        # With several same-named callables, each caller row must say WHOSE
+        # caller it is (Greptile review on PR #1386).
+        assert (
+            "callee.qualified_name AS callee_qualified_name"
+            in CYPHER_EXAMPLE_FUNCTION_CALLERS
+        )
+
 
 class TestCypherPromptRelationshipGuidance:
     def test_main_prompt_contains_caller_pattern_example(self) -> None:

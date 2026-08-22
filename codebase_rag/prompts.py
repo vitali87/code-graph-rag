@@ -4,13 +4,13 @@ from loguru import logger
 
 from .cypher_queries import (
     CYPHER_EXAMPLE_CLASS_METHODS,
-    CYPHER_EXAMPLE_FUNCTION_CALLERS,
     CYPHER_EXAMPLE_CODE_SMELLS,
     CYPHER_EXAMPLE_CONTENT_BY_PATH,
     CYPHER_EXAMPLE_DECORATED_FUNCTIONS,
     CYPHER_EXAMPLE_FILES_IN_FOLDER,
     CYPHER_EXAMPLE_FIND_FILE,
     CYPHER_EXAMPLE_FIND_PATTERN,
+    CYPHER_EXAMPLE_FUNCTION_CALLERS,
     CYPHER_EXAMPLE_KEYWORD_SEARCH,
     CYPHER_EXAMPLE_LIMIT_ONE,
     CYPHER_EXAMPLE_PROJECT_SCOPED,
@@ -302,6 +302,8 @@ cypher// "What methods does UserService have?" or "Show me methods in UserServic
 cypher// "Which functions call process_payment?" or "Who uses process_payment?" or "Find call sites of process_payment"
 // Match the CALLS edge explicitly and return `type(r)` so definers/importers can't be mistaken for callers.
 // The caller end stays unlabeled: modules, functions, and methods can all hold call sites.
+// Filter by qualified_name suffix (rule 2) and return the callee's qualified_name: several
+// same-named callables can exist, and each row must say whose caller it is.
 {CYPHER_EXAMPLE_FUNCTION_CALLERS}
 
 **Pattern: Scoping Results to a Single Project**
@@ -401,7 +403,7 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     ```
 
 *   **Natural Language:** "Which functions call process_payment?" or "Who uses process_payment?"
-*   **Cypher Query (Note: match the `CALLS` edge and return `type(r)`; leave the caller unlabeled):**
+*   **Cypher Query (Note: match the `CALLS` edge and return `type(r)`; leave the caller unlabeled; filter by qualified_name suffix and return the callee identity):**
     ```cypher
     {CYPHER_EXAMPLE_FUNCTION_CALLERS}
     ```

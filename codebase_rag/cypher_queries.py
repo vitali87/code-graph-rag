@@ -130,8 +130,9 @@ RETURN c.name AS className, m.name AS methodName, m.qualified_name AS qualified_
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_FUNCTION_CALLERS = f"""MATCH (caller)-[r:CALLS]->(callee:Function|Method)
-WHERE callee.name = 'process_payment'
+WHERE callee.qualified_name ENDS WITH '.process_payment'
 RETURN caller.qualified_name AS caller_qualified_name, caller.path AS path,
+       callee.qualified_name AS callee_qualified_name,
        type(r) AS relationship, labels(caller) AS caller_type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
