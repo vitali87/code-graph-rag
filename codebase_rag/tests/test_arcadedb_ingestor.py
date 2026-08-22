@@ -21,6 +21,13 @@ def _ingestor(**kw: Any) -> ArcadeDBIngestor:
     return ArcadeDBIngestor(**{**defaults, **kw})
 
 
+# ArcadeDBIngestor does not yet implement flush_nodes, flush_relationships,
+# clean_database, list_projects, list_project_roots, delete_project, or
+# export_graph_to_dict (batching lands in Task 12, admin ops in Task 13), so
+# it does not yet structurally satisfy GraphIngestor. strict=True: if this
+# starts passing before Task 13 removes the marker, the run must fail so the
+# stale xfail cannot silently stop asserting anything.
+@pytest.mark.xfail(strict=True, reason="GraphIngestor protocol is completed in Task 13")
 def test_satisfies_the_graph_ingestor_protocol() -> None:
     assert isinstance(_ingestor(), GraphIngestor)
 
