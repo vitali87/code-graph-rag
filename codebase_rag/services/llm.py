@@ -18,9 +18,12 @@ from ..prompts import (
     build_rag_orchestrator_prompt,
 )
 from ..providers.base import get_provider_from_config
+from .graph.factory import get_dialect
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
+
+    from .graph.dialect import GraphDialect
 
 
 def _create_provider_model(config: ModelConfig) -> Model:
@@ -97,24 +100,24 @@ def _validate_no_unbounded_paths(query: str) -> None:
                 raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
 
 
-def _validate_call_procedures(query: str) -> None:
+def _validate_call_procedures(query: str, dialect: GraphDialect | None = None) -> None:
+    resolved = dialect or get_dialect()
     for match in _PROCEDURE_CALL_PATTERN.finditer(query):
         name = match.group(1)
-        if not any(
-            name.startswith(prefix) for prefix in cs.CYPHER_ALLOWED_PROCEDURE_PREFIXES
-        ):
+        if not any(name.startswith(p) for p in resolved.allowed_proc_prefixes):
             raise ex.LLMGenerationError(
                 ex.LLM_DISALLOWED_PROCEDURE.format(name=name, query=query)
             )
 
 
 class CypherGenerator:
-    __slots__ = ("agent",)
+    __slots__ = ("agent", "_dialect")
 
     def __init__(self, active_projects: list[str] | None = None) -> None:
         try:
             config = settings.active_cypher_config
             llm = _create_provider_model(config)
+            self._dialect = get_dialect()
 
             system_prompt = (
                 build_local_cypher_system_prompt(active_projects)
@@ -146,7 +149,7 @@ class CypherGenerator:
             query = _clean_cypher_response(result.output)
             _validate_cypher_read_only(query)
             _validate_no_unbounded_paths(query)
-            _validate_call_procedures(query)
+            _validate_call_procedures(query, self._dialect)
             logger.info(ls.CYPHER_GENERATED.format(query=query))
             return query
         except Exception as e:

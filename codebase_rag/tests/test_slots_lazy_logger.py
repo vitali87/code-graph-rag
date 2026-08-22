@@ -33,7 +33,7 @@ SLOTS_CLASSES: list[tuple[type, tuple[str, ...]]] = [
     (CommandGroup, ("commands", "operator")),
     (ShellCommander, ("project_root", "timeout", "is_yolo")),
     (HealthChecker, ("results",)),
-    (CypherGenerator, ("agent",)),
+    (CypherGenerator, ("agent", "_dialect")),
     (ModelProvider, ("config",)),
     (
         GoogleProvider,
