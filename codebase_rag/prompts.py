@@ -4,6 +4,7 @@ from loguru import logger
 
 from .cypher_queries import (
     CYPHER_EXAMPLE_CLASS_METHODS,
+    CYPHER_EXAMPLE_FUNCTION_CALLERS,
     CYPHER_EXAMPLE_CODE_SMELLS,
     CYPHER_EXAMPLE_CONTENT_BY_PATH,
     CYPHER_EXAMPLE_DECORATED_FUNCTIONS,
@@ -54,6 +55,8 @@ CYPHER_QUERY_RULES = """**2. Critical Cypher Query Rules**
 - **Use `ENDS WITH` for qualified_name**: The `qualified_name` property contains full paths like `'Project.folder.subfolder.ClassName'`. When users mention a class, function, or method by its short name (e.g., "VatManager"), use `ENDS WITH` to match: `WHERE c.qualified_name ENDS WITH '.VatManager'`. Do NOT use `{name: 'VatManager'}` equality matching.
 - **Use `toLower()` for Searches**: For case-insensitive searching on string properties, use `toLower()`.
 - **Querying Lists**: To check if a list property (like `decorators`) contains an item, use the `ANY` or `IN` clause (e.g., `WHERE 'flow' IN n.decorators`).
+- **Match the asked-about relationship explicitly and RETURN it**: For questions about callers, callees, usage, or dependencies, match the specific edge (e.g., `(caller)-[r:CALLS]->(callee)`) and include `type(r) AS relationship` in the RETURN clause. A bare node list is ambiguous — the file that *defines* or *imports* a function is not a *caller* of it, and the consumer can only tell them apart if the relationship type is in the results.
+- **Prefer multi-label matches over guessing one label**: When the node kind is uncertain, match `(n:Function|Method)` (or `(n:Function|Method|Class)`) instead of a single label — a wrong single label silently returns nothing. Leave the *other* end of a relationship pattern unlabeled when any node kind is a valid answer (e.g., module-level code also has `CALLS` edges).
 - **NEVER use unbounded variable-length paths**: Patterns like `[:CALLS*]`, `[*]`, `[:CALLS*1..]` enumerate every path in the graph and exhaust memory. Always cap with an upper bound, e.g. `[:CALLS*1..6]`. If you genuinely need unbounded reachability, use a MAGE procedure (see Section 2b) instead of variable-length Cypher.
 
 **2b. Graph Algorithm Procedures (MAGE)**
@@ -295,6 +298,12 @@ cypher// "What methods does UserService have?" or "Show me methods in UserServic
 // Use `ENDS WITH` to match the class by short name since qualified_name contains full path.
 {CYPHER_EXAMPLE_CLASS_METHODS}
 
+**Pattern: Finding Callers of a Function/Method**
+cypher// "Which functions call process_payment?" or "Who uses process_payment?" or "Find call sites of process_payment"
+// Match the CALLS edge explicitly and return `type(r)` so definers/importers can't be mistaken for callers.
+// The caller end stays unlabeled: modules, functions, and methods can all hold call sites.
+{CYPHER_EXAMPLE_FUNCTION_CALLERS}
+
 **Pattern: Scoping Results to a Single Project**
 cypher// "show all classes in myproject" (multi-project database)
 // Filter on the qualified_name prefix to keep results within one project.
@@ -337,6 +346,7 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
 7.  **AGGREGATION QUERIES**: When asked "how many" or "count", return ONLY the count:
     - CORRECT: `MATCH (c:Class) RETURN count(c) AS total`
     - WRONG: `MATCH (c:Class) RETURN c.name, count(c) AS total` (returns all items!)
+8.  **RETURN THE RELATIONSHIP TYPE**: For questions about callers, callees, or usage, match the edge explicitly (e.g., `(caller)-[r:CALLS]->(callee)`) and include `type(r) AS relationship` in the RETURN clause. Defining or importing a function is NOT calling it; without the relationship type in the results the consumer cannot tell the difference.
 
 **VALUE PATTERN RULES (CRITICAL FOR NAME MATCHING):**
 - The `qualified_name` property contains FULL paths like: `'Project.folder.subfolder.ClassName'`
@@ -388,6 +398,12 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
 *   **Cypher Query (Note: match by `name` property, use `DEFINES_METHOD` relationship):**
     ```cypher
     {CYPHER_EXAMPLE_CLASS_METHODS}
+    ```
+
+*   **Natural Language:** "Which functions call process_payment?" or "Who uses process_payment?"
+*   **Cypher Query (Note: match the `CALLS` edge and return `type(r)`; leave the caller unlabeled):**
+    ```cypher
+    {CYPHER_EXAMPLE_FUNCTION_CALLERS}
     ```
 
 *   **Natural Language:** "show all classes in myproject"
