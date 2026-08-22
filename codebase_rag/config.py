@@ -342,7 +342,9 @@ class AppConfig(BaseSettings):
     QUERY_RESULT_MAX_TOKENS: int = Field(default=16000, gt=0)
     QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
     QUERY_MEMORY_LIMIT_MB: int = Field(default=4096, gt=0)
-    QUERY_TIMEOUT_S: float = Field(default=60.0, gt=0)
+    # 600s matches Memgraph's own query ceiling (see cypher_queries.py); the
+    # ArcadeDB ingestor's transaction timeout also draws on this value.
+    QUERY_TIMEOUT_S: float = Field(default=600.0, gt=0)
 
     OLLAMA_HEALTH_TIMEOUT: float = 5.0
     LITELLM_HEALTH_TIMEOUT: float = 5.0

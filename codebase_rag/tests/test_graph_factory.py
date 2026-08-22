@@ -16,7 +16,6 @@ def test_get_dialect_returns_memgraph_by_default() -> None:
     assert isinstance(get_dialect(), MemgraphDialect)
 
 
-@pytest.mark.xfail(reason="ArcadeDBDialect lands in Task 10", strict=False)
 def test_get_dialect_honours_explicit_backend() -> None:
     from codebase_rag.services.graph.arcadedb import ArcadeDBDialect
 

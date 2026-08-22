@@ -113,6 +113,10 @@ GRAPH_BACKEND_AUTH_REQUIRED = (
 ARCADE_HTTP_FAILED = (
     "ArcadeDB HTTP command failed ({status}): {detail}\nCommand: {command}"
 )
+ARCADE_NO_HTTP_CLIENT = (
+    "ArcadeDBDialect needs an HTTP client to run schema DDL; construct it "
+    "with ArcadeDBDialect(http=ArcadeHttpClient(...))."
+)
 
 
 # Exception classes

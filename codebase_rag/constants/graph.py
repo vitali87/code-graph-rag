@@ -623,3 +623,26 @@ ARCADE_DDL_VERTEX_TYPE = "CREATE VERTEX TYPE {label} IF NOT EXISTS"
 ARCADE_DDL_EDGE_TYPE = "CREATE EDGE TYPE {rel_type} IF NOT EXISTS"
 ARCADE_DDL_PROPERTY = "CREATE PROPERTY {label}.{prop} IF NOT EXISTS STRING"
 ARCADE_DDL_UNIQUE_INDEX = "CREATE INDEX IF NOT EXISTS ON {label} ({prop}) UNIQUE"
+
+# ArcadeDB is MVCC/optimistic: parallel MERGE into a shared vertex raises
+# these, and they are worth retrying. Memgraph's engine does not produce them.
+ARCADE_RETRYABLE_SUBSTRINGS: tuple[str, ...] = (
+    "concurrent modification",
+    "concurrentmodification",
+    "transient",
+    "neo.transienterror",
+)
+ARCADE_BENIGN_SUBSTRINGS: tuple[str, ...] = ("already exists",)
+ARCADE_ALLOWED_PROCEDURE_PREFIXES: frozenset[str] = frozenset({"algo."})
+
+# Placeholder catalog. Task 15 replaces this with the enumerated result of
+# probing a live server; ArcadeDB does not document its Cypher CALL surface,
+# so it cannot be written from the docs.
+ARCADE_PROCEDURE_CATALOG = """- **PageRank**: `CALL algo.pageRank() YIELD node, score`
+- **Strongly connected components**: `CALL algo.scc() YIELD node, componentId`
+- **Weakly connected components**: `CALL algo.wcc() YIELD node, componentId`
+- **Communities**: `CALL algo.louvain() YIELD node, communityId`
+
+Important: these procedures yield `node` as a **record-id string** such as
+`"#46:0"`, not a node you can read properties from. To get properties, match
+the node separately by its stored key rather than writing `node.name`."""

@@ -14,8 +14,7 @@ _ARCADEDB_EXTRA = "arcadedb"
 def get_dialect(backend: GraphBackend | None = None) -> GraphDialect:
     resolved = backend or settings.GRAPH_BACKEND
     if resolved == GraphBackend.ARCADEDB:
-        # TODO: remove ty: ignore once services/graph/arcadedb.py exists (Task 11)
-        from .arcadedb import ArcadeDBDialect  # ty: ignore[unresolved-import]
+        from .arcadedb import ArcadeDBDialect
 
         return ArcadeDBDialect()
     return MemgraphDialect()
