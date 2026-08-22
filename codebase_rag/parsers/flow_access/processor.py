@@ -72,11 +72,13 @@ from ..utils import (
     go_positional_parameter_slots,
     java_positional_parameter_slots,
     js_ts_positional_parameter_slots,
+    lua_positional_parameter_slots,
     php_positional_parameter_slots,
     python_free_variable_names,
     python_parameter_names,
     rust_positional_parameter_slots,
     safe_decode_text,
+    scala_positional_parameter_slots,
 )
 from .constants import (
     KEY_KIND,
@@ -193,12 +195,38 @@ def _lean_parameter_slots(
         return php_positional_parameter_slots(func_node)
     if language == cs.SupportedLanguage.DART:
         return dart_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.LUA:
+        return lua_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.SCALA:
+        return scala_positional_parameter_slots(func_node)
     return [], None
 
 
 # A Rust block's final child is the function's value only when it is an
 # expression: a statement or declaration yields `()` and returns nothing.
 _RUST_NON_VALUE_TAIL = frozenset({cs.TS_EXPRESSION_STATEMENT, cs.TS_RS_LET_DECLARATION})
+
+
+# A Scala block yields its final expression; a definition yields Unit.
+_SCALA_NON_VALUE_TAIL = frozenset(
+    {cs.TS_SCALA_VAL_DEFINITION, cs.TS_SCALA_VAR_DEFINITION}
+)
+
+
+def _scala_body_value(func_node: Node) -> Node | None:
+    # Scala has no return keyword in idiomatic code: a def's BODY is its value,
+    # whether that is a bare expression (`def f(v: String) = v`), a call, or a
+    # block whose final expression is the result (issue #1365).
+    body = func_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return None
+    if body.type != cs.TS_SCALA_BLOCK:
+        return body
+    children = [c for c in body.named_children if c.type != cs.TS_COMMENT]
+    if not children:
+        return None
+    tail = children[-1]
+    return None if tail.type in _SCALA_NON_VALUE_TAIL else tail
 
 
 def _rust_tail_expression(func_node: Node) -> Node | None:
@@ -818,8 +846,12 @@ class FlowProcessor:
             # not leak its shadow past the join.
             for node in statements:
                 state = self._walk_flat_stmt(node, state, jc)
-        if ctx.language == cs.SupportedLanguage.RUST:
-            tail = _rust_tail_expression(caller_node)
+        if ctx.language in (cs.SupportedLanguage.RUST, cs.SupportedLanguage.SCALA):
+            tail = (
+                _rust_tail_expression(caller_node)
+                if ctx.language == cs.SupportedLanguage.RUST
+                else _scala_body_value(caller_node)
+            )
             if tail is not None:
                 returned = self._js_expr_taint(tail, state.taint, jc)
                 if returned is not None:

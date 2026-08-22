@@ -973,6 +973,59 @@ def _rust_parameter_name(pattern: Node | None) -> str | None:
     return None
 
 
+def lua_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Lua `parameters` holds bare `identifier` children plus a trailing `...`
+    # spelled `vararg_expression`, which takes the variadic slot and binds no
+    # name. A `function obj:method(a)` receiver is implicit (never a parameter
+    # node), and a `:` call passes it implicitly too, so the explicit arguments
+    # still line up with these slots and nothing has to be dropped.
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for param in params.named_children:
+        if param.type == cs.TS_LUA_VARARG_EXPRESSION:
+            if variadic_index is None:
+                variadic_index = len(names)
+            names.append(None)
+            continue
+        if param.type == cs.TS_LUA_IDENTIFIER:
+            names.append(safe_decode_text(param))
+    return names, variadic_index
+
+
+def scala_positional_parameter_slots(
+    func_node: Node,
+) -> tuple[list[str | None], int | None]:
+    # Scala `parameters` -> `parameter` (name field). A repeated parameter
+    # (`xs: String*`) carries a `repeated_parameter_type` as its TYPE, which is
+    # the only marker distinguishing it from a normal one. Curried definitions
+    # (`def f(a: Int)(b: Int)`) have SEVERAL sibling `parameters` lists; the
+    # field yields the first, and only that one maps to arg:<index> at a call
+    # site, so the later lists are deliberately left alone.
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return [], None
+    names: list[str | None] = []
+    variadic_index: int | None = None
+    for param in params.named_children:
+        if param.type != cs.TS_SCALA_PARAMETER:
+            continue
+        type_node = param.child_by_field_name(cs.FIELD_TYPE)
+        if (
+            type_node is not None
+            and type_node.type == cs.TS_SCALA_REPEATED_PARAMETER_TYPE
+            and variadic_index is None
+        ):
+            variadic_index = len(names)
+        name = param.child_by_field_name(cs.FIELD_NAME)
+        names.append(safe_decode_text(name) if name is not None else None)
+    return names, variadic_index
+
+
 def rust_positional_parameter_slots(
     func_node: Node,
 ) -> tuple[list[str | None], int | None]:
