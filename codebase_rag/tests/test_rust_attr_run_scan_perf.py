@@ -24,13 +24,33 @@ def _scan_time(source: str) -> float:
     return time.perf_counter() - start
 
 
+def _best_scan_time(source: str, repeats: int = 5) -> float:
+    # Take the FASTEST run rather than one sample. Scheduler noise only ever
+    # ADDS time, so the minimum is the closest estimate of the real cost, and
+    # one clean run among several is far likelier than a single clean sample
+    # (issue #1382: a loaded macOS runner inflated one sample ~6x and failed).
+    return min(_scan_time(source) for _ in range(repeats))
+
+
 def test_unbroken_attribute_run_scans_linearly() -> None:
-    small = _scan_time(_attr_run(1000))
-    large = _scan_time(_attr_run(4000))
-    # Quadratic behaviour makes 4x the input ~16x the time; linear stays
-    # around 4x. The bound leaves generous headroom for loaded runners.
-    assert large < max(small * 10, 0.05), (small, large)
-    assert large < 2.0, large
+    # Compare a RATIO, never an absolute duration: the machine's speed cancels
+    # out, which an absolute ceiling cannot do. The previous absolute floor was
+    # the branch that actually fired, and 50ms of wall clock on a shared runner
+    # says nothing about complexity.
+    small = _best_scan_time(_attr_run(2000))
+    large = _best_scan_time(_attr_run(8000))
+    # 4x the input costs ~4x linear and ~16x quadratic. Measured: linear sits
+    # at 3.6-4.9x and the #1089 pattern this guards against measures 16.7x, so
+    # the bound separates them with room on both sides.
+    assert large < small * 10, (small, large)
+    # No absolute ceiling here on purpose. One used to sit below this line to
+    # catch a UNIFORM slowdown, which the ratio cannot see: if every scan got
+    # 100x slower, 4x input would still cost 4x time. It was removed anyway,
+    # because a sustained-contention runner can delay EVERY sample, so even a
+    # best-of-N minimum is not an uncontended measurement, and no wall-clock
+    # number distinguishes "the scanner regressed" from "the runner is busy".
+    # That coverage belongs in a controlled benchmark environment rather than a
+    # unit test on shared CI (issue #1382).
 
 
 def test_attribute_block_above_declaration_still_redirects() -> None:
