@@ -224,3 +224,49 @@ def test_scala_3_indented_body_composes(tmp_path: Path) -> None:
         "    println(forward(s))\n"
     )
     assert (_ENV, _STDOUT) in _flows(tmp_path, "scala", source)
+
+
+def test_a_qualified_scala_unit_also_returns_nothing(tmp_path: Path) -> None:
+    # `scala.Unit` names the same type as `Unit`, so an exact-string check on
+    # the annotation lets the qualified spelling through and re-opens the leak.
+    source = (
+        "object M {\n"
+        '  def fetch(): scala.Unit = { System.getenv("SECRET") }\n'
+        "  def caller(): Unit = { println(fetch()) }\n"
+        "}\n"
+    )
+    assert (_ENV, _STDOUT) not in _flows(tmp_path, "scala", source)
+
+
+def test_a_unit_method_discarding_a_non_unit_expression_stays_clean(
+    tmp_path: Path,
+) -> None:
+    # A `Unit` def whose trailing expression HAS a value still discards it.
+    source = (
+        "object M {\n"
+        "  def leak(v: String): Unit = { v.toUpperCase }\n"
+        "  def caller(): Unit = {\n"
+        '    val s = System.getenv("SECRET")\n'
+        "    println(leak(s))\n"
+        "  }\n"
+        "}\n"
+    )
+    assert (_ENV, _STDOUT) not in _flows(tmp_path, "scala", source)
+
+
+def test_a_unit_method_that_writes_its_parameter_still_reaches_the_sink(
+    tmp_path: Path,
+) -> None:
+    # The Unit exclusion must not suppress the parameter-to-SINK direction: the
+    # helper prints the secret itself, which is a real flow regardless of what
+    # the method returns.
+    source = (
+        "object M {\n"
+        "  def show(v: String): Unit = { println(v) }\n"
+        "  def caller(): Unit = {\n"
+        '    val s = System.getenv("SECRET")\n'
+        "    show(s)\n"
+        "  }\n"
+        "}\n"
+    )
+    assert (_ENV, _STDOUT) in _flows(tmp_path, "scala", source)

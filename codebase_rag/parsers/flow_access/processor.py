@@ -213,6 +213,19 @@ _SCALA_NON_VALUE_TAIL = frozenset(
 )
 
 
+def _scala_returns_unit(func_node: Node) -> bool:
+    # `Unit` and the qualified `scala.Unit` (and `_root_.scala.Unit`) name the
+    # same type, so compare the LAST dotted segment rather than the whole
+    # annotation. A user-defined type that happens to end in `Unit` would also
+    # match; that direction only SUPPRESSES a summary, so the cost is a missed
+    # flow rather than a fabricated one, which is the safer way to be wrong.
+    return_type = func_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
+    if return_type is None or return_type.text is None:
+        return False
+    spelled = return_type.text.decode(cs.ENCODING_UTF8).strip()
+    return spelled.rpartition(cs.SEPARATOR_DOT)[2] == cs.SCALA_UNIT_TYPE
+
+
 def _scala_body_value(func_node: Node) -> Node | None:
     # Scala has no return keyword in idiomatic code: a def's BODY is its value,
     # whether that is a bare expression (`def f(v: String) = v`), a call, or a
@@ -223,12 +236,7 @@ def _scala_body_value(func_node: Node) -> Node | None:
     # sink consuming `f()` would report a flow that does not exist. Only an
     # explicit annotation is trusted here; an inferred type is unknown to the
     # walk and left alone.
-    return_type = func_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
-    if (
-        return_type is not None
-        and return_type.text is not None
-        and return_type.text.decode(cs.ENCODING_UTF8) == cs.SCALA_UNIT_TYPE
-    ):
+    if _scala_returns_unit(func_node):
         return None
     body = func_node.child_by_field_name(cs.FIELD_BODY)
     if body is None:
