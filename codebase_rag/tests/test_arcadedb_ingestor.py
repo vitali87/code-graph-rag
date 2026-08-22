@@ -32,10 +32,21 @@ def test_satisfies_the_graph_ingestor_protocol() -> None:
     assert isinstance(_ingestor(), GraphIngestor)
 
 
-def test_requires_credentials() -> None:
-    # ArcadeDB's Bolt listener rejects the `none` auth scheme.
+@pytest.mark.parametrize(
+    "username,password",
+    [
+        pytest.param("", "", id="both-empty"),
+        pytest.param(" ", "pw", id="whitespace-only-username"),
+        pytest.param("root", " ", id="whitespace-only-password"),
+        pytest.param(" ", " ", id="whitespace-only-both"),
+    ],
+)
+def test_requires_credentials(username: str, password: str) -> None:
+    # ArcadeDB's Bolt listener rejects the `none` auth scheme, and a
+    # whitespace-only credential is never valid either -- it must fail here,
+    # at construction, not later when the driver rejects a blank credential.
     with pytest.raises(ValueError, match="credentials"):
-        _ingestor(username="", password="")
+        _ingestor(username=username, password=password)
 
 
 def test_rejects_batch_size_below_one() -> None:
@@ -129,6 +140,22 @@ def test_fetch_all_passes_parameters_through() -> None:
         ingestor = _ingestor()
         ingestor.__enter__()
         ingestor.fetch_all("MATCH (n {qn: $qn}) RETURN n", {"qn": "a.b"})
+        assert session.run.call_args.kwargs["qn"] == "a.b"
+        ingestor.__exit__(None, None, None)
+
+
+def test_execute_write_runs_the_query_and_returns_none() -> None:
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        result = MagicMock()
+        result.__iter__.return_value = iter([])
+        session = MagicMock()
+        session.run.return_value = result
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        assert ingestor.execute_write("CREATE (n:Foo {qn: $qn})", {"qn": "a.b"}) is None
+        session.run.assert_called_once()
         assert session.run.call_args.kwargs["qn"] == "a.b"
         ingestor.__exit__(None, None, None)
 

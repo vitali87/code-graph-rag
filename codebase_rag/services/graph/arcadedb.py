@@ -138,6 +138,12 @@ class ArcadeDBIngestor:
         batch_size: int = 1000,
         use_merge: bool = True,
     ) -> None:
+        # Blank-after-strip is rejected outright, not normalised to "no auth"
+        # the way Memgraph's optional credentials are: ArcadeDB's Bolt
+        # listener has no unauthenticated fallback, so a whitespace-only
+        # credential can never be valid and must fail here, not at connect.
+        username = username.strip()
+        password = password.strip()
         if not username or not password:
             raise ValueError(ex.ARCADE_CREDENTIALS_REQUIRED)
         if batch_size < 1:
