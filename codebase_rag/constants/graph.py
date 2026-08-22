@@ -557,6 +557,16 @@ NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
     label.value: key.value for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
 }
 
+# Generated Cypher overwhelmingly filters on bare `name` ("who calls X" →
+# WHERE f.name = 'X'); without a label+name index every such query is a full
+# label scan. Labels whose unique key already IS `name` are covered by the
+# constraint indexes derived from NODE_UNIQUE_CONSTRAINTS.
+NODE_NAME_INDEXES: tuple[str, ...] = tuple(
+    label.value
+    for label, key in _NODE_LABEL_UNIQUE_KEYS.items()
+    if key is not UniqueKeyType.NAME
+)
+
 # Superseded unique constraints that must be dropped from existing shared
 # databases; a leftover Folder/File path constraint would keep rejecting the
 # second same-relative-path node the fix now creates (issue #897).
