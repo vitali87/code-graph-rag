@@ -34,6 +34,7 @@ evals/oracles/rs_oracle/.build.lock
 evals/oracles/ts_oracle/node_modules/
 # Java oracle compiled classes (the source is committed)
 evals/oracles/java_oracle/*.class
+evals/oracles/java_oracle/.build-lock
 # Lua oracle deps (the source + package-lock.json are committed)
 evals/oracles/lua_oracle/node_modules/
 # PHP oracle deps (the source + package-lock.json are committed)
