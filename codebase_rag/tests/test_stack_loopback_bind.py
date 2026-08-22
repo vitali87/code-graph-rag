@@ -8,6 +8,7 @@ for the MCP HTTP server by defaulting to a loopback bind.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -181,3 +182,91 @@ class TestPublicPortWarning:
 @pytest.mark.parametrize("service", ["memgraph", "lab", "qdrant"])
 def test_each_service_is_covered(service: str) -> None:
     assert any(name == service for name, _mapping in _published_ports())
+
+
+SECURITY_DOC = REPO_ROOT / "docs" / "architecture" / "security.md"
+
+
+def test_the_security_guide_describes_the_loopback_default() -> None:
+    # The guide kept claiming the ports were "currently network-reachable" and
+    # pointed at #1012 as still tracking a fix, for months after #1012 shipped
+    # the loopback bind (issue #1372, found in an external field-test review).
+    # A security document that MISSTATES exposure in either direction is worse
+    # than a stale one: understating it is how a reader leaves the graph open.
+    #
+    # Rejecting the old phrase alone is not enough -- a guide claiming the
+    # services bind everywhere and are safe would pass that. Assert the actual
+    # security claims this file exists to keep true.
+    doc = SECURITY_DOC.read_text(encoding="utf-8")
+    assert "network-reachable" not in doc, (
+        "security.md still describes the pre-#1012 exposure; a newly rendered "
+        f"compose file now binds every published port to {LOOPBACK}"
+    )
+    assert LOOPBACK in doc, f"security.md must state the {LOOPBACK} default"
+    assert cs.COMPOSE_BIND_HOST_VAR in doc, (
+        f"security.md must name {cs.COMPOSE_BIND_HOST_VAR}, since widening the "
+        "bind is one of the two ways to re-create the exposure"
+    )
+    assert "UNAUTHENTICATED" in doc, (
+        "security.md must say the services carry no credential, or a wider "
+        "bind reads as a routine configuration change"
+    )
+    assert "never overwritten" in doc, (
+        "security.md must warn that a pre-fix ~/.cgr/docker-compose.yaml keeps "
+        "its bare mappings; StackManager warns but does not migrate it"
+    )
+    # Parse the remediation as an ORDERED LIST rather than hunting substrings.
+    # Position matching kept measuring the wrong occurrence, because the same
+    # paragraph names `cgr daemon up` both as the command that merely warns and
+    # as the re-render step. Numbered steps are unambiguous to a reader and to
+    # this test, which is why the guide states them that way.
+    anchor = "remediate in this order:"
+    assert anchor in doc, (
+        "security.md must introduce the remediation with a stable anchor so "
+        f"this guard reads the right list; expected {anchor!r}"
+    )
+    # Anchor the parse: the guide contains OTHER numbered lists (the security
+    # invariants), and matching numbered lines document-wide read those instead.
+    steps = re.findall(r"^\d+\. (.+)$", doc.split(anchor, 1)[1], flags=re.MULTILINE)
+    assert len(steps) >= 3, (
+        "security.md must give the remediation as numbered steps; prose lets "
+        "the stop/delete/re-render order drift without any test noticing"
+    )
+    stop, delete, rerender = steps[0], steps[1], steps[2]
+    assert "cgr daemon down" in stop, (
+        f"step 1 must stop the stack, got {stop!r}: ensure_running() returns "
+        "early on a healthy stack, so deleting the compose file while it is up "
+        "neither re-renders the file nor replaces the exposed containers"
+    )
+    assert "delete" in delete, f"step 2 must delete something, got {delete!r}"
+    assert COMPOSE_PATH.name in delete, (
+        f"step 2 must name the COMPOSE file, got {delete!r}; 'delete the file' "
+        "alone does not tell the reader which one"
+    )
+    assert "cgr daemon up" in rerender, (
+        f"step 3 must re-render, got {rerender!r}; stopping and deleting alone "
+        "leaves no compose file at all"
+    )
+    # The manual alternative needs its OWN sentence checked: `127.0.0.1:` also
+    # appears earlier, where the guide tells the reader what to look for, so a
+    # document-wide search stays green even if the remedy itself is deleted.
+    tail = doc.split(anchor, 1)[1]
+    # Require the line to say WHAT the manual fix applies to. Matching only
+    # "by hand" plus the address let a decoy sentence ("you can tweak things by
+    # hand; the 127.0.0.1: value is shown above") stand in for a deleted remedy
+    # -- verified blind before this clause was added. Naming the published port
+    # ties the assertion to the instruction'"'"'s meaning rather than its wording.
+    # The manual remedy must also RECREATE the containers. Docker fixes a
+    # container's published ports at creation, so an edited compose file leaves
+    # the running stack bound exactly as before; an edit-only instruction reads
+    # as complete while changing nothing.
+    assert any(
+        "by hand" in line
+        and f"{LOOPBACK}:" in line
+        and "published port" in line
+        and "cgr daemon down" in line
+        for line in tail.splitlines()
+    ), (
+        "security.md must offer the manual fix of adding the "
+        f"'{LOOPBACK}:' prefix by hand, for a compose file carrying local edits"
+    )
