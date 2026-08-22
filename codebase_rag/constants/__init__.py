@@ -12,6 +12,7 @@ from .ast_php import *  # noqa: F403
 from .ast_python import *  # noqa: F403
 from .ast_rust import *  # noqa: F403
 from .ast_scala import *  # noqa: F403
+from .ast_sql import *  # noqa: F403
 from .build import *  # noqa: F403
 from .cli import *  # noqa: F403
 from .core import *  # noqa: F403
