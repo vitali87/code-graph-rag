@@ -7,7 +7,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import cpp_declarator_name
-from .constants import DYNAMIC_TARGET
+from .constants import DYNAMIC_TARGET, PY_SCOPE_BOUNDARIES
 from .descriptor import LanguageDescriptor
 
 # Definition nodes whose BODY is a separate scope but whose HEADER (default arg
@@ -35,6 +35,193 @@ def scope_seed_nodes(caller_node: Node) -> list[Node]:
     # the enclosing scope. For a module it is every child.
     body = _definition_body(caller_node)
     return list(body.children) if body is not None else list(caller_node.children)
+
+
+def _binding_identifiers(target: Node) -> set[str]:
+    # The identifiers a Python binding target actually binds: the target itself,
+    # or every identifier nested in a destructuring pattern (`os, v = ...` /
+    # `[os, v] = ...` / `for os, v in ...`). An attribute or subscript target
+    # (`os.environ['K'] = v`, `a.b = v`) binds NO plain name -- its identifiers
+    # are loads, not stores -- so those subtrees are skipped entirely.
+    out: set[str] = set()
+    stack = [target]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_IDENTIFIER and node.text is not None:
+            out.add(node.text.decode(cs.ENCODING_UTF8))
+        elif node.type not in (cs.TS_PY_ATTRIBUTE, cs.TS_PY_SUBSCRIPT):
+            stack.extend(node.children)
+    return out
+
+
+def _python_parameter_names(scope_node: Node) -> set[str]:
+    # A function's parameter names are local for the whole function (their scope
+    # IS the body), so `def leak(os):` shadows a module-level `import os` for the
+    # entire body like any assignment (CodeRabbit review on PR #1325). A typed /
+    # default parameter binds only its `name` field -- its annotation / default
+    # expressions are loads in the ENCLOSING scope, never bindings here.
+    if scope_node.type == cs.TS_PY_DECORATED_DEFINITION:
+        inner = scope_node.child_by_field_name(cs.FIELD_DEFINITION)
+        if inner is not None:
+            scope_node = inner
+    if scope_node.type != cs.TS_PY_FUNCTION_DEFINITION:
+        return set()
+    params = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return set()
+    names: set[str] = set()
+    for param in params.named_children:
+        if param.type in (
+            cs.TS_PY_DEFAULT_PARAMETER,
+            cs.TS_PY_TYPED_DEFAULT_PARAMETER,
+        ):
+            name = param.child_by_field_name(cs.TS_FIELD_NAME)
+            if name is not None and name.type == cs.TS_PY_IDENTIFIER and name.text:
+                names.add(name.text.decode(cs.ENCODING_UTF8))
+        elif param.type == cs.TS_PY_TYPED_PARAMETER:
+            # A typed parameter has no `name` field: the binding identifier is
+            # the DIRECT child before the `type` field (`os: int` -> os); the
+            # annotation identifier sits inside the type field and is never a
+            # binding here.
+            name = next(
+                (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER),
+                None,
+            )
+            if name is not None and name.text is not None:
+                names.add(name.text.decode(cs.ENCODING_UTF8))
+        else:
+            names |= _binding_identifiers(param)
+    return names
+
+
+def _global_declared_names(scope_node: Node) -> set[str]:
+    # Identifiers declared `global` in this scope's OWN body (nested
+    # defs/classes pruned): `global os` makes EVERY `os` use here resolve to
+    # the module-level binding, so a same-named assignment is a GLOBAL rebind,
+    # not a local -- the whole-scope locality rule must not treat it as a
+    # shadowing local (CodeRabbit review on PR #1325). A module scope is never
+    # `global`-affected (there it is a legal no-op and the assignment still
+    # rebinds the module name), so callers apply this only for non-module
+    # scopes.
+    names: set[str] = set()
+    stack = list(scope_seed_nodes(scope_node))
+    while stack:
+        node = stack.pop()
+        if node.type in PY_SCOPE_BOUNDARIES:
+            continue
+        if node.type == cs.TS_PY_GLOBAL_STATEMENT:
+            for child in node.children:
+                if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
+                    names.add(child.text.decode(cs.ENCODING_UTF8))
+        stack.extend(node.children)
+    return names
+
+
+def _binding_target(node: Node) -> Node | None:
+    # The LHS target of a Python binding node: the `left` field of an
+    # assignment / augmented assignment / for statement, the alias name of an
+    # as_pattern (`with x as f:` / `except E as e:`), or the `name` field of a
+    # named_expression (walrus `(os := v)`).
+    if node.type in (
+        cs.TS_PY_ASSIGNMENT,
+        cs.TS_PY_AUGMENTED_ASSIGNMENT,
+        cs.TS_PY_FOR_STATEMENT,
+    ):
+        return node.child_by_field_name(cs.FIELD_LEFT)
+    if node.type == cs.TS_PY_AS_PATTERN:
+        alias = next(
+            (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
+            None,
+        )
+        return alias.children[0] if alias and alias.children else None
+    if node.type == cs.TS_PY_NAMED_EXPRESSION:
+        return node.child_by_field_name(cs.FIELD_NAME)
+    return None
+
+
+def _global_rebind_positions(scope_node: Node, name: str) -> list[int]:
+    # Source-order END offsets of statements that REBIND a `global`-declared
+    # name in this scope's OWN body (nested defs/classes pruned). `global os`
+    # keeps `os` module-scoped, so `os = Fake()` writes the MODULE binding: a
+    # subscript AFTER that offset reads the rebound value, not the imported
+    # module, while one BEFORE it still sees the module (CodeRabbit review on
+    # PR #1325). Augmented (`os += v`) and walrus (`(os := v)`) rebindings
+    # replace the binding just like a plain assignment (Greptile review on
+    # PR #1325). The end offset is used because the target is bound only
+    # AFTER the RHS evaluates: in `os = os.environ['K']` the RHS subscript
+    # still reads through the module (CodeRabbit review on PR #1325).
+    positions: list[int] = []
+    stack = list(scope_seed_nodes(scope_node))
+    while stack:
+        node = stack.pop()
+        if node.type in PY_SCOPE_BOUNDARIES:
+            continue
+        if node.type in (
+            cs.TS_PY_ASSIGNMENT,
+            cs.TS_PY_AUGMENTED_ASSIGNMENT,
+            cs.TS_PY_NAMED_EXPRESSION,
+        ):
+            target = _binding_target(node)
+            if (
+                target is not None
+                and target.type == cs.TS_PY_IDENTIFIER
+                and target.text is not None
+                and target.text.decode(cs.ENCODING_UTF8) == name
+            ):
+                positions.append(node.end_byte or 0)
+        stack.extend(node.children)
+    return sorted(positions)
+
+
+def python_globally_rebound_before(scope_node: Node, name: str, at_byte: int) -> bool:
+    # True when a `global`-declared name was REBOUND at or before `at_byte` in
+    # this scope's OWN body: the module binding is already replaced, so a use
+    # after the rebind reads the rebound value, while a use before it still
+    # sees the module (CodeRabbit review on PR #1325). A module scope is never
+    # `global`-affected (the rebind is an ordinary local assignment), so it is
+    # rejected here.
+    if scope_node.type == cs.TS_PY_MODULE or name not in _global_declared_names(
+        scope_node
+    ):
+        return False
+    return any(
+        offset <= at_byte for offset in _global_rebind_positions(scope_node, name)
+    )
+
+
+def python_name_shadowed_at(scope_node: Node, name: str, at_byte: int) -> bool:
+    # Whether `name` is shadowed at source offset `at_byte` within the scope:
+    # True when it is a whole-scope local (bound anywhere in the body,
+    # parameters included -- Python makes the name local for the whole
+    # function), or when a `global`-declared name was REBOUND at or before
+    # `at_byte` in source order.
+    if name in python_locally_assigned_names(scope_node):
+        return True
+    return python_globally_rebound_before(scope_node, name, at_byte)
+
+
+def python_locally_assigned_names(scope_node: Node) -> set[str]:
+    # Plain identifiers bound anywhere in this scope's OWN body (nested
+    # defs/classes pruned): assignment / augmented assignment / walrus / with-as
+    # / for targets, including destructuring forms, plus a function's parameter
+    # names. Python makes a name bound anywhere in a function local for the
+    # WHOLE function, so any such name shadows a same-named module import even
+    # before the assignment (a use before it is UnboundLocalError). A `global`
+    # declaration removes the name from this scope's locals: its uses resolve to
+    # the module binding, so an assignment is a global rebind, not a shadowing
+    # local.
+    names = _python_parameter_names(scope_node)
+    stack = list(scope_seed_nodes(scope_node))
+    while stack:
+        node = stack.pop()
+        if node.type in PY_SCOPE_BOUNDARIES:
+            continue
+        if (target := _binding_target(node)) is not None:
+            names |= _binding_identifiers(target)
+        stack.extend(node.children)
+    if scope_node.type != cs.TS_PY_MODULE:
+        names -= _global_declared_names(scope_node)
+    return names
 
 
 def definition_header_nodes(node: Node) -> list[Node]:

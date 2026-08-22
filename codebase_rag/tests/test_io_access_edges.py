@@ -459,3 +459,175 @@ def test_interpolation_with_slash_collapses_to_opaque_placeholder(
     assert _has(
         rels, "m.page", READS_FROM, "resource::NETWORK::http://svc:8000/users/{*}"
     )
+
+
+def test_python_os_environ_subscript_read(tmp_path: Path) -> None:
+    # `os.environ['K']` is the subscript spelling of the `os.getenv('K')`
+    # env read; the io walk must emit READS_FROM ENV K (issue #1324).
+    files = {"m.py": "import os\n\ndef leak():\n    return os.environ['TOKEN']\n"}
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+    assert not _has(rels, "m.leak", WRITES_TO, "resource::ENV::TOKEN"), rels
+
+
+def test_python_os_environ_subscript_write(tmp_path: Path) -> None:
+    # `os.environ['K'] = v` mutates the environment (dotenv's core behavior);
+    # the subscript on the assignment's LHS is a WRITE, not a READ.
+    files = {"m.py": "import os\n\ndef set(v):\n    os.environ['TOKEN'] = v\n"}
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.set", WRITES_TO, "resource::ENV::TOKEN"), rels
+    assert not _has(rels, "m.set", READS_FROM, "resource::ENV::TOKEN"), rels
+
+
+def test_python_os_environ_subscript_augmented_reads_and_writes(
+    tmp_path: Path,
+) -> None:
+    # `os.environ['K'] += v` reads the old value and writes the new one,
+    # mirroring the lean member-walk augmented-assignment semantics.
+    files = {"m.py": "import os\n\ndef grow(v):\n    os.environ['PATH_LIKE'] += v\n"}
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.grow", WRITES_TO, "resource::ENV::PATH_LIKE"), rels
+    assert _has(rels, "m.grow", READS_FROM, "resource::ENV::PATH_LIKE"), rels
+
+
+def test_python_os_environ_subscript_dynamic_key_is_dynamic(tmp_path: Path) -> None:
+    # A non-literal index keeps the <dynamic> identity, matching the flow walk
+    # and the lean member walks (issue #1324).
+    files = {
+        "m.py": "import os\n\nk = 'TOKEN'\ndef leak():\n    return os.environ[k]\n"
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.leak", READS_FROM, "resource::ENV::<dynamic>"), rels
+
+
+def test_python_os_environ_subscript_aliased_import(tmp_path: Path) -> None:
+    # The object is import-normalised before the member-read match, so an
+    # aliased `import os as o` still reads `os.environ` (issue #1324).
+    files = {"m.py": "import os as o\n\ndef leak():\n    return o.environ['TOKEN']\n"}
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+
+
+def test_python_unrelated_subscript_is_not_env(tmp_path: Path) -> None:
+    # A subscript of any other object (`config['TOKEN']`) is not an env read,
+    # even with a TOKEN index (maintainer review on PR #1325).
+    files = {"m.py": "import config\n\ndef leak():\n    return config['TOKEN']\n"}
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+    assert not _has(rels, "m.leak", WRITES_TO, "resource::ENV::TOKEN"), rels
+
+
+def test_python_unimported_os_subscript_is_not_env(tmp_path: Path) -> None:
+    # An unimported `os` is a local or a NameError, never the stdlib module;
+    # the import gate must reject it (issue #1324).
+    files = {"m.py": "def leak():\n    return os.environ['TOKEN']\n"}
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+
+
+def test_python_os_environ_subscript_global_receiver_is_env(
+    tmp_path: Path,
+) -> None:
+    # `global os` makes the later `os = Fake()` a module-global rebind, NOT a
+    # local binding, so the earlier read still hits the imported module and
+    # emits READS_FROM ENV (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'TOKEN': 'x'}\n\n"
+            "def leak():\n"
+            "    global os\n"
+            "    print(os.environ['TOKEN'])\n"
+            "    os = Fake()\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+
+
+def test_python_os_environ_subscript_global_rebind_before_read_not_env(
+    tmp_path: Path,
+) -> None:
+    # A `global`-declared name keeps its module binding only until a REBIND:
+    # once `os = Fake()` executes, a later subscript hits the rebound value,
+    # not the imported module (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'TOKEN': 'x'}\n\n"
+            "def leak():\n"
+            "    global os\n"
+            "    os = Fake()\n"
+            "    return os.environ['TOKEN']\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+    assert not _has(rels, "m.leak", WRITES_TO, "resource::ENV::TOKEN"), rels
+
+
+def test_python_os_environ_subscript_global_rebind_rhs_read_is_env(
+    tmp_path: Path,
+) -> None:
+    # The RHS of an assignment evaluates BEFORE the target is rebound, so in
+    # `global os; os = os.environ['TOKEN']` the subscript still reads through
+    # the imported module and is an ENV read (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\ndef leak():\n    global os\n    os = os.environ['TOKEN']\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+
+
+def test_python_os_environ_subscript_augmented_assignment_shadow_not_env(
+    tmp_path: Path,
+) -> None:
+    # `os += v` binds `os` locally for the whole function exactly like a plain
+    # assignment, so the subscript is not an env read (Greptile review on
+    # PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\ndef leak(v):\n    os += v\n    return os.environ['TOKEN']\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+    assert not _has(rels, "m.leak", WRITES_TO, "resource::ENV::TOKEN"), rels
+
+
+def test_python_os_environ_subscript_walrus_shadow_not_env(tmp_path: Path) -> None:
+    # The walrus `(os := v)` binds `os` locally for the whole function, so the
+    # subscript is not an env read (Greptile review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n"
+            "    (os := source())\n"
+            "    return os.environ['TOKEN']\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+    assert not _has(rels, "m.leak", WRITES_TO, "resource::ENV::TOKEN"), rels
+
+
+def test_python_os_environ_subscript_local_shadow_is_not_env(tmp_path: Path) -> None:
+    # A name bound anywhere in the scope shadows the module-level import for
+    # the whole scope, so a local `os = Fake()` never reads the env mapping.
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'TOKEN': 'x'}\n\n"
+            "def leak():\n"
+            "    os = Fake()\n"
+            "    return os.environ['TOKEN']\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert not _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+    assert not _has(rels, "m.leak", WRITES_TO, "resource::ENV::TOKEN"), rels

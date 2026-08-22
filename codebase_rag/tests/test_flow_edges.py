@@ -77,6 +77,406 @@ def test_resource_to_resource_env_to_stdout(tmp_path: Path) -> None:
     )
 
 
+def test_python_os_environ_subscript_read_is_env_source(tmp_path: Path) -> None:
+    # `os.environ['K']` is the index-object form of the `os.environ.get('K')`
+    # env read; the deep walk must treat it as ENV source K (issue #1324).
+    files = {
+        "m.py": "import os\n\ndef leak():\n    x = os.environ['K']\n    print(x)\n"
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_inline_in_sink_arg(tmp_path: Path) -> None:
+    # An inline subscript source in a sink's argument is seen by the
+    # argument-taint evaluator, not only a pre-assigned name (issue #1324).
+    files = {"m.py": "import os\n\nprint(os.environ['K'])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_with_aliased_import(tmp_path: Path) -> None:
+    # The object is import-normalised before the member-read match, so an
+    # aliased `import os as o` still reads `os.environ` (issue #1324).
+    files = {"m.py": "import os as o\n\nprint(o.environ['K'])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_environ_from_import_subscript_read_is_env_source(
+    tmp_path: Path,
+) -> None:
+    # `from os import environ` binds the imported member directly; the subscript
+    # read of that binding is still ENV source K (issue #1324).
+    files = {"m.py": "from os import environ\n\nprint(environ['K'])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_without_os_import_is_not_env_source(
+    tmp_path: Path,
+) -> None:
+    # An unimported `os` is never the stdlib module: a local `os = Fake()` with
+    # an `environ` attribute must not create a false ENV source (issue #1324).
+    files = {
+        "m.py": (
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "def leak():\n"
+            "    os = Fake()\n"
+            "    print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_local_rebind_shadows_import(
+    tmp_path: Path,
+) -> None:
+    # Python makes a name assigned anywhere in a function local for the whole
+    # function, so a local `os = Fake()` shadows the module-level import and
+    # the read is not an ENV source (issue #1324).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "def leak():\n"
+            "    os = Fake()\n"
+            "    print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_dynamic_key_is_dynamic_target(
+    tmp_path: Path,
+) -> None:
+    # A non-literal index keeps the <dynamic> identity, matching the io_access
+    # member-read walk's fallback (issue #1324).
+    files = {"m.py": "import os\n\nk = 'K'\nprint(os.environ[k])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::<dynamic>",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_returned_os_environ_subscript_flows_to_caller_sink(
+    tmp_path: Path,
+) -> None:
+    # A returned subscript source flows out of the function exactly like a
+    # returned call-shaped source (issue #1324).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def build():\n    return os.environ['K']\n\n"
+            "def caller():\n    v = build()\n    print(v)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+    assert _has(edges, "m.build", "m.caller", kind=FlowKind.RETURN.value)
+
+
+def test_python_os_environ_subscript_parameter_shadow_not_source(
+    tmp_path: Path,
+) -> None:
+    # A function parameter named `os` is local for the whole function, so it
+    # shadows the module-level import and the read is not an ENV source
+    # (CodeRabbit review on PR #1325).
+    files = {"m.py": "import os\n\ndef leak(os):\n    print(os.environ['K'])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_typed_parameter_shadow_not_source(
+    tmp_path: Path,
+) -> None:
+    # A TYPED parameter (`os: dict`) binds its name field-less shape the same
+    # way, shadowing the module-level import for the whole function.
+    files = {"m.py": "import os\n\ndef leak(os: dict):\n    print(os.environ['K'])\n"}
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_global_receiver_is_env_source(
+    tmp_path: Path,
+) -> None:
+    # `global os` declares the name module-scoped: the later `os = Fake()`
+    # rebinds the GLOBAL, not a local, so the earlier read still resolves to
+    # the imported module and is an ENV source (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "def leak():\n"
+            "    global os\n"
+            "    print(os.environ['K'])\n"
+            "    os = Fake()\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_global_rebind_before_read_not_source(
+    tmp_path: Path,
+) -> None:
+    # A `global`-declared name keeps its module binding only until a REBIND:
+    # once `os = Fake()` executes, a later read hits the rebound value, not
+    # the imported module, so it is not an ENV source (CodeRabbit review on
+    # PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "def leak():\n"
+            "    global os\n"
+            "    os = Fake()\n"
+            "    print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_global_rebind_rhs_read_is_source(
+    tmp_path: Path,
+) -> None:
+    # The RHS of an assignment evaluates BEFORE the target is rebound, so in
+    # `global os; os = os.environ['K']` the subscript still reads through the
+    # imported module: the ENV value lands in the rebound name and flows to
+    # the sink (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n"
+            "    global os\n"
+            "    os = os.environ['K']\n"
+            "    print(os)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_augmented_assignment_shadow_not_source(
+    tmp_path: Path,
+) -> None:
+    # `os += v` binds `os` locally for the whole function exactly like a plain
+    # assignment, so the subscript read is not an ENV source (Greptile review
+    # on PR #1325).
+    files = {
+        "m.py": ("import os\n\ndef leak(v):\n    os += v\n    print(os.environ['K'])\n")
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_walrus_shadow_not_source(
+    tmp_path: Path,
+) -> None:
+    # The walrus `(os := v)` binds `os` locally for the whole function, so the
+    # subscript read is not an ENV source (Greptile review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n"
+            "    (os := source())\n"
+            "    print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_read_before_local_assignment_not_source(
+    tmp_path: Path,
+) -> None:
+    # Without a `global` declaration the whole-scope locality rule still holds:
+    # a read BEFORE a later `os = Fake()` is shadowed for the whole function
+    # (a use before the assignment is UnboundLocalError), so it is not an ENV
+    # source (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "def leak():\n"
+            "    print(os.environ['K'])\n"
+            "    os = Fake()\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_module_scope_rebind_still_shadows(
+    tmp_path: Path,
+) -> None:
+    # At module scope `global` is a legal no-op: a module-level `os = Fake()`
+    # still rebinds the module name, so the read is not an ENV source
+    # (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "class Fake:\n"
+            "    environ = {'K': 'x'}\n\n"
+            "global os\n"
+            "os = Fake()\n"
+            "print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_destructuring_shadow_not_source(
+    tmp_path: Path,
+) -> None:
+    # A destructuring assignment binds every target identifier, so `os, _ =
+    # split()` shadows the module-level `import os` for the whole function
+    # (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n"
+            "    os, _ = split()\n"
+            "    print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_for_destructuring_shadow_not_source(
+    tmp_path: Path,
+) -> None:
+    # A for-loop destructuring target binds its identifiers, so `for os, _ in
+    # pairs():` shadows the module-level `import os` for the whole function
+    # (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n"
+            "    for os, _ in pairs():\n"
+            "        print(os.environ['K'])\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
+def test_python_os_environ_subscript_assignment_lhs_is_not_read_source(
+    tmp_path: Path,
+) -> None:
+    # `os.environ['K'] = v` writes the env mapping; the value-taint evaluator
+    # only reads the RHS, so the LHS subscript must never surface as an ENV
+    # read source (maintainer review on PR #1325).
+    files = {
+        "m.py": "import os\n\ndef store(v):\n    os.environ['K'] = v\n    print('stored')\n"
+    }
+    edges = _run_flow(tmp_path, files)
+    assert not any(a.startswith("resource::ENV") for a, _b, _p in edges)
+
+
 def test_tainted_positional_arg_flows_to_callee(tmp_path: Path) -> None:
     files = {
         "m.py": (

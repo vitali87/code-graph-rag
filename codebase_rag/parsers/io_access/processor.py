@@ -39,7 +39,10 @@ from .extract import (
     iter_token_tree_calls,
     literal_target,
     match_normalised,
+    normalise,
     positional_arg_node,
+    python_globally_rebound_before,
+    python_locally_assigned_names,
     registry_match,
     rust_unwrap_result,
     scope_seed_nodes,
@@ -367,7 +370,8 @@ class IOAccessProcessor:
         # assignment, so uses after it still resolve. Attribute keys (self.x) are
         # never locals, so they are unaffected.
         handles = self._inherited_handles(caller_node, import_map, ctor_by_name)
-        for name in self._locally_assigned_names(caller_node):
+        locally_assigned = self._locally_assigned_names(caller_node)
+        for name in locally_assigned:
             if cs.SEPARATOR_DOT not in name:
                 handles.pop(name, None)
         stack = list(reversed(scope_seed_nodes(caller_node)))
@@ -382,6 +386,10 @@ class IOAccessProcessor:
                 handles[var] = binding
             elif node.type == cs.TS_PY_CALL:
                 self._emit_call(node, caller_spec, import_map, sink_by_name, handles)
+            elif node.type == cs.TS_PY_SUBSCRIPT:
+                self._emit_py_env_subscript(
+                    node, caller_spec, import_map, caller_node, locally_assigned
+                )
             stack.extend(reversed(node.children))
 
     def _binding_from_node(
@@ -471,33 +479,7 @@ class IOAccessProcessor:
         return handles
 
     def _locally_assigned_names(self, caller_node: Node) -> set[str]:
-        # Plain identifiers assigned anywhere in this scope's OWN body (nested
-        # defs/classes pruned): assignment / with-as / for targets. Any such name is
-        # local for the whole function, so an inherited handle of that name is
-        # shadowed. Dotted attribute targets (self.x) are not locals, so skipped.
-        names: set[str] = set()
-        stack = list(scope_seed_nodes(caller_node))
-        while stack:
-            node = stack.pop()
-            if node.type in PY_SCOPE_BOUNDARIES:
-                continue
-            target: Node | None = None
-            if node.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
-                target = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            elif node.type == cs.TS_PY_AS_PATTERN:
-                alias = next(
-                    (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
-                    None,
-                )
-                target = alias.children[0] if alias and alias.children else None
-            if (
-                target is not None
-                and target.type == cs.TS_PY_IDENTIFIER
-                and target.text is not None
-            ):
-                names.add(target.text.decode(cs.ENCODING_UTF8))
-            stack.extend(node.children)
-        return names
+        return python_locally_assigned_names(caller_node)
 
     def _collect_scope_var_handles(
         self,
@@ -2076,6 +2058,76 @@ class IOAccessProcessor:
         direction = sink.effective_direction(mode_literal)
         identity = literal_target(node, sink.target_arg, sink.target_kw)
         self._emit(caller_spec, direction, sink.kind, identity)
+
+    def _emit_py_env_subscript(
+        self,
+        node: Node,
+        caller_spec: tuple[str, str, str],
+        import_map: dict[str, str],
+        scope_node: Node,
+        in_scope: set[str],
+    ) -> None:
+        # `os.environ['K']` reads (and, on an assignment's LHS, writes) the
+        # process-env mapping: the subscript spelling of the `os.getenv` /
+        # `os.environ.get` env sink, matched against the shared member-read
+        # catalog (issue #1324). The object's dotted text is import-normalised,
+        # so an aliased import (`import os as o` -> `o.environ['K']`) still
+        # reads `os.environ`. The receiver head must be an imported name (an
+        # unimported `os` is a local or a NameError, never the stdlib module),
+        # and a name bound anywhere in the enclosing scope is local for the
+        # whole scope, shadowing the import -- except a `global`-declared name,
+        # whose rebinding only shadows reads AFTER the rebind in source order.
+        member_reads = IO_MEMBER_READS.get(cs.SupportedLanguage.PYTHON, ())
+        if not member_reads:
+            return
+        obj = node.child_by_field_name(cs.FIELD_VALUE)
+        if obj is None or obj.text is None:
+            return
+        obj_text = obj.text.decode(cs.ENCODING_UTF8)
+        raw_head, _, _ = obj_text.partition(cs.SEPARATOR_DOT)
+        if (
+            import_map.get(raw_head) is None
+            or raw_head in in_scope
+            or python_globally_rebound_before(
+                scope_node, raw_head, node.start_byte or 0
+            )
+        ):
+            return
+        normalised = normalise(obj_text, import_map)
+        if normalised is None:
+            return
+        for prefix, kind in member_reads:
+            if normalised != prefix:
+                continue
+            index = node.child_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
+            identity = (
+                string_literal(index, cs.TS_PY_STRING, cs.TS_PY_STRING_CONTENT)
+                if index is not None and index.type == cs.TS_PY_STRING
+                else DYNAMIC_TARGET
+            )
+            self._emit(caller_spec, self._py_subscript_direction(node), kind, identity)
+            return
+
+    @staticmethod
+    def _py_subscript_direction(node: Node) -> IODirection:
+        # A subscript on an assignment's LHS mutates the resource:
+        # `os.environ['K'] = v` is a WRITE (mislabelling it a read hid dotenv's
+        # core behaviour); `+=` reads the old value AND writes. Any other
+        # position (the assignment RHS included) stays a read. Node equality is
+        # by .id (the bindings hand out fresh Node objects).
+        parent = node.parent
+        if parent is None:
+            return IODirection.READ
+        if parent.type == cs.TS_PY_AUGMENTED_ASSIGNMENT:
+            direction = IODirection.READ_WRITE
+        elif parent.type == cs.TS_PY_ASSIGNMENT:
+            direction = IODirection.WRITE
+        else:
+            return IODirection.READ
+        left = parent.child_by_field_name(cs.FIELD_LEFT)
+        return (
+            direction if left is not None and left.id == node.id else IODirection.READ
+        )
 
     def _emit_handle_method(
         self,
