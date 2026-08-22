@@ -565,3 +565,59 @@ def test_cross_project_ref_emits_the_write_fact_itself(
     facts = run_csharp_frontend(repo)
     writes = {key[3]: value for key, value in facts.out_writes.items()}
     assert writes.get("Fill") == {1: "sink"}
+
+
+# The block-bodied local function is already covered above. These two add the
+# shapes it does not reach: the EXPRESSION-bodied local function, and the
+# read-only negative that keeps the branch from writing back unconditionally
+# (issue #1353 item 1).
+_LOCAL_FUNCTION_EXPRESSION_REF = (
+    "using System;\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    "        void Fill(string src, ref string dst) => dst = src;\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    '        var sink = "";\n'
+    "        Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+_LOCAL_FUNCTION_READ_ONLY_REF = (
+    "using System;\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    "        void Inspect(string src, ref string other)\n        {\n"
+    "            Console.Error.WriteLine(src.Length + other.Length);\n        }\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    '        var sink = "";\n'
+    "        Inspect(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_expression_bodied_local_function_ref_callee_writes_back(
+    tmp_path: Path,
+) -> None:
+    # `CallableBody` reaches for `local.ExpressionBody?.Expression` on this
+    # shape; nothing exercised that fallback before.
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "lf2", _LOCAL_FUNCTION_EXPRESSION_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_read_only_ref_local_function_never_gains_a_flow(tmp_path: Path) -> None:
+    # The local-function branch must keep the same discipline as the method one:
+    # a `ref` parameter that is only READ does not write back, so treating every
+    # ref argument as written would invent an edge. The callee reports to STDERR
+    # deliberately: writing to STDOUT there would leak the token through the
+    # callee's OWN sink and the test would pass or fail for the wrong reason.
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "lf3", _LOCAL_FUNCTION_READ_ONLY_REF, cs.CSharpFrontend.HYBRID
+    )
