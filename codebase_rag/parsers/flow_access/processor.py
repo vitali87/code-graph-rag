@@ -72,11 +72,13 @@ from ..utils import (
     go_positional_parameter_slots,
     java_positional_parameter_slots,
     js_ts_positional_parameter_slots,
+    lua_positional_parameter_slots,
     php_positional_parameter_slots,
     python_free_variable_names,
     python_parameter_names,
     rust_positional_parameter_slots,
     safe_decode_text,
+    scala_positional_parameter_slots,
 )
 from .constants import (
     KEY_KIND,
@@ -193,12 +195,58 @@ def _lean_parameter_slots(
         return php_positional_parameter_slots(func_node)
     if language == cs.SupportedLanguage.DART:
         return dart_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.LUA:
+        return lua_positional_parameter_slots(func_node)
+    if language == cs.SupportedLanguage.SCALA:
+        return scala_positional_parameter_slots(func_node)
     return [], None
 
 
 # A Rust block's final child is the function's value only when it is an
 # expression: a statement or declaration yields `()` and returns nothing.
 _RUST_NON_VALUE_TAIL = frozenset({cs.TS_EXPRESSION_STATEMENT, cs.TS_RS_LET_DECLARATION})
+
+
+# A Scala block yields its final expression; a definition yields Unit.
+_SCALA_NON_VALUE_TAIL = frozenset(
+    {cs.TS_SCALA_VAL_DEFINITION, cs.TS_SCALA_VAR_DEFINITION}
+)
+
+
+def _scala_returns_unit(func_node: Node) -> bool:
+    # The spellings of scala.Unit are enumerable, so match them exactly rather
+    # than by trailing segment: a user-defined `example.Unit` is an ordinary
+    # type whose returned value DOES matter, and suppressing it would drop a
+    # real flow.
+    return_type = func_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
+    if return_type is None or return_type.text is None:
+        return False
+    return return_type.text.decode(cs.ENCODING_UTF8).strip() in cs.SCALA_UNIT_TYPES
+
+
+def _scala_body_value(func_node: Node) -> Node | None:
+    # Scala has no return keyword in idiomatic code: a def's BODY is its value,
+    # whether that is a bare expression (`def f(v: String) = v`), a call, or a
+    # block whose final expression is the result (issue #1365).
+    #
+    # A def DECLARED `Unit` is the exception: its body's value is discarded, so
+    # summarising it would invent a return the caller can never observe and a
+    # sink consuming `f()` would report a flow that does not exist. Only an
+    # explicit annotation is trusted here; an inferred type is unknown to the
+    # walk and left alone.
+    if _scala_returns_unit(func_node):
+        return None
+    body = func_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return None
+    # Scala 3 significant indentation spells the same block `indented_block`.
+    if body.type not in (cs.TS_SCALA_BLOCK, cs.TS_SCALA_INDENTED_BLOCK):
+        return body
+    children = [c for c in body.named_children if c.type != cs.TS_COMMENT]
+    if not children:
+        return None
+    tail = children[-1]
+    return None if tail.type in _SCALA_NON_VALUE_TAIL else tail
 
 
 def _rust_tail_expression(func_node: Node) -> Node | None:
@@ -818,8 +866,12 @@ class FlowProcessor:
             # not leak its shadow past the join.
             for node in statements:
                 state = self._walk_flat_stmt(node, state, jc)
-        if ctx.language == cs.SupportedLanguage.RUST:
-            tail = _rust_tail_expression(caller_node)
+        if ctx.language in (cs.SupportedLanguage.RUST, cs.SupportedLanguage.SCALA):
+            tail = (
+                _rust_tail_expression(caller_node)
+                if ctx.language == cs.SupportedLanguage.RUST
+                else _scala_body_value(caller_node)
+            )
             if tail is not None:
                 returned = self._js_expr_taint(tail, state.taint, jc)
                 if returned is not None:

@@ -33,3 +33,7 @@ TS_LUA_FUNCTION_DEFINITION = "function_definition"
 IMPORT_REQUIRE = "require"
 IMPORT_PCALL = "pcall"
 IMPORT_IMPORT = "import"
+
+# Lua `...` in a parameter list: occupies the trailing variadic slot and
+# binds no simple name (issue #1365).
+TS_LUA_VARARG_EXPRESSION = "vararg_expression"

@@ -361,8 +361,9 @@ module is re-exported under its own name. A project that does
   summaries are resolved by a worklist fixpoint once every file has been walked, so
   a callee defined after (or in a different file from) its caller is still known to
   return a tainted value at the caller's site.
-- Forward argument taint composes into callee **sinks** for Python and the lean-walk
-  languages with a parameter-name extractor (Go, JavaScript, TypeScript/TSX, C++): a
+- Forward argument taint composes into callee **sinks** for Python and every lean-walk
+  language with a parameter-name extractor, which is now all of them: Go, JavaScript,
+  TypeScript/TSX, C++, Java, C#, Rust, C, PHP, Dart, Lua and Scala. A
   parameter that reaches a write sink inside its body is recorded as a per-function
   parameter-sink summary (closed over transitive parameter hand-offs by the same
   finalize fixpoint), so a tainted argument passed at a call site emits the full
@@ -377,13 +378,17 @@ module is re-exported under its own name. A project that does
   return summary, so a caller consuming the return (`y = redact(secret); print(y)`)
   resolves the secret to the sink. The composition is keyed by the individual call site,
   so a second call to the same helper with a clean argument keeps a clean result. A DIRECT
-  pass-through (`return v`) composes in Python, JavaScript, TypeScript, Java, C#, Go, PHP,
-  C, C++, Dart and Rust, including Rust's idiomatic trailing-expression return with no
-  `return` keyword. It does NOT compose in Lua or Scala, which have no lean parameter-slot
-  extractor, so no parameter is seeded for the composition to match. Chaining transitively
-  through another call
-  (`return other(p)`) is Python-only; a lean-walk callee that returns the result of a
-  further call ends the chain there.
+  pass-through (`return v`) composes in every language the walk covers: Python,
+  JavaScript, TypeScript, Java, C#, Go, PHP, C, C++, Dart, Rust, Lua and Scala. Two of
+  those spell the return without a keyword and are handled as the body's value rather
+  than a return node: Rust's trailing block expression, and a Scala `def` whose body IS
+  its result (a bare expression, a call, or a block ending in one). Chaining transitively
+  through another call (`return other(p)`) is Python-only; a lean-walk callee that
+  returns the result of a further call ends the chain there.
+- Lua's `...` occupies its positional slot but binds no name, so a secret passed into a
+  vararg parameter seeds nothing and the flow stops there. Because Lua requires `...` to
+  be last, it can never displace a named parameter, so only propagation is affected, not
+  the positional mapping.
 - The `kind = arg` edge itself is still recorded one level deep — it marks that a
   tainted value reached a call — and is emitted alongside the forward composition above.
   Sources and sinks are direct I/O calls from the registry.
