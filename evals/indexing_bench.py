@@ -67,7 +67,7 @@ def _peak_rss_mib() -> float | None:
     return round(rss / divisor, 1)
 
 
-def measure(target: Path, project_name: str) -> IndexingStats:
+def measure_indexing_run(target: Path, project_name: str) -> IndexingStats:
     t0 = time.perf_counter()
     parsers, queries = load_parsers()
     t1 = time.perf_counter()
@@ -107,6 +107,34 @@ def _ensure_corpus(spec: CorpusSpec, corpus_dir: Path) -> Path:
             check=False,
         ).stdout.strip()
         if head == spec.commit:
+            dirty = subprocess.run(
+                ["git", "-C", str(checkout), "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            if dirty:
+                # A dirty cache would index edited or stray content while the
+                # report pins the result to spec.commit, making the numbers
+                # non-reproducible; restore the pinned tree (CodeRabbit
+                # review on PR #1388).
+                logger.info(ls.INDEXING_RESETTING.format(name=spec.name))
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(checkout),
+                        "checkout",
+                        "-q",
+                        "--force",
+                        spec.commit,
+                    ],
+                    check=True,
+                )
+                subprocess.run(
+                    ["git", "-C", str(checkout), "clean", "-qdff"],
+                    check=True,
+                )
             return target
     logger.info(ls.INDEXING_FETCHING.format(name=spec.name, commit=spec.commit))
     checkout.mkdir(parents=True, exist_ok=True)
@@ -137,7 +165,7 @@ def _ensure_corpus(spec: CorpusSpec, corpus_dir: Path) -> Path:
     return target
 
 
-def _run_child(target: Path, project_name: str) -> IndexingStats:
+def _measure_in_child_process(target: Path, project_name: str) -> IndexingStats:
     logger.info(ls.INDEXING_MEASURING.format(target=target, project=project_name))
     proc = subprocess.run(
         [
@@ -226,11 +254,15 @@ def main(
     ] = None,
 ) -> None:
     if measure_target is not None:
-        stats = measure(measure_target.resolve(), project_name or measure_target.name)
+        stats = measure_indexing_run(
+            measure_target.resolve(), project_name or measure_target.name
+        )
         sys.stdout.write(json.dumps(stats) + "\n")
         return
     if target is not None:
-        stats = _run_child(target.resolve(), project_name or target.resolve().name)
+        stats = _measure_in_child_process(
+            target.resolve(), project_name or target.resolve().name
+        )
     else:
         if corpus not in CORPORA:
             raise typer.BadParameter(
@@ -238,7 +270,7 @@ def main(
             )
         spec = CORPORA[corpus]
         checkout = _ensure_corpus(spec, corpus_dir)
-        stats = _run_child(checkout, project_name or spec.name)
+        stats = _measure_in_child_process(checkout, project_name or spec.name)
         stats["commit"] = spec.commit
     _report(stats, out_dir)
 

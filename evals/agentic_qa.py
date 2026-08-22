@@ -136,6 +136,51 @@ class _CallSite(NamedTuple):
     callee: str
 
 
+def _definition_time_exprs(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[ast.expr]:
+    # Decorators, argument defaults, and annotations evaluate at DEFINITION
+    # time in the enclosing scope; only the body runs inside the new function
+    # (Greptile review on PR #1388).
+    args = fn.args
+    exprs: list[ast.expr | None] = [
+        *fn.decorator_list,
+        *args.defaults,
+        *args.kw_defaults,
+        fn.returns,
+        *(a.annotation for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)),
+    ]
+    exprs.extend(a.annotation for a in (args.vararg, args.kwarg) if a is not None)
+    return [e for e in exprs if e is not None]
+
+
+def _visit_call_site(
+    rel: str,
+    node: ast.AST,
+    stack: list[str],
+    first_party: set[str],
+    sites: list[_CallSite],
+) -> None:
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        for expr in _definition_time_exprs(node):
+            _visit_call_site(rel, expr, stack, first_party, sites)
+        inner = [*stack, node.name]
+        for stmt in node.body:
+            _visit_call_site(rel, stmt, inner, first_party, sites)
+        return
+    if isinstance(node, ast.Lambda):
+        for expr in (*node.args.defaults, *node.args.kw_defaults):
+            if expr is not None:
+                _visit_call_site(rel, expr, stack, first_party, sites)
+        _visit_call_site(rel, node.body, [*stack, _LAMBDA_SCOPE], first_party, sites)
+        return
+    if isinstance(node, ast.Call) and (name := _callee_name(node.func)):
+        if name in first_party:
+            sites.append(_CallSite(rel, stack[-1] if stack else None, name))
+    for child in ast.iter_child_nodes(node):
+        _visit_call_site(rel, child, stack, first_party, sites)
+
+
 def _collect_call_sites(
     rel: str,
     node: ast.AST,
@@ -144,16 +189,7 @@ def _collect_call_sites(
     sites: list[_CallSite],
 ) -> None:
     for child in ast.iter_child_nodes(node):
-        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
-            _collect_call_sites(rel, child, [*stack, child.name], first_party, sites)
-            continue
-        if isinstance(child, ast.Lambda):
-            _collect_call_sites(rel, child, [*stack, _LAMBDA_SCOPE], first_party, sites)
-            continue
-        if isinstance(child, ast.Call) and (name := _callee_name(child.func)):
-            if name in first_party:
-                sites.append(_CallSite(rel, stack[-1] if stack else None, name))
-        _collect_call_sites(rel, child, stack, first_party, sites)
+        _visit_call_site(rel, child, stack, first_party, sites)
 
 
 def _definition_counts(trees: list[tuple[str, ast.Module]]) -> Counter[str]:
@@ -227,7 +263,7 @@ def extract_answer_files(answer: str, expected_root: str = "") -> frozenset[str]
     return frozenset(found)
 
 
-def grade(answered: frozenset[str], expected: frozenset[str]) -> QAGrade:
+def grade_answer_files(answered: frozenset[str], expected: frozenset[str]) -> QAGrade:
     tp = len(answered & expected)
     precision = tp / len(answered) if answered else 0.0
     recall = tp / len(expected) if expected else 0.0
@@ -240,7 +276,7 @@ def grade(answered: frozenset[str], expected: frozenset[str]) -> QAGrade:
     )
 
 
-def percentile(values: list[float], pct: float) -> float:
+def latency_percentile(values: list[float], pct: float) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
@@ -292,19 +328,19 @@ def _build_tools(
     from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
     from codebase_rag.tools.shell_command import (
         ShellCommander,
-        create_shell_command_tool,
+        create_noninteractive_shell_command_tool,
     )
 
     commander = ShellCommander(
         project_root=str(root),
         timeout=settings.SHELL_COMMAND_TIMEOUT,
-        # The harness only ever runs read-only search commands chosen by the
-        # model inside the corpus checkout; YOLO here avoids the interactive
-        # approval flow, which has no operator in a benchmark run.
-        is_yolo=lambda: True,
     )
     tools: list[object] = [
-        create_shell_command_tool(commander),
+        # A benchmark run has no operator to approve commands, so anything
+        # that would need approval is denied (never yolo-bypassed): the model
+        # only needs read-only search commands, and a mutating command would
+        # corrupt the pinned corpus (Greptile security review on PR #1388).
+        create_noninteractive_shell_command_tool(commander),
         create_file_reader_tool(FileReader(project_root=str(root))),
         create_directory_lister_tool(DirectoryLister(project_root=str(root))),
     ]
@@ -370,7 +406,7 @@ async def _run_condition(
         seconds = round(time.perf_counter() - start, 2)
         in_tokens += cypher_meter.input_tokens - cypher_before[0]
         out_tokens += cypher_meter.output_tokens - cypher_before[1]
-        graded = grade(extract_answer_files(answer), case.expected_files)
+        graded = grade_answer_files(extract_answer_files(answer), case.expected_files)
         records.append(
             QARecord(
                 condition=condition.value,
@@ -403,7 +439,7 @@ async def _run_condition(
     return records
 
 
-def summarize(records: list[QARecord]) -> dict[str, float]:
+def summarize_qa_records(records: list[QARecord]) -> dict[str, float]:
     if not records:
         return {}
     seconds = [r["seconds"] for r in records]
@@ -413,8 +449,8 @@ def summarize(records: list[QARecord]) -> dict[str, float]:
         "exact_rate": round(sum(1 for r in records if r["exact"]) / len(records), 4),
         "errors": sum(1 for r in records if r["error"]),
         "mean_seconds": round(sum(seconds) / len(seconds), 2),
-        "p50_seconds": round(percentile(seconds, 50), 2),
-        "p95_seconds": round(percentile(seconds, 95), 2),
+        "p50_seconds": round(latency_percentile(seconds, 50), 2),
+        "p95_seconds": round(latency_percentile(seconds, 95), 2),
         "mean_input_tokens": round(
             sum(r["input_tokens"] for r in records) / len(records)
         ),
@@ -422,6 +458,53 @@ def summarize(records: list[QARecord]) -> dict[str, float]:
             sum(r["output_tokens"] for r in records) / len(records)
         ),
     }
+
+
+def _init_records_file(
+    records_path: Path, fingerprint: dict[str, object], resume: bool
+) -> dict[str, list[QARecord]]:
+    """Prepare the JSONL records file and load resumable prior records.
+
+    The first line of the file is a fingerprint header describing the run
+    configuration; --resume refuses a file whose header does not match, so
+    records from a different corpus, commit, question set, seed, or model can
+    never be merged into one summary. A fresh run truncates the file instead
+    of appending, so a crashed-then-rerun file cannot double-count questions.
+    Loading keeps only the LAST record per (condition, name). A completed
+    answer or a timeout is a real benchmark outcome and is kept; an API-error
+    record (e.g. exhausted credits) is not — the question is re-run so the
+    final data holds no infrastructure failures. (Greptile P1 + CodeRabbit
+    review on PR #1388.)
+    """
+    header = json.dumps({"fingerprint": fingerprint})
+    if not resume or not records_path.exists():
+        records_path.write_text(header + "\n")
+        return {}
+    lines = records_path.read_text().splitlines()
+    stored: object = None
+    if lines:
+        try:
+            stored = json.loads(lines[0]).get("fingerprint")
+        except (json.JSONDecodeError, AttributeError):
+            stored = None
+    if stored != fingerprint:
+        raise typer.BadParameter(
+            ls.AGENTIC_QA_RESUME_MISMATCH.format(
+                path=records_path, stored=stored, current=fingerprint
+            )
+        )
+    latest: dict[tuple[str, str], QARecord] = {}
+    for line in lines[1:]:
+        try:
+            rec: QARecord = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not rec["error"] or rec["error"].startswith("TimeoutError"):
+            latest[(rec["condition"], rec["name"])] = rec
+    prior: dict[str, list[QARecord]] = {}
+    for (condition, _name), rec in latest.items():
+        prior.setdefault(condition, []).append(rec)
+    return prior
 
 
 def _reindex_into_memgraph(root: Path, project_name: str, ingestor: object) -> None:
@@ -506,25 +589,22 @@ def main(
         if condition != "both"
         else [Condition.GRAPH, Condition.GREP]
     )
+    from codebase_rag.config import settings
+    from codebase_rag.services.graph_service import MemgraphIngestor
+
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = "" if QType(qtype) is QType.CALLS else f"_{qtype}"
     records_path = out_dir / ec.AGENTIC_RECORDS_FILE.format(suffix=suffix)
-    # A completed answer or a timeout is a real benchmark outcome and is kept
-    # on --resume; an API-error record (e.g. exhausted credits) is not — the
-    # question is re-run so the final data holds no infrastructure failures.
-    prior: dict[str, list[QARecord]] = {}
-    if resume and records_path.exists():
-        with records_path.open() as source:
-            for line in source:
-                try:
-                    rec: QARecord = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not rec["error"] or rec["error"].startswith("TimeoutError"):
-                    prior.setdefault(rec["condition"], []).append(rec)
+    fingerprint: dict[str, object] = {
+        "corpus": corpus,
+        "commit": spec.commit,
+        "qtype": qtype,
+        "sample": sample,
+        "seed": seed,
+        "model": settings.active_orchestrator_config.model_id,
+    }
+    prior = _init_records_file(records_path, fingerprint, resume)
     done = {(c, r["name"]) for c, rs in prior.items() for r in rs}
-    from codebase_rag.config import settings
-    from codebase_rag.services.graph_service import MemgraphIngestor
 
     needs_graph = Condition.GRAPH in conditions
     results: dict[str, dict[str, float]] = {}
@@ -555,7 +635,7 @@ def main(
                         records_path,
                     )
                 )
-                results[cond.value] = summarize(records)
+                results[cond.value] = summarize_qa_records(records)
                 all_records.extend(records)
     else:
         for cond in conditions:
@@ -563,7 +643,7 @@ def main(
             records = prior.get(cond.value, []) + asyncio.run(
                 _run_condition(cond, todo, root, None, spec.name, records_path)
             )
-            results[cond.value] = summarize(records)
+            results[cond.value] = summarize_qa_records(records)
             all_records.extend(records)
 
     out_path = out_dir / ec.AGENTIC_RESULTS_FILE.format(suffix=suffix)

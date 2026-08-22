@@ -24,6 +24,7 @@ from codebase_rag.tools.shell_command import (
     _parse_command,
     _requires_approval,
     _validate_segment,
+    create_noninteractive_shell_command_tool,
     create_shell_command_tool,
 )
 
@@ -433,6 +434,73 @@ class TestYoloMode:
         result = await tool.function(mock_ctx, "rm -rf /")
         assert result.return_code != 0
         assert "dangerous" in result.stderr.lower()
+
+
+class TestNoninteractiveMode:
+    # Operator-less runs (benchmarks): approval-requiring commands are DENIED
+    # instead of bypassed, and the allowlist stays enforced (Greptile security
+    # review on PR #1388).
+    async def test_denies_write_command_instead_of_bypassing(
+        self, temp_project_root: Path
+    ) -> None:
+        test_file = temp_project_root / "keep_me.txt"
+        test_file.write_text("hi", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "rm keep_me.txt")
+        assert result.return_code != 0
+        assert "non-interactive" in result.stderr.lower()
+        assert test_file.exists()
+
+    async def test_denies_absolute_path_read(self, temp_project_root: Path) -> None:
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat /etc/passwd")
+        assert result.return_code != 0
+        assert "path" in result.stderr.lower()
+
+    async def test_denies_parent_traversal_read(self, temp_project_root: Path) -> None:
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat ../outside.txt")
+        assert result.return_code != 0
+        assert "path" in result.stderr.lower()
+
+    async def test_denies_find_mutating_action(self, temp_project_root: Path) -> None:
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "find . -name x -delete")
+        assert result.return_code != 0
+        assert "find" in result.stderr.lower()
+
+    async def test_enforces_allowlist(self, temp_project_root: Path) -> None:
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        assert "printf" not in settings.SHELL_COMMAND_ALLOWLIST
+        result = await tool.function(mock_ctx, "printf hello")
+        assert result.return_code != 0
+
+    async def test_read_only_command_runs_without_approval(
+        self, temp_project_root: Path
+    ) -> None:
+        (temp_project_root / "data.txt").write_text("payload", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat data.txt")
+        assert result.return_code == 0, result.stderr
+        assert "payload" in result.stdout
 
 
 class TestHasRedirectOperators:

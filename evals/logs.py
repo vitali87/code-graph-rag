@@ -155,6 +155,13 @@ INDEXING_MEASURING = "Indexing {target} (project={project}) in a child interpret
 INDEXING_CHILD_FAILED = "indexing child process failed:\n{stderr}"
 INDEXING_UNKNOWN_CORPUS = "Unknown corpus {corpus!r}; known: {known}"
 INDEXING_ROW_HINT = "README benchmark-table row:"
+INDEXING_RESETTING = (
+    "Cached corpus {name} is dirty; restoring the pinned tree before indexing"
+)
 AGENTIC_QA_CASES = "Built {count} oracle-derived questions over corpus {corpus}"
 AGENTIC_QA_PROGRESS = "[{condition}] {done}/{total} {name}: f1={f1} in {seconds}s"
 AGENTIC_QA_REINDEXING = "Indexing corpus {corpus} into Memgraph (this can take a while)"
+AGENTIC_QA_RESUME_MISMATCH = (
+    "Cannot --resume from {path}: its fingerprint {stored} does not match the "
+    "current run {current}. Re-run without --resume to start fresh."
+)

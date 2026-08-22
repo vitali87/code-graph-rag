@@ -1,6 +1,7 @@
 {
   "corpus": "django",
   "commit": "9e7cc2b628fe8fd3895986af9b7fc9525034c1b0",
+  "qtype": "calls",
   "sample": 40,
   "seed": 0,
   "summary": {

@@ -533,3 +533,73 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
         name=td.AgenticToolName.EXECUTE_SHELL,
         description=td.SHELL_COMMAND,
     )
+
+
+_ESCAPING_PATH_ARG = re.compile(r"(?:^|=)[/~]")
+
+
+def _noninteractive_denial(command: str) -> str | None:
+    # The denial reason for an operator-less run, or None when every segment
+    # is a confined read: a read-only command, no redirection tokens, no find
+    # mutating actions, and no absolute or parent-traversal path arguments
+    # (subprocess runs without a shell, so `~` never expands and a redirect
+    # token is inert, but both signal intent the harness must not honor).
+    try:
+        groups = _parse_command(command)
+    except (ValueError, IndexError):
+        return te.COMMAND_INVALID_SYNTAX.format(segment=command)
+    read_only = (
+        settings.SHELL_READ_ONLY_COMMANDS | settings.SHELL_NONINTERACTIVE_READ_COMMANDS
+    )
+    for group in groups:
+        for segment in group.commands:
+            if not (segment := segment.strip()):
+                continue
+            try:
+                parts = shlex.split(segment)
+            except ValueError:
+                return te.COMMAND_INVALID_SYNTAX.format(segment=segment)
+            if not parts:
+                continue
+            if parts[0] not in read_only:
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_NOT_READ_ONLY
+                )
+            if _has_redirect_operators(parts):
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_REDIRECT
+                )
+            if parts[0] == "find" and _find_requires_approval(parts):
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_FIND_MUTATES
+                )
+            for arg in parts[1:]:
+                if _ESCAPING_PATH_ARG.search(arg) or ".." in arg.split("/"):
+                    return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                        command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
+                    )
+    return None
+
+
+def create_noninteractive_shell_command_tool(shell_commander: ShellCommander) -> Tool:
+    # For operator-less runs (benchmarks, batch jobs): a command that would
+    # need interactive approval is DENIED instead of yolo-bypassed, and the
+    # allowlist stays enforced, so a model-selected command can never mutate
+    # the host or read outside the project root (Greptile security review on
+    # PR #1388). The error text tells the model why, so it can retry with a
+    # confined read-only command.
+    async def run_shell_command(
+        ctx: RunContext[None], command: str
+    ) -> ShellCommandResult:
+        if err_msg := _noninteractive_denial(command):
+            logger.error(err_msg)
+            return ShellCommandResult(
+                return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
+            )
+        return await shell_commander.execute(command)
+
+    return Tool(
+        function=run_shell_command,
+        name=td.AgenticToolName.EXECUTE_SHELL,
+        description=td.SHELL_COMMAND,
+    )

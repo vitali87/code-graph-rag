@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from evals.indexing_bench import CORPORA, markdown_row, measure
+from evals.indexing_bench import CORPORA, markdown_row, measure_indexing_run
 from evals.types_defs import IndexingStats
 
 _CORE = """\
@@ -29,7 +29,7 @@ def _write_fixture(root: Path) -> None:
 
 def test_measure_reports_graph_size_and_timings(tmp_path: Path) -> None:
     _write_fixture(tmp_path)
-    stats = measure(tmp_path, "fixture")
+    stats = measure_indexing_run(tmp_path, "fixture")
     assert stats["corpus"] == "fixture"
     assert stats["modules"] == 2
     assert stats["files"] == 2
@@ -86,3 +86,67 @@ def test_corpora_are_pinned_to_full_shas() -> None:
     for spec in CORPORA.values():
         assert len(spec.commit) == 40, spec
         assert spec.url.startswith("https://"), spec
+
+
+def _git(checkout: Path, *args: str) -> str:
+    import subprocess
+
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(checkout),
+            "-c",
+            "user.email=bench@test",
+            "-c",
+            "user.name=bench",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def test_ensure_corpus_resets_dirty_cached_checkout(tmp_path: Path) -> None:
+    # A cached checkout at the right HEAD but with tracked edits or untracked
+    # files would index modified content while the report pins the result to
+    # spec.commit; the cache must be restored to the pinned tree (CodeRabbit
+    # review on PR #1388).
+    from evals.indexing_bench import CorpusSpec, _ensure_corpus
+
+    corpus_dir = tmp_path / "corpora"
+    checkout = corpus_dir / "demo"
+    checkout.mkdir(parents=True)
+    _git(checkout, "init", "-q")
+    (checkout / "a.py").write_text("print('clean')\n")
+    _git(checkout, "add", "a.py")
+    _git(checkout, "commit", "-q", "--no-verify", "-m", "pin")
+    sha = _git(checkout, "rev-parse", "HEAD")
+    (checkout / "a.py").write_text("print('dirty')\n")
+    (checkout / "stray.py").write_text("x = 1\n")
+
+    spec = CorpusSpec(name="demo", url="unused", commit=sha, subdir="")
+    target = _ensure_corpus(spec, corpus_dir)
+
+    assert target == checkout
+    assert (checkout / "a.py").read_text() == "print('clean')\n"
+    assert not (checkout / "stray.py").exists()
+
+
+def test_ensure_corpus_leaves_clean_checkout_untouched(tmp_path: Path) -> None:
+    from evals.indexing_bench import CorpusSpec, _ensure_corpus
+
+    corpus_dir = tmp_path / "corpora"
+    checkout = corpus_dir / "demo"
+    checkout.mkdir(parents=True)
+    _git(checkout, "init", "-q")
+    (checkout / "a.py").write_text("print('clean')\n")
+    _git(checkout, "add", "a.py")
+    _git(checkout, "commit", "-q", "--no-verify", "-m", "pin")
+    sha = _git(checkout, "rev-parse", "HEAD")
+
+    spec = CorpusSpec(name="demo", url="unused", commit=sha, subdir="")
+    assert _ensure_corpus(spec, corpus_dir) == checkout
+    assert (checkout / "a.py").read_text() == "print('clean')\n"
