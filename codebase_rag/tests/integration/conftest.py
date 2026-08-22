@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import socket
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
@@ -10,6 +10,7 @@ import pytest
 
 from codebase_rag.constants import GraphBackend
 from codebase_rag.services.graph import GraphIngestor
+from codebase_rag.services.graph.arcadedb import ArcadeDBIngestor
 from codebase_rag.services.graph.memgraph import MemgraphIngestor
 
 if TYPE_CHECKING:
@@ -17,11 +18,17 @@ if TYPE_CHECKING:
 
 _INTEGRATION_DIR = Path(__file__).parent
 
-# Backends the integration suite runs against. Task 14 appends ARCADEDB.
-BACKENDS: tuple[GraphBackend, ...] = (GraphBackend.MEMGRAPH,)
+# Backends the integration suite runs against.
+BACKENDS: tuple[GraphBackend, ...] = (GraphBackend.MEMGRAPH, GraphBackend.ARCADEDB)
 
 MEMGRAPH_IMAGE = "memgraph/memgraph:3.3.0"
 MEMGRAPH_READY_LOG = "You are running Memgraph"
+
+ARCADEDB_IMAGE = "arcadedata/arcadedb:26.8.1"
+ARCADEDB_TEST_DB = "cgrtest"
+ARCADEDB_ROOT_PASSWORD = "cgrtestpassword1!"  # noqa: S105 - throwaway container
+ARCADEDB_READY_LOG = "ArcadeDB Server started"
+ARCADEDB_BOLT_PLUGIN = "Bolt:com.arcadedb.bolt.BoltProtocolPlugin"
 
 
 class GraphContainer(TypedDict):
@@ -105,9 +112,49 @@ def _start_memgraph() -> tuple[object, GraphContainer]:
 
 
 def _start_arcadedb() -> tuple[object, GraphContainer]:
-    # Unreachable while BACKENDS holds only MEMGRAPH. Task 14 implements
-    # this and replaces the placeholder.
-    raise NotImplementedError
+    from testcontainers.core.container import DockerContainer
+    from testcontainers.core.wait_strategies import LogMessageWaitStrategy
+
+    container = DockerContainer(ARCADEDB_IMAGE)
+    container.with_exposed_ports(7687, 2480)
+    # ARCADEDB_ROOT_PASSWORD as a plain env var is a no-op on this image --
+    # decompiling arcadedb-server-26.8.1.jar shows the only thing the server
+    # reads is the -Darcadedb.server.rootPassword system property
+    # (com.arcadedb.server.security.ServerSecurity). Without it the server
+    # falls back to an interactive askForRootPassword prompt, which hangs
+    # forever with no TTY attached and the ready log line never appears.
+    # The Bolt listener is also a plugin and is off unless explicitly
+    # enabled.
+    #
+    # defaultDatabases' per-database credential entry is `user:password:role`
+    # (ArcadeDBServer.parseCredentials); the role is optional but without it
+    # ArcadeDBServer.addDatabase grants root access to `cgrtest` with no
+    # role, and every schema DDL statement then 403s with "User 'root' is
+    # not allowed to update schema" even though root is the server's global
+    # superuser. Appending `:admin` grants the role schema DDL needs.
+    container.with_env(
+        "JAVA_OPTS",
+        f"-Darcadedb.server.rootPassword={ARCADEDB_ROOT_PASSWORD} "
+        f"-Darcadedb.server.plugins={ARCADEDB_BOLT_PLUGIN} "
+        f"-Darcadedb.server.defaultDatabases="
+        f"{ARCADEDB_TEST_DB}[root:{ARCADEDB_ROOT_PASSWORD}:admin]",
+    )
+    container.waiting_for(LogMessageWaitStrategy(ARCADEDB_READY_LOG))
+    container.start()
+
+    host = container.get_container_host_ip()
+    bolt_port = int(container.get_exposed_port(7687))
+    http_port = int(container.get_exposed_port(2480))
+    _wait_for_port(host, bolt_port)
+    _wait_for_port(host, http_port)
+    return container, GraphContainer(
+        backend=GraphBackend.ARCADEDB,
+        host=host,
+        bolt_port=bolt_port,
+        http_port=http_port,
+        username="root",
+        password=ARCADEDB_ROOT_PASSWORD,
+    )
 
 
 @pytest.fixture(scope="session", params=BACKENDS, ids=[str(b) for b in BACKENDS])
@@ -129,22 +176,35 @@ def graph_container(
 def _build_ingestor(info: GraphContainer) -> GraphIngestor:
     if info["backend"] == GraphBackend.MEMGRAPH:
         return MemgraphIngestor(host=info["host"], port=info["bolt_port"])
-    # Unreachable while BACKENDS holds only MEMGRAPH. Task 14 adds
-    # ArcadeDBIngestor and ARCADEDB_TEST_DB and replaces this placeholder.
-    raise NotImplementedError
+    assert info["http_port"] is not None
+    assert info["username"] is not None
+    assert info["password"] is not None
+    return ArcadeDBIngestor(
+        host=info["host"],
+        bolt_port=info["bolt_port"],
+        http_port=info["http_port"],
+        database=ARCADEDB_TEST_DB,
+        username=info["username"],
+        password=info["password"],
+    )
 
 
-@pytest.fixture(scope="function")
-def graph_ingestor(
-    graph_container: GraphContainer,
+def _connect_with_wipe(
+    build: Callable[[], GraphIngestor],
 ) -> Generator[GraphIngestor, None, None]:
     ingestor: GraphIngestor | None = None
     for attempt in range(10):
-        candidate = _build_ingestor(graph_container)
+        candidate = build()
         entered = False
         try:
             candidate.__enter__()
             entered = True
+            # Idempotent and cheap on both backends; on ArcadeDB it is load
+            # bearing -- MERGE without the unique index is a full type scan,
+            # so skipping this would let the conformance suite's idempotency
+            # assertions pass by luck on tiny data while masking behaviour
+            # that degrades to quadratic on a real repo.
+            candidate.ensure_constraints()
             candidate.execute_write("MATCH (n) DETACH DELETE n")
             ingestor = candidate
             break
@@ -166,10 +226,32 @@ def graph_ingestor(
 
 
 @pytest.fixture(scope="function")
-def memgraph_ingestor(graph_ingestor: GraphIngestor) -> GraphIngestor:
-    """Deprecated alias. Retained so the 30 existing test modules keep
-    working while they migrate; delete once none reference it."""
-    return graph_ingestor
+def graph_ingestor(
+    graph_container: GraphContainer,
+) -> Generator[GraphIngestor, None, None]:
+    yield from _connect_with_wipe(lambda: _build_ingestor(graph_container))
+
+
+@pytest.fixture(scope="function")
+def memgraph_ingestor(
+    memgraph_container: dict[str, str | int],
+) -> Generator[GraphIngestor, None, None]:
+    """Deprecated alias, pinned to Memgraph regardless of BACKENDS.
+
+    Retained so the 30 existing test modules keep working while they
+    migrate; delete once none reference it. Deliberately built on the
+    Memgraph-only `memgraph_container` fixture rather than the
+    backend-parametrized `graph_container`: those 30 modules call
+    Memgraph-only private methods (e.g. `_execute_query`), which
+    `ArcadeDBIngestor` does not implement, so once BACKENDS grew a second
+    entry, indirectly parametrizing this alias over `graph_container` would
+    have doubled every one of them onto ArcadeDB and failed with
+    AttributeError -- a fixture-wiring artifact, not a real backend
+    difference worth discovering.
+    """
+    host = str(memgraph_container["host"])
+    port = int(memgraph_container["port"])
+    yield from _connect_with_wipe(lambda: MemgraphIngestor(host=host, port=port))
 
 
 @pytest.fixture(scope="session")

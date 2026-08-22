@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import types
 from collections import defaultdict
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Hashable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -73,6 +73,50 @@ def _count_created(results: list[ResultRow]) -> int:
         if isinstance(created, int):
             total += created
     return total
+
+
+def _hashable(value: PropertyValue) -> Hashable:
+    # PropertyValue includes list[str] (e.g. decorators), which can't sit in
+    # a dict key as-is.
+    return tuple(value) if isinstance(value, list) else value
+
+
+def _dedupe_rows_sharing_a_merge_pattern(
+    rows: list[RelBatchRow], merge_key_props: tuple[str, ...]
+) -> list[RelBatchRow]:
+    """Collapse rows that MERGE onto the identical (endpoints + key props)
+    pattern before they reach the server.
+
+    Relationships carry no unique index on ArcadeDB (only vertex types do),
+    so its Cypher MERGE only checks already-committed state -- it cannot see
+    an earlier row's write from *this same* UNWIND-batched statement. Two
+    rows with an otherwise-identical MERGE pattern therefore created two
+    edges on ArcadeDB where Memgraph's engine naturally converged on one
+    (found via manual probing while building the Task 14 conformance suite;
+    see TestRelationships.test_merge_does_not_duplicate_the_same_edge_within_one_batch
+    in test_graph_backend_conformance.py). Pre-merging duplicates
+    client-side, last-props-wins to mirror Memgraph's own SET-after-MERGE
+    overlay, makes the two engines converge on the same graph regardless of
+    engine-level MERGE semantics.
+    """
+    merged: dict[tuple[Hashable, Hashable, tuple[Hashable, ...]], RelBatchRow] = {}
+    for row in rows:
+        props = row["props"] or {}
+        key = (
+            _hashable(row["from_val"]),
+            _hashable(row["to_val"]),
+            tuple(_hashable(props.get(p)) for p in merge_key_props),
+        )
+        prior = merged.get(key)
+        if prior is None:
+            merged[key] = row
+        else:
+            merged[key] = RelBatchRow(
+                from_val=row["from_val"],
+                to_val=row["to_val"],
+                props={**(prior["props"] or {}), **props},
+            )
+    return list(merged.values())
 
 
 def build_arcade_schema_statements() -> list[str]:
@@ -422,16 +466,17 @@ class ArcadeDBIngestor:
         attempted = 0
         created = 0
         for merge_key_props, group in by_keys.items():
+            deduped = _dedupe_rows_sharing_a_merge_pattern(group, merge_key_props)
             query = build_merge_relationship_query(
                 from_label,
                 from_key,
                 rel_type,
                 to_label,
                 to_key,
-                any(r["props"] for r in group),
+                any(r["props"] for r in deduped),
                 merge_key_props=merge_key_props,
             )
-            results = self._execute_batch(query, group)
+            results = self._execute_batch(query, deduped)
             attempted += len(group)
             created += _count_created(results)
         return attempted, created

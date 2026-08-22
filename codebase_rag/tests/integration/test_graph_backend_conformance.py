@@ -108,29 +108,68 @@ class TestRelationships:
         )
         assert rows[0]["c"] == 1
 
+    def test_merge_does_not_duplicate_the_same_edge_within_one_batch(
+        self, graph_ingestor: GraphIngestor
+    ) -> None:
+        # Real ArcadeDB divergence found while building this suite: unlike
+        # nodes (deduped via a unique index), relationships have no index on
+        # ArcadeDB, so its Cypher MERGE only sees already-committed state --
+        # not an earlier row's write from the *same* UNWIND-batched
+        # statement. Two identical rows flushed in one batch (no
+        # flush_relationships() between them, unlike the test above) used to
+        # create two edges on ArcadeDB while Memgraph's engine converged on
+        # one. Fixed by pre-merging same-pattern rows client-side in
+        # ArcadeDBIngestor._flush_rel_pattern_group before the batch is
+        # sent; this guards the fix.
+        graph_ingestor.ensure_node_batch(_FN, {_QN: "p.m.a"})
+        graph_ingestor.ensure_node_batch(_FN, {_QN: "p.m.b"})
+        graph_ingestor.flush_nodes()
+        for _ in range(2):
+            graph_ingestor.ensure_relationship_batch(
+                (_FN, _QN, "p.m.a"),
+                RelationshipType.CALLS.value,
+                (_FN, _QN, "p.m.b"),
+            )
+        graph_ingestor.flush_all()
+
+        rows = graph_ingestor.fetch_all(
+            f"MATCH (:{_FN})-[r:{RelationshipType.CALLS.value}]->(:{_FN}) "
+            "RETURN count(r) AS c"
+        )
+        assert rows[0]["c"] == 1
+
     def test_flows_to_parallel_edges_survive_merge(
         self, graph_ingestor: GraphIngestor
     ) -> None:
-        # Regression guard for issue #722. MERGE_KEY_PROPS_BY_REL puts
-        # (via, kind) into the MERGE pattern so two provenance edges between
-        # the same pair stay distinct instead of collapsing into one.
+        # Regression guard for issue #722. MERGE_KEY_PROPS_BY_REL groups
+        # rows by which of (via, kind) are PRESENT, not by their values, so
+        # the two rows below deliberately carry different prop shapes (one
+        # has both via and kind, the other has via only) to exercise that
+        # signature-splitting logic. Two rows that both carried the same two
+        # keys (as an earlier version of this test did) would still pass
+        # even if per-signature splitting were deleted outright, since a
+        # naive (via, kind) MERGE key alone already disambiguates them --
+        # see the asymmetric case at test_cypher_queries.py:778-807.
         graph_ingestor.ensure_node_batch(_FN, {_QN: "p.m.src"})
         graph_ingestor.ensure_node_batch(_FN, {_QN: "p.m.dst"})
         graph_ingestor.flush_nodes()
-        for via, kind in (("arg", "direct"), ("ret", "direct")):
+        for props in ({"via": "arg", "kind": "direct"}, {"via": "ret"}):
             graph_ingestor.ensure_relationship_batch(
                 (_FN, _QN, "p.m.src"),
                 RelationshipType.FLOWS_TO.value,
                 (_FN, _QN, "p.m.dst"),
-                {"via": via, "kind": kind},
+                props,
             )
         graph_ingestor.flush_all()
 
         rows = graph_ingestor.fetch_all(
             f"MATCH (:{_FN})-[r:{RelationshipType.FLOWS_TO.value}]->(:{_FN}) "
-            "RETURN r.via AS via ORDER BY via"
+            "RETURN r.via AS via, r.kind AS kind ORDER BY r.via"
         )
-        assert [r["via"] for r in rows] == ["arg", "ret"]
+        assert [(r["via"], r["kind"]) for r in rows] == [
+            ("arg", "direct"),
+            ("ret", None),
+        ]
 
 
 class TestConcurrency:
