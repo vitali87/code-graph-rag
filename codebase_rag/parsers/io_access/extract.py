@@ -171,18 +171,15 @@ def _global_rebind_positions(scope_node: Node, name: str) -> list[int]:
     return sorted(positions)
 
 
-def python_globally_rebound_before(
-    scope_node: Node, name: str, at_byte: int
-) -> bool:
+def python_globally_rebound_before(scope_node: Node, name: str, at_byte: int) -> bool:
     # True when a `global`-declared name was REBOUND at or before `at_byte` in
     # this scope's OWN body: the module binding is already replaced, so a use
     # after the rebind reads the rebound value, while a use before it still
     # sees the module (CodeRabbit review on PR #1325). A module scope is never
     # `global`-affected (the rebind is an ordinary local assignment), so it is
     # rejected here.
-    if (
-        scope_node.type == cs.TS_PY_MODULE
-        or name not in _global_declared_names(scope_node)
+    if scope_node.type == cs.TS_PY_MODULE or name not in _global_declared_names(
+        scope_node
     ):
         return False
     return any(

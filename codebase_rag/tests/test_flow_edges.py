@@ -309,12 +309,7 @@ def test_python_os_environ_subscript_augmented_assignment_shadow_not_source(
     # assignment, so the subscript read is not an ENV source (Greptile review
     # on PR #1325).
     files = {
-        "m.py": (
-            "import os\n\n"
-            "def leak(v):\n"
-            "    os += v\n"
-            "    print(os.environ['K'])\n"
-        )
+        "m.py": ("import os\n\ndef leak(v):\n    os += v\n    print(os.environ['K'])\n")
     }
     edges = _run_flow(tmp_path, files)
     assert not _has(

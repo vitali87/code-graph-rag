@@ -493,7 +493,9 @@ def test_python_os_environ_subscript_augmented_reads_and_writes(
 def test_python_os_environ_subscript_dynamic_key_is_dynamic(tmp_path: Path) -> None:
     # A non-literal index keeps the <dynamic> identity, matching the flow walk
     # and the lean member walks (issue #1324).
-    files = {"m.py": "import os\n\nk = 'TOKEN'\ndef leak():\n    return os.environ[k]\n"}
+    files = {
+        "m.py": "import os\n\nk = 'TOKEN'\ndef leak():\n    return os.environ[k]\n"
+    }
     rels = _run_io(tmp_path, files)
     assert _has(rels, "m.leak", READS_FROM, "resource::ENV::<dynamic>"), rels
 
@@ -574,10 +576,7 @@ def test_python_os_environ_subscript_augmented_assignment_shadow_not_env(
     # PR #1325).
     files = {
         "m.py": (
-            "import os\n\n"
-            "def leak(v):\n"
-            "    os += v\n"
-            "    return os.environ['TOKEN']\n"
+            "import os\n\ndef leak(v):\n    os += v\n    return os.environ['TOKEN']\n"
         )
     }
     rels = _run_io(tmp_path, files)

@@ -2105,9 +2105,7 @@ class IOAccessProcessor:
                 if index is not None and index.type == cs.TS_PY_STRING
                 else DYNAMIC_TARGET
             )
-            self._emit(
-                caller_spec, self._py_subscript_direction(node), kind, identity
-            )
+            self._emit(caller_spec, self._py_subscript_direction(node), kind, identity)
             return
 
     @staticmethod
@@ -2127,7 +2125,9 @@ class IOAccessProcessor:
         else:
             return IODirection.READ
         left = parent.child_by_field_name(cs.FIELD_LEFT)
-        return direction if left is not None and left.id == node.id else IODirection.READ
+        return (
+            direction if left is not None and left.id == node.id else IODirection.READ
+        )
 
     def _emit_handle_method(
         self,
