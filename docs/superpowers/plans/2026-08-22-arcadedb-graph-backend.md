@@ -992,7 +992,7 @@ git commit -m "refactor: source the prompt procedure catalog from the graph dial
 **Files:**
 - Modify: `codebase_rag/tests/integration/conftest.py`
 - Modify: 30 files under `codebase_rag/tests/integration/` using the `memgraph_ingestor` fixture
-- Modify: `codebase_rag/tests/integration/test_flow_edges_e2e.py` (the one file using `memgraph_connection`)
+- Delete: the dead `memgraph_connection` fixture in `codebase_rag/tests/integration/conftest.py` (no test requests it — see the correction note in Task 16)
 
 **Interfaces:**
 - Consumes: `get_ingestor` (Task 3), `GraphBackend` (Task 2)
@@ -1195,7 +1195,7 @@ def memgraph_ingestor(graph_ingestor: GraphIngestor) -> GraphIngestor:
 
 `_start_arcadedb` and `ARCADEDB_TEST_DB` land in Task 14. Until then the `else` branch is unreachable because `BACKENDS` holds only Memgraph — add a `raise NotImplementedError` placeholder body and remove it in Task 14.
 
-The `memgraph_connection` fixture (raw `mgclient.Connection`, used by exactly one file) stays as-is; it is Memgraph-specific by nature and its one consumer is a Memgraph-only test.
+The `memgraph_connection` fixture (raw `mgclient.Connection`) stays as-is for now. NOTE: Task 5 established it has no consumers at all — Task 16 deletes it.
 
 - [ ] **Step 4: Run the fixture-contract test**
 
@@ -3511,7 +3511,7 @@ done
 grep -rn "memgraph_ingestor\|MemgraphIngestor" codebase_rag/tests/integration/ || echo "all migrated"
 ```
 
-The one file using the raw `memgraph_connection` fixture (`test_flow_edges_e2e.py`) keeps it — that fixture is Memgraph-specific by nature and is not part of the cross-backend contract.
+**Correction found during Task 5:** the plan previously claimed `test_flow_edges_e2e.py` consumes the raw `memgraph_connection` fixture. It does not — no test in the repo requests it. The fixture is defined in `conftest.py` and never used; the original grep that produced this claim counted the definition itself. Delete the dead `memgraph_connection` fixture in this task rather than preserving it, and confirm with `grep -rn "memgraph_connection" codebase_rag/` that the only remaining hits are the unrelated `check_memgraph_connection` method in `tools/health_checker.py` and its test.
 
 - [ ] **Step 3: Delete the deprecated alias**
 
