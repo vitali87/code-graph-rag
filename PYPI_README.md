@@ -54,12 +54,13 @@ transformers are then not required locally.
 `pip install code-graph-rag` gives you the newest PyPI release, which is deliberately
 not the newest commit. Git tags exist for every version (one per merge), while PyPI
 uploads and GitHub Release binaries land on an every-50 cadence, so the tag on `main`
-runs ahead of the published version.
+usually runs ahead of the published version. A security fix is the exception: it
+ships immediately rather than waiting for the cadence.
 
 To run code newer than the latest release, install from git:
 
 ```bash
-pip install "git+https://github.com/vitali87/code-graph-rag@main#egg=code-graph-rag[treesitter-full]"
+pip install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
 ### Prerequisites

@@ -108,20 +108,22 @@ Three version lines exist and they intentionally differ:
 | where | what it tracks |
 |---|---|
 | git tags | every version, one per merge |
-| GitHub Releases (binaries, signatures) | every 50th version |
-| PyPI | every 50th version |
+| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix |
+| PyPI | every 50th version, plus any security fix |
 
-So the newest tag on `main` always runs ahead of the newest release, often by
-tens of patch versions. Nothing is stuck; the cadences differ by design.
+So the newest tag on `main` usually runs ahead of the newest release, often by
+tens of patch versions; they coincide only just after a release. Nothing is
+stuck, the cadences differ by design. A security fix does NOT wait for the
+cadence: it ships a release and a PyPI upload immediately.
 
 `uv tool install` and `pipx install` give you the newest PyPI version, which is the
-newest RELEASE, not the newest tag. That is deliberate: interim tags exist so every
-merge is addressable, while binaries and PyPI uploads land on the every-50 cadence.
+newest RELEASE, not the newest tag. Interim tags exist so every merge is
+addressable; binaries and PyPI uploads follow the cadence above.
 
 To run code newer than the latest release, install from git:
 
 ```bash
-uv tool install "git+https://github.com/vitali87/code-graph-rag@main#egg=code-graph-rag[treesitter-full,semantic]"
+uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
 You also need Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
