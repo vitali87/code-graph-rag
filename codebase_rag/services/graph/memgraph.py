@@ -682,6 +682,7 @@ class MemgraphDialect:
                 ingestor.execute_write(build_constraint_query(label, prop))
             except Exception:
                 pass
+        logger.info(ls.MG_ENSURING_INDEXES)
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 ingestor.execute_write(build_index_query(label, prop))
@@ -695,6 +696,7 @@ class MemgraphDialect:
                 ingestor.execute_write(build_index_query(label, KEY_NAME))
             except Exception:
                 pass
+        logger.info(ls.MG_INDEXES_DONE)
 
     def apply_query_limit(self, query: str, mb: int) -> str:
         if CYPHER_MEMORY_LIMIT_TOKEN in query.upper():

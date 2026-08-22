@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import types
 
 import pytest
 
@@ -39,11 +40,21 @@ def _pattern_predicates(query: str) -> list[str]:
     ]
 
 
-# Documentation prose, not a query ever sent to the database: it illustrates
-# a WHERE/pattern shape as an example for the LLM prompt, so the detector's
-# heuristic (meant for constants actually executed as Cypher) false-positives
-# on it.
-_NON_QUERY_STRING_CONSTANTS = frozenset({"MAGE_PROCEDURE_CATALOG"})
+# Every constant that is actually sent to Memgraph as Cypher is named with
+# this prefix by convention (cypher_queries.py: every top-level constant but
+# two private label/rel-type join helpers; constants/graph.py: CYPHER_DELETE_*,
+# CYPHER_MEMORY_LIMIT_*, etc.). Constants/*.py also holds plenty of unrelated
+# uppercase strings that happen to contain the literal word "WHERE" without
+# being Cypher at all -- TS_RS_WHERE_CLAUSE and TS_RS_WHERE_PREDICATE are
+# tree-sitter Rust grammar node-type names, SHELL_CMD_WHERE is the Windows
+# `where` command, and MAGE_PROCEDURE_CATALOG is LLM-prompt documentation
+# that shows an example WHERE clause in prose. None of those are ever
+# executed as Cypher, so scanning them for the pattern-in-WHERE shape is a
+# false-positive risk, not a coverage gain; restricting the scan to the
+# CYPHER_ prefix is a positive rule, not a name-by-name exclusion list, so it
+# does not need updating every time a new prose or grammar constant is added
+# (verified: no real Cypher-query constant in either module lacks the prefix).
+_CYPHER_QUERY_NAME_PREFIX = "CYPHER_"
 
 
 def _string_constants(module) -> dict[str, str]:
@@ -52,7 +63,7 @@ def _string_constants(module) -> dict[str, str]:
         for name, value in vars(module).items()
         if name.isupper()
         and isinstance(value, str)
-        and name not in _NON_QUERY_STRING_CONSTANTS
+        and name.startswith(_CYPHER_QUERY_NAME_PREFIX)
     }
 
 
@@ -93,6 +104,37 @@ def test_no_pattern_expressions_in_where_clauses():
             for predicate in _pattern_predicates(value):
                 offenders.append((module.__name__, name, predicate))
     assert not offenders, offenders
+
+
+def test_string_constants_selection_is_prefix_based_not_a_denylist() -> None:
+    """Pins the scanner's selection mechanism (issue: prose constants like
+    MAGE_PROCEDURE_CATALOG false-positived the pattern-in-WHERE detector).
+
+    A future prose/documentation constant must be excluded automatically by
+    naming convention alone, with no per-name edit to this test file; a
+    future real Cypher query constant must still be caught by the guard.
+    """
+    fake_module = types.ModuleType("fake_constants")
+    # A documentation-style constant illustrating a WHERE/pattern shape in
+    # prose, the same shape MAGE_PROCEDURE_CATALOG has -- must be skipped
+    # purely because it lacks the CYPHER_ prefix, not via a name lookup.
+    fake_module.SOME_PROCEDURE_CATALOG = (  # type: ignore[attr-defined]
+        "follow the procedure call with a WHERE clause that checks "
+        "EXISTS((a)-[:CALLS]->(b))"
+    )
+    # A real Cypher query constant with the same offending shape -- must
+    # still be selected and therefore still be catchable by the guard.
+    fake_module.CYPHER_FAKE_OFFENDER = (  # type: ignore[attr-defined]
+        "MATCH (m) WHERE NOT (m)<--() DETACH DELETE m"
+    )
+
+    selected = _string_constants(fake_module)
+
+    assert "SOME_PROCEDURE_CATALOG" not in selected
+    assert selected["CYPHER_FAKE_OFFENDER"] == fake_module.CYPHER_FAKE_OFFENDER
+    # And the pattern-in-WHERE detector itself still fires on it, so a real
+    # regression in a CYPHER_-named constant would still fail the guard test.
+    assert _pattern_predicates(selected["CYPHER_FAKE_OFFENDER"])
 
 
 def test_orphan_cleanup_queries_use_portable_rewrite():
