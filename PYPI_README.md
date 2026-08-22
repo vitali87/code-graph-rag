@@ -49,6 +49,19 @@ instead of locally, set `CGR_EMBEDDING_PROVIDER=openai` with
 `OPENAI_EMBEDDING_BASE_URL` and `OPENAI_EMBEDDING_MODEL`; torch and
 transformers are then not required locally.
 
+### Which version am I getting?
+
+`pip install code-graph-rag` gives you the newest PyPI release, which is deliberately
+not the newest commit. Git tags exist for every version (one per merge), while PyPI
+uploads and GitHub Release binaries land on an every-50 cadence, so the tag on `main`
+runs ahead of the published version.
+
+To run code newer than the latest release, install from git:
+
+```bash
+pip install "git+https://github.com/vitali87/code-graph-rag@main#egg=code-graph-rag[treesitter-full]"
+```
+
 ### Prerequisites
 
 - Python 3.12+
