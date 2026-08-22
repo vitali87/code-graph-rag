@@ -1,3 +1,16 @@
+# pre-commit.ci runs these hooks on every PR and pushes the fixes back to the
+# branch, so lint/format drift from clones without `pre-commit install` (cloud
+# sessions, fork contributors) is corrected server-side instead of failing CI.
+ci:
+  autofix_prs: true
+  autofix_commit_msg: "style: pre-commit.ci auto-fixes"
+  autoupdate_commit_msg: "chore: pre-commit autoupdate"
+  autoupdate_schedule: monthly
+  # ty and generate-readme are `language: system` hooks that need uv and the
+  # project venv; pre-commit.ci's isolated runners cannot run them. CI's Type
+  # Check job still covers ty on every PR.
+  skip: [ty, generate-readme]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

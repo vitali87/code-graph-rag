@@ -77,7 +77,7 @@ The interactive agent has access to these tools:
 <!-- SECTION:agentic_tools -->
 | Tool | Description |
 |----|-----------|
-| `query_graph` | Query the codebase knowledge graph using natural language questions. Ask in plain English about classes, functions, methods, dependencies, or code structure. Examples: 'Find all functions that call each other', 'What classes are in the user module', 'Show me functions with the longest call chains'. |
+| `query_graph` | Query the codebase knowledge graph using natural language questions. Ask in plain English about classes, functions, methods, dependencies, or code structure. Examples: 'Find all functions that call each other', 'What classes are in the user module', 'Show me functions with the longest call chains'. Results come from a machine-generated Cypher query (returned as query_used) that may be narrower than your question, so treat rows as candidates, not answers. Check the relationship column when present: a file that defines or imports a symbol is NOT a caller of it. Before reporting call sites, verify them in the source (read the file or fetch the function source), and cross-check suspiciously short result lists with a text search. |
 | `read_file` | Reads the content of text-based files. Images and PDFs the user references are attached inline; read them directly. |
 | `create_file` | Creates a new file with content. IMPORTANT: Check file existence first! Overwrites completely WITHOUT showing diff. Use only for new files, not existing file modifications. |
 | `replace_code` | Surgically replaces specific code blocks in files. Requires exact target code and replacement. Only modifies the specified block, leaving rest of file unchanged. True surgical patching. |
