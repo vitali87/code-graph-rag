@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from codebase_rag.services.graph.memgraph import _apply_memory_limit
+from codebase_rag.services.graph.memgraph import MemgraphDialect
+
+_apply_memory_limit = MemgraphDialect().apply_query_limit
 
 
 class TestApplyMemoryLimit:

@@ -72,6 +72,14 @@ class VectorStoreBackend(StrEnum):
     MILVUS = "milvus"
 
 
+class GraphBackend(StrEnum):
+    MEMGRAPH = "memgraph"
+    ARCADEDB = "arcadedb"
+
+
+MODULE_NEO4J = "neo4j"
+
+
 # Batches between torch.mps.empty_cache() calls: dropping the Metal
 # allocator cache every batch costs ~21% throughput (M-series UniXcoder
 # run), so release it periodically to bound growth.

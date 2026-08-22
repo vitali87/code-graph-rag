@@ -338,7 +338,7 @@ class TestEnsureConstraints:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
-        def capture_query(query: str) -> list[dict]:
+        def capture_query(query: str, params: object = None) -> list[dict]:
             executed_queries.append(query)
             return []
 
@@ -355,7 +355,7 @@ class TestEnsureConstraints:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         call_count = 0
 
-        def fail_first_create(query: str) -> list[dict]:
+        def fail_first_create(query: str, params: object = None) -> list[dict]:
             nonlocal call_count
             call_count += 1
             if query.startswith("CREATE CONSTRAINT") and call_count == 4:

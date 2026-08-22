@@ -582,3 +582,29 @@ LEGACY_NODE_CONSTRAINTS: tuple[tuple[str, str], ...] = (
 
 CYPHER_MEMORY_LIMIT_SUFFIX = " QUERY MEMORY LIMIT {mb} MB"
 CYPHER_MEMORY_LIMIT_TOKEN = "QUERY MEMORY LIMIT"
+
+# Section 2b of the orchestrator prompt: the MAGE procedure catalog, used by
+# both the Cypher-rules prompt fragment and (later) MemgraphDialect's
+# procedure_catalog. Kept verbatim from its original home in prompts.py.
+MAGE_PROCEDURE_CATALOG = """**2b. Graph Algorithm Procedures (MAGE)**
+
+For algorithmic questions (longest/shortest paths, cycles, recursion clusters, centrality, communities, reachability), prefer calling a MAGE procedure over writing variable-length Cypher. Cypher path patterns enumerate all matches with no memoization, so they OOM on cyclic graphs; MAGE procedures run real graph algorithms in bounded memory.
+
+Use these read-only procedures (call them with `CALL <procedure>(...) YIELD ... RETURN ...`):
+
+- **Strongly connected components / recursion clusters**: `CALL nxalg.strongly_connected_components() YIELD components`
+- **Weakly connected components**: `CALL weakly_connected_components.get() YIELD node, component_id` or `CALL wcc.get_components(nodes, edges)`
+- **Cycles**: `CALL nxalg.simple_cycles() YIELD cycles` (all cycles), `CALL nxalg.find_cycle() YIELD cycle` (one cycle)
+- **All simple paths between two nodes (bounded)**: `CALL nxalg.all_simple_paths(source, target, cutoff)` or `CALL algo.all_simple_paths(source, target, [:CALLS], maxHops)`
+- **Shortest path**: `CALL nxalg.shortest_path(source, target)` or `CALL algo.astar(source, target, config)`
+- **Reachability**: `CALL graph_util.ancestors(node)`, `CALL graph_util.descendants(node)`
+- **Topological order (DAGs only)**: `CALL nxalg.topological_sort() YIELD nodes` or `CALL graph_util.topological_sort()`
+- **PageRank**: `CALL pagerank.get() YIELD node, rank` or `CALL nxalg.pagerank() YIELD node, rank`
+- **Betweenness centrality**: `CALL betweenness_centrality.get() YIELD node, betweenness_centrality`
+- **Degree centrality**: `CALL degree_centrality.get() YIELD node, degree`
+- **Communities**: `CALL community_detection.get() YIELD node, community_id`, `CALL leiden_community_detection.get() YIELD node, community_id`
+- **Articulation / bridges**: `CALL bridges.get() YIELD ...`, `CALL nxalg.biconnected_components() YIELD nodes`
+- **Dominators**: `CALL nxalg.immediate_dominators(start) YIELD node, dominator`
+- **Path expansion (bounded BFS over filtered edges)**: `CALL path.expand(start, relationships, labels, minHops, maxHops) YIELD path`
+
+Important: MAGE procedures named `nxalg.*` and several others operate on the **entire graph**, ignoring edge-type filters. To restrict to a specific edge type (e.g., only `CALLS`), follow the procedure call with a `WHERE` clause that checks `EXISTS((a)-[:CALLS]->(b))` or use `path.expand` which accepts a relationship-type filter."""

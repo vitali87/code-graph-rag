@@ -39,11 +39,20 @@ def _pattern_predicates(query: str) -> list[str]:
     ]
 
 
+# Documentation prose, not a query ever sent to the database: it illustrates
+# a WHERE/pattern shape as an example for the LLM prompt, so the detector's
+# heuristic (meant for constants actually executed as Cypher) false-positives
+# on it.
+_NON_QUERY_STRING_CONSTANTS = frozenset({"MAGE_PROCEDURE_CATALOG"})
+
+
 def _string_constants(module) -> dict[str, str]:
     return {
         name: value
         for name, value in vars(module).items()
-        if name.isupper() and isinstance(value, str)
+        if name.isupper()
+        and isinstance(value, str)
+        and name not in _NON_QUERY_STRING_CONSTANTS
     }
 
 

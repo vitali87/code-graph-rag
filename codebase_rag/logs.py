@@ -323,8 +323,6 @@ MG_LEGACY_PURGE = (
     "relative-path key (issue #897); re-run with --update-graph for "
     "affected projects to rebuild their containment."
 )
-MG_ENSURING_INDEXES = "Ensuring label-property indexes for MERGE performance..."
-MG_INDEXES_DONE = "Indexes checked/created."
 MG_NODE_BUFFER_FLUSH = (
     "Node buffer reached batch size ({size}). Performing incremental flush."
 )
@@ -362,6 +360,12 @@ MG_FETCH_QUERY = "Executing fetch query: {query} with params: {params}"
 MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
 MG_EXPORTING = "Exporting graph data..."
 MG_EXPORTED = "Exported {nodes} nodes and {rels} relationships"
+
+# Graph dialect logs
+GRAPH_RETRY_TRANSIENT = (
+    "Transient write conflict (attempt {attempt}/{attempts}), "
+    "retrying in {delay:.3f}s: {error}"
+)
 
 # LLM/Cypher logs
 CYPHER_GENERATING = "  [CypherGenerator] Generating query for: '{query}'"

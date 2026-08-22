@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from .constants import MAGE_PROCEDURE_CATALOG
 from .cypher_queries import (
     CYPHER_EXAMPLE_CLASS_METHODS,
     CYPHER_EXAMPLE_CODE_SMELLS,
@@ -48,39 +49,18 @@ def extract_tool_names(tools: list["Tool"]) -> ToolNames:
     )
 
 
-CYPHER_QUERY_RULES = """**2. Critical Cypher Query Rules**
+CYPHER_QUERY_RULES = f"""**2. Critical Cypher Query Rules**
 
 - **ALWAYS Return Specific Properties with Aliases**: Do NOT return whole nodes (e.g., `RETURN n`). You MUST return specific properties with clear aliases (e.g., `RETURN n.name AS name`).
 - **Use `STARTS WITH` for Paths**: When matching paths, always use `STARTS WITH` for robustness (e.g., `WHERE n.path STARTS WITH 'workflows/src'`). Do not use `=`.
-- **Use `ENDS WITH` for qualified_name**: The `qualified_name` property contains full paths like `'Project.folder.subfolder.ClassName'`. When users mention a class, function, or method by its short name (e.g., "VatManager"), use `ENDS WITH` to match: `WHERE c.qualified_name ENDS WITH '.VatManager'`. Do NOT use `{name: 'VatManager'}` equality matching.
+- **Use `ENDS WITH` for qualified_name**: The `qualified_name` property contains full paths like `'Project.folder.subfolder.ClassName'`. When users mention a class, function, or method by its short name (e.g., "VatManager"), use `ENDS WITH` to match: `WHERE c.qualified_name ENDS WITH '.VatManager'`. Do NOT use `{{name: 'VatManager'}}` equality matching.
 - **Use `toLower()` for Searches**: For case-insensitive searching on string properties, use `toLower()`.
 - **Querying Lists**: To check if a list property (like `decorators`) contains an item, use the `ANY` or `IN` clause (e.g., `WHERE 'flow' IN n.decorators`).
 - **Match the asked-about relationship explicitly and RETURN it**: For questions about callers, callees, usage, or dependencies, match the specific edge (e.g., `(caller)-[r:CALLS]->(callee)`) and include `type(r) AS relationship` in the RETURN clause. A bare node list is ambiguous — the file that *defines* or *imports* a function is not a *caller* of it, and the consumer can only tell them apart if the relationship type is in the results.
 - **Prefer multi-label matches over guessing one label**: When the node kind is uncertain, match `(n:Function|Method)` (or `(n:Function|Method|Class)`) instead of a single label — a wrong single label silently returns nothing. Leave the *other* end of a relationship pattern unlabeled when any node kind is a valid answer (e.g., module-level code also has `CALLS` edges).
 - **NEVER use unbounded variable-length paths**: Patterns like `[:CALLS*]`, `[*]`, `[:CALLS*1..]` enumerate every path in the graph and exhaust memory. Always cap with an upper bound, e.g. `[:CALLS*1..6]`. If you genuinely need unbounded reachability, use a MAGE procedure (see Section 2b) instead of variable-length Cypher.
 
-**2b. Graph Algorithm Procedures (MAGE)**
-
-For algorithmic questions (longest/shortest paths, cycles, recursion clusters, centrality, communities, reachability), prefer calling a MAGE procedure over writing variable-length Cypher. Cypher path patterns enumerate all matches with no memoization, so they OOM on cyclic graphs; MAGE procedures run real graph algorithms in bounded memory.
-
-Use these read-only procedures (call them with `CALL <procedure>(...) YIELD ... RETURN ...`):
-
-- **Strongly connected components / recursion clusters**: `CALL nxalg.strongly_connected_components() YIELD components`
-- **Weakly connected components**: `CALL weakly_connected_components.get() YIELD node, component_id` or `CALL wcc.get_components(nodes, edges)`
-- **Cycles**: `CALL nxalg.simple_cycles() YIELD cycles` (all cycles), `CALL nxalg.find_cycle() YIELD cycle` (one cycle)
-- **All simple paths between two nodes (bounded)**: `CALL nxalg.all_simple_paths(source, target, cutoff)` or `CALL algo.all_simple_paths(source, target, [:CALLS], maxHops)`
-- **Shortest path**: `CALL nxalg.shortest_path(source, target)` or `CALL algo.astar(source, target, config)`
-- **Reachability**: `CALL graph_util.ancestors(node)`, `CALL graph_util.descendants(node)`
-- **Topological order (DAGs only)**: `CALL nxalg.topological_sort() YIELD nodes` or `CALL graph_util.topological_sort()`
-- **PageRank**: `CALL pagerank.get() YIELD node, rank` or `CALL nxalg.pagerank() YIELD node, rank`
-- **Betweenness centrality**: `CALL betweenness_centrality.get() YIELD node, betweenness_centrality`
-- **Degree centrality**: `CALL degree_centrality.get() YIELD node, degree`
-- **Communities**: `CALL community_detection.get() YIELD node, community_id`, `CALL leiden_community_detection.get() YIELD node, community_id`
-- **Articulation / bridges**: `CALL bridges.get() YIELD ...`, `CALL nxalg.biconnected_components() YIELD nodes`
-- **Dominators**: `CALL nxalg.immediate_dominators(start) YIELD node, dominator`
-- **Path expansion (bounded BFS over filtered edges)**: `CALL path.expand(start, relationships, labels, minHops, maxHops) YIELD path`
-
-Important: MAGE procedures named `nxalg.*` and several others operate on the **entire graph**, ignoring edge-type filters. To restrict to a specific edge type (e.g., only `CALLS`), follow the procedure call with a `WHERE` clause that checks `EXISTS((a)-[:CALLS]->(b))` or use `path.expand` which accepts a relationship-type filter.
+{MAGE_PROCEDURE_CATALOG}
 
 **2c. When Cypher Can't Answer**
 

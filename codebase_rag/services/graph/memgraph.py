@@ -7,6 +7,7 @@ from collections.abc import Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
@@ -14,6 +15,7 @@ from loguru import logger
 from codebase_rag.config import settings
 from codebase_rag.types_defs import CursorProtocol, ResultValue
 
+from ... import constants as cs
 from ... import exceptions as ex
 from ... import logs as ls
 from ...constants import (
@@ -33,10 +35,12 @@ from ...constants import (
     KEY_PURGED,
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
+    MAGE_PROCEDURE_CATALOG,
     MERGE_KEY_PROPS_BY_REL,
     NODE_NAME_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
+    GraphBackend,
 )
 from ...cypher_queries import (
     CYPHER_ANY_KEYLESS_STRUCTURE,
@@ -72,21 +76,14 @@ from ...types_defs import (
 from ...utils.path_utils import project_roots_from_rows
 from ..resource_cleanup import prune_unanchored_resources
 
-
-def _apply_memory_limit(query: str, mb: int) -> str:
-    if CYPHER_MEMORY_LIMIT_TOKEN in query.upper():
-        return query
-    stripped = query.rstrip()
-    had_semicolon = stripped.endswith(CYPHER_SEMICOLON)
-    if had_semicolon:
-        stripped = stripped[: -len(CYPHER_SEMICOLON)].rstrip()
-    suffix = CYPHER_MEMORY_LIMIT_SUFFIX.format(mb=mb)
-    return f"{stripped}{suffix}{CYPHER_SEMICOLON}"
+if TYPE_CHECKING:
+    from .protocol import GraphIngestor
 
 
 class MemgraphIngestor:
     __slots__ = (
         "_conn_lock",
+        "_dialect",
         "_executor",
         "_host",
         "_port",
@@ -119,6 +116,7 @@ class MemgraphIngestor:
             raise ValueError(ex.BATCH_SIZE)
         self.batch_size = batch_size
         self._use_merge = use_merge
+        self._dialect = MemgraphDialect()
         self._conn_lock = threading.Lock()
         self._executor: ThreadPoolExecutor | None = None
         self.conn: mgclient.Connection | None = None
@@ -300,13 +298,8 @@ class MemgraphIngestor:
     def ensure_constraints(self) -> None:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
         self._migrate_legacy_path_keys()
-        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
-            try:
-                self._execute_query(build_constraint_query(label, prop))
-            except Exception:
-                pass
+        self._dialect.ensure_schema(self)
         logger.info(ls.MG_CONSTRAINTS_DONE)
-        self._ensure_indexes()
 
     def _migrate_legacy_path_keys(self) -> None:
         """Retire the superseded Folder/File relative-path keys (issue #897).
@@ -347,23 +340,6 @@ class MemgraphIngestor:
                 purged += int(str(rows[0][KEY_PURGED]))
         if purged:
             logger.warning(ls.MG_LEGACY_PURGE.format(count=purged))
-
-    def _ensure_indexes(self) -> None:
-        logger.info(ls.MG_ENSURING_INDEXES)
-        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
-            try:
-                self._execute_query(build_index_query(label, prop))
-            except Exception:
-                pass
-        # The unique-key indexes serve MERGE at write time; generated Cypher
-        # reads filter on bare `name`, which needs its own label+name index
-        # or every lookup is a full label scan.
-        for label in NODE_NAME_INDEXES:
-            try:
-                self._execute_query(build_index_query(label, KEY_NAME))
-            except Exception:
-                pass
-        logger.info(ls.MG_INDEXES_DONE)
 
     def ensure_node_batch(
         self, label: str, properties: dict[str, PropertyValue]
@@ -656,7 +632,9 @@ class MemgraphIngestor:
     def fetch_all(
         self, query: str, params: dict[str, PropertyValue] | None = None
     ) -> list[ResultRow]:
-        bounded_query = _apply_memory_limit(query, settings.QUERY_MEMORY_LIMIT_MB)
+        bounded_query = self._dialect.apply_query_limit(
+            query, settings.QUERY_MEMORY_LIMIT_MB
+        )
         logger.debug(ls.MG_FETCH_QUERY, query=bounded_query, params=params)
         return self._execute_query(bounded_query, params)
 
@@ -689,3 +667,58 @@ class MemgraphIngestor:
 
     def _get_current_timestamp(self) -> str:
         return datetime.now(UTC).isoformat()
+
+
+class MemgraphDialect:
+    __slots__ = ()
+
+    @property
+    def name(self) -> GraphBackend:
+        return GraphBackend.MEMGRAPH
+
+    def ensure_schema(self, ingestor: GraphIngestor) -> None:
+        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
+            try:
+                ingestor.execute_write(build_constraint_query(label, prop))
+            except Exception:
+                pass
+        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
+            try:
+                ingestor.execute_write(build_index_query(label, prop))
+            except Exception:
+                pass
+        # The unique-key indexes serve MERGE at write time; generated Cypher
+        # reads filter on bare `name`, which needs its own label+name index
+        # or every lookup is a full label scan.
+        for label in NODE_NAME_INDEXES:
+            try:
+                ingestor.execute_write(build_index_query(label, KEY_NAME))
+            except Exception:
+                pass
+
+    def apply_query_limit(self, query: str, mb: int) -> str:
+        if CYPHER_MEMORY_LIMIT_TOKEN in query.upper():
+            return query
+        stripped = query.rstrip()
+        if stripped.endswith(CYPHER_SEMICOLON):
+            stripped = stripped[: -len(CYPHER_SEMICOLON)].rstrip()
+        suffix = CYPHER_MEMORY_LIMIT_SUFFIX.format(mb=mb)
+        return f"{stripped}{suffix}{CYPHER_SEMICOLON}"
+
+    @property
+    def procedure_catalog(self) -> str:
+        return MAGE_PROCEDURE_CATALOG
+
+    @property
+    def allowed_proc_prefixes(self) -> frozenset[str]:
+        return cs.CYPHER_ALLOWED_PROCEDURE_PREFIXES
+
+    def is_benign_error(self, exc: Exception) -> bool:
+        text = str(exc).lower()
+        return ERR_SUBSTR_ALREADY_EXISTS in text or ERR_SUBSTR_CONSTRAINT in text
+
+    def is_retryable(self, exc: Exception) -> bool:
+        # Memgraph's storage engine does not surface the optimistic-write
+        # conflicts ArcadeDB does. Keeping this False makes the shared retry
+        # loop inert on the default backend, so behaviour is unchanged.
+        return False
