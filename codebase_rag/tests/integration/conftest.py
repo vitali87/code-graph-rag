@@ -47,12 +47,23 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         item.add_marker(pytest.mark.xdist_group(f"graph-integration-{backend}"))
 
 
+def _backend_from_callspec_params(params: dict[str, object]) -> str:
+    # Pure helper (no pytest.Item involved) so the classification logic is
+    # directly unit-testable. `graph_container` is the only fixture that
+    # carries the backend as its indirect-parametrize value; other
+    # parametrize axes on the same item must not be mistaken for it, which
+    # ruled out the earlier substring-matching approach against the test id.
+    backend = params.get("graph_container")
+    if backend is None:
+        return str(BACKENDS[0])
+    return str(backend)
+
+
 def _backend_of(item: pytest.Item) -> str:
-    # Parametrised items carry the backend in their id as [memgraph] etc.
-    for backend in BACKENDS:
-        if f"[{backend}" in item.name or f"-{backend}]" in item.name:
-            return str(backend)
-    return str(BACKENDS[0])
+    callspec = getattr(item, "callspec", None)
+    if callspec is None:
+        return str(BACKENDS[0])
+    return _backend_from_callspec_params(callspec.params)
 
 
 def _wait_for_port(host: str, port: int, attempts: int = 30) -> None:
@@ -94,6 +105,8 @@ def _start_memgraph() -> tuple[object, GraphContainer]:
 
 
 def _start_arcadedb() -> tuple[object, GraphContainer]:
+    # Unreachable while BACKENDS holds only MEMGRAPH. Task 14 implements
+    # this and replaces the placeholder.
     raise NotImplementedError
 
 
@@ -127,12 +140,20 @@ def graph_ingestor(
 ) -> Generator[GraphIngestor, None, None]:
     ingestor: GraphIngestor | None = None
     for attempt in range(10):
+        candidate = _build_ingestor(graph_container)
+        entered = False
         try:
-            ingestor = _build_ingestor(graph_container)
-            ingestor.__enter__()
-            ingestor.execute_write("MATCH (n) DETACH DELETE n")
+            candidate.__enter__()
+            entered = True
+            candidate.execute_write("MATCH (n) DETACH DELETE n")
+            ingestor = candidate
             break
         except Exception as e:
+            # __enter__ succeeded but the wipe failed: close the connection
+            # and thread pool this attempt opened before retrying, or the
+            # next attempt leaks them.
+            if entered:
+                candidate.__exit__(type(e), e, e.__traceback__)
             if attempt == 9:
                 pytest.fail(f"Failed to connect after 10 attempts: {e}")
             time.sleep(0.5)
