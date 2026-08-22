@@ -238,7 +238,10 @@ def test_the_security_guide_describes_the_loopback_default() -> None:
         "early on a healthy stack, so deleting the compose file while it is up "
         "neither re-renders the file nor replaces the exposed containers"
     )
-    assert "delete" in delete, f"step 2 must delete the compose file, got {delete!r}"
+    assert "delete" in delete and COMPOSE_PATH.name in delete, (
+        f"step 2 must delete the COMPOSE file by name, got {delete!r}; "
+        "'delete the file' alone does not tell the reader which one"
+    )
     assert "cgr daemon up" in rerender, (
         f"step 3 must re-render, got {rerender!r}; stopping and deleting alone "
         "leaves no compose file at all"
@@ -247,8 +250,15 @@ def test_the_security_guide_describes_the_loopback_default() -> None:
     # appears earlier, where the guide tells the reader what to look for, so a
     # document-wide search stays green even if the remedy itself is deleted.
     tail = doc.split(anchor, 1)[1]
-    manual = next((line for line in tail.splitlines() if "by hand" in line), "")
-    assert f"{LOOPBACK}:" in manual, (
+    # Require the line to say WHAT the manual fix applies to. Matching only
+    # "by hand" plus the address let a decoy sentence ("you can tweak things by
+    # hand; the 127.0.0.1: value is shown above") stand in for a deleted remedy
+    # -- verified blind before this clause was added. Naming the published port
+    # ties the assertion to the instruction'"'"'s meaning rather than its wording.
+    assert any(
+        "by hand" in line and f"{LOOPBACK}:" in line and "published port" in line
+        for line in tail.splitlines()
+    ), (
         "security.md must offer the manual fix of adding the "
         f"'{LOOPBACK}:' prefix by hand, for a compose file carrying local edits"
     )
