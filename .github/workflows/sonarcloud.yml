@@ -34,7 +34,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
+        run: uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra arcadedb --group dev
 
       # This job runs the same unit suite as ci.yml, so it hits the same
       # embedding-model download and the same 429s (issue #1092).

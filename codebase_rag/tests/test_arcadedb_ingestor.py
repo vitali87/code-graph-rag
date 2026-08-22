@@ -242,6 +242,55 @@ def test_flush_relationships_splits_by_merge_key_signature() -> None:
         ingestor.__exit__(None, None, None)
 
 
+def test_flush_relationships_dedupes_identical_pattern_rows_within_one_batch() -> None:
+    # Task 14 review finding: ArcadeDB has no unique index on relationships
+    # (only vertex types get one), so its Cypher MERGE can't see an earlier
+    # row's write from the *same* UNWIND-batched statement -- two rows that
+    # MERGE onto the identical pattern created two edges instead of one.
+    # _dedupe_rows_sharing_a_merge_pattern collapses such rows client-side
+    # before the batch is sent. This pins two things a query-text-only
+    # assertion can't: (1) only ONE row reaches session.run's `batch` kwarg
+    # for the pair below, not two, and (2) the surviving row's props are a
+    # per-key OVERLAY of both rows (later value wins per key, earlier keys
+    # not present in the later row survive) -- not a blunt "keep the last
+    # row entirely", which would silently drop `keep_me`.
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.return_value = iter([{"created": 1}])
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        # CALLS has no MERGE_KEY_PROPS_BY_REL entry, so merge_key_props is
+        # () and both rows share the same (from_val, to_val, ()) dedup key
+        # -- the exact "no distinguishing props" shape real call-graph edges
+        # have.
+        ingestor.ensure_relationship_batch(
+            ("Function", "qualified_name", "a"),
+            "CALLS",
+            ("Function", "qualified_name", "b"),
+            {"keep_me": "first", "line_number": 1},
+        )
+        ingestor.ensure_relationship_batch(
+            ("Function", "qualified_name", "a"),
+            "CALLS",
+            ("Function", "qualified_name", "b"),
+            {"line_number": 2},
+        )
+        ingestor.flush_relationships()
+
+        assert session.run.call_count == 1
+        batch = session.run.call_args.kwargs["batch"]
+        assert batch == [
+            {
+                "from_val": "a",
+                "to_val": "b",
+                "props": {"keep_me": "first", "line_number": 2},
+            }
+        ]
+        ingestor.__exit__(None, None, None)
+
+
 def test_flush_retries_a_concurrent_modification_error() -> None:
     with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
         session = MagicMock()

@@ -72,7 +72,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --group dev
+          uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --extra arcadedb --group dev
 
       - name: Run type checking
         run: |
@@ -111,7 +111,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
+          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --extra arcadedb --group dev
 
       # Three unit tests embed for real. Without a cache each job pulled
       # microsoft/unixcoder-base from HuggingFace mid-suite, so a 429 or an
@@ -206,7 +206,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
+          uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra arcadedb --group dev
 
       - name: Run integration tests
         env:

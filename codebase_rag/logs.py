@@ -382,6 +382,10 @@ ARCADE_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
 ARCADE_RELS_FLUSHED = (
     "Flushed {total} relationships ({success} successful, {failed} failed)."
 )
+ARCADE_RELS_DEDUPED = (
+    "Collapsed {count} duplicate relationship row(s) sharing a MERGE pattern "
+    "within this flush before sending."
+)
 ARCADE_LABEL_FLUSH_ERROR = "Error flushing label group '{label}': {error}"
 ARCADE_REL_FLUSH_ERROR = "Error flushing relationship group '{pattern}': {error}"
 ARCADE_CLEANING_DB = "--- Cleaning ArcadeDB database... ---"

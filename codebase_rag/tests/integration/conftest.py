@@ -10,7 +10,6 @@ import pytest
 
 from codebase_rag.constants import GraphBackend
 from codebase_rag.services.graph import GraphIngestor
-from codebase_rag.services.graph.arcadedb import ArcadeDBIngestor
 from codebase_rag.services.graph.memgraph import MemgraphIngestor
 
 if TYPE_CHECKING:
@@ -176,6 +175,13 @@ def graph_container(
 def _build_ingestor(info: GraphContainer) -> GraphIngestor:
     if info["backend"] == GraphBackend.MEMGRAPH:
         return MemgraphIngestor(host=info["host"], port=info["bolt_port"])
+    # Deferred like _start_arcadedb defers `testcontainers`: arcadedb.py
+    # imports neo4j unconditionally, and neo4j ships only in the optional
+    # `arcadedb` extra. A module-level import here would break collection of
+    # the ENTIRE integration directory -- including every Memgraph-only test
+    # -- for any contributor or CI job that didn't sync that extra.
+    from codebase_rag.services.graph.arcadedb import ArcadeDBIngestor
+
     assert info["http_port"] is not None
     assert info["username"] is not None
     assert info["password"] is not None

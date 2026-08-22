@@ -95,9 +95,13 @@ def _dedupe_rows_sharing_a_merge_pattern(
     (found via manual probing while building the Task 14 conformance suite;
     see TestRelationships.test_merge_does_not_duplicate_the_same_edge_within_one_batch
     in test_graph_backend_conformance.py). Pre-merging duplicates
-    client-side, last-props-wins to mirror Memgraph's own SET-after-MERGE
-    overlay, makes the two engines converge on the same graph regardless of
-    engine-level MERGE semantics.
+    client-side -- overlaying each row's props onto the running merge
+    per-key, later values winning only on the keys they actually carry,
+    never wiping keys a later row omits -- mirrors Memgraph's own
+    SET-after-MERGE overlay exactly (NOT a blunt "keep the last row",
+    which would silently drop any prop only an earlier row set), so the two
+    engines converge on the same graph regardless of engine-level MERGE
+    semantics.
     """
     merged: dict[tuple[Hashable, Hashable, tuple[Hashable, ...]], RelBatchRow] = {}
     for row in rows:
@@ -438,7 +442,7 @@ class ArcadeDBIngestor:
         self,
         pattern: tuple[str, str, str, str, str],
         rows: list[RelBatchRow],
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         from_label, from_key, rel_type, to_label, to_key = pattern
 
         if not self._use_merge:
@@ -451,7 +455,7 @@ class ArcadeDBIngestor:
                 any(r["props"] for r in rows),
             )
             results = self._execute_batch(query, rows)
-            return len(rows), _count_created(results)
+            return len(rows), _count_created(results), 0
 
         # Issue #722: rows for the same endpoints may carry different
         # distinguishing props. Flushing each merge-key signature separately
@@ -465,8 +469,16 @@ class ArcadeDBIngestor:
 
         attempted = 0
         created = 0
+        deduped_away = 0
         for merge_key_props, group in by_keys.items():
             deduped = _dedupe_rows_sharing_a_merge_pattern(group, merge_key_props)
+            # Duplicate rows collapsed here are the expected, common case
+            # this dedup exists for (see _dedupe_rows_sharing_a_merge_pattern)
+            # -- count what was actually SENT so `attempted - created` in
+            # flush_relationships' log line reflects genuine failures
+            # (e.g. an endpoint not yet in the graph), not rows this method
+            # itself chose to collapse.
+            deduped_away += len(group) - len(deduped)
             query = build_merge_relationship_query(
                 from_label,
                 from_key,
@@ -477,9 +489,9 @@ class ArcadeDBIngestor:
                 merge_key_props=merge_key_props,
             )
             results = self._execute_batch(query, deduped)
-            attempted += len(group)
+            attempted += len(deduped)
             created += _count_created(results)
-        return attempted, created
+        return attempted, created, deduped_away
 
     def flush_nodes(self) -> None:
         if not self.node_buffer:
@@ -532,6 +544,7 @@ class ArcadeDBIngestor:
         total = self._rel_count
         attempted = 0
         created = 0
+        deduped_away = 0
         first_error: Exception | None = None
 
         if self._executor and len(self._rel_groups) > 1:
@@ -544,9 +557,10 @@ class ArcadeDBIngestor:
             for future in as_completed(futures):
                 pattern = futures[future]
                 try:
-                    a, c = future.result()
+                    a, c, d = future.result()
                     attempted += a
                     created += c
+                    deduped_away += d
                 except Exception as e:
                     logger.error(
                         ls.ARCADE_REL_FLUSH_ERROR.format(pattern=pattern, error=e)
@@ -555,9 +569,10 @@ class ArcadeDBIngestor:
         else:
             for pattern, rows in self._rel_groups.items():
                 try:
-                    a, c = self._flush_rel_pattern_group(pattern, rows)
+                    a, c, d = self._flush_rel_pattern_group(pattern, rows)
                     attempted += a
                     created += c
+                    deduped_away += d
                 except Exception as e:
                     logger.error(
                         ls.ARCADE_REL_FLUSH_ERROR.format(pattern=pattern, error=e)
@@ -569,6 +584,14 @@ class ArcadeDBIngestor:
                 total=total, success=created, failed=attempted - created
             )
         )
+        # Logged distinctly from "failed" above: these rows were never sent
+        # to the server at all -- they're the same-batch duplicates
+        # _dedupe_rows_sharing_a_merge_pattern collapsed before the MERGE,
+        # not query failures. Duplicate CALLS/etc. edges within one flush
+        # cycle are the expected common case (see issue found in Task 14),
+        # so this is routine, not a warning.
+        if deduped_away:
+            logger.info(ls.ARCADE_RELS_DEDUPED.format(count=deduped_away))
         self._rel_count = 0
         self._rel_groups.clear()
         if first_error is not None:

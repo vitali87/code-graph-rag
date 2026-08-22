@@ -138,6 +138,36 @@ class TestRelationships:
         )
         assert rows[0]["c"] == 1
 
+    def test_duplicate_edge_props_overlay_last_value_wins_within_one_batch(
+        self, graph_ingestor: GraphIngestor
+    ) -> None:
+        # Regression guard for the overlay ORDER of ArcadeDB's client-side
+        # same-batch dedup (_dedupe_rows_sharing_a_merge_pattern). Two rows
+        # merging onto the same edge in one batch, differing only in
+        # `line_number`, must converge on the SECOND (later) value -- this
+        # is the assertion that would catch a dedup that kept the FIRST row
+        # instead of overlaying in arrival order, which is the most likely
+        # silent divergence class for this fix (Memgraph's own
+        # SET-after-MERGE naturally applies later writes last; the
+        # client-side dedup must reproduce that, not invert it).
+        graph_ingestor.ensure_node_batch(_FN, {_QN: "p.m.a"})
+        graph_ingestor.ensure_node_batch(_FN, {_QN: "p.m.b"})
+        graph_ingestor.flush_nodes()
+        for line_number in (1, 2):
+            graph_ingestor.ensure_relationship_batch(
+                (_FN, _QN, "p.m.a"),
+                RelationshipType.CALLS.value,
+                (_FN, _QN, "p.m.b"),
+                {"line_number": line_number},
+            )
+        graph_ingestor.flush_all()
+
+        rows = graph_ingestor.fetch_all(
+            f"MATCH (:{_FN})-[r:{RelationshipType.CALLS.value}]->(:{_FN}) "
+            "RETURN r.line_number AS line"
+        )
+        assert [r["line"] for r in rows] == [2]
+
     def test_flows_to_parallel_edges_survive_merge(
         self, graph_ingestor: GraphIngestor
     ) -> None:
@@ -170,6 +200,40 @@ class TestRelationships:
             ("arg", "direct"),
             ("ret", None),
         ]
+
+    def test_flows_to_same_signature_edges_survive_merge_within_one_batch(
+        self, graph_ingestor: GraphIngestor
+    ) -> None:
+        # Regression guard for the client-side pre-merge dedup added to fix
+        # ArcadeDB's same-batch relationship MERGE gap (see
+        # test_merge_does_not_duplicate_the_same_edge_within_one_batch
+        # above). Both rows here carry via+kind, so both share ONE
+        # merge-key signature and land in the SAME by_keys group -- unlike
+        # test_flows_to_parallel_edges_survive_merge's asymmetric rows,
+        # which get split into different groups before dedup ever runs on
+        # them. A dedup key that only looked at (from_val, to_val) would
+        # silently collapse these two into one edge and pass every other
+        # test in this file; only a dedup key that also includes each row's
+        # actual via/kind VALUES keeps both. Flushed in one batch (single
+        # flush_all, no flush_relationships between the two adds) so the
+        # dedup path in _flush_rel_pattern_group actually runs.
+        graph_ingestor.ensure_node_batch(_FN, {_QN: "p.m.src2"})
+        graph_ingestor.ensure_node_batch(_FN, {_QN: "p.m.dst2"})
+        graph_ingestor.flush_nodes()
+        for via in ("kw:username", "kw:password"):
+            graph_ingestor.ensure_relationship_batch(
+                (_FN, _QN, "p.m.src2"),
+                RelationshipType.FLOWS_TO.value,
+                (_FN, _QN, "p.m.dst2"),
+                {"via": via, "kind": "arg"},
+            )
+        graph_ingestor.flush_all()
+
+        rows = graph_ingestor.fetch_all(
+            f"MATCH (:{_FN})-[r:{RelationshipType.FLOWS_TO.value}]->(:{_FN}) "
+            "RETURN r.via AS via ORDER BY via"
+        )
+        assert [r["via"] for r in rows] == ["kw:password", "kw:username"]
 
 
 class TestConcurrency:
