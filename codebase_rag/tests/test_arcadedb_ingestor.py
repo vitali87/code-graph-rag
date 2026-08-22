@@ -256,6 +256,61 @@ def test_flush_reraises_a_permanent_error() -> None:
         ingestor.__exit__(None, None, None)
 
 
+def test_exit_flushes_buffered_nodes_on_the_happy_path() -> None:
+    # No exception: __exit__ still owes a final flush_all(), or nodes
+    # buffered right up to the end of a successful run are dropped silently.
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.return_value = iter([])
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        ingestor.ensure_node_batch("Function", {"qualified_name": "a"})
+        ingestor.__exit__(None, None, None)
+
+        session.run.assert_called_once()
+
+
+def test_exit_best_effort_flushes_buffered_nodes_on_exception() -> None:
+    # An exception mid-run must not silently drop buffered nodes: __exit__
+    # makes a best-effort flush_all() call, and the original exception (not
+    # a secondary flush failure) is what the caller sees.
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.return_value = iter([])
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        try:
+            ingestor.ensure_node_batch("Function", {"qualified_name": "a"})
+            raise ValueError("boom mid-ingest")
+        except ValueError:
+            ingestor.__exit__(ValueError, ValueError("boom mid-ingest"), None)
+
+        session.run.assert_called_once()
+
+
+def test_exit_swallows_a_secondary_flush_failure_during_exception_handling() -> None:
+    # A flush_all() failure while already unwinding a real exception must
+    # not mask that original exception -- it is merely logged.
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.side_effect = RuntimeError("Syntax error at line 1")
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        ingestor.ensure_node_batch("Function", {"qualified_name": "a"})
+        # __exit__ itself must not raise, despite the secondary flush error.
+        ingestor.__exit__(ValueError, ValueError("original error"), None)
+
+        # The flush must actually have been attempted (and failed) -- a
+        # no-op __exit__ would also satisfy "did not raise" without this.
+        session.run.assert_called_once()
+
+
 def test_ensure_constraints_runs_the_schema_ddl() -> None:
     # ArcadeDBDialect is __slots__-only (no instance __dict__), so the mock
     # must patch the class rather than `ingestor._dialect` directly; a
