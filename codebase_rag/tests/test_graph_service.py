@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.constants import NODE_UNIQUE_CONSTRAINTS
+from codebase_rag.constants import NODE_NAME_INDEXES, NODE_UNIQUE_CONSTRAINTS
 from codebase_rag.cypher_queries import (
     build_create_node_query,
     build_create_relationship_query,
@@ -367,9 +367,11 @@ class TestEnsureConstraints:
         ):
             ingestor.ensure_constraints()
 
-        # One SHOW, two damage probes, then a create-constraint and a
-        # create-index per label.
-        expected_queries = 3 + len(NODE_UNIQUE_CONSTRAINTS) * 2
+        # One SHOW, two damage probes, a create-constraint and a
+        # create-index per label, plus a name index per non-name-keyed label.
+        expected_queries = (
+            3 + len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(NODE_NAME_INDEXES)
+        )
         assert call_count == expected_queries
 
 
