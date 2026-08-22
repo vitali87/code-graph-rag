@@ -8,6 +8,7 @@ from codebase_rag.constants import (
     NodeLabel,
     RelationshipType,
 )
+from codebase_rag.exceptions import ARCADE_NO_HTTP_CLIENT, ArcadeHttpError
 from codebase_rag.services.graph.arcadedb import (
     ArcadeDBDialect,
     build_arcade_schema_statements,
@@ -120,8 +121,55 @@ def test_ensure_schema_sends_every_statement_over_http() -> None:
     assert sent == build_arcade_schema_statements()
 
 
+def test_ensure_schema_swallows_a_benign_error_and_keeps_going() -> None:
+    sent: list[str] = []
+
+    class _FlakyHttp:
+        def sql(self, command: str) -> list[dict[str, object]]:
+            sent.append(command)
+            if len(sent) == 1:
+                raise RuntimeError("Type 'Function' already exists")
+            return []
+
+    ArcadeDBDialect(http=_FlakyHttp()).ensure_schema(ingestor=None)  # type: ignore[arg-type]
+    # The failing statement was attempted, and every statement after it was
+    # still sent -- the swallow path continues rather than aborting.
+    assert sent == build_arcade_schema_statements()
+
+
+def test_ensure_schema_reraises_a_non_benign_error_and_stops() -> None:
+    sent: list[str] = []
+
+    class _BrokenHttp:
+        def sql(self, command: str) -> list[dict[str, object]]:
+            sent.append(command)
+            raise RuntimeError("Syntax error near CREATE")
+
+    with pytest.raises(RuntimeError, match="Syntax error near CREATE"):
+        ArcadeDBDialect(http=_BrokenHttp()).ensure_schema(ingestor=None)  # type: ignore[arg-type]
+    # Execution stopped at the first (and only) statement sent, rather than
+    # continuing through the remaining statements.
+    assert sent == build_arcade_schema_statements()[:1]
+
+
+def test_ensure_schema_without_an_http_client_raises_a_clear_error() -> None:
+    with pytest.raises(ArcadeHttpError) as exc_info:
+        ArcadeDBDialect().ensure_schema(ingestor=None)  # type: ignore[arg-type]
+    assert str(exc_info.value) == ARCADE_NO_HTTP_CLIENT
+
+
 def test_procedure_catalog_mentions_only_algo_procedures() -> None:
     catalog = ArcadeDBDialect().procedure_catalog
     assert "algo." in catalog
     for absent in ("nxalg.", "pagerank.get", "graph_util.", "path.expand"):
         assert absent not in catalog
+
+
+def test_procedure_catalog_warns_that_node_is_a_record_id_string() -> None:
+    # Without this warning the model writes `node.qualified_name` against an
+    # algo.* result and silently gets nothing back -- `node` there is a
+    # record-id string, not a node. Pin the load-bearing tokens, not the
+    # whole paragraph, so rewording the surrounding prose doesn't break this.
+    catalog = ArcadeDBDialect().procedure_catalog
+    assert "record-id string" in catalog
+    assert "#46:0" in catalog
