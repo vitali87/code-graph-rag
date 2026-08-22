@@ -614,3 +614,12 @@ ARCADE_KEY_LANGUAGE = "language"
 ARCADE_KEY_COMMAND = "command"
 ARCADE_KEY_RESULT = "result"
 ARCADE_HTTP_TIMEOUT_S = 30.0
+
+# ArcadeDB schema DDL templates. Every unique key in _NODE_LABEL_UNIQUE_KEYS
+# is a string type (name, qualified_name, absolute_path), so hard-coding
+# STRING here is correct for all of them; a per-label type table would be
+# needed only if that stopped being true.
+ARCADE_DDL_VERTEX_TYPE = "CREATE VERTEX TYPE {label} IF NOT EXISTS"
+ARCADE_DDL_EDGE_TYPE = "CREATE EDGE TYPE {rel_type} IF NOT EXISTS"
+ARCADE_DDL_PROPERTY = "CREATE PROPERTY {label}.{prop} IF NOT EXISTS STRING"
+ARCADE_DDL_UNIQUE_INDEX = "CREATE INDEX IF NOT EXISTS ON {label} ({prop}) UNIQUE"
