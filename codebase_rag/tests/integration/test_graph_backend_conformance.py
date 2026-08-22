@@ -17,6 +17,7 @@ from codebase_rag.services.graph import GraphIngestor
 pytestmark = [pytest.mark.integration]
 
 _FN = NodeLabel.FUNCTION.value
+_METHOD = NodeLabel.METHOD.value
 _MOD = NodeLabel.MODULE.value
 _QN = "qualified_name"
 
@@ -137,18 +138,34 @@ class TestConcurrency:
         self, graph_ingestor: GraphIngestor
     ) -> None:
         # Many CALLS edges converging on one vertex is the exact shape that
-        # provokes optimistic-write conflicts on MVCC engines. This is the
-        # test that exercises the retry path.
+        # provokes optimistic-write conflicts on MVCC engines. Splitting the
+        # callers across two node kinds (Function, Method) gives
+        # ensure_relationship_batch two distinct (from_label, rel_type,
+        # to_label) patterns instead of one, so the flush fans out into two
+        # groups that write on separate connections concurrently -- real
+        # concurrent writes at the database layer, not just concurrent
+        # buffer appends -- while both groups still converge on the same
+        # hot vertex. This mirrors real ingest, where a hot function is
+        # called from several node kinds, and is the test that exercises
+        # the retry path.
         target = "p.m.hot"
-        callers = [f"p.m.c{i}" for i in range(60)]
+        fn_callers = [f"p.m.c{i}" for i in range(30)]
+        method_callers = [f"p.m.C.m{i}" for i in range(30)]
         graph_ingestor.ensure_node_batch(_FN, {_QN: target})
-        for qn in callers:
+        for qn in fn_callers:
             graph_ingestor.ensure_node_batch(_FN, {_QN: qn})
+        for qn in method_callers:
+            graph_ingestor.ensure_node_batch(_METHOD, {_QN: qn})
         graph_ingestor.flush_nodes()
 
-        def write(qn: str) -> None:
+        callers: list[tuple[str, str]] = [(_FN, qn) for qn in fn_callers] + [
+            (_METHOD, qn) for qn in method_callers
+        ]
+
+        def write(spec: tuple[str, str]) -> None:
+            label, qn = spec
             graph_ingestor.ensure_relationship_batch(
-                (_FN, _QN, qn), RelationshipType.CALLS.value, (_FN, _QN, target)
+                (label, _QN, qn), RelationshipType.CALLS.value, (_FN, _QN, target)
             )
 
         with ThreadPoolExecutor(max_workers=8) as pool:
@@ -156,7 +173,7 @@ class TestConcurrency:
         graph_ingestor.flush_all()
 
         rows = graph_ingestor.fetch_all(
-            f"MATCH (:{_FN})-[r:{RelationshipType.CALLS.value}]->"
+            f"MATCH ()-[r:{RelationshipType.CALLS.value}]->"
             f"(:{_FN} {{{_QN}: '{target}'}}) RETURN count(r) AS c"
         )
         assert rows[0]["c"] == len(callers)
@@ -238,13 +255,28 @@ class TestSchemaBootstrap:
     def test_ensure_constraints_is_idempotent(
         self, graph_ingestor: GraphIngestor
     ) -> None:
+        # Re-running ensure_constraints() must stay safe -- this is the
+        # idempotency being tested, not merely a setup step.
         graph_ingestor.ensure_constraints()
         graph_ingestor.ensure_constraints()
 
-        graph_ingestor.ensure_node_batch(_FN, {_QN: "p.m.f"})
-        graph_ingestor.ensure_node_batch(_FN, {_QN: "p.m.f"})
-        graph_ingestor.flush_all()
-        rows = graph_ingestor.fetch_all(f"MATCH (n:{_FN}) RETURN count(n) AS c")
+        # Exercise the constraint itself, not the ingestor's own MERGE-based
+        # dedup (already covered by test_merge_is_idempotent): a raw CREATE
+        # bypasses ensure_node_batch's batching entirely, so a second CREATE
+        # on the same unique key only survives if no constraint enforces it.
+        # The offending write may raise or be silently rejected depending on
+        # the engine, so either outcome is accepted here -- what must hold
+        # is the end state: exactly one node with this key.
+        create_query = f"CREATE (n:{_FN} {{{_QN}: 'p.m.constrained'}})"
+        graph_ingestor.execute_write(create_query)
+        try:
+            graph_ingestor.execute_write(create_query)
+        except Exception:
+            pass
+
+        rows = graph_ingestor.fetch_all(
+            f"MATCH (n:{_FN} {{{_QN}: 'p.m.constrained'}}) RETURN count(n) AS c"
+        )
         assert rows[0]["c"] == 1
 
 
