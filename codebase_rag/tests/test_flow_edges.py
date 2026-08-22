@@ -302,6 +302,31 @@ def test_python_os_environ_subscript_global_rebind_before_read_not_source(
     )
 
 
+def test_python_os_environ_subscript_global_rebind_rhs_read_is_source(
+    tmp_path: Path,
+) -> None:
+    # The RHS of an assignment evaluates BEFORE the target is rebound, so in
+    # `global os; os = os.environ['K']` the subscript still reads through the
+    # imported module: the ENV value lands in the rebound name and flows to
+    # the sink (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\n"
+            "def leak():\n"
+            "    global os\n"
+            "    os = os.environ['K']\n"
+            "    print(os)\n"
+        )
+    }
+    edges = _run_flow(tmp_path, files)
+    assert _has(
+        edges,
+        "resource::ENV::K",
+        "resource::STDOUT::<dynamic>",
+        kind=FlowKind.RESOURCE.value,
+    )
+
+
 def test_python_os_environ_subscript_augmented_assignment_shadow_not_source(
     tmp_path: Path,
 ) -> None:

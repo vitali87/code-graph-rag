@@ -568,6 +568,21 @@ def test_python_os_environ_subscript_global_rebind_before_read_not_env(
     assert not _has(rels, "m.leak", WRITES_TO, "resource::ENV::TOKEN"), rels
 
 
+def test_python_os_environ_subscript_global_rebind_rhs_read_is_env(
+    tmp_path: Path,
+) -> None:
+    # The RHS of an assignment evaluates BEFORE the target is rebound, so in
+    # `global os; os = os.environ['TOKEN']` the subscript still reads through
+    # the imported module and is an ENV read (CodeRabbit review on PR #1325).
+    files = {
+        "m.py": (
+            "import os\n\ndef leak():\n    global os\n    os = os.environ['TOKEN']\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "m.leak", READS_FROM, "resource::ENV::TOKEN"), rels
+
+
 def test_python_os_environ_subscript_augmented_assignment_shadow_not_env(
     tmp_path: Path,
 ) -> None:

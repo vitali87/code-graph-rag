@@ -140,14 +140,16 @@ def _binding_target(node: Node) -> Node | None:
 
 
 def _global_rebind_positions(scope_node: Node, name: str) -> list[int]:
-    # Source-order start offsets of statements that REBIND a `global`-declared
+    # Source-order END offsets of statements that REBIND a `global`-declared
     # name in this scope's OWN body (nested defs/classes pruned). `global os`
     # keeps `os` module-scoped, so `os = Fake()` writes the MODULE binding: a
     # subscript AFTER that offset reads the rebound value, not the imported
     # module, while one BEFORE it still sees the module (CodeRabbit review on
     # PR #1325). Augmented (`os += v`) and walrus (`(os := v)`) rebindings
     # replace the binding just like a plain assignment (Greptile review on
-    # PR #1325).
+    # PR #1325). The end offset is used because the target is bound only
+    # AFTER the RHS evaluates: in `os = os.environ['K']` the RHS subscript
+    # still reads through the module (CodeRabbit review on PR #1325).
     positions: list[int] = []
     stack = list(scope_seed_nodes(scope_node))
     while stack:
@@ -166,7 +168,7 @@ def _global_rebind_positions(scope_node: Node, name: str) -> list[int]:
                 and target.text is not None
                 and target.text.decode(cs.ENCODING_UTF8) == name
             ):
-                positions.append(node.start_byte or 0)
+                positions.append(node.end_byte or 0)
         stack.extend(node.children)
     return sorted(positions)
 
