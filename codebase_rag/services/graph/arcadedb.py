@@ -445,11 +445,14 @@ class ArcadeDBIngestor:
                 for label, props in by_label.items()
             }
             for future in as_completed(futures):
+                label = futures[future]
                 try:
                     count, _ = future.result()
                     flushed += count
                 except Exception as e:
-                    logger.error(ls.ARCADE_BATCH_ERROR.format(error=e))
+                    logger.error(
+                        ls.ARCADE_LABEL_FLUSH_ERROR.format(label=label, error=e)
+                    )
                     first_error = first_error or e
         else:
             for label, props in by_label.items():
@@ -457,7 +460,9 @@ class ArcadeDBIngestor:
                     count, _ = self._flush_node_label_group(label, props)
                     flushed += count
                 except Exception as e:
-                    logger.error(ls.ARCADE_BATCH_ERROR.format(error=e))
+                    logger.error(
+                        ls.ARCADE_LABEL_FLUSH_ERROR.format(label=label, error=e)
+                    )
                     first_error = first_error or e
 
         logger.info(ls.ARCADE_NODES_FLUSHED.format(flushed=flushed, total=total))
@@ -481,12 +486,15 @@ class ArcadeDBIngestor:
                 for pattern, rows in self._rel_groups.items()
             }
             for future in as_completed(futures):
+                pattern = futures[future]
                 try:
                     a, c = future.result()
                     attempted += a
                     created += c
                 except Exception as e:
-                    logger.error(ls.ARCADE_BATCH_ERROR.format(error=e))
+                    logger.error(
+                        ls.ARCADE_REL_FLUSH_ERROR.format(pattern=pattern, error=e)
+                    )
                     first_error = first_error or e
         else:
             for pattern, rows in self._rel_groups.items():
@@ -495,7 +503,9 @@ class ArcadeDBIngestor:
                     attempted += a
                     created += c
                 except Exception as e:
-                    logger.error(ls.ARCADE_BATCH_ERROR.format(error=e))
+                    logger.error(
+                        ls.ARCADE_REL_FLUSH_ERROR.format(pattern=pattern, error=e)
+                    )
                     first_error = first_error or e
 
         logger.info(

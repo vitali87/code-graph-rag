@@ -382,6 +382,8 @@ ARCADE_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
 ARCADE_RELS_FLUSHED = (
     "Flushed {total} relationships ({success} successful, {failed} failed)."
 )
+ARCADE_LABEL_FLUSH_ERROR = "Error flushing label group '{label}': {error}"
+ARCADE_REL_FLUSH_ERROR = "Error flushing relationship group '{pattern}': {error}"
 
 # Graph dialect logs
 GRAPH_RETRY_TRANSIENT = (

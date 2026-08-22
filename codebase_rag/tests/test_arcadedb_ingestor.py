@@ -21,12 +21,12 @@ def _ingestor(**kw: Any) -> ArcadeDBIngestor:
     return ArcadeDBIngestor(**{**defaults, **kw})
 
 
-# ArcadeDBIngestor does not yet implement flush_nodes, flush_relationships,
-# clean_database, list_projects, list_project_roots, delete_project, or
-# export_graph_to_dict (batching lands in Task 12, admin ops in Task 13), so
-# it does not yet structurally satisfy GraphIngestor. strict=True: if this
-# starts passing before Task 13 removes the marker, the run must fail so the
-# stale xfail cannot silently stop asserting anything.
+# ArcadeDBIngestor does not yet implement clean_database, list_projects,
+# list_project_roots, delete_project, or export_graph_to_dict (those admin
+# ops land in Task 13), so it does not yet structurally satisfy
+# GraphIngestor. strict=True: if this starts passing before Task 13 removes
+# the marker, the run must fail so the stale xfail cannot silently stop
+# asserting anything.
 @pytest.mark.xfail(strict=True, reason="GraphIngestor protocol is completed in Task 13")
 def test_satisfies_the_graph_ingestor_protocol() -> None:
     assert isinstance(_ingestor(), GraphIngestor)
@@ -201,8 +201,16 @@ def test_flush_nodes_sends_an_unwound_merge() -> None:
 
 
 def test_flush_relationships_splits_by_merge_key_signature() -> None:
-    # Issue #722: rows carrying different distinguishing props must not
-    # share a MERGE key, or parallel FLOWS_TO edges collapse into one.
+    # Issue #722: rows for the same endpoints may carry different sets of
+    # distinguishing props -- not just different values for the same set.
+    # One row here has both `via` and `kind`; the other has only `via`. If
+    # the implementation grouped rows by candidate prop *values* (or ignored
+    # presence and always used the full candidate tuple as the merge key),
+    # this would still produce a single query and pass a weaker assertion --
+    # so this test requires two calls with two distinct MERGE key shapes,
+    # matching the asymmetric-props shape of the Memgraph integration
+    # regression test (test_mixed_via_and_viales_edges_do_not_collapse in
+    # tests/integration/test_cypher_queries.py).
     with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
         session = MagicMock()
         session.run.return_value = iter([{"created": 1}])
@@ -210,17 +218,31 @@ def test_flush_relationships_splits_by_merge_key_signature() -> None:
 
         ingestor = _ingestor()
         ingestor.__enter__()
-        for via in ("arg", "ret"):
-            ingestor.ensure_relationship_batch(
-                ("Function", "qualified_name", "a"),
-                "FLOWS_TO",
-                ("Function", "qualified_name", "b"),
-                {"via": via, "kind": "direct"},
-            )
+        ingestor.ensure_relationship_batch(
+            ("Function", "qualified_name", "a"),
+            "FLOWS_TO",
+            ("Function", "qualified_name", "b"),
+            {"via": "arg", "kind": "direct"},
+        )
+        ingestor.ensure_relationship_batch(
+            ("Function", "qualified_name", "a"),
+            "FLOWS_TO",
+            ("Function", "qualified_name", "b"),
+            {"via": "ret"},
+        )
         ingestor.flush_relationships()
 
+        assert session.run.call_count == 2
         merged = [c[0][0].text for c in session.run.call_args_list]
-        assert any("via: row.props.via" in q for q in merged)
+        both_props = [q for q in merged if "kind: row.props.kind" in q]
+        via_only = [q for q in merged if "kind: row.props.kind" not in q]
+        assert len(both_props) == 1
+        assert len(via_only) == 1
+        assert (
+            "MERGE (a)-[r:FLOWS_TO {via: row.props.via, kind: row.props.kind}]->(b)"
+            in both_props[0]
+        )
+        assert "MERGE (a)-[r:FLOWS_TO {via: row.props.via}]->(b)" in via_only[0]
         ingestor.__exit__(None, None, None)
 
 
