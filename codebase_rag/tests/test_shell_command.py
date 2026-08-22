@@ -565,6 +565,39 @@ class TestNoninteractiveMode:
         assert result.return_code == 0, result.stderr
         assert "payload" in result.stdout
 
+    async def test_denies_symlink_escape_after_double_dash(
+        self, tmp_path: Path
+    ) -> None:
+        # `cat -- -linked_secret` makes the dash-leading name an OPERAND, so
+        # skipping dash-args as flags would bypass the symlink confinement
+        # (CodeRabbit review on PR #1388).
+        root = tmp_path / "proj"
+        root.mkdir()
+        secret = tmp_path / "secret.txt"
+        secret.write_text("host data", encoding="utf-8")
+        (root / "-linked_secret").symlink_to(secret)
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat -- -linked_secret")
+        assert result.return_code != 0
+        assert "host data" not in result.stdout
+
+    async def test_double_dash_operand_inside_root_is_allowed(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        (root / "data.txt").write_text("payload", encoding="utf-8")
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat -- data.txt")
+        assert result.return_code == 0, result.stderr
+        assert "payload" in result.stdout
+
 
 class TestHasRedirectOperators:
     def test_output_redirect(self) -> None:

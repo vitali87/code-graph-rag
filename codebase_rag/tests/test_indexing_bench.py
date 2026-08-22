@@ -187,3 +187,28 @@ def test_ensure_corpus_cleans_untracked_after_commit_switch(tmp_path: Path) -> N
     assert _git(checkout, "rev-parse", "HEAD") == c2
     assert (checkout / "a.py").read_text() == "two = 2\n"
     assert not (checkout / "stray.py").exists()
+
+
+def test_ensure_corpus_removes_ignored_stray_at_pinned_commit(
+    tmp_path: Path,
+) -> None:
+    # An IGNORED stale file hides from `status --porcelain` and survives
+    # `git clean` without -x, yet still gets indexed while the report records
+    # spec.commit (CodeRabbit review on PR #1388).
+    corpus_dir = tmp_path / "corpora"
+    checkout = corpus_dir / "demo"
+    checkout.mkdir(parents=True)
+    _git(checkout, "init", "-q")
+    (checkout / ".gitignore").write_text("build/\n")
+    (checkout / "a.py").write_text("print('clean')\n")
+    _git(checkout, "add", ".gitignore", "a.py")
+    _git(checkout, "commit", "-q", "--no-verify", "-m", "pin")
+    sha = _git(checkout, "rev-parse", "HEAD")
+    (checkout / "build").mkdir()
+    (checkout / "build" / "stale.py").write_text("x = 1\n")
+
+    from evals.indexing_bench import CorpusSpec, _ensure_corpus
+
+    spec = CorpusSpec(name="demo", url="unused", commit=sha, subdir="")
+    assert _ensure_corpus(spec, corpus_dir) == checkout
+    assert not (checkout / "build" / "stale.py").exists()

@@ -107,8 +107,11 @@ def _ensure_corpus(spec: CorpusSpec, corpus_dir: Path) -> Path:
             check=False,
         ).stdout.strip()
         if head == spec.commit:
+            # --ignored: a stale file in an ignored directory hides from a
+            # plain status yet still gets indexed (CodeRabbit review on
+            # PR #1388).
             dirty = subprocess.run(
-                ["git", "-C", str(checkout), "status", "--porcelain"],
+                ["git", "-C", str(checkout), "status", "--porcelain", "--ignored"],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -132,7 +135,7 @@ def _ensure_corpus(spec: CorpusSpec, corpus_dir: Path) -> Path:
                     check=True,
                 )
                 subprocess.run(
-                    ["git", "-C", str(checkout), "clean", "-qdff"],
+                    ["git", "-C", str(checkout), "clean", "-qdffx"],
                     check=True,
                 )
             return target

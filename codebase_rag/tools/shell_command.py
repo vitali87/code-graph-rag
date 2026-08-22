@@ -594,12 +594,18 @@ def _noninteractive_denial(command: str, project_root: Path) -> str | None:
                 return te.COMMAND_NONINTERACTIVE_DENIED.format(
                     command=segment, reason=te.NONINTERACTIVE_FIND_MUTATES
                 )
+            operands_only = False
             for arg in parts[1:]:
+                if not operands_only and arg == "--":
+                    # After `--` every argument is an operand, even one that
+                    # starts with `-` (CodeRabbit review on PR #1388).
+                    operands_only = True
+                    continue
                 if _ESCAPING_PATH_ARG.search(arg) or ".." in arg.split("/"):
                     return te.COMMAND_NONINTERACTIVE_DENIED.format(
                         command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
                     )
-                if arg.startswith("-"):
+                if not operands_only and arg.startswith("-"):
                     continue
                 candidate = root / arg
                 if os.path.lexists(
