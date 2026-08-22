@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from codebase_rag.services.graph_service import _apply_memory_limit
+from codebase_rag.services.graph.memgraph import _apply_memory_limit
 
 
 class TestApplyMemoryLimit:
