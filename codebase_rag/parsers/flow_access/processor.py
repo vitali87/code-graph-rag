@@ -873,6 +873,10 @@ class FlowProcessor:
                 else _scala_body_value(caller_node)
             )
             if tail is not None:
+                # A keyword-less return is still a return: the chain hand-off
+                # has to be recorded here as well, or Scala and Rust wrappers
+                # stop one hop in (issue #1363).
+                self._record_lean_return_handoff(tail, state.taint, jc)
                 returned = self._js_expr_taint(tail, state.taint, jc)
                 if returned is not None:
                     self._acc_returns_taint = True
@@ -2504,8 +2508,41 @@ class FlowProcessor:
     ) -> Taint | None:
         # A Dart `return <chain>;` contributes the chain's taint to the summary.
         rhs = [c for c in node.named_children if c.type != cs.TS_COMMENT]
+        # Dart spells a call as a SELECTOR chain, not the descriptor's call
+        # node, so the shared hand-off recorder cannot recognise it; do the same
+        # job with the Dart accessors (issue #1363).
+        self._record_dart_return_handoff(rhs, tainted, jc)
         taint, _ = self._dart_rhs(rhs, tainted, {}, jc)
         return taint
+
+    def _record_dart_return_handoff(
+        self, rhs: list[Node], tainted: _TaintMap, jc: _JsCtx
+    ) -> None:
+        # `return inner(p);`: record which of this function's parameters the
+        # returned call forwards, so the finalize closure can follow the chain.
+        call_sel = next((n for n in rhs if self._dart_selector_is_call(n)), None)
+        if call_sel is None:
+            return
+        raw = dart_call_name(call_sel)
+        if raw is None:
+            return
+        callee = self._resolve(
+            raw,
+            jc.flow.module_qn,
+            jc.flow.class_context,
+            jc.flow.caller_qn,
+            jc.flow.language,
+            jc.flow.local_var_types,
+        )
+        if callee is None:
+            return
+        for via, taint in self._dart_arg_taints(call_sel, tainted, jc):
+            if taint is None:
+                continue
+            for pname in taint.params:
+                self._return_param_edges.append(
+                    (jc.flow.caller_qn, pname, callee[1], via)
+                )
 
     def _dart_first_string_arg(self, selector: Node) -> str:
         arguments = self._dart_arguments(selector)
@@ -2964,6 +3001,18 @@ class FlowProcessor:
         #
         # Params-only, never the deferred-candidate lists: the VALUE side of the
         # returned call is already handled by _js_expr_taint on the same node.
+        # `return (inner(p))` and `return await inner(p)` are the same hand-off
+        # wearing a wrapper, so unwrap exactly what _js_expr_taint unwraps
+        # before testing for a call; otherwise the chain silently stops at a
+        # pair of parentheses.
+        while expr.type in (
+            cs.TS_AWAIT_EXPRESSION,
+            cs.TS_PARENTHESIZED_EXPRESSION,
+        ):
+            inner = self._js_first_expr(expr)
+            if inner is None:
+                return
+            expr = inner
         if expr.type != jc.descriptor.call_type:
             return
         raw = call_name(expr)
