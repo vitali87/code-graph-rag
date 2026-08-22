@@ -352,3 +352,20 @@ def test_run_fingerprint_includes_backend_identity() -> None:
     assert fp_base != fp_other
     assert fp_base["provider"] == "anthropic"
     assert fp_other["endpoint"] == "https://proxy.example"
+
+
+def test_run_fingerprint_includes_thinking_budget() -> None:
+    # thinking_budget is forwarded to the model by get_provider_from_config
+    # and changes its behavior, so runs with different budgets must not
+    # resume into each other (CodeRabbit review on PR #1388).
+    from codebase_rag.config import ModelConfig
+    from evals.agentic_qa import _run_fingerprint
+
+    base = ModelConfig(provider="google", model_id="m1", endpoint=None)
+    budgeted = ModelConfig(
+        provider="google", model_id="m1", endpoint=None, thinking_budget=1024
+    )
+    fp_base = _run_fingerprint("django", "abc", "calls", 2, 0, base)
+    fp_budgeted = _run_fingerprint("django", "abc", "calls", 2, 0, budgeted)
+    assert fp_base != fp_budgeted
+    assert fp_budgeted["thinking_budget"] == 1024

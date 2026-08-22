@@ -471,8 +471,9 @@ def _run_fingerprint(
     # Backend identity beyond the model id: the same model served through a
     # different provider, endpoint, provider type, project, or region has
     # different latency and token behavior, so records from one backend must
-    # never resume into a run on another (Greptile review on PR #1388). All
-    # fields are non-secret configuration.
+    # never resume into a run on another (Greptile review on PR #1388), and
+    # thinking_budget changes model behavior the same way (CodeRabbit review
+    # on PR #1388). All fields are non-secret configuration.
     return {
         "corpus": corpus,
         "commit": commit,
@@ -485,6 +486,7 @@ def _run_fingerprint(
         "provider_type": getattr(config, "provider_type", None),
         "project": getattr(config, "project_id", None),
         "region": getattr(config, "region", None),
+        "thinking_budget": getattr(config, "thinking_budget", None),
     }
 
 
