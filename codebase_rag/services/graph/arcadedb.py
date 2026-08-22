@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -23,6 +24,9 @@ from ...constants import (
     ARCADE_DDL_VERTEX_TYPE,
     ARCADE_PROCEDURE_CATALOG,
     ARCADE_RETRYABLE_SUBSTRINGS,
+    CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
+    KEY_NAME,
+    KEY_PROJECT_NAME,
     MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
     GraphBackend,
@@ -30,6 +34,11 @@ from ...constants import (
     RelationshipType,
 )
 from ...cypher_queries import (
+    CYPHER_DELETE_ALL,
+    CYPHER_DELETE_PROJECT,
+    CYPHER_EXPORT_NODES,
+    CYPHER_EXPORT_RELATIONSHIPS,
+    CYPHER_LIST_PROJECTS,
     build_create_node_query,
     build_create_relationship_query,
     build_merge_node_query,
@@ -38,11 +47,15 @@ from ...cypher_queries import (
 )
 from ...types_defs import (
     BatchParams,
+    GraphData,
+    GraphMetadata,
     NodeBatchRow,
     PropertyValue,
     RelBatchRow,
     ResultRow,
 )
+from ...utils.path_utils import project_roots_from_rows
+from ..resource_cleanup import prune_unanchored_resources
 from .arcade_http import ArcadeHttpClient
 from .retry import retry_on_transient
 
@@ -136,11 +149,11 @@ class ArcadeDBIngestor:
     ArcadeDB's Bolt listener accepts Cypher only, so the two transports are
     not a choice — index creation is SQL and has nowhere else to go.
 
-    This covers connection lifecycle, the read/write query surface, and the
-    buffered ingestion path (ensure_*_batch / flush_*). Admin operations
-    (clean_database, list_projects, delete_project, export_graph_to_dict,
-    ...) are not implemented yet, so this class does not yet satisfy the
-    full `GraphIngestor` protocol.
+    This covers connection lifecycle, the read/write query surface, the
+    buffered ingestion path (ensure_*_batch / flush_*), and the admin
+    operations (clean_database, list_projects, delete_project,
+    export_graph_to_dict, ...) -- together the full `GraphIngestor`
+    protocol.
     """
 
     __slots__ = (
@@ -298,9 +311,7 @@ class ArcadeDBIngestor:
 
     def ensure_constraints(self) -> None:
         logger.info(ls.ARCADE_ENSURING_SCHEMA)
-        # TODO: remove ty: ignore once ArcadeDBIngestor implements the full
-        # GraphIngestor protocol (flush/admin ops land in Tasks 12-13).
-        self._dialect.ensure_schema(self)  # ty: ignore[invalid-argument-type]
+        self._dialect.ensure_schema(self)
         logger.info(ls.ARCADE_SCHEMA_DONE)
 
     def ensure_node_batch(
@@ -521,3 +532,38 @@ class ArcadeDBIngestor:
     def flush_all(self) -> None:
         self.flush_nodes()
         self.flush_relationships()
+
+    def clean_database(self) -> None:
+        logger.info(ls.ARCADE_CLEANING_DB)
+        # DETACH DELETE clears records but leaves ArcadeDB's type definitions
+        # behind. That is fine: ensure_schema is idempotent and reuses them.
+        self.execute_write(CYPHER_DELETE_ALL)
+        logger.info(ls.ARCADE_DB_CLEANED)
+
+    def list_projects(self) -> list[str]:
+        return [str(r[KEY_NAME]) for r in self.fetch_all(CYPHER_LIST_PROJECTS)]
+
+    def list_project_roots(self) -> dict[str, str | None]:
+        return project_roots_from_rows(self.fetch_all(CYPHER_LIST_PROJECTS))
+
+    def delete_project(self, project_name: str) -> None:
+        logger.info(ls.ARCADE_DELETING_PROJECT.format(project_name=project_name))
+        self.execute_write(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
+        # Shared prefix-less nodes (Resources, ExternalModules) only lose
+        # their edges above; drop the ones this project alone anchored.
+        prune_unanchored_resources(self)
+        self.execute_write(CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+        logger.info(ls.ARCADE_PROJECT_DELETED.format(project_name=project_name))
+
+    def export_graph_to_dict(self) -> GraphData:
+        nodes_data = self.fetch_all(CYPHER_EXPORT_NODES)
+        relationships_data = self.fetch_all(CYPHER_EXPORT_RELATIONSHIPS)
+        return GraphData(
+            nodes=nodes_data,
+            relationships=relationships_data,
+            metadata=GraphMetadata(
+                total_nodes=len(nodes_data),
+                total_relationships=len(relationships_data),
+                exported_at=datetime.now(UTC).isoformat(),
+            ),
+        )

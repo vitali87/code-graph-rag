@@ -21,13 +21,9 @@ def _ingestor(**kw: Any) -> ArcadeDBIngestor:
     return ArcadeDBIngestor(**{**defaults, **kw})
 
 
-# ArcadeDBIngestor does not yet implement clean_database, list_projects,
-# list_project_roots, delete_project, or export_graph_to_dict (those admin
-# ops land in Task 13), so it does not yet structurally satisfy
-# GraphIngestor. strict=True: if this starts passing before Task 13 removes
-# the marker, the run must fail so the stale xfail cannot silently stop
-# asserting anything.
-@pytest.mark.xfail(strict=True, reason="GraphIngestor protocol is completed in Task 13")
+# Task 13 added clean_database, list_projects, list_project_roots,
+# delete_project, and export_graph_to_dict, so ArcadeDBIngestor now
+# structurally satisfies GraphIngestor.
 def test_satisfies_the_graph_ingestor_protocol() -> None:
     assert isinstance(_ingestor(), GraphIngestor)
 
@@ -344,4 +340,64 @@ def test_ensure_constraints_runs_the_schema_ddl() -> None:
         with patch.object(ArcadeDBDialect, "ensure_schema") as ensure:
             ingestor.ensure_constraints()
             ensure.assert_called_once_with(ingestor)
+        ingestor.__exit__(None, None, None)
+
+
+def test_admin_operations_use_the_shared_cypher() -> None:
+    from codebase_rag.cypher_queries import CYPHER_DELETE_ALL, CYPHER_LIST_PROJECTS
+
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.return_value = iter([])
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        ingestor.clean_database()
+        # session.run's first positional arg is a neo4j.Query object (needed
+        # to carry the timeout, see test_fetch_all_carries_the_timeout_on_the_
+        # query_object), so the query text is read off its .text attribute.
+        assert session.run.call_args[0][0].text == CYPHER_DELETE_ALL
+
+        session.run.return_value = iter([])
+        ingestor.list_projects()
+        assert CYPHER_LIST_PROJECTS in session.run.call_args[0][0].text
+        ingestor.__exit__(None, None, None)
+
+
+def test_delete_project_also_prunes_shared_nodes() -> None:
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.return_value = iter([])
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        ingestor.delete_project("alpha")
+
+        # delete_project issues three writes (CYPHER_DELETE_PROJECT, the
+        # prune pass, CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES); pin the count
+        # so a dropped call isn't masked by the two `any()` checks below
+        # still finding matches among the remaining calls.
+        assert session.run.call_count == 3
+        sent = [c[0][0].text for c in session.run.call_args_list]
+        assert any("Resource" in q for q in sent)
+        assert any("ExternalModule" in q for q in sent)
+        ingestor.__exit__(None, None, None)
+
+
+def test_export_graph_to_dict_reports_counts() -> None:
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.side_effect = [
+            iter([{"node_id": 1, "labels": ["Function"], "properties": {}}]),
+            iter([]),
+        ]
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        data = ingestor.export_graph_to_dict()
+        assert data["metadata"]["total_nodes"] == 1
+        assert data["metadata"]["total_relationships"] == 0
         ingestor.__exit__(None, None, None)

@@ -44,9 +44,7 @@ def get_ingestor(
             raise ValueError(ex.GRAPH_BACKEND_AUTH_REQUIRED.format(backend=resolved))
         from .arcadedb import ArcadeDBIngestor
 
-        # TODO: remove ty: ignore once ArcadeDBIngestor implements the full
-        # GraphIngestor protocol (flush/admin ops land in Tasks 12-13).
-        return ArcadeDBIngestor(  # ty: ignore[invalid-return-type]
+        return ArcadeDBIngestor(
             host=settings.ARCADEDB_HOST,
             bolt_port=settings.ARCADEDB_BOLT_PORT,
             http_port=settings.ARCADEDB_HTTP_PORT,

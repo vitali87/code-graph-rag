@@ -384,6 +384,10 @@ ARCADE_RELS_FLUSHED = (
 )
 ARCADE_LABEL_FLUSH_ERROR = "Error flushing label group '{label}': {error}"
 ARCADE_REL_FLUSH_ERROR = "Error flushing relationship group '{pattern}': {error}"
+ARCADE_CLEANING_DB = "--- Cleaning ArcadeDB database... ---"
+ARCADE_DB_CLEANED = "--- ArcadeDB database cleaned. ---"
+ARCADE_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
+ARCADE_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
 
 # Graph dialect logs
 GRAPH_RETRY_TRANSIENT = (
