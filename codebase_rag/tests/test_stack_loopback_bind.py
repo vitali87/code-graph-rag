@@ -238,9 +238,10 @@ def test_the_security_guide_describes_the_loopback_default() -> None:
         "early on a healthy stack, so deleting the compose file while it is up "
         "neither re-renders the file nor replaces the exposed containers"
     )
-    assert "delete" in delete and COMPOSE_PATH.name in delete, (
-        f"step 2 must delete the COMPOSE file by name, got {delete!r}; "
-        "'delete the file' alone does not tell the reader which one"
+    assert "delete" in delete, f"step 2 must delete something, got {delete!r}"
+    assert COMPOSE_PATH.name in delete, (
+        f"step 2 must name the COMPOSE file, got {delete!r}; 'delete the file' "
+        "alone does not tell the reader which one"
     )
     assert "cgr daemon up" in rerender, (
         f"step 3 must re-render, got {rerender!r}; stopping and deleting alone "
