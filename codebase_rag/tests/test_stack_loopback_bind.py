@@ -256,8 +256,15 @@ def test_the_security_guide_describes_the_loopback_default() -> None:
     # hand; the 127.0.0.1: value is shown above") stand in for a deleted remedy
     # -- verified blind before this clause was added. Naming the published port
     # ties the assertion to the instruction'"'"'s meaning rather than its wording.
+    # The manual remedy must also RECREATE the containers. Docker fixes a
+    # container's published ports at creation, so an edited compose file leaves
+    # the running stack bound exactly as before; an edit-only instruction reads
+    # as complete while changing nothing.
     assert any(
-        "by hand" in line and f"{LOOPBACK}:" in line and "published port" in line
+        "by hand" in line
+        and f"{LOOPBACK}:" in line
+        and "published port" in line
+        and "cgr daemon down" in line
         for line in tail.splitlines()
     ), (
         "security.md must offer the manual fix of adding the "

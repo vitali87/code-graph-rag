@@ -30,7 +30,7 @@ code-graph-rag parses codebases into a knowledge graph stored in a local Memgrap
 2. delete the file `~/.cgr/docker-compose.yaml`
 3. `cgr daemon up` to re-render it with the loopback bind
 
-The order matters: deleting the file while the stack is up achieves nothing, because the running containers keep their old bindings and a later start sees a healthy stack and returns before it would re-render anything. To keep local edits instead, add a `127.0.0.1:` prefix to each published port by hand and restart the stack.
+The order matters: deleting the file while the stack is up achieves nothing, because the running containers keep their old bindings and a later start sees a healthy stack and returns before it would re-render anything. To keep local edits instead, add a `127.0.0.1:` prefix to each published port by hand, then run `cgr daemon down` and `cgr daemon up` to RECREATE the containers. Docker fixes a container's published ports when it is created, so an edited file does not rebind anything until the containers are replaced; `docker restart` is not enough.
 
 Setting `CGR_STACK_BIND_HOST` widens the bind deliberately (for example to `0.0.0.0` to reach the stack from another machine). Memgraph Bolt, Memgraph Lab, and Qdrant are all UNAUTHENTICATED, so a wider bind, or a stale compose file, puts the whole code graph on the network with no credential in front of it. Treat the graph with the same confidentiality as the code itself.
 
