@@ -2947,10 +2947,45 @@ class FlowProcessor:
         # `return a, b` several); union the taint over every returned value.
         result: Taint | None = None
         for expr in self._lean_return_values(node):
+            self._record_lean_return_handoff(expr, tainted, jc)
             taint = self._js_expr_taint(expr, tainted, jc)
             if taint is not None:
                 result = taint if result is None else _merge_taint(result, taint)
         return result
+
+    def _record_lean_return_handoff(
+        self, expr: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> None:
+        # `return other(p)`: record that each of THIS function's parameters
+        # appearing in the returned call reaches its return through that callee,
+        # so a wrapper of a wrapper resolves (issue #1363). The Python walk has
+        # recorded this hand-off since #1168; without it the lean closure had
+        # only direct `return v` and every chain ended one hop in.
+        #
+        # Params-only, never the deferred-candidate lists: the VALUE side of the
+        # returned call is already handled by _js_expr_taint on the same node.
+        if expr.type != jc.descriptor.call_type:
+            return
+        raw = call_name(expr)
+        if raw is None:
+            return
+        callee = self._resolve(
+            raw,
+            jc.flow.module_qn,
+            jc.flow.class_context,
+            jc.flow.caller_qn,
+            jc.flow.language,
+            jc.flow.local_var_types,
+        )
+        if callee is None:
+            return
+        for via, taint in self._js_arg_taints(expr, tainted, jc):
+            if taint is None:
+                continue
+            for pname in taint.params:
+                self._return_param_edges.append(
+                    (jc.flow.caller_qn, pname, callee[1], via)
+                )
 
     @staticmethod
     def _lean_return_values(node: Node) -> list[Node]:

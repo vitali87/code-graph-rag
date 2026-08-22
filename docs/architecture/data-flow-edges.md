@@ -383,8 +383,11 @@ module is re-exported under its own name. A project that does
   those spell the return without a keyword and are handled as the body's value rather
   than a return node: Rust's trailing block expression, and a Scala `def` whose body IS
   its result (a bare expression, a call, or a block ending in one). Chaining transitively
-  through another call (`return other(p)`) is Python-only; a lean-walk callee that
-  returns the result of a further call ends the chain there.
+  through another call (`return other(p)`) composes in those same languages: a returned
+  call records which of the enclosing function's parameters it forwards, and the finalize
+  closure follows the hand-off to any depth, so a wrapper of a wrapper resolves. The
+  chain is positional throughout, so forwarding a parameter into a slot the inner callee
+  does not return ends it.
 - Lua's `...` occupies its positional slot but binds no name, so a secret passed into a
   vararg parameter seeds nothing and the flow stops there. Because Lua requires `...` to
   be last, it can never displace a named parameter, so only propagation is affected, not
