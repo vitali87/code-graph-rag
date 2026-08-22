@@ -14,6 +14,7 @@ _ARCADEDB_EXTRA = "arcadedb"
 def get_dialect(backend: GraphBackend | None = None) -> GraphDialect:
     resolved = backend or settings.GRAPH_BACKEND
     if resolved == GraphBackend.ARCADEDB:
+        # TODO: remove ty: ignore once services/graph/arcadedb.py exists (Task 11)
         from .arcadedb import ArcadeDBDialect  # ty: ignore[unresolved-import]
 
         return ArcadeDBDialect()
@@ -42,6 +43,7 @@ def get_ingestor(
             )
         if not settings.ARCADEDB_USERNAME or not settings.ARCADEDB_PASSWORD:
             raise ValueError(ex.GRAPH_BACKEND_AUTH_REQUIRED.format(backend=resolved))
+        # TODO: remove ty: ignore once services/graph/arcadedb.py exists (Task 11)
         from .arcadedb import ArcadeDBIngestor  # ty: ignore[unresolved-import]
 
         return ArcadeDBIngestor(

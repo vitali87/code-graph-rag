@@ -42,15 +42,25 @@ def test_get_ingestor_raises_when_driver_missing(
         get_ingestor(backend=GraphBackend.ARCADEDB)
 
 
-@pytest.mark.xfail(reason="ArcadeDBDialect lands in Task 10", strict=False)
-def test_arcadedb_requires_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    # ArcadeDB's Bolt listener rejects the `none` auth scheme outright.
+@pytest.mark.parametrize(
+    ("username", "password"),
+    [
+        pytest.param(None, None, id="both_missing"),
+        pytest.param("arcade_user", None, id="password_missing"),
+        pytest.param(None, "arcade_pass", id="username_missing"),
+    ],
+)
+def test_arcadedb_requires_credentials(
+    monkeypatch: pytest.MonkeyPatch, username: str | None, password: str | None
+) -> None:
+    # ArcadeDB's Bolt listener rejects the `none` auth scheme outright. The
+    # guard uses `or`, so each half-missing case must be pinned individually.
     monkeypatch.setattr(
         "codebase_rag.services.graph.factory.has_neo4j_driver", lambda: True
     )
     from codebase_rag.config import settings
 
-    monkeypatch.setattr(settings, "ARCADEDB_USERNAME", None)
-    monkeypatch.setattr(settings, "ARCADEDB_PASSWORD", None)
+    monkeypatch.setattr(settings, "ARCADEDB_USERNAME", username)
+    monkeypatch.setattr(settings, "ARCADEDB_PASSWORD", password)
     with pytest.raises(ValueError, match="credentials"):
         get_ingestor(backend=GraphBackend.ARCADEDB)
