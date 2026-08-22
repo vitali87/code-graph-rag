@@ -71,6 +71,34 @@ All pull requests are validated by CI, which runs in parallel:
 4. **Integration Tests**: Full stack testing with Memgraph
 5. **PR Title Validation**: Conventional Commits format check
 
+### Release cadence and why tags outrun releases
+
+`version-bump.yml` tags every merge, but only some of those tags publish. The
+difference is the CREDENTIAL used to push the tag, which is easy to miss when
+reading the workflows:
+
+```bash
+git tag "v${NEW}"
+if [ release == "true" ]; then
+  git push origin "v${NEW}"                                   # SSH deploy key
+else
+  git push "https://x-access-token:${GITHUB_TOKEN}@..." "v${NEW}"
+fi
+```
+
+`publish.yml` triggers on `push: tags: ["v*"]`, so it looks like every tag should
+publish. It does not, because GitHub deliberately does not run workflows for
+events pushed with `GITHUB_TOKEN`. Interim tags therefore land on the remote and
+publish nothing, while release tags go out over the SSH deploy key and do trigger
+the publish.
+
+A release happens on the every-50 cadence, or immediately when the `decide` step
+sees a security fix (a GHSA id in the commit message, an explicit `[security]`
+marker, or an associated PR labelled `security`).
+
+If you are ever debugging "the tag exists but PyPI did not update", this is why,
+and the tag not publishing is the intended behaviour rather than a failure.
+
 ### Automated Code Review
 
 This project uses automated code review bots (**Greptile** and **Gemini Code Assist**). Before requesting a human review, address all bot comments by either implementing suggestions or replying with a clear justification for why a suggestion doesn't apply.
