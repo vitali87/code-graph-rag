@@ -25,7 +25,13 @@ CODEBASE_QUERY = (
     "Ask in plain English about classes, functions, methods, dependencies, or code structure. "
     "Examples: 'Find all functions that call each other', "
     "'What classes are in the user module', "
-    "'Show me functions with the longest call chains'."
+    "'Show me functions with the longest call chains'. "
+    "Results come from a machine-generated Cypher query (returned as query_used) "
+    "that may be narrower than your question, so treat rows as candidates, not "
+    "answers. Check the relationship column when present: a file that defines or "
+    "imports a symbol is NOT a caller of it. Before reporting call sites, verify "
+    "them in the source (read the file or fetch the function source), and "
+    "cross-check suspiciously short result lists with a text search."
 )
 
 DIRECTORY_LISTER = "Lists the contents of a directory to explore the codebase."
