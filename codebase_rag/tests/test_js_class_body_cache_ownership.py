@@ -8,10 +8,14 @@
 # unequal and clears it.
 from __future__ import annotations
 
-import tree_sitter_javascript as tsj
+import pytest
 from tree_sitter import Language, Parser
 
 from codebase_rag.parsers.js_ts import utils as js_utils
+
+# Optional grammar: a base install ships only tree-sitter-python, so this
+# module must SKIP rather than abort collection (issue #1371).
+tsj = pytest.importorskip("tree_sitter_javascript")
 
 
 def _parse(src: str):

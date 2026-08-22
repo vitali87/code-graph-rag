@@ -13,7 +13,6 @@ from unittest.mock import MagicMock
 
 import pytest
 import tree_sitter
-import tree_sitter_rust
 
 from codebase_rag.parsers.rs.type_inference import RustTypeInferenceEngine
 from codebase_rag.tests.test_rust_crate_path_trait_linking import (
@@ -21,6 +20,10 @@ from codebase_rag.tests.test_rust_crate_path_trait_linking import (
     _write,
     create_and_run_updater,
 )
+
+# Optional grammar: a base install ships only tree-sitter-python, so this
+# module must SKIP rather than abort collection (issue #1371).
+tree_sitter_rust = pytest.importorskip("tree_sitter_rust")
 
 
 @pytest.fixture

@@ -3,13 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import tree_sitter_java as tsjava
+import pytest
 from tree_sitter import Language, Node, Parser
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.java.utils import extract_class_info
 from codebase_rag.tests.conftest import get_relationships
+
+# Optional grammar: a base install ships only tree-sitter-python, so this
+# module must SKIP rather than abort collection (issue #1371).
+tsjava = pytest.importorskip("tree_sitter_java")
 
 
 def _call_targets(mock_ingestor: MagicMock) -> set[str]:
