@@ -150,3 +150,40 @@ def test_ensure_corpus_leaves_clean_checkout_untouched(tmp_path: Path) -> None:
     spec = CorpusSpec(name="demo", url="unused", commit=sha, subdir="")
     assert _ensure_corpus(spec, corpus_dir) == checkout
     assert (checkout / "a.py").read_text() == "print('clean')\n"
+
+
+def test_ensure_corpus_cleans_untracked_after_commit_switch(tmp_path: Path) -> None:
+    # When the cache sits at a DIFFERENT commit, the fetch/checkout path must
+    # also drop untracked files: `git checkout --force` keeps non-conflicting
+    # strays, which would leak into the indexed graph while the report
+    # records spec.commit (CodeRabbit review on PR #1388).
+    src = tmp_path / "src"
+    src.mkdir()
+    _git(src, "init", "-q")
+    _git(src, "config", "uploadpack.allowAnySHA1InWant", "true")
+    (src / "a.py").write_text("one = 1\n")
+    _git(src, "add", "a.py")
+    _git(src, "commit", "-q", "--no-verify", "-m", "c1")
+    c1 = _git(src, "rev-parse", "HEAD")
+    (src / "a.py").write_text("two = 2\n")
+    _git(src, "add", "a.py")
+    _git(src, "commit", "-q", "--no-verify", "-m", "c2")
+    c2 = _git(src, "rev-parse", "HEAD")
+
+    from evals.indexing_bench import CorpusSpec, _ensure_corpus
+
+    corpus_dir = tmp_path / "corpora"
+    checkout = corpus_dir / "demo"
+    checkout.mkdir(parents=True)
+    _git(checkout, "init", "-q")
+    _git(checkout, "fetch", "-q", str(src), c1)
+    _git(checkout, "checkout", "-q", "--force", c1)
+    (checkout / "stray.py").write_text("x = 1\n")
+
+    spec = CorpusSpec(name="demo", url=str(src), commit=c2, subdir="")
+    target = _ensure_corpus(spec, corpus_dir)
+
+    assert target == checkout
+    assert _git(checkout, "rev-parse", "HEAD") == c2
+    assert (checkout / "a.py").read_text() == "two = 2\n"
+    assert not (checkout / "stray.py").exists()

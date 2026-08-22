@@ -502,6 +502,69 @@ class TestNoninteractiveMode:
         assert result.return_code == 0, result.stderr
         assert "payload" in result.stdout
 
+    async def test_denies_sort_output_flag(self, temp_project_root: Path) -> None:
+        # `sort -o` writes a file even though sort is in the read-only set
+        # (CodeRabbit review on PR #1388).
+        keep = temp_project_root / "keep_me.txt"
+        keep.write_text("hi", encoding="utf-8")
+        (temp_project_root / "input.txt").write_text("b\na\n", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        for cmd in (
+            "sort -o keep_me.txt input.txt",
+            "sort -okeep_me.txt input.txt",
+            "sort --output keep_me.txt input.txt",
+            "sort --output=keep_me.txt input.txt",
+        ):
+            result = await tool.function(mock_ctx, cmd)
+            assert result.return_code != 0, cmd
+        assert keep.read_text() == "hi"
+
+    async def test_denies_uniq_output_operand(self, temp_project_root: Path) -> None:
+        # uniq's second positional operand is an OUTPUT file.
+        keep = temp_project_root / "keep_me.txt"
+        keep.write_text("hi", encoding="utf-8")
+        (temp_project_root / "input.txt").write_text("a\na\n", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "uniq input.txt keep_me.txt")
+        assert result.return_code != 0
+        assert keep.read_text() == "hi"
+
+    async def test_denies_symlink_escaping_project_root(self, tmp_path: Path) -> None:
+        # A repo-local symlink pointing outside the root would let `cat`
+        # disclose host files despite the relative-path text (CodeRabbit
+        # review on PR #1388).
+        root = tmp_path / "proj"
+        root.mkdir()
+        secret = tmp_path / "secret.txt"
+        secret.write_text("host data", encoding="utf-8")
+        (root / "linked_secret").symlink_to(secret)
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat linked_secret")
+        assert result.return_code != 0
+        assert "host data" not in result.stdout
+
+    async def test_symlink_inside_project_root_is_allowed(self, tmp_path: Path) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        (root / "real.txt").write_text("payload", encoding="utf-8")
+        (root / "link.txt").symlink_to(root / "real.txt")
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat link.txt")
+        assert result.return_code == 0, result.stderr
+        assert "payload" in result.stdout
+
 
 class TestHasRedirectOperators:
     def test_output_redirect(self) -> None:

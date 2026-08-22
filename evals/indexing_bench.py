@@ -162,6 +162,11 @@ def _ensure_corpus(spec: CorpusSpec, corpus_dir: Path) -> Path:
         ["git", "-C", str(checkout), "checkout", "-q", "--force", spec.commit],
         check=True,
     )
+    # A force checkout keeps non-conflicting untracked files from the
+    # previous commit; drop them too, or a stale file leaks into the indexed
+    # graph while the report records spec.commit (CodeRabbit review on
+    # PR #1388).
+    subprocess.run(["git", "-C", str(checkout), "clean", "-qdffx"], check=True)
     return target
 
 

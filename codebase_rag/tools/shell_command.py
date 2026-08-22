@@ -538,12 +538,28 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
 _ESCAPING_PATH_ARG = re.compile(r"(?:^|=)[/~]")
 
 
-def _noninteractive_denial(command: str) -> str | None:
+def _noninteractive_write_form(parts: list[str]) -> bool:
+    # Write-capable invocations of otherwise read-only commands: `sort -o` /
+    # `--output[=]` writes a file, and uniq's SECOND positional operand is an
+    # output file (CodeRabbit review on PR #1388).
+    if parts[0] == "sort":
+        return any(
+            arg.startswith("-o") or arg.startswith("--output") for arg in parts[1:]
+        )
+    if parts[0] == "uniq":
+        return len([arg for arg in parts[1:] if not arg.startswith("-")]) > 1
+    return False
+
+
+def _noninteractive_denial(command: str, project_root: Path) -> str | None:
     # The denial reason for an operator-less run, or None when every segment
-    # is a confined read: a read-only command, no redirection tokens, no find
-    # mutating actions, and no absolute or parent-traversal path arguments
-    # (subprocess runs without a shell, so `~` never expands and a redirect
-    # token is inert, but both signal intent the harness must not honor).
+    # is a confined read: a read-only command in a non-writing form, no
+    # redirection tokens, no find mutating actions, and no absolute,
+    # parent-traversal, or symlink-escaping path arguments (subprocess runs
+    # without a shell, so `~` never expands and a redirect token is inert,
+    # but both signal intent the harness must not honor; a repo-local
+    # symlink, however, WOULD be followed outside the root by the child
+    # process — CodeRabbit review on PR #1388).
     try:
         groups = _parse_command(command)
     except (ValueError, IndexError):
@@ -551,6 +567,7 @@ def _noninteractive_denial(command: str) -> str | None:
     read_only = (
         settings.SHELL_READ_ONLY_COMMANDS | settings.SHELL_NONINTERACTIVE_READ_COMMANDS
     )
+    root = project_root.resolve()
     for group in groups:
         for segment in group.commands:
             if not (segment := segment.strip()):
@@ -565,6 +582,10 @@ def _noninteractive_denial(command: str) -> str | None:
                 return te.COMMAND_NONINTERACTIVE_DENIED.format(
                     command=segment, reason=te.NONINTERACTIVE_NOT_READ_ONLY
                 )
+            if _noninteractive_write_form(parts):
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_WRITE_FORM
+                )
             if _has_redirect_operators(parts):
                 return te.COMMAND_NONINTERACTIVE_DENIED.format(
                     command=segment, reason=te.NONINTERACTIVE_REDIRECT
@@ -575,6 +596,15 @@ def _noninteractive_denial(command: str) -> str | None:
                 )
             for arg in parts[1:]:
                 if _ESCAPING_PATH_ARG.search(arg) or ".." in arg.split("/"):
+                    return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                        command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
+                    )
+                if arg.startswith("-"):
+                    continue
+                candidate = root / arg
+                if os.path.lexists(
+                    candidate
+                ) and not candidate.resolve().is_relative_to(root):
                     return te.COMMAND_NONINTERACTIVE_DENIED.format(
                         command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
                     )
@@ -591,7 +621,7 @@ def create_noninteractive_shell_command_tool(shell_commander: ShellCommander) ->
     async def run_shell_command(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:
-        if err_msg := _noninteractive_denial(command):
+        if err_msg := _noninteractive_denial(command, shell_commander.project_root):
             logger.error(err_msg)
             return ShellCommandResult(
                 return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg

@@ -34,6 +34,7 @@ COMMAND_NONINTERACTIVE_DENIED = (
     "{reason}. Use read-only commands with repo-relative paths."
 )
 NONINTERACTIVE_NOT_READ_ONLY = "only read-only commands are available"
+NONINTERACTIVE_WRITE_FORM = "file-writing options are not available"
 NONINTERACTIVE_REDIRECT = "redirection is not available"
 NONINTERACTIVE_FIND_MUTATES = "find's mutating actions are not available"
 NONINTERACTIVE_PATH_ESCAPES = "absolute and parent-traversal paths are not available"
