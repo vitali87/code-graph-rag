@@ -214,16 +214,14 @@ _SCALA_NON_VALUE_TAIL = frozenset(
 
 
 def _scala_returns_unit(func_node: Node) -> bool:
-    # `Unit` and the qualified `scala.Unit` (and `_root_.scala.Unit`) name the
-    # same type, so compare the LAST dotted segment rather than the whole
-    # annotation. A user-defined type that happens to end in `Unit` would also
-    # match; that direction only SUPPRESSES a summary, so the cost is a missed
-    # flow rather than a fabricated one, which is the safer way to be wrong.
+    # The spellings of scala.Unit are enumerable, so match them exactly rather
+    # than by trailing segment: a user-defined `example.Unit` is an ordinary
+    # type whose returned value DOES matter, and suppressing it would drop a
+    # real flow.
     return_type = func_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
     if return_type is None or return_type.text is None:
         return False
-    spelled = return_type.text.decode(cs.ENCODING_UTF8).strip()
-    return spelled.rpartition(cs.SEPARATOR_DOT)[2] == cs.SCALA_UNIT_TYPE
+    return return_type.text.decode(cs.ENCODING_UTF8).strip() in cs.SCALA_UNIT_TYPES
 
 
 def _scala_body_value(func_node: Node) -> Node | None:

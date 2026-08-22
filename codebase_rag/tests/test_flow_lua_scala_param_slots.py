@@ -270,3 +270,16 @@ def test_a_unit_method_that_writes_its_parameter_still_reaches_the_sink(
         "}\n"
     )
     assert (_ENV, _STDOUT) in _flows(tmp_path, "scala", source)
+
+
+def test_a_user_defined_type_ending_in_unit_still_composes(tmp_path: Path) -> None:
+    # `example.Unit` is an ordinary type, not scala.Unit: its returned value is
+    # observable, so suppressing it would drop a real flow. Matching the Unit
+    # spellings exactly rather than by trailing segment is what keeps this edge.
+    source = (
+        "object M {\n"
+        '  def fetch(): example.Unit = { System.getenv("SECRET") }\n'
+        "  def caller(): Unit = { println(fetch()) }\n"
+        "}\n"
+    )
+    assert (_ENV, _STDOUT) in _flows(tmp_path, "scala", source)

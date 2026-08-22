@@ -32,3 +32,6 @@ TS_SCALA_REPEATED_PARAMETER_TYPE = "repeated_parameter_type"
 TS_SCALA_INDENTED_BLOCK = "indented_block"
 # A def declared `Unit` discards its body's value, so no return summary.
 SCALA_UNIT_TYPE = "Unit"
+# Every spelling of scala.Unit. A user-defined type merely ENDING in Unit
+# (`example.Unit`) is a real type whose return value must still compose.
+SCALA_UNIT_TYPES = frozenset({"Unit", "scala.Unit", "_root_.scala.Unit"})
