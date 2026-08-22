@@ -166,6 +166,18 @@ class AppConfig(BaseSettings):
     MEMGRAPH_PASSWORD: str | None = None
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
+
+    # Graph backend selection. MEMGRAPH_* above stay authoritative for the
+    # default backend; renaming them would break every existing .env.
+    GRAPH_BACKEND: cs.GraphBackend = cs.GraphBackend.MEMGRAPH
+    ARCADEDB_HOST: str = "localhost"
+    ARCADEDB_BOLT_PORT: int = 7687
+    ARCADEDB_HTTP_PORT: int = 2480
+    ARCADEDB_USERNAME: str | None = None
+    ARCADEDB_PASSWORD: str | None = None
+    # ArcadeDB is multi-database; Memgraph is not. Required when selected.
+    ARCADEDB_DATABASE: str = "codegraph"
+
     AGENT_RETRIES: int = 3
     ORCHESTRATOR_OUTPUT_RETRIES: int = 100
 

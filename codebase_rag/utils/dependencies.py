@@ -5,6 +5,7 @@ from collections.abc import Sequence
 
 from codebase_rag.constants import (
     MODULE_AST_GREP,
+    MODULE_NEO4J,
     MODULE_PYMILVUS,
     MODULE_QDRANT_CLIENT,
     MODULE_TORCH,
@@ -43,6 +44,10 @@ def has_pymilvus() -> bool:
 
 def has_ast_grep() -> bool:
     return _check_dependency(MODULE_AST_GREP)
+
+
+def has_neo4j_driver() -> bool:
+    return _check_dependency(MODULE_NEO4J)
 
 
 def has_vector_store_dependencies() -> bool:

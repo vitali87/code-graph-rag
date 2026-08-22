@@ -101,7 +101,21 @@ AUTH_INCOMPLETE = (
 # Access control errors (used with raise)
 ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 
+# Graph backend selection errors
+GRAPH_BACKEND_UNAVAILABLE = (
+    "GRAPH_BACKEND is '{backend}' but its driver is not installed. "
+    "Install it with: pip install 'code-graph-rag[{extra}]'"
+)
+GRAPH_BACKEND_AUTH_REQUIRED = (
+    "Backend '{backend}' requires credentials: set ARCADEDB_USERNAME and "
+    "ARCADEDB_PASSWORD. Its Bolt listener rejects unauthenticated connections."
+)
+
 
 # Exception classes
 class LLMGenerationError(Exception):
     pass
+
+
+class GraphBackendUnavailableError(RuntimeError):
+    """The selected graph backend's driver is not installed."""
