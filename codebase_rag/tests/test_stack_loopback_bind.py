@@ -190,14 +190,27 @@ def test_the_security_guide_describes_the_loopback_default() -> None:
     # The guide kept claiming the ports were "currently network-reachable" and
     # pointed at #1012 as still tracking a fix, for months after #1012 shipped
     # the loopback bind (issue #1372, found in an external field-test review).
-    # A security document that overstates exposure is not harmlessly out of
-    # date: a reader cannot tell which parts of it are still true.
+    # A security document that MISSTATES exposure in either direction is worse
+    # than a stale one: understating it is how a reader leaves the graph open.
+    #
+    # Rejecting the old phrase alone is not enough -- a guide claiming the
+    # services bind everywhere and are safe would pass that. Assert the actual
+    # security claims this file exists to keep true.
     doc = SECURITY_DOC.read_text(encoding="utf-8")
     assert "network-reachable" not in doc, (
-        "security.md still describes the pre-#1012 exposure; the compose file "
-        f"now binds every published port to {LOOPBACK} by default"
+        "security.md still describes the pre-#1012 exposure; a newly rendered "
+        f"compose file now binds every published port to {LOOPBACK}"
     )
+    assert LOOPBACK in doc, f"security.md must state the {LOOPBACK} default"
     assert cs.COMPOSE_BIND_HOST_VAR in doc, (
         f"security.md must name {cs.COMPOSE_BIND_HOST_VAR}, since widening the "
-        "bind is the operation that re-creates the exposure"
+        "bind is one of the two ways to re-create the exposure"
+    )
+    assert "UNAUTHENTICATED" in doc, (
+        "security.md must say the services carry no credential, or a wider "
+        "bind reads as a routine configuration change"
+    )
+    assert "never overwritten" in doc, (
+        "security.md must warn that a pre-fix ~/.cgr/docker-compose.yaml keeps "
+        "its bare mappings; StackManager warns but does not migrate it"
     )
