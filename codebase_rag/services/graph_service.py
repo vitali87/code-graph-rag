@@ -34,6 +34,7 @@ from ..constants import (
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
     MERGE_KEY_PROPS_BY_REL,
+    NODE_NAME_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
 )
@@ -352,6 +353,14 @@ class MemgraphIngestor:
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(build_index_query(label, prop))
+            except Exception:
+                pass
+        # The unique-key indexes serve MERGE at write time; generated Cypher
+        # reads filter on bare `name`, which needs its own label+name index
+        # or every lookup is a full label scan.
+        for label in NODE_NAME_INDEXES:
+            try:
+                self._execute_query(build_index_query(label, KEY_NAME))
             except Exception:
                 pass
         logger.info(ls.MG_INDEXES_DONE)

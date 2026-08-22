@@ -9,6 +9,7 @@ from codebase_rag.constants import (
     KEY_NAME,
     KEY_PATH,
     KEY_QUALIFIED_NAME,
+    NODE_NAME_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
     NodeLabel,
     RelationshipType,
@@ -264,6 +265,13 @@ class TestEnsureConstraintsForAllLabels:
             assert expected_index in executed_queries, (
                 f"Missing index for {label.value}. Expected query: {expected_index}. "
                 "Indexes are required for efficient MERGE operations in Memgraph."
+            )
+        for label in NODE_NAME_INDEXES:
+            expected_index = f"CREATE INDEX ON :{label}({KEY_NAME});"
+            assert expected_index in executed_queries, (
+                f"Missing name index for {label}. Expected query: {expected_index}. "
+                "Generated Cypher filters on bare `name`; without a label+name "
+                "index every lookup is a full label scan."
             )
 
 
