@@ -299,7 +299,6 @@ class MemgraphIngestor:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
         self._migrate_legacy_path_keys()
         self._dialect.ensure_schema(self)
-        logger.info(ls.MG_CONSTRAINTS_DONE)
 
     def _migrate_legacy_path_keys(self) -> None:
         """Retire the superseded Folder/File relative-path keys (issue #897).
@@ -682,6 +681,7 @@ class MemgraphDialect:
                 ingestor.execute_write(build_constraint_query(label, prop))
             except Exception:
                 pass
+        logger.info(ls.MG_CONSTRAINTS_DONE)
         logger.info(ls.MG_ENSURING_INDEXES)
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
