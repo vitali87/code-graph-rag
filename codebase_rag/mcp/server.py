@@ -18,7 +18,7 @@ from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.mcp.tools import create_mcp_tools_registry
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph import GraphIngestor, get_ingestor
 from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
@@ -67,7 +67,7 @@ def get_project_root() -> Path:
     return project_root
 
 
-def create_server() -> tuple[Server, MemgraphIngestor]:
+def create_server() -> tuple[Server, GraphIngestor]:
     setup_logging()
 
     try:
@@ -90,13 +90,11 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
     logger.info(lg.MCP_SERVER_INIT_SERVICES)
 
-    ingestor = MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        batch_size=settings.MEMGRAPH_BATCH_SIZE,
-        username=settings.MEMGRAPH_USERNAME,
-        password=settings.MEMGRAPH_PASSWORD,
-    )
+    # GRAPH_BACKEND-aware, like every other entry point (cgr start, cgr
+    # stats, cgr doctor's health check, ...) -- this used to hardcode
+    # MemgraphIngestor directly, so `cgr mcp` with GRAPH_BACKEND=arcadedb
+    # silently queried a Memgraph that might not even be running.
+    ingestor = get_ingestor()
 
     # Scope Cypher generation to this server's project (named exactly as
     # indexing names it) so queries don't bleed into other projects sharing
@@ -165,19 +163,27 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
     return server, ingestor
 
 
+def _graph_endpoint() -> tuple[str, int]:
+    if settings.GRAPH_BACKEND == cs.GraphBackend.ARCADEDB:
+        return settings.ARCADEDB_HOST, settings.ARCADEDB_BOLT_PORT
+    return settings.MEMGRAPH_HOST, settings.MEMGRAPH_PORT
+
+
 @contextlib.contextmanager
-def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
+def _service_lifecycle(ingestor: GraphIngestor) -> Iterator[None]:
     """Manage shared service lifetimes for the MCP server.
 
-    Opens the Memgraph ingestor connection and releases the vector store client
-    on shutdown, so a CLI indexing run can reuse local resources once the server
-    stops.
+    Opens the graph ingestor connection (whichever backend GRAPH_BACKEND
+    selects) and releases the vector store client on shutdown, so a CLI
+    indexing run can reuse local resources once the server stops.
     """
     try:
         with ingestor:
+            host, port = _graph_endpoint()
+            backend_name = cs.GRAPH_BACKEND_DISPLAY_NAMES[settings.GRAPH_BACKEND]
             logger.info(
                 lg.MCP_SERVER_CONNECTED.format(
-                    host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+                    backend=backend_name, host=host, port=port
                 )
             )
             yield

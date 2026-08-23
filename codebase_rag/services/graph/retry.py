@@ -12,15 +12,23 @@ from ... import logs as ls
 if TYPE_CHECKING:
     from .dialect import GraphDialect
 
-# Deliberately small: an isolated probe against a live server showed that
-# an ArcadeDB UNWIND batch where 2+ rows MERGE onto the same vertex (e.g.
-# many files IMPORTS-ing the same popular module) deadlocks deterministically
-# -- retrying the identical query mostly reproduces the identical internal
-# race, so a large budget here just delays the real fix. ArcadeDBIngestor's
-# _execute_batch falls back to one MERGE per row (immune to this, per the
-# same probe: 300/300 succeeded one row at a time) once this is exhausted,
-# so this only needs to cover genuine short-lived contention on the way to
-# that fallback, not the deadlock itself.
+# An isolated probe against a live server showed that an ArcadeDB UNWIND
+# batch where 2+ *rows in the same call* MERGE onto the same vertex (e.g.
+# many files IMPORTS-ing the same popular module) can deadlock
+# deterministically, or worse, silently drop the colliding row -- retrying
+# the identical query just reproduces the identical internal race, so no
+# retry budget fixes that class of failure. ArcadeDBIngestor's
+# _chunk_endpoint_disjoint (arcadedb.py) is what actually prevents it, by
+# never sending such a batch in the first place.
+#
+# What this budget is for instead is the failure that remains once
+# collisions can no longer happen within one call: genuine external MVCC
+# contention, when two *different* relationship-pattern groups flush
+# concurrently (flush_relationships fans out across an executor, like
+# flush_nodes) and both happen to touch the same shared vertex at once.
+# That is a normal, short-lived optimistic-concurrency conflict -- exactly
+# what retrying is for -- so a small budget clears it without masking a
+# real deadlock behind a long one.
 DEFAULT_ATTEMPTS = 4
 DEFAULT_BASE_DELAY_S = 0.05
 

@@ -291,6 +291,45 @@ def test_flush_relationships_dedupes_identical_pattern_rows_within_one_batch() -
         ingestor.__exit__(None, None, None)
 
 
+def test_flush_relationships_chunks_a_hot_target_across_multiple_merge_calls() -> None:
+    # The deterministic regression guard for _chunk_endpoint_disjoint: if
+    # it were ever reverted to `return [rows]` or bypassed, this test
+    # fails immediately, without needing a live server to reproduce the
+    # timing-dependent engine race it exists for (an ArcadeDB UNWIND batch
+    # where 2+ rows share an endpoint can deadlock or silently drop a row
+    # -- see arcadedb.py's docstring on _chunk_endpoint_disjoint, and
+    # test_parallel_flush_into_one_hot_target in
+    # tests/integration/test_graph_backend_conformance.py for the
+    # real-concurrency side of this coverage). Three distinct rows here --
+    # different from_val each, so _dedupe_rows_sharing_a_merge_pattern
+    # does not collapse them -- all target the same vertex, so no two of
+    # them can ever share a chunk: three separate session.run calls, each
+    # carrying exactly one row, not one call carrying all three.
+    with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
+        session = MagicMock()
+        session.run.return_value = iter([{"created": 1}])
+        gdb.driver.return_value.session.return_value.__enter__.return_value = session
+
+        ingestor = _ingestor()
+        ingestor.__enter__()
+        for src in ("a", "b", "c"):
+            ingestor.ensure_relationship_batch(
+                ("Function", "qualified_name", src),
+                "CALLS",
+                ("Function", "qualified_name", "hot"),
+            )
+        ingestor.flush_relationships()
+
+        assert session.run.call_count == 3
+        sent_batches = [c.kwargs["batch"] for c in session.run.call_args_list]
+        assert all(len(batch) == 1 for batch in sent_batches)
+        sent_pairs = {
+            (batch[0]["from_val"], batch[0]["to_val"]) for batch in sent_batches
+        }
+        assert sent_pairs == {("a", "hot"), ("b", "hot"), ("c", "hot")}
+        ingestor.__exit__(None, None, None)
+
+
 def test_flush_retries_a_concurrent_modification_error() -> None:
     with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
         session = MagicMock()

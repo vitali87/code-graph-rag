@@ -36,11 +36,11 @@ class TestStartupKeyValidation:
                 "active_cypher_config",
                 property(lambda self: _local_config()),
             ),
-            patch.object(srv, "MemgraphIngestor") as ingestor,
+            patch.object(srv, "get_ingestor") as get_ingestor,
         ):
             with pytest.raises(ValueError, match=cs.ModelRole.ORCHESTRATOR):
                 srv.create_server()
-            ingestor.assert_not_called()
+            get_ingestor.assert_not_called()
 
     def test_cypher_role_is_validated_too(self, tmp_path: Path) -> None:
         with (
@@ -55,7 +55,7 @@ class TestStartupKeyValidation:
                 "active_cypher_config",
                 property(lambda self: _remote_config_without_key()),
             ),
-            patch.object(srv, "MemgraphIngestor"),
+            patch.object(srv, "get_ingestor"),
         ):
             with pytest.raises(ValueError, match=cs.ModelRole.CYPHER):
                 srv.create_server()
@@ -73,7 +73,7 @@ class TestStartupKeyValidation:
                 "active_cypher_config",
                 property(lambda self: _local_config()),
             ),
-            patch.object(srv, "MemgraphIngestor"),
+            patch.object(srv, "get_ingestor"),
             patch.object(srv, "CypherGenerator"),
             patch.object(srv, "create_mcp_tools_registry"),
         ):

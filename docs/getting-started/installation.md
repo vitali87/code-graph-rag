@@ -103,6 +103,16 @@ make dev
 
 This installs all dependencies and sets up pre-commit hooks automatically.
 
+`make dev` does not sync the `arcadedb` or `milvus` extras — they are
+optional, not part of the default dev footprint, so `make
+test-integration-arcadedb` silently skips every test
+(`pytest.importorskip`) without them. To match what CI syncs and run the
+full suite locally, including the ArcadeDB backend:
+
+```bash
+uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra arcadedb --group dev
+```
+
 ## Verify Release Artifacts
 
 Each [GitHub release](https://github.com/vitali87/code-graph-rag/releases) ships prebuilt binaries together with Sigstore signatures (`*.sigstore.json`); releases from v0.0.484 onwards also carry a SLSA build provenance attestation (`multiple.intoto.jsonl`). Both are produced by the `build-binaries.yml` GitHub Actions workflow using keyless signing, so there is no maintainer-held key to obtain: verification checks that the artifact was built by this repository's release workflow.

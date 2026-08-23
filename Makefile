@@ -42,7 +42,12 @@ test-integration: ## Run integration tests (requires Docker)
 test-integration-memgraph: ## Run integration tests against Memgraph only
 	$(PYTHON) pytest -m "integration" -k memgraph -v
 
-test-integration-arcadedb: ## Run integration tests against ArcadeDB only
+# `make dev` does not sync the `arcadedb` extra (it is optional, not part of
+# the default dev footprint), so this silently importorskip-skips every
+# ArcadeDB test unless you first run:
+#   uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra arcadedb --group dev
+# (the same line CI uses -- see docs/getting-started/installation.md).
+test-integration-arcadedb: ## Run integration tests against ArcadeDB only (needs: uv sync --extra arcadedb)
 	$(PYTHON) pytest -m "integration" -k arcadedb -v
 
 test-all: ## Run all tests including integration and e2e (requires Docker)

@@ -24,6 +24,7 @@ from codebase_rag.main import (
     _to_tool_args,
     _update_single_model_setting,
     app_context,
+    connect_memgraph,
     export_graph_to_file,
     update_model_settings,
 )
@@ -417,6 +418,28 @@ class TestExportGraphToFile:
 
         assert export_graph_to_file(ingestor, str(tmp_path / "graph.json")) is False
         assert "boom" in _plain(capsys.readouterr().out)
+
+
+class TestConnectMemgraph:
+    """Regression coverage for the bug this project's ArcadeDB backend work
+    found: connect_memgraph used to construct MemgraphIngestor directly, so
+    every entry point that calls it (cgr start --update-graph, cgr stats,
+    cgr dead-code, cgr export, cgr delete-project, the interactive agent)
+    ignored GRAPH_BACKEND entirely and always talked to Memgraph. Every one
+    of those call sites patches connect_memgraph by name in its own tests,
+    so none of them observes what it actually builds -- this test is the
+    only one that does, and it is what would have caught the regression
+    before a real ArcadeDB run had to find it."""
+
+    def test_delegates_to_get_ingestor_with_the_requested_batch_size(self) -> None:
+        sentinel = MagicMock(name="ingestor-from-factory")
+        with patch(
+            "codebase_rag.main.get_ingestor", return_value=sentinel
+        ) as get_ingestor:
+            result = connect_memgraph(batch_size=250)
+
+        get_ingestor.assert_called_once_with(batch_size=250)
+        assert result is sentinel
 
 
 class TestSetupCommonInitialization:

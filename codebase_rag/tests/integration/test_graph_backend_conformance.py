@@ -251,9 +251,35 @@ class TestConcurrency:
         # hot vertex. This mirrors real ingest, where a hot function is
         # called from several node kinds, and is the test that exercises
         # the retry path.
+        #
+        # 300 callers per group, not 30: this pins the row count an
+        # isolated probe against a live server used to find the mechanism
+        # _chunk_endpoint_disjoint exists for (see its docstring in
+        # arcadedb.py) -- an ArcadeDB UNWIND batch where many rows share a
+        # target vertex can deadlock, or silently drop the colliding row
+        # with no exception and no attempted/created mismatch. That
+        # specific silent-drop failure did NOT reproduce here even at
+        # 6,000 accumulated edges across repeated rounds with both
+        # _chunk_endpoint_disjoint and retry.py's retry disabled --
+        # whatever conditions make it fire during a multi-minute real
+        # indexing run (found indexing this project's own repository,
+        # 1,392 File nodes) were not reproducible in this fixture's small,
+        # fresh, single-process test database within a reasonable test
+        # budget. The deterministic
+        # regression guard for _chunk_endpoint_disjoint is therefore the
+        # pure-function suite in test_arcadedb_chunk_endpoint_disjoint.py
+        # (partitioning correctness) plus
+        # test_flush_relationships_chunks_a_hot_target_across_multiple_merge_calls
+        # in test_arcadedb_ingestor.py (proves it is actually wired into
+        # the flush path -- fails immediately if reverted to
+        # `return [rows]`). This test's job is narrower and still real:
+        # it is the one that exercises genuine concurrent writes at the
+        # database layer and the retry path, at a scale large enough to
+        # be a meaningful smoke test rather than the 30-caller version
+        # that could pass or fail almost by construction.
         target = "p.m.hot"
-        fn_callers = [f"p.m.c{i}" for i in range(30)]
-        method_callers = [f"p.m.C.m{i}" for i in range(30)]
+        fn_callers = [f"p.m.c{i}" for i in range(300)]
+        method_callers = [f"p.m.C.m{i}" for i in range(300)]
         graph_ingestor.ensure_node_batch(_FN, {_QN: target})
         for qn in fn_callers:
             graph_ingestor.ensure_node_batch(_FN, {_QN: qn})

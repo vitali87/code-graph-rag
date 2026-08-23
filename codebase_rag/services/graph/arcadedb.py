@@ -441,20 +441,18 @@ class ArcadeDBIngestor:
         try:
             return retry_on_transient(run, self._dialect)
         except Exception as e:
-            # Confirmed by an isolated probe against a live server: 300
-            # MERGEs onto one hot vertex, sent as 300 separate single-row
-            # queries, succeeded 300/300 with zero conflicts. The identical
-            # 300 rows sent as one UNWIND batch deadlocked immediately and
-            # deterministically, with no concurrent writer of ours anywhere
-            # in the picture -- ArcadeDB's Cypher engine appears to execute
-            # UNWIND rows with internal parallelism that collides once 2+
-            # rows in the same UNWIND touch the same vertex (every file
-            # importing `typing` merges an edge onto that one
-            # ExternalModule row, for example). Retrying the same UNWIND
-            # just reproduces the same internal race, so this falls back
-            # to one MERGE per row -- still UNWIND-shaped (wrap_with_unwind
-            # runs on every call) but with exactly one row, which cannot
-            # collide with itself.
+            # Defense in depth, not the primary defense: every caller now
+            # runs rows through _chunk_endpoint_disjoint first, so a batch
+            # that reaches this point already has no two rows sharing an
+            # endpoint and this branch should rarely trigger. It stays
+            # because retry_on_transient can still exhaust its budget on
+            # ordinary external MVCC contention (two concurrently-flushing
+            # relationship-pattern groups both touching a shared vertex --
+            # see flush_relationships), and confirmed by an isolated probe
+            # against a live server: 300 MERGEs onto one hot vertex, sent as
+            # 300 separate single-row queries, succeeded 300/300 with zero
+            # conflicts, so degrading to one MERGE per row here is a safe
+            # bottom rung regardless of why the batch failed.
             if len(rows) > 1 and self._dialect.is_retryable(e):
                 results: list[ResultRow] = []
                 for row in rows:
@@ -605,27 +603,54 @@ class ArcadeDBIngestor:
         deduped_away = 0
         first_error: Exception | None = None
 
-        # Unlike flush_nodes, this never fans out across the executor. Node
-        # groups partition cleanly by label -- disjoint vertex sets, so
-        # parallel workers rarely touch the same row. Relationship patterns
-        # do not: most rel types in this schema hang off Module (IMPORTS,
-        # DEFINES, ...), so concurrent MERGE across patterns repeatedly
-        # converges on the same hot Module vertices. Indexing this repo's
-        # own ~9k-file tree into ArcadeDB hit
-        # Neo.TransientError.Transaction.DeadlockDetected often enough,
-        # even with retry.py's 8-attempt budget, that some batches still
-        # exhausted it. Running the patterns sequentially removes the
-        # concurrent writers causing the contention instead of retrying
-        # around it.
-        for pattern, rows in self._rel_groups.items():
-            try:
-                a, c, d = self._flush_rel_pattern_group(pattern, rows)
-                attempted += a
-                created += c
-                deduped_away += d
-            except Exception as e:
-                logger.error(ls.ARCADE_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
-                first_error = first_error or e
+        # Fans out across the executor exactly like flush_nodes: different
+        # (from_label, rel_type, to_label) patterns commonly share an
+        # endpoint (most rel types in this schema hang off Module, for
+        # example), so two groups' concurrent MERGEs onto that shared
+        # vertex is real, expected ArcadeDB MVCC contention -- the
+        # "ConcurrentModification"/"Transaction" errors retry.py's
+        # is_retryable already exists to retry. That is a different failure
+        # from the one _chunk_endpoint_disjoint (see its docstring) exists
+        # for: a single UNWIND batch where 2+ *rows in the same call* share
+        # an endpoint, which this project found can silently drop a row
+        # instead of raising anything retryable at all. Chunking each
+        # group's rows before they are ever sent removes that hazard
+        # regardless of how many groups run at once, so fanning back out
+        # across groups here is safe -- and restores what
+        # test_parallel_flush_into_one_hot_target documents itself as
+        # covering: real concurrent writes at the database layer, not just
+        # concurrent buffer appends.
+        if self._executor and len(self._rel_groups) > 1:
+            futures = {
+                self._executor.submit(
+                    self._flush_rel_pattern_group, pattern, rows
+                ): pattern
+                for pattern, rows in self._rel_groups.items()
+            }
+            for future in as_completed(futures):
+                pattern = futures[future]
+                try:
+                    a, c, d = future.result()
+                    attempted += a
+                    created += c
+                    deduped_away += d
+                except Exception as e:
+                    logger.error(
+                        ls.ARCADE_REL_FLUSH_ERROR.format(pattern=pattern, error=e)
+                    )
+                    first_error = first_error or e
+        else:
+            for pattern, rows in self._rel_groups.items():
+                try:
+                    a, c, d = self._flush_rel_pattern_group(pattern, rows)
+                    attempted += a
+                    created += c
+                    deduped_away += d
+                except Exception as e:
+                    logger.error(
+                        ls.ARCADE_REL_FLUSH_ERROR.format(pattern=pattern, error=e)
+                    )
+                    first_error = first_error or e
 
         logger.info(
             ls.ARCADE_RELS_FLUSHED.format(

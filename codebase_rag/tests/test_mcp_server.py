@@ -202,6 +202,45 @@ class TestServiceLifecycle:
             mock_ingestor.__exit__.assert_called_once()
 
 
+class TestCreateServerGraphBackend:
+    """create_server() must route through get_ingestor(), not a hardcoded
+    MemgraphIngestor -- otherwise `cgr mcp` with GRAPH_BACKEND=arcadedb
+    silently queries a Memgraph that may not be running, the exact failure
+    this project found and fixed for every other CLI entry point."""
+
+    def test_create_server_calls_get_ingestor_not_a_hardcoded_backend(
+        self, tmp_path: Path
+    ) -> None:
+        sentinel = MagicMock(name="ingestor-from-factory")
+        with (
+            patch.dict(os.environ, {"TARGET_REPO_PATH": str(tmp_path)}),
+            patch.object(srv, "get_ingestor", return_value=sentinel) as get_ingestor,
+            patch.object(srv, "CypherGenerator"),
+            patch.object(srv, "create_mcp_tools_registry"),
+        ):
+            _, ingestor = srv.create_server()
+
+        get_ingestor.assert_called_once_with()
+        assert ingestor is sentinel
+
+    def test_graph_endpoint_follows_graph_backend_setting(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from codebase_rag.constants import GraphBackend
+
+        monkeypatch.setattr(srv.settings, "GRAPH_BACKEND", GraphBackend.MEMGRAPH)
+        assert srv._graph_endpoint() == (
+            srv.settings.MEMGRAPH_HOST,
+            srv.settings.MEMGRAPH_PORT,
+        )
+
+        monkeypatch.setattr(srv.settings, "GRAPH_BACKEND", GraphBackend.ARCADEDB)
+        assert srv._graph_endpoint() == (
+            srv.settings.ARCADEDB_HOST,
+            srv.settings.ARCADEDB_BOLT_PORT,
+        )
+
+
 class TestServeStdioShutdown:
     """Tests that serve_stdio releases the Qdrant lock on shutdown."""
 

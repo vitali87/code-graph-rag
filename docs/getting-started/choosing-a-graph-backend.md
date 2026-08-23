@@ -9,8 +9,9 @@ is the default and the better-tested path — it has been the only backend
 for most of this project's history, and it is what the Quick Start and the
 bundled `docker-compose.yaml`'s default profile assume. ArcadeDB is a
 genuine second backend: the same conformance suite runs against both
-engines on every change, and `cgr index`/`cgr stats`/`cgr dead-code` and
-every other command work identically regardless of which one is active.
+engines on every change, and `cgr start --update-graph`/`cgr stats`/`cgr
+dead-code` and every other graph command work identically regardless of
+which one is active.
 Reach for it if you already run ArcadeDB, want a JVM-embeddable engine, or
 want a second engine's disk/query characteristics; stay on Memgraph if
 you have no reason to switch.
