@@ -25,6 +25,7 @@ Nothing is inferred: without a declaration this module does nothing at all.
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,13 @@ CONFIG_SECTION = "string_calls"
 # cannot carry one (a read-only mount, a third-party repo).
 CONFIG_PATH_ENV = "CGR_CONFIG_PATH"
 _QUOTES = "\"'`"
+# JDBC names its target inside an escape expression: `{call usp_x(?)}`, or
+# `{?= call fn(?)}` for a function with a return value. The routine name is
+# the token after `call`, still possibly schema-qualified.
+_JDBC_CALL = re.compile(
+    r"^\{\s*(?:\?\s*=\s*)?call\s+([^\s({}]+)\s*(?:\(.*\))?\s*\}$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -76,7 +84,12 @@ def load_string_call_specs(repo_root: Path) -> tuple[StringCallSpec, ...]:
         if not isinstance(callee, str) or not callee:
             continue
         arg_index = entry.get("arg_index", 0)
-        if not isinstance(arg_index, int) or arg_index < 0:
+        # bool is an int subclass: `arg_index = true` must not select index 1.
+        if (
+            isinstance(arg_index, bool)
+            or not isinstance(arg_index, int)
+            or arg_index < 0
+        ):
             arg_index = 0
         specs.append(StringCallSpec(callee=callee, arg_index=arg_index))
 
@@ -111,8 +124,10 @@ def string_call_target(
 
     `call_name` is matched on its LAST segment so a dispatcher reached through
     a namespace or an object (`db.callSp`, `this.callSp`) still matches.
-    Schema-qualified targets (`app.usp_x`) reduce to the routine name, which is
-    how the definition side registers it.
+    A schema-qualified target (`app.usp_x`) stays qualified: the definition
+    side registers routines under their schema-qualified name, and reducing
+    the target here would fan the call onto every schema's same-named routine.
+    A JDBC escape expression (`{call usp_x(?)}`) is unwrapped to its routine.
     """
     if not specs or not call_name:
         return None
@@ -142,5 +157,13 @@ def string_call_target(
         value = _string_literal_value(args[spec.arg_index])
         if not value:
             return None
-        return value.rsplit(".", 1)[-1]
+        jdbc = _JDBC_CALL.match(value)
+        if jdbc:
+            value = jdbc.group(1)
+        value = ".".join(
+            part
+            for part in (piece.strip().strip('"') for piece in value.split("."))
+            if part
+        )
+        return value or None
     return None
