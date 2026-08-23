@@ -28,6 +28,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)\*\*: \S.*$")
 
+# Placed directly below the block of entries the latest release inserted, so
+# the README's "Latest News" can render that whole block instead of a fixed
+# top-N (a fixed three once hid two of the five v0.0.720 highlights). This
+# script must stay stdlib-only, so the literal is duplicated in
+# codebase_rag.readme_sections; a test asserts the two never drift.
+LATEST_RELEASE_MARKER = "<!-- latest-release-end -->"
+
 # Latest News is for user-facing features, never CI, developer tooling,
 # release/build automation, refactors, docs, tests, or bug fixes. Any bullet
 # whose theme names that kind of work is dropped so it can never reach the
@@ -100,7 +107,9 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
     Bullets whose theme already appears anywhere in NEWS.md or earlier in the
     same fragment are dropped, which makes a rerun of the same release
     idempotent. Every remaining Highlights bullet is accepted: the fragment is
-    the release's curated Highlights section, so all of it is news.
+    the release's curated Highlights section, so all of it is news. The
+    latest-release marker is moved below the inserted block so the README can
+    render the whole block; when nothing is inserted the marker stays put.
     """
     themes = existing_themes(news)
     fresh: list[str] = []
@@ -116,7 +125,11 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
     if not fresh:
         return news, []
 
-    lines = news.splitlines(keepends=True)
+    lines = [
+        line
+        for line in news.splitlines(keepends=True)
+        if line.strip() != LATEST_RELEASE_MARKER
+    ]
     insert_at = len(lines)
     for index, line in enumerate(lines):
         if BULLET_PATTERN.match(line.strip()):
@@ -125,9 +138,8 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
 
     if not news.endswith("\n"):
         lines.append("\n")
-    updated = (
-        lines[:insert_at] + [f"{bullet}\n" for bullet in fresh] + lines[insert_at:]
-    )
+    block = [f"{bullet}\n" for bullet in fresh] + [f"{LATEST_RELEASE_MARKER}\n"]
+    updated = lines[:insert_at] + block + lines[insert_at:]
     return "".join(updated), fresh
 
 

@@ -229,12 +229,21 @@ def format_dependencies(deps: list[str]) -> str:
         _save_pypi_cache(cache)
 
 
+# Duplicated from scripts/update_news.py, which must stay stdlib-only and
+# cannot depend on this package; a test asserts the two literals never drift.
+LATEST_RELEASE_MARKER = "<!-- latest-release-end -->"
+
+
 def format_latest_news(news_path: Path, limit: int = 3) -> str:
-    # Render the top `limit` bullet entries from NEWS.md into the README's
-    # "Latest News" section. NEWS.md is the source of truth (newest first):
-    # the release workflow prepends entries via scripts/update_news.py and
-    # hand edits remain welcome between releases (issue #1146); the generator
-    # only syncs it into the README.
+    # Render the latest release's bullet entries from NEWS.md into the
+    # README's "Latest News" section. NEWS.md is the source of truth (newest
+    # first): the release workflow prepends entries via scripts/update_news.py
+    # and leaves the latest-release marker below the block it inserted, so
+    # every highlight of the latest release is rendered, however many there
+    # are (a fixed top three once hid two of the five v0.0.720 highlights).
+    # Hand edits remain welcome between releases (issue #1146) and land above
+    # the marker, so they render too. Without a marker, or with no entries
+    # above it, fall back to the top `limit` entries.
     try:
         content = news_path.read_text(encoding=ENCODING_UTF8)
     except OSError:
@@ -242,10 +251,19 @@ def format_latest_news(news_path: Path, limit: int = 3) -> str:
     # Group each "- " entry with its wrapped continuation lines; a blank line
     # closes the entry (Markdown list-item semantics), so trailing prose or a
     # header list elsewhere in the file is not swept into the news bullets.
+    # The marker also closes the entry above it, and records how many entries
+    # belong to the latest release.
     bullets: list[str] = []
     current: list[str] = []
+    marker_count: int | None = None
     for line in content.splitlines():
-        if line.startswith("- "):
+        if line.strip() == LATEST_RELEASE_MARKER:
+            if current:
+                bullets.append("\n".join(current))
+                current = []
+            if marker_count is None:
+                marker_count = len(bullets)
+        elif line.startswith("- "):
             if current:
                 bullets.append("\n".join(current))
             current = [line]
@@ -256,7 +274,8 @@ def format_latest_news(news_path: Path, limit: int = 3) -> str:
             current = []
     if current:
         bullets.append("\n".join(current))
-    return "\n".join(bullets[:limit])
+    count = marker_count if marker_count else limit
+    return "\n".join(bullets[:count])
 
 
 def generate_all_sections(project_root: Path) -> dict[str, str]:
