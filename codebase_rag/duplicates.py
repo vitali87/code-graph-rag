@@ -380,6 +380,64 @@ def _supplemental_cliques(
     return subcliques
 
 
+def _edge_qualifies(left: _Entry, right: _Entry, threshold: float) -> bool:
+    first, second = left.branches, right.branches
+    smaller, larger = min(len(first), len(second)), max(len(first), len(second))
+    # Necessary condition for Jaccard >= threshold: even a full subset
+    # overlap cannot exceed smaller/larger.
+    if larger == 0 or smaller / larger < threshold:
+        return False
+    if _jaccard(first, second) < threshold:
+        return False
+    return not _only_nested_members(left.members, right.members)
+
+
+def _threshold_adjacency(
+    order: list[_Entry], pairs: set[tuple[int, int]], threshold: float
+) -> dict[int, set[int]]:
+    adjacency: dict[int, set[int]] = {}
+    for left, right in pairs:
+        if not _edge_qualifies(order[left], order[right], threshold):
+            continue
+        adjacency.setdefault(left, set()).add(right)
+        adjacency.setdefault(right, set()).add(left)
+    return adjacency
+
+
+def _pruned_members(positions: list[int], order: list[_Entry]) -> list[DuplicateMember]:
+    return _drop_contained_members(
+        [member for position in positions for member in order[position].members]
+    )
+
+
+def _clique_emissions(
+    clique: list[int], order: list[_Entry]
+) -> list[tuple[list[int], list[DuplicateMember]]]:
+    members = _pruned_members(clique, order)
+    emissions = [(clique, members)]
+    emissions.extend(
+        (subclique, _pruned_members(subclique, order))
+        for subclique in _supplemental_cliques(clique, order, members)
+    )
+    return emissions
+
+
+def _similar_group(
+    positions: list[int], members: list[DuplicateMember], order: list[_Entry]
+) -> DuplicateGroup:
+    similarity = min(
+        _jaccard(order[left].branches, order[right].branches)
+        for at, left in enumerate(positions)
+        for right in positions[at + 1 :]
+    )
+    return DuplicateGroup(
+        kind=cs.KIND_SIMILAR,
+        similarity=round(similarity, 3),
+        node_count=max(order[position].node_count for position in positions),
+        members=_sorted_members(members),
+    )
+
+
 def _similar_groups(
     entries: dict[str, _Entry], config: DuplicatesConfig
 ) -> tuple[list[DuplicateGroup], bool]:
@@ -393,24 +451,10 @@ def _similar_groups(
     # A legitimately appears in {A, B} and in {A, C}.
     threshold, max_groups = config.threshold, config.max_similar_groups
     order = list(entries.values())
-    adjacency: dict[int, set[int]] = {}
     pairs, pairs_truncated = _candidate_pairs(
         order, threshold, config.max_candidate_pairs
     )
-    for left, right in pairs:
-        first, second = order[left].branches, order[right].branches
-        smaller, larger = min(len(first), len(second)), max(len(first), len(second))
-        # Necessary condition for Jaccard >= threshold: even a full subset
-        # overlap cannot exceed smaller/larger.
-        if larger == 0 or smaller / larger < threshold:
-            continue
-        if _jaccard(first, second) < threshold:
-            continue
-        if _only_nested_members(order[left].members, order[right].members):
-            continue
-        adjacency.setdefault(left, set()).add(right)
-        adjacency.setdefault(right, set()).add(left)
-
+    adjacency = _threshold_adjacency(order, pairs, threshold)
     cliques, cliques_truncated = _maximal_cliques(adjacency, max_groups)
     if cliques_truncated:
         logger.warning(ls.DUPLICATES_GROUPS_TRUNCATED.format(cap=max_groups))
@@ -418,45 +462,14 @@ def _similar_groups(
     groups: list[DuplicateGroup] = []
     seen_member_sets: set[frozenset[str]] = set()
     for clique in cliques:
-        members = _drop_contained_members(
-            [member for position in clique for member in order[position].members]
-        )
-        emit = [(clique, members)]
-        emit.extend(
-            (
-                subclique,
-                _drop_contained_members(
-                    [
-                        member
-                        for position in subclique
-                        for member in order[position].members
-                    ]
-                ),
-            )
-            for subclique in _supplemental_cliques(clique, order, members)
-        )
-        for group_positions, group_members in emit:
+        for group_positions, group_members in _clique_emissions(clique, order):
             if len(group_members) < 2:
                 continue
             key = frozenset(m[cs.KEY_QUALIFIED_NAME] for m in group_members)
             if key in seen_member_sets:
                 continue
             seen_member_sets.add(key)
-            similarity = min(
-                _jaccard(order[left].branches, order[right].branches)
-                for at, left in enumerate(group_positions)
-                for right in group_positions[at + 1 :]
-            )
-            groups.append(
-                DuplicateGroup(
-                    kind=cs.KIND_SIMILAR,
-                    similarity=round(similarity, 3),
-                    node_count=max(
-                        order[position].node_count for position in group_positions
-                    ),
-                    members=_sorted_members(group_members),
-                )
-            )
+            groups.append(_similar_group(group_positions, group_members, order))
     return groups, truncated
 
 

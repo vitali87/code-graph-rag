@@ -1528,6 +1528,68 @@ def _build_duplicates_table(groups: list[DuplicateGroup], project_name: str) -> 
     return table
 
 
+def _emit_duplicates_json(
+    groups: list[DuplicateGroup],
+    output: Path | None,
+    skipped_symbols: int,
+    truncated: bool,
+) -> None:
+    # Envelope, not a bare list: scan-completeness metadata must reach
+    # JSON consumers too, or a CI artifact reads as a complete scan when
+    # symbols went unanalyzed or group enumeration hit its cap.
+    payload = json.dumps(
+        {
+            cs.KEY_DUPLICATE_GROUPS: groups,
+            cs.KEY_SKIPPED_SYMBOLS: skipped_symbols,
+            cs.KEY_TRUNCATED: truncated,
+        },
+        indent=2,
+    )
+    if output is None:
+        typer.echo(payload)
+        return
+    output.write_text(payload, encoding=cs.ENCODING_UTF8)
+    _print_duplicates_written(len(groups), output)
+
+
+def _duplicates_notices(
+    skipped_symbols: int, truncated: bool, all_skipped: bool
+) -> list[str]:
+    # As with dead-code, the completeness notices follow the report into its
+    # sink so a saved artifact never reads as "all clean" when symbols went
+    # unanalyzed or group enumeration hit its cap.
+    notices = []
+    if all_skipped:
+        notices.append(cs.CLI_DUPLICATES_STALE_GRAPH.format(count=skipped_symbols))
+    elif skipped_symbols:
+        notices.append(
+            cs.CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED.format(count=skipped_symbols)
+        )
+    if truncated:
+        notices.append(cs.CLI_DUPLICATES_TRUNCATED_NOTICE)
+    return notices
+
+
+def _print_duplicates_written(count: int, output: Path) -> None:
+    app_context.console.print(
+        style(
+            cs.CLI_DUPLICATES_WRITTEN.format(count=count, path=output),
+            cs.Color.GREEN,
+        )
+    )
+
+
+def _write_duplicates_file(
+    table: Table, notices: list[str], group_count: int, output: Path
+) -> None:
+    with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
+        file_console = Console(file=fh)
+        file_console.print(table)
+        for notice in notices:
+            file_console.print(notice)
+    _print_duplicates_written(group_count, output)
+
+
 def _emit_duplicates(
     groups: list[DuplicateGroup],
     output_format: cs.DuplicatesFormat,
@@ -1538,58 +1600,17 @@ def _emit_duplicates(
     analyzed_symbols: int = 0,
 ) -> None:
     if output_format == cs.DuplicatesFormat.JSON:
-        # Envelope, not a bare list: scan-completeness metadata must reach
-        # JSON consumers too, or a CI artifact reads as a complete scan when
-        # symbols went unanalyzed or group enumeration hit its cap.
-        payload = json.dumps(
-            {
-                cs.KEY_DUPLICATE_GROUPS: groups,
-                cs.KEY_SKIPPED_SYMBOLS: skipped_symbols,
-                cs.KEY_TRUNCATED: truncated,
-            },
-            indent=2,
-        )
-        if output is not None:
-            output.write_text(payload, encoding=cs.ENCODING_UTF8)
-            app_context.console.print(
-                style(
-                    cs.CLI_DUPLICATES_WRITTEN.format(count=len(groups), path=output),
-                    cs.Color.GREEN,
-                )
-            )
-            return
-        typer.echo(payload)
+        _emit_duplicates_json(groups, output, skipped_symbols, truncated)
         return
 
-    # As with dead-code, the completeness notices follow the report into its
-    # sink so a saved artifact never reads as "all clean" when symbols went
-    # unanalyzed or group enumeration hit its cap.
-    notices = []
     # Every symbol skipped and none analyzed: the graph was indexed before
     # fingerprint stamping, so "no duplicates" would be vacuous and the
     # pattern-tier wording a misdiagnosis - recommend a re-index instead.
     all_skipped = skipped_symbols > 0 and analyzed_symbols == 0
-    if all_skipped:
-        notices.append(cs.CLI_DUPLICATES_STALE_GRAPH.format(count=skipped_symbols))
-    elif skipped_symbols:
-        notices.append(
-            cs.CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED.format(count=skipped_symbols)
-        )
-    if truncated:
-        notices.append(cs.CLI_DUPLICATES_TRUNCATED_NOTICE)
+    notices = _duplicates_notices(skipped_symbols, truncated, all_skipped)
     table = _build_duplicates_table(groups, project_name)
     if output is not None:
-        with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
-            file_console = Console(file=fh)
-            file_console.print(table)
-            for notice in notices:
-                file_console.print(notice)
-        app_context.console.print(
-            style(
-                cs.CLI_DUPLICATES_WRITTEN.format(count=len(groups), path=output),
-                cs.Color.GREEN,
-            )
-        )
+        _write_duplicates_file(table, notices, len(groups), output)
         for notice in notices:
             app_context.console.print(style(notice, cs.Color.YELLOW))
         return
