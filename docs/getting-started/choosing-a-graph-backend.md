@@ -65,17 +65,62 @@ ARCADEDB_HTTP_PORT=2480         # schema DDL only; MERGE traffic goes over Bolt
 ARCADEDB_DATABASE=codegraph
 ARCADEDB_TX_TIMEOUT_S=600       # wall-clock write-transaction budget
 ARCADEDB_HTTP_SCHEME=http       # http or https; see below
+ARCADEDB_BOLT_SCHEME=bolt       # bolt, bolt+s, or bolt+ssc; see below
 ```
 
-The schema-DDL HTTP client sends Basic credentials on every request, so
-plaintext `http` is only safe when the traffic never leaves this machine.
-This is now **enforced, not advisory**: if `ARCADEDB_HTTP_SCHEME=http`
-(the default, matching the container this project ships, which binds to
-loopback only) and `ARCADEDB_HOST` is not a loopback address (`localhost`,
-`127.0.0.1`, `::1`), the client refuses to start rather than send
-credentials over the network in the clear. To point at a remote ArcadeDB,
-set `ARCADEDB_HTTP_SCHEME=https` (with a server that terminates TLS) or
-reach it through a loopback-bound tunnel (e.g. SSH port forwarding).
+## Two transports, two independent guards
+
+ArcadeDB is spoken over **two** connections, and both carry the same
+`ARCADEDB_USERNAME`/`ARCADEDB_PASSWORD`:
+
+- **HTTP** (`ArcadeHttpClient`), used only for schema DDL (`CREATE VERTEX
+  TYPE`, `CREATE INDEX`, ...). Sends Basic auth on every request.
+- **Bolt** (`ArcadeDBIngestor`, via the `neo4j` driver), used for every
+  Cypher read and write — this is where all graph data and every generated
+  query actually travel.
+
+Both refuse to start in plaintext against a non-loopback host, and the two
+guards are independent — hardening one does nothing for the other:
+
+- If `ARCADEDB_HTTP_SCHEME=http` (the default, matching the container this
+  project ships, which binds to loopback only) and `ARCADEDB_HOST` is not a
+  loopback address (`localhost`, `127.0.0.1`, `::1`), `ArcadeHttpClient`
+  refuses to start rather than send Basic auth over the network in the
+  clear.
+- If `ARCADEDB_BOLT_SCHEME=bolt` (the default) and `ARCADEDB_HOST` is not a
+  loopback address, `ArcadeDBIngestor` refuses to start rather than send
+  Bolt credentials — and all graph data — over the network in the clear.
+
+**A remote ArcadeDB therefore needs both settings changed, not just one.**
+Setting only `ARCADEDB_HTTP_SCHEME=https` satisfies the HTTP guard but
+leaves Bolt, which carries everything else, wide open:
+
+```bash
+ARCADEDB_HTTP_SCHEME=https      # HTTP client: TLS
+ARCADEDB_BOLT_SCHEME=bolt+s     # Bolt driver: TLS, verified certificate
+# or, for a self-signed certificate:
+ARCADEDB_BOLT_SCHEME=bolt+ssc   # Bolt driver: TLS, self-signed certificate
+```
+
+`bolt+s` and `bolt+ssc` are the `neo4j` driver's own URI schemes, not
+something specific to this project — `bolt+s` verifies the server's
+certificate against a trusted CA, `bolt+ssc` accepts a self-signed one.
+Either requires the ArcadeDB server itself to have TLS enabled on its Bolt
+listener; setting `ARCADEDB_BOLT_SCHEME` alone does not turn on server-side
+TLS, it only tells the client which protocol to speak.
+
+Alternatively, reach a remote ArcadeDB through a loopback-bound tunnel
+(e.g. SSH port forwarding) and leave both settings at their plaintext
+defaults — from the client's point of view `ARCADEDB_HOST` is then
+`localhost`, which both guards trust.
+
+**What this project has and has not verified:** the loopback/non-loopback
+guard logic itself is covered by unit tests for both transports. Neither
+`ARCADEDB_HTTP_SCHEME=https` nor `ARCADEDB_BOLT_SCHEME=bolt+s`/`bolt+ssc`
+has been exercised end-to-end against a real TLS-enabled ArcadeDB server —
+this repository has no such container in its test infrastructure. Treat
+the TLS schemes as correctly *shaped* (the neo4j driver and ArcadeDB both
+document them), not as a path this project has proven works.
 
 ## Running the container
 

@@ -203,3 +203,30 @@ class TestArcadeHttpScheme:
         monkeypatch.setenv("ARCADEDB_HTTP_SCHEME", "ftp")
         with pytest.raises(ValueError, match="ARCADEDB_HTTP_SCHEME"):
             AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+
+
+class TestArcadeBoltScheme:
+    """ARCADEDB_BOLT_SCHEME threads into ArcadeDBIngestor, which refuses
+    plaintext Bolt traffic (credentials plus all graph data) to a
+    non-loopback host (see test_arcadedb_ingestor.py's
+    TestBoltPlaintextCredentialsRefused for the enforcement itself)."""
+
+    def test_defaults_to_bolt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ARCADEDB_BOLT_SCHEME", raising=False)
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.ARCADEDB_BOLT_SCHEME == cs.ArcadeBoltScheme.BOLT
+
+    def test_accepts_bolt_s(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARCADEDB_BOLT_SCHEME", "bolt+s")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.ARCADEDB_BOLT_SCHEME == cs.ArcadeBoltScheme.BOLT_S
+
+    def test_accepts_bolt_ssc(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARCADEDB_BOLT_SCHEME", "bolt+ssc")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.ARCADEDB_BOLT_SCHEME == cs.ArcadeBoltScheme.BOLT_SSC
+
+    def test_invalid_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARCADEDB_BOLT_SCHEME", "ftp")
+        with pytest.raises(ValueError, match="ARCADEDB_BOLT_SCHEME"):
+            AppConfig(_env_file=None)  # ty: ignore[unknown-argument]

@@ -614,11 +614,30 @@ class ArcadeHttpScheme(StrEnum):
 
 
 ARCADE_HTTP_SCHEME = ArcadeHttpScheme.HTTP
-# Hosts ArcadeHttpClient trusts to receive Basic auth credentials in
-# plaintext over ARCADE_HTTP_SCHEME=http. Anything else must use https --
-# see exceptions.ARCADE_PLAINTEXT_CREDENTIALS_REMOTE.
+# Hosts ArcadeHttpClient (and ArcadeDBIngestor, for Bolt) trust to receive
+# Basic auth credentials in plaintext over an unencrypted scheme. Anything
+# else must use a TLS scheme -- see exceptions.ARCADE_PLAINTEXT_CREDENTIALS_REMOTE
+# and exceptions.ARCADE_BOLT_PLAINTEXT_CREDENTIALS_REMOTE.
 ARCADE_LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost"})
-ARCADE_BOLT_SCHEME = "bolt"
+
+
+# ArcadeDB Bolt: carries all graph data (and the same username/password as
+# the HTTP client) over the neo4j driver. `bolt` is plaintext; `bolt+s` is
+# TLS with full certificate verification; `bolt+ssc` is TLS that accepts a
+# self-signed certificate -- these three are the neo4j driver's own URI
+# schemes, not an ArcadeDB-specific vocabulary.
+class ArcadeBoltScheme(StrEnum):
+    BOLT = "bolt"
+    BOLT_S = "bolt+s"
+    BOLT_SSC = "bolt+ssc"
+
+
+ARCADE_BOLT_SCHEME = ArcadeBoltScheme.BOLT
+# Schemes that carry Bolt traffic over TLS; anything not in this set is
+# plaintext and therefore subject to the ARCADE_LOOPBACK_HOSTS guard.
+ARCADE_BOLT_TLS_SCHEMES: frozenset[ArcadeBoltScheme] = frozenset(
+    {ArcadeBoltScheme.BOLT_S, ArcadeBoltScheme.BOLT_SSC}
+)
 ARCADE_COMMAND_PATH = "/api/v1/command/{database}"
 ARCADE_LANG_SQL = "sql"
 ARCADE_KEY_LANGUAGE = "language"

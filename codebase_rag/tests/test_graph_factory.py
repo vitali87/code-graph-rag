@@ -75,17 +75,49 @@ def test_get_ingestor_threads_http_scheme_into_the_http_client(
         "codebase_rag.services.graph.factory.has_neo4j_driver", lambda: True
     )
     from codebase_rag.config import settings
-    from codebase_rag.constants import ArcadeHttpScheme
+    from codebase_rag.constants import ArcadeBoltScheme, ArcadeHttpScheme
     from codebase_rag.services.graph.arcadedb import ArcadeDBIngestor
 
     monkeypatch.setattr(settings, "ARCADEDB_USERNAME", "root")
     monkeypatch.setattr(settings, "ARCADEDB_PASSWORD", "pw")
     monkeypatch.setattr(settings, "ARCADEDB_HOST", "db.example.com")
+    # bolt+s so only the HTTP guard is under test here; ArcadeDBIngestor's
+    # own Bolt guard (test_get_ingestor_threads_bolt_scheme_into_the_ingestor
+    # below) would otherwise raise first on a non-loopback host.
+    monkeypatch.setattr(settings, "ARCADEDB_BOLT_SCHEME", ArcadeBoltScheme.BOLT_S)
 
     monkeypatch.setattr(settings, "ARCADEDB_HTTP_SCHEME", ArcadeHttpScheme.HTTP)
     with pytest.raises(ValueError, match="plaintext"):
         get_ingestor(backend=GraphBackend.ARCADEDB)
 
     monkeypatch.setattr(settings, "ARCADEDB_HTTP_SCHEME", ArcadeHttpScheme.HTTPS)
+    ingestor = get_ingestor(backend=GraphBackend.ARCADEDB)
+    assert isinstance(ingestor, ArcadeDBIngestor)
+
+
+def test_get_ingestor_threads_bolt_scheme_into_the_ingestor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Same wiring check as test_get_ingestor_threads_http_scheme_into_the_http_client,
+    # for the Bolt path added in the 2nd review round: ARCADEDB_BOLT_SCHEME
+    # must reach ArcadeDBIngestor, which is what actually enforces it.
+    monkeypatch.setattr(
+        "codebase_rag.services.graph.factory.has_neo4j_driver", lambda: True
+    )
+    from codebase_rag.config import settings
+    from codebase_rag.constants import ArcadeBoltScheme, ArcadeHttpScheme
+    from codebase_rag.services.graph.arcadedb import ArcadeDBIngestor
+
+    monkeypatch.setattr(settings, "ARCADEDB_USERNAME", "root")
+    monkeypatch.setattr(settings, "ARCADEDB_PASSWORD", "pw")
+    monkeypatch.setattr(settings, "ARCADEDB_HOST", "db.example.com")
+    # HTTPS so only the Bolt guard is under test here.
+    monkeypatch.setattr(settings, "ARCADEDB_HTTP_SCHEME", ArcadeHttpScheme.HTTPS)
+
+    monkeypatch.setattr(settings, "ARCADEDB_BOLT_SCHEME", ArcadeBoltScheme.BOLT)
+    with pytest.raises(ValueError, match="plaintext"):
+        get_ingestor(backend=GraphBackend.ARCADEDB)
+
+    monkeypatch.setattr(settings, "ARCADEDB_BOLT_SCHEME", ArcadeBoltScheme.BOLT_S)
     ingestor = get_ingestor(backend=GraphBackend.ARCADEDB)
     assert isinstance(ingestor, ArcadeDBIngestor)

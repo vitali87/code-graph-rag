@@ -50,6 +50,44 @@ def test_rejects_batch_size_below_one() -> None:
         _ingestor(batch_size=0)
 
 
+class TestBoltPlaintextCredentialsRefused:
+    """ArcadeDBIngestor's Bolt driver sends the same Basic auth as
+    ArcadeHttpClient plus every Cypher statement and all graph data; over
+    plaintext bolt that must never leave the loopback interface. Mirrors
+    test_arcade_http.py's TestPlaintextCredentialsRefused (2nd review round:
+    the HTTP client was hardened but Bolt, which carries the actual data,
+    was left wide open)."""
+
+    def test_loopback_and_bolt_is_allowed(self) -> None:
+        _ingestor(host="localhost", bolt_scheme="bolt")
+
+    def test_loopback_ip_and_bolt_is_allowed(self) -> None:
+        _ingestor(host="127.0.0.1", bolt_scheme="bolt")
+
+    def test_non_loopback_and_bolt_raises(self) -> None:
+        # http_scheme=https so only the Bolt guard is under test here; the
+        # HTTP client has its own independent loopback guard (see
+        # test_arcade_http.py) that would otherwise raise first.
+        with pytest.raises(ValueError, match="plaintext"):
+            _ingestor(host="db.example.com", bolt_scheme="bolt", http_scheme="https")
+
+    def test_non_loopback_and_bolt_s_is_allowed(self) -> None:
+        _ingestor(host="db.example.com", bolt_scheme="bolt+s", http_scheme="https")
+
+    def test_non_loopback_and_bolt_ssc_is_allowed(self) -> None:
+        _ingestor(host="db.example.com", bolt_scheme="bolt+ssc", http_scheme="https")
+
+    def test_loopback_and_bolt_s_is_allowed(self) -> None:
+        _ingestor(host="localhost", bolt_scheme="bolt+s")
+
+
+def test_bolt_uri_renders_the_configured_scheme() -> None:
+    ingestor = _ingestor(
+        host="db.example.com", bolt_scheme="bolt+s", http_scheme="https"
+    )
+    assert ingestor._bolt_uri == "bolt+s://db.example.com:7687"
+
+
 def test_enter_opens_a_driver_with_basic_auth() -> None:
     with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
         ingestor = _ingestor()

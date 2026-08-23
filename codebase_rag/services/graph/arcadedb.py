@@ -18,11 +18,13 @@ from ...constants import (
     ARCADE_ALLOWED_PROCEDURE_PREFIXES,
     ARCADE_BENIGN_SUBSTRINGS,
     ARCADE_BOLT_SCHEME,
+    ARCADE_BOLT_TLS_SCHEMES,
     ARCADE_DDL_EDGE_TYPE,
     ARCADE_DDL_PROPERTY,
     ARCADE_DDL_UNIQUE_INDEX,
     ARCADE_DDL_VERTEX_TYPE,
     ARCADE_HTTP_SCHEME,
+    ARCADE_LOOPBACK_HOSTS,
     ARCADE_PROCEDURE_CATALOG,
     ARCADE_RETRYABLE_SUBSTRINGS,
     CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
@@ -30,6 +32,7 @@ from ...constants import (
     KEY_PROJECT_NAME,
     MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
+    ArcadeBoltScheme,
     ArcadeHttpScheme,
     GraphBackend,
     NodeLabel,
@@ -243,6 +246,7 @@ class ArcadeDBIngestor:
 
     __slots__ = (
         "_bolt_port",
+        "_bolt_scheme",
         "_database",
         "_dialect",
         "_driver",
@@ -270,6 +274,7 @@ class ArcadeDBIngestor:
         batch_size: int = 1000,
         use_merge: bool = True,
         http_scheme: ArcadeHttpScheme | str = ARCADE_HTTP_SCHEME,
+        bolt_scheme: ArcadeBoltScheme | str = ARCADE_BOLT_SCHEME,
     ) -> None:
         # Blank-after-strip is rejected outright, not normalised to "no auth"
         # the way Memgraph's optional credentials are: ArcadeDB's Bolt
@@ -281,8 +286,22 @@ class ArcadeDBIngestor:
             raise ValueError(ex.ARCADE_CREDENTIALS_REQUIRED)
         if batch_size < 1:
             raise ValueError(ex.BATCH_SIZE)
+        # Bolt carries the same username/password as ArcadeHttpClient's Basic
+        # auth, plus every Cypher statement and all graph data -- a much
+        # larger exposure than the schema-DDL-only HTTP path. Mirror
+        # ArcadeHttpClient's guard exactly: refuse a plaintext scheme to
+        # anything but a loopback host rather than let ARCADEDB_HOST
+        # silently point Bolt credentials at the network.
+        if (
+            bolt_scheme not in ARCADE_BOLT_TLS_SCHEMES
+            and host not in ARCADE_LOOPBACK_HOSTS
+        ):
+            raise ValueError(
+                ex.ARCADE_BOLT_PLAINTEXT_CREDENTIALS_REMOTE.format(host=host)
+            )
         self._host = host
         self._bolt_port = bolt_port
+        self._bolt_scheme = bolt_scheme
         self._http_port = http_port
         self._database = database
         self._username = username
@@ -308,7 +327,7 @@ class ArcadeDBIngestor:
 
     @property
     def _bolt_uri(self) -> str:
-        return f"{ARCADE_BOLT_SCHEME}://{self._host}:{self._bolt_port}"
+        return f"{self._bolt_scheme}://{self._host}:{self._bolt_port}"
 
     def __enter__(self) -> ArcadeDBIngestor:
         logger.info(ls.ARCADE_CONNECTING.format(uri=self._bolt_uri))

@@ -129,6 +129,14 @@ ARCADE_PLAINTEXT_CREDENTIALS_REMOTE = (
     "address (localhost, 127.0.0.1, ::1) -- e.g. run ArcadeDB locally or "
     "reach it through an SSH tunnel."
 )
+ARCADE_BOLT_PLAINTEXT_CREDENTIALS_REMOTE = (
+    "Refusing to send ArcadeDB Bolt credentials (and all graph data) in "
+    "plaintext to non-loopback host '{host}' over ARCADEDB_BOLT_SCHEME=bolt. "
+    "Either set ARCADEDB_BOLT_SCHEME=bolt+s (TLS, verified certificate) or "
+    "bolt+ssc (TLS, self-signed certificate), or point ARCADEDB_HOST at a "
+    "loopback address (localhost, 127.0.0.1, ::1) -- e.g. run ArcadeDB "
+    "locally or reach it through an SSH tunnel."
+)
 
 
 # Exception classes

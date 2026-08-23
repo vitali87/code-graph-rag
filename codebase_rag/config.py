@@ -199,6 +199,14 @@ class AppConfig(BaseSettings):
     # plaintext Basic auth to a non-loopback ARCADEDB_HOST, so a remote host
     # must set this to https (issue: CodeRabbit review, plaintext-creds).
     ARCADEDB_HTTP_SCHEME: cs.ArcadeHttpScheme = cs.ArcadeHttpScheme.HTTP
+    # Scheme for the Bolt driver (ArcadeDBIngestor), which sends the same
+    # Basic auth plus every Cypher statement and all graph data. Defaults to
+    # bolt for the loopback-bound container this project ships;
+    # ArcadeDBIngestor itself refuses plaintext bolt to a non-loopback
+    # ARCADEDB_HOST, so a remote host must set this to bolt+s or bolt+ssc
+    # (second review round: the HTTP scheme was hardened but Bolt, which
+    # carries the actual data, was left wide open).
+    ARCADEDB_BOLT_SCHEME: cs.ArcadeBoltScheme = cs.ArcadeBoltScheme.BOLT
     # ArcadeDB is multi-database; Memgraph is not. Required when selected.
     ARCADEDB_DATABASE: str = "codegraph"
     # Server-side transaction ceiling for ArcadeDB Bolt queries. Distinct from
