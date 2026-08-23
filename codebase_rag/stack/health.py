@@ -105,15 +105,6 @@ def graph_reachability_detail(
     return "bolt ok, http unreachable (schema changes will fail)"
 
 
-def wait_for_memgraph(
-    host: str,
-    port: int,
-    timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,
-    interval: float = cs.DEFAULT_HEALTH_INTERVAL_S,
-) -> bool:
-    return wait_for_graph(GraphBackend.MEMGRAPH, host, port, None, timeout, interval)
-
-
 def wait_for_qdrant(
     port: int,
     timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,

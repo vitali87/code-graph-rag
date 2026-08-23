@@ -206,7 +206,10 @@ def _connect_with_wipe(
             # bearing -- MERGE without the unique index is a full type scan,
             # so skipping this would let the conformance suite's idempotency
             # assertions pass by luck on tiny data while masking behaviour
-            # that degrades to quadratic on a real repo.
+            # that degrades to quadratic on a real repo. This helper backs
+            # both `graph_ingestor` and `memgraph_only_ingestor`, so the 30
+            # legacy modules that use the latter now also get a constraints
+            # setup they never ran under the old `memgraph_ingestor` alias.
             candidate.ensure_constraints()
             candidate.execute_write("MATCH (n) DETACH DELETE n")
             ingestor = candidate
