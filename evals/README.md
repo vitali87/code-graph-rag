@@ -372,9 +372,10 @@ hand-built rows (`test_duplicates_collect.py`), so a fixture mismatch indicts
 fingerprint ingest or the graph capture, not the grouping. The graded eval is
 the fixture suite `codebase_rag/tests/test_duplicates_eval.py`; the CLI's
 corpus mode is informational only, because a real repo has no independent
-clone oracle. The corpus mode was dogfooded across ten repos in nine languages
-(flask, requests, express, zod, gin, anyhow, gson, fmt, monolog,
-plenary.nvim): every sampled exact group reproduces from raw source, reports
+clone oracle. The corpus mode was dogfooded across fourteen repos in eleven
+languages (flask, requests, django, express, zod, gin, anyhow, gson, fmt,
+libuv, Humanizer, scopt, monolog, plenary.nvim): every sampled exact group
+reproduces from raw source, reports
 are deterministic, pair sets shrink monotonically as the threshold rises, and
 the in-memory harness matches the live `cgr duplicates` CLI pair-for-pair.
 
