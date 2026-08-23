@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from ..sql_names import normalize_sql_reference
+
 if TYPE_CHECKING:
     from tree_sitter import Node
 
@@ -76,8 +78,18 @@ def load_string_call_specs(repo_root: Path) -> tuple[StringCallSpec, ...]:
         logger.warning(f"Ignoring unreadable {CONFIG_FILENAME}: {exc}")
         return ()
 
+    section = data.get(CONFIG_SECTION, [])
+    if not isinstance(section, list):
+        # A scalar here (`string_calls = 5`) is valid TOML; iterating it
+        # would raise while the call processor initializes and abort the
+        # whole ingestion over an optional refinement.
+        logger.warning(
+            f"Ignoring {CONFIG_FILENAME}: {CONFIG_SECTION} is not an array of tables"
+        )
+        return ()
+
     specs: list[StringCallSpec] = []
-    for entry in data.get(CONFIG_SECTION, ()):
+    for entry in section:
         if not isinstance(entry, dict):
             continue
         callee = entry.get("callee")
@@ -114,6 +126,14 @@ def _string_literal_value(node: Node) -> str | None:
     value = text[1:-1].strip()
     if not value or "${" in value or "%s" in value:
         return None
+    if "\\" in value:
+        # The raw source spelling may escape characters ("usp_invoice")
+        # that the runtime string does not contain; resolve the runtime
+        # string or the lookup misses the routine it plainly names.
+        try:
+            value = value.encode("latin-1", "backslashreplace").decode("unicode_escape")
+        except UnicodeDecodeError:
+            return None
     return value
 
 
@@ -169,10 +189,9 @@ def string_call_target(
         jdbc = _JDBC_CALL.match(value)
         if jdbc:
             value = jdbc.group(1)
-        value = ".".join(
-            part
-            for part in (piece.strip().strip('"') for piece in value.split("."))
-            if part
-        )
-        return value or None
+        # The SAME normalizer as the definition side: PostgreSQL folds an
+        # unquoted identifier to lowercase, so callSp('MyFunc') must look up
+        # myfunc — quoting inside the string ('"MyFunc"') preserves case,
+        # exactly as it would in SQL.
+        return normalize_sql_reference(value) or None
     return None

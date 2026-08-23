@@ -67,6 +67,12 @@ class TestLoadStringCallSpecs:
         root = _write_config(tmp_path, "[[string_calls]]\narg_index = 2\n")
         assert load_string_call_specs(root) == ()
 
+    def test_scalar_section_disables_instead_of_failing(self, tmp_path: Path) -> None:
+        # `string_calls = 5` is valid TOML; iterating it raised TypeError
+        # while the call processor initialized and aborted the ingestion.
+        root = _write_config(tmp_path, "string_calls = 5\n")
+        assert load_string_call_specs(root) == ()
+
     def test_boolean_arg_index_falls_back_to_zero(self, tmp_path: Path) -> None:
         # bool is an int subclass: `arg_index = true` must not select index 1.
         root = _write_config(
@@ -117,6 +123,22 @@ class TestStringCallTarget:
         specs = (StringCallSpec(callee="prepareCall", arg_index=0),)
         node = _ts_call_node('conn.prepareCall("{?= call app.usp_total(?, ?)}");')
         assert string_call_target(node, "conn.prepareCall", specs) == "app.usp_total"
+
+    def test_escaped_literal_resolves_its_runtime_string(self) -> None:
+        # The raw source spelling escapes the i; the runtime string is what
+        # names the routine.
+        node = _ts_call_node('callSp("usp_\\u0069nvoice_list");')
+        assert string_call_target(node, "callSp", SPECS) == "usp_invoice_list"
+
+    def test_unquoted_target_folds_to_lowercase(self) -> None:
+        # PostgreSQL folds MyFunc to myfunc on BOTH sides, so the call and
+        # the definition meet at the same key.
+        node = _ts_call_node('callSp("MyFunc");')
+        assert string_call_target(node, "callSp", SPECS) == "myfunc"
+
+    def test_quoted_target_keeps_its_case(self) -> None:
+        node = _ts_call_node("callSp('\"MyFunc\"');")
+        assert string_call_target(node, "callSp", SPECS) == "MyFunc"
 
     def test_generic_call_reads_past_the_type_arguments(self) -> None:
         # `callSp<Procedure>("usp_x")` puts a type_arguments child before the
