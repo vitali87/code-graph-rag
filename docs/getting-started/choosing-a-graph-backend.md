@@ -6,9 +6,10 @@ description: "Store the code graph in Memgraph (the default) or ArcadeDB, and wh
 
 The knowledge graph can be stored in **Memgraph** or **ArcadeDB**. Memgraph
 is the default and the better-tested path — it has been the only backend
-for most of this project's history, and it is what the Quick Start and the
-bundled `docker-compose.yaml`'s default profile assume. ArcadeDB is a
-genuine second backend: the same conformance suite runs against both
+for most of this project's history, and it is what the Quick Start and
+`cgr daemon up` (which injects `--profile memgraph` unless `GRAPH_BACKEND`
+says otherwise) assume. ArcadeDB is a genuine second backend: the same
+conformance suite runs against both
 engines on every change, and `cgr start --update-graph`/`cgr stats`/`cgr
 dead-code` and every other graph command work identically regardless of
 which one is active.
@@ -64,6 +65,13 @@ ARCADEDB_HTTP_PORT=2480         # schema DDL only; MERGE traffic goes over Bolt
 ARCADEDB_DATABASE=codegraph
 ARCADEDB_TX_TIMEOUT_S=600       # wall-clock write-transaction budget
 ```
+
+The schema-DDL HTTP client always speaks plain `http`, with no TLS option,
+and sends Basic credentials on every request. That is correct for the
+container this project ships, which binds to loopback only — but
+`ARCADEDB_HOST` is not validated, so pointing it at a non-loopback host
+sends the Basic credentials over plaintext HTTP on the network. Only point
+`ARCADEDB_HOST` at a loopback-bound ArcadeDB instance.
 
 ## Running the container
 

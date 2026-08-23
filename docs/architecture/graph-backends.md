@@ -26,8 +26,8 @@ Everything that touches the graph goes through two abstractions in
   `ArcadeDBIngestor` both implement it in full; nothing in the parser or
   RAG-agent layers imports either concrete class.
 - **`GraphDialect`** (`dialect.py`) — everything that genuinely differs
-  between engines, deliberately kept small. Seven members (the class
-  docstring undercounts it as six):
+  between engines, deliberately kept small. Seven members: `name` plus the
+  six behaviours the class docstring counts:
 
   | Member | Purpose |
   |---|---|
