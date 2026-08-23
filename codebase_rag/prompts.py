@@ -324,10 +324,6 @@ Provide only the Cypher query.
 """
 
 
-# Backwards-compatible default (no project scope injected)
-CYPHER_SYSTEM_PROMPT = build_cypher_system_prompt()
-
-
 # Stricter prompt for less capable open-source/local models (e.g., Ollama)
 def build_local_cypher_system_prompt(active_projects: list[str] | None = None) -> str:
     return f"""
@@ -413,10 +409,6 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     {CYPHER_EXAMPLE_PROJECT_SCOPED}
     ```
 """
-
-
-# Backwards-compatible default (no project scope injected)
-LOCAL_CYPHER_SYSTEM_PROMPT = build_local_cypher_system_prompt()
 
 
 OPTIMIZATION_PROMPT = """
