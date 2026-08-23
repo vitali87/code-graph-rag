@@ -813,12 +813,18 @@ def export(
         app_context.console.print(style(cs.CLI_ERR_ONLY_JSON, cs.Color.RED))
         raise typer.Exit(1)
 
-    _info(style(cs.CLI_MSG_CONNECTING_MEMGRAPH, cs.Color.CYAN))
-
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     try:
         with connect_memgraph(effective_batch_size) as ingestor:
+            _info(
+                style(
+                    cs.MSG_CONNECTED_GRAPH_BACKEND.format(
+                        backend=cs.GRAPH_BACKEND_DISPLAY_NAMES[settings.GRAPH_BACKEND]
+                    ),
+                    cs.Color.CYAN,
+                )
+            )
             _info(style(cs.CLI_MSG_EXPORTING_DATA, cs.Color.CYAN))
 
             if not export_graph_to_file(ingestor, output):
