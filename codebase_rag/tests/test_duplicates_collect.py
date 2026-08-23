@@ -267,6 +267,12 @@ class TestSimilarGroups:
         # Deterministic prefix: the capped result is a subset of the full one.
         assert all(clique in full for clique in capped)
 
+        # A cap exactly equal to the clique count is a COMPLETE scan: the
+        # flag must only fire when a clique beyond the cap materializes.
+        exact, truncated = _maximal_cliques(adjacency, cap=8)
+        assert len(exact) == 8
+        assert truncated is False
+
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(
             [
@@ -336,6 +342,25 @@ class TestOrderingAndCoverage:
         report = collect_duplicates_with_coverage(ingestor, "proj", config)
         assert len(report.groups) == 1
         assert report.truncated is True
+
+    def test_cap_matching_group_count_is_not_flagged_truncated(self) -> None:
+        # Same two overlapping cliques with the cap at exactly two: the scan
+        # is complete and must not be reported as truncated.
+        config = default_duplicates_config(threshold=0.5, max_similar_groups=2)
+        ingestor = FakeIngestor(
+            [
+                _row("proj.a.one", "aaaa", ["b1", "b2", "b3", "b4"]),
+                _row("proj.b.two", "bbbb", ["b1", "b2", "b3", "b4", "b5", "b6"]),
+                _row(
+                    "proj.c.three",
+                    "cccc",
+                    ["b1", "b2", "b3", "b4", "b7", "b8", "b9"],
+                ),
+            ]
+        )
+        report = collect_duplicates_with_coverage(ingestor, "proj", config)
+        assert len(report.groups) == 2
+        assert report.truncated is False
 
     def test_method_and_function_share_a_group(self) -> None:
         ingestor = FakeIngestor(

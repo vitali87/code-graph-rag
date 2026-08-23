@@ -239,18 +239,22 @@ def _maximal_cliques(
     # capped by DUPLICATES_HOT_FINGERPRINT_CAP) and its dense spots are
     # near-cliques, the cheap case for pivoted Bron-Kerbosch. A pathological
     # graph still has exponentially many maximal cliques (Moon-Moser), so
-    # enumeration stops after `cap` cliques: with pivoting, work between two
-    # emitted cliques is polynomial, making the cap a bound on total work,
-    # not just on output size. Returns (cliques, truncated).
+    # enumeration stops once a clique BEYOND the cap materializes: with
+    # pivoting, work between two emitted cliques is polynomial, making the
+    # budget a bound on total work, not just on output size. The overflow
+    # clique is the truncation evidence and is dropped from the result, so a
+    # scan with exactly `cap` cliques completes and is NOT flagged truncated.
+    # Returns (cliques, truncated).
+    budget = cap + 1
     cliques: list[list[int]] = []
 
     def expand(taken: set[int], candidates: set[int], excluded: set[int]) -> bool:
-        if len(cliques) >= cap:
+        if len(cliques) >= budget:
             return False
         if not candidates and not excluded:
             if len(taken) > 1:
                 cliques.append(sorted(taken))
-            return True
+            return len(cliques) < budget
         pivot = max(
             sorted(candidates | excluded),
             key=lambda vertex: len(adjacency[vertex] & candidates),
@@ -266,5 +270,6 @@ def _maximal_cliques(
             excluded = excluded | {vertex}
         return True
 
-    completed = expand(set(), set(adjacency), set())
-    return sorted(cliques), not completed
+    expand(set(), set(adjacency), set())
+    truncated = len(cliques) > cap
+    return sorted(cliques[:cap]), truncated
