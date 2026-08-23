@@ -112,6 +112,7 @@ class TestFormatMissingApiKeyErrors:
     def test_unknown_provider_generic_message(self) -> None:
         msg = format_missing_api_key_errors("deepseek")
         assert "DEEPSEEK_API_KEY" in msg
+        assert "Deepseek" in msg
 
     def test_role_appears_in_message(self) -> None:
         msg = format_missing_api_key_errors(cs.Provider.OPENAI, role="cypher")
