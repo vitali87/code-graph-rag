@@ -534,6 +534,48 @@ class TestSimilarGroups:
             "proj.min.fourth",
         }
 
+    def test_closure_pair_with_distinct_external_function_is_kept(self) -> None:
+        # An external function with a DIFFERENT fingerprint that is similar
+        # to both a factory and its closure: the factory-closure edge is
+        # filtered, so two overlapping cliques emerge, and the closure's own
+        # relationship with the external function must be reported.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.m.factory",
+                    "aaaa",
+                    [*shared, "outer_extra"],
+                    path="proj/m.py",
+                    start_line=30,
+                    end_line=60,
+                ),
+                _row(
+                    "proj.m.factory.inner",
+                    "bbbb",
+                    [*shared, "inner_extra"],
+                    path="proj/m.py",
+                    start_line=38,
+                    end_line=58,
+                ),
+                _row(
+                    "proj.other.cousin",
+                    "cccc",
+                    [*shared, "cousin_extra"],
+                    path="proj/other.py",
+                    start_line=5,
+                    end_line=25,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.m.factory", "proj.other.cousin"} in member_sets
+        assert {"proj.m.factory.inner", "proj.other.cousin"} in member_sets
+        assert len(groups) == 2
+
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(
             [

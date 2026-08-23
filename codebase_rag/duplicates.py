@@ -302,7 +302,7 @@ def _only_nested_members(
 
 
 def _drop_contained_members(
-    members: list[DuplicateMember],
+    expanded: list[tuple[int, DuplicateMember]],
 ) -> list[DuplicateMember]:
     """Drop members nested inside another member of the same group.
 
@@ -313,15 +313,27 @@ def _drop_contained_members(
     already a Stage-1 group, while the container's only real partner is the
     external copy. Nesting requires proper containment or a qualified-name
     hierarchy on an identical span, so two distinct definitions sharing a
-    span (adjacent minified one-liners) both survive.
+    span (adjacent minified one-liners) both survive. A nested member is
+    only dropped while a same-entry sibling (its exact twin) survives to
+    represent the clone class, so no entry's relationship ever leaves the
+    report.
     """
+    nested = [
+        any(
+            other is not member and _member_nested_in(other, member)
+            for _pos, other in expanded
+        )
+        for _pos, member in expanded
+    ]
+    entries_with_free_member = {
+        position
+        for (position, _member), is_nested in zip(expanded, nested, strict=True)
+        if not is_nested
+    }
     return [
         member
-        for member in members
-        if not any(
-            other is not member and _member_nested_in(other, member)
-            for other in members
-        )
+        for (position, member), is_nested in zip(expanded, nested, strict=True)
+        if not (is_nested and position in entries_with_free_member)
     ]
 
 
@@ -373,7 +385,11 @@ def _similar_groups(
             for right in clique[at + 1 :]
         )
         members = _drop_contained_members(
-            [member for position in clique for member in order[position].members]
+            [
+                (position, member)
+                for position in clique
+                for member in order[position].members
+            ]
         )
         if len(members) < 2:
             continue
