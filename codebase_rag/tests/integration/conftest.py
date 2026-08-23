@@ -227,8 +227,14 @@ def _connect_with_wipe(
     assert ingestor is not None
     yield ingestor
 
-    ingestor.execute_write("MATCH (n) DETACH DELETE n")
-    ingestor.__exit__(None, None, None)
+    # __exit__ must run even if the post-test wipe raises, or this
+    # connection and its thread pool leak for the rest of the session --
+    # every remaining test in the xdist_group sharing this container would
+    # then run without ever getting a fresh ingestor.
+    try:
+        ingestor.execute_write("MATCH (n) DETACH DELETE n")
+    finally:
+        ingestor.__exit__(None, None, None)
 
 
 @pytest.fixture(scope="function")
