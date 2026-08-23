@@ -159,6 +159,10 @@ class TestRequiresApproval:
         for action in ("-delete", "-exec", "-execdir", "-ok", "-okdir"):
             command = f"find . -name '*.py' {action} rm {{}} ;"
             assert _requires_approval(command) is True, command
+        # GNU output actions write their file argument, so they gate too.
+        for action in ("-fprint", "-fprint0", "-fprintf", "-fls"):
+            command = f"find . -name '*.py' {action} out.txt"
+            assert _requires_approval(command) is True, command
 
     def test_safe_git_subcommands_no_approval(self) -> None:
         assert not settings.SHELL_SAFE_GIT_SUBCOMMANDS
@@ -480,6 +484,31 @@ class TestNoninteractiveMode:
         result = await tool.function(mock_ctx, "find . -name x -delete")
         assert result.return_code != 0
         assert "find" in result.stderr.lower()
+
+    async def test_denies_find_output_actions(self, temp_project_root: Path) -> None:
+        # GNU find's output actions create or overwrite the named file, so
+        # they are file writes even though find is a read tool (Greptile
+        # review on PR #1388, verified: all four replaced a file's content).
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        victim = temp_project_root / "victim.txt"
+        for command in (
+            "find . -name x -fprint victim.txt",
+            "find . -name x -fprint0 victim.txt",
+            "find . -name x -fprintf victim.txt %p",
+            "find . -fls victim.txt",
+        ):
+            victim.write_text("ORIGINAL")
+            result = await tool.function(mock_ctx, command)
+            assert result.return_code != 0, command
+            # The policy must deny it; BSD find rejecting a GNU-only action
+            # is not protection, the benchmark runs on GNU find in CI.
+            assert "not permitted in this non-interactive session" in result.stderr, (
+                command
+            )
+            assert victim.read_text() == "ORIGINAL", command
 
     async def test_enforces_allowlist(self, temp_project_root: Path) -> None:
         commander = ShellCommander(str(temp_project_root), timeout=5)
