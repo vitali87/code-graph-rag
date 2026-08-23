@@ -204,6 +204,12 @@ POLYGLOT_SOURCES: dict[str, str] = {
         "  return helper(1);\n"
         "}\n"
     ),
+    "routines.sql": (
+        "CREATE FUNCTION usp_poly_helper(x int) RETURNS int\n"
+        "AS $$ SELECT x + 1; $$ LANGUAGE sql;\n\n"
+        "CREATE FUNCTION usp_poly_run() RETURNS int\n"
+        "AS $$ SELECT usp_poly_helper(1); $$ LANGUAGE sql;\n"
+    ),
     # the cross-language collision trio: same basename, three languages.
     "shapes.rs": _RS_SHAPES,
     "shapes.cpp": _CPP_SHAPES,
