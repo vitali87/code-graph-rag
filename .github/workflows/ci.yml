@@ -470,6 +470,62 @@ jobs:
             sleep 60
           done
 
+  sonar-gate:
+    name: Sonar Zero Issues Gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 45
+
+    steps:
+      - name: Require a SonarCloud analysis of the head commit with zero open issues
+        env:
+          PROJECT_KEY: vitali87_code-graph-rag
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The merge gate: a pull request is mergeable ONLY when SonarCloud
+          # has analyzed the CURRENT head commit and reports zero open issues
+          # on the pull request. The built-in "Sonar way" quality gate passes
+          # with new issues of low severity (its conditions are ratings, not
+          # counts), so this job enforces the stricter bar the project wants:
+          # every issue fixed, or explicitly resolved (accepted / false
+          # positive) in the SonarCloud UI. Both endpoints are public for
+          # public projects, so no token is needed. Analysis lands minutes
+          # after the SonarCloud Analysis job finishes, so poll until the
+          # reported analyzed commit is this exact commit.
+          deadline=$(( $(date +%s) + 2400 ))
+          while :; do
+            analyzed=$(curl -sf "https://sonarcloud.io/api/project_pull_requests/list?project=$PROJECT_KEY" \
+              | jq -r --arg pr "$PR" \
+                  '.pullRequests[] | select(.key == $pr) | .commit.sha // empty' \
+              || true)
+            if [ "$analyzed" = "$HEAD_SHA" ]; then
+              issues=$(curl -sf "https://sonarcloud.io/api/issues/search?componentKeys=$PROJECT_KEY&pullRequest=$PR&resolved=false&ps=100" \
+                || true)
+              total=$(printf '%s' "$issues" | jq -r '.total // empty' || true)
+              if [ -z "$total" ]; then
+                echo "Issue search returned no usable payload, retrying ..."
+              elif [ "$total" = "0" ]; then
+                echo "✅ SonarCloud analyzed $HEAD_SHA and reports zero open issues"
+                exit 0
+              else
+                echo "❌ SonarCloud reports $total open issue(s) on this pull request:"
+                printf '%s' "$issues" | jq -r \
+                  '.issues[] | "  - [\(.severity)] \(.component | sub("^[^:]*:"; "")):\(.line // "?") \(.message) (\(.rule))"'
+                echo "Fix them and push, or resolve them as accepted/false positive in SonarCloud."
+                exit 1
+              fi
+            else
+              echo "No SonarCloud analysis of $HEAD_SHA yet (last analyzed: ${analyzed:-none}), waiting ..."
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "❌ No SonarCloud analysis of $HEAD_SHA appeared within 40 minutes."
+              echo "Check the SonarCloud Analysis job, then re-run this job."
+              exit 1
+            fi
+            sleep 60
+          done
+
   all-checks-pass:
     name: All Checks Pass
     runs-on: ubuntu-latest
@@ -484,6 +540,7 @@ jobs:
         wheel-fresh-resolution,
         go-frontend,
         greptile-gate,
+        sonar-gate,
       ]
     timeout-minutes: 5
 
@@ -531,6 +588,13 @@ jobs:
           if [[ "${{ needs.greptile-gate.result }}" != "success" \
              && "${{ needs.greptile-gate.result }}" != "skipped" ]]; then
             echo "❌ Greptile gate failed: a 5/5 review of the head commit is required"
+            exit 1
+          fi
+          # Same skip semantics: Sonar analyzes pull requests; on a pull
+          # request anything but success blocks the merge.
+          if [[ "${{ needs.sonar-gate.result }}" != "success" \
+             && "${{ needs.sonar-gate.result }}" != "skipped" ]]; then
+            echo "❌ Sonar gate failed: zero open SonarCloud issues on the head commit are required"
             exit 1
           fi
           echo "✅ All checks passed!"
