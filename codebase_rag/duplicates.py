@@ -342,6 +342,44 @@ def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
     return len(first & second) / union if union else 0.0
 
 
+def _entry_contains_any(container: _Entry, contained: _Entry) -> bool:
+    return any(
+        _member_nested_in(outer, inner)
+        for outer in container.members
+        for inner in contained.members
+    )
+
+
+def _supplemental_cliques(
+    clique: list[int], order: list[_Entry], kept: list[DuplicateMember]
+) -> list[list[int]]:
+    """Sub-cliques preserving a fully-pruned entry's non-container partners.
+
+    Dropping nested members can erase an ENTIRE entry from a clique (two
+    factories carrying their identical closures). Its relationship to a
+    partner that contains none of its members (a standalone function similar
+    to the closures) is covered by no other group, so each such entry is
+    re-emitted with exactly those partners.
+    """
+    kept_ids = {id(member) for member in kept}
+    pruned = [
+        position
+        for position in clique
+        if not any(id(member) in kept_ids for member in order[position].members)
+    ]
+    subcliques: list[list[int]] = []
+    for position in pruned:
+        partners = [
+            other
+            for other in clique
+            if other != position
+            and not _entry_contains_any(order[other], order[position])
+        ]
+        if partners:
+            subcliques.append(sorted([position, *partners]))
+    return subcliques
+
+
 def _similar_groups(
     entries: dict[str, _Entry], config: DuplicatesConfig
 ) -> tuple[list[DuplicateGroup], bool]:
@@ -378,25 +416,47 @@ def _similar_groups(
         logger.warning(ls.DUPLICATES_GROUPS_TRUNCATED.format(cap=max_groups))
     truncated = pairs_truncated or cliques_truncated
     groups: list[DuplicateGroup] = []
+    seen_member_sets: set[frozenset[str]] = set()
     for clique in cliques:
-        similarity = min(
-            _jaccard(order[left].branches, order[right].branches)
-            for at, left in enumerate(clique)
-            for right in clique[at + 1 :]
-        )
         members = _drop_contained_members(
             [member for position in clique for member in order[position].members]
         )
-        if len(members) < 2:
-            continue
-        groups.append(
-            DuplicateGroup(
-                kind=cs.KIND_SIMILAR,
-                similarity=round(similarity, 3),
-                node_count=max(order[position].node_count for position in clique),
-                members=_sorted_members(members),
+        emit = [(clique, members)]
+        emit.extend(
+            (
+                subclique,
+                _drop_contained_members(
+                    [
+                        member
+                        for position in subclique
+                        for member in order[position].members
+                    ]
+                ),
             )
+            for subclique in _supplemental_cliques(clique, order, members)
         )
+        for group_positions, group_members in emit:
+            if len(group_members) < 2:
+                continue
+            key = frozenset(m[cs.KEY_QUALIFIED_NAME] for m in group_members)
+            if key in seen_member_sets:
+                continue
+            seen_member_sets.add(key)
+            similarity = min(
+                _jaccard(order[left].branches, order[right].branches)
+                for at, left in enumerate(group_positions)
+                for right in group_positions[at + 1 :]
+            )
+            groups.append(
+                DuplicateGroup(
+                    kind=cs.KIND_SIMILAR,
+                    similarity=round(similarity, 3),
+                    node_count=max(
+                        order[position].node_count for position in group_positions
+                    ),
+                    members=_sorted_members(group_members),
+                )
+            )
     return groups, truncated
 
 

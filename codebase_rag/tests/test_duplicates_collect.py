@@ -635,6 +635,89 @@ class TestSimilarGroups:
                 and "proj.b.factory_two.helper" in members
             )
 
+    def test_dropped_closure_entry_keeps_standalone_partner_pair(self) -> None:
+        # Two similar factories, their identical closures (one exact entry),
+        # and a standalone function similar to everything: one 4-entry
+        # clique. Dropping the nested closures from the main group must not
+        # erase the closure-to-standalone relationship - it is not covered
+        # by any exact group, so a supplemental group carries it.
+        closure_branches = [f"b{i}" for i in range(5)]
+        factory_a = [f"b{i}" for i in range(9)] + ["x1"]
+        factory_b = [f"b{i}" for i in range(9)] + ["x2"]
+        standalone = [f"b{i}" for i in range(6)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.a.factory_one",
+                    "aaaa",
+                    factory_a,
+                    path="proj/a.py",
+                    start_line=10,
+                    end_line=40,
+                ),
+                _row(
+                    "proj.b.factory_two",
+                    "eeee",
+                    factory_b,
+                    path="proj/b.py",
+                    start_line=10,
+                    end_line=40,
+                ),
+                _row(
+                    "proj.a.factory_one.helper",
+                    "cccc",
+                    closure_branches,
+                    path="proj/a.py",
+                    start_line=15,
+                    end_line=30,
+                ),
+                _row(
+                    "proj.b.factory_two.helper",
+                    "cccc",
+                    closure_branches,
+                    path="proj/b.py",
+                    start_line=15,
+                    end_line=30,
+                ),
+                _row(
+                    "proj.s.standalone",
+                    "dddd",
+                    standalone,
+                    path="proj/s.py",
+                    start_line=3,
+                    end_line=20,
+                ),
+            ]
+        )
+        config = default_duplicates_config(threshold=0.5)
+        groups = collect_duplicates(ingestor, "proj", config)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        # Main clique group: factories with the standalone, closures pruned.
+        assert {
+            "proj.a.factory_one",
+            "proj.b.factory_two",
+            "proj.s.standalone",
+        } in member_sets
+        # Supplemental group: the pruned closure entry with its non-container
+        # partner, so the closure-standalone relationship survives.
+        assert {
+            "proj.a.factory_one.helper",
+            "proj.b.factory_two.helper",
+            "proj.s.standalone",
+        } in member_sets
+        # And never a factory beside its own closure.
+        for members in member_sets:
+            assert not (
+                "proj.a.factory_one" in members
+                and "proj.a.factory_one.helper" in members
+            )
+            assert not (
+                "proj.b.factory_two" in members
+                and "proj.b.factory_two.helper" in members
+            )
+
     def test_parameterized_qn_still_proves_same_line_nesting(self) -> None:
         # C#/Java qualified names carry a signature (`Run(int)`) that a
         # nested local function's qn does not repeat (`Run.Local`): the
