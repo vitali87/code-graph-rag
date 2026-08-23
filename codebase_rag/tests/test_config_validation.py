@@ -159,6 +159,25 @@ class TestGraphBackendDefaulting:
         config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
         assert config.GRAPH_BACKEND == cs.GraphBackend.ARCADEDB
 
+    def test_padded_value_is_normalized(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", " memgraph ")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.MEMGRAPH
+
+    def test_mixed_case_value_is_normalized(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "Memgraph")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.MEMGRAPH
+
+    def test_padded_mixed_case_arcadedb_is_normalized(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "  ArcadeDB  ")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.ARCADEDB
+
     def test_invalid_value_still_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GRAPH_BACKEND", "not-a-backend")
         with pytest.raises(ValueError, match="GRAPH_BACKEND"):

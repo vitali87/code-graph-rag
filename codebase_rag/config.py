@@ -173,11 +173,18 @@ class AppConfig(BaseSettings):
 
     @field_validator("GRAPH_BACKEND", mode="before")
     @classmethod
-    def _default_empty_graph_backend(cls, value: object) -> object:
+    def _normalize_graph_backend(cls, value: object) -> object:
         # An unset, empty, or blanked-out GRAPH_BACKEND env var must fall
         # back to the default rather than fail enum validation -- blanking
-        # a value is the obvious way a user "turns it off" in .env.
-        if isinstance(value, str) and not value.strip():
+        # a value is the obvious way a user "turns it off" in .env. A
+        # non-blank value is stripped and lower-cased before the enum
+        # validates it, so whitespace padding (" memgraph ") or mixed case
+        # ("Memgraph") still resolve; a genuinely invalid value like
+        # "postgres" still fails enum validation after normalization.
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if not normalized:
             return cs.GraphBackend.MEMGRAPH
         return value
 
