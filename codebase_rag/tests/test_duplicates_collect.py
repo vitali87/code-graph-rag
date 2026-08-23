@@ -6,6 +6,7 @@ from __future__ import annotations
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.duplicates import (
+    _maximal_cliques,
     collect_duplicates,
     collect_duplicates_with_coverage,
     default_duplicates_config,
@@ -245,6 +246,26 @@ class TestSimilarGroups:
         assert by_members[frozenset({"proj.a.one", "proj.c.three"})][
             "similarity"
         ] == round(4 / 7, 3)
+
+    def test_clique_enumeration_is_capped_with_truncation_signal(self) -> None:
+        # Moon-Moser K(2,2,2): three partner pairs, every vertex adjacent to
+        # all but its partner -> 2*2*2 = 8 maximal cliques. A pathological
+        # threshold graph grows this exponentially, so enumeration must stop
+        # at the cap and say so instead of materializing everything.
+        partners = {0: 1, 1: 0, 2: 3, 3: 2, 4: 5, 5: 4}
+        adjacency = {
+            vertex: {other for other in range(6) if other not in (vertex, partner)}
+            for vertex, partner in partners.items()
+        }
+        full, truncated = _maximal_cliques(adjacency, cap=100)
+        assert len(full) == 8
+        assert truncated is False
+
+        capped, truncated = _maximal_cliques(adjacency, cap=3)
+        assert len(capped) == 3
+        assert truncated is True
+        # Deterministic prefix: the capped result is a subset of the full one.
+        assert all(clique in full for clique in capped)
 
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(

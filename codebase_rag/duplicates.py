@@ -12,8 +12,11 @@ from __future__ import annotations
 
 from fnmatch import fnmatch
 
+from loguru import logger
+
 from . import constants as cs
 from . import cypher_queries as cq
+from . import logs as ls
 from .types_defs import (
     DuplicateGroup,
     DuplicateMember,
@@ -197,8 +200,13 @@ def _similar_groups(
         adjacency.setdefault(left, set()).add(right)
         adjacency.setdefault(right, set()).add(left)
 
+    cliques, truncated = _maximal_cliques(adjacency, cs.DUPLICATES_MAX_SIMILAR_GROUPS)
+    if truncated:
+        logger.warning(
+            ls.DUPLICATES_GROUPS_TRUNCATED.format(cap=cs.DUPLICATES_MAX_SIMILAR_GROUPS)
+        )
     groups: list[DuplicateGroup] = []
-    for clique in _maximal_cliques(adjacency):
+    for clique in cliques:
         similarity = min(
             _jaccard(order[left].branches, order[right].branches)
             for at, left in enumerate(clique)
@@ -216,30 +224,40 @@ def _similar_groups(
     return groups
 
 
-def _maximal_cliques(adjacency: dict[int, set[int]]) -> list[list[int]]:
+def _maximal_cliques(
+    adjacency: dict[int, set[int]], cap: int
+) -> tuple[list[list[int]], bool]:
     # Bron-Kerbosch with pivoting, deterministic via sorted iteration. The
     # threshold graph is sparse (edges need shared discriminative branches,
     # capped by DUPLICATES_HOT_FINGERPRINT_CAP) and its dense spots are
-    # near-cliques, the cheap case for pivoted Bron-Kerbosch.
+    # near-cliques, the cheap case for pivoted Bron-Kerbosch. A pathological
+    # graph still has exponentially many maximal cliques (Moon-Moser), so
+    # enumeration stops after `cap` cliques: with pivoting, work between two
+    # emitted cliques is polynomial, making the cap a bound on total work,
+    # not just on output size. Returns (cliques, truncated).
     cliques: list[list[int]] = []
 
-    def expand(taken: set[int], candidates: set[int], excluded: set[int]) -> None:
+    def expand(taken: set[int], candidates: set[int], excluded: set[int]) -> bool:
+        if len(cliques) >= cap:
+            return False
         if not candidates and not excluded:
             if len(taken) > 1:
                 cliques.append(sorted(taken))
-            return
+            return True
         pivot = max(
             sorted(candidates | excluded),
             key=lambda vertex: len(adjacency[vertex] & candidates),
         )
         for vertex in sorted(candidates - adjacency[pivot]):
-            expand(
+            if not expand(
                 taken | {vertex},
                 candidates & adjacency[vertex],
                 excluded & adjacency[vertex],
-            )
+            ):
+                return False
             candidates = candidates - {vertex}
             excluded = excluded | {vertex}
+        return True
 
-    expand(set(), set(adjacency), set())
-    return sorted(cliques)
+    completed = expand(set(), set(adjacency), set())
+    return sorted(cliques), not completed

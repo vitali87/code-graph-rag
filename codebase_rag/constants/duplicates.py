@@ -69,6 +69,10 @@ DUPLICATES_DEFAULT_MIN_NODES = 15
 # discriminative (a common guard clause); its posting list generates no
 # candidate pairs.
 DUPLICATES_HOT_FINGERPRINT_CAP = 50
+# Hard budget on materialized similar groups: a pathological threshold graph
+# (Moon-Moser shape) has exponentially many maximal cliques, so enumeration
+# stops here and the scan reports truncation instead of hanging.
+DUPLICATES_MAX_SIMILAR_GROUPS = 1000
 
 KIND_EXACT = "exact"
 KIND_SIMILAR = "similar"
