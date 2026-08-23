@@ -91,11 +91,13 @@ def _entries_from_rows(
 
     A C++ declaration/definition pair and the registry's DUP_QN variants
     ("@"/"_" suffixes) can put the same source span in the graph more than
-    once; the (path, start_line) key collapses them while treating the
-    qualified name as opaque.
+    once; the span key collapses them while treating the qualified name as
+    opaque. The key carries start_col and the fingerprint so two distinct
+    definitions sharing a start line (minified or generated one-liners) are
+    never mistaken for one registration of the same definition.
     """
     entries: dict[str, _Entry] = {}
-    seen_spans: set[tuple[str, int]] = set()
+    seen_spans: set[tuple[str, int, int, str]] = set()
     for row in rows:
         fingerprint = str(row.get(cs.KEY_AST_FINGERPRINT) or "")
         node_count = int(str(row.get(cs.KEY_AST_FINGERPRINT_NODES) or 0))
@@ -105,7 +107,8 @@ def _entries_from_rows(
         if any(fnmatch(path, pattern) for pattern in config.exclude_patterns):
             continue
         start_line = int(str(row.get(cs.KEY_START_LINE) or 0))
-        span = (path, start_line)
+        start_col = int(str(row.get(cs.KEY_START_COL) or 0))
+        span = (path, start_line, start_col, fingerprint)
         if span in seen_spans:
             continue
         seen_spans.add(span)
@@ -164,6 +167,11 @@ def _candidate_pairs(order: list[_Entry]) -> set[tuple[int, int]]:
     return pairs
 
 
+def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
+    union = len(first | second)
+    return len(first & second) / union if union else 0.0
+
+
 def _similar_groups(
     entries: dict[str, _Entry], threshold: float
 ) -> list[DuplicateGroup]:
@@ -178,7 +186,6 @@ def _similar_groups(
             node = parent[node]
         return node
 
-    pair_similarity: dict[tuple[int, int], float] = {}
     for left, right in _candidate_pairs(order):
         first, second = order[left].branches, order[right].branches
         smaller, larger = min(len(first), len(second)), max(len(first), len(second))
@@ -186,26 +193,53 @@ def _similar_groups(
         # overlap cannot exceed smaller/larger.
         if larger == 0 or smaller / larger < threshold:
             continue
-        union = len(first | second)
-        similarity = len(first & second) / union if union else 0.0
-        if similarity < threshold:
+        if _jaccard(first, second) < threshold:
             continue
-        pair_similarity[(left, right)] = similarity
         parent[find(left)] = find(right)
 
-    clusters: dict[int, list[int]] = {}
+    components: dict[int, list[int]] = {}
     for position in range(len(order)):
-        clusters.setdefault(find(position), []).append(position)
+        components.setdefault(find(position), []).append(position)
 
     groups: list[DuplicateGroup] = []
-    for cluster in clusters.values():
+    for component in components.values():
+        if len(component) < 2:
+            continue
+        groups.extend(_complete_link_groups(order, component, threshold))
+    return groups
+
+
+def _complete_link_groups(
+    order: list[_Entry], component: list[int], threshold: float
+) -> list[DuplicateGroup]:
+    # The union-find component is connected by threshold-qualified edges, but
+    # connectivity is transitive while the threshold criterion is pairwise:
+    # A-B and B-C qualifying does not make A-C similar. Reported groups must
+    # honour the pairwise invariant, so each component is re-clustered
+    # complete-link: an entry joins a cluster only when it clears the
+    # threshold against EVERY current member. Components are small (bounded
+    # by the hot-fingerprint cap), so the quadratic check is cheap.
+    ordered = sorted(component, key=lambda position: order[position].fingerprint)
+    clusters: list[list[int]] = []
+    for position in ordered:
+        for cluster in clusters:
+            if all(
+                _jaccard(order[position].branches, order[member].branches) >= threshold
+                for member in cluster
+            ):
+                cluster.append(position)
+                break
+        else:
+            clusters.append([position])
+
+    groups: list[DuplicateGroup] = []
+    for cluster in clusters:
         if len(cluster) < 2:
             continue
-        in_cluster = set(cluster)
         similarity = min(
-            value
-            for (left, right), value in pair_similarity.items()
-            if left in in_cluster and right in in_cluster
+            _jaccard(order[left].branches, order[right].branches)
+            for at, left in enumerate(cluster)
+            for right in cluster[at + 1 :]
         )
         members = [member for position in cluster for member in order[position].members]
         groups.append(

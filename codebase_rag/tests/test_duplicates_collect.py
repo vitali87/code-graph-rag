@@ -38,6 +38,7 @@ def _row(
     nodes: int = 20,
     path: str | None = None,
     start_line: int = 1,
+    start_col: int = 0,
     label: str = _FUNCTION,
 ) -> ResultRow:
     return {
@@ -46,6 +47,7 @@ def _row(
         "name": qn.rsplit(".", 1)[-1],
         "path": path if path is not None else f"proj/{qn.replace('.', '_')}.py",
         "start_line": start_line,
+        "start_col": start_col,
         "end_line": start_line + 9,
         "ast_fingerprint": fingerprint,
         "ast_fingerprint_nodes": nodes,
@@ -95,6 +97,31 @@ class TestExactGroups:
         groups = collect_duplicates(ingestor, "proj", _CONFIG)
         assert len(groups) == 1
         assert len(groups[0]["members"]) == 2
+
+    def test_same_line_distinct_definitions_both_survive(self) -> None:
+        # Two DIFFERENT definitions can share a start line (generated or
+        # minified one-liners). Only true re-registrations of one definition
+        # may be collapsed, so the span key carries column and fingerprint.
+        ingestor = FakeIngestor(
+            [
+                _row("proj.r.alpha", "aaaa", ["b1"], path="proj/r.py", start_line=3),
+                _row(
+                    "proj.r.beta@1",
+                    "eeee",
+                    ["b2"],
+                    path="proj/r.py",
+                    start_line=3,
+                    start_col=40,
+                ),
+                _row("proj.o.beta_copy", "eeee", ["b2"], path="proj/o.py"),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        assert len(groups) == 1
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
+            "proj.r.beta@1",
+            "proj.o.beta_copy",
+        }
 
     def test_exclude_glob_removes_members(self) -> None:
         config = default_duplicates_config(exclude_patterns=("*_generated*",))
@@ -165,6 +192,27 @@ class TestSimilarGroups:
         groups = collect_duplicates(ingestor, "proj", _CONFIG)
         assert len(groups) == 1
         assert len(groups[0]["members"]) == 3
+
+    def test_below_threshold_pair_is_not_grouped_transitively(self) -> None:
+        # A-B = 4/6 ~ 0.667 and B-C = 4/8 = 0.5 qualify at threshold 0.5,
+        # but A-C = 2/8 = 0.25 does not. Connectivity is transitive while
+        # the threshold is pairwise: the report must not present A and C as
+        # near-duplicates, so complete-link clustering keeps only {A, B}.
+        config = default_duplicates_config(threshold=0.5)
+        ingestor = FakeIngestor(
+            [
+                _row("proj.a.one", "aaaa", ["b1", "b2", "b3", "b4"]),
+                _row("proj.b.two", "bbbb", ["b1", "b2", "b3", "b4", "b5", "b6"]),
+                _row("proj.c.three", "cccc", ["b3", "b4", "b5", "b6", "b7", "b8"]),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", config)
+        assert len(groups) == 1
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
+            "proj.a.one",
+            "proj.b.two",
+        }
+        assert groups[0]["similarity"] == round(4 / 6, 3)
 
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(

@@ -1520,7 +1520,16 @@ def _emit_duplicates(
     skipped_symbols: int = 0,
 ) -> None:
     if output_format == cs.DuplicatesFormat.JSON:
-        payload = json.dumps(groups, indent=2)
+        # Envelope, not a bare list: the coverage count must reach JSON
+        # consumers too, or a CI artifact reads as a complete scan when
+        # symbols went unanalyzed.
+        payload = json.dumps(
+            {
+                cs.KEY_DUPLICATE_GROUPS: groups,
+                cs.KEY_SKIPPED_SYMBOLS: skipped_symbols,
+            },
+            indent=2,
+        )
         if output is not None:
             output.write_text(payload, encoding=cs.ENCODING_UTF8)
             app_context.console.print(

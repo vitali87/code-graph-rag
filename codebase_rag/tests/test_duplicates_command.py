@@ -82,18 +82,24 @@ class TestDuplicatesCommand:
         assert "total_price" in result.output
         assert "sum_weights" in result.output
 
-    def test_json_format_emits_groups(
+    def test_json_format_emits_envelope_with_coverage(
         self, runner: CliRunner, clone_rows: list[ResultRow]
     ) -> None:
-        mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=clone_rows)
+        mock_ingestor = _make_mock_ingestor(
+            projects=["myproj"], rows=clone_rows, skipped=3
+        )
         with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates", "--format", "json"])
 
         assert result.exit_code == 0
         payload = json.loads(result.output)
-        assert len(payload) == 1
-        assert payload[0]["kind"] == cs.KIND_EXACT
-        assert {m["qualified_name"] for m in payload[0]["members"]} == {
+        # Envelope, not a bare list: JSON consumers must see the coverage
+        # count or an incomplete scan reads as a complete one.
+        assert payload[cs.KEY_SKIPPED_SYMBOLS] == 3
+        groups = payload[cs.KEY_DUPLICATE_GROUPS]
+        assert len(groups) == 1
+        assert groups[0]["kind"] == cs.KIND_EXACT
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
             "myproj.billing.total_price",
             "myproj.shipping.sum_weights",
         }

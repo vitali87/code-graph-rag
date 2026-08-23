@@ -439,6 +439,36 @@ cgr duplicates --min-size 25
 | `--output`, `-o` | Write the report to this file instead of stdout. |
 | `--fail-on-found` | Exit with code 1 when any duplicate is found (useful in CI). |
 
+The JSON report is an envelope carrying the group list and the scan's
+coverage, so an artifact never reads as a complete scan when some symbols
+could not be analyzed:
+
+```json
+{
+  "groups": [
+    {
+      "kind": "exact",
+      "similarity": 1.0,
+      "node_count": 24,
+      "members": [
+        {
+          "label": "Function",
+          "qualified_name": "myproj.billing.total_price",
+          "name": "total_price",
+          "path": "billing/cart.py",
+          "start_line": 5,
+          "end_line": 12
+        }
+      ]
+    }
+  ],
+  "skipped_symbols": 0
+}
+```
+
+`skipped_symbols` counts functions and methods with no structural
+fingerprint: pattern-tier languages and bodiless declarations.
+
 ## Use in CI
 
 Fail a build when duplication appears, writing a JSON report for the job

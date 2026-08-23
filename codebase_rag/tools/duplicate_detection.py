@@ -59,9 +59,19 @@ def create_find_duplicates_tool(ingestor: QueryProtocol) -> Tool:
         min_size: int = cs.DUPLICATES_DEFAULT_MIN_NODES,
         limit: int = 20,
     ) -> str:
+        if not 0 <= threshold <= 1:
+            return cs.MSG_DUPLICATES_BAD_THRESHOLD.format(threshold=threshold)
+        if min_size < 1:
+            return cs.MSG_DUPLICATES_BAD_MIN_SIZE.format(min_size=min_size)
+        if limit < 1:
+            return cs.MSG_DUPLICATES_BAD_LIMIT.format(limit=limit)
         projects = await asyncio.to_thread(_project_names, ingestor)
         if not projects:
             return cs.MSG_DUPLICATES_NO_PROJECTS
+        if project is not None and project not in projects:
+            return cs.MSG_DUPLICATES_UNKNOWN_PROJECT.format(
+                project=project, projects=projects
+            )
         resolved = project or (projects[0] if len(projects) == 1 else None)
         if resolved is None:
             return cs.MSG_DUPLICATES_AMBIGUOUS.format(projects=projects)
