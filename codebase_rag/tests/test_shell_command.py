@@ -551,6 +551,44 @@ class TestNoninteractiveMode:
             assert result.return_code != 0, cmd
         assert keep.read_text() == "hi"
 
+    async def test_denies_sort_clustered_output_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        # `sort -ro out.txt` clusters `-o` behind another flag, so a prefix
+        # check on "-o" misses it while sort still writes the file; `-rT`
+        # hides the temp-dir option the same way (Greptile review on
+        # PR #1388).
+        keep = temp_project_root / "keep_me.txt"
+        keep.write_text("hi", encoding="utf-8")
+        (temp_project_root / "input.txt").write_text("b\na\n", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        for cmd in (
+            "sort -ro keep_me.txt input.txt",
+            "sort -rokeep_me.txt input.txt",
+            "sort -nro keep_me.txt input.txt",
+            "sort -rT tmpdir input.txt",
+        ):
+            result = await tool.function(mock_ctx, cmd)
+            assert result.return_code != 0, cmd
+            assert "not permitted in this non-interactive session" in result.stderr, cmd
+        assert keep.read_text() == "hi"
+
+    async def test_sort_value_taking_cluster_is_not_misread(
+        self, temp_project_root: Path
+    ) -> None:
+        # In `-k2o`, the `o` is part of -k's KEYDEF value, not the output
+        # option; the cluster walk must stop at a value-taking option.
+        (temp_project_root / "input.txt").write_text("b\na\n", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "sort -rk1 input.txt")
+        assert result.return_code == 0, result.stderr
+
     async def test_denies_uniq_output_operand(self, temp_project_root: Path) -> None:
         # uniq's second positional operand is an OUTPUT file.
         keep = temp_project_root / "keep_me.txt"

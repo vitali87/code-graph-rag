@@ -544,9 +544,26 @@ def _noninteractive_write_form(parts: list[str]) -> bool:
     # output file -- counted through `--`, after which every argument is an
     # operand (CodeRabbit and Greptile reviews on PR #1388).
     if parts[0] == "sort":
-        return any(
-            arg.startswith("-o") or arg.startswith("--output") for arg in parts[1:]
-        )
+        for arg in parts[1:]:
+            if arg == "--":
+                break
+            if arg.startswith("--"):
+                if arg.startswith("--output"):
+                    return True
+                continue
+            if not arg.startswith("-") or len(arg) < 2:
+                continue
+            # Walk the short-option cluster: `-ro` hides the output option
+            # behind other flags, and `-rT` hides the temp-dir option
+            # (Greptile review on PR #1388). A value-taking option (-k, -t,
+            # -S) consumes the rest of the cluster as its value, so an `o`
+            # after one is data, not a flag.
+            for ch in arg[1:]:
+                if ch in "oT":
+                    return True
+                if ch in "ktS":
+                    break
+        return False
     if parts[0] == "uniq":
         operands = 0
         operands_only = False
