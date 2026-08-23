@@ -57,6 +57,11 @@ AST_FP_BLOCK_PARENT_EXTRAS = frozenset({"statement_list", "compound_statement"})
 # nearly every function and would dominate the candidate index.
 AST_FP_MIN_BRANCH_NODES = 5
 
+# Wrapper definitions (C++ template_declaration) carry no body field of
+# their own; the fingerprint walk descends into the child whose type carries
+# this marker (function_definition) to find the real body.
+AST_FP_WRAPPED_DEF_SUBSTRING = "function"
+
 # Byte separators framing a node's token and child digests in the Merkle hash.
 AST_FP_HASH_OPEN = b"("
 AST_FP_HASH_CLOSE = b")"

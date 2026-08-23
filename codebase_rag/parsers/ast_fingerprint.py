@@ -51,7 +51,18 @@ def _resolve_body(func_node: Node) -> Node | None:
     body = func_node.child_by_field_name(cs.FIELD_BODY)
     if body is not None:
         return body
-    return dart_body_node(func_node)
+    dart_body = dart_body_node(func_node)
+    if dart_body is not None:
+        return dart_body
+    # A wrapper definition (C++ template_declaration) has no body field of
+    # its own: the body lives on the inner function_definition. Recursing
+    # also covers nested wrappers (member templates of class templates).
+    for child in func_node.named_children:
+        if cs.AST_FP_WRAPPED_DEF_SUBSTRING in child.type:
+            inner = _resolve_body(child)
+            if inner is not None:
+                return inner
+    return None
 
 
 def _token_for(node: Node) -> str | None:
