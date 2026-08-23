@@ -576,6 +576,108 @@ class TestSimilarGroups:
         assert {"proj.m.factory.inner", "proj.other.cousin"} in member_sets
         assert len(groups) == 2
 
+    def test_all_nested_closure_entry_is_dropped_from_similar_group(self) -> None:
+        # Two similar factories each contain an identical closure (one exact
+        # entry, every member nested in a group co-member). The closure clone
+        # class is the Stage-1 exact group; the similar group must pair the
+        # factories alone, never a factory beside its own closure.
+        shared = [f"b{i}" for i in range(9)]
+        closure_branches = shared[:5]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.a.factory_one",
+                    "aaaa",
+                    [*shared, "x1"],
+                    path="proj/a.py",
+                    start_line=10,
+                    end_line=40,
+                ),
+                _row(
+                    "proj.b.factory_two",
+                    "eeee",
+                    [*shared, "x2"],
+                    path="proj/b.py",
+                    start_line=10,
+                    end_line=40,
+                ),
+                _row(
+                    "proj.a.factory_one.helper",
+                    "cccc",
+                    closure_branches,
+                    path="proj/a.py",
+                    start_line=15,
+                    end_line=30,
+                ),
+                _row(
+                    "proj.b.factory_two.helper",
+                    "cccc",
+                    closure_branches,
+                    path="proj/b.py",
+                    start_line=15,
+                    end_line=30,
+                ),
+            ]
+        )
+        config = default_duplicates_config(threshold=0.5)
+        groups = collect_duplicates(ingestor, "proj", config)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.a.factory_one.helper", "proj.b.factory_two.helper"} in member_sets
+        for members in member_sets:
+            assert not (
+                "proj.a.factory_one" in members
+                and "proj.a.factory_one.helper" in members
+            )
+            assert not (
+                "proj.b.factory_two" in members
+                and "proj.b.factory_two.helper" in members
+            )
+
+    def test_parameterized_qn_still_proves_same_line_nesting(self) -> None:
+        # C#/Java qualified names carry a signature (`Run(int)`) that a
+        # nested local function's qn does not repeat (`Run.Local`): the
+        # hierarchy check must strip signatures or same-line nesting is
+        # never recognized and the method pairs with its own local function.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.N.Sample.Run(int)",
+                    "aaaa",
+                    [*shared, "outer_extra"],
+                    path="proj/Sample.cs",
+                    start_line=5,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.N.Sample.Run.Local",
+                    "bbbb",
+                    shared,
+                    path="proj/Sample.cs",
+                    start_line=5,
+                    start_col=30,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.Other.LocalCopy",
+                    "bbbb",
+                    shared,
+                    path="proj/Other.cs",
+                    start_line=3,
+                    end_line=3,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.N.Sample.Run.Local", "proj.Other.LocalCopy"} in member_sets
+        assert {"proj.N.Sample.Run(int)", "proj.Other.LocalCopy"} in member_sets
+        assert len(groups) == 2
+
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(
             [

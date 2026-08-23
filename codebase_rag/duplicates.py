@@ -256,10 +256,20 @@ _DUP_QN_MARKER_RE = re.compile(
 )
 
 
+# C#/Java qualified names carry a parameter signature ("Run(int)") that a
+# nested definition's qn does not repeat ("Run.Local"); stripped before the
+# hierarchy comparison, alongside the registration markers.
+_QN_SIGNATURE_RE = re.compile(r"\([^()]*\)")
+
+
+def _qn_normalized(qn: str) -> str:
+    return _QN_SIGNATURE_RE.sub("", _DUP_QN_MARKER_RE.sub("", qn))
+
+
 def _qn_within(outer_qn: str, inner_qn: str) -> bool:
-    outer = _DUP_QN_MARKER_RE.sub("", outer_qn)
-    inner = _DUP_QN_MARKER_RE.sub("", inner_qn)
-    return inner.startswith(outer + cs.SEPARATOR_DOT)
+    return _qn_normalized(inner_qn).startswith(
+        _qn_normalized(outer_qn) + cs.SEPARATOR_DOT
+    )
 
 
 def _member_nested_in(outer: DuplicateMember, inner: DuplicateMember) -> bool:
@@ -302,38 +312,28 @@ def _only_nested_members(
 
 
 def _drop_contained_members(
-    expanded: list[tuple[int, DuplicateMember]],
+    members: list[DuplicateMember],
 ) -> list[DuplicateMember]:
     """Drop members nested inside another member of the same group.
 
-    When a closure's fingerprint also matches a copy elsewhere, the entry
-    edge legitimately survives, but expanding the entry's full member list
-    would seat the enclosing function next to its own nested closure. The
-    nested member is the redundant one: its exact-twin relationship is
-    already a Stage-1 group, while the container's only real partner is the
-    external copy. Nesting requires proper containment or a qualified-name
-    hierarchy on an identical span, so two distinct definitions sharing a
-    span (adjacent minified one-liners) both survive. A nested member is
-    only dropped while a same-entry sibling (its exact twin) survives to
-    represent the clone class, so no entry's relationship ever leaves the
-    report.
+    Expanding an entry's full member list can seat an enclosing function
+    next to its own nested closure (the closure's fingerprint matching a
+    copy elsewhere keeps the entry edge legitimately alive, and two similar
+    factories can carry their identical closures as one all-nested entry).
+    The nested member is always the redundant one: whenever its entry has
+    more than one member, the Stage-1 exact group already reports the
+    closure clone class, and its container's real partners stay in this
+    group. Nesting requires proper containment or a qualified-name
+    hierarchy on a shared boundary, so two distinct definitions sharing a
+    span (adjacent minified one-liners) both survive.
     """
-    nested = [
-        any(
-            other is not member and _member_nested_in(other, member)
-            for _pos, other in expanded
-        )
-        for _pos, member in expanded
-    ]
-    entries_with_free_member = {
-        position
-        for (position, _member), is_nested in zip(expanded, nested, strict=True)
-        if not is_nested
-    }
     return [
         member
-        for (position, member), is_nested in zip(expanded, nested, strict=True)
-        if not (is_nested and position in entries_with_free_member)
+        for member in members
+        if not any(
+            other is not member and _member_nested_in(other, member)
+            for other in members
+        )
     ]
 
 
@@ -385,11 +385,7 @@ def _similar_groups(
             for right in clique[at + 1 :]
         )
         members = _drop_contained_members(
-            [
-                (position, member)
-                for position in clique
-                for member in order[position].members
-            ]
+            [member for position in clique for member in order[position].members]
         )
         if len(members) < 2:
             continue
