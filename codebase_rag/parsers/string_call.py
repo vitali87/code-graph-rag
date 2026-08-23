@@ -46,23 +46,51 @@ CONFIG_PATH_ENV = "CGR_CONFIG_PATH"
 _QUOTES = "\"'`"
 # JDBC names its target inside an escape expression: `{call usp_x(?)}`, or
 # `{?= call fn(?)}` for a function with a return value. The routine name is
-# the token after `call`, still possibly schema-qualified.
-_JDBC_CALL = re.compile(
-    r"^\{\s*(?:\?\s*=\s*)?call\s+([^\s({}]+)\s*(?:\(.*\))?\s*\}$",
-    re.IGNORECASE | re.DOTALL,
+# the token after `call`, still possibly schema-qualified; the head anchors
+# linearly and the closing brace is checked separately, so the pattern
+# cannot backtrack super-linearly.
+_JDBC_CALL_HEAD = re.compile(
+    r"^\{\s*(?:\?\s*=\s*)?call\s+([^\s({}]+)",
+    re.IGNORECASE,
 )
-# ECMAScript's braced form (`\u{5f}` .. `\u{10FFFF}`), which the
-# unicode_escape codec does not know. The leading backslashes are captured so
-# parity decides: an even count means the `u{...}` is literal text behind
-# escaped backslashes and stays for the codec to handle.
-_BRACED_UNICODE = re.compile(r"(\\+)u\{([0-9a-fA-F]{1,6})\}")
+# ECMAScript's braced form (`\u{5f}` .. `\u{10FFFF}`), matched AFTER one
+# unescaped backslash has been consumed by the scanner, which also settles
+# escape parity (an even backslash run means literal text).
+_BRACED_TAIL = re.compile(r"u\{([0-9a-fA-F]{1,6})\}")
 
 
-def _decode_braced_escape(match: re.Match[str]) -> str:
-    slashes = match.group(1)
-    if len(slashes) % 2 == 0:
-        return match.group(0)
-    return slashes[:-1] + chr(int(match.group(2), 16))
+def _decode_braced_escapes(value: str) -> str:
+    """Replace `\\u{...}` with its character, respecting escape parity."""
+    out: list[str] = []
+    i = 0
+    while i < len(value):
+        ch = value[i]
+        if ch != "\\":
+            out.append(ch)
+            i += 1
+            continue
+        if i + 1 < len(value) and value[i + 1] == "\\":
+            # An escaped backslash: whatever follows is literal text; keep
+            # the pair spelled for the unicode_escape codec.
+            out.append("\\\\")
+            i += 2
+            continue
+        tail = _BRACED_TAIL.match(value, i + 1)
+        if tail:
+            out.append(chr(int(tail.group(1), 16)))
+            i = tail.end()
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _unwrap_jdbc_call(value: str) -> str:
+    """`{call usp_x(?)}` -> `usp_x`; anything else passes through."""
+    if not value.endswith("}"):
+        return value
+    head = _JDBC_CALL_HEAD.match(value)
+    return head.group(1) if head else value
 
 
 @dataclass(frozen=True)
@@ -143,9 +171,11 @@ def _string_literal_value(node: Node) -> str | None:
         # that the runtime string does not contain; resolve the runtime
         # string or the lookup misses the routine it plainly names.
         try:
-            value = _BRACED_UNICODE.sub(_decode_braced_escape, value)
+            value = _decode_braced_escapes(value)
             value = value.encode("latin-1", "backslashreplace").decode("unicode_escape")
-        except (UnicodeDecodeError, ValueError):
+        except ValueError:
+            # Covers UnicodeDecodeError too: an undecodable spelling names
+            # nothing knowable.
             return None
     return value
 
@@ -174,37 +204,41 @@ def string_call_target(
     for spec in specs:
         if last_segment != spec.callee:
             continue
-        # The arguments FIELD first: a generic call (`callSp<Proc>("usp_x")`)
-        # puts a type_arguments child before the value arguments, and a
-        # substring scan would pick it up and see no string literal. The scan
-        # stays as a fallback for grammars without the field, skipping the
-        # type-argument nodes it can now tell apart.
-        arguments = call_node.child_by_field_name("arguments") or next(
-            (
-                child
-                for child in call_node.named_children
-                if "argument" in child.type and "type" not in child.type
-            ),
-            None,
-        )
-        if arguments is None:
-            return None
-        args = [
-            child
-            for child in arguments.named_children
-            if child.type not in {"comment", "line_comment", "block_comment"}
-        ]
-        if spec.arg_index >= len(args):
+        args = _call_argument_nodes(call_node)
+        if args is None or spec.arg_index >= len(args):
             return None
         value = _string_literal_value(args[spec.arg_index])
         if not value:
             return None
-        jdbc = _JDBC_CALL.match(value)
-        if jdbc:
-            value = jdbc.group(1)
         # The SAME normalizer as the definition side: PostgreSQL folds an
         # unquoted identifier to lowercase, so callSp('MyFunc') must look up
         # myfunc — quoting inside the string ('"MyFunc"') preserves case,
         # exactly as it would in SQL.
-        return normalize_sql_reference(value) or None
+        return normalize_sql_reference(_unwrap_jdbc_call(value)) or None
     return None
+
+
+def _call_argument_nodes(call_node: Node) -> list[Node] | None:
+    """The call's value arguments, or None when it carries none at all.
+
+    The arguments FIELD comes first: a generic call (`callSp<Proc>("usp_x")`)
+    puts a type_arguments child before the value arguments, and a substring
+    scan would pick it up and see no string literal. The scan stays as a
+    fallback for grammars without the field, skipping the type-argument nodes
+    it can tell apart.
+    """
+    arguments = call_node.child_by_field_name("arguments") or next(
+        (
+            child
+            for child in call_node.named_children
+            if "argument" in child.type and "type" not in child.type
+        ),
+        None,
+    )
+    if arguments is None:
+        return None
+    return [
+        child
+        for child in arguments.named_children
+        if child.type not in {"comment", "line_comment", "block_comment"}
+    ]
