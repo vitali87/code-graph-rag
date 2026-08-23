@@ -103,11 +103,13 @@ make dev
 
 This installs all dependencies and sets up pre-commit hooks automatically.
 
-`make dev` does not sync the `arcadedb` or `milvus` extras — they are
-optional, not part of the default dev footprint, so `make
-test-integration-arcadedb` silently skips every test
-(`pytest.importorskip`) without them. To match what CI syncs and run the
-full suite locally, including the ArcadeDB backend:
+`make dev` syncs the `arcadedb` extra so the `neo4j` driver is present —
+several unit test modules import `codebase_rag.services.graph.arcadedb` at
+collection time, and without the driver installed they fail to *collect*
+(there is no `pytest.importorskip` guard anywhere in this suite). `make
+dev` does not sync the `milvus` extra, since it is optional and not part
+of the default dev footprint. To match exactly what CI syncs and run the
+full suite locally, including Milvus-backed tests:
 
 ```bash
 uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra arcadedb --group dev

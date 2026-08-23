@@ -25,7 +25,7 @@ python: ## Install project dependencies for Python only
 	uv sync
 
 dev: ## Setup development environment (install deps + pre-commit hooks)
-	uv sync --extra treesitter-full --extra test --extra semantic --group dev
+	uv sync --extra treesitter-full --extra test --extra semantic --extra arcadedb --group dev
 	$(PYTHON) pre-commit install
 	$(PYTHON) pre-commit install --hook-type commit-msg
 	@echo "✅ Development environment ready!"
@@ -40,13 +40,15 @@ test-integration: ## Run integration tests (requires Docker)
 	$(PYTHON) pytest -m "integration" -v
 
 test-integration-memgraph: ## Run integration tests against Memgraph only
-	$(PYTHON) pytest -m "integration" -k memgraph -v
+	# `-k memgraph` alone would miss `TestLegacyPathKeyMigration`, which is
+	# Memgraph-only by construction but not parametrized (and so carries no
+	# "memgraph" id) -- see its docstring in test_cross_project_folder_identity.py.
+	$(PYTHON) pytest -m "integration" -k "memgraph or TestLegacyPathKeyMigration" -v
 
-# `make dev` does not sync the `arcadedb` extra (it is optional, not part of
-# the default dev footprint), so this silently importorskip-skips every
-# ArcadeDB test unless you first run:
-#   uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra arcadedb --group dev
-# (the same line CI uses -- see docs/getting-started/installation.md).
+# `make dev` syncs the `arcadedb` extra (matching CI), so the `neo4j` driver
+# it requires is present and these tests collect normally. There is no
+# `pytest.importorskip` guard anywhere in this suite; without the extra the
+# ArcadeDB test modules fail to *collect* instead of skipping.
 test-integration-arcadedb: ## Run integration tests against ArcadeDB only (needs: uv sync --extra arcadedb)
 	$(PYTHON) pytest -m "integration" -k arcadedb -v
 
