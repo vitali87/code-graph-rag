@@ -339,7 +339,7 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
     ),
     SupportedLanguage.SQL: LanguageMetadata(
         LanguageStatus.DEV,
-        "Stored functions and procedures (CREATE FUNCTION/PROCEDURE), schema-qualified names, invocations between routines. PL/pgSQL bodies are not parsed in depth: the upstream grammar parses plain SQL statements only",
+        "Stored functions (CREATE FUNCTION), schema-qualified names, invocations between routines. CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only",
         "SQL (PostgreSQL)",
     ),
 }
