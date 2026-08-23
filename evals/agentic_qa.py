@@ -175,19 +175,28 @@ def _visit_call_site(
         _visit_call_site(rel, node.body, [*stack, _LAMBDA_SCOPE], first_party, sites)
         return
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Lambda):
+        # An immediately invoked lambda may be wrapped: `(f := lambda: ...)()`
+        # makes the call target a NamedExpr around the lambda (Greptile review
+        # on PR #1388), and parentheses do not add a node.
+        target = node.func
+        while isinstance(target, ast.NamedExpr):
+            target = target.value
+        if isinstance(target, ast.Lambda):
             # `(lambda ...: body)(args)` runs the body immediately in THIS
             # scope, so its calls belong to the enclosing function, not an
-            # anonymous lambda scope (Greptile review on PR #1388). Visit the
-            # arguments here and the body with the current stack, bypassing
-            # the deferred-lambda marker below.
+            # anonymous lambda scope. Visit the arguments and the walrus
+            # target's own value here, then the body with the current stack,
+            # bypassing the deferred-lambda marker below.
             for arg in (*node.args, *(kw.value for kw in node.keywords)):
                 _visit_call_site(rel, arg, stack, first_party, sites)
-            lam = node.func
-            for expr in (*lam.args.defaults, *lam.args.kw_defaults):
+            walrus = node.func
+            while isinstance(walrus, ast.NamedExpr):
+                _visit_call_site(rel, walrus.target, stack, first_party, sites)
+                walrus = walrus.value
+            for expr in (*target.args.defaults, *target.args.kw_defaults):
                 if expr is not None:
                     _visit_call_site(rel, expr, stack, first_party, sites)
-            _visit_call_site(rel, lam.body, stack, first_party, sites)
+            _visit_call_site(rel, target.body, stack, first_party, sites)
             return
         if (name := _callee_name(node.func)) and name in first_party:
             sites.append(_CallSite(rel, stack[-1] if stack else None, name))
@@ -474,6 +483,21 @@ def summarize_qa_records(records: list[QARecord]) -> dict[str, float]:
     }
 
 
+def _backend_identity(config: object) -> dict[str, object]:
+    # The non-secret identity of one model backend: the same model id served
+    # through a different provider, endpoint, provider type, project, region,
+    # or thinking budget has different accuracy, latency, and token behavior.
+    return {
+        "model": getattr(config, "model_id", None),
+        "provider": getattr(config, "provider", None),
+        "endpoint": getattr(config, "endpoint", None),
+        "provider_type": getattr(config, "provider_type", None),
+        "project": getattr(config, "project_id", None),
+        "region": getattr(config, "region", None),
+        "thinking_budget": getattr(config, "thinking_budget", None),
+    }
+
+
 def _run_fingerprint(
     corpus: str,
     commit: str,
@@ -482,33 +506,29 @@ def _run_fingerprint(
     seed: int,
     config: object,
     *,
+    cypher: object = None,
     agent_retries: int | None = None,
     shell_timeout: int | None = None,
 ) -> dict[str, object]:
-    # Backend identity beyond the model id: the same model served through a
-    # different provider, endpoint, provider type, project, or region has
-    # different latency and token behavior, so records from one backend must
-    # never resume into a run on another (Greptile review on PR #1388), and
-    # thinking_budget changes model behavior the same way (CodeRabbit review
-    # on PR #1388). Execution settings that shape a record's outcome (agent
-    # retry count, shell probe timeout) are part of the identity too
-    # (Greptile review on PR #1388). All fields are non-secret configuration.
-    return {
+    # Records from one backend must never resume into a run on another
+    # (Greptile/CodeRabbit reviews on PR #1388). The orchestrator drives the
+    # answer and the separate Cypher backend drives graph-condition queries,
+    # so both identities count; execution settings that shape a record's
+    # outcome (agent retry count, shell probe timeout) do too. All fields are
+    # non-secret configuration.
+    fingerprint: dict[str, object] = {
         "corpus": corpus,
         "commit": commit,
         "qtype": qtype,
         "sample": sample,
         "seed": seed,
-        "model": getattr(config, "model_id", None),
-        "provider": getattr(config, "provider", None),
-        "endpoint": getattr(config, "endpoint", None),
-        "provider_type": getattr(config, "provider_type", None),
-        "project": getattr(config, "project_id", None),
-        "region": getattr(config, "region", None),
-        "thinking_budget": getattr(config, "thinking_budget", None),
+        **_backend_identity(config),
         "agent_retries": agent_retries,
         "shell_timeout": shell_timeout,
     }
+    for key, value in _backend_identity(cypher).items():
+        fingerprint[f"cypher_{key}"] = value
+    return fingerprint
 
 
 def _init_records_file(
@@ -653,6 +673,7 @@ def main(
         sample,
         seed,
         settings.active_orchestrator_config,
+        cypher=settings.active_cypher_config,
         agent_retries=settings.AGENT_RETRIES,
         shell_timeout=settings.SHELL_COMMAND_TIMEOUT,
     )

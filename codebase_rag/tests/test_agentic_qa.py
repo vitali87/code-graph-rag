@@ -359,6 +359,23 @@ class TestCollectCallSiteScopes:
         for site in sites:
             assert site.func != _LAMBDA_SCOPE, site
 
+    def test_namedexpr_bound_immediate_lambda_belongs_to_enclosing_scope(
+        self,
+    ) -> None:
+        # `@(f := lambda: make_decorator())()` binds the lambda with a walrus
+        # then invokes it immediately; the call target is a NamedExpr wrapping
+        # the lambda, so it must be unwrapped or the case is dropped (Greptile
+        # review on PR #1388).
+        from evals.agentic_qa import _LAMBDA_SCOPE
+
+        src = (
+            "@(factory := lambda: make_decorator())()\ndef decorated():\n    return 1\n"
+        )
+        sites = self._sites(src)
+        assert "make_decorator" in {s.callee for s in sites}
+        for site in sites:
+            assert site.func != _LAMBDA_SCOPE, site
+
 
 def test_run_fingerprint_includes_backend_identity() -> None:
     # The same model id served through a different provider, endpoint, or
@@ -377,6 +394,25 @@ def test_run_fingerprint_includes_backend_identity() -> None:
     assert fp_base != fp_other
     assert fp_base["provider"] == "anthropic"
     assert fp_other["endpoint"] == "https://proxy.example"
+
+
+def test_run_fingerprint_includes_cypher_backend() -> None:
+    # Graph-condition runs generate Cypher with a separate backend
+    # (active_cypher_config); changing its provider/model/endpoint changes
+    # accuracy, latency, and tokens, so records must not resume across it
+    # (Greptile review on PR #1388).
+    from codebase_rag.config import ModelConfig
+    from evals.agentic_qa import _run_fingerprint
+
+    orch = ModelConfig(provider="anthropic", model_id="m1", endpoint=None)
+    cypher_a = ModelConfig(provider="anthropic", model_id="cy1", endpoint=None)
+    cypher_b = ModelConfig(provider="openai", model_id="cy2", endpoint="https://x")
+    fp_a = _run_fingerprint("django", "abc", "calls", 2, 0, orch, cypher=cypher_a)
+    fp_b = _run_fingerprint("django", "abc", "calls", 2, 0, orch, cypher=cypher_b)
+    assert fp_a != fp_b
+    assert fp_a["cypher_model"] == "cy1"
+    assert fp_b["cypher_provider"] == "openai"
+    assert fp_b["cypher_endpoint"] == "https://x"
 
 
 def test_run_fingerprint_includes_thinking_budget() -> None:
