@@ -580,18 +580,17 @@ class TestNoninteractiveMode:
             assert "not permitted in this non-interactive session" in result.stderr, cmd
         assert keep.read_text() == "hi"
 
-    async def test_sort_value_taking_cluster_is_not_misread(
-        self, temp_project_root: Path
-    ) -> None:
-        # In `-k2o`, the `o` is part of -k's KEYDEF value, not the output
-        # option; the cluster walk must stop at a value-taking option.
-        (temp_project_root / "input.txt").write_text("b\na\n", encoding="utf-8")
-        commander = ShellCommander(str(temp_project_root), timeout=5)
-        tool = create_noninteractive_shell_command_tool(commander)
-        mock_ctx = MagicMock()
-        mock_ctx.tool_call_approved = False
-        result = await tool.function(mock_ctx, "sort -rk1 input.txt")
-        assert result.return_code == 0, result.stderr
+    def test_sort_value_taking_cluster_is_not_misread(self) -> None:
+        # In `-k1o`, the `o` is part of -k's KEYDEF value, not the output
+        # option; the cluster walk must stop at a value-taking option. This
+        # checks the policy directly rather than running sort, because
+        # Windows's sort.exe rejects GNU key syntax outright (CI, PR #1388).
+        from codebase_rag.tools.shell_command import _noninteractive_write_form
+
+        assert _noninteractive_write_form(["sort", "-rk1", "input.txt"]) is False
+        assert _noninteractive_write_form(["sort", "-k1o", "input.txt"]) is False
+        # But an output option before the value-taking one still writes.
+        assert _noninteractive_write_form(["sort", "-ok1", "input.txt"]) is True
 
     async def test_denies_uniq_output_operand(self, temp_project_root: Path) -> None:
         # uniq's second positional operand is an OUTPUT file.
