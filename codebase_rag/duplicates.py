@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from fnmatch import fnmatch
+from math import ceil
 
 from loguru import logger
 
@@ -44,6 +45,7 @@ def default_duplicates_config(
     exact_only: bool = False,
     exclude_patterns: tuple[str, ...] = (),
     max_similar_groups: int = cs.DUPLICATES_MAX_SIMILAR_GROUPS,
+    max_candidate_pairs: int = cs.DUPLICATES_MAX_CANDIDATE_PAIRS,
 ) -> DuplicatesConfig:
     return DuplicatesConfig(
         threshold=threshold,
@@ -51,6 +53,7 @@ def default_duplicates_config(
         exact_only=exact_only,
         exclude_patterns=exclude_patterns,
         max_similar_groups=max_similar_groups,
+        max_candidate_pairs=max_candidate_pairs,
     )
 
 
@@ -82,9 +85,7 @@ def collect_duplicates_with_coverage(
     groups = _exact_groups(entries)
     truncated = False
     if not config.exact_only:
-        similar, truncated = _similar_groups(
-            entries, config.threshold, config.max_similar_groups
-        )
+        similar, truncated = _similar_groups(entries, config)
         groups.extend(similar)
     groups.sort(
         key=lambda group: (
@@ -176,22 +177,58 @@ def _exact_groups(entries: dict[str, _Entry]) -> list[DuplicateGroup]:
     ]
 
 
-def _candidate_pairs(order: list[_Entry]) -> set[tuple[int, int]]:
-    # Inverted index branch-fingerprint -> entries carrying it. A branch
-    # shared by more entries than the cap (a ubiquitous guard clause) is not
-    # discriminative and generates no pairs.
+def _candidate_pairs(
+    order: list[_Entry], threshold: float, max_pairs: int
+) -> tuple[set[tuple[int, int]], bool]:
+    """Exact prefix-filtered candidate generation (AllPairs/PPJoin).
+
+    Jaccard >= threshold forces an overlap of at least ceil(threshold * size)
+    branches, so the globally rarest shared branch of any qualifying pair
+    must sit inside BOTH members' prefixes of length size - overlap + 1
+    (pigeonhole). Indexing only those prefixes therefore loses no qualifying
+    pair, while ubiquitous boilerplate branches sort to the ends of the
+    canonical order and enter a prefix only for functions that are mostly
+    boilerplate - exactly the case where they are needed for correctness.
+    Returns (pairs, truncated): generation stops past max_pairs, and the
+    overflow pair is the truncation evidence (an exactly-at-budget scan is
+    complete and not flagged).
+    """
+    frequency: dict[str, int] = {}
+    for entry in order:
+        for branch in entry.branches:
+            frequency[branch] = frequency.get(branch, 0) + 1
+    index = _prefix_index(order, threshold, frequency)
+    return _pairs_from_index(index, max_pairs)
+
+
+def _prefix_index(
+    order: list[_Entry], threshold: float, frequency: dict[str, int]
+) -> dict[str, list[int]]:
     index: dict[str, list[int]] = {}
     for position, entry in enumerate(order):
-        for branch in entry.branches:
+        size = len(entry.branches)
+        if size == 0:
+            continue
+        required = max(1, ceil(threshold * size - cs.DUPLICATES_PREFIX_EPSILON))
+        ranked = sorted(entry.branches, key=lambda branch: (frequency[branch], branch))
+        for branch in ranked[: size - required + 1]:
             index.setdefault(branch, []).append(position)
+    return index
+
+
+def _pairs_from_index(
+    index: dict[str, list[int]], max_pairs: int
+) -> tuple[set[tuple[int, int]], bool]:
     pairs: set[tuple[int, int]] = set()
     for postings in index.values():
-        if len(postings) < 2 or len(postings) > cs.DUPLICATES_HOT_FINGERPRINT_CAP:
-            continue
         for left_at, left in enumerate(postings):
             for right in postings[left_at + 1 :]:
-                pairs.add((left, right))
-    return pairs
+                pair = (left, right)
+                if len(pairs) >= max_pairs and pair not in pairs:
+                    logger.warning(ls.DUPLICATES_PAIRS_TRUNCATED.format(cap=max_pairs))
+                    return pairs, True
+                pairs.add(pair)
+    return pairs, False
 
 
 def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
@@ -200,7 +237,7 @@ def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
 
 
 def _similar_groups(
-    entries: dict[str, _Entry], threshold: float, max_groups: int
+    entries: dict[str, _Entry], config: DuplicatesConfig
 ) -> tuple[list[DuplicateGroup], bool]:
     # Pairs already inside a Stage-1 exact group never reach this stage:
     # entries are keyed by whole fingerprint, so exact copies are one entry.
@@ -210,9 +247,13 @@ def _similar_groups(
     # the groups are the maximal cliques of the threshold graph. Cliques can
     # overlap - when A duplicates both B and C but B and C are not similar,
     # A legitimately appears in {A, B} and in {A, C}.
+    threshold, max_groups = config.threshold, config.max_similar_groups
     order = list(entries.values())
     adjacency: dict[int, set[int]] = {}
-    for left, right in _candidate_pairs(order):
+    pairs, pairs_truncated = _candidate_pairs(
+        order, threshold, config.max_candidate_pairs
+    )
+    for left, right in pairs:
         first, second = order[left].branches, order[right].branches
         smaller, larger = min(len(first), len(second)), max(len(first), len(second))
         # Necessary condition for Jaccard >= threshold: even a full subset
@@ -224,9 +265,10 @@ def _similar_groups(
         adjacency.setdefault(left, set()).add(right)
         adjacency.setdefault(right, set()).add(left)
 
-    cliques, truncated = _maximal_cliques(adjacency, max_groups)
-    if truncated:
+    cliques, cliques_truncated = _maximal_cliques(adjacency, max_groups)
+    if cliques_truncated:
         logger.warning(ls.DUPLICATES_GROUPS_TRUNCATED.format(cap=max_groups))
+    truncated = pairs_truncated or cliques_truncated
     groups: list[DuplicateGroup] = []
     for clique in cliques:
         similarity = min(
@@ -250,8 +292,8 @@ def _maximal_cliques(
     adjacency: dict[int, set[int]], cap: int
 ) -> tuple[list[list[int]], bool]:
     # Bron-Kerbosch with pivoting, deterministic via sorted iteration. The
-    # threshold graph is sparse (edges need shared discriminative branches,
-    # capped by DUPLICATES_HOT_FINGERPRINT_CAP) and its dense spots are
+    # threshold graph is sparse (edges need Jaccard overlap at or above the
+    # threshold across whole branch sets) and its dense spots are
     # near-cliques, the cheap case for pivoted Bron-Kerbosch. A pathological
     # graph still has exponentially many maximal cliques (Moon-Moser), so
     # enumeration stops once a clique BEYOND the cap materializes: with

@@ -171,15 +171,69 @@ class TestSimilarGroups:
         )
         assert collect_duplicates(ingestor, "proj", _CONFIG) == []
 
-    def test_hot_branch_generates_no_pairs(self) -> None:
-        # One branch shared by more functions than the cap is not
-        # discriminative; without a second shared branch, no candidates.
-        rows = [
-            _row(f"proj.m{i}.fn", f"fp{i}", ["hot"], nodes=20)
-            for i in range(cs.DUPLICATES_HOT_FINGERPRINT_CAP + 1)
-        ]
+    def test_ubiquitous_shared_branch_still_yields_pairs(self) -> None:
+        # A branch shared by many functions is boilerplate, but two edited
+        # copies whose overlap is that branch still qualify: prefix
+        # filtering must not silently drop them (the old hot-fingerprint
+        # cap did exactly that).
+        rows = [_row(f"proj.m{i}.fn", f"fp{i}", ["hot"], nodes=20) for i in range(60)]
         ingestor = FakeIngestor(rows)
-        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        # All 60 share their entire (single-element) branch set: one clique.
+        assert len(groups) == 1
+        assert groups[0]["kind"] == cs.KIND_SIMILAR
+        assert len(groups[0]["members"]) == 60
+
+    def test_rare_prefix_still_finds_pair_with_hot_overlap(self) -> None:
+        # The qualifying pair shares nine hot branches plus rare tails; the
+        # rarest shared branch lands in both prefixes, so the pair is found
+        # even though every shared branch is carried by many functions.
+        shared = [f"hot{i}" for i in range(9)]
+        rows = [
+            _row("proj.a.orig", "aaaa", [*shared, "rare_a"]),
+            _row("proj.b.edit", "bbbb", [*shared, "rare_b"]),
+        ]
+        # 58 unrelated functions carry every hot branch (well past the old
+        # cap of 50) but cannot themselves qualify: one branch vs ten fails
+        # the size-ratio bound.
+        rows.extend(
+            _row(f"proj.n{i}.noise", f"n{i:04d}", [shared[i % len(shared)]])
+            for i in range(58)
+        )
+        ingestor = FakeIngestor(rows)
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        pair_groups = [
+            group
+            for group in groups
+            if {m["qualified_name"] for m in group["members"]}
+            == {"proj.a.orig", "proj.b.edit"}
+        ]
+        assert len(pair_groups) == 1
+        assert pair_groups[0]["similarity"] == round(9 / 11, 3)
+
+    def test_candidate_pair_budget_reports_truncation(self) -> None:
+        # Ten mutually-similar copies produce 45 true pairs; a budget of 3
+        # must stop early and surface truncated=True, never hang or read as
+        # a complete scan.
+        rows = [
+            _row(f"proj.m{i}.fn", f"fp{i}", ["b1", "b2", "b3"], nodes=20)
+            for i in range(10)
+        ]
+        config = default_duplicates_config(max_candidate_pairs=3)
+        report = collect_duplicates_with_coverage(FakeIngestor(rows), "proj", config)
+        assert report.truncated is True
+
+    def test_candidate_pairs_at_exact_budget_not_truncated(self) -> None:
+        # Three copies produce exactly three pairs: a budget of 3 completes.
+        rows = [
+            _row(f"proj.m{i}.fn", f"fp{i}", ["b1", "b2", "b3"], nodes=20)
+            for i in range(3)
+        ]
+        config = default_duplicates_config(max_candidate_pairs=3)
+        report = collect_duplicates_with_coverage(FakeIngestor(rows), "proj", config)
+        assert report.truncated is False
+        assert len(report.groups) == 1
+        assert len(report.groups[0]["members"]) == 3
 
     def test_union_find_merges_transitive_pairs(self) -> None:
         shared = [f"b{i}" for i in range(9)]

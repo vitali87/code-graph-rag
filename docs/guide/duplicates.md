@@ -400,12 +400,16 @@ appear in more than one `similar` group: when `A` duplicates both `B` and `C`
 but `B` and `C` are not similar to each other, the report shows `{A, B}` and
 `{A, C}` rather than lumping all three together or dropping one pair.
 
-One deliberate recall limit: a statement block shared by a very large number
-of functions is boilerplate, not evidence of copying, so such blocks never
-generate candidate pairs. Two functions whose *only* overlap is boilerplate
-are exactly the matches the report should not contain — and byte-for-byte
-copies of boilerplate-heavy functions are still caught as `exact` groups by
-their whole-skeleton fingerprint.
+Candidate discovery is *exact*: any pair of functions clearing the threshold
+is guaranteed to be compared, no matter how common their shared blocks are.
+The engine uses prefix filtering — each function is indexed only under its
+globally rarest statement blocks, sized so that a qualifying pair always
+co-occurs under at least one of them — which keeps the scan far from
+all-pairs cost without sacrificing recall. On a pathological codebase (vast
+numbers of near-identical bodies) candidate generation stops at a hard
+budget and the report says so: the `truncated` flag in the JSON envelope,
+the table notice, and the agent tool's warning all fire, so a cut-short
+scan can never be mistaken for a complete one.
 
 ## Exact Copies vs. Edited Copies
 

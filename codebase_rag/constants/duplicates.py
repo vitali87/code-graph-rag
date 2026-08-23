@@ -65,10 +65,16 @@ AST_FP_DIGEST_SIZE = 8
 # Analysis defaults (CLI/tool overridable).
 DUPLICATES_DEFAULT_THRESHOLD = 0.8
 DUPLICATES_DEFAULT_MIN_NODES = 15
-# A branch fingerprint shared by more functions than this is not
-# discriminative (a common guard clause); its posting list generates no
-# candidate pairs.
-DUPLICATES_HOT_FINGERPRINT_CAP = 50
+# Candidate generation is exact prefix filtering (AllPairs/PPJoin): each
+# function is indexed only under its rarest prefix branches, sized so any
+# pair clearing the Jaccard threshold is guaranteed to co-occur in a posting
+# list. The epsilon guards the ceil of threshold*size against float error;
+# erring toward a longer prefix only adds candidates, never loses one.
+DUPLICATES_PREFIX_EPSILON = 1e-9
+# Hard budget on materialized candidate pairs: a repo of near-identical
+# boilerplate bodies makes the true pair set quadratic, so generation stops
+# here and the scan reports truncation instead of hanging.
+DUPLICATES_MAX_CANDIDATE_PAIRS = 1_000_000
 # Hard budget on materialized similar groups: a pathological threshold graph
 # (Moon-Moser shape) has exponentially many maximal cliques, so enumeration
 # stops here and the scan reports truncation instead of hanging.

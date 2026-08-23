@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict
 from prompt_toolkit.styles import Style
 
 from .constants import (
+    DUPLICATES_MAX_CANDIDATE_PAIRS,
     DUPLICATES_MAX_SIMILAR_GROUPS,
     AuditCheck,
     NodeLabel,
@@ -501,6 +502,7 @@ class DuplicatesConfig(NamedTuple):
     exact_only: bool
     exclude_patterns: tuple[str, ...] = ()
     max_similar_groups: int = DUPLICATES_MAX_SIMILAR_GROUPS
+    max_candidate_pairs: int = DUPLICATES_MAX_CANDIDATE_PAIRS
 
 
 class DuplicateMember(TypedDict):

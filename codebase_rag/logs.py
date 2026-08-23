@@ -485,6 +485,10 @@ DUPLICATES_GROUPS_TRUNCATED = (
     "Similar-group enumeration stopped at the cap of {cap} groups; the report "
     "is truncated. Raise --threshold or --min-size to narrow the scan."
 )
+DUPLICATES_PAIRS_TRUNCATED = (
+    "Candidate-pair generation stopped at the budget of {cap} pairs; the "
+    "report is truncated. Raise --threshold or --min-size to narrow the scan."
+)
 INDEXING_FAILED = "Indexing failed"
 PATH_NOT_IN_QUESTION = (
     "Could not locate path token in user message for attachment: {path}"
