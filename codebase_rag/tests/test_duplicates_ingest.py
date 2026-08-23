@@ -145,3 +145,34 @@ def test_cpp_template_function_gets_a_fingerprint(
     assert original.get(cs.KEY_AST_FINGERPRINT) is not None
     assert original[cs.KEY_AST_FINGERPRINT] == renamed[cs.KEY_AST_FINGERPRINT]
     assert original[cs.KEY_AST_BRANCH_FINGERPRINTS]
+
+
+CSHARP_ARROW_A = """
+class PriceSheet {
+    decimal Total => items.Sum(i => i.Price * factor) + shipping.Base + Fees(items);
+}
+"""
+
+CSHARP_ARROW_B = """
+class WeightSheet {
+    decimal Load => boxes.Sum(b => b.Mass * scale) + pallet.Tare + Slack(boxes);
+}
+"""
+
+
+def test_csharp_expression_bodied_property_gets_a_fingerprint(
+    temp_repo: Path, mock_ingestor: _MockIngestor
+) -> None:
+    # A C# property_declaration NEVER has a `body` field: an expression-bodied
+    # property carries its logic in a plain arrow_expression_clause child, so
+    # every such property silently skipped clone detection (Humanizer: 2311
+    # skipped symbols, largely properties).
+    (temp_repo / "First.cs").write_text(CSHARP_ARROW_A)
+    (temp_repo / "Second.cs").write_text(CSHARP_ARROW_B)
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="c_sharp")
+
+    methods = _props_by_name(mock_ingestor, cs.NodeLabel.METHOD.value)
+    original = methods["Total"]
+    renamed = methods["Load"]
+    assert original.get(cs.KEY_AST_FINGERPRINT) is not None
+    assert original[cs.KEY_AST_FINGERPRINT] == renamed[cs.KEY_AST_FINGERPRINT]

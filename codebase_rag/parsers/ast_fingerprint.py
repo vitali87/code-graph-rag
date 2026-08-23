@@ -62,6 +62,11 @@ def _resolve_body(func_node: Node) -> Node | None:
             inner = _resolve_body(child)
             if inner is not None:
                 return inner
+    # An expression-bodied definition (C# `=> expr` property/member) keeps
+    # its logic in a plain named child rather than a body field.
+    for child in func_node.named_children:
+        if child.type in cs.AST_FP_EXPRESSION_BODY_TYPES:
+            return child
     return None
 
 
