@@ -11,7 +11,7 @@ from loguru import logger
 from ..config import settings
 from ..constants import GraphBackend
 from . import constants as cs
-from .health import wait_for_graph, wait_for_qdrant
+from .health import graph_reachability_detail, wait_for_graph, wait_for_qdrant
 
 
 def _publishes_on_all_interfaces(mapping: object) -> bool:
@@ -53,6 +53,11 @@ class StackStatus:
     compose_file: Path
     graph_endpoint: str
     qdrant_endpoint: str
+    # Set only when graph_reachable is False on ArcadeDB: names which of the
+    # two required transports (Bolt, HTTP) is down, since a single boolean
+    # can't distinguish "Bolt up, HTTP down" -- the split-brain failure the
+    # two-port probe exists to catch -- from both being down.
+    graph_detail: str | None = None
 
 
 class StackManager:
@@ -307,6 +312,16 @@ class StackManager:
                 state = cs.StackState.STOPPED
             case _:
                 state = cs.StackState.PARTIAL
+        graph_detail = (
+            None
+            if graph_ok
+            else graph_reachability_detail(
+                self.backend,
+                self.graph_host,
+                self.graph_bolt_port,
+                self.graph_http_port,
+            )
+        )
         return StackStatus(
             state=state,
             graph_reachable=graph_ok,
@@ -314,6 +329,7 @@ class StackManager:
             compose_file=self.compose_file,
             graph_endpoint=f"{self.graph_host}:{self.graph_bolt_port}",
             qdrant_endpoint=f"{cs.LOOPBACK_HOST}:{self.qdrant_port}",
+            graph_detail=graph_detail,
         )
 
     def ensure_running(self) -> StackStatus:

@@ -4,9 +4,12 @@
 # #1012). Set CGR_STACK_BIND_HOST=0.0.0.0 to expose the stack deliberately.
 # Memgraph and ArcadeDB both default to Bolt port 7687, so they are gated
 # behind mutually exclusive profiles ("memgraph", "arcadedb") and only one
-# may be up at a time. "memgraph" is the default-active profile, so plain
-# `docker compose up` / `cgr daemon up` behave exactly as before for
-# existing users; select ArcadeDB with `--profile arcadedb`.
+# may be up at a time. Compose has no "default-active" profile: a service
+# carrying ANY profile is excluded unless that profile is explicitly
+# activated, so a bare `docker compose up` against this file starts only
+# qdrant. `cgr daemon up` is unaffected -- StackManager injects
+# `--profile <backend>` itself -- but driving this file directly needs an
+# explicit `docker compose --profile memgraph up` (or `--profile arcadedb`).
 services:
   memgraph:
     # Pinned by digest: engine upgrades change accepted Cypher syntax (issue

@@ -77,6 +77,17 @@ class GraphBackend(StrEnum):
     ARCADEDB = "arcadedb"
 
 
+# Display names for user-facing text (health-check output, etc.). The enum
+# values themselves stay lowercase because they double as compose profile
+# names and settings values; "ArcadeDB" is not recoverable from "arcadedb"
+# by a generic .title() (that yields "Arcadedb"), so this is a lookup
+# rather than a string transform.
+GRAPH_BACKEND_DISPLAY_NAMES: dict[GraphBackend, str] = {
+    GraphBackend.MEMGRAPH: "Memgraph",
+    GraphBackend.ARCADEDB: "ArcadeDB",
+}
+
+
 MODULE_NEO4J = "neo4j"
 
 

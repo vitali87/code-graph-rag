@@ -75,6 +75,36 @@ def wait_for_graph(
     return False
 
 
+def graph_reachability_detail(
+    backend: GraphBackend,
+    host: str,
+    bolt_port: int,
+    http_port: int | None,
+) -> str | None:
+    """One-shot diagnosis for a graph backend `status()` found unreachable.
+
+    A single `reachable=False` boolean cannot tell an operator whether
+    ArcadeDB's Bolt listener or its HTTP endpoint is the one that's down --
+    "Bolt up, HTTP down" is precisely the split-brain failure the two-port
+    probe in `wait_for_graph` exists to catch (a live Bolt connection would
+    otherwise pass startup and only fail later, inside
+    `ensure_constraints()`). Returns None when there is nothing to
+    disambiguate: the backend is reachable, or it is Memgraph, which only
+    has the one port `wait_for_graph` already checked.
+    """
+    if backend != GraphBackend.ARCADEDB:
+        return None
+    bolt_ok = _arcade_bolt_reachable(host, bolt_port)
+    http_ok = _http_reachable(f"http://{cs.LOOPBACK_HOST}:{http_port}/api/v1/ready")
+    if bolt_ok and http_ok:
+        return None
+    if not bolt_ok and not http_ok:
+        return "bolt unreachable, http unreachable"
+    if not bolt_ok:
+        return "bolt unreachable, http ok"
+    return "bolt ok, http unreachable (schema changes will fail)"
+
+
 def wait_for_memgraph(
     host: str,
     port: int,

@@ -24,6 +24,26 @@ def test_check_graph_connection_returns_failure_when_down(
     result = HealthChecker().check_graph_connection()
 
     assert result.passed is False
+    # Title-cased display name, not the lowercase GraphBackend.value used for
+    # compose profiles/settings -- "memgraph connection failed" would be a
+    # case regression from the pre-rename "Memgraph connection failed".
+    assert result.name == "Memgraph connection failed"
+    assert result.error is not None and result.error.startswith("Memgraph error:")
+
+
+def test_check_graph_connection_returns_success_with_titlecased_backend_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cursor = _FakeCursor({}, ["test"])
+    monkeypatch.setattr(
+        "codebase_rag.services.graph.memgraph.mgclient.connect",
+        lambda **_: _FakeConnection(cursor),
+    )
+
+    result = HealthChecker().check_graph_connection()
+
+    assert result.passed is True
+    assert result.name == "Memgraph connection successful"
 
 
 class _FakeColumn:

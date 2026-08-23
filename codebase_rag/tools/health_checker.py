@@ -70,13 +70,14 @@ class HealthChecker:
 
     def check_graph_connection(self) -> HealthCheckResult:
         backend = settings.GRAPH_BACKEND
+        display_name = cs.GRAPH_BACKEND_DISPLAY_NAMES[backend]
         host, port = self._graph_endpoint(backend)
         try:
             with get_ingestor(backend) as ingestor:
                 list(ingestor.fetch_all(cs.HEALTH_CHECK_GRAPH_QUERY))
 
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_GRAPH_SUCCESSFUL.format(backend=backend),
+                name=cs.HEALTH_CHECK_GRAPH_SUCCESSFUL.format(backend=display_name),
                 passed=True,
                 message=cs.HEALTH_CHECK_GRAPH_CONNECTED_MSG.format(
                     host=host,
@@ -86,10 +87,12 @@ class HealthChecker:
 
         except Exception as e:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_GRAPH_FAILED.format(backend=backend),
+                name=cs.HEALTH_CHECK_GRAPH_FAILED.format(backend=display_name),
                 passed=False,
                 message=cs.HEALTH_CHECK_GRAPH_CONNECTION_FAILED_MSG,
-                error=cs.HEALTH_CHECK_GRAPH_ERROR.format(backend=backend, error=str(e)),
+                error=cs.HEALTH_CHECK_GRAPH_ERROR.format(
+                    backend=display_name, error=str(e)
+                ),
             )
 
     def check_api_key(self, env_name: str, display_name: str) -> HealthCheckResult:

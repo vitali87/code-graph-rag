@@ -22,8 +22,10 @@ def cli() -> None:
 def _print_status(mgr: StackManager) -> None:
     status = mgr.status()
     click.echo(f"state:    {status.state.value}")
+    detail = f", {status.graph_detail}" if status.graph_detail else ""
     click.echo(
-        f"{mgr.backend.value}: {status.graph_endpoint} (reachable={status.graph_reachable})"
+        f"{mgr.backend.value}: {status.graph_endpoint} "
+        f"(reachable={status.graph_reachable}{detail})"
     )
     click.echo(
         f"qdrant:   {status.qdrant_endpoint} (reachable={status.qdrant_reachable})"

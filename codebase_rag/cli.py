@@ -1107,9 +1107,11 @@ def stop_command() -> None:
 def status_command() -> None:
     mgr = StackManager()
     status = mgr.status()
+    detail = f" [{status.graph_detail}]" if status.graph_detail else ""
     app_context.console.print(
         f"stack:    {status.state.value} "
-        f"({mgr.backend.value}={status.graph_endpoint} reachable={status.graph_reachable}, "
+        f"({mgr.backend.value}={status.graph_endpoint} "
+        f"reachable={status.graph_reachable}{detail}, "
         f"qdrant={status.qdrant_endpoint} reachable={status.qdrant_reachable})"
     )
     app_context.console.print(f"compose:  {status.compose_file}")
