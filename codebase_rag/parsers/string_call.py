@@ -141,8 +141,17 @@ def string_call_target(
     for spec in specs:
         if last_segment != spec.callee:
             continue
-        arguments = next(
-            (child for child in call_node.named_children if "argument" in child.type),
+        # The arguments FIELD first: a generic call (`callSp<Proc>("usp_x")`)
+        # puts a type_arguments child before the value arguments, and a
+        # substring scan would pick it up and see no string literal. The scan
+        # stays as a fallback for grammars without the field, skipping the
+        # type-argument nodes it can now tell apart.
+        arguments = call_node.child_by_field_name("arguments") or next(
+            (
+                child
+                for child in call_node.named_children
+                if "argument" in child.type and "type" not in child.type
+            ),
             None,
         )
         if arguments is None:

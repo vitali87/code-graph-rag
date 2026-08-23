@@ -118,6 +118,12 @@ class TestStringCallTarget:
         node = _ts_call_node('conn.prepareCall("{?= call app.usp_total(?, ?)}");')
         assert string_call_target(node, "conn.prepareCall", specs) == "app.usp_total"
 
+    def test_generic_call_reads_past_the_type_arguments(self) -> None:
+        # `callSp<Procedure>("usp_x")` puts a type_arguments child before the
+        # value arguments; a bare substring scan picked it and resolved None.
+        node = _ts_call_node('callSp<Procedure>("usp_invoice_list");')
+        assert string_call_target(node, "callSp", SPECS) == "usp_invoice_list"
+
     def test_honours_the_declared_argument_index(self) -> None:
         node = _ts_call_node('callProc(conn, "usp_invoice_list");')
         specs = (StringCallSpec(callee="callProc", arg_index=1),)
