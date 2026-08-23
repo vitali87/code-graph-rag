@@ -42,6 +42,7 @@ from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
+from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
     cpp_parameter_names,
@@ -936,6 +937,7 @@ class CallProcessor:
         "function_locations",
         "macro_qns",
         "_resolver",
+        "_string_call_specs",
         "_flow_param_names",
         "_flow_args",
         "_returned_callables",
@@ -976,6 +978,9 @@ class CallProcessor:
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
+        # Dispatchers that name their callee in a string argument, declared in
+        # the repository's .cgr.toml. Empty unless the project opts in.
+        self._string_call_specs = load_string_call_specs(repo_path)
         self.module_qn_to_file_path = module_qn_to_file_path or {}
         self._path_to_module_qn: dict[Path, str] | None = None
         # Package-prefix index over module_qn_to_file_path (issue #930),
@@ -3171,6 +3176,41 @@ class CallProcessor:
                 call_name = get_target(call_node, language)
                 if call_name_cache is not None:
                     call_name_cache[node_id] = call_name
+            # A declared dispatcher (`callSp('usp_x')`) names its real callee in
+            # a string, which no parser resolves as a call: without this the
+            # edge stops at the dispatcher and the routine looks unreachable.
+            # The dispatcher's own edge still emits below; this only ADDS the
+            # one the syntax hides.
+            if self._string_call_specs and call_name:
+                target_name = string_call_target(
+                    call_node, call_name, self._string_call_specs
+                )
+                if target_name:
+                    # A qualified target (`app.usp_x`) matches through the
+                    # dotted-suffix scan (#513) and so reaches ONLY routines
+                    # carrying that schema in their FQN; an unqualified one
+                    # goes through the last-segment index and legitimately
+                    # fans onto every schema's candidate, mirroring what a
+                    # runtime search_path could pick.
+                    for target_qn in resolver.function_registry.find_ending_with(
+                        target_name
+                    ):
+                        # find_ending_with indexes classes too; only a
+                        # callable takes the edge, under its OWN label — a
+                        # mislabeled edge is a phantom the database drops.
+                        target_type = resolver.function_registry.get(target_qn)
+                        if target_type not in (NodeType.FUNCTION, NodeType.METHOD):
+                            continue
+                        target_label = (
+                            cs.NodeLabel.METHOD
+                            if target_type == NodeType.METHOD
+                            else cs.NodeLabel.FUNCTION
+                        )
+                        ensure_rel(
+                            caller_spec,
+                            calls_rel,
+                            (target_label, qn_key, target_qn),
+                        )
             # An inline function ARGUMENT is handed to the callee regardless of
             # whether the callee resolves: an external/param callee
             # (`create((set) => ...)` passing `set((state) => ...)`, zustand) or a

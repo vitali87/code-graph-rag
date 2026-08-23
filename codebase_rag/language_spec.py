@@ -3,8 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
+from .sql_names import normalize_sql_reference
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -69,6 +72,38 @@ def _generic_get_name(node: Node) -> str | None:
         if name_node and name_node.text:
             return name_node.text.decode(cs.ENCODING_UTF8)
 
+    return None
+
+
+def _sql_get_name(node: Node) -> str | None:
+    # `create_function` names the routine through an `object_reference` child,
+    # not a `name` field, so the generic extractor finds nothing. The schema
+    # qualifier is KEPT: `app.usp_x` and `audit.usp_x` are different routines,
+    # and collapsing both to `usp_x` would register them under one key and fan
+    # a schema-qualified call onto every same-named routine. The registry
+    # indexes the last dotted segment, so an unqualified caller still finds a
+    # qualified definition.
+    for child in node.named_children:
+        if child.type != cs.TS_SQL_OBJECT_REFERENCE:
+            continue
+        if not child.text:
+            break
+        reference = child.text.decode(cs.ENCODING_UTF8).strip()
+        # The shared normalizer applies PostgreSQL's folding rules (unquoted
+        # lowercases, quoted keeps case); the string-call side uses the SAME
+        # one, or a definition and the call naming it would never connect.
+        name = normalize_sql_reference(reference)
+        if name:
+            return name
+        break
+    # A routine the grammar parsed but could not name: with the upstream
+    # grammar's partial PL/pgSQL coverage a low hit rate is usually the
+    # grammar, not the schema, and this line is how a user can tell.
+    logger.debug(
+        "SQL routine name extraction failed for a {} node at line {}",
+        node.type,
+        node.start_point[0] + 1,
+    )
     return None
 
 
@@ -276,6 +311,13 @@ LUA_FQN_SPEC = FQNSpec(
     file_to_module_parts=_generic_file_to_module,
 )
 
+SQL_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_SQL_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_SQL_FUNCTION_TYPES),
+    get_name=_sql_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 GO_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_GO_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_GO_FUNCTION_TYPES),
@@ -326,6 +368,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PHP: PHP_FQN_SPEC,
     cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
     cs.SupportedLanguage.DART: DART_FQN_SPEC,
+    cs.SupportedLanguage.SQL: SQL_FQN_SPEC,
 }
 
 
@@ -438,6 +481,14 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             .
             (token_tree . "("))
         """,
+    ),
+    cs.SupportedLanguage.SQL: LanguageSpec(
+        language=cs.SupportedLanguage.SQL,
+        file_extensions=cs.SQL_EXTENSIONS,
+        function_node_types=cs.SPEC_SQL_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_SQL_CLASS_TYPES,
+        module_node_types=cs.SPEC_SQL_MODULE_TYPES,
+        call_node_types=cs.SPEC_SQL_CALL_TYPES,
     ),
     cs.SupportedLanguage.GO: LanguageSpec(
         language=cs.SupportedLanguage.GO,

@@ -170,6 +170,11 @@ from .ast_scala import (
     TS_SCALA_OBJECT_DEFINITION,
     TS_SCALA_TRAIT_DEFINITION,
 )
+from .ast_sql import (
+    TS_SQL_CREATE_FUNCTION,
+    TS_SQL_INVOCATION,
+    TS_SQL_PROGRAM,
+)
 from .languages import (
     PKG_CARGO_TOML,
     PKG_CMAKE_LISTS,
@@ -360,6 +365,13 @@ FQN_GO_FUNCTION_TYPES = (
     TS_GO_METHOD_DECLARATION,
 )
 
+FQN_SQL_SCOPE_TYPES = (TS_SQL_PROGRAM,)
+# Only `create_function`: the published tree-sitter-sql (0.3.11) has no
+# `create_procedure` node yet, and naming a type the grammar does not define
+# fails the whole language at load time ("Invalid node type"), so the grammar
+# is dropped and no SQL is parsed at all.
+FQN_SQL_FUNCTION_TYPES = (TS_SQL_CREATE_FUNCTION,)
+
 FQN_SCALA_SCOPE_TYPES = (
     TS_SCALA_CLASS_DEFINITION,
     TS_SCALA_OBJECT_DEFINITION,
@@ -482,6 +494,13 @@ SPEC_DART_IMPORT_TYPES = (
     TS_DART_PART_DIRECTIVE,
     TS_DART_PART_OF_DIRECTIVE,
 )
+
+SPEC_SQL_FUNCTION_TYPES = (TS_SQL_CREATE_FUNCTION,)
+# SQL has no classes; a script is the module. `invocation` covers `schema.fn(...)`
+# calls made from inside another routine's body.
+SPEC_SQL_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_SQL_MODULE_TYPES = (TS_SQL_PROGRAM,)
+SPEC_SQL_CALL_TYPES = (TS_SQL_INVOCATION,)
 
 SPEC_GO_FUNCTION_TYPES = (TS_GO_FUNCTION_DECLARATION, TS_GO_METHOD_DECLARATION)
 SPEC_GO_CLASS_TYPES = (TS_GO_TYPE_SPEC, TS_GO_TYPE_ALIAS)
