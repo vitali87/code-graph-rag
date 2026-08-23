@@ -581,6 +581,77 @@ class TestNoninteractiveMode:
         assert result.return_code != 0
         assert "host data" not in result.stdout
 
+    async def test_denies_option_carried_file_inputs(
+        self, temp_project_root: Path
+    ) -> None:
+        # `sort --files0-from=paths` reads a NUL-separated list of input
+        # files, so a repo-local list can name /etc/passwd and sort discloses
+        # it; wc and find have the same indirect-input option, and options
+        # naming a program to run are command execution outside the allowlist
+        # (Greptile review on PR #1388, disclosure verified by T-Rex).
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        (temp_project_root / "paths").write_bytes(b"/etc/passwd\0")
+        (temp_project_root / "data.txt").write_text("payload", encoding="utf-8")
+        for command in (
+            "sort --files0-from=paths",
+            "sort --files0-from paths",
+            "wc --files0-from=paths",
+            "find . -files0-from paths",
+            "sort --compress-program=sh data.txt",
+            "sort --random-source=paths data.txt",
+            "sort -T tmpdir data.txt",
+            "sort -Ttmpdir data.txt",
+            "rg --pre sh pattern .",
+        ):
+            result = await tool.function(mock_ctx, command)
+            assert result.return_code != 0, command
+            assert "not permitted in this non-interactive session" in result.stderr, (
+                command
+            )
+            assert "root:" not in result.stdout, command
+
+    async def test_denies_option_attached_escaping_value(self, tmp_path: Path) -> None:
+        # A relative option value still escapes through `..` or a repo-local
+        # symlink; the operand loop skips dash-prefixed arguments, so the
+        # attached value needs its own containment check (Greptile review on
+        # PR #1388).
+        root = tmp_path / "proj"
+        root.mkdir()
+        secret = tmp_path / "patterns.txt"
+        secret.write_text("host data", encoding="utf-8")
+        (root / "linked_pats").symlink_to(secret)
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        for command in (
+            "rg --file=../patterns.txt .",
+            "rg --file=linked_pats .",
+        ):
+            result = await tool.function(mock_ctx, command)
+            assert result.return_code != 0, command
+            assert "not permitted in this non-interactive session" in result.stderr, (
+                command
+            )
+
+    async def test_in_root_option_attached_value_is_allowed(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        (root / "pats.txt").write_text("payload", encoding="utf-8")
+        (root / "data.txt").write_text("payload here", encoding="utf-8")
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "rg --file=pats.txt data.txt")
+        assert result.return_code == 0, result.stderr
+        assert "payload here" in result.stdout
+
     async def test_symlink_inside_project_root_is_allowed(self, tmp_path: Path) -> None:
         root = tmp_path / "proj"
         root.mkdir()

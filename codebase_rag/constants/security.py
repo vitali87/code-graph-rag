@@ -74,6 +74,26 @@ SHELL_FIND_MUTATING_ACTIONS = frozenset(
     }
 )
 
+# Options that make an otherwise read-only command take its file inputs from
+# an option value instead of an operand (`sort/wc --files0-from`, find's
+# `-files0-from`), or name a program for it to execute (`sort
+# --compress-program`, `rg --pre`). The noninteractive containment loop checks
+# operands, so a repo-local list file naming /etc/passwd would slip through;
+# denying the whole indirect-input mode is the auditable policy. `sort -T`
+# is included because it writes temp files to the named directory.
+SHELL_NONINTERACTIVE_DENIED_OPTIONS: dict[str, tuple[str, ...]] = {
+    "sort": (
+        "--files0-from",
+        "--compress-program",
+        "--random-source",
+        "-T",
+        "--temporary-directory",
+    ),
+    "wc": ("--files0-from",),
+    "find": ("-files0-from",),
+    "rg": ("--pre",),
+}
+
 SHELL_GIT_SUBCMD_CONFIG = "config"
 
 # `git config` writes to these keys plant a value that git later hands to a

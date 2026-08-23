@@ -585,6 +585,25 @@ def _follows_symlinks(parts: list[str]) -> bool:
     return False
 
 
+def _option_carries_file_input(parts: list[str]) -> bool:
+    # `sort --files0-from=paths` makes sort read every file a repo-local
+    # list names, including /etc/passwd, and `--compress-program`/`--pre`
+    # execute a program; the operand containment loop never sees either, so
+    # the whole indirect-input mode is denied (Greptile review on PR #1388).
+    denied = cs.SHELL_NONINTERACTIVE_DENIED_OPTIONS.get(parts[0])
+    if not denied:
+        return False
+    for arg in parts[1:]:
+        if arg == "--":
+            break
+        name = arg.split("=", 1)[0]
+        for opt in denied:
+            # len(opt) == 2 covers the attached short form (`-Tdir`).
+            if name == opt or (len(opt) == 2 and arg.startswith(opt)):
+                return True
+    return False
+
+
 def _noninteractive_denial(command: str, project_root: Path) -> str | None:
     # The denial reason for an operator-less run, or None when every segment
     # is a confined read: a read-only command in a non-writing form, no
@@ -624,6 +643,10 @@ def _noninteractive_denial(command: str, project_root: Path) -> str | None:
                 return te.COMMAND_NONINTERACTIVE_DENIED.format(
                     command=segment, reason=te.NONINTERACTIVE_FOLLOW_SYMLINKS
                 )
+            if _option_carries_file_input(parts):
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_OPTION_CARRIED_INPUT
+                )
             if _has_redirect_operators(parts):
                 return te.COMMAND_NONINTERACTIVE_DENIED.format(
                     command=segment, reason=te.NONINTERACTIVE_REDIRECT
@@ -644,6 +667,21 @@ def _noninteractive_denial(command: str, project_root: Path) -> str | None:
                         command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
                     )
                 if not operands_only and arg.startswith("-"):
+                    # An `=`-attached option value (`--file=linked_pats`) is a
+                    # path the operand check below never sees, so it gets the
+                    # same traversal and symlink containment (Greptile review
+                    # on PR #1388).
+                    value = arg.partition("=")[2]
+                    if value and (
+                        ".." in value.split("/")
+                        or (
+                            os.path.lexists(candidate := root / value)
+                            and not candidate.resolve().is_relative_to(root)
+                        )
+                    ):
+                        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                            command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
+                        )
                     continue
                 candidate = root / arg
                 if os.path.lexists(
