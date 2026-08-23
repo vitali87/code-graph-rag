@@ -352,6 +352,32 @@ corpus mode is informational only, because a real repo has no independent dead-c
 oracle (true reachability needs the very call graph under test). On `codebase_rag`
 it currently reports 4450 unreachable functions/methods (tests excluded).
 
+## Duplicates — structural clone detection over the captured graph
+
+cgr's `duplicates` command groups structural clones (exact/renamed copies by
+whole-skeleton fingerprint, edited copies by branch-overlap similarity). The
+engine reads fingerprint rows from the database, which the deterministic
+in-memory harness cannot query, so this eval replays the two duplicate Cypher
+fetches over the captured graph and runs the same engine on top.
+
+```bash
+uv run python -m evals.duplicates --target codebase_rag  # informational report
+uv run python -m evals.duplicates --target ../some-repo --threshold 0.7
+```
+
+Grading is pair-level (the clone-detection standard): every unordered member
+pair of every reported group, scored precision/recall against fixture repos
+whose clone pairs are known by construction. The engine is unit-tested on
+hand-built rows (`test_duplicates_collect.py`), so a fixture mismatch indicts
+fingerprint ingest or the graph capture, not the grouping. The graded eval is
+the fixture suite `codebase_rag/tests/test_duplicates_eval.py`; the CLI's
+corpus mode is informational only, because a real repo has no independent
+clone oracle. The corpus mode was dogfooded across ten repos in nine languages
+(flask, requests, express, zod, gin, anyhow, gson, fmt, monolog,
+plenary.nvim): every sampled exact group reproduces from raw source, reports
+are deterministic, pair sets shrink monotonically as the threshold rises, and
+the in-memory harness matches the live `cgr duplicates` CLI pair-for-pair.
+
 ## Cross-project — resolution across top-level packages (monorepo)
 
 Every other eval runs on a single top-level package (`codebase_rag`), so none
