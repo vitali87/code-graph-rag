@@ -77,10 +77,10 @@ Point Code-Graph-RAG at a repository and it reads every source file, extracts fu
 
 The system has two components:
 
-1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into the knowledge graph (Memgraph by default, or ArcadeDB) under a single language-agnostic schema.
+1. **Multi-language parser.** A Tree-sitter-based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into the knowledge graph (Memgraph by default, or ArcadeDB) under a single language-agnostic schema.
 2. **RAG system** (`codebase_rag/`). An interactive CLI that turns natural language into Cypher queries, retrieves matching code, and drives AI-powered editing and optimisation.
 
-```
+```text
 Source Code -> Tree-sitter Parser -> AST Analysis -> Knowledge Graph (Memgraph or ArcadeDB)
                                                              |
 User Query -> AI Model (Cypher Gen) -> Cypher Query -> Graph Results -> Response
