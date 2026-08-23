@@ -398,6 +398,9 @@ jobs:
     if: github.event_name == 'pull_request'
     timeout-minutes: 45
     permissions:
+      # contents: read backs the commits API call that resolves an
+      # abbreviated reviewed-commit reference to a full SHA.
+      contents: read
       pull-requests: read
       issues: read
 
