@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 
@@ -73,18 +75,35 @@ def _generic_get_name(node: Node) -> str | None:
 
 
 def _sql_get_name(node: Node) -> str | None:
-    # `create_function` / `create_procedure` name the routine through an
-    # `object_reference` child, not a `name` field, so the generic extractor
-    # finds nothing. The reference may be schema-qualified (`app.usp_do_thing`);
-    # the last identifier is the routine name, which is what a caller writes
-    # when it invokes it by name.
+    # `create_function` names the routine through an `object_reference` child,
+    # not a `name` field, so the generic extractor finds nothing. The schema
+    # qualifier is KEPT: `app.usp_x` and `audit.usp_x` are different routines,
+    # and collapsing both to `usp_x` would register them under one key and fan
+    # a schema-qualified call onto every same-named routine. The registry
+    # indexes the last dotted segment, so an unqualified caller still finds a
+    # qualified definition.
     for child in node.named_children:
         if child.type != cs.TS_SQL_OBJECT_REFERENCE:
             continue
         if not child.text:
-            return None
+            break
         reference = child.text.decode(cs.ENCODING_UTF8).strip()
-        return reference.rsplit(".", 1)[-1].strip('"') or None
+        name = ".".join(
+            part
+            for part in (piece.strip().strip('"') for piece in reference.split("."))
+            if part
+        )
+        if name:
+            return name
+        break
+    # A routine the grammar parsed but could not name: with the upstream
+    # grammar's partial PL/pgSQL coverage a low hit rate is usually the
+    # grammar, not the schema, and this line is how a user can tell.
+    logger.debug(
+        "SQL routine name extraction failed for a {} node at line {}",
+        node.type,
+        node.start_point[0] + 1,
+    )
     return None
 
 

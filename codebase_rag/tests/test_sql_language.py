@@ -80,14 +80,36 @@ class TestSqlGetName:
         assert node is not None
         assert _sql_get_name(node) == "usp_invoice_list"
 
-    def test_schema_qualified_name_reduces_to_the_routine(self) -> None:
-        # A caller writes the routine name, so that is what it registers under.
+    def test_schema_qualified_name_keeps_its_schema(self) -> None:
+        # app.usp_x and audit.usp_x are different routines; collapsing both to
+        # usp_x would register them under one key and fan a qualified call
+        # onto every schema. The registry indexes the last segment, so an
+        # unqualified caller still finds this definition.
         node = _create_function_node(
             "CREATE FUNCTION app.usp_invoice_list() RETURNS int "
             "AS $$ SELECT 1; $$ LANGUAGE sql;"
         )
         assert node is not None
-        assert _sql_get_name(node) == "usp_invoice_list"
+        assert _sql_get_name(node) == "app.usp_invoice_list"
+
+    def test_same_named_routines_in_different_schemas_stay_distinct(self) -> None:
+        names = set()
+        for schema in ("app", "audit"):
+            node = _create_function_node(
+                f"CREATE FUNCTION {schema}.usp_invoice_list() RETURNS int "
+                "AS $$ SELECT 1; $$ LANGUAGE sql;"
+            )
+            assert node is not None
+            names.add(_sql_get_name(node))
+        assert names == {"app.usp_invoice_list", "audit.usp_invoice_list"}
+
+    def test_quoted_identifiers_lose_their_quotes(self) -> None:
+        node = _create_function_node(
+            'CREATE FUNCTION "app"."usp_invoice_list"() RETURNS int '
+            "AS $$ SELECT 1; $$ LANGUAGE sql;"
+        )
+        assert node is not None
+        assert _sql_get_name(node) == "app.usp_invoice_list"
 
     def test_returns_none_without_an_object_reference(self) -> None:
         tree_sitter = pytest.importorskip("tree_sitter")
