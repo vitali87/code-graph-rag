@@ -526,8 +526,12 @@ def _run_fingerprint(
         "agent_retries": agent_retries,
         "shell_timeout": shell_timeout,
     }
-    for key, value in _backend_identity(cypher).items():
-        fingerprint[f"cypher_{key}"] = value
+    # Only fold in the Cypher identity when a graph-condition run actually
+    # uses it; a grep-only run passes cypher=None so an unused Cypher setting
+    # change cannot reject its resume (Greptile review on PR #1388).
+    if cypher is not None:
+        for key, value in _backend_identity(cypher).items():
+            fingerprint[f"cypher_{key}"] = value
     return fingerprint
 
 
@@ -666,6 +670,7 @@ def main(
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = "" if QType(qtype) is QType.CALLS else f"_{qtype}"
     records_path = out_dir / ec.AGENTIC_RECORDS_FILE.format(suffix=suffix)
+    needs_graph = Condition.GRAPH in conditions
     fingerprint = _run_fingerprint(
         corpus,
         spec.commit,
@@ -673,14 +678,15 @@ def main(
         sample,
         seed,
         settings.active_orchestrator_config,
-        cypher=settings.active_cypher_config,
+        # A grep-only run never queries Cypher, so its backend must not affect
+        # the fingerprint (Greptile review on PR #1388).
+        cypher=settings.active_cypher_config if needs_graph else None,
         agent_retries=settings.AGENT_RETRIES,
         shell_timeout=settings.SHELL_COMMAND_TIMEOUT,
     )
     prior = _init_records_file(records_path, fingerprint, resume)
     done = {(c, r["name"]) for c, rs in prior.items() for r in rs}
 
-    needs_graph = Condition.GRAPH in conditions
     results: dict[str, dict[str, float]] = {}
     all_records: list[QARecord] = []
     if needs_graph:

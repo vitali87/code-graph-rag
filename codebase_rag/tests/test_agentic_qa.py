@@ -415,6 +415,18 @@ def test_run_fingerprint_includes_cypher_backend() -> None:
     assert fp_b["cypher_endpoint"] == "https://x"
 
 
+def test_run_fingerprint_omits_cypher_when_not_passed() -> None:
+    # A grep-only run does not touch the Cypher backend, so its identity must
+    # not enter the fingerprint or an unused Cypher setting change would
+    # wrongly reject grep resume (Greptile review on PR #1388).
+    from codebase_rag.config import ModelConfig
+    from evals.agentic_qa import _run_fingerprint
+
+    orch = ModelConfig(provider="anthropic", model_id="m1", endpoint=None)
+    fp = _run_fingerprint("django", "abc", "calls", 2, 0, orch)
+    assert not any(k.startswith("cypher_") for k in fp)
+
+
 def test_run_fingerprint_includes_thinking_budget() -> None:
     # thinking_budget is forwarded to the model by get_provider_from_config
     # and changes its behavior, so runs with different budgets must not
