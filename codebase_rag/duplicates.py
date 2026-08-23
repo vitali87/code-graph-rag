@@ -231,6 +231,31 @@ def _pairs_from_index(
     return pairs, False
 
 
+def _span_contains(outer: DuplicateMember, inner: DuplicateMember) -> bool:
+    return (
+        outer["path"] == inner["path"]
+        and outer["start_line"] <= inner["start_line"]
+        and inner["end_line"] <= outer["end_line"]
+    )
+
+
+def _only_nested_members(
+    first: list[DuplicateMember], second: list[DuplicateMember]
+) -> bool:
+    """True when every cross pair is one definition inside the other.
+
+    A factory's body contains its nested function, so the outer branch set is
+    a superset of the inner's and Jaccard clears any threshold - yet "this
+    function duplicates its own body" is a false positive by construction.
+    The exemption is scoped to pure containment: one non-nested cross pair
+    (the closure's fingerprint also matching a copy elsewhere) keeps the
+    entries a real clone pair.
+    """
+    return all(
+        _span_contains(a, b) or _span_contains(b, a) for a in first for b in second
+    )
+
+
 def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
     union = len(first | second)
     return len(first & second) / union if union else 0.0
@@ -261,6 +286,8 @@ def _similar_groups(
         if larger == 0 or smaller / larger < threshold:
             continue
         if _jaccard(first, second) < threshold:
+            continue
+        if _only_nested_members(order[left].members, order[right].members):
             continue
         adjacency.setdefault(left, set()).add(right)
         adjacency.setdefault(right, set()).add(left)

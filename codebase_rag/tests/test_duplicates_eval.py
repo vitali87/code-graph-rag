@@ -141,6 +141,30 @@ def test_cgr_duplicates_finds_edited_copy(tmp_path: Path) -> None:
     assert 0.8 <= similar[0]["similarity"] < 1.0
 
 
+def test_cgr_duplicates_does_not_pair_factory_with_its_closure(tmp_path: Path) -> None:
+    # A factory function's body IS its nested closure plus a return: the
+    # outer branch set contains the inner's, so overlap scoring sees a
+    # near-perfect match. Reporting a function as a duplicate of its own
+    # closure is unactionable noise (the create_query_tool shape).
+    factory = (
+        "def create_tool(db, log):\n"
+        "    def run_query(query, limit):\n"
+        "        cleaned = query.strip().lower()\n"
+        "        rows = db.execute(cleaned, limit=limit)\n"
+        "        counted = [decorate(row) for row in rows]\n"
+        "        mapping = {row.key: row for row in counted}\n"
+        "        picked = mapping.get(cleaned) if mapping else None\n"
+        "        log.info('ran', extra={'q': cleaned})\n"
+        "        total = sum(row.cost * 2 for row in counted)\n"
+        "        return (picked, total, [rows, counted])\n"
+        "    return run_query\n"
+    )
+    src = tmp_path / "proj"
+    _write_repo(src, {"factory.py": factory})
+    report = cgr_duplicates(src, "proj", _CONFIG)
+    assert report.groups == []
+
+
 def test_cgr_duplicates_honours_exclude_patterns(tmp_path: Path) -> None:
     # A generated twin excluded by glob may not leave a one-member "group".
     src = tmp_path / "proj"

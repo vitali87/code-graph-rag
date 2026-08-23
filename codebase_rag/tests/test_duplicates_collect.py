@@ -41,6 +41,7 @@ def _row(
     start_line: int = 1,
     start_col: int = 0,
     label: str = _FUNCTION,
+    end_line: int | None = None,
 ) -> ResultRow:
     return {
         "label": label,
@@ -49,7 +50,7 @@ def _row(
         "path": path if path is not None else f"proj/{qn.replace('.', '_')}.py",
         "start_line": start_line,
         "start_col": start_col,
-        "end_line": start_line + 9,
+        "end_line": end_line if end_line is not None else start_line + 9,
         "ast_fingerprint": fingerprint,
         "ast_fingerprint_nodes": nodes,
         "ast_branch_fingerprints": branches,
@@ -326,6 +327,77 @@ class TestSimilarGroups:
         exact, truncated = _maximal_cliques(adjacency, cap=8)
         assert len(exact) == 8
         assert truncated is False
+
+    def test_enclosing_function_is_not_similar_to_its_own_closure(self) -> None:
+        # A factory's body contains its nested function, so the outer branch
+        # set is a superset of the inner's and Jaccard clears any threshold.
+        # "This function duplicates its own body" is a false positive by
+        # construction: a nested pair must never form a similar group
+        # (create_query_tool vs its query_codebase_knowledge_graph closure).
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.m.factory",
+                    "aaaa",
+                    [*shared, "outer_extra"],
+                    path="proj/m.py",
+                    start_line=30,
+                    end_line=60,
+                ),
+                _row(
+                    "proj.m.factory.inner",
+                    "bbbb",
+                    shared,
+                    path="proj/m.py",
+                    start_line=38,
+                    end_line=58,
+                ),
+            ]
+        )
+        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
+
+    def test_nested_pair_with_external_copy_still_groups(self) -> None:
+        # The nested-pair exemption is scoped to containment: when the
+        # closure's fingerprint ALSO matches a copy elsewhere, the entries
+        # are a real clone pair and the group must survive.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.m.factory",
+                    "aaaa",
+                    [*shared, "outer_extra"],
+                    path="proj/m.py",
+                    start_line=30,
+                    end_line=60,
+                ),
+                _row(
+                    "proj.m.factory.inner",
+                    "bbbb",
+                    shared,
+                    path="proj/m.py",
+                    start_line=38,
+                    end_line=58,
+                ),
+                _row(
+                    "proj.other.copy",
+                    "bbbb",
+                    shared,
+                    path="proj/other.py",
+                    start_line=5,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        # inner and its external copy share a fingerprint: one exact group.
+        assert {"proj.m.factory.inner", "proj.other.copy"} in member_sets
+        # factory vs the inner-fingerprint entry is a real cross-file clone
+        # relationship (factory vs proj.other.copy), so the edge survives.
+        assert any("proj.m.factory" in members for members in member_sets)
 
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(
