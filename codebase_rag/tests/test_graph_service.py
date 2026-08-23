@@ -378,7 +378,7 @@ class TestEnsureConstraints:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
-        def fail_first_name_index(query: str) -> list[dict]:
+        def fail_first_name_index(query: str, params: object = None) -> list[dict]:
             executed_queries.append(query)
             if query == f"CREATE INDEX ON :{NODE_NAME_INDEXES[0]}(name);":
                 raise RuntimeError("Index already exists")
