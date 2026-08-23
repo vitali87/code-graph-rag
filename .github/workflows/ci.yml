@@ -431,11 +431,18 @@ jobs:
               reviewed=$(printf '%s' "$body" \
                 | grep -o 'Last reviewed commit.*' \
                 | grep -oE '[0-9a-f]{7,40}' | head -1 || true)
+              if [ -n "$reviewed" ] && [ "${#reviewed}" -lt 40 ]; then
+                # Resolve to the full SHA so the comparison below is exact
+                # equality, never a prefix guess; an unresolvable reference
+                # just keeps the poll going.
+                reviewed=$(gh api "repos/$REPO/commits/$reviewed" \
+                  --jq .sha 2>/dev/null || true)
+              fi
               score=$(printf '%s' "$body" \
                 | grep -oE 'Confidence Score: [0-9]+/5' | tail -1 \
                 | grep -oE '[0-9]+' | head -1 || true)
               if [ -n "$reviewed" ] && [ -n "$score" ] \
-                 && [[ "$HEAD_SHA" == "$reviewed"* ]]; then
+                 && [ "$reviewed" = "$HEAD_SHA" ]; then
                 if [ "$score" = "5" ]; then
                   echo "✅ Greptile scored $HEAD_SHA at 5/5"
                   exit 0
