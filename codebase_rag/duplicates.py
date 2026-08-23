@@ -94,7 +94,12 @@ def collect_duplicates_with_coverage(
             -group["node_count"],
         )
     )
-    return DuplicatesReport(groups=groups, skipped_symbols=skipped, truncated=truncated)
+    return DuplicatesReport(
+        groups=groups,
+        skipped_symbols=skipped,
+        truncated=truncated,
+        analyzed_symbols=len(rows),
+    )
 
 
 def _entries_from_rows(
