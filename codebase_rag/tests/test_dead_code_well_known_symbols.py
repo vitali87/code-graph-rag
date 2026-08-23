@@ -1,4 +1,3 @@
-import socket
 from pathlib import Path
 
 import pytest
@@ -10,19 +9,6 @@ from codebase_rag.dead_code import (
     is_well_known_symbol_member,
 )
 from evals.dead_code import cgr_dead_code, default_dead_code_config
-
-
-def is_memgraph_up() -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", 7687), timeout=0.1):
-            return True
-    except OSError:
-        return False
-
-
-skip_if_no_memgraph = pytest.mark.skipif(
-    not is_memgraph_up(), reason="Memgraph is unreachable"
-)
 
 
 def test_is_well_known_symbol_member() -> None:
@@ -70,9 +56,9 @@ def test_method_symbol_root_predicate_is_allowlisted() -> None:
     assert _is_js_well_known_symbol_root("[mySym]", True, "a.ts") is False
 
 
-@skip_if_no_memgraph
 def test_javascript_well_known_symbols_liveness_roots(tmp_path: Path) -> None:
-    # 4b + 4c: Parser/graph-shape test & DB-backed e2e test
+    # 4b + 4c: Parser/graph-shape test & in-memory e2e test (the eval capture
+    # harness replays the updater into a capturing ingestor; no database).
     # Copy fixtures to temp repo
     fixtures_dir = Path("fixtures/well_known_symbols")
     if not fixtures_dir.exists():
