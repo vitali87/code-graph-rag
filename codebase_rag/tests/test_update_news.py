@@ -146,7 +146,10 @@ class TestPrependNews:
         assert inserted == ["- **Web Search**: The agent can now search the web."]
         assert "phrased again" not in updated
 
-    def test_fragment_is_capped_at_three_entries(self) -> None:
+    def test_every_fresh_highlight_becomes_an_entry(self) -> None:
+        # The fragment is the release's curated Highlights, so no cap applies:
+        # all of it is news (a cap once silently dropped two of the five
+        # v0.0.720 highlights).
         fragment = (
             "- **One**: first.\n"
             "- **Two**: second.\n"
@@ -154,8 +157,8 @@ class TestPrependNews:
             "- **Four**: fourth.\n"
         )
         updated, inserted = prepend_news(NEWS, fragment)
-        assert len(inserted) == 3
-        assert "- **Four**" not in updated
+        assert len(inserted) == 4
+        assert "- **Four**" in updated
 
     def test_mixed_fragment_inserts_only_fresh_themes(self) -> None:
         fragment = (
