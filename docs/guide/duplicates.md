@@ -400,6 +400,13 @@ appear in more than one `similar` group: when `A` duplicates both `B` and `C`
 but `B` and `C` are not similar to each other, the report shows `{A, B}` and
 `{A, C}` rather than lumping all three together or dropping one pair.
 
+One deliberate recall limit: a statement block shared by a very large number
+of functions is boilerplate, not evidence of copying, so such blocks never
+generate candidate pairs. Two functions whose *only* overlap is boilerplate
+are exactly the matches the report should not contain — and byte-for-byte
+copies of boilerplate-heavy functions are still caught as `exact` groups by
+their whole-skeleton fingerprint.
+
 ## Exact Copies vs. Edited Copies
 
 By default the report contains both kinds of finding:
