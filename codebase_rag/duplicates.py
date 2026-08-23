@@ -10,6 +10,7 @@
 # project.
 from __future__ import annotations
 
+import re
 from fnmatch import fnmatch
 from math import ceil
 
@@ -244,6 +245,42 @@ def _span_contains(outer: DuplicateMember, inner: DuplicateMember) -> bool:
     )
 
 
+# Registration artifacts on a qualified name ("@<line>", optionally
+# "_<col>"), never part of the written name; stripped before any
+# hierarchy comparison.
+_DUP_QN_MARKER_RE = re.compile(
+    re.escape(cs.DUP_QN_MARKER)
+    + r"\d+(?:"
+    + re.escape(cs.DUP_QN_COLUMN_MARKER)
+    + r"\d+)?"
+)
+
+
+def _qn_within(outer_qn: str, inner_qn: str) -> bool:
+    outer = _DUP_QN_MARKER_RE.sub("", outer_qn)
+    inner = _DUP_QN_MARKER_RE.sub("", inner_qn)
+    return inner.startswith(outer + cs.SEPARATOR_DOT)
+
+
+def _member_nested_in(outer: DuplicateMember, inner: DuplicateMember) -> bool:
+    """True when inner's definition sits textually inside outer's.
+
+    Proper line containment proves it outright. An IDENTICAL line span
+    (minified one-liners) cannot: lines alone do not separate a one-line
+    factory's closure from an adjacent one-line definition, so the
+    qualified-name hierarchy decides - a nested definition's qn extends its
+    container's, an adjacent one's never does.
+    """
+    if not _span_contains(outer, inner):
+        return False
+    if (
+        outer["start_line"] < inner["start_line"]
+        or inner["end_line"] < outer["end_line"]
+    ):
+        return True
+    return _qn_within(outer["qualified_name"], inner["qualified_name"])
+
+
 def _only_nested_members(
     first: list[DuplicateMember], second: list[DuplicateMember]
 ) -> bool:
@@ -257,7 +294,9 @@ def _only_nested_members(
     entries a real clone pair.
     """
     return all(
-        _span_contains(a, b) or _span_contains(b, a) for a in first for b in second
+        _member_nested_in(a, b) or _member_nested_in(b, a)
+        for a in first
+        for b in second
     )
 
 
@@ -271,19 +310,15 @@ def _drop_contained_members(
     would seat the enclosing function next to its own nested closure. The
     nested member is the redundant one: its exact-twin relationship is
     already a Stage-1 group, while the container's only real partner is the
-    external copy. Proper containment only, so two distinct definitions
-    sharing a span (minified one-liners) both survive.
+    external copy. Nesting requires proper containment or a qualified-name
+    hierarchy on an identical span, so two distinct definitions sharing a
+    span (adjacent minified one-liners) both survive.
     """
     return [
         member
         for member in members
         if not any(
-            other is not member
-            and _span_contains(other, member)
-            and (
-                other["start_line"] < member["start_line"]
-                or member["end_line"] < other["end_line"]
-            )
+            other is not member and _member_nested_in(other, member)
             for other in members
         )
     ]

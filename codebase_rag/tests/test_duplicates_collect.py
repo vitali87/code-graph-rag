@@ -402,6 +402,83 @@ class TestSimilarGroups:
         assert {"proj.m.factory", "proj.other.copy"} in member_sets
         assert len(groups) == 2
 
+    def test_same_line_nested_closure_with_external_copy_is_dropped(self) -> None:
+        # Minified one-liners: the factory and its closure share the SAME
+        # start and end line, so line spans cannot prove nesting - but the
+        # qualified-name hierarchy can (factory.closure sits under factory).
+        # The similar group must still seat the factory with the external
+        # copy only, never with its own closure.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.min.factory",
+                    "aaaa",
+                    [*shared, "outer_extra"],
+                    path="proj/min.py",
+                    start_line=5,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.min.factory.closure",
+                    "bbbb",
+                    shared,
+                    path="proj/min.py",
+                    start_line=5,
+                    start_col=24,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.other.closure_copy",
+                    "bbbb",
+                    shared,
+                    path="proj/other.py",
+                    start_line=3,
+                    end_line=3,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.min.factory.closure", "proj.other.closure_copy"} in member_sets
+        assert {"proj.min.factory", "proj.other.closure_copy"} in member_sets
+        assert len(groups) == 2
+
+    def test_same_line_adjacent_definitions_still_pair(self) -> None:
+        # Two DISTINCT minified definitions can share one line span without
+        # any nesting (side-by-side one-liners). Their qualified names are
+        # unrelated, so the nested-member rules must not eat the pair.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.min.first",
+                    "aaaa",
+                    [*shared, "x1"],
+                    path="proj/min.py",
+                    start_line=5,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.min.second",
+                    "bbbb",
+                    [*shared, "x2"],
+                    path="proj/min.py",
+                    start_line=5,
+                    start_col=60,
+                    end_line=5,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        assert len(groups) == 1
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
+            "proj.min.first",
+            "proj.min.second",
+        }
+
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(
             [
