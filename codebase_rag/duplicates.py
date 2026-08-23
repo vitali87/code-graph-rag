@@ -261,6 +261,34 @@ def _only_nested_members(
     )
 
 
+def _drop_contained_members(
+    members: list[DuplicateMember],
+) -> list[DuplicateMember]:
+    """Drop members nested inside another member of the same group.
+
+    When a closure's fingerprint also matches a copy elsewhere, the entry
+    edge legitimately survives, but expanding the entry's full member list
+    would seat the enclosing function next to its own nested closure. The
+    nested member is the redundant one: its exact-twin relationship is
+    already a Stage-1 group, while the container's only real partner is the
+    external copy. Proper containment only, so two distinct definitions
+    sharing a span (minified one-liners) both survive.
+    """
+    return [
+        member
+        for member in members
+        if not any(
+            other is not member
+            and _span_contains(other, member)
+            and (
+                other["start_line"] < member["start_line"]
+                or member["end_line"] < other["end_line"]
+            )
+            for other in members
+        )
+    ]
+
+
 def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
     union = len(first | second)
     return len(first & second) / union if union else 0.0
@@ -308,7 +336,11 @@ def _similar_groups(
             for at, left in enumerate(clique)
             for right in clique[at + 1 :]
         )
-        members = [member for position in clique for member in order[position].members]
+        members = _drop_contained_members(
+            [member for position in clique for member in order[position].members]
+        )
+        if len(members) < 2:
+            continue
         groups.append(
             DuplicateGroup(
                 kind=cs.KIND_SIMILAR,

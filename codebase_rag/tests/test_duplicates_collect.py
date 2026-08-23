@@ -396,8 +396,11 @@ class TestSimilarGroups:
         # inner and its external copy share a fingerprint: one exact group.
         assert {"proj.m.factory.inner", "proj.other.copy"} in member_sets
         # factory vs the inner-fingerprint entry is a real cross-file clone
-        # relationship (factory vs proj.other.copy), so the edge survives.
-        assert any("proj.m.factory" in members for members in member_sets)
+        # relationship, but only via the EXTERNAL copy: the similar group
+        # must seat factory with proj.other.copy alone, never with its own
+        # nested closure (whose exact twin is already reported above).
+        assert {"proj.m.factory", "proj.other.copy"} in member_sets
+        assert len(groups) == 2
 
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(
