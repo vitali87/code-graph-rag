@@ -640,6 +640,8 @@ class TestNoninteractiveMode:
     async def test_in_root_option_attached_value_is_allowed(
         self, tmp_path: Path
     ) -> None:
+        if not shutil.which("rg"):
+            pytest.skip("rg (ripgrep) not installed")
         root = tmp_path / "proj"
         root.mkdir()
         (root / "pats.txt").write_text("payload", encoding="utf-8")
