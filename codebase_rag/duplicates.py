@@ -114,9 +114,7 @@ def _entries_from_rows(
         fingerprint = str(row.get(cs.KEY_AST_FINGERPRINT) or "")
         node_count = int(str(row.get(cs.KEY_AST_FINGERPRINT_NODES) or 0))
         path = str(row.get(cs.KEY_PATH) or "")
-        if not fingerprint or node_count < config.min_nodes:
-            continue
-        if any(fnmatch(path, pattern) for pattern in config.exclude_patterns):
+        if _row_excluded(fingerprint, node_count, path, config):
             continue
         start_line = int(str(row.get(cs.KEY_START_LINE) or 0))
         start_col = int(str(row.get(cs.KEY_START_COL) or 0))
@@ -124,24 +122,41 @@ def _entries_from_rows(
         if span in seen_spans:
             continue
         seen_spans.add(span)
-        entry = entries.get(fingerprint)
-        if entry is None:
-            entry = _Entry(fingerprint, node_count)
-            branches = row.get(cs.KEY_AST_BRANCH_FINGERPRINTS)
-            if isinstance(branches, list):
-                entry.branches = frozenset(str(branch) for branch in branches)
-            entries[fingerprint] = entry
-        entry.members.append(
-            DuplicateMember(
-                label=str(row.get(cs.KEY_LABEL) or ""),
-                qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME) or ""),
-                name=str(row.get(cs.KEY_NAME) or ""),
-                path=path,
-                start_line=start_line,
-                end_line=int(str(row.get(cs.KEY_END_LINE) or 0)),
-            )
-        )
+        entry = _entry_for(entries, row, fingerprint, node_count)
+        entry.members.append(_member_from_row(row, path, start_line))
     return entries
+
+
+def _row_excluded(
+    fingerprint: str, node_count: int, path: str, config: DuplicatesConfig
+) -> bool:
+    if not fingerprint or node_count < config.min_nodes:
+        return True
+    return any(fnmatch(path, pattern) for pattern in config.exclude_patterns)
+
+
+def _entry_for(
+    entries: dict[str, _Entry], row: ResultRow, fingerprint: str, node_count: int
+) -> _Entry:
+    entry = entries.get(fingerprint)
+    if entry is None:
+        entry = _Entry(fingerprint, node_count)
+        branches = row.get(cs.KEY_AST_BRANCH_FINGERPRINTS)
+        if isinstance(branches, list):
+            entry.branches = frozenset(str(branch) for branch in branches)
+        entries[fingerprint] = entry
+    return entry
+
+
+def _member_from_row(row: ResultRow, path: str, start_line: int) -> DuplicateMember:
+    return DuplicateMember(
+        label=str(row.get(cs.KEY_LABEL) or ""),
+        qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME) or ""),
+        name=str(row.get(cs.KEY_NAME) or ""),
+        path=path,
+        start_line=start_line,
+        end_line=int(str(row.get(cs.KEY_END_LINE) or 0)),
+    )
 
 
 def _sorted_members(members: list[DuplicateMember]) -> list[DuplicateMember]:

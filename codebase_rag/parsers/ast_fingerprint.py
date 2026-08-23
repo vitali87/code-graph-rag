@@ -92,6 +92,15 @@ def _fingerprint_subtree(body: Node) -> AstFingerprintResult | None:
     # pre-order pass records each kept node's token, children, and whether
     # its parent is block-ish; the reversed order is post-order, so digests
     # and node counts fold bottom-up in one array scan.
+    tokens, child_indexes, is_branch_root = _collect_skeleton(body)
+    if not tokens:
+        return None
+    return _fold_digests(tokens, child_indexes, is_branch_root)
+
+
+def _collect_skeleton(
+    body: Node,
+) -> tuple[list[str], list[list[int]], list[bool]]:
     tokens: list[str] = []
     child_indexes: list[list[int]] = []
     is_branch_root: list[bool] = []
@@ -113,10 +122,12 @@ def _fingerprint_subtree(body: Node) -> AstFingerprintResult | None:
             # Reversed push keeps children in source order after popping.
             for child in reversed(node.children):
                 stack.append((child, index))
+    return tokens, child_indexes, is_branch_root
 
-    if not tokens:
-        return None
 
+def _fold_digests(
+    tokens: list[str], child_indexes: list[list[int]], is_branch_root: list[bool]
+) -> AstFingerprintResult:
     digests: list[bytes] = [b""] * len(tokens)
     counts: list[int] = [0] * len(tokens)
     branch_digests: set[bytes] = set()
