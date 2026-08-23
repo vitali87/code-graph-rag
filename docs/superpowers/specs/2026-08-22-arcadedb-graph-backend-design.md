@@ -244,8 +244,15 @@ since Memgraph remains the default.
 
 Both engines default to port 7687, so they cannot both run unprofiled.
 `docker-compose.yaml` gains an `arcadedb` service under a compose profile, with
-Memgraph under a `memgraph` profile active by default — existing
-`docker compose up` behaviour is unchanged.
+Memgraph under a `memgraph` profile.
+
+**CORRECTION (found in Task 17):** this originally claimed Memgraph's profile would be
+"active by default" so that bare `docker compose up` was unchanged. Compose has no such
+concept — a service carrying ANY profile is excluded unless that profile is explicitly
+activated. Verified: `docker compose config --services` on the shipped file returns only
+`qdrant`. The guarantee is therefore scoped to `cgr daemon`, which injects
+`--profile <backend>` explicitly and behaves exactly as before. Driving the compose file
+directly now requires `docker compose --profile memgraph up`.
 
 ```yaml
 arcadedb:
