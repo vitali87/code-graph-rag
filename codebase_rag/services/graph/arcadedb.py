@@ -81,6 +81,41 @@ def _hashable(value: PropertyValue) -> Hashable:
     return tuple(value) if isinstance(value, list) else value
 
 
+def _chunk_endpoint_disjoint(rows: list[RelBatchRow]) -> list[list[RelBatchRow]]:
+    """Partition rows into UNWIND-safe chunks: no chunk contains two rows
+    sharing an endpoint (from_val or to_val).
+
+    Confirmed by an isolated probe against a live server: 300 MERGEs onto
+    one hot vertex succeeded 300/300 sent one row at a time, but the
+    identical 300 rows sent as a single UNWIND batch deadlocked
+    deterministically -- and indexing this repo's own test suite showed
+    the failure mode is not always a raised exception either: 9 of 508
+    CALLS edges onto the shared `load_parsers` target vanished from a
+    batched flush with no error and no attempted/created mismatch in this
+    ingestor's own bookkeeping. Retrying or bisecting an already-sent
+    UNWIND cannot rule that out -- it can only reduce how often it is hit.
+    Guaranteeing every chunk's endpoints are pairwise disjoint before
+    anything is sent removes the collision outright, and costs nothing
+    for the common case (unique targets per row all land in one chunk);
+    only a genuinely hot vertex degrades to one row per chunk.
+    """
+    chunks: list[list[RelBatchRow]] = []
+    chunk_endpoints: list[set[Hashable]] = []
+    for row in rows:
+        from_h = _hashable(row["from_val"])
+        to_h = _hashable(row["to_val"])
+        for chunk, endpoints in zip(chunks, chunk_endpoints, strict=True):
+            if from_h not in endpoints and to_h not in endpoints:
+                chunk.append(row)
+                endpoints.add(from_h)
+                endpoints.add(to_h)
+                break
+        else:
+            chunks.append([row])
+            chunk_endpoints.append({from_h, to_h})
+    return chunks
+
+
 def _dedupe_rows_sharing_a_merge_pattern(
     rows: list[RelBatchRow], merge_key_props: tuple[str, ...]
 ) -> list[RelBatchRow]:
@@ -406,6 +441,25 @@ class ArcadeDBIngestor:
         try:
             return retry_on_transient(run, self._dialect)
         except Exception as e:
+            # Confirmed by an isolated probe against a live server: 300
+            # MERGEs onto one hot vertex, sent as 300 separate single-row
+            # queries, succeeded 300/300 with zero conflicts. The identical
+            # 300 rows sent as one UNWIND batch deadlocked immediately and
+            # deterministically, with no concurrent writer of ours anywhere
+            # in the picture -- ArcadeDB's Cypher engine appears to execute
+            # UNWIND rows with internal parallelism that collides once 2+
+            # rows in the same UNWIND touch the same vertex (every file
+            # importing `typing` merges an edge onto that one
+            # ExternalModule row, for example). Retrying the same UNWIND
+            # just reproduces the same internal race, so this falls back
+            # to one MERGE per row -- still UNWIND-shaped (wrap_with_unwind
+            # runs on every call) but with exactly one row, which cannot
+            # collide with itself.
+            if len(rows) > 1 and self._dialect.is_retryable(e):
+                results: list[ResultRow] = []
+                for row in rows:
+                    results.extend(self._execute_batch(query, [row]))
+                return results
             if not self._dialect.is_benign_error(e):
                 logger.error(ls.ARCADE_BATCH_ERROR.format(error=e))
                 logger.error(ls.ARCADE_CYPHER_QUERY.format(query=query))
@@ -454,7 +508,9 @@ class ArcadeDBIngestor:
                 to_key,
                 any(r["props"] for r in rows),
             )
-            results = self._execute_batch(query, rows)
+            results: list[ResultRow] = []
+            for chunk in _chunk_endpoint_disjoint(rows):
+                results.extend(self._execute_batch(query, chunk))
             return len(rows), _count_created(results), 0
 
         # Issue #722: rows for the same endpoints may carry different
@@ -488,9 +544,11 @@ class ArcadeDBIngestor:
                 any(r["props"] for r in deduped),
                 merge_key_props=merge_key_props,
             )
-            results = self._execute_batch(query, deduped)
+            merge_results: list[ResultRow] = []
+            for chunk in _chunk_endpoint_disjoint(deduped):
+                merge_results.extend(self._execute_batch(query, chunk))
             attempted += len(deduped)
-            created += _count_created(results)
+            created += _count_created(merge_results)
         return attempted, created, deduped_away
 
     def flush_nodes(self) -> None:
@@ -547,37 +605,27 @@ class ArcadeDBIngestor:
         deduped_away = 0
         first_error: Exception | None = None
 
-        if self._executor and len(self._rel_groups) > 1:
-            futures = {
-                self._executor.submit(
-                    self._flush_rel_pattern_group, pattern, rows
-                ): pattern
-                for pattern, rows in self._rel_groups.items()
-            }
-            for future in as_completed(futures):
-                pattern = futures[future]
-                try:
-                    a, c, d = future.result()
-                    attempted += a
-                    created += c
-                    deduped_away += d
-                except Exception as e:
-                    logger.error(
-                        ls.ARCADE_REL_FLUSH_ERROR.format(pattern=pattern, error=e)
-                    )
-                    first_error = first_error or e
-        else:
-            for pattern, rows in self._rel_groups.items():
-                try:
-                    a, c, d = self._flush_rel_pattern_group(pattern, rows)
-                    attempted += a
-                    created += c
-                    deduped_away += d
-                except Exception as e:
-                    logger.error(
-                        ls.ARCADE_REL_FLUSH_ERROR.format(pattern=pattern, error=e)
-                    )
-                    first_error = first_error or e
+        # Unlike flush_nodes, this never fans out across the executor. Node
+        # groups partition cleanly by label -- disjoint vertex sets, so
+        # parallel workers rarely touch the same row. Relationship patterns
+        # do not: most rel types in this schema hang off Module (IMPORTS,
+        # DEFINES, ...), so concurrent MERGE across patterns repeatedly
+        # converges on the same hot Module vertices. Indexing this repo's
+        # own ~9k-file tree into ArcadeDB hit
+        # Neo.TransientError.Transaction.DeadlockDetected often enough,
+        # even with retry.py's 8-attempt budget, that some batches still
+        # exhausted it. Running the patterns sequentially removes the
+        # concurrent writers causing the contention instead of retrying
+        # around it.
+        for pattern, rows in self._rel_groups.items():
+            try:
+                a, c, d = self._flush_rel_pattern_group(pattern, rows)
+                attempted += a
+                created += c
+                deduped_away += d
+            except Exception as e:
+                logger.error(ls.ARCADE_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
+                first_error = first_error or e
 
         logger.info(
             ls.ARCADE_RELS_FLUSHED.format(

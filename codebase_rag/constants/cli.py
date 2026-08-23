@@ -324,7 +324,7 @@ TABLE_ROW_OLLAMA_CYPHER = "Ollama Endpoint (Cypher)"
 TABLE_ROW_EDIT_CONFIRMATION = "Edit Confirmation"
 TABLE_ROW_TARGET_REPOSITORY = "Target Repository"
 
-MSG_CONNECTED_MEMGRAPH = "Successfully connected to Memgraph."
+MSG_CONNECTED_GRAPH_BACKEND = "Successfully connected to {backend}."
 MSG_THINKING_CANCELLED = "Thinking cancelled."
 MSG_TIMEOUT_FORMAT = "Operation timed out after {timeout} seconds."
 MSG_TOOL_CALL_CANCELLED = "Tool call cancelled by user."

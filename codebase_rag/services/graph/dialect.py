@@ -13,7 +13,7 @@ class GraphDialect(Protocol):
     """Everything that genuinely differs between graph engines.
 
     Deliberately small: the shared Cypher in cypher_queries.py runs on both
-    backends unchanged, so only these five behaviours plus the name vary.
+    backends unchanged, so only these six behaviours plus the name vary.
     """
 
     @property

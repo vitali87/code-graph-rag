@@ -55,7 +55,7 @@ from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
 from .services import QueryProtocol
-from .services.graph_service import MemgraphIngestor
+from .services.graph import GraphIngestor, get_ingestor
 from .services.llm import CypherGenerator, create_rag_orchestrator
 from .tools.ast_grep_service import AstGrepService
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
@@ -1381,7 +1381,7 @@ def update_model_settings(
         _update_single_model_setting(cs.ModelRole.CYPHER, cypher)
 
 
-def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphData:
+def _write_graph_json(ingestor: GraphIngestor, output_path: Path) -> GraphData:
     graph_data: GraphData = ingestor.export_graph_to_dict()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1391,17 +1391,18 @@ def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphDat
     return graph_data
 
 
-def connect_memgraph(batch_size: int) -> MemgraphIngestor:
-    return MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        batch_size=batch_size,
-        username=settings.MEMGRAPH_USERNAME,
-        password=settings.MEMGRAPH_PASSWORD,
-    )
+def connect_memgraph(batch_size: int) -> GraphIngestor:
+    """Connect to the configured graph backend.
+
+    Kept under its historical name -- callers and tests patch it by name --
+    but it no longer hardcodes Memgraph: it dispatches through
+    `services.graph.factory.get_ingestor`, so `GRAPH_BACKEND=arcadedb`
+    returns an `ArcadeDBIngestor` here too.
+    """
+    return get_ingestor(batch_size=batch_size)
 
 
-def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
+def export_graph_to_file(ingestor: GraphIngestor, output: str) -> bool:
     output_path = Path(output)
 
     try:
@@ -1724,7 +1725,14 @@ async def main_async(
         app_context.console.print(table)
 
     async with connect_memgraph(batch_size) as ingestor:
-        app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
+        app_context.console.print(
+            style(
+                cs.MSG_CONNECTED_GRAPH_BACKEND.format(
+                    backend=cs.GRAPH_BACKEND_DISPLAY_NAMES[settings.GRAPH_BACKEND]
+                ),
+                cs.Color.GREEN,
+            )
+        )
         app_context.console.print(
             Panel(
                 style(cs.MSG_CHAT_INSTRUCTIONS, cs.Color.YELLOW),
@@ -1776,7 +1784,14 @@ async def main_optimize_async(
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     async with connect_memgraph(effective_batch_size) as ingestor:
-        app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
+        app_context.console.print(
+            style(
+                cs.MSG_CONNECTED_GRAPH_BACKEND.format(
+                    backend=cs.GRAPH_BACKEND_DISPLAY_NAMES[settings.GRAPH_BACKEND]
+                ),
+                cs.Color.GREEN,
+            )
+        )
 
         rag_agent, tool_names, system_prompt = _initialize_services_and_agent(
             target_repo_path, ingestor

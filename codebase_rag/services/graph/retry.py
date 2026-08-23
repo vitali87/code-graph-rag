@@ -12,7 +12,16 @@ from ... import logs as ls
 if TYPE_CHECKING:
     from .dialect import GraphDialect
 
-DEFAULT_ATTEMPTS = 5
+# Deliberately small: an isolated probe against a live server showed that
+# an ArcadeDB UNWIND batch where 2+ rows MERGE onto the same vertex (e.g.
+# many files IMPORTS-ing the same popular module) deadlocks deterministically
+# -- retrying the identical query mostly reproduces the identical internal
+# race, so a large budget here just delays the real fix. ArcadeDBIngestor's
+# _execute_batch falls back to one MERGE per row (immune to this, per the
+# same probe: 300/300 succeeded one row at a time) once this is exhausted,
+# so this only needs to cover genuine short-lived contention on the way to
+# that fallback, not the deadlock itself.
+DEFAULT_ATTEMPTS = 4
 DEFAULT_BASE_DELAY_S = 0.05
 
 
