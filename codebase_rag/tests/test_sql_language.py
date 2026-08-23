@@ -127,6 +127,26 @@ class TestSqlGetName:
         assert node is not None
         assert _sql_get_name(node) == "MyFunc"
 
+    def test_quoted_identifier_keeps_a_dot_inside_it(self) -> None:
+        # A dot inside quotes is part of the identifier, not a qualifier
+        # separator: "billing.v1" is one schema name.
+        node = _create_function_node(
+            'CREATE FUNCTION "billing.v1".usp_total() RETURNS int '
+            "AS $$ SELECT 1; $$ LANGUAGE sql;"
+        )
+        assert node is not None
+        assert _sql_get_name(node) == "billing.v1.usp_total"
+
+    def test_doubled_quotes_unescape_to_one(self) -> None:
+        # Straight through the normalizer: the published grammar cannot yet
+        # tokenize a doubled quote inside a quoted identifier (it yields an
+        # ERROR node), but the string-call side feeds the normalizer directly
+        # and must agree with PostgreSQL.
+        from codebase_rag.sql_names import normalize_sql_reference
+
+        assert normalize_sql_reference('"a""b"') == 'a"b'
+        assert normalize_sql_reference('app."a""b"') == 'app.a"b'
+
     def test_returns_none_without_an_object_reference(self) -> None:
         tree_sitter = pytest.importorskip("tree_sitter")
         tree_sitter_sql = pytest.importorskip("tree_sitter_sql")

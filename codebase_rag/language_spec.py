@@ -7,6 +7,7 @@ from loguru import logger
 
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
+from .sql_names import normalize_sql_reference
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -74,16 +75,6 @@ def _generic_get_name(node: Node) -> str | None:
     return None
 
 
-def _sql_fold_identifier(piece: str) -> str:
-    # PostgreSQL folds an unquoted identifier to lowercase but keeps a quoted
-    # one verbatim: MyFunc and "MyFunc" are DIFFERENT routines (myfunc vs
-    # MyFunc), and folding both the same way would merge them.
-    piece = piece.strip()
-    if len(piece) >= 2 and piece[0] == '"' and piece[-1] == '"':
-        return piece[1:-1]
-    return piece.lower()
-
-
 def _sql_get_name(node: Node) -> str | None:
     # `create_function` names the routine through an `object_reference` child,
     # not a `name` field, so the generic extractor finds nothing. The schema
@@ -98,9 +89,10 @@ def _sql_get_name(node: Node) -> str | None:
         if not child.text:
             break
         reference = child.text.decode(cs.ENCODING_UTF8).strip()
-        name = ".".join(
-            part for part in map(_sql_fold_identifier, reference.split(".")) if part
-        )
+        # The shared normalizer applies PostgreSQL's folding rules (unquoted
+        # lowercases, quoted keeps case); the string-call side uses the SAME
+        # one, or a definition and the call naming it would never connect.
+        name = normalize_sql_reference(reference)
         if name:
             return name
         break
