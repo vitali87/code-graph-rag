@@ -129,6 +129,13 @@ WHERE c.name = 'UserService'
 RETURN c.name AS className, m.name AS methodName, m.qualified_name AS qualified_name, labels(m) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
+CYPHER_EXAMPLE_FUNCTION_CALLERS = f"""MATCH (caller)-[r:CALLS]->(callee:Function|Method)
+WHERE callee.qualified_name ENDS WITH '.process_payment'
+RETURN caller.qualified_name AS caller_qualified_name, caller.path AS path,
+       callee.qualified_name AS callee_qualified_name,
+       type(r) AS relationship, labels(caller) AS caller_type
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
+
 # ast-grep findings (issue #413): Pattern/CodeSmell/SecurityIssue nodes hang
 # off a Module via IMPLEMENTS_PATTERN/HAS_SMELL/HAS_VULNERABILITY. The finding
 # node's name is the rule id; start_line locates the site.
