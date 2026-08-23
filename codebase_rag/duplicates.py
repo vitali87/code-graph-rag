@@ -265,17 +265,18 @@ def _qn_within(outer_qn: str, inner_qn: str) -> bool:
 def _member_nested_in(outer: DuplicateMember, inner: DuplicateMember) -> bool:
     """True when inner's definition sits textually inside outer's.
 
-    Proper line containment proves it outright. An IDENTICAL line span
-    (minified one-liners) cannot: lines alone do not separate a one-line
-    factory's closure from an adjacent one-line definition, so the
-    qualified-name hierarchy decides - a nested definition's qn extends its
-    container's, an adjacent one's never does.
+    Only STRICT containment on both boundaries proves nesting by lines
+    alone. Any shared boundary is ambiguous - a one-liner at 5-5 beside a
+    sibling spanning 5-9 shares a start line without nesting, and minified
+    one-liners share both - so there the qualified-name hierarchy decides:
+    a nested definition's qn extends its container's, a sibling's never
+    does.
     """
     if not _span_contains(outer, inner):
         return False
     if (
         outer["start_line"] < inner["start_line"]
-        or inner["end_line"] < outer["end_line"]
+        and inner["end_line"] < outer["end_line"]
     ):
         return True
     return _qn_within(outer["qualified_name"], inner["qualified_name"])

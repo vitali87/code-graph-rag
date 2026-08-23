@@ -479,6 +479,61 @@ class TestSimilarGroups:
             "proj.min.second",
         }
 
+    def test_shared_boundary_siblings_still_pair(self) -> None:
+        # Sibling definitions can share ONE line boundary without nesting: a
+        # one-liner at 5-5 beside a definition spanning 5-9 (or 9-9 closing a
+        # 5-9 span). Containment is only proven by STRICT bounds on both
+        # sides; a shared boundary defers to the qualified-name hierarchy.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.min.first",
+                    "aaaa",
+                    [*shared, "x1"],
+                    path="proj/min.py",
+                    start_line=5,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.min.second",
+                    "bbbb",
+                    [*shared, "x2"],
+                    path="proj/min.py",
+                    start_line=5,
+                    start_col=40,
+                    end_line=9,
+                ),
+                _row(
+                    "proj.min.third",
+                    "cccc",
+                    [*shared, "x3"],
+                    path="proj/tail.py",
+                    start_line=9,
+                    end_line=9,
+                ),
+                _row(
+                    "proj.min.fourth",
+                    "dddd",
+                    [*shared, "x4"],
+                    path="proj/tail.py",
+                    start_line=5,
+                    end_line=9,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        # All four are mutually similar: ONE 4-clique. A wrongly dropped
+        # first-second (or third-fourth) edge would split it into two
+        # overlapping 3-cliques instead.
+        assert len(groups) == 1
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
+            "proj.min.first",
+            "proj.min.second",
+            "proj.min.third",
+            "proj.min.fourth",
+        }
+
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(
             [
