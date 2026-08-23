@@ -4,6 +4,7 @@ import pytest
 
 from codebase_rag.constants import (
     NODE_UNIQUE_CONSTRAINTS,
+    VERIFIED_ARCADE_PROCEDURES,
     GraphBackend,
     NodeLabel,
     RelationshipType,
@@ -158,18 +159,21 @@ def test_ensure_schema_without_an_http_client_raises_a_clear_error() -> None:
     assert str(exc_info.value) == ARCADE_NO_HTTP_CLIENT
 
 
-def test_procedure_catalog_mentions_only_algo_procedures() -> None:
+def test_procedure_catalog_lists_only_verified_procedures() -> None:
     catalog = ArcadeDBDialect().procedure_catalog
-    assert "algo." in catalog
-    for absent in ("nxalg.", "pagerank.get", "graph_util.", "path.expand"):
+    # Every procedure named here was accepted by scripts/probe_arcade_procedures.py
+    # against ArcadeDB 26.8.1. Re-run that script before adding to this list.
+    for confirmed in VERIFIED_ARCADE_PROCEDURES:
+        assert confirmed in catalog
+
+
+def test_procedure_catalog_excludes_mage_namespaces() -> None:
+    catalog = ArcadeDBDialect().procedure_catalog
+    for absent in ("nxalg.", "pagerank.get", "graph_util.", "path.expand", "wcc.get"):
         assert absent not in catalog
 
 
-def test_procedure_catalog_warns_that_node_is_a_record_id_string() -> None:
-    # Without this warning the model writes `node.qualified_name` against an
-    # algo.* result and silently gets nothing back -- `node` there is a
-    # record-id string, not a node. Pin the load-bearing tokens, not the
-    # whole paragraph, so rewording the surrounding prose doesn't break this.
-    catalog = ArcadeDBDialect().procedure_catalog
-    assert "record-id string" in catalog
-    assert "#46:0" in catalog
+def test_procedure_catalog_warns_that_node_is_a_rid_string() -> None:
+    # Without this the model writes node.qualified_name and gets nothing.
+    assert "record-id string" in ArcadeDBDialect().procedure_catalog
+    assert "#46:0" in ArcadeDBDialect().procedure_catalog

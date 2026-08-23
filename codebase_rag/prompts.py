@@ -62,7 +62,7 @@ _CYPHER_RULES_BODY = """- **ALWAYS Return Specific Properties with Aliases**: Do
 
 _CYPHER_RULES_FALLBACK = """**2c. When Cypher Can't Answer**
 
-If a question cannot be expressed as a bounded Cypher pattern or as a single MAGE procedure call (e.g., "longest call chain in a graph with cycles"), return your best bounded approximation rather than an unbounded path query. Examples:
+If a question cannot be expressed as a bounded Cypher pattern or as a single graph-algorithm procedure call (e.g., "longest call chain in a graph with cycles"), return your best bounded approximation rather than an unbounded path query. Examples:
 - "longest call chain" -> call a strongly-connected-components procedure from Section 2b and post-process the result.
 - "find a deeply-nested call site" -> use a bounded depth such as `[:CALLS*1..10]` with `ORDER BY ... LIMIT 1`."""
 

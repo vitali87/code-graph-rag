@@ -636,14 +636,112 @@ ARCADE_RETRYABLE_SUBSTRINGS: tuple[str, ...] = (
 ARCADE_BENIGN_SUBSTRINGS: tuple[str, ...] = ("already exists",)
 ARCADE_ALLOWED_PROCEDURE_PREFIXES: frozenset[str] = frozenset({"algo."})
 
-# Placeholder catalog. Task 15 replaces this with the enumerated result of
-# probing a live server; ArcadeDB does not document its Cypher CALL surface,
-# so it cannot be written from the docs.
-ARCADE_PROCEDURE_CATALOG = """- **PageRank**: `CALL algo.pageRank() YIELD node, score`
-- **Strongly connected components**: `CALL algo.scc() YIELD node, componentId`
-- **Weakly connected components**: `CALL algo.wcc() YIELD node, componentId`
-- **Communities**: `CALL algo.louvain() YIELD node, communityId`
+# Names confirmed to resolve over Cypher CALL against a live ArcadeDB 26.8.1
+# server (scripts/probe_arcade_procedures.py). ArcadeDB documents only the
+# Java GraphAlgorithms API; the Cypher CALL surface is undocumented and does
+# not match the marketing algorithm list (e.g. `algo.betweennessCentrality`
+# does not resolve; `algo.betweenness` does). Re-run the probe script before
+# adding a name here -- do not add on the strength of the Java docs alone.
+VERIFIED_ARCADE_PROCEDURES: tuple[str, ...] = (
+    "algo.pageRank",
+    "algo.articleRank",
+    "algo.betweenness",
+    "algo.closeness",
+    "algo.hits",
+    "algo.eccentricity",
+    "algo.wcc",
+    "algo.scc",
+    "algo.louvain",
+    "algo.leiden",
+    "algo.labelPropagation",
+    "algo.slpa",
+    "algo.triangleCount",
+    "algo.localClusteringCoefficient",
+    "algo.longestPath",
+    "algo.topologicalSort",
+    "algo.dijkstra",
+    "algo.allSimplePaths",
+)
 
-Important: these procedures yield `node` as a **record-id string** such as
-`"#46:0"`, not a node you can read properties from. To get properties, match
-the node separately by its stored key rather than writing `node.name`."""
+# (title, CALL-argument text, YIELD-column text) for each name in
+# VERIFIED_ARCADE_PROCEDURES, observed by calling the bare procedure (or, for
+# the two pathfinding procedures, by binding real vertices with MATCH first)
+# and reading `result.keys()`. Keyed by the same strings as
+# VERIFIED_ARCADE_PROCEDURES so the catalog text below cannot name a
+# procedure that constant does not also list.
+_ARCADE_PROCEDURE_INFO: dict[str, tuple[str, str, str]] = {
+    "algo.pageRank": ("PageRank", "", "node, score"),
+    "algo.articleRank": ("ArticleRank", "", "node, score"),
+    "algo.betweenness": ("Betweenness centrality", "", "node, score"),
+    "algo.closeness": ("Closeness centrality", "", "node, score"),
+    "algo.hits": ("HITS (hub/authority)", "", "node, hubScore, authorityScore"),
+    "algo.eccentricity": (
+        "Eccentricity",
+        "",
+        "node, eccentricity, isCenter, isPeripheral",
+    ),
+    "algo.wcc": ("Weakly connected components", "", "node, componentId"),
+    "algo.scc": ("Strongly connected components", "", "node, componentId"),
+    "algo.louvain": ("Louvain communities", "", "node, communityId, modularity"),
+    "algo.leiden": ("Leiden communities", "", "nodeId, community"),
+    "algo.labelPropagation": ("Label propagation communities", "", "node, communityId"),
+    "algo.slpa": ("SLPA communities", "", "node, communities"),
+    "algo.triangleCount": (
+        "Triangle count",
+        "",
+        "node, triangles, clusteringCoefficient",
+    ),
+    "algo.localClusteringCoefficient": (
+        "Local clustering coefficient",
+        "",
+        "node, localClusteringCoefficient",
+    ),
+    "algo.longestPath": ("Longest path from each node", "", "node, distance, source"),
+    "algo.topologicalSort": ("Topological sort", "", "node, order"),
+    "algo.dijkstra": (
+        "Shortest path (Dijkstra)",
+        "start, end, 'REL_TYPE', 'OUT'",
+        "path",
+    ),
+    "algo.allSimplePaths": (
+        "All simple paths up to a depth",
+        "start, end, 'REL_TYPE', 5",
+        "path",
+    ),
+}
+
+_missing_proc_info = set(VERIFIED_ARCADE_PROCEDURES) - set(_ARCADE_PROCEDURE_INFO)
+if _missing_proc_info:
+    raise RuntimeError(
+        f"VERIFIED_ARCADE_PROCEDURES missing from _ARCADE_PROCEDURE_INFO: "
+        f"{sorted(_missing_proc_info)}."
+    )
+
+
+def _build_arcade_procedure_catalog() -> str:
+    lines = []
+    for name in VERIFIED_ARCADE_PROCEDURES:
+        title, args, yields = _ARCADE_PROCEDURE_INFO[name]
+        lines.append(f"- **{title}**: `CALL {name}({args}) YIELD {yields}`")
+    bullets = "\n".join(lines)
+    return f"""{bullets}
+
+Important: every procedure above except `algo.dijkstra` and `algo.allSimplePaths`
+yields its node column (`node`, or `nodeId` for `algo.leiden`) as a
+**record-id string** such as `"#46:0"`, not a node you can read properties
+from. To get properties, match the node separately by its stored key rather
+than writing `node.qualified_name`.
+
+`algo.dijkstra` and `algo.allSimplePaths` require real vertices, not
+record-id strings: `MATCH (start), (end) WHERE ... WITH start, end CALL
+algo.dijkstra(start, end, 'REL_TYPE', 'OUT') YIELD path RETURN path`. Their
+`path` result carries full node objects, unlike the record-id strings above.
+
+Verified but NOT included above because the probe could not confirm correct
+behaviour: `algo.personalizedPageRank` (its `node` column comes back `null`
+on ArcadeDB 26.8.1) and `algo.astar`, `algo.bellmanFord`, `algo.kShortestPaths`
+(all three accept a call and return a zero-length, edge-less path even when a
+real path exists between the given vertices). Do not call these four."""
+
+
+ARCADE_PROCEDURE_CATALOG = _build_arcade_procedure_catalog()
