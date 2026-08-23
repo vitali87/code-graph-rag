@@ -334,6 +334,31 @@ class TestCollectCallSiteScopes:
         (site,) = sites
         assert site.func == "caller_fn"
 
+    def test_deferred_lambda_body_belongs_to_lambda_scope(self) -> None:
+        # A lambda that is stored and called later runs its body in the
+        # lambda scope, which the multihop oracle cannot name-match, so the
+        # marker must stay.
+        from evals.agentic_qa import _LAMBDA_SCOPE
+
+        sites = self._sites("handler = lambda: default_factory()\n")
+        (site,) = sites
+        assert site.func == _LAMBDA_SCOPE
+
+    def test_immediately_invoked_lambda_belongs_to_enclosing_scope(self) -> None:
+        # A lambda invoked at definition time (here in a decorator
+        # expression) runs its body in the enclosing scope, not an anonymous
+        # one, so its calls must NOT carry the lambda marker or the multihop
+        # oracle wrongly drops an otherwise-valid target (Greptile review on
+        # PR #1388).
+        from evals.agentic_qa import _LAMBDA_SCOPE
+
+        src = "@(lambda: make_decorator())()\ndef decorated():\n    return 1\n"
+        sites = self._sites(src)
+        callees = {s.callee for s in sites}
+        assert "make_decorator" in callees
+        for site in sites:
+            assert site.func != _LAMBDA_SCOPE, site
+
 
 def test_run_fingerprint_includes_backend_identity() -> None:
     # The same model id served through a different provider, endpoint, or

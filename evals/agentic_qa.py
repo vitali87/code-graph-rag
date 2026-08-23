@@ -174,8 +174,22 @@ def _visit_call_site(
                 _visit_call_site(rel, expr, stack, first_party, sites)
         _visit_call_site(rel, node.body, [*stack, _LAMBDA_SCOPE], first_party, sites)
         return
-    if isinstance(node, ast.Call) and (name := _callee_name(node.func)):
-        if name in first_party:
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Lambda):
+            # `(lambda ...: body)(args)` runs the body immediately in THIS
+            # scope, so its calls belong to the enclosing function, not an
+            # anonymous lambda scope (Greptile review on PR #1388). Visit the
+            # arguments here and the body with the current stack, bypassing
+            # the deferred-lambda marker below.
+            for arg in (*node.args, *(kw.value for kw in node.keywords)):
+                _visit_call_site(rel, arg, stack, first_party, sites)
+            lam = node.func
+            for expr in (*lam.args.defaults, *lam.args.kw_defaults):
+                if expr is not None:
+                    _visit_call_site(rel, expr, stack, first_party, sites)
+            _visit_call_site(rel, lam.body, stack, first_party, sites)
+            return
+        if (name := _callee_name(node.func)) and name in first_party:
             sites.append(_CallSite(rel, stack[-1] if stack else None, name))
     for child in ast.iter_child_nodes(node):
         _visit_call_site(rel, child, stack, first_party, sites)
