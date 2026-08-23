@@ -546,6 +546,10 @@ class TestNoninteractiveMode:
             "sort -okeep_me.txt input.txt",
             "sort --output keep_me.txt input.txt",
             "sort --output=keep_me.txt input.txt",
+            # GNU accepts unambiguous long-option abbreviations, so --out
+            # reaches --output (Greptile review on PR #1388).
+            "sort --out=keep_me.txt input.txt",
+            "sort --outp keep_me.txt input.txt",
         ):
             result = await tool.function(mock_ctx, cmd)
             assert result.return_code != 0, cmd
@@ -643,6 +647,11 @@ class TestNoninteractiveMode:
             "sort -T tmpdir data.txt",
             "sort -Ttmpdir data.txt",
             "rg --pre sh pattern .",
+            # Unambiguous long-option abbreviations reach the same option
+            # (Greptile review on PR #1388).
+            "sort --files0=paths",
+            "sort --files0 paths",
+            "sort --comp=sh data.txt",
         ):
             result = await tool.function(mock_ctx, command)
             assert result.return_code != 0, command

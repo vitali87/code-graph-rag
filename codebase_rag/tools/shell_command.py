@@ -538,6 +538,18 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
 _ESCAPING_PATH_ARG = re.compile(r"(?:^|=)[/~]")
 
 
+def _long_option_matches(arg: str, canonical: str) -> bool:
+    # GNU tools accept any unambiguous abbreviation of a long option, so
+    # `--out`, `--outp`, ... all mean `--output` and `--files0` means
+    # `--files0-from`. Match the arg's option name (before any `=`) as a
+    # non-empty prefix of the canonical name, which covers the full spelling
+    # too (Greptile review on PR #1388). Abbreviation ambiguity only widens
+    # what GNU rejects, never what it accepts, so treating every prefix as
+    # the dangerous option is safe.
+    name = arg.split("=", 1)[0]
+    return len(name) > 2 and canonical.startswith(name)
+
+
 def _noninteractive_write_form(parts: list[str]) -> bool:
     # Write-capable invocations of otherwise read-only commands: `sort -o` /
     # `--output[=]` writes a file, and uniq's SECOND positional operand is an
@@ -548,7 +560,7 @@ def _noninteractive_write_form(parts: list[str]) -> bool:
             if arg == "--":
                 break
             if arg.startswith("--"):
-                if arg.startswith("--output"):
+                if _long_option_matches(arg, "--output"):
                     return True
                 continue
             if not arg.startswith("-") or len(arg) < 2:
@@ -615,8 +627,14 @@ def _option_carries_file_input(parts: list[str]) -> bool:
             break
         name = arg.split("=", 1)[0]
         for opt in denied:
-            # len(opt) == 2 covers the attached short form (`-Tdir`).
-            if name == opt or (len(opt) == 2 and arg.startswith(opt)):
+            if len(opt) == 2:
+                # A short option: exact, or the attached-value form `-Tdir`.
+                if name == opt or arg.startswith(opt):
+                    return True
+            # A long option matches any unambiguous GNU abbreviation, so
+            # `--files0` reaches `--files0-from` (Greptile review on
+            # PR #1388).
+            elif _long_option_matches(arg, opt):
                 return True
     return False
 
