@@ -6,13 +6,20 @@ surface, and the two do not match. Run this against a live server and paste
 the surviving names into ARCADE_PROCEDURE_CATALOG.
 
 Usage:
+    export ARCADEDB_PASSWORD=pw
     uv run python scripts/probe_arcade_procedures.py \
-        --uri bolt://localhost:7687 --user root --password pw --database cgrtest
+        --uri bolt://localhost:7687 --user root --database cgrtest
+
+    # or, without the env var, you'll be prompted interactively:
+    uv run python scripts/probe_arcade_procedures.py \
+        --uri bolt://localhost:7687 --user root --database cgrtest
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
+import os
 
 from neo4j import GraphDatabase, Query
 
@@ -57,11 +64,18 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--uri", required=True)
     parser.add_argument("--user", required=True)
-    parser.add_argument("--password", required=True)
     parser.add_argument("--database", required=True)
     args = parser.parse_args()
 
-    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    # Never accept the password as an argv flag: argv is visible to every
+    # other process on the machine via `ps` and gets written to shell
+    # history. Read it from the environment, falling back to an
+    # interactive, non-echoing prompt.
+    password = os.environ.get("ARCADEDB_PASSWORD") or getpass.getpass(
+        "ArcadeDB password: "
+    )
+
+    driver = GraphDatabase.driver(args.uri, auth=(args.user, password))
     available: list[str] = []
     with driver.session(database=args.database) as session:
         for name in CANDIDATES:
