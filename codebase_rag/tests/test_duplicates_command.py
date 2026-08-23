@@ -120,6 +120,16 @@ class TestDuplicatesCommand:
         assert result.exit_code == 0
         assert cs.CLI_DUPLICATES_NONE in result.output
 
+    def test_unknown_project_errors(self, runner: CliRunner) -> None:
+        # `-n typo` must error, not scan a nonexistent prefix and report a
+        # clean project.
+        mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=[])
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(app, ["duplicates", "-n", "typo"])
+
+        assert result.exit_code == 1
+        assert "is not indexed" in result.output
+
     def test_no_projects_errors(self, runner: CliRunner) -> None:
         mock_ingestor = _make_mock_ingestor(projects=[], rows=[])
         with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):

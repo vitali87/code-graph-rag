@@ -1638,6 +1638,18 @@ def duplicates(
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             resolved = _resolve_dead_code_project(project_name, projects)
+            # An explicit name absent from the graph must error, not scan a
+            # nonexistent prefix and report a clean project.
+            if resolved is not None and resolved not in projects:
+                app_context.console.print(
+                    style(
+                        cs.CLI_ERR_DUPLICATES_UNKNOWN_PROJECT.format(
+                            project=resolved, projects=projects
+                        ),
+                        cs.Color.RED,
+                    )
+                )
+                raise typer.Exit(1)
             if resolved is not None:
                 logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
                 report = collect_duplicates_with_coverage(
@@ -1650,6 +1662,8 @@ def duplicates(
                         exclude_patterns=tuple(exclude),
                     ),
                 )
+    except typer.Exit:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DUPLICATES_FAILED.format(error=e), cs.Color.RED)

@@ -176,6 +176,9 @@ CLI_DUPLICATES_TRUNCATED_NOTICE = (
     "be missing. Raise --threshold or --min-size to narrow the scan."
 )
 CLI_ERR_DUPLICATES_FAILED = "Failed to scan for duplicates: {error}"
+CLI_ERR_DUPLICATES_UNKNOWN_PROJECT = (
+    "Project '{project}' is not indexed. Indexed projects: {projects}."
+)
 CLI_MSG_AUTO_EXCLUDE = (
     "Auto-excluding common directories (venv, node_modules, .git, etc.). "
     "Use --interactive-setup to customize."
