@@ -1,0 +1,15 @@
+{
+  "django": {
+    "build_s": 68.12,
+    "commit": "9e7cc2b628fe8fd3895986af9b7fc9525034c1b0",
+    "corpus": "django",
+    "edges": 297758,
+    "files": 6811,
+    "modules": 2818,
+    "nodes": 54000,
+    "parser_load_s": 0.0,
+    "peak_rss_mib": 699.0,
+    "platform": "darwin",
+    "python": "3.12.7"
+  }
+}

@@ -55,12 +55,44 @@ SHELL_RETURN_CODE_ERROR = -1
 SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
 SHELL_SUBSHELL_PATTERNS = ("$(", "`")
 SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
-# `find` actions that run a command or delete files, so they need approval even
-# though `find` itself is a read tool. Kept here so the security boundary is
-# auditable in one place rather than inline in the approval check.
+# `find` actions that run a command, delete files, or write output files
+# (GNU -fprint/-fprint0/-fprintf/-fls create or truncate their file argument),
+# so they need approval even though `find` itself is a read tool. Kept here so
+# the security boundary is auditable in one place rather than inline in the
+# approval check.
 SHELL_FIND_MUTATING_ACTIONS = frozenset(
-    {"-delete", "-exec", "-execdir", "-ok", "-okdir"}
+    {
+        "-delete",
+        "-exec",
+        "-execdir",
+        "-ok",
+        "-okdir",
+        "-fprint",
+        "-fprint0",
+        "-fprintf",
+        "-fls",
+    }
 )
+
+# Options that make an otherwise read-only command take its file inputs from
+# an option value instead of an operand (`sort/wc --files0-from`, find's
+# `-files0-from`), or name a program for it to execute (`sort
+# --compress-program`, `rg --pre`). The noninteractive containment loop checks
+# operands, so a repo-local list file naming /etc/passwd would slip through;
+# denying the whole indirect-input mode is the auditable policy. `sort -T`
+# is included because it writes temp files to the named directory.
+SHELL_NONINTERACTIVE_DENIED_OPTIONS: dict[str, tuple[str, ...]] = {
+    "sort": (
+        "--files0-from",
+        "--compress-program",
+        "--random-source",
+        "-T",
+        "--temporary-directory",
+    ),
+    "wc": ("--files0-from",),
+    "find": ("-files0-from",),
+    "rg": ("--pre",),
+}
 
 SHELL_GIT_SUBCMD_CONFIG = "config"
 

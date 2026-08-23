@@ -667,3 +667,12 @@ class InheritanceLanguage(StrEnum):
 INHERITANCE_LANGUAGE_HELP = (
     "Language to grade: python (ast oracle) or java (javac oracle)."
 )
+
+INDEXING_DEFAULT_CORPUS = "django"
+INDEXING_CORPUS_DIR = "evals/results/corpora"
+INDEXING_RESULTS_FILE = "indexing_bench.json"
+
+AGENTIC_DEFAULT_SAMPLE = 40
+AGENTIC_QA_TIMEOUT_S = 300
+AGENTIC_RESULTS_FILE = "agentic_qa{suffix}.json"
+AGENTIC_RECORDS_FILE = "agentic_qa{suffix}_records.jsonl"

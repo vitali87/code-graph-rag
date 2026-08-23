@@ -264,6 +264,26 @@ class AppConfig(BaseSettings):
         }
     )
     SHELL_SAFE_GIT_SUBCOMMANDS: frozenset[str] = frozenset()
+    # Read-only, path-taking commands a NON-INTERACTIVE session (benchmark
+    # harnesses, batch jobs) may run without an operator. Kept a subset of
+    # SHELL_COMMAND_ALLOWLIST; the non-interactive wrapper additionally
+    # rejects redirects, find's mutating actions, and absolute or
+    # parent-traversal path arguments, so these reads stay inside the
+    # project root.
+    SHELL_NONINTERACTIVE_READ_COMMANDS: frozenset[str] = frozenset(
+        {
+            "ls",
+            "rg",
+            "cat",
+            "find",
+            "wc",
+            "head",
+            "tail",
+            "sort",
+            "uniq",
+            "cut",
+        }
+    )
 
     QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
     QDRANT_URL: str | None = None

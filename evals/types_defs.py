@@ -110,3 +110,37 @@ class OraclePayload(TypedDict):
     # Optional: only call-aware oracles (Go multi-language retrieval) emit call
     # sites; structure-only oracles omit this key.
     calls: NotRequired[list[OracleCall]]
+
+
+class IndexingStats(TypedDict):
+    corpus: str
+    commit: str
+    parser_load_s: float
+    build_s: float
+    peak_rss_mib: float | None
+    nodes: int
+    edges: int
+    modules: int
+    files: int
+    python: str
+    platform: str
+
+
+class QAGrade(TypedDict):
+    f1: float
+    exact: bool
+    answered: list[str]
+    expected: list[str]
+
+
+class QARecord(TypedDict):
+    condition: str
+    name: str
+    f1: float
+    exact: bool
+    seconds: float
+    input_tokens: int
+    output_tokens: int
+    answered: list[str]
+    expected: list[str]
+    error: str

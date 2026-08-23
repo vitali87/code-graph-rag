@@ -150,6 +150,31 @@ base-class edges); the recall tail is first-party names colliding with builtins
 missed first-party edge), the same name-based limitation documented for the
 per-language retrieval evals below.
 
+## Indexing-time benchmark — pinned corpora
+
+Measures how long cgr takes to build the knowledge graph for a real repository
+(wall-clock for parser load and graph build, peak RSS, and the resulting graph's
+node/edge/module counts), over corpora pinned to an exact commit so numbers are
+comparable across cgr versions. Phase 1 of the end-to-end benchmark suite
+tracked in [issue #1374](https://github.com/vitali87/code-graph-rag/issues/1374).
+
+```bash
+uv run python -m evals.indexing_bench --corpus django
+uv run python -m evals.indexing_bench --target /path/to/any/repo
+```
+
+The graph is built with the same in-memory capturing ingestor the other evals
+use, so the number covers parsing plus cross-file resolution and **excludes
+Memgraph batch writes** (full-stack timing lands with the latency harness in a
+later #1374 phase) — which also means it needs no running database and is
+CI-friendly. The measured run happens in a fresh child interpreter so peak RSS
+is attributable to the indexing run alone. The pinned corpus is cloned shallowly
+into `evals/results/corpora/` (gitignored) on first run; results are written to
+`evals/results/indexing_bench.json` and printed as a ready-to-paste README
+benchmark-table row. Measurement mechanics (graph-size accounting, JSON hop,
+row formatting, full-SHA pinning) are pinned by
+`codebase_rag/tests/test_indexing_bench.py`.
+
 ## Incremental update — incremental vs clean re-index
 
 Answers a correctness question the other layers cannot: after cgr re-indexes only
@@ -1195,3 +1220,31 @@ own design: hold one agent and model fixed and vary only the tools (graph tools
 versus grep), then report SWE-bench-style resolved rate over real issues. That
 needs an LLM, a container harness, and many runs, so it is tracked separately
 rather than run inside this deterministic harness.
+
+## Agentic A/B — graph tools vs grep, one model, one agent loop
+
+The end-to-end comparison the README benchmark table is built around
+([issue #1374](https://github.com/vitali87/code-graph-rag/issues/1374)): the
+same model and agent loop answer the same oracle-derived questions twice —
+once with the grep baseline toolset (`execute_shell` + `read_file` +
+`list_directory`), once with that same baseline **plus** cgr's graph tools
+(`query_graph`, `get_function_source`) — so the measured delta is exactly what
+adding cgr as an MCP server buys. One run reports, per condition: mean
+per-question F1 and exact-match rate (graded against the retrieval oracle, no
+LLM judge), wall-clock seconds per question (mean/p50/p95), and tokens per
+question (the graph condition's hidden Cypher-generation model is metered and
+included, so the token comparison is honest).
+
+```bash
+uv run python -m evals.agentic_qa --corpus django --dry-run     # question set only, no model
+uv run python -m evals.agentic_qa --corpus django --reindex     # full A/B (see prerequisites)
+```
+
+Questions are sampled deterministically (seeded) from callables with 2–8
+oracle-known caller files and distinctive names; property getters are excluded
+as unfair to grep. Prerequisites for a live run: an orchestrator model
+(`ORCHESTRATOR_PROVIDER`/`ORCHESTRATOR_MODEL` + API key) and, for the graph
+condition, a Cypher model plus Memgraph up (`cgr daemon up`) with the corpus
+indexed (`--reindex` on first run). Results land in
+`evals/results/agentic_qa.json`. Question generation, grading, and aggregation
+are pinned by `codebase_rag/tests/test_agentic_qa.py`.

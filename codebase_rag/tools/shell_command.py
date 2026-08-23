@@ -533,3 +533,220 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
         name=td.AgenticToolName.EXECUTE_SHELL,
         description=td.SHELL_COMMAND,
     )
+
+
+_ESCAPING_PATH_ARG = re.compile(r"(?:^|=)[/~]")
+
+
+def _long_option_matches(arg: str, canonical: str) -> bool:
+    # GNU tools accept any unambiguous abbreviation of a long option, so
+    # `--out`, `--outp`, ... all mean `--output` and `--files0` means
+    # `--files0-from`. Match the arg's option name (before any `=`) as a
+    # non-empty prefix of the canonical name, which covers the full spelling
+    # too (Greptile review on PR #1388). Abbreviation ambiguity only widens
+    # what GNU rejects, never what it accepts, so treating every prefix as
+    # the dangerous option is safe.
+    name = arg.split("=", 1)[0]
+    return len(name) > 2 and canonical.startswith(name)
+
+
+def _noninteractive_write_form(parts: list[str]) -> bool:
+    # Write-capable invocations of otherwise read-only commands: `sort -o` /
+    # `--output[=]` writes a file, and uniq's SECOND positional operand is an
+    # output file -- counted through `--`, after which every argument is an
+    # operand (CodeRabbit and Greptile reviews on PR #1388).
+    if parts[0] == "sort":
+        for arg in parts[1:]:
+            if arg == "--":
+                break
+            if arg.startswith("--"):
+                if _long_option_matches(arg, "--output"):
+                    return True
+                continue
+            if not arg.startswith("-") or len(arg) < 2:
+                continue
+            # Walk the short-option cluster: `-ro` hides the output option
+            # behind other flags, and `-rT` hides the temp-dir option
+            # (Greptile review on PR #1388). A value-taking option (-k, -t,
+            # -S) consumes the rest of the cluster as its value, so an `o`
+            # after one is data, not a flag.
+            for ch in arg[1:]:
+                if ch in "oT":
+                    return True
+                if ch in "ktS":
+                    break
+        return False
+    if parts[0] == "uniq":
+        operands = 0
+        operands_only = False
+        for arg in parts[1:]:
+            if not operands_only and arg == "--":
+                operands_only = True
+                continue
+            if operands_only or not arg.startswith("-"):
+                operands += 1
+        return operands > 1
+    return False
+
+
+_FOLLOW_LONG_FLAGS = ("--follow", "--dereference")
+_SHORT_CLUSTER = re.compile(r"-[A-Za-z]+")
+
+
+def _follows_symlinks(parts: list[str]) -> bool:
+    # Symlink-following traversal (`find -L .`, `rg -L pat .`, `ls -RL`)
+    # reads through outward symlinks the per-operand containment check never
+    # sees, because no explicit operand names the escaped target (Greptile
+    # review on PR #1388).
+    cmd = parts[0]
+    if cmd not in ("find", "rg", "ls"):
+        return False
+    for arg in parts[1:]:
+        if arg == "--":
+            break
+        if cmd == "find":
+            if arg in ("-L", "-follow"):
+                return True
+        elif arg in _FOLLOW_LONG_FLAGS or (
+            _SHORT_CLUSTER.fullmatch(arg) and "L" in arg
+        ):
+            return True
+    return False
+
+
+def _option_carries_file_input(parts: list[str]) -> bool:
+    # `sort --files0-from=paths` makes sort read every file a repo-local
+    # list names, including /etc/passwd, and `--compress-program`/`--pre`
+    # execute a program; the operand containment loop never sees either, so
+    # the whole indirect-input mode is denied (Greptile review on PR #1388).
+    denied = cs.SHELL_NONINTERACTIVE_DENIED_OPTIONS.get(parts[0])
+    if not denied:
+        return False
+    for arg in parts[1:]:
+        if arg == "--":
+            break
+        name = arg.split("=", 1)[0]
+        for opt in denied:
+            if len(opt) == 2:
+                # A short option: exact, or the attached-value form `-Tdir`.
+                if name == opt or arg.startswith(opt):
+                    return True
+            # A long option matches any unambiguous GNU abbreviation, so
+            # `--files0` reaches `--files0-from` (Greptile review on
+            # PR #1388).
+            elif _long_option_matches(arg, opt):
+                return True
+    return False
+
+
+def _noninteractive_denial(command: str, project_root: Path) -> str | None:
+    # The denial reason for an operator-less run, or None when every segment
+    # is a confined read: a read-only command in a non-writing form, no
+    # redirection tokens, no find mutating actions, and no absolute,
+    # parent-traversal, or symlink-escaping path arguments (subprocess runs
+    # without a shell, so `~` never expands and a redirect token is inert,
+    # but both signal intent the harness must not honor; a repo-local
+    # symlink, however, WOULD be followed outside the root by the child
+    # process — CodeRabbit review on PR #1388).
+    try:
+        groups = _parse_command(command)
+    except (ValueError, IndexError):
+        return te.COMMAND_INVALID_SYNTAX.format(segment=command)
+    read_only = (
+        settings.SHELL_READ_ONLY_COMMANDS | settings.SHELL_NONINTERACTIVE_READ_COMMANDS
+    )
+    root = project_root.resolve()
+    for group in groups:
+        for segment in group.commands:
+            if not (segment := segment.strip()):
+                continue
+            try:
+                parts = shlex.split(segment)
+            except ValueError:
+                return te.COMMAND_INVALID_SYNTAX.format(segment=segment)
+            if not parts:
+                continue
+            if parts[0] not in read_only:
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_NOT_READ_ONLY
+                )
+            if _noninteractive_write_form(parts):
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_WRITE_FORM
+                )
+            if _follows_symlinks(parts):
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_FOLLOW_SYMLINKS
+                )
+            if _option_carries_file_input(parts):
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_OPTION_CARRIED_INPUT
+                )
+            if _has_redirect_operators(parts):
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_REDIRECT
+                )
+            if parts[0] == "find" and _find_requires_approval(parts):
+                return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                    command=segment, reason=te.NONINTERACTIVE_FIND_MUTATES
+                )
+            operands_only = False
+            for arg in parts[1:]:
+                if not operands_only and arg == "--":
+                    # After `--` every argument is an operand, even one that
+                    # starts with `-` (CodeRabbit review on PR #1388).
+                    operands_only = True
+                    continue
+                if _ESCAPING_PATH_ARG.search(arg) or ".." in arg.split("/"):
+                    return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                        command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
+                    )
+                if not operands_only and arg.startswith("-"):
+                    # An `=`-attached option value (`--file=linked_pats`) is a
+                    # path the operand check below never sees, so it gets the
+                    # same traversal and symlink containment (Greptile review
+                    # on PR #1388).
+                    value = arg.partition("=")[2]
+                    if value and (
+                        ".." in value.split("/")
+                        or (
+                            os.path.lexists(candidate := root / value)
+                            and not candidate.resolve().is_relative_to(root)
+                        )
+                    ):
+                        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                            command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
+                        )
+                    continue
+                candidate = root / arg
+                if os.path.lexists(
+                    candidate
+                ) and not candidate.resolve().is_relative_to(root):
+                    return te.COMMAND_NONINTERACTIVE_DENIED.format(
+                        command=segment, reason=te.NONINTERACTIVE_PATH_ESCAPES
+                    )
+    return None
+
+
+def create_noninteractive_shell_command_tool(shell_commander: ShellCommander) -> Tool:
+    # For operator-less runs (benchmarks, batch jobs): a command that would
+    # need interactive approval is DENIED instead of yolo-bypassed, and the
+    # allowlist stays enforced, so a model-selected command can never mutate
+    # the host or read outside the project root (Greptile security review on
+    # PR #1388). The error text tells the model why, so it can retry with a
+    # confined read-only command.
+    async def run_shell_command(
+        ctx: RunContext[None], command: str
+    ) -> ShellCommandResult:
+        if err_msg := _noninteractive_denial(command, shell_commander.project_root):
+            logger.error(err_msg)
+            return ShellCommandResult(
+                return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
+            )
+        return await shell_commander.execute(command)
+
+    return Tool(
+        function=run_shell_command,
+        name=td.AgenticToolName.EXECUTE_SHELL,
+        description=td.SHELL_COMMAND,
+    )

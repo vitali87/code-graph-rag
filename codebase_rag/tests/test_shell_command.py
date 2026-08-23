@@ -24,6 +24,7 @@ from codebase_rag.tools.shell_command import (
     _parse_command,
     _requires_approval,
     _validate_segment,
+    create_noninteractive_shell_command_tool,
     create_shell_command_tool,
 )
 
@@ -157,6 +158,10 @@ class TestRequiresApproval:
         # approval, not just -exec/-delete.
         for action in ("-delete", "-exec", "-execdir", "-ok", "-okdir"):
             command = f"find . -name '*.py' {action} rm {{}} ;"
+            assert _requires_approval(command) is True, command
+        # GNU output actions write their file argument, so they gate too.
+        for action in ("-fprint", "-fprint0", "-fprintf", "-fls"):
+            command = f"find . -name '*.py' {action} out.txt"
             assert _requires_approval(command) is True, command
 
     def test_safe_git_subcommands_no_approval(self) -> None:
@@ -433,6 +438,357 @@ class TestYoloMode:
         result = await tool.function(mock_ctx, "rm -rf /")
         assert result.return_code != 0
         assert "dangerous" in result.stderr.lower()
+
+
+class TestNoninteractiveMode:
+    # Operator-less runs (benchmarks): approval-requiring commands are DENIED
+    # instead of bypassed, and the allowlist stays enforced (Greptile security
+    # review on PR #1388).
+    async def test_denies_write_command_instead_of_bypassing(
+        self, temp_project_root: Path
+    ) -> None:
+        test_file = temp_project_root / "keep_me.txt"
+        test_file.write_text("hi", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "rm keep_me.txt")
+        assert result.return_code != 0
+        assert "non-interactive" in result.stderr.lower()
+        assert test_file.exists()
+
+    async def test_denies_absolute_path_read(self, temp_project_root: Path) -> None:
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat /etc/passwd")
+        assert result.return_code != 0
+        assert "path" in result.stderr.lower()
+
+    async def test_denies_parent_traversal_read(self, temp_project_root: Path) -> None:
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat ../outside.txt")
+        assert result.return_code != 0
+        assert "path" in result.stderr.lower()
+
+    async def test_denies_find_mutating_action(self, temp_project_root: Path) -> None:
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "find . -name x -delete")
+        assert result.return_code != 0
+        assert "find" in result.stderr.lower()
+
+    async def test_denies_find_output_actions(self, temp_project_root: Path) -> None:
+        # GNU find's output actions create or overwrite the named file, so
+        # they are file writes even though find is a read tool (Greptile
+        # review on PR #1388, verified: all four replaced a file's content).
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        victim = temp_project_root / "victim.txt"
+        for command in (
+            "find . -name x -fprint victim.txt",
+            "find . -name x -fprint0 victim.txt",
+            "find . -name x -fprintf victim.txt %p",
+            "find . -fls victim.txt",
+        ):
+            victim.write_text("ORIGINAL")
+            result = await tool.function(mock_ctx, command)
+            assert result.return_code != 0, command
+            # The policy must deny it; BSD find rejecting a GNU-only action
+            # is not protection, the benchmark runs on GNU find in CI.
+            assert "not permitted in this non-interactive session" in result.stderr, (
+                command
+            )
+            assert victim.read_text() == "ORIGINAL", command
+
+    async def test_enforces_allowlist(self, temp_project_root: Path) -> None:
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        assert "printf" not in settings.SHELL_COMMAND_ALLOWLIST
+        result = await tool.function(mock_ctx, "printf hello")
+        assert result.return_code != 0
+
+    async def test_read_only_command_runs_without_approval(
+        self, temp_project_root: Path
+    ) -> None:
+        (temp_project_root / "data.txt").write_text("payload", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat data.txt")
+        assert result.return_code == 0, result.stderr
+        assert "payload" in result.stdout
+
+    async def test_denies_sort_output_flag(self, temp_project_root: Path) -> None:
+        # `sort -o` writes a file even though sort is in the read-only set
+        # (CodeRabbit review on PR #1388).
+        keep = temp_project_root / "keep_me.txt"
+        keep.write_text("hi", encoding="utf-8")
+        (temp_project_root / "input.txt").write_text("b\na\n", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        for cmd in (
+            "sort -o keep_me.txt input.txt",
+            "sort -okeep_me.txt input.txt",
+            "sort --output keep_me.txt input.txt",
+            "sort --output=keep_me.txt input.txt",
+            # GNU accepts unambiguous long-option abbreviations, so --out
+            # reaches --output (Greptile review on PR #1388).
+            "sort --out=keep_me.txt input.txt",
+            "sort --outp keep_me.txt input.txt",
+        ):
+            result = await tool.function(mock_ctx, cmd)
+            assert result.return_code != 0, cmd
+        assert keep.read_text() == "hi"
+
+    async def test_denies_sort_clustered_output_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        # `sort -ro out.txt` clusters `-o` behind another flag, so a prefix
+        # check on "-o" misses it while sort still writes the file; `-rT`
+        # hides the temp-dir option the same way (Greptile review on
+        # PR #1388).
+        keep = temp_project_root / "keep_me.txt"
+        keep.write_text("hi", encoding="utf-8")
+        (temp_project_root / "input.txt").write_text("b\na\n", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        for cmd in (
+            "sort -ro keep_me.txt input.txt",
+            "sort -rokeep_me.txt input.txt",
+            "sort -nro keep_me.txt input.txt",
+            "sort -rT tmpdir input.txt",
+        ):
+            result = await tool.function(mock_ctx, cmd)
+            assert result.return_code != 0, cmd
+            assert "not permitted in this non-interactive session" in result.stderr, cmd
+        assert keep.read_text() == "hi"
+
+    def test_sort_value_taking_cluster_is_not_misread(self) -> None:
+        # In `-k1o`, the `o` is part of -k's KEYDEF value, not the output
+        # option; the cluster walk must stop at a value-taking option. This
+        # checks the policy directly rather than running sort, because
+        # Windows's sort.exe rejects GNU key syntax outright (CI, PR #1388).
+        from codebase_rag.tools.shell_command import _noninteractive_write_form
+
+        assert _noninteractive_write_form(["sort", "-rk1", "input.txt"]) is False
+        assert _noninteractive_write_form(["sort", "-k1o", "input.txt"]) is False
+        # But an output option before the value-taking one still writes.
+        assert _noninteractive_write_form(["sort", "-ok1", "input.txt"]) is True
+
+    async def test_denies_uniq_output_operand(self, temp_project_root: Path) -> None:
+        # uniq's second positional operand is an OUTPUT file.
+        keep = temp_project_root / "keep_me.txt"
+        keep.write_text("hi", encoding="utf-8")
+        (temp_project_root / "input.txt").write_text("a\na\n", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "uniq input.txt keep_me.txt")
+        assert result.return_code != 0
+        assert keep.read_text() == "hi"
+
+    async def test_denies_symlink_escaping_project_root(self, tmp_path: Path) -> None:
+        # A repo-local symlink pointing outside the root would let `cat`
+        # disclose host files despite the relative-path text (CodeRabbit
+        # review on PR #1388).
+        root = tmp_path / "proj"
+        root.mkdir()
+        secret = tmp_path / "secret.txt"
+        secret.write_text("host data", encoding="utf-8")
+        (root / "linked_secret").symlink_to(secret)
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat linked_secret")
+        assert result.return_code != 0
+        assert "host data" not in result.stdout
+
+    async def test_denies_option_carried_file_inputs(
+        self, temp_project_root: Path
+    ) -> None:
+        # `sort --files0-from=paths` reads a NUL-separated list of input
+        # files, so a repo-local list can name /etc/passwd and sort discloses
+        # it; wc and find have the same indirect-input option, and options
+        # naming a program to run are command execution outside the allowlist
+        # (Greptile review on PR #1388, disclosure verified by T-Rex).
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        (temp_project_root / "paths").write_bytes(b"/etc/passwd\0")
+        (temp_project_root / "data.txt").write_text("payload", encoding="utf-8")
+        for command in (
+            "sort --files0-from=paths",
+            "sort --files0-from paths",
+            "wc --files0-from=paths",
+            "find . -files0-from paths",
+            "sort --compress-program=sh data.txt",
+            "sort --random-source=paths data.txt",
+            "sort -T tmpdir data.txt",
+            "sort -Ttmpdir data.txt",
+            "rg --pre sh pattern .",
+            # Unambiguous long-option abbreviations reach the same option
+            # (Greptile review on PR #1388).
+            "sort --files0=paths",
+            "sort --files0 paths",
+            "sort --comp=sh data.txt",
+        ):
+            result = await tool.function(mock_ctx, command)
+            assert result.return_code != 0, command
+            assert "not permitted in this non-interactive session" in result.stderr, (
+                command
+            )
+            assert "root:" not in result.stdout, command
+
+    async def test_denies_option_attached_escaping_value(self, tmp_path: Path) -> None:
+        # A relative option value still escapes through `..` or a repo-local
+        # symlink; the operand loop skips dash-prefixed arguments, so the
+        # attached value needs its own containment check (Greptile review on
+        # PR #1388).
+        root = tmp_path / "proj"
+        root.mkdir()
+        secret = tmp_path / "patterns.txt"
+        secret.write_text("host data", encoding="utf-8")
+        (root / "linked_pats").symlink_to(secret)
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        for command in (
+            "rg --file=../patterns.txt .",
+            "rg --file=linked_pats .",
+        ):
+            result = await tool.function(mock_ctx, command)
+            assert result.return_code != 0, command
+            assert "not permitted in this non-interactive session" in result.stderr, (
+                command
+            )
+
+    async def test_in_root_option_attached_value_is_allowed(
+        self, tmp_path: Path
+    ) -> None:
+        if not shutil.which("rg"):
+            pytest.skip("rg (ripgrep) not installed")
+        root = tmp_path / "proj"
+        root.mkdir()
+        (root / "pats.txt").write_text("payload", encoding="utf-8")
+        (root / "data.txt").write_text("payload here", encoding="utf-8")
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "rg --file=pats.txt data.txt")
+        assert result.return_code == 0, result.stderr
+        assert "payload here" in result.stdout
+
+    async def test_symlink_inside_project_root_is_allowed(self, tmp_path: Path) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        (root / "real.txt").write_text("payload", encoding="utf-8")
+        (root / "link.txt").symlink_to(root / "real.txt")
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat link.txt")
+        assert result.return_code == 0, result.stderr
+        assert "payload" in result.stdout
+
+    async def test_denies_symlink_escape_after_double_dash(
+        self, tmp_path: Path
+    ) -> None:
+        # `cat -- -linked_secret` makes the dash-leading name an OPERAND, so
+        # skipping dash-args as flags would bypass the symlink confinement
+        # (CodeRabbit review on PR #1388).
+        root = tmp_path / "proj"
+        root.mkdir()
+        secret = tmp_path / "secret.txt"
+        secret.write_text("host data", encoding="utf-8")
+        (root / "-linked_secret").symlink_to(secret)
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat -- -linked_secret")
+        assert result.return_code != 0
+        assert "host data" not in result.stdout
+
+    async def test_double_dash_operand_inside_root_is_allowed(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        (root / "data.txt").write_text("payload", encoding="utf-8")
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "cat -- data.txt")
+        assert result.return_code == 0, result.stderr
+        assert "payload" in result.stdout
+
+    async def test_denies_uniq_output_after_double_dash(
+        self, temp_project_root: Path
+    ) -> None:
+        # `uniq -- input.txt -keep_me.txt` hides the output operand behind
+        # `--` (Greptile review on PR #1388).
+        keep = temp_project_root / "-keep_me.txt"
+        keep.write_text("hi", encoding="utf-8")
+        (temp_project_root / "input.txt").write_text("a\na\n", encoding="utf-8")
+        commander = ShellCommander(str(temp_project_root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "uniq -- input.txt -keep_me.txt")
+        assert result.return_code != 0
+        assert keep.read_text() == "hi"
+
+    async def test_denies_symlink_following_traversal_flags(
+        self, tmp_path: Path
+    ) -> None:
+        # `find -L .` / `rg -L pat .` follow an outward symlink DURING
+        # traversal, reaching files no explicit operand names (Greptile
+        # review on PR #1388).
+        root = tmp_path / "proj"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("OUTSIDE_SECRET", encoding="utf-8")
+        (root / "link").symlink_to(outside)
+        commander = ShellCommander(str(root), timeout=5)
+        tool = create_noninteractive_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        for cmd in (
+            "find -L .",
+            "find . -follow",
+            "rg -L OUTSIDE_SECRET .",
+            "rg --follow OUTSIDE_SECRET .",
+            "ls -RL .",
+            "ls --dereference link",
+        ):
+            result = await tool.function(mock_ctx, cmd)
+            assert result.return_code != 0, cmd
+            assert "OUTSIDE_SECRET" not in result.stdout, cmd
 
 
 class TestHasRedirectOperators:
