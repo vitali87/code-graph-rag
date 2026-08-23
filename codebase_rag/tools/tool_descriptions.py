@@ -18,6 +18,7 @@ class AgenticToolName(StrEnum):
     STRUCTURAL_SEARCH = "structural_search"
     STRUCTURAL_REPLACE = "structural_replace"
     WEB_SEARCH = "web_search"
+    FIND_DUPLICATE_CODE = "find_duplicate_code"
 
 
 CODEBASE_QUERY = (
@@ -90,6 +91,18 @@ STRUCTURAL_SEARCH = (
     "(e.g. 'print($A)', 'def $F($$$ARGS): $$$BODY'). "
     "Returns file:line:column and the matched code. "
     "Optional 'language' (e.g. 'python', 'typescript', 'csharp') restricts the search."
+)
+
+FIND_DUPLICATE_CODE = (
+    "Finds structurally duplicated functions and methods (copy-pastes, "
+    "including renamed and lightly edited copies) by comparing AST "
+    "fingerprints stored in the graph. Returns clone groups with file:line "
+    "locations, largest first: 'exact' groups are certain copies, 'similar' "
+    "pairs carry a branch-overlap score. Use it to answer DRY questions "
+    "('where is this logic repeated?') and before writing a new helper to "
+    "check whether an implementation already exists. Tune with 'threshold' "
+    "(0-1 similarity, default 0.8) and 'min_size' (skeleton nodes, filters "
+    "trivial getters)."
 )
 
 STRUCTURAL_EDITOR = (
@@ -286,4 +299,5 @@ AGENTIC_TOOLS: dict[AgenticToolName, str] = {
     AgenticToolName.STRUCTURAL_SEARCH: STRUCTURAL_SEARCH,
     AgenticToolName.STRUCTURAL_REPLACE: STRUCTURAL_EDITOR,
     AgenticToolName.WEB_SEARCH: WEB_SEARCH,
+    AgenticToolName.FIND_DUPLICATE_CODE: FIND_DUPLICATE_CODE,
 }

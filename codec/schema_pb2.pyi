@@ -213,7 +213,7 @@ class Resource(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., kind: _Optional[str] = ...) -> None: ...
 
 class Function(_message.Message):
-    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported")
+    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported", "ast_fingerprint", "ast_fingerprint_nodes", "ast_branch_fingerprints")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     DOCSTRING_FIELD_NUMBER: _ClassVar[int]
@@ -221,6 +221,9 @@ class Function(_message.Message):
     END_LINE_FIELD_NUMBER: _ClassVar[int]
     DECORATORS_FIELD_NUMBER: _ClassVar[int]
     IS_EXPORTED_FIELD_NUMBER: _ClassVar[int]
+    AST_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    AST_FINGERPRINT_NODES_FIELD_NUMBER: _ClassVar[int]
+    AST_BRANCH_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     docstring: str
@@ -228,23 +231,32 @@ class Function(_message.Message):
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
     is_exported: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: _Optional[bool] = ...) -> None: ...
+    ast_fingerprint: str
+    ast_fingerprint_nodes: int
+    ast_branch_fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: _Optional[bool] = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class Method(_message.Message):
-    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators")
+    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "ast_fingerprint", "ast_fingerprint_nodes", "ast_branch_fingerprints")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     DOCSTRING_FIELD_NUMBER: _ClassVar[int]
     START_LINE_FIELD_NUMBER: _ClassVar[int]
     END_LINE_FIELD_NUMBER: _ClassVar[int]
     DECORATORS_FIELD_NUMBER: _ClassVar[int]
+    AST_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    AST_FINGERPRINT_NODES_FIELD_NUMBER: _ClassVar[int]
+    AST_BRANCH_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     docstring: str
     start_line: int
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ...) -> None: ...
+    ast_fingerprint: str
+    ast_fingerprint_nodes: int
+    ast_branch_fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class Class(_message.Message):
     __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported")

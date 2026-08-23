@@ -252,6 +252,11 @@ message GraphCodeIndex {
     int32 end_line = 5;
     repeated string decorators = 6;
     bool is_exported = 7;
+    // Structural clone-detection fingerprints (whole skeleton, its node
+    // count, and the statement-level branch digests).
+    string ast_fingerprint = 8;
+    int32 ast_fingerprint_nodes = 9;
+    repeated string ast_branch_fingerprints = 10;
   }
 
   message Method {
@@ -263,6 +268,10 @@ message GraphCodeIndex {
     int32 start_line = 4;
     int32 end_line = 5;
     repeated string decorators = 6;
+    // Structural clone-detection fingerprints (see Function).
+    string ast_fingerprint = 7;
+    int32 ast_fingerprint_nodes = 8;
+    repeated string ast_branch_fingerprints = 9;
   }
 
   message Class {

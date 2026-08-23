@@ -31,6 +31,9 @@ SAMPLE_NODES = {
             "end_line": 20,
             "decorators": [],
             "docstring": "Gets a user.",
+            "ast_fingerprint": "f3a9c2d1e4b58607",
+            "ast_fingerprint_nodes": 21,
+            "ast_branch_fingerprints": ["11aa22bb33cc44dd", "55ee66ff77008899"],
         },
     },
 }
@@ -102,6 +105,15 @@ def test_protobuf_ingestor_joint_serialization_and_deserialization(
     assert class_payload.name == "UserService"
     assert class_payload.start_line == 10
     assert class_payload.decorators[0] == "@injectable"
+
+    method_payload = deserialized_nodes_map["test_project.UserService.get_user"]
+    assert isinstance(method_payload, pb.Method)
+    assert method_payload.ast_fingerprint == "f3a9c2d1e4b58607"
+    assert method_payload.ast_fingerprint_nodes == 21
+    assert list(method_payload.ast_branch_fingerprints) == [
+        "11aa22bb33cc44dd",
+        "55ee66ff77008899",
+    ]
 
     assert len(deserialized_index.relationships) == 1
 

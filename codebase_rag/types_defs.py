@@ -16,7 +16,14 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict
 
 from prompt_toolkit.styles import Style
 
-from .constants import AuditCheck, NodeLabel, RelationshipType, SupportedLanguage
+from .constants import (
+    DUPLICATES_MAX_CANDIDATE_PAIRS,
+    DUPLICATES_MAX_SIMILAR_GROUPS,
+    AuditCheck,
+    NodeLabel,
+    RelationshipType,
+    SupportedLanguage,
+)
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Node, Parser, Query
@@ -481,6 +488,47 @@ class DeadCodeConfig(NamedTuple):
     exclude_patterns: tuple[str, ...] = ()
 
 
+class AstFingerprintResult(NamedTuple):
+    """Structural fingerprints of one function body's skeleton."""
+
+    fingerprint: str
+    node_count: int
+    branch_fingerprints: list[str]
+
+
+class DuplicatesConfig(NamedTuple):
+    threshold: float
+    min_nodes: int
+    exact_only: bool
+    exclude_patterns: tuple[str, ...] = ()
+    max_similar_groups: int = DUPLICATES_MAX_SIMILAR_GROUPS
+    max_candidate_pairs: int = DUPLICATES_MAX_CANDIDATE_PAIRS
+
+
+class DuplicateMember(TypedDict):
+    label: str
+    qualified_name: str
+    name: str
+    path: str
+    start_line: int
+    end_line: int
+
+
+class DuplicateGroup(TypedDict):
+    kind: str
+    similarity: float
+    node_count: int
+    members: list[DuplicateMember]
+
+
+class DuplicatesReport(NamedTuple):
+    groups: list[DuplicateGroup]
+    skipped_symbols: int
+    # True when similar-group enumeration stopped at the configured cap:
+    # qualifying groups may be missing and every consumer must say so.
+    truncated: bool
+
+
 class GraphQueryClient(Protocol):
     def fetch_all(
         self, query: str, params: dict[str, PropertyValue] | None = None
@@ -794,11 +842,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,

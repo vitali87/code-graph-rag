@@ -410,6 +410,10 @@ class AstGrepTier:
                 cs.KEY_IS_EXPORTED: True,
                 cs.KEY_PATH: relative_path,
                 cs.KEY_ABSOLUTE_PATH: absolute_path,
+                # No ast_fingerprint props: SgNode carries no tree-sitter
+                # tree, so structural clone detection cannot cover the
+                # pattern-tier languages; `cgr duplicates` reports them as
+                # skipped rather than analyzed.
             },
         )
         self._ingestor.ensure_relationship_batch(

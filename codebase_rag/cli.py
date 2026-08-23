@@ -53,7 +53,14 @@ from .stack.manager import StackError
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .trace.cli import cli as trace_cli
-from .types_defs import DeadCodeConfig, DeadCodeRow, ResultRow
+from .types_defs import (
+    DeadCodeConfig,
+    DeadCodeRow,
+    DuplicateGroup,
+    DuplicatesConfig,
+    DuplicatesReport,
+    ResultRow,
+)
 from .utils.path_utils import derive_project_name, resolve_repo_path
 from .vector_store import clear_all_embeddings, delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
@@ -1464,6 +1471,225 @@ def dead_code(
     )
 
     if fail_on_found and candidates:
+        raise typer.Exit(1)
+
+
+def _similarity_text(group: DuplicateGroup) -> str:
+    if group["kind"] == cs.KIND_EXACT:
+        return cs.CLI_DUPLICATES_SIMILARITY_EXACT
+    return cs.CLI_DUPLICATES_SIMILARITY_PCT.format(pct=group["similarity"] * 100)
+
+
+def _build_duplicates_table(groups: list[DuplicateGroup], project_name: str) -> Table:
+    table = Table(
+        title=style(
+            cs.CLI_DUPLICATES_TABLE_TITLE.format(project_name=project_name),
+            cs.Color.GREEN,
+        ),
+        show_header=True,
+        header_style=f"{cs.StyleModifier.BOLD} {cs.Color.MAGENTA}",
+    )
+    table.add_column(cs.CLI_DUPLICATES_COL_GROUP, style=cs.Color.MAGENTA)
+    table.add_column(cs.CLI_DUPLICATES_COL_KIND, style=cs.Color.MAGENTA)
+    table.add_column(
+        cs.CLI_DUPLICATES_COL_SIMILARITY, style=cs.Color.YELLOW, justify="right"
+    )
+    table.add_column(cs.CLI_DUPLICATES_COL_MEMBER, style=cs.Color.CYAN)
+    table.add_column(cs.CLI_DUPLICATES_COL_LOCATION, style=cs.Color.YELLOW)
+    for number, group in enumerate(groups, start=1):
+        for at, member in enumerate(group["members"]):
+            table.add_row(
+                str(number) if at == 0 else "",
+                group["kind"] if at == 0 else "",
+                _similarity_text(group) if at == 0 else "",
+                member["qualified_name"],
+                cs.CLI_DUPLICATES_LOCATION.format(
+                    path=member["path"],
+                    start=member["start_line"],
+                    end=member["end_line"],
+                ),
+            )
+        table.add_section()
+    return table
+
+
+def _emit_duplicates(
+    groups: list[DuplicateGroup],
+    output_format: cs.DuplicatesFormat,
+    output: Path | None,
+    project_name: str,
+    skipped_symbols: int = 0,
+    truncated: bool = False,
+) -> None:
+    if output_format == cs.DuplicatesFormat.JSON:
+        # Envelope, not a bare list: scan-completeness metadata must reach
+        # JSON consumers too, or a CI artifact reads as a complete scan when
+        # symbols went unanalyzed or group enumeration hit its cap.
+        payload = json.dumps(
+            {
+                cs.KEY_DUPLICATE_GROUPS: groups,
+                cs.KEY_SKIPPED_SYMBOLS: skipped_symbols,
+                cs.KEY_TRUNCATED: truncated,
+            },
+            indent=2,
+        )
+        if output is not None:
+            output.write_text(payload, encoding=cs.ENCODING_UTF8)
+            app_context.console.print(
+                style(
+                    cs.CLI_DUPLICATES_WRITTEN.format(count=len(groups), path=output),
+                    cs.Color.GREEN,
+                )
+            )
+            return
+        typer.echo(payload)
+        return
+
+    # As with dead-code, the completeness notices follow the report into its
+    # sink so a saved artifact never reads as "all clean" when symbols went
+    # unanalyzed or group enumeration hit its cap.
+    notices = []
+    if skipped_symbols:
+        notices.append(
+            cs.CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED.format(count=skipped_symbols)
+        )
+    if truncated:
+        notices.append(cs.CLI_DUPLICATES_TRUNCATED_NOTICE)
+    table = _build_duplicates_table(groups, project_name)
+    if output is not None:
+        with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
+            file_console = Console(file=fh)
+            file_console.print(table)
+            for notice in notices:
+                file_console.print(notice)
+        app_context.console.print(
+            style(
+                cs.CLI_DUPLICATES_WRITTEN.format(count=len(groups), path=output),
+                cs.Color.GREEN,
+            )
+        )
+        for notice in notices:
+            app_context.console.print(style(notice, cs.Color.YELLOW))
+        return
+
+    if not groups:
+        app_context.console.print(style(cs.CLI_DUPLICATES_NONE, cs.Color.GREEN))
+    else:
+        app_context.console.print(table)
+        members = sum(len(group["members"]) for group in groups)
+        app_context.console.print(
+            style(
+                cs.CLI_DUPLICATES_SUMMARY.format(groups=len(groups), members=members),
+                cs.Color.GREEN,
+            )
+        )
+    for notice in notices:
+        app_context.console.print(style(notice, cs.Color.YELLOW))
+
+
+@app.command(
+    name=ch.CLICommandName.DUPLICATES,
+    help=ch.CMD_DUPLICATES,
+    short_help=ch.CMD_DUPLICATES,
+    epilog=ch.EXAMPLES_DUPLICATES,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
+def duplicates(
+    project_name: str | None = typer.Option(
+        None, "--project-name", "-n", help=ch.HELP_DUPLICATES_PROJECT_NAME
+    ),
+    threshold: float = typer.Option(
+        cs.DUPLICATES_DEFAULT_THRESHOLD,
+        "--threshold",
+        min=0.0,
+        max=1.0,
+        help=ch.HELP_DUPLICATES_THRESHOLD,
+    ),
+    min_size: int = typer.Option(
+        cs.DUPLICATES_DEFAULT_MIN_NODES,
+        "--min-size",
+        min=1,
+        help=ch.HELP_DUPLICATES_MIN_SIZE,
+    ),
+    exact_only: bool = typer.Option(
+        False, "--exact-only", help=ch.HELP_DUPLICATES_EXACT_ONLY
+    ),
+    exclude: list[str] = typer.Option([], "--exclude", help=ch.HELP_DUPLICATES_EXCLUDE),
+    output_format: cs.DuplicatesFormat = typer.Option(
+        cs.DuplicatesFormat.TABLE, "--format", help=ch.HELP_DUPLICATES_FORMAT
+    ),
+    output: Path | None = typer.Option(
+        None, "--output", "-o", help=ch.HELP_DUPLICATES_OUTPUT
+    ),
+    fail_on_found: bool = typer.Option(
+        False, "--fail-on-found", help=ch.HELP_DUPLICATES_FAIL_ON_FOUND
+    ),
+) -> None:
+    from .duplicates import collect_duplicates_with_coverage
+
+    show_progress = output_format == cs.DuplicatesFormat.TABLE and output is None
+    if show_progress:
+        app_context.console.print(style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN))
+
+    projects: list[str] = []
+    resolved: str | None = None
+    report = DuplicatesReport(groups=[], skipped_symbols=0, truncated=False)
+    try:
+        with connect_memgraph(batch_size=1) as ingestor:
+            projects = ingestor.list_projects()
+            resolved = _resolve_dead_code_project(project_name, projects)
+            # An explicit name absent from the graph must error, not scan a
+            # nonexistent prefix and report a clean project.
+            if resolved is not None and resolved not in projects:
+                app_context.console.print(
+                    style(
+                        cs.CLI_ERR_DUPLICATES_UNKNOWN_PROJECT.format(
+                            project=resolved, projects=projects
+                        ),
+                        cs.Color.RED,
+                    )
+                )
+                raise typer.Exit(1)
+            if resolved is not None:
+                logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
+                report = collect_duplicates_with_coverage(
+                    ingestor,
+                    resolved,
+                    DuplicatesConfig(
+                        threshold=threshold,
+                        min_nodes=min_size,
+                        exact_only=exact_only,
+                        exclude_patterns=tuple(exclude),
+                    ),
+                )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        app_context.console.print(
+            style(cs.CLI_ERR_DUPLICATES_FAILED.format(error=e), cs.Color.RED)
+        )
+        logger.exception(ls.DUPLICATES_ERROR.format(error=e))
+        raise typer.Exit(1) from e
+
+    if resolved is None:
+        message = (
+            cs.CLI_ERR_DEADCODE_NO_PROJECTS
+            if not projects
+            else cs.CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT.format(projects=projects)
+        )
+        app_context.console.print(style(message, cs.Color.RED))
+        raise typer.Exit(1)
+
+    _emit_duplicates(
+        report.groups,
+        output_format,
+        output,
+        resolved,
+        report.skipped_symbols,
+        report.truncated,
+    )
+
+    if fail_on_found and report.groups:
         raise typer.Exit(1)
 
 

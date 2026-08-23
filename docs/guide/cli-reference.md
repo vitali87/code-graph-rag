@@ -85,6 +85,27 @@ cgr dead-code [OPTIONS]
 | `--output`, `-o` | Write the report to a file instead of stdout. |
 | `--fail-on-found` | Exit with code 1 when any candidate is found (useful in CI). |
 
+### `cgr duplicates`
+
+Report groups of structurally duplicated functions and methods (copy-pastes,
+including renamed and lightly edited copies). See
+[Duplicate Code Detection](duplicates.md).
+
+```bash
+cgr duplicates [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--project-name`, `-n` | Project to scan. Defaults to the sole indexed project. |
+| `--threshold` | Minimum similarity for a near-duplicate pair, 0-1. Default `0.8`. |
+| `--min-size` | Minimum skeleton size (tree nodes) for a function to be considered. Default `15`. |
+| `--exact-only` | Report only identical-fingerprint clone groups; skip similarity scoring. |
+| `--exclude` | Glob matched against a symbol's file path to exclude. Repeatable. |
+| `--format` | Output format: `table` (default) or `json`. |
+| `--output`, `-o` | Write the report to a file instead of stdout. |
+| `--fail-on-found` | Exit with code 1 when any duplicate is found (useful in CI). |
+
 ### `cgr mcp-server`
 
 Serve cgr tools to MCP clients over stdio or HTTP.

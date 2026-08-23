@@ -263,6 +263,29 @@ RETURN labels(a)[0] AS from_label, a.qualified_name AS from_qn,
        b.qualified_name AS to_qn"""
 
 
+# Duplicate-detection fetch. Grouping and overlap scoring run client-side in
+# codebase_rag/duplicates.py (same reasoning as dead code: keep memgraph
+# queries linear). ast-grep-tier symbols carry no fingerprint and are
+# excluded here; their count is reported separately as "not analyzed".
+_DUPLICATES_NODE_LABELS = "|".join((NodeLabel.FUNCTION.value, NodeLabel.METHOD.value))
+
+CYPHER_DUPLICATE_FINGERPRINTS = f"""MATCH (n:{_DUPLICATES_NODE_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND n.ast_fingerprint IS NOT NULL
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
+       n.name AS name, n.path AS path,
+       n.start_line AS start_line, n.start_col AS start_col,
+       n.end_line AS end_line,
+       n.ast_fingerprint AS ast_fingerprint,
+       n.ast_fingerprint_nodes AS ast_fingerprint_nodes,
+       n.ast_branch_fingerprints AS ast_branch_fingerprints"""
+
+CYPHER_DUPLICATE_SKIPPED_COUNT = f"""MATCH (n:{_DUPLICATES_NODE_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND n.ast_fingerprint IS NULL
+RETURN count(n) AS skipped"""
+
+
 def wrap_with_unwind(query: str) -> str:
     return f"UNWIND $batch AS row\n{query}"
 
