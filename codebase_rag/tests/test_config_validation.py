@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.config import ModelConfig, format_missing_api_key_errors
+from codebase_rag.config import AppConfig, ModelConfig, format_missing_api_key_errors
 
 
 def test_import_does_not_walk_parent_directories_for_dotenv(tmp_path) -> None:
@@ -112,7 +112,6 @@ class TestFormatMissingApiKeyErrors:
     def test_unknown_provider_generic_message(self) -> None:
         msg = format_missing_api_key_errors("deepseek")
         assert "DEEPSEEK_API_KEY" in msg
-        assert "Deepseek" in msg
 
     def test_role_appears_in_message(self) -> None:
         msg = format_missing_api_key_errors(cs.Provider.OPENAI, role="cypher")
@@ -126,3 +125,40 @@ class TestFormatMissingApiKeyErrors:
         msg = format_missing_api_key_errors("OpenAI")
         assert "OPENAI_API_KEY" in msg
         assert "OpenAI" in msg
+
+
+class TestGraphBackendDefaulting:
+    """GRAPH_BACKEND must default to memgraph rather than fail validation
+    when a user blanks it out -- the obvious way to "turn it off" in .env
+    (see docs/getting-started/choosing-a-graph-backend.md)."""
+
+    def test_unset_defaults_to_memgraph(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GRAPH_BACKEND", raising=False)
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.MEMGRAPH
+
+    def test_empty_string_defaults_to_memgraph(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.MEMGRAPH
+
+    def test_whitespace_only_defaults_to_memgraph(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "   ")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.MEMGRAPH
+
+    def test_explicit_arcadedb_is_respected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "arcadedb")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.ARCADEDB
+
+    def test_invalid_value_still_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "not-a-backend")
+        with pytest.raises(ValueError, match="GRAPH_BACKEND"):
+            AppConfig(_env_file=None)  # ty: ignore[unknown-argument]

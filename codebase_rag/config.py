@@ -9,7 +9,7 @@ from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -170,6 +170,17 @@ class AppConfig(BaseSettings):
     # Graph backend selection. MEMGRAPH_* above stay authoritative for the
     # default backend; renaming them would break every existing .env.
     GRAPH_BACKEND: cs.GraphBackend = cs.GraphBackend.MEMGRAPH
+
+    @field_validator("GRAPH_BACKEND", mode="before")
+    @classmethod
+    def _default_empty_graph_backend(cls, value: object) -> object:
+        # An unset, empty, or blanked-out GRAPH_BACKEND env var must fall
+        # back to the default rather than fail enum validation -- blanking
+        # a value is the obvious way a user "turns it off" in .env.
+        if isinstance(value, str) and not value.strip():
+            return cs.GraphBackend.MEMGRAPH
+        return value
+
     ARCADEDB_HOST: str = "localhost"
     ARCADEDB_BOLT_PORT: int = 7687
     ARCADEDB_HTTP_PORT: int = 2480
