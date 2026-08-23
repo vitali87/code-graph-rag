@@ -21,6 +21,7 @@ from .types_defs import (
     DuplicateGroup,
     DuplicateMember,
     DuplicatesConfig,
+    DuplicatesReport,
     GraphQueryClient,
     PropertyValue,
     ResultRow,
@@ -42,29 +43,33 @@ def default_duplicates_config(
     min_nodes: int = cs.DUPLICATES_DEFAULT_MIN_NODES,
     exact_only: bool = False,
     exclude_patterns: tuple[str, ...] = (),
+    max_similar_groups: int = cs.DUPLICATES_MAX_SIMILAR_GROUPS,
 ) -> DuplicatesConfig:
     return DuplicatesConfig(
         threshold=threshold,
         min_nodes=min_nodes,
         exact_only=exact_only,
         exclude_patterns=exclude_patterns,
+        max_similar_groups=max_similar_groups,
     )
 
 
 def collect_duplicates(
     ingestor: GraphQueryClient, project_name: str, config: DuplicatesConfig
 ) -> list[DuplicateGroup]:
-    return collect_duplicates_with_coverage(ingestor, project_name, config)[0]
+    return collect_duplicates_with_coverage(ingestor, project_name, config).groups
 
 
 def collect_duplicates_with_coverage(
     ingestor: GraphQueryClient, project_name: str, config: DuplicatesConfig
-) -> tuple[list[DuplicateGroup], int]:
-    """Duplicate groups plus the count of symbols with no fingerprint.
+) -> DuplicatesReport:
+    """Duplicate groups plus scan-completeness metadata.
 
-    The count covers ast-grep-tier languages (no tree-sitter tree at ingest)
-    and bodiless declarations; like dead-code's coverage count it rides along
-    so the CLI does not need a second bespoke query path.
+    skipped_symbols counts ast-grep-tier languages (no tree-sitter tree at
+    ingest) and bodiless declarations; truncated reports whether similar-group
+    enumeration stopped at the configured cap. Both ride along so the CLI
+    does not need a second bespoke query path and no consumer mistakes a
+    partial report for a complete scan.
     """
     prefix = project_name + cs.SEPARATOR_DOT
     params: dict[str, PropertyValue] = {cs.KEY_PROJECT_PREFIX: prefix}
@@ -75,8 +80,12 @@ def collect_duplicates_with_coverage(
 
     entries = _entries_from_rows(rows, config)
     groups = _exact_groups(entries)
+    truncated = False
     if not config.exact_only:
-        groups.extend(_similar_groups(entries, config.threshold))
+        similar, truncated = _similar_groups(
+            entries, config.threshold, config.max_similar_groups
+        )
+        groups.extend(similar)
     groups.sort(
         key=lambda group: (
             group["kind"] != cs.KIND_EXACT,
@@ -84,7 +93,7 @@ def collect_duplicates_with_coverage(
             -group["node_count"],
         )
     )
-    return groups, skipped
+    return DuplicatesReport(groups=groups, skipped_symbols=skipped, truncated=truncated)
 
 
 def _entries_from_rows(
@@ -176,8 +185,8 @@ def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
 
 
 def _similar_groups(
-    entries: dict[str, _Entry], threshold: float
-) -> list[DuplicateGroup]:
+    entries: dict[str, _Entry], threshold: float, max_groups: int
+) -> tuple[list[DuplicateGroup], bool]:
     # Pairs already inside a Stage-1 exact group never reach this stage:
     # entries are keyed by whole fingerprint, so exact copies are one entry.
     #
@@ -200,11 +209,9 @@ def _similar_groups(
         adjacency.setdefault(left, set()).add(right)
         adjacency.setdefault(right, set()).add(left)
 
-    cliques, truncated = _maximal_cliques(adjacency, cs.DUPLICATES_MAX_SIMILAR_GROUPS)
+    cliques, truncated = _maximal_cliques(adjacency, max_groups)
     if truncated:
-        logger.warning(
-            ls.DUPLICATES_GROUPS_TRUNCATED.format(cap=cs.DUPLICATES_MAX_SIMILAR_GROUPS)
-        )
+        logger.warning(ls.DUPLICATES_GROUPS_TRUNCATED.format(cap=max_groups))
     groups: list[DuplicateGroup] = []
     for clique in cliques:
         similarity = min(
@@ -221,7 +228,7 @@ def _similar_groups(
                 members=_sorted_members(members),
             )
         )
-    return groups
+    return groups, truncated
 
 
 def _maximal_cliques(

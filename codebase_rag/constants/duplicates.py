@@ -80,10 +80,12 @@ KIND_SIMILAR = "similar"
 # Cypher return alias for the not-analyzed symbol count.
 KEY_SKIPPED = "skipped"
 
-# JSON report envelope fields: the group list plus the coverage count, so a
-# saved artifact never reads as a complete scan when symbols went unanalyzed.
+# JSON report envelope fields: the group list plus scan-completeness
+# metadata, so a saved artifact never reads as a complete scan when symbols
+# went unanalyzed or similar-group enumeration hit its cap.
 KEY_DUPLICATE_GROUPS = "groups"
 KEY_SKIPPED_SYMBOLS = "skipped_symbols"
+KEY_TRUNCATED = "truncated"
 
 # find_duplicate_code agentic tool output.
 MSG_DUPLICATES_NO_PROJECTS = (
@@ -105,6 +107,10 @@ MSG_DUPLICATES_MEMBER = "   - {qualified_name}  {path}:{start}-{end}"
 MSG_DUPLICATES_TRUNCATED = "... {count} more group(s); raise limit to see them."
 MSG_DUPLICATES_SKIPPED = (
     "{count} symbol(s) had no structural fingerprint and were not analyzed."
+)
+MSG_DUPLICATES_GROUPS_TRUNCATED = (
+    "Similar-group enumeration reached its cap; some qualifying groups may be "
+    "missing. Narrow the scan with a higher threshold or min_size."
 )
 MSG_DUPLICATES_UNKNOWN_PROJECT = (
     "Project '{project}' is not indexed. Indexed projects: {projects}."

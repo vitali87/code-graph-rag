@@ -58,6 +58,7 @@ from .types_defs import (
     DeadCodeRow,
     DuplicateGroup,
     DuplicatesConfig,
+    DuplicatesReport,
     ResultRow,
 )
 from .utils.path_utils import derive_project_name, resolve_repo_path
@@ -1518,15 +1519,17 @@ def _emit_duplicates(
     output: Path | None,
     project_name: str,
     skipped_symbols: int = 0,
+    truncated: bool = False,
 ) -> None:
     if output_format == cs.DuplicatesFormat.JSON:
-        # Envelope, not a bare list: the coverage count must reach JSON
-        # consumers too, or a CI artifact reads as a complete scan when
-        # symbols went unanalyzed.
+        # Envelope, not a bare list: scan-completeness metadata must reach
+        # JSON consumers too, or a CI artifact reads as a complete scan when
+        # symbols went unanalyzed or group enumeration hit its cap.
         payload = json.dumps(
             {
                 cs.KEY_DUPLICATE_GROUPS: groups,
                 cs.KEY_SKIPPED_SYMBOLS: skipped_symbols,
+                cs.KEY_TRUNCATED: truncated,
             },
             indent=2,
         )
@@ -1542,20 +1545,22 @@ def _emit_duplicates(
         typer.echo(payload)
         return
 
-    # As with dead-code, the coverage notice follows the report into its sink
-    # so a saved artifact never reads as "all clean" when symbols went
-    # unanalyzed.
-    notice = (
-        cs.CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED.format(count=skipped_symbols)
-        if skipped_symbols
-        else ""
-    )
+    # As with dead-code, the completeness notices follow the report into its
+    # sink so a saved artifact never reads as "all clean" when symbols went
+    # unanalyzed or group enumeration hit its cap.
+    notices = []
+    if skipped_symbols:
+        notices.append(
+            cs.CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED.format(count=skipped_symbols)
+        )
+    if truncated:
+        notices.append(cs.CLI_DUPLICATES_TRUNCATED_NOTICE)
     table = _build_duplicates_table(groups, project_name)
     if output is not None:
         with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
             file_console = Console(file=fh)
             file_console.print(table)
-            if notice:
+            for notice in notices:
                 file_console.print(notice)
         app_context.console.print(
             style(
@@ -1563,7 +1568,7 @@ def _emit_duplicates(
                 cs.Color.GREEN,
             )
         )
-        if notice:
+        for notice in notices:
             app_context.console.print(style(notice, cs.Color.YELLOW))
         return
 
@@ -1578,7 +1583,7 @@ def _emit_duplicates(
                 cs.Color.GREEN,
             )
         )
-    if notice:
+    for notice in notices:
         app_context.console.print(style(notice, cs.Color.YELLOW))
 
 
@@ -1628,15 +1633,14 @@ def duplicates(
 
     projects: list[str] = []
     resolved: str | None = None
-    groups: list[DuplicateGroup] = []
-    skipped_symbols = 0
+    report = DuplicatesReport(groups=[], skipped_symbols=0, truncated=False)
     try:
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             resolved = _resolve_dead_code_project(project_name, projects)
             if resolved is not None:
                 logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
-                groups, skipped_symbols = collect_duplicates_with_coverage(
+                report = collect_duplicates_with_coverage(
                     ingestor,
                     resolved,
                     DuplicatesConfig(
@@ -1662,9 +1666,16 @@ def duplicates(
         app_context.console.print(style(message, cs.Color.RED))
         raise typer.Exit(1)
 
-    _emit_duplicates(groups, output_format, output, resolved, skipped_symbols)
+    _emit_duplicates(
+        report.groups,
+        output_format,
+        output,
+        resolved,
+        report.skipped_symbols,
+        report.truncated,
+    )
 
-    if fail_on_found and groups:
+    if fail_on_found and report.groups:
         raise typer.Exit(1)
 
 

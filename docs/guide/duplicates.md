@@ -467,12 +467,17 @@ could not be analyzed:
       ]
     }
   ],
-  "skipped_symbols": 0
+  "skipped_symbols": 0,
+  "truncated": false
 }
 ```
 
 `skipped_symbols` counts functions and methods with no structural
-fingerprint: pattern-tier languages and bodiless declarations.
+fingerprint: pattern-tier languages and bodiless declarations. `truncated`
+is `true` when similar-group enumeration stopped at its internal cap —
+qualifying groups may be missing, and narrowing the scan with a higher
+`--threshold` or `--min-size` brings the report back under the cap. The
+table output prints the same facts as notices after the report.
 
 ## Use in CI
 

@@ -171,6 +171,10 @@ CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED = (
     "{count} symbol(s) were not analyzed (no structural fingerprint: "
     "pattern-tier language or bodiless declaration)."
 )
+CLI_DUPLICATES_TRUNCATED_NOTICE = (
+    "Similar-group enumeration reached its cap; some qualifying groups may "
+    "be missing. Raise --threshold or --min-size to narrow the scan."
+)
 CLI_ERR_DUPLICATES_FAILED = "Failed to scan for duplicates: {error}"
 CLI_MSG_AUTO_EXCLUDE = (
     "Auto-excluding common directories (venv, node_modules, .git, etc.). "

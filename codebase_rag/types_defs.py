@@ -16,7 +16,13 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict
 
 from prompt_toolkit.styles import Style
 
-from .constants import AuditCheck, NodeLabel, RelationshipType, SupportedLanguage
+from .constants import (
+    DUPLICATES_MAX_SIMILAR_GROUPS,
+    AuditCheck,
+    NodeLabel,
+    RelationshipType,
+    SupportedLanguage,
+)
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Node, Parser, Query
@@ -494,6 +500,7 @@ class DuplicatesConfig(NamedTuple):
     min_nodes: int
     exact_only: bool
     exclude_patterns: tuple[str, ...] = ()
+    max_similar_groups: int = DUPLICATES_MAX_SIMILAR_GROUPS
 
 
 class DuplicateMember(TypedDict):
@@ -510,6 +517,14 @@ class DuplicateGroup(TypedDict):
     similarity: float
     node_count: int
     members: list[DuplicateMember]
+
+
+class DuplicatesReport(NamedTuple):
+    groups: list[DuplicateGroup]
+    skipped_symbols: int
+    # True when similar-group enumeration stopped at the configured cap:
+    # qualifying groups may be missing and every consumer must say so.
+    truncated: bool
 
 
 class GraphQueryClient(Protocol):

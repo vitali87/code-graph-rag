@@ -94,6 +94,7 @@ class TestDuplicatesCommand:
         # Envelope, not a bare list: JSON consumers must see the coverage
         # count or an incomplete scan reads as a complete one.
         assert payload[cs.KEY_SKIPPED_SYMBOLS] == 3
+        assert payload[cs.KEY_TRUNCATED] is False
         groups = payload[cs.KEY_DUPLICATE_GROUPS]
         assert len(groups) == 1
         assert groups[0]["kind"] == cs.KIND_EXACT

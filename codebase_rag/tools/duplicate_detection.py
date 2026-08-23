@@ -78,10 +78,11 @@ def create_find_duplicates_tool(ingestor: QueryProtocol) -> Tool:
 
         logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
         config = default_duplicates_config(threshold=threshold, min_nodes=min_size)
-        groups, skipped = await asyncio.to_thread(
+        report = await asyncio.to_thread(
             collect_duplicates_with_coverage, ingestor, resolved, config
         )
 
+        groups = report.groups
         if not groups:
             response = cs.MSG_DUPLICATES_NONE.format(
                 project=resolved, threshold=threshold, min_size=min_size
@@ -92,8 +93,13 @@ def create_find_duplicates_tool(ingestor: QueryProtocol) -> Tool:
                 *_format_groups(groups, limit),
             ]
             response = "\n".join(lines)
-        if skipped:
-            response = f"{response}\n{cs.MSG_DUPLICATES_SKIPPED.format(count=skipped)}"
+        if report.skipped_symbols:
+            skipped_line = cs.MSG_DUPLICATES_SKIPPED.format(
+                count=report.skipped_symbols
+            )
+            response = f"{response}\n{skipped_line}"
+        if report.truncated:
+            response = f"{response}\n{cs.MSG_DUPLICATES_GROUPS_TRUNCATED}"
         return response
 
     return Tool(

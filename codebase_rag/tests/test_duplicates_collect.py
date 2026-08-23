@@ -312,9 +312,30 @@ class TestOrderingAndCoverage:
 
     def test_coverage_reports_skipped_symbols(self) -> None:
         ingestor = FakeIngestor([], skipped=12)
-        groups, skipped = collect_duplicates_with_coverage(ingestor, "proj", _CONFIG)
-        assert groups == []
-        assert skipped == 12
+        report = collect_duplicates_with_coverage(ingestor, "proj", _CONFIG)
+        assert report.groups == []
+        assert report.skipped_symbols == 12
+        assert report.truncated is False
+
+    def test_truncation_flag_propagates_to_report(self) -> None:
+        # A-B and A-C qualify at threshold 0.5 (two overlapping cliques);
+        # with the cap at one group the second is cut and the report must
+        # say so instead of passing the partial list off as complete.
+        config = default_duplicates_config(threshold=0.5, max_similar_groups=1)
+        ingestor = FakeIngestor(
+            [
+                _row("proj.a.one", "aaaa", ["b1", "b2", "b3", "b4"]),
+                _row("proj.b.two", "bbbb", ["b1", "b2", "b3", "b4", "b5", "b6"]),
+                _row(
+                    "proj.c.three",
+                    "cccc",
+                    ["b1", "b2", "b3", "b4", "b7", "b8", "b9"],
+                ),
+            ]
+        )
+        report = collect_duplicates_with_coverage(ingestor, "proj", config)
+        assert len(report.groups) == 1
+        assert report.truncated is True
 
     def test_method_and_function_share_a_group(self) -> None:
         ingestor = FakeIngestor(
