@@ -189,8 +189,8 @@ class AppConfig(BaseSettings):
         return normalized.lower()
 
     ARCADEDB_HOST: str = "localhost"
-    ARCADEDB_BOLT_PORT: int = 7687
-    ARCADEDB_HTTP_PORT: int = 2480
+    ARCADEDB_BOLT_PORT: int = Field(default=7687, ge=1, le=65535)
+    ARCADEDB_HTTP_PORT: int = Field(default=2480, ge=1, le=65535)
     ARCADEDB_USERNAME: str | None = None
     ARCADEDB_PASSWORD: str | None = None
     # Scheme for the schema-DDL HTTP client (ArcadeHttpClient), which sends

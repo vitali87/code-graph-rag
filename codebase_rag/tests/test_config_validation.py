@@ -230,3 +230,32 @@ class TestArcadeBoltScheme:
         monkeypatch.setenv("ARCADEDB_BOLT_SCHEME", "ftp")
         with pytest.raises(ValueError, match="ARCADEDB_BOLT_SCHEME"):
             AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+
+
+class TestArcadePortRange:
+    """ARCADEDB_BOLT_PORT and ARCADEDB_HTTP_PORT are bare ints in .env, so a
+    typo like 0, a negative number, or an out-of-range value would otherwise
+    pass validation and only fail later at connect. Mirrors the gt=0
+    precedent already set by ARCADEDB_TX_TIMEOUT_S."""
+
+    @pytest.mark.parametrize("field", ["ARCADEDB_BOLT_PORT", "ARCADEDB_HTTP_PORT"])
+    def test_accepts_a_valid_port(
+        self, monkeypatch: pytest.MonkeyPatch, field: str
+    ) -> None:
+        monkeypatch.setenv(field, "8182")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert getattr(config, field) == 8182
+
+    @pytest.mark.parametrize("field", ["ARCADEDB_BOLT_PORT", "ARCADEDB_HTTP_PORT"])
+    def test_rejects_zero(self, monkeypatch: pytest.MonkeyPatch, field: str) -> None:
+        monkeypatch.setenv(field, "0")
+        with pytest.raises(ValueError, match=field):
+            AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+
+    @pytest.mark.parametrize("field", ["ARCADEDB_BOLT_PORT", "ARCADEDB_HTTP_PORT"])
+    def test_rejects_above_65535(
+        self, monkeypatch: pytest.MonkeyPatch, field: str
+    ) -> None:
+        monkeypatch.setenv(field, "65536")
+        with pytest.raises(ValueError, match=field):
+            AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
