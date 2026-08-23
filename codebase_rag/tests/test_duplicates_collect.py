@@ -41,6 +41,7 @@ def _row(
     start_line: int = 1,
     start_col: int = 0,
     label: str = _FUNCTION,
+    end_line: int | None = None,
 ) -> ResultRow:
     return {
         "label": label,
@@ -49,7 +50,7 @@ def _row(
         "path": path if path is not None else f"proj/{qn.replace('.', '_')}.py",
         "start_line": start_line,
         "start_col": start_col,
-        "end_line": start_line + 9,
+        "end_line": end_line if end_line is not None else start_line + 9,
         "ast_fingerprint": fingerprint,
         "ast_fingerprint_nodes": nodes,
         "ast_branch_fingerprints": branches,
@@ -326,6 +327,439 @@ class TestSimilarGroups:
         exact, truncated = _maximal_cliques(adjacency, cap=8)
         assert len(exact) == 8
         assert truncated is False
+
+    def test_enclosing_function_is_not_similar_to_its_own_closure(self) -> None:
+        # A factory's body contains its nested function, so the outer branch
+        # set is a superset of the inner's and Jaccard clears any threshold.
+        # "This function duplicates its own body" is a false positive by
+        # construction: a nested pair must never form a similar group
+        # (create_query_tool vs its query_codebase_knowledge_graph closure).
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.m.factory",
+                    "aaaa",
+                    [*shared, "outer_extra"],
+                    path="proj/m.py",
+                    start_line=30,
+                    end_line=60,
+                ),
+                _row(
+                    "proj.m.factory.inner",
+                    "bbbb",
+                    shared,
+                    path="proj/m.py",
+                    start_line=38,
+                    end_line=58,
+                ),
+            ]
+        )
+        assert collect_duplicates(ingestor, "proj", _CONFIG) == []
+
+    def test_nested_pair_with_external_copy_still_groups(self) -> None:
+        # The nested-pair exemption is scoped to containment: when the
+        # closure's fingerprint ALSO matches a copy elsewhere, the entries
+        # are a real clone pair and the group must survive.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.m.factory",
+                    "aaaa",
+                    [*shared, "outer_extra"],
+                    path="proj/m.py",
+                    start_line=30,
+                    end_line=60,
+                ),
+                _row(
+                    "proj.m.factory.inner",
+                    "bbbb",
+                    shared,
+                    path="proj/m.py",
+                    start_line=38,
+                    end_line=58,
+                ),
+                _row(
+                    "proj.other.copy",
+                    "bbbb",
+                    shared,
+                    path="proj/other.py",
+                    start_line=5,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        # inner and its external copy share a fingerprint: one exact group.
+        assert {"proj.m.factory.inner", "proj.other.copy"} in member_sets
+        # factory vs the inner-fingerprint entry is a real cross-file clone
+        # relationship, but only via the EXTERNAL copy: the similar group
+        # must seat factory with proj.other.copy alone, never with its own
+        # nested closure (whose exact twin is already reported above).
+        assert {"proj.m.factory", "proj.other.copy"} in member_sets
+        assert len(groups) == 2
+
+    def test_same_line_nested_closure_with_external_copy_is_dropped(self) -> None:
+        # Minified one-liners: the factory and its closure share the SAME
+        # start and end line, so line spans cannot prove nesting - but the
+        # qualified-name hierarchy can (factory.closure sits under factory).
+        # The similar group must still seat the factory with the external
+        # copy only, never with its own closure.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.min.factory",
+                    "aaaa",
+                    [*shared, "outer_extra"],
+                    path="proj/min.py",
+                    start_line=5,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.min.factory.closure",
+                    "bbbb",
+                    shared,
+                    path="proj/min.py",
+                    start_line=5,
+                    start_col=24,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.other.closure_copy",
+                    "bbbb",
+                    shared,
+                    path="proj/other.py",
+                    start_line=3,
+                    end_line=3,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.min.factory.closure", "proj.other.closure_copy"} in member_sets
+        assert {"proj.min.factory", "proj.other.closure_copy"} in member_sets
+        assert len(groups) == 2
+
+    def test_same_line_adjacent_definitions_still_pair(self) -> None:
+        # Two DISTINCT minified definitions can share one line span without
+        # any nesting (side-by-side one-liners). Their qualified names are
+        # unrelated, so the nested-member rules must not eat the pair.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.min.first",
+                    "aaaa",
+                    [*shared, "x1"],
+                    path="proj/min.py",
+                    start_line=5,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.min.second",
+                    "bbbb",
+                    [*shared, "x2"],
+                    path="proj/min.py",
+                    start_line=5,
+                    start_col=60,
+                    end_line=5,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        assert len(groups) == 1
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
+            "proj.min.first",
+            "proj.min.second",
+        }
+
+    def test_shared_boundary_siblings_still_pair(self) -> None:
+        # Sibling definitions can share ONE line boundary without nesting: a
+        # one-liner at 5-5 beside a definition spanning 5-9 (or 9-9 closing a
+        # 5-9 span). Containment is only proven by STRICT bounds on both
+        # sides; a shared boundary defers to the qualified-name hierarchy.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.min.first",
+                    "aaaa",
+                    [*shared, "x1"],
+                    path="proj/min.py",
+                    start_line=5,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.min.second",
+                    "bbbb",
+                    [*shared, "x2"],
+                    path="proj/min.py",
+                    start_line=5,
+                    start_col=40,
+                    end_line=9,
+                ),
+                _row(
+                    "proj.min.third",
+                    "cccc",
+                    [*shared, "x3"],
+                    path="proj/tail.py",
+                    start_line=9,
+                    end_line=9,
+                ),
+                _row(
+                    "proj.min.fourth",
+                    "dddd",
+                    [*shared, "x4"],
+                    path="proj/tail.py",
+                    start_line=5,
+                    end_line=9,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        # All four are mutually similar: ONE 4-clique. A wrongly dropped
+        # first-second (or third-fourth) edge would split it into two
+        # overlapping 3-cliques instead.
+        assert len(groups) == 1
+        assert {m["qualified_name"] for m in groups[0]["members"]} == {
+            "proj.min.first",
+            "proj.min.second",
+            "proj.min.third",
+            "proj.min.fourth",
+        }
+
+    def test_closure_pair_with_distinct_external_function_is_kept(self) -> None:
+        # An external function with a DIFFERENT fingerprint that is similar
+        # to both a factory and its closure: the factory-closure edge is
+        # filtered, so two overlapping cliques emerge, and the closure's own
+        # relationship with the external function must be reported.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.m.factory",
+                    "aaaa",
+                    [*shared, "outer_extra"],
+                    path="proj/m.py",
+                    start_line=30,
+                    end_line=60,
+                ),
+                _row(
+                    "proj.m.factory.inner",
+                    "bbbb",
+                    [*shared, "inner_extra"],
+                    path="proj/m.py",
+                    start_line=38,
+                    end_line=58,
+                ),
+                _row(
+                    "proj.other.cousin",
+                    "cccc",
+                    [*shared, "cousin_extra"],
+                    path="proj/other.py",
+                    start_line=5,
+                    end_line=25,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.m.factory", "proj.other.cousin"} in member_sets
+        assert {"proj.m.factory.inner", "proj.other.cousin"} in member_sets
+        assert len(groups) == 2
+
+    def test_all_nested_closure_entry_is_dropped_from_similar_group(self) -> None:
+        # Two similar factories each contain an identical closure (one exact
+        # entry, every member nested in a group co-member). The closure clone
+        # class is the Stage-1 exact group; the similar group must pair the
+        # factories alone, never a factory beside its own closure.
+        shared = [f"b{i}" for i in range(9)]
+        closure_branches = shared[:5]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.a.factory_one",
+                    "aaaa",
+                    [*shared, "x1"],
+                    path="proj/a.py",
+                    start_line=10,
+                    end_line=40,
+                ),
+                _row(
+                    "proj.b.factory_two",
+                    "eeee",
+                    [*shared, "x2"],
+                    path="proj/b.py",
+                    start_line=10,
+                    end_line=40,
+                ),
+                _row(
+                    "proj.a.factory_one.helper",
+                    "cccc",
+                    closure_branches,
+                    path="proj/a.py",
+                    start_line=15,
+                    end_line=30,
+                ),
+                _row(
+                    "proj.b.factory_two.helper",
+                    "cccc",
+                    closure_branches,
+                    path="proj/b.py",
+                    start_line=15,
+                    end_line=30,
+                ),
+            ]
+        )
+        config = default_duplicates_config(threshold=0.5)
+        groups = collect_duplicates(ingestor, "proj", config)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.a.factory_one.helper", "proj.b.factory_two.helper"} in member_sets
+        for members in member_sets:
+            assert not (
+                "proj.a.factory_one" in members
+                and "proj.a.factory_one.helper" in members
+            )
+            assert not (
+                "proj.b.factory_two" in members
+                and "proj.b.factory_two.helper" in members
+            )
+
+    def test_dropped_closure_entry_keeps_standalone_partner_pair(self) -> None:
+        # Two similar factories, their identical closures (one exact entry),
+        # and a standalone function similar to everything: one 4-entry
+        # clique. Dropping the nested closures from the main group must not
+        # erase the closure-to-standalone relationship - it is not covered
+        # by any exact group, so a supplemental group carries it.
+        closure_branches = [f"b{i}" for i in range(5)]
+        factory_a = [f"b{i}" for i in range(9)] + ["x1"]
+        factory_b = [f"b{i}" for i in range(9)] + ["x2"]
+        standalone = [f"b{i}" for i in range(6)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.a.factory_one",
+                    "aaaa",
+                    factory_a,
+                    path="proj/a.py",
+                    start_line=10,
+                    end_line=40,
+                ),
+                _row(
+                    "proj.b.factory_two",
+                    "eeee",
+                    factory_b,
+                    path="proj/b.py",
+                    start_line=10,
+                    end_line=40,
+                ),
+                _row(
+                    "proj.a.factory_one.helper",
+                    "cccc",
+                    closure_branches,
+                    path="proj/a.py",
+                    start_line=15,
+                    end_line=30,
+                ),
+                _row(
+                    "proj.b.factory_two.helper",
+                    "cccc",
+                    closure_branches,
+                    path="proj/b.py",
+                    start_line=15,
+                    end_line=30,
+                ),
+                _row(
+                    "proj.s.standalone",
+                    "dddd",
+                    standalone,
+                    path="proj/s.py",
+                    start_line=3,
+                    end_line=20,
+                ),
+            ]
+        )
+        config = default_duplicates_config(threshold=0.5)
+        groups = collect_duplicates(ingestor, "proj", config)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        # Main clique group: factories with the standalone, closures pruned.
+        assert {
+            "proj.a.factory_one",
+            "proj.b.factory_two",
+            "proj.s.standalone",
+        } in member_sets
+        # Supplemental group: the pruned closure entry with its non-container
+        # partner, so the closure-standalone relationship survives.
+        assert {
+            "proj.a.factory_one.helper",
+            "proj.b.factory_two.helper",
+            "proj.s.standalone",
+        } in member_sets
+        # And never a factory beside its own closure.
+        for members in member_sets:
+            assert not (
+                "proj.a.factory_one" in members
+                and "proj.a.factory_one.helper" in members
+            )
+            assert not (
+                "proj.b.factory_two" in members
+                and "proj.b.factory_two.helper" in members
+            )
+
+    def test_parameterized_qn_still_proves_same_line_nesting(self) -> None:
+        # C#/Java qualified names carry a signature (`Run(int)`) that a
+        # nested local function's qn does not repeat (`Run.Local`): the
+        # hierarchy check must strip signatures or same-line nesting is
+        # never recognized and the method pairs with its own local function.
+        shared = [f"b{i}" for i in range(9)]
+        ingestor = FakeIngestor(
+            [
+                _row(
+                    "proj.N.Sample.Run(int)",
+                    "aaaa",
+                    [*shared, "outer_extra"],
+                    path="proj/Sample.cs",
+                    start_line=5,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.N.Sample.Run.Local",
+                    "bbbb",
+                    shared,
+                    path="proj/Sample.cs",
+                    start_line=5,
+                    start_col=30,
+                    end_line=5,
+                ),
+                _row(
+                    "proj.Other.LocalCopy",
+                    "bbbb",
+                    shared,
+                    path="proj/Other.cs",
+                    start_line=3,
+                    end_line=3,
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", _CONFIG)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.N.Sample.Run.Local", "proj.Other.LocalCopy"} in member_sets
+        assert {"proj.N.Sample.Run(int)", "proj.Other.LocalCopy"} in member_sets
+        assert len(groups) == 2
 
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(

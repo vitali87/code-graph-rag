@@ -1438,7 +1438,7 @@ def dead_code(
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             resolved = _resolve_dead_code_project(project_name, projects)
-            if resolved is not None:
+            if resolved is not None and resolved in projects:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
                 rows, structural_tier_symbols = collect_dead_code_with_coverage(
                     ingestor,
@@ -1453,6 +1453,21 @@ def dead_code(
         )
         logger.exception(ls.DEADCODE_ERROR.format(error=e))
         raise typer.Exit(1) from e
+
+    # An explicit name absent from the graph must error, not scan a
+    # nonexistent prefix and report a clean project (the duplicates command
+    # gained this guard first). Raised OUTSIDE the connection context so a
+    # user typo never trips the service layer's error logging on exit.
+    if resolved is not None and resolved not in projects:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_DEADCODE_UNKNOWN_PROJECT.format(
+                    project=resolved, projects=projects
+                ),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
 
     if resolved is None:
         message = (
@@ -1520,6 +1535,7 @@ def _emit_duplicates(
     project_name: str,
     skipped_symbols: int = 0,
     truncated: bool = False,
+    analyzed_symbols: int = 0,
 ) -> None:
     if output_format == cs.DuplicatesFormat.JSON:
         # Envelope, not a bare list: scan-completeness metadata must reach
@@ -1549,7 +1565,13 @@ def _emit_duplicates(
     # sink so a saved artifact never reads as "all clean" when symbols went
     # unanalyzed or group enumeration hit its cap.
     notices = []
-    if skipped_symbols:
+    # Every symbol skipped and none analyzed: the graph was indexed before
+    # fingerprint stamping, so "no duplicates" would be vacuous and the
+    # pattern-tier wording a misdiagnosis - recommend a re-index instead.
+    all_skipped = skipped_symbols > 0 and analyzed_symbols == 0
+    if all_skipped:
+        notices.append(cs.CLI_DUPLICATES_STALE_GRAPH.format(count=skipped_symbols))
+    elif skipped_symbols:
         notices.append(
             cs.CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED.format(count=skipped_symbols)
         )
@@ -1573,7 +1595,8 @@ def _emit_duplicates(
         return
 
     if not groups:
-        app_context.console.print(style(cs.CLI_DUPLICATES_NONE, cs.Color.GREEN))
+        if not all_skipped:
+            app_context.console.print(style(cs.CLI_DUPLICATES_NONE, cs.Color.GREEN))
     else:
         app_context.console.print(table)
         members = sum(len(group["members"]) for group in groups)
@@ -1638,19 +1661,7 @@ def duplicates(
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             resolved = _resolve_dead_code_project(project_name, projects)
-            # An explicit name absent from the graph must error, not scan a
-            # nonexistent prefix and report a clean project.
-            if resolved is not None and resolved not in projects:
-                app_context.console.print(
-                    style(
-                        cs.CLI_ERR_DUPLICATES_UNKNOWN_PROJECT.format(
-                            project=resolved, projects=projects
-                        ),
-                        cs.Color.RED,
-                    )
-                )
-                raise typer.Exit(1)
-            if resolved is not None:
+            if resolved is not None and resolved in projects:
                 logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
                 report = collect_duplicates_with_coverage(
                     ingestor,
@@ -1662,14 +1673,27 @@ def duplicates(
                         exclude_patterns=tuple(exclude),
                     ),
                 )
-    except typer.Exit:
-        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DUPLICATES_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.DUPLICATES_ERROR.format(error=e))
         raise typer.Exit(1) from e
+
+    # An explicit name absent from the graph must error, not scan a
+    # nonexistent prefix and report a clean project. Raised OUTSIDE the
+    # connection context: a user typo is not a connection failure and must
+    # not trip the service layer's error logging on exit.
+    if resolved is not None and resolved not in projects:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_DUPLICATES_UNKNOWN_PROJECT.format(
+                    project=resolved, projects=projects
+                ),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
 
     if resolved is None:
         message = (
@@ -1687,6 +1711,7 @@ def duplicates(
         resolved,
         report.skipped_symbols,
         report.truncated,
+        report.analyzed_symbols,
     )
 
     if fail_on_found and report.groups:

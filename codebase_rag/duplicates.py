@@ -10,6 +10,7 @@
 # project.
 from __future__ import annotations
 
+import re
 from fnmatch import fnmatch
 from math import ceil
 
@@ -94,7 +95,12 @@ def collect_duplicates_with_coverage(
             -group["node_count"],
         )
     )
-    return DuplicatesReport(groups=groups, skipped_symbols=skipped, truncated=truncated)
+    return DuplicatesReport(
+        groups=groups,
+        skipped_symbols=skipped,
+        truncated=truncated,
+        analyzed_symbols=len(rows),
+    )
 
 
 def _entries_from_rows(
@@ -231,9 +237,147 @@ def _pairs_from_index(
     return pairs, False
 
 
+def _span_contains(outer: DuplicateMember, inner: DuplicateMember) -> bool:
+    return (
+        outer["path"] == inner["path"]
+        and outer["start_line"] <= inner["start_line"]
+        and inner["end_line"] <= outer["end_line"]
+    )
+
+
+# Registration artifacts on a qualified name ("@<line>", optionally
+# "_<col>"), never part of the written name; stripped before any
+# hierarchy comparison.
+_DUP_QN_MARKER_RE = re.compile(
+    re.escape(cs.DUP_QN_MARKER)
+    + r"\d+(?:"
+    + re.escape(cs.DUP_QN_COLUMN_MARKER)
+    + r"\d+)?"
+)
+
+
+# C#/Java qualified names carry a parameter signature ("Run(int)") that a
+# nested definition's qn does not repeat ("Run.Local"); stripped before the
+# hierarchy comparison, alongside the registration markers.
+_QN_SIGNATURE_RE = re.compile(r"\([^()]*\)")
+
+
+def _qn_normalized(qn: str) -> str:
+    return _QN_SIGNATURE_RE.sub("", _DUP_QN_MARKER_RE.sub("", qn))
+
+
+def _qn_within(outer_qn: str, inner_qn: str) -> bool:
+    return _qn_normalized(inner_qn).startswith(
+        _qn_normalized(outer_qn) + cs.SEPARATOR_DOT
+    )
+
+
+def _member_nested_in(outer: DuplicateMember, inner: DuplicateMember) -> bool:
+    """True when inner's definition sits textually inside outer's.
+
+    Only STRICT containment on both boundaries proves nesting by lines
+    alone. Any shared boundary is ambiguous - a one-liner at 5-5 beside a
+    sibling spanning 5-9 shares a start line without nesting, and minified
+    one-liners share both - so there the qualified-name hierarchy decides:
+    a nested definition's qn extends its container's, a sibling's never
+    does.
+    """
+    if not _span_contains(outer, inner):
+        return False
+    if (
+        outer["start_line"] < inner["start_line"]
+        and inner["end_line"] < outer["end_line"]
+    ):
+        return True
+    return _qn_within(outer["qualified_name"], inner["qualified_name"])
+
+
+def _only_nested_members(
+    first: list[DuplicateMember], second: list[DuplicateMember]
+) -> bool:
+    """True when every cross pair is one definition inside the other.
+
+    A factory's body contains its nested function, so the outer branch set is
+    a superset of the inner's and Jaccard clears any threshold - yet "this
+    function duplicates its own body" is a false positive by construction.
+    The exemption is scoped to pure containment: one non-nested cross pair
+    (the closure's fingerprint also matching a copy elsewhere) keeps the
+    entries a real clone pair.
+    """
+    return all(
+        _member_nested_in(a, b) or _member_nested_in(b, a)
+        for a in first
+        for b in second
+    )
+
+
+def _drop_contained_members(
+    members: list[DuplicateMember],
+) -> list[DuplicateMember]:
+    """Drop members nested inside another member of the same group.
+
+    Expanding an entry's full member list can seat an enclosing function
+    next to its own nested closure (the closure's fingerprint matching a
+    copy elsewhere keeps the entry edge legitimately alive, and two similar
+    factories can carry their identical closures as one all-nested entry).
+    The nested member is always the redundant one: whenever its entry has
+    more than one member, the Stage-1 exact group already reports the
+    closure clone class, and its container's real partners stay in this
+    group. Nesting requires proper containment or a qualified-name
+    hierarchy on a shared boundary, so two distinct definitions sharing a
+    span (adjacent minified one-liners) both survive.
+    """
+    return [
+        member
+        for member in members
+        if not any(
+            other is not member and _member_nested_in(other, member)
+            for other in members
+        )
+    ]
+
+
 def _jaccard(first: frozenset[str], second: frozenset[str]) -> float:
     union = len(first | second)
     return len(first & second) / union if union else 0.0
+
+
+def _entry_contains_any(container: _Entry, contained: _Entry) -> bool:
+    return any(
+        _member_nested_in(outer, inner)
+        for outer in container.members
+        for inner in contained.members
+    )
+
+
+def _supplemental_cliques(
+    clique: list[int], order: list[_Entry], kept: list[DuplicateMember]
+) -> list[list[int]]:
+    """Sub-cliques preserving a fully-pruned entry's non-container partners.
+
+    Dropping nested members can erase an ENTIRE entry from a clique (two
+    factories carrying their identical closures). Its relationship to a
+    partner that contains none of its members (a standalone function similar
+    to the closures) is covered by no other group, so each such entry is
+    re-emitted with exactly those partners.
+    """
+    kept_ids = {id(member) for member in kept}
+    pruned = [
+        position
+        for position in clique
+        if not any(id(member) in kept_ids for member in order[position].members)
+    ]
+    subcliques: list[list[int]] = []
+    for position in pruned:
+        partners = [
+            other
+            for other in clique
+            if other != position
+            and not _entry_contains_any(order[other], order[position])
+        ]
+        if partners:
+            subcliques.append(sorted([position, *partners]))
+    return subcliques
 
 
 def _similar_groups(
@@ -262,6 +406,8 @@ def _similar_groups(
             continue
         if _jaccard(first, second) < threshold:
             continue
+        if _only_nested_members(order[left].members, order[right].members):
+            continue
         adjacency.setdefault(left, set()).add(right)
         adjacency.setdefault(right, set()).add(left)
 
@@ -270,21 +416,47 @@ def _similar_groups(
         logger.warning(ls.DUPLICATES_GROUPS_TRUNCATED.format(cap=max_groups))
     truncated = pairs_truncated or cliques_truncated
     groups: list[DuplicateGroup] = []
+    seen_member_sets: set[frozenset[str]] = set()
     for clique in cliques:
-        similarity = min(
-            _jaccard(order[left].branches, order[right].branches)
-            for at, left in enumerate(clique)
-            for right in clique[at + 1 :]
+        members = _drop_contained_members(
+            [member for position in clique for member in order[position].members]
         )
-        members = [member for position in clique for member in order[position].members]
-        groups.append(
-            DuplicateGroup(
-                kind=cs.KIND_SIMILAR,
-                similarity=round(similarity, 3),
-                node_count=max(order[position].node_count for position in clique),
-                members=_sorted_members(members),
+        emit = [(clique, members)]
+        emit.extend(
+            (
+                subclique,
+                _drop_contained_members(
+                    [
+                        member
+                        for position in subclique
+                        for member in order[position].members
+                    ]
+                ),
             )
+            for subclique in _supplemental_cliques(clique, order, members)
         )
+        for group_positions, group_members in emit:
+            if len(group_members) < 2:
+                continue
+            key = frozenset(m[cs.KEY_QUALIFIED_NAME] for m in group_members)
+            if key in seen_member_sets:
+                continue
+            seen_member_sets.add(key)
+            similarity = min(
+                _jaccard(order[left].branches, order[right].branches)
+                for at, left in enumerate(group_positions)
+                for right in group_positions[at + 1 :]
+            )
+            groups.append(
+                DuplicateGroup(
+                    kind=cs.KIND_SIMILAR,
+                    similarity=round(similarity, 3),
+                    node_count=max(
+                        order[position].node_count for position in group_positions
+                    ),
+                    members=_sorted_members(group_members),
+                )
+            )
     return groups, truncated
 
 

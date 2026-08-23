@@ -153,6 +153,9 @@ CLI_ERR_DEADCODE_NO_PROJECTS = (
 CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT = (
     "Multiple projects found: {projects}. Specify which one with --project-name/-n."
 )
+CLI_ERR_DEADCODE_UNKNOWN_PROJECT = (
+    "Project '{project}' is not indexed. Indexed projects: {projects}."
+)
 
 CLI_DUPLICATES_CONNECTING = "Scanning for structurally duplicated functions..."
 CLI_DUPLICATES_TABLE_TITLE = "Duplicate Code Groups ({project_name})"
@@ -170,6 +173,11 @@ CLI_DUPLICATES_WRITTEN = "Wrote {count} group(s) to {path}"
 CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED = (
     "{count} symbol(s) were not analyzed (no structural fingerprint: "
     "pattern-tier language or bodiless declaration)."
+)
+CLI_DUPLICATES_STALE_GRAPH = (
+    "None of the {count} function(s)/method(s) in this project carry a "
+    "structural fingerprint; the graph predates fingerprint stamping. "
+    "Re-index the repository (cgr start --update-graph) and rerun."
 )
 CLI_DUPLICATES_TRUNCATED_NOTICE = (
     "Similar-group enumeration reached its cap; some qualifying groups may "

@@ -527,6 +527,11 @@ class DuplicatesReport(NamedTuple):
     # True when similar-group enumeration stopped at the configured cap:
     # qualifying groups may be missing and every consumer must say so.
     truncated: bool
+    # Fingerprint-bearing symbols the scan actually examined. Zero with a
+    # positive skipped count means the graph predates fingerprint stamping
+    # (indexed before the feature): "no duplicates" would be vacuous and the
+    # CLI recommends a re-index instead.
+    analyzed_symbols: int = 0
 
 
 class GraphQueryClient(Protocol):

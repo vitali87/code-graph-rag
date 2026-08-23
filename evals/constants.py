@@ -632,6 +632,17 @@ DEAD_CODE_DIFF_PREFIX = "dead-code:"
 DEAD_CODE_LABEL = "dead-code"
 DEAD_CODE_TITLE = "cgr dead-code eval: reachability over the captured graph"
 
+# Duplicates eval: replay the duplicate-fingerprint Cypher fetches over the
+# captured graph and run codebase_rag.duplicates on top, grading reported
+# clone PAIRS against fixtures whose duplicates are known by construction.
+# The engine is unit-tested on hand-built rows, so a fixture mismatch points
+# at fingerprint ingest or the graph capture, not the grouping.
+DUPLICATES_DEFAULT_TARGET = "codebase_rag"
+DUPLICATES_REPORT_FILENAME = "duplicates_report.json"
+DUPLICATES_DIFF_PREFIX = "duplicates:"
+DUPLICATES_LABEL = "duplicate-pairs"
+DUPLICATES_PAIR_SEP = "<->"
+
 # Cross-project (monorepo) eval: does cgr resolve CALLS and IMPORTS across
 # top-level package boundaries? The single-package corpora the other evals use
 # never exercise this, yet monorepo RAG is cgr's headline. Graded on synthetic
