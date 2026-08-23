@@ -62,6 +62,11 @@ KEY_PROJECT_NAME = "project_name"
 # ast-grep finding node properties (issue #413)
 KEY_MESSAGE = "message"
 KEY_SNIPPET = "snippet"
+# Structural clone-detection fingerprints, stamped on Function/Method at
+# ingest and read back by `cgr duplicates` and the find_duplicate_code tool.
+KEY_AST_FINGERPRINT = "ast_fingerprint"
+KEY_AST_FINGERPRINT_NODES = "ast_fingerprint_nodes"
+KEY_AST_BRANCH_FINGERPRINTS = "ast_branch_fingerprints"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"

@@ -61,6 +61,7 @@ from .tools.ast_grep_service import AstGrepService
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
 from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
+from .tools.duplicate_detection import create_find_duplicates_tool
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
@@ -1647,6 +1648,7 @@ def _initialize_services_and_agent(
     function_source_tool = create_get_function_source_tool(ingestor)
     structural_search_tool = create_structural_search_tool(ast_grep_service)
     structural_editor_tool = create_structural_editor_tool(ast_grep_service)
+    find_duplicates_tool = create_find_duplicates_tool(ingestor)
 
     # Web search always registers: the default DuckDuckGo backend needs no key,
     # and WEB_SEARCH_PROVIDER=serpdive (with SERPDIVE_API_KEY) swaps in the
@@ -1663,6 +1665,7 @@ def _initialize_services_and_agent(
         function_source_tool,
         structural_search_tool,
         structural_editor_tool,
+        find_duplicates_tool,
     ]
     agentic_tools.append(create_web_search_tool(make_web_searcher()))
 

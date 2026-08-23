@@ -153,6 +153,27 @@ CLI_ERR_DEADCODE_NO_PROJECTS = (
 CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT = (
     "Multiple projects found: {projects}. Specify which one with --project-name/-n."
 )
+
+CLI_DUPLICATES_CONNECTING = "Scanning for structurally duplicated functions..."
+CLI_DUPLICATES_TABLE_TITLE = "Duplicate Code Groups ({project_name})"
+CLI_DUPLICATES_COL_GROUP = "Group"
+CLI_DUPLICATES_COL_SIMILARITY = "Similarity"
+CLI_DUPLICATES_COL_KIND = "Kind"
+CLI_DUPLICATES_COL_MEMBER = "Member"
+CLI_DUPLICATES_COL_LOCATION = "Location"
+CLI_DUPLICATES_LOCATION = "{path}:{start}-{end}"
+CLI_DUPLICATES_SIMILARITY_EXACT = "100%"
+CLI_DUPLICATES_SIMILARITY_PCT = "{pct:.0f}%"
+CLI_DUPLICATES_SUMMARY = (
+    "{groups} duplicate group(s) covering {members} function(s)."
+)
+CLI_DUPLICATES_NONE = "No duplicated functions or methods found."
+CLI_DUPLICATES_WRITTEN = "Wrote {count} group(s) to {path}"
+CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED = (
+    "{count} symbol(s) were not analyzed (no structural fingerprint: "
+    "pattern-tier language or bodiless declaration)."
+)
+CLI_ERR_DUPLICATES_FAILED = "Failed to scan for duplicates: {error}"
 CLI_MSG_AUTO_EXCLUDE = (
     "Auto-excluding common directories (venv, node_modules, .git, etc.). "
     "Use --interactive-setup to customize."
@@ -202,6 +223,11 @@ UI_INPUT_PROMPT_HTML = (
 
 
 class DeadCodeFormat(StrEnum):
+    TABLE = "table"
+    JSON = "json"
+
+
+class DuplicatesFormat(StrEnum):
     TABLE = "table"
     JSON = "json"
 

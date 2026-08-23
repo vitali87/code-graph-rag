@@ -12,6 +12,7 @@ class CLICommandName(StrEnum):
     DOCTOR = "doctor"
     STATS = "stats"
     DEAD_CODE = "dead-code"
+    DUPLICATES = "duplicates"
     DELETE_PROJECT = "delete-project"
     DAEMON = "daemon"
     WORKSPACE = "workspace"
@@ -42,6 +43,7 @@ CMD_LANGUAGE = "Manage language grammars and parser metadata"
 CMD_DOCTOR = "Check dependencies, services, and configuration"
 CMD_STATS = "Show graph node and relationship counts"
 CMD_DEAD_CODE = "Report code that appears unreachable from known entry points"
+CMD_DUPLICATES = "Report structurally duplicated functions and methods"
 CMD_DELETE_PROJECT = "Delete one project without changing other indexed projects"
 CMD_HELP = "Show help for a command"
 
@@ -93,6 +95,11 @@ EXAMPLES_LANGUAGE_ADD = "EXAMPLE\n\n  cgr language add-grammar ruby"
 EXAMPLES_LANGUAGE_REMOVE = "EXAMPLE\n\n  cgr language remove-language ruby"
 EXAMPLES_DEAD_CODE = (
     "EXAMPLE\n\n  cgr dead-code --project-name my-project --format json"
+)
+EXAMPLES_DUPLICATES = (
+    "EXAMPLES\n\n"
+    "  cgr duplicates --project-name my-project\n\n"
+    "  cgr duplicates --threshold 0.9 --format json --fail-on-found"
 )
 EXAMPLES_DELETE_PROJECT = "EXAMPLE\n\n  cgr delete-project --name my-project"
 EXAMPLES_HELP = "EXAMPLES\n\n  cgr help start\n\n  cgr help daemon logs"
@@ -326,6 +333,28 @@ HELP_DEADCODE_FAIL_ON_FOUND = (
     "Exit with status 1 when any candidate is found. Useful in CI."
 )
 
+HELP_DUPLICATES_PROJECT_NAME = (
+    "Project to scan. If omitted, cgr uses the only indexed project."
+)
+HELP_DUPLICATES_THRESHOLD = (
+    "Minimum branch-overlap similarity for a near-duplicate pair, 0-1."
+)
+HELP_DUPLICATES_MIN_SIZE = (
+    "Minimum skeleton size (tree nodes) for a function to be considered. "
+    "Filters trivial getters and one-liners."
+)
+HELP_DUPLICATES_EXACT_ONLY = (
+    "Report only identical-fingerprint clone groups; skip similarity scoring."
+)
+HELP_DUPLICATES_EXCLUDE = (
+    "Exclude symbols whose file path matches GLOB. '*' spans directories. Repeatable."
+)
+HELP_DUPLICATES_FORMAT = "Report format: table or json."
+HELP_DUPLICATES_OUTPUT = "Write the report to this file instead of stdout."
+HELP_DUPLICATES_FAIL_ON_FOUND = (
+    "Exit with status 1 when any duplicate is found. Useful in CI."
+)
+
 HELP_DELETE_PROJECT_NAME = "Project name to delete from the graph."
 HELP_DELETE_PROJECT_REPO_PATH = (
     "Optional repo path. If set, the local hash cache is removed too."
@@ -341,6 +370,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.GRAPH_LOADER: CMD_GRAPH_LOADER,
     CLICommandName.STATS: CMD_STATS,
     CLICommandName.DEAD_CODE: CMD_DEAD_CODE,
+    CLICommandName.DUPLICATES: CMD_DUPLICATES,
     CLICommandName.DELETE_PROJECT: CMD_DELETE_PROJECT,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DAEMON: CMD_DAEMON,

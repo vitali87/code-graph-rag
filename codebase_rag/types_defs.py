@@ -481,6 +481,37 @@ class DeadCodeConfig(NamedTuple):
     exclude_patterns: tuple[str, ...] = ()
 
 
+class AstFingerprintResult(NamedTuple):
+    """Structural fingerprints of one function body's skeleton."""
+
+    fingerprint: str
+    node_count: int
+    branch_fingerprints: list[str]
+
+
+class DuplicatesConfig(NamedTuple):
+    threshold: float
+    min_nodes: int
+    exact_only: bool
+    exclude_patterns: tuple[str, ...] = ()
+
+
+class DuplicateMember(TypedDict):
+    label: str
+    qualified_name: str
+    name: str
+    path: str
+    start_line: int
+    end_line: int
+
+
+class DuplicateGroup(TypedDict):
+    kind: str
+    similarity: float
+    node_count: int
+    members: list[DuplicateMember]
+
+
 class GraphQueryClient(Protocol):
     def fetch_all(
         self, query: str, params: dict[str, PropertyValue] | None = None
@@ -794,11 +825,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,

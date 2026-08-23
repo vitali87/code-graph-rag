@@ -479,6 +479,8 @@ EXPORT_ERROR = "Export error: {error}"
 STATS_ERROR = "Stats error: {error}"
 DEADCODE_SCANNING = "Scanning project '{project_name}' for dead code"
 DEADCODE_ERROR = "Dead code scan error: {error}"
+DUPLICATES_SCANNING = "Scanning project '{project_name}' for duplicated code"
+DUPLICATES_ERROR = "Duplicate scan error: {error}"
 INDEXING_FAILED = "Indexing failed"
 PATH_NOT_IN_QUESTION = (
     "Could not locate path token in user message for attachment: {path}"

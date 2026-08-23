@@ -23,6 +23,7 @@ from ..types_defs import (
     TreeSitterNodeProtocol,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
+from .ast_fingerprint import fingerprint_props
 from .endpoints import emit_endpoints, queue_endpoints
 
 if TYPE_CHECKING:
@@ -1293,6 +1294,7 @@ def ingest_method(
             file_path, repo_path
         ).as_posix()
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    method_props.update(fingerprint_props(method_node))
 
     # Persist @property status on the node so an incremental rebuild can restore
     # the registry's property-name set for unchanged files (it re-marks from this
@@ -1438,6 +1440,7 @@ def module_function_props(
     if file_path is not None and repo_path is not None:
         props[cs.KEY_PATH] = cached_relative_path(file_path, repo_path).as_posix()
         props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    props.update(fingerprint_props(function_node))
     return props
 
 
