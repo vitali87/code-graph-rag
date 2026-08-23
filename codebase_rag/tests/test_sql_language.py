@@ -111,6 +111,22 @@ class TestSqlGetName:
         assert node is not None
         assert _sql_get_name(node) == "app.usp_invoice_list"
 
+    def test_unquoted_identifier_folds_to_lowercase(self) -> None:
+        # PostgreSQL folds MyFunc to myfunc; only quoting preserves case.
+        node = _create_function_node(
+            "CREATE FUNCTION MyFunc() RETURNS int AS $$ SELECT 1; $$ LANGUAGE sql;"
+        )
+        assert node is not None
+        assert _sql_get_name(node) == "myfunc"
+
+    def test_quoted_identifier_keeps_its_case(self) -> None:
+        # "MyFunc" and MyFunc are DIFFERENT routines (MyFunc vs myfunc).
+        node = _create_function_node(
+            'CREATE FUNCTION "MyFunc"() RETURNS int AS $$ SELECT 1; $$ LANGUAGE sql;'
+        )
+        assert node is not None
+        assert _sql_get_name(node) == "MyFunc"
+
     def test_returns_none_without_an_object_reference(self) -> None:
         tree_sitter = pytest.importorskip("tree_sitter")
         tree_sitter_sql = pytest.importorskip("tree_sitter_sql")

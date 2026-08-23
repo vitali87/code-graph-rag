@@ -74,6 +74,16 @@ def _generic_get_name(node: Node) -> str | None:
     return None
 
 
+def _sql_fold_identifier(piece: str) -> str:
+    # PostgreSQL folds an unquoted identifier to lowercase but keeps a quoted
+    # one verbatim: MyFunc and "MyFunc" are DIFFERENT routines (myfunc vs
+    # MyFunc), and folding both the same way would merge them.
+    piece = piece.strip()
+    if len(piece) >= 2 and piece[0] == '"' and piece[-1] == '"':
+        return piece[1:-1]
+    return piece.lower()
+
+
 def _sql_get_name(node: Node) -> str | None:
     # `create_function` names the routine through an `object_reference` child,
     # not a `name` field, so the generic extractor finds nothing. The schema
@@ -89,9 +99,7 @@ def _sql_get_name(node: Node) -> str | None:
             break
         reference = child.text.decode(cs.ENCODING_UTF8).strip()
         name = ".".join(
-            part
-            for part in (piece.strip().strip('"') for piece in reference.split("."))
-            if part
+            part for part in map(_sql_fold_identifier, reference.split(".")) if part
         )
         if name:
             return name
