@@ -64,14 +64,18 @@ ARCADEDB_BOLT_PORT=7687
 ARCADEDB_HTTP_PORT=2480         # schema DDL only; MERGE traffic goes over Bolt
 ARCADEDB_DATABASE=codegraph
 ARCADEDB_TX_TIMEOUT_S=600       # wall-clock write-transaction budget
+ARCADEDB_HTTP_SCHEME=http       # http or https; see below
 ```
 
-The schema-DDL HTTP client always speaks plain `http`, with no TLS option,
-and sends Basic credentials on every request. That is correct for the
-container this project ships, which binds to loopback only — but
-`ARCADEDB_HOST` is not validated, so pointing it at a non-loopback host
-sends the Basic credentials over plaintext HTTP on the network. Only point
-`ARCADEDB_HOST` at a loopback-bound ArcadeDB instance.
+The schema-DDL HTTP client sends Basic credentials on every request, so
+plaintext `http` is only safe when the traffic never leaves this machine.
+This is now **enforced, not advisory**: if `ARCADEDB_HTTP_SCHEME=http`
+(the default, matching the container this project ships, which binds to
+loopback only) and `ARCADEDB_HOST` is not a loopback address (`localhost`,
+`127.0.0.1`, `::1`), the client refuses to start rather than send
+credentials over the network in the clear. To point at a remote ArcadeDB,
+set `ARCADEDB_HTTP_SCHEME=https` (with a server that terminates TLS) or
+reach it through a loopback-bound tunnel (e.g. SSH port forwarding).
 
 ## Running the container
 

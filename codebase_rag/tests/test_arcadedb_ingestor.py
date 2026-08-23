@@ -11,7 +11,7 @@ from codebase_rag.services.graph.arcadedb import ArcadeDBDialect, ArcadeDBIngest
 
 def _ingestor(**kw: Any) -> ArcadeDBIngestor:
     defaults = dict(
-        host="db",
+        host="localhost",
         bolt_port=7687,
         http_port=2480,
         database="cg",
@@ -54,7 +54,7 @@ def test_enter_opens_a_driver_with_basic_auth() -> None:
     with patch("codebase_rag.services.graph.arcadedb.GraphDatabase") as gdb:
         ingestor = _ingestor()
         ingestor.__enter__()
-        gdb.driver.assert_called_once_with("bolt://db:7687", auth=("root", "pw"))
+        gdb.driver.assert_called_once_with("bolt://localhost:7687", auth=("root", "pw"))
         ingestor.__exit__(None, None, None)
 
 

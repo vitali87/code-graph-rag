@@ -15,6 +15,8 @@ from ...constants import (
     ARCADE_KEY_LANGUAGE,
     ARCADE_KEY_RESULT,
     ARCADE_LANG_SQL,
+    ARCADE_LOOPBACK_HOSTS,
+    ArcadeHttpScheme,
 )
 
 
@@ -29,10 +31,23 @@ class ArcadeHttpClient:
     __slots__ = ("_base_url", "_auth_header")
 
     def __init__(
-        self, host: str, port: int, database: str, username: str, password: str
+        self,
+        host: str,
+        port: int,
+        database: str,
+        username: str,
+        password: str,
+        scheme: ArcadeHttpScheme | str = ARCADE_HTTP_SCHEME,
     ) -> None:
+        # Basic auth is sent on every request (see `sql()` below), so a
+        # plaintext `http` scheme leaks it to anyone on the wire between
+        # here and `host`. That is only acceptable when `host` cannot be
+        # anything but this machine -- refuse construction otherwise rather
+        # than let ARCADEDB_HOST silently point Basic auth at the network.
+        if scheme == ArcadeHttpScheme.HTTP and host not in ARCADE_LOOPBACK_HOSTS:
+            raise ValueError(ex.ARCADE_PLAINTEXT_CREDENTIALS_REMOTE.format(host=host))
         path = ARCADE_COMMAND_PATH.format(database=database)
-        self._base_url = f"{ARCADE_HTTP_SCHEME}://{host}:{port}{path}"
+        self._base_url = f"{scheme}://{host}:{port}{path}"
         token = base64.b64encode(f"{username}:{password}".encode()).decode()
         self._auth_header = f"Basic {token}"
 
@@ -40,7 +55,7 @@ class ArcadeHttpClient:
         payload = json.dumps(
             {ARCADE_KEY_LANGUAGE: ARCADE_LANG_SQL, ARCADE_KEY_COMMAND: command}
         ).encode()
-        request = urllib.request.Request(  # noqa: S310 - fixed http scheme
+        request = urllib.request.Request(  # noqa: S310 - scheme is http/https only, enforced above
             self._base_url,
             data=payload,
             headers={

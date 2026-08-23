@@ -182,3 +182,24 @@ class TestGraphBackendDefaulting:
         monkeypatch.setenv("GRAPH_BACKEND", "not-a-backend")
         with pytest.raises(ValueError, match="GRAPH_BACKEND"):
             AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+
+
+class TestArcadeHttpScheme:
+    """ARCADEDB_HTTP_SCHEME threads into ArcadeHttpClient, which refuses
+    plaintext Basic auth to a non-loopback host (see test_arcade_http.py's
+    TestPlaintextCredentialsRefused for the enforcement itself)."""
+
+    def test_defaults_to_http(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ARCADEDB_HTTP_SCHEME", raising=False)
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.ARCADEDB_HTTP_SCHEME == cs.ArcadeHttpScheme.HTTP
+
+    def test_accepts_https(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARCADEDB_HTTP_SCHEME", "https")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.ARCADEDB_HTTP_SCHEME == cs.ArcadeHttpScheme.HTTPS
+
+    def test_invalid_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARCADEDB_HTTP_SCHEME", "ftp")
+        with pytest.raises(ValueError, match="ARCADEDB_HTTP_SCHEME"):
+            AppConfig(_env_file=None)  # ty: ignore[unknown-argument]

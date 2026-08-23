@@ -605,9 +605,19 @@ MAGE_PROCEDURE_CATALOG = """- **Strongly connected components / recursion cluste
 
 Important: MAGE procedures named `nxalg.*` and several others operate on the **entire graph**, ignoring edge-type filters. To restrict to a specific edge type (e.g., only `CALLS`), follow the procedure call with a `WHERE` clause that checks `EXISTS((a)-[:CALLS]->(b))` or use `path.expand` which accepts a relationship-type filter."""
 
+
 # ArcadeDB HTTP: Bolt accepts Cypher only, so schema DDL (which is SQL)
 # goes over the REST endpoint instead.
-ARCADE_HTTP_SCHEME = "http"
+class ArcadeHttpScheme(StrEnum):
+    HTTP = "http"
+    HTTPS = "https"
+
+
+ARCADE_HTTP_SCHEME = ArcadeHttpScheme.HTTP
+# Hosts ArcadeHttpClient trusts to receive Basic auth credentials in
+# plaintext over ARCADE_HTTP_SCHEME=http. Anything else must use https --
+# see exceptions.ARCADE_PLAINTEXT_CREDENTIALS_REMOTE.
+ARCADE_LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost"})
 ARCADE_BOLT_SCHEME = "bolt"
 ARCADE_COMMAND_PATH = "/api/v1/command/{database}"
 ARCADE_LANG_SQL = "sql"

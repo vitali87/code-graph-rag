@@ -22,6 +22,7 @@ from ...constants import (
     ARCADE_DDL_PROPERTY,
     ARCADE_DDL_UNIQUE_INDEX,
     ARCADE_DDL_VERTEX_TYPE,
+    ARCADE_HTTP_SCHEME,
     ARCADE_PROCEDURE_CATALOG,
     ARCADE_RETRYABLE_SUBSTRINGS,
     CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
@@ -29,6 +30,7 @@ from ...constants import (
     KEY_PROJECT_NAME,
     MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
+    ArcadeHttpScheme,
     GraphBackend,
     NodeLabel,
     RelationshipType,
@@ -267,6 +269,7 @@ class ArcadeDBIngestor:
         password: str,
         batch_size: int = 1000,
         use_merge: bool = True,
+        http_scheme: ArcadeHttpScheme | str = ARCADE_HTTP_SCHEME,
     ) -> None:
         # Blank-after-strip is rejected outright, not normalised to "no auth"
         # the way Memgraph's optional credentials are: ArcadeDB's Bolt
@@ -299,6 +302,7 @@ class ArcadeDBIngestor:
             database=database,
             username=username,
             password=password,
+            scheme=http_scheme,
         )
         self._dialect = ArcadeDBDialect(http=self._http)
 

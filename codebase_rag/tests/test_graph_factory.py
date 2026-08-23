@@ -63,3 +63,29 @@ def test_arcadedb_requires_credentials(
     monkeypatch.setattr(settings, "ARCADEDB_PASSWORD", password)
     with pytest.raises(ValueError, match="credentials"):
         get_ingestor(backend=GraphBackend.ARCADEDB)
+
+
+def test_get_ingestor_threads_http_scheme_into_the_http_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # End-to-end wiring check for ARCADEDB_HTTP_SCHEME: get_ingestor() must
+    # pass it through to ArcadeHttpClient, which is the thing that actually
+    # enforces it (a non-loopback host is only allowed over https).
+    monkeypatch.setattr(
+        "codebase_rag.services.graph.factory.has_neo4j_driver", lambda: True
+    )
+    from codebase_rag.config import settings
+    from codebase_rag.constants import ArcadeHttpScheme
+    from codebase_rag.services.graph.arcadedb import ArcadeDBIngestor
+
+    monkeypatch.setattr(settings, "ARCADEDB_USERNAME", "root")
+    monkeypatch.setattr(settings, "ARCADEDB_PASSWORD", "pw")
+    monkeypatch.setattr(settings, "ARCADEDB_HOST", "db.example.com")
+
+    monkeypatch.setattr(settings, "ARCADEDB_HTTP_SCHEME", ArcadeHttpScheme.HTTP)
+    with pytest.raises(ValueError, match="plaintext"):
+        get_ingestor(backend=GraphBackend.ARCADEDB)
+
+    monkeypatch.setattr(settings, "ARCADEDB_HTTP_SCHEME", ArcadeHttpScheme.HTTPS)
+    ingestor = get_ingestor(backend=GraphBackend.ARCADEDB)
+    assert isinstance(ingestor, ArcadeDBIngestor)

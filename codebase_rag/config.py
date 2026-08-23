@@ -186,13 +186,19 @@ class AppConfig(BaseSettings):
         normalized = value.strip()
         if not normalized:
             return cs.GraphBackend.MEMGRAPH
-        return value
+        return normalized.lower()
 
     ARCADEDB_HOST: str = "localhost"
     ARCADEDB_BOLT_PORT: int = 7687
     ARCADEDB_HTTP_PORT: int = 2480
     ARCADEDB_USERNAME: str | None = None
     ARCADEDB_PASSWORD: str | None = None
+    # Scheme for the schema-DDL HTTP client (ArcadeHttpClient), which sends
+    # Basic auth on every request. Defaults to http for the loopback-bound
+    # container this project ships; ArcadeHttpClient itself refuses to send
+    # plaintext Basic auth to a non-loopback ARCADEDB_HOST, so a remote host
+    # must set this to https (issue: CodeRabbit review, plaintext-creds).
+    ARCADEDB_HTTP_SCHEME: cs.ArcadeHttpScheme = cs.ArcadeHttpScheme.HTTP
     # ArcadeDB is multi-database; Memgraph is not. Required when selected.
     ARCADEDB_DATABASE: str = "codegraph"
     # Server-side transaction ceiling for ArcadeDB Bolt queries. Distinct from

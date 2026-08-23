@@ -52,6 +52,7 @@ def get_ingestor(
             username=settings.ARCADEDB_USERNAME,
             password=settings.ARCADEDB_PASSWORD,
             batch_size=size,
+            http_scheme=settings.ARCADEDB_HTTP_SCHEME,
         )
 
     return MemgraphIngestor(

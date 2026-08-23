@@ -122,6 +122,13 @@ ARCADE_CREDENTIALS_REQUIRED = (
     "listener rejects the 'none' auth scheme."
 )
 ARCADE_NOT_CONNECTED = "Not connected to ArcadeDB."
+ARCADE_PLAINTEXT_CREDENTIALS_REMOTE = (
+    "Refusing to send ArcadeDB Basic auth credentials in plaintext to "
+    "non-loopback host '{host}' over ARCADE_HTTP_SCHEME=http. Either set "
+    "ARCADEDB_HTTP_SCHEME=https, or point ARCADEDB_HOST at a loopback "
+    "address (localhost, 127.0.0.1, ::1) -- e.g. run ArcadeDB locally or "
+    "reach it through an SSH tunnel."
+)
 
 
 # Exception classes
