@@ -16,6 +16,11 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
 
 ### Installing cmake and ripgrep
 
+<!-- mkdocs-material tab syntax ("===") needs these fenced blocks 4-space
+     indented, which a strict parser reads as an indented code block; see
+     .markdownlint.jsonc for the full reason. -->
+<!-- markdownlint-disable MD046 -->
+
 === "macOS"
 
     ```bash
@@ -37,6 +42,8 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
     ```
 
     ripgrep may need to be installed from EPEL or via `cargo install ripgrep`.
+
+<!-- markdownlint-enable MD046 -->
 
 ## Install from PyPI
 

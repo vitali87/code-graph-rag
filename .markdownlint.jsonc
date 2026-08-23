@@ -1,0 +1,12 @@
+{
+  // Pin MD046 to "fenced" rather than the default "consistent". Several docs
+  // (e.g. docs/getting-started/installation.md) nest fenced code blocks
+  // inside mkdocs-material tab syntax ("==="), which is not CommonMark: its
+  // required 4-space indent reads as an *indented* code block to a strict
+  // parser. Left on "consistent", that one nested block silently becomes
+  // the document's "expected" style and every ordinary top-level fenced
+  // block after it is flagged as inconsistent. Pinning the style avoids
+  // that cascade without reformatting the tabs (which would break how
+  // mkdocs renders them).
+  "MD046": { "style": "fenced" }
+}
