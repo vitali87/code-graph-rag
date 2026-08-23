@@ -135,6 +135,13 @@ class TestStringCallTarget:
         node = _ts_call_node('callSp("usp\\u{005f}invoice_list");')
         assert string_call_target(node, "callSp", SPECS) == "usp_invoice_list"
 
+    def test_escaped_backslash_keeps_the_braced_text_literal(self) -> None:
+        # `"usp\\u{005f}..."` holds a literal backslash at runtime, not an
+        # escape: decoding it anyway would resolve a name the runtime string
+        # does not carry.
+        node = _ts_call_node('callSp("usp\\\\u{005f}invoice_list");')
+        assert string_call_target(node, "callSp", SPECS) == "usp\\u{005f}invoice_list"
+
     def test_unquoted_target_folds_to_lowercase(self) -> None:
         # PostgreSQL folds MyFunc to myfunc on BOTH sides, so the call and
         # the definition meet at the same key.

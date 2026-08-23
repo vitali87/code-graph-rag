@@ -17,10 +17,18 @@ from __future__ import annotations
 # apart from a qualifier separator: "billing.v1".usp_total and
 # billing."v1.usp_total" must not collide, and every downstream consumer
 # (FQN joining, the registry trie, dotted-suffix lookup) splits on ".".
-# ONE DOT LEADER renders as a dot to a human; an identifier that itself
-# contains U+2024 is not distinguished, which PostgreSQL identifiers do
-# not do in practice.
-QUOTED_DOT = "․"
+# ONE DOT LEADER renders as a dot to a human. Because PostgreSQL permits
+# the leader characters themselves inside quoted identifiers, the encoding
+# is a proper escape scheme (TWO DOT LEADER escapes itself and ONE DOT
+# LEADER), so it stays injective on any input.
+QUOTED_DOT = "․"  # U+2024 ONE DOT LEADER: an encoded literal dot
+_ESCAPE = "‥"  # U+2025 TWO DOT LEADER: escapes itself and QUOTED_DOT
+
+
+def _encode_quoted_segment(segment: str) -> str:
+    segment = segment.replace(_ESCAPE, _ESCAPE + _ESCAPE)
+    segment = segment.replace(QUOTED_DOT, _ESCAPE + QUOTED_DOT)
+    return segment.replace(".", QUOTED_DOT)
 
 
 def normalize_sql_reference(reference: str) -> str:
@@ -41,7 +49,7 @@ def normalize_sql_reference(reference: str) -> str:
     def flush() -> None:
         nonlocal saw_quotes
         if saw_quotes:
-            segment = "".join(buf).replace(".", QUOTED_DOT)
+            segment = _encode_quoted_segment("".join(buf))
         else:
             segment = "".join(buf).strip().lower()
         if segment:

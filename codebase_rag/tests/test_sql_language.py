@@ -151,6 +151,18 @@ class TestSqlGetName:
             normalize_sql_reference('billing."v1.usp_total"')
         )
 
+    def test_quoted_dot_encoding_is_injective(self) -> None:
+        # PostgreSQL permits the leader characters themselves inside quoted
+        # identifiers, so the encoding must not let "a.b", "a․b" (U+2024) or
+        # repeated dots collapse onto one key.
+        from codebase_rag.sql_names import normalize_sql_reference
+
+        keys = {
+            normalize_sql_reference(reference)
+            for reference in ('"a.b"', '"a․b"', '"a‥b"', '"a..b"', '"a.․b"')
+        }
+        assert len(keys) == 5
+
     def test_doubled_quotes_unescape_to_one(self) -> None:
         # Straight through the normalizer: the published grammar cannot yet
         # tokenize a doubled quote inside a quoted identifier (it yields an

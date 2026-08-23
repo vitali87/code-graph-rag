@@ -52,8 +52,17 @@ _JDBC_CALL = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 # ECMAScript's braced form (`\u{5f}` .. `\u{10FFFF}`), which the
-# unicode_escape codec does not know.
-_BRACED_UNICODE = re.compile(r"\\u\{([0-9a-fA-F]{1,6})\}")
+# unicode_escape codec does not know. The leading backslashes are captured so
+# parity decides: an even count means the `u{...}` is literal text behind
+# escaped backslashes and stays for the codec to handle.
+_BRACED_UNICODE = re.compile(r"(\\+)u\{([0-9a-fA-F]{1,6})\}")
+
+
+def _decode_braced_escape(match: re.Match[str]) -> str:
+    slashes = match.group(1)
+    if len(slashes) % 2 == 0:
+        return match.group(0)
+    return slashes[:-1] + chr(int(match.group(2), 16))
 
 
 @dataclass(frozen=True)
@@ -134,9 +143,7 @@ def _string_literal_value(node: Node) -> str | None:
         # that the runtime string does not contain; resolve the runtime
         # string or the lookup misses the routine it plainly names.
         try:
-            value = _BRACED_UNICODE.sub(
-                lambda match: chr(int(match.group(1), 16)), value
-            )
+            value = _BRACED_UNICODE.sub(_decode_braced_escape, value)
             value = value.encode("latin-1", "backslashreplace").decode("unicode_escape")
         except (UnicodeDecodeError, ValueError):
             return None
