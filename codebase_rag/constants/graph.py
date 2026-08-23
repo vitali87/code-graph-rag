@@ -727,10 +727,11 @@ def _build_arcade_procedure_catalog() -> str:
     return f"""{bullets}
 
 Important: every procedure above except `algo.dijkstra` and `algo.allSimplePaths`
-yields its node column (`node`, or `nodeId` for `algo.leiden`) as a
-**record-id string** such as `"#46:0"`, not a node you can read properties
-from. To get properties, match the node separately by its stored key rather
-than writing `node.qualified_name`.
+yields any column holding a node reference -- `node`, `nodeId`, `source`, or
+any other -- as a **record-id string** such as `"#46:0"`, not a node you can
+read properties from (e.g. `algo.longestPath` yields both `node` and
+`source` this way). To get properties, match the node separately by its
+stored key rather than writing `node.qualified_name` or `source.qualified_name`.
 
 `algo.dijkstra` and `algo.allSimplePaths` require real vertices, not
 record-id strings: `MATCH (start), (end) WHERE ... WITH start, end CALL
