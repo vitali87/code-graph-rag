@@ -65,14 +65,16 @@ class ArcadeHttpClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(  # noqa: S310 - fixed http scheme
+            with urllib.request.urlopen(  # noqa: S310 - scheme is http/https only, enforced above
                 request, timeout=ARCADE_HTTP_TIMEOUT_S
             ) as response:
                 body = json.loads(response.read().decode() or "{}")
         except urllib.error.HTTPError as e:
             raise ex.ArcadeHttpError(
                 ex.ARCADE_HTTP_FAILED.format(
-                    status=e.code, detail=e.reason, command=command
+                    status=e.code,
+                    detail=self._error_detail(e),
+                    command=command,
                 )
             ) from e
         except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -81,3 +83,16 @@ class ArcadeHttpClient:
             ) from e
         result = body.get(ARCADE_KEY_RESULT, [])
         return list(result) if isinstance(result, list) else []
+
+    @staticmethod
+    def _error_detail(e: urllib.error.HTTPError) -> str:
+        # e.reason is a generic HTTP status phrase ("Internal Server
+        # Error"); ArcadeDB puts the actual cause -- which DDL statement
+        # failed and why -- in the response body. Reading it can itself
+        # fail (body already consumed, connection dropped), so fall back to
+        # e.reason rather than let a diagnostics path raise.
+        try:
+            body = e.read().decode(errors="replace").strip()
+        except Exception:
+            body = ""
+        return f"{e.reason}: {body}" if body else str(e.reason)
