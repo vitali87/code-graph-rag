@@ -130,4 +130,5 @@ The function- and class-defining AST node types captured per language (auto-gene
 - **TypeScript (TSX)**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 - **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
+- **SQL (PostgreSQL)**: `create_function`
 <!-- /SECTION:language_mappings -->

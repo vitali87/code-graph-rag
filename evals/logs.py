@@ -82,6 +82,11 @@ INSTANTIATION_ORACLE_DONE = "oracle constructor calls: {count}"
 INSTANTIATION_CGR_DONE = "cgr INSTANTIATES edges: {count}"
 DEAD_CODE_TARGET = "Dead-code eval over {target} (project={project})"
 DEAD_CODE_DONE = "cgr reports {count} unreachable functions/methods"
+DUPLICATES_TARGET = "Duplicates eval over {target} (project={project})"
+DUPLICATES_DONE = (
+    "cgr reports {groups} duplicate group(s) covering {members} definition(s)"
+    " ({skipped} skipped, truncated={truncated})"
+)
 GO_RETRIEVAL_ORACLE = "Running go/ast call oracle ({binary}) over {target}"
 GO_RETRIEVAL_ORACLE_DONE = "go/ast first-party call edges: {count}"
 GO_RETRIEVAL_CGR = "Building cgr Go CALLS edges for {target} (project={project})"

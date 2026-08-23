@@ -25,6 +25,7 @@ Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified
 | TypeScript (TSX) | Fully Supported | .tsx | ✓ | ✓ | ✓ | - | All TypeScript features plus JSX elements and components |
 | TypeScript | Fully Supported | .ts, .mts, .cts | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
+| SQL (PostgreSQL) | In Development | .sql | ✓ | - | ✓ | - | Stored functions (CREATE FUNCTION), schema-qualified names, invocations between routines. CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only |
 <!-- /SECTION:supported_languages -->
 
 ## Structural Support (ast-grep tier)
