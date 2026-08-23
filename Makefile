@@ -1,4 +1,4 @@
-.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check pre-commit release jvm-agent
+.PHONY: help all install dev test test-parallel test-integration test-integration-memgraph test-integration-arcadedb test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check pre-commit release jvm-agent
 
 PYTHON := uv run
 
@@ -38,6 +38,12 @@ test-parallel: ## Run unit tests in parallel (fast, no Docker)
 
 test-integration: ## Run integration tests (requires Docker)
 	$(PYTHON) pytest -m "integration" -v
+
+test-integration-memgraph: ## Run integration tests against Memgraph only
+	$(PYTHON) pytest -m "integration" -k memgraph -v
+
+test-integration-arcadedb: ## Run integration tests against ArcadeDB only
+	$(PYTHON) pytest -m "integration" -k arcadedb -v
 
 test-all: ## Run all tests including integration and e2e (requires Docker)
 	$(PYTHON) pytest -v

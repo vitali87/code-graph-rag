@@ -11,6 +11,7 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **ArcadeDB Backend**: The code graph can now be stored in ArcadeDB as well as Memgraph, selected with `GRAPH_BACKEND=arcadedb`. Both engines run the same conformance suite on every change. Memgraph remains the default.
 - **Java Taint Improvements**: Enhanced taint tracking in Java, including handling JDK shims, chained call receivers, literal arguments, and type-test patterns.
 - **C# Taint Propagation**: Improved taint propagation in C# with refinements to argument binding, tuple deconstruction, and await plumbing methods.
 - **Semantic Frontend Enhancements**: Added in-process Jedi semantic frontend for Python and re-run semantic frontends on the watch path for more accurate analysis.

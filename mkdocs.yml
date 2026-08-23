@@ -80,6 +80,7 @@ nav:
   - Getting Started:
     - Installation: getting-started/installation.md
     - Configuration: getting-started/configuration.md
+    - Choosing a Graph Backend: getting-started/choosing-a-graph-backend.md
     - Quick Start: getting-started/quickstart.md
   - User Guide:
     - CLI Reference: guide/cli-reference.md
@@ -102,6 +103,7 @@ nav:
   - Architecture:
     - Overview: architecture/overview.md
     - Graph Schema: architecture/graph-schema.md
+    - Graph Backend Abstraction: architecture/graph-backends.md
     - I/O and Data-Flow Edges: architecture/data-flow-edges.md
     - Language Support: architecture/language-support.md
     - Security Model: architecture/security.md

@@ -42,7 +42,7 @@
 
 # Code-Graph-RAG
 
-Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph or ArcadeDB, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 <p align="center">
   <img src="./assets/demo.gif" alt="demo">
@@ -51,6 +51,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowl
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
+- **ArcadeDB Backend**: The code graph can now be stored in ArcadeDB as well as Memgraph, selected with `GRAPH_BACKEND=arcadedb`. Both engines run the same conformance suite on every change. Memgraph remains the default.
 - **Java Taint Improvements**: Enhanced taint tracking in Java, including handling JDK shims, chained call receivers, literal arguments, and type-test patterns.
 - **C# Taint Propagation**: Improved taint propagation in C# with refinements to argument binding, tuple deconstruction, and await plumbing methods.
 - **Semantic Frontend Enhancements**: Added in-process Jedi semantic frontend for Python and re-run semantic frontends on the watch path for more accurate analysis.

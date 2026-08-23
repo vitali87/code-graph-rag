@@ -10,7 +10,7 @@ Code-Graph-RAG consists of two main components that work together to analyse and
 
 ### 1. Multi-Language Parser
 
-A Tree-sitter based parsing system that analyses codebases and ingests data into Memgraph.
+A Tree-sitter based parsing system that analyses codebases and ingests data into the shared knowledge graph, stored in Memgraph (the default) or ArcadeDB — see [Graph Backend Abstraction](graph-backends.md).
 
 - Uses Tree-sitter for robust, language-agnostic AST parsing
 - Extracts functions, classes, methods, modules, and their relationships
