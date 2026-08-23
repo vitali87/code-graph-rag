@@ -29,7 +29,7 @@ An interactive CLI for querying the stored knowledge graph.
 ## Data Flow
 
 ```
-Source Code → Tree-sitter Parser → AST Analysis → Memgraph Knowledge Graph
+Source Code → Tree-sitter Parser → AST Analysis → Knowledge Graph (Memgraph or ArcadeDB)
                                                           ↓
 User Query → AI Model (Cypher Gen) → Cypher Query → Graph Results → Response
 ```
@@ -39,7 +39,8 @@ User Query → AI Model (Cypher Gen) → Cypher Query → Graph Results → Resp
 | Dependency | Purpose |
 |-----------|---------|
 | `tree-sitter` | Language-agnostic AST parsing |
-| `pymgclient` | Memgraph database adapter |
+| `pymgclient` | Memgraph database adapter (default backend) |
+| `neo4j` | ArcadeDB database adapter (optional `arcadedb` extra — see [Graph Backend Abstraction](graph-backends.md)) |
 | `pydantic-ai` | Agent framework for LLM integration |
 | `pydantic-settings` | Settings management |
 | `mcp` | Model Context Protocol SDK |
