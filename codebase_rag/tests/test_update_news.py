@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from scripts.update_news import (
+    LATEST_RELEASE_MARKER,
     existing_themes,
     extract_bullets,
     is_feature_theme,
@@ -9,9 +10,9 @@ from scripts.update_news import (
 
 NEWS = """# Latest News
 
-Newest first. The top three entries are rendered into the README's "Latest News"
-section automatically by `scripts/generate_readme.py`, so edit them here rather
-than in the README.
+Newest first. Every entry above the latest-release marker is rendered into the
+README's "Latest News" section automatically by `scripts/generate_readme.py`,
+so edit entries here rather than in the README.
 
 - **Ruby Support**: Ruby joins the graph through a new pluggable ast-grep tier.
 - **Data-Flow Tracing**: New `FLOWS_TO` taint edges follow values through assignments.
@@ -135,7 +136,9 @@ class TestPrependNews:
         fragment = "- **First Feature**: The very first entry.\n"
         updated, inserted = prepend_news(header_only, fragment)
         assert inserted == ["- **First Feature**: The very first entry."]
-        assert updated.endswith("- **First Feature**: The very first entry.\n")
+        assert updated.endswith(
+            f"- **First Feature**: The very first entry.\n{LATEST_RELEASE_MARKER}\n"
+        )
 
     def test_duplicate_theme_within_one_fragment_inserted_once(self) -> None:
         fragment = (
@@ -159,6 +162,46 @@ class TestPrependNews:
         updated, inserted = prepend_news(NEWS, fragment)
         assert len(inserted) == 4
         assert "- **Four**" in updated
+
+    def test_marker_placed_after_inserted_release_block(self) -> None:
+        # The README renders every entry above the marker as the latest
+        # release's news, so the marker must sit directly below the block
+        # this release inserted.
+        fragment = (
+            "- **Web Search**: The agent can now search the web.\n"
+            "- **Static Binaries**: Intel macOS builds link OpenSSL statically.\n"
+        )
+        updated, inserted = prepend_news(NEWS, fragment)
+        assert len(inserted) == 2
+        lines = updated.splitlines()
+        marker_at = lines.index(LATEST_RELEASE_MARKER)
+        assert lines[marker_at - 1].startswith("- **Static Binaries**")
+        assert lines[marker_at + 1].startswith("- **Ruby Support**")
+
+    def test_marker_moves_to_newest_release_block(self) -> None:
+        first, _ = prepend_news(NEWS, "- **Web Search**: search the web.\n")
+        second, inserted = prepend_news(first, "- **Voice Input**: speak to it.\n")
+        assert len(inserted) == 1
+        lines = second.splitlines()
+        assert lines.count(LATEST_RELEASE_MARKER) == 1
+        marker_at = lines.index(LATEST_RELEASE_MARKER)
+        assert lines[marker_at - 1].startswith("- **Voice Input**")
+        assert lines[marker_at + 1].startswith("- **Web Search**")
+
+    def test_no_fresh_bullets_leaves_marker_untouched(self) -> None:
+        first, _ = prepend_news(NEWS, "- **Web Search**: search the web.\n")
+        second, inserted = prepend_news(first, "- **web search**: same theme.\n")
+        assert inserted == []
+        assert second == first
+
+    def test_marker_matches_readme_renderer(self) -> None:
+        # scripts/update_news.py must stay stdlib-only, so the marker literal
+        # is duplicated in codebase_rag.readme_sections; they must never drift.
+        from codebase_rag.readme_sections import (
+            LATEST_RELEASE_MARKER as RENDER_MARKER,
+        )
+
+        assert LATEST_RELEASE_MARKER == RENDER_MARKER
 
     def test_mixed_fragment_inserts_only_fresh_themes(self) -> None:
         fragment = (

@@ -93,6 +93,61 @@ class TestLatestNews:
     def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
         assert format_latest_news(tmp_path / "nope.md") == ""
 
+    def test_marker_renders_every_latest_release_entry(self, tmp_path: Path) -> None:
+        # v0.0.720 shipped five highlights but the README showed only three;
+        # the latest-release marker must lift the cap for the marked block.
+        news = tmp_path / "NEWS.md"
+        news.write_text(
+            "# News\n\n"
+            "- **A**: first.\n"
+            "- **B**: second.\n"
+            "- **C**: third.\n"
+            "- **D**: fourth.\n"
+            "- **E**: fifth.\n"
+            "<!-- latest-release-end -->\n"
+            "- **F**: older release.\n",
+            encoding="utf-8",
+        )
+        result = format_latest_news(news, limit=3)
+        assert result == (
+            "- **A**: first.\n"
+            "- **B**: second.\n"
+            "- **C**: third.\n"
+            "- **D**: fourth.\n"
+            "- **E**: fifth."
+        )
+        assert "latest-release-end" not in result
+
+    def test_marker_is_not_swallowed_as_continuation_line(self, tmp_path: Path) -> None:
+        # The marker follows a bullet with no blank line between them; it must
+        # terminate that bullet, not be absorbed as wrapped continuation text.
+        news = tmp_path / "NEWS.md"
+        news.write_text(
+            "- **A**: line one\n  wrapped line two.\n"
+            "<!-- latest-release-end -->\n"
+            "- **B**: older.\n",
+            encoding="utf-8",
+        )
+        assert format_latest_news(news, limit=3) == (
+            "- **A**: line one\n  wrapped line two."
+        )
+
+    def test_marker_without_entries_above_falls_back_to_limit(
+        self, tmp_path: Path
+    ) -> None:
+        news = tmp_path / "NEWS.md"
+        news.write_text(
+            "# News\n\n"
+            "<!-- latest-release-end -->\n"
+            "- **A**: first.\n"
+            "- **B**: second.\n"
+            "- **C**: third.\n"
+            "- **D**: fourth.\n",
+            encoding="utf-8",
+        )
+        result = format_latest_news(news, limit=3)
+        assert result == "- **A**: first.\n- **B**: second.\n- **C**: third."
+
 
 def test_cli_command_table_has_one_markdown_row_per_command() -> None:
     lines = format_cli_commands_table().splitlines()
