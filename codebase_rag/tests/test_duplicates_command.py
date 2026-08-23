@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,8 +23,8 @@ def clone_rows() -> list[ResultRow]:
         {
             "label": "Function",
             "name": "total_price",
-            "qualified_name": "myproj.billing.total_price",
-            "path": "billing/cart.py",
+            "qualified_name": "myproj.b.total_price",
+            "path": "b.py",
             "start_line": 5,
             "end_line": 12,
             "ast_fingerprint": "f3a9c2d1e4b58607",
@@ -35,8 +34,8 @@ def clone_rows() -> list[ResultRow]:
         {
             "label": "Function",
             "name": "sum_weights",
-            "qualified_name": "myproj.shipping.sum_weights",
-            "path": "shipping/load.py",
+            "qualified_name": "myproj.s.sum_weights",
+            "path": "s.py",
             "start_line": 8,
             "end_line": 15,
             "ast_fingerprint": "f3a9c2d1e4b58607",
@@ -70,12 +69,11 @@ class TestDuplicatesCommand:
         self, runner: CliRunner, clone_rows: list[ResultRow]
     ) -> None:
         mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=clone_rows)
-        # A wide console: the five-column table elides cell text at the
-        # CliRunner's default 80 columns.
-        with (
-            patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor),
-            patch.dict(os.environ, {"COLUMNS": "200"}),
-        ):
+        # Fixture identifiers are short enough to render un-elided in the
+        # five-column table at the CliRunner's default 80 columns (COLUMNS
+        # overrides do not reach consoles created at import time on every
+        # platform).
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates"])
 
         assert result.exit_code == 0
@@ -100,8 +98,8 @@ class TestDuplicatesCommand:
         assert len(groups) == 1
         assert groups[0]["kind"] == cs.KIND_EXACT
         assert {m["qualified_name"] for m in groups[0]["members"]} == {
-            "myproj.billing.total_price",
-            "myproj.shipping.sum_weights",
+            "myproj.b.total_price",
+            "myproj.s.sum_weights",
         }
 
     def test_fail_on_found_exits_nonzero(
@@ -146,10 +144,7 @@ class TestDuplicatesCommand:
         )
         # Rich's highlighter wraps digits and parens in their own ANSI
         # spans, so assert on an unstyled fragment of the notice.
-        with (
-            patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor),
-            patch.dict(os.environ, {"COLUMNS": "200"}),
-        ):
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
             result = runner.invoke(app, ["duplicates"])
 
         assert result.exit_code == 0

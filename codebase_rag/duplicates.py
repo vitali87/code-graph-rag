@@ -177,15 +177,14 @@ def _similar_groups(
 ) -> list[DuplicateGroup]:
     # Pairs already inside a Stage-1 exact group never reach this stage:
     # entries are keyed by whole fingerprint, so exact copies are one entry.
+    #
+    # A reported group must honour the PAIRWISE invariant (every two members
+    # clear the threshold), and no qualifying pair may be silently dropped:
+    # the groups are the maximal cliques of the threshold graph. Cliques can
+    # overlap - when A duplicates both B and C but B and C are not similar,
+    # A legitimately appears in {A, B} and in {A, C}.
     order = list(entries.values())
-    parent = list(range(len(order)))
-
-    def find(node: int) -> int:
-        while parent[node] != node:
-            parent[node] = parent[parent[node]]
-            node = parent[node]
-        return node
-
+    adjacency: dict[int, set[int]] = {}
     for left, right in _candidate_pairs(order):
         first, second = order[left].branches, order[right].branches
         smaller, larger = min(len(first), len(second)), max(len(first), len(second))
@@ -195,59 +194,52 @@ def _similar_groups(
             continue
         if _jaccard(first, second) < threshold:
             continue
-        parent[find(left)] = find(right)
-
-    components: dict[int, list[int]] = {}
-    for position in range(len(order)):
-        components.setdefault(find(position), []).append(position)
+        adjacency.setdefault(left, set()).add(right)
+        adjacency.setdefault(right, set()).add(left)
 
     groups: list[DuplicateGroup] = []
-    for component in components.values():
-        if len(component) < 2:
-            continue
-        groups.extend(_complete_link_groups(order, component, threshold))
-    return groups
-
-
-def _complete_link_groups(
-    order: list[_Entry], component: list[int], threshold: float
-) -> list[DuplicateGroup]:
-    # The union-find component is connected by threshold-qualified edges, but
-    # connectivity is transitive while the threshold criterion is pairwise:
-    # A-B and B-C qualifying does not make A-C similar. Reported groups must
-    # honour the pairwise invariant, so each component is re-clustered
-    # complete-link: an entry joins a cluster only when it clears the
-    # threshold against EVERY current member. Components are small (bounded
-    # by the hot-fingerprint cap), so the quadratic check is cheap.
-    ordered = sorted(component, key=lambda position: order[position].fingerprint)
-    clusters: list[list[int]] = []
-    for position in ordered:
-        for cluster in clusters:
-            if all(
-                _jaccard(order[position].branches, order[member].branches) >= threshold
-                for member in cluster
-            ):
-                cluster.append(position)
-                break
-        else:
-            clusters.append([position])
-
-    groups: list[DuplicateGroup] = []
-    for cluster in clusters:
-        if len(cluster) < 2:
-            continue
+    for clique in _maximal_cliques(adjacency):
         similarity = min(
             _jaccard(order[left].branches, order[right].branches)
-            for at, left in enumerate(cluster)
-            for right in cluster[at + 1 :]
+            for at, left in enumerate(clique)
+            for right in clique[at + 1 :]
         )
-        members = [member for position in cluster for member in order[position].members]
+        members = [member for position in clique for member in order[position].members]
         groups.append(
             DuplicateGroup(
                 kind=cs.KIND_SIMILAR,
                 similarity=round(similarity, 3),
-                node_count=max(order[position].node_count for position in cluster),
+                node_count=max(order[position].node_count for position in clique),
                 members=_sorted_members(members),
             )
         )
     return groups
+
+
+def _maximal_cliques(adjacency: dict[int, set[int]]) -> list[list[int]]:
+    # Bron-Kerbosch with pivoting, deterministic via sorted iteration. The
+    # threshold graph is sparse (edges need shared discriminative branches,
+    # capped by DUPLICATES_HOT_FINGERPRINT_CAP) and its dense spots are
+    # near-cliques, the cheap case for pivoted Bron-Kerbosch.
+    cliques: list[list[int]] = []
+
+    def expand(taken: set[int], candidates: set[int], excluded: set[int]) -> None:
+        if not candidates and not excluded:
+            if len(taken) > 1:
+                cliques.append(sorted(taken))
+            return
+        pivot = max(
+            sorted(candidates | excluded),
+            key=lambda vertex: len(adjacency[vertex] & candidates),
+        )
+        for vertex in sorted(candidates - adjacency[pivot]):
+            expand(
+                taken | {vertex},
+                candidates & adjacency[vertex],
+                excluded & adjacency[vertex],
+            )
+            candidates = candidates - {vertex}
+            excluded = excluded | {vertex}
+
+    expand(set(), set(adjacency), set())
+    return sorted(cliques)

@@ -196,8 +196,8 @@ class TestSimilarGroups:
     def test_below_threshold_pair_is_not_grouped_transitively(self) -> None:
         # A-B = 4/6 ~ 0.667 and B-C = 4/8 = 0.5 qualify at threshold 0.5,
         # but A-C = 2/8 = 0.25 does not. Connectivity is transitive while
-        # the threshold is pairwise: the report must not present A and C as
-        # near-duplicates, so complete-link clustering keeps only {A, B}.
+        # the threshold is pairwise: A and C must never share a group, yet
+        # both qualifying pairs must be reported - two overlapping cliques.
         config = default_duplicates_config(threshold=0.5)
         ingestor = FakeIngestor(
             [
@@ -207,12 +207,44 @@ class TestSimilarGroups:
             ]
         )
         groups = collect_duplicates(ingestor, "proj", config)
-        assert len(groups) == 1
-        assert {m["qualified_name"] for m in groups[0]["members"]} == {
-            "proj.a.one",
-            "proj.b.two",
-        }
-        assert groups[0]["similarity"] == round(4 / 6, 3)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.a.one", "proj.b.two"} in member_sets
+        assert {"proj.b.two", "proj.c.three"} in member_sets
+        assert len(groups) == 2
+
+    def test_overlapping_qualifying_pairs_are_both_reported(self) -> None:
+        # A-B = 4/6 ~ 0.667 and A-C = 4/7 ~ 0.571 qualify at threshold 0.5;
+        # B-C = 4/9 ~ 0.444 does not. First-fit clustering would seat A with
+        # B and silently lose the valid A-C pair; maximal cliques report
+        # both groups, with A in each.
+        config = default_duplicates_config(threshold=0.5)
+        ingestor = FakeIngestor(
+            [
+                _row("proj.a.one", "aaaa", ["b1", "b2", "b3", "b4"]),
+                _row("proj.b.two", "bbbb", ["b1", "b2", "b3", "b4", "b5", "b6"]),
+                _row(
+                    "proj.c.three",
+                    "cccc",
+                    ["b1", "b2", "b3", "b4", "b7", "b8", "b9"],
+                ),
+            ]
+        )
+        groups = collect_duplicates(ingestor, "proj", config)
+        member_sets = [
+            {m["qualified_name"] for m in group["members"]} for group in groups
+        ]
+        assert {"proj.a.one", "proj.b.two"} in member_sets
+        assert {"proj.a.one", "proj.c.three"} in member_sets
+        assert len(groups) == 2
+        by_members = dict(zip(map(frozenset, member_sets), groups, strict=True))
+        assert by_members[frozenset({"proj.a.one", "proj.b.two"})][
+            "similarity"
+        ] == round(4 / 6, 3)
+        assert by_members[frozenset({"proj.a.one", "proj.c.three"})][
+            "similarity"
+        ] == round(4 / 7, 3)
 
     def test_exact_copies_are_not_rereported_as_similar(self) -> None:
         ingestor = FakeIngestor(

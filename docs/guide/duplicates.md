@@ -395,6 +395,11 @@ Each reported group lists its members with `file:line` locations, ordered so
 the largest wins — the groups with the most copies and the biggest bodies come
 first, because that is where applying DRY pays off most.
 
+Every pair inside a group clears the similarity threshold, and a function can
+appear in more than one `similar` group: when `A` duplicates both `B` and `C`
+but `B` and `C` are not similar to each other, the report shows `{A, B}` and
+`{A, C}` rather than lumping all three together or dropping one pair.
+
 ## Exact Copies vs. Edited Copies
 
 By default the report contains both kinds of finding:
