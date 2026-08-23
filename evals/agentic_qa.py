@@ -467,13 +467,18 @@ def _run_fingerprint(
     sample: int,
     seed: int,
     config: object,
+    *,
+    agent_retries: int | None = None,
+    shell_timeout: int | None = None,
 ) -> dict[str, object]:
     # Backend identity beyond the model id: the same model served through a
     # different provider, endpoint, provider type, project, or region has
     # different latency and token behavior, so records from one backend must
     # never resume into a run on another (Greptile review on PR #1388), and
     # thinking_budget changes model behavior the same way (CodeRabbit review
-    # on PR #1388). All fields are non-secret configuration.
+    # on PR #1388). Execution settings that shape a record's outcome (agent
+    # retry count, shell probe timeout) are part of the identity too
+    # (Greptile review on PR #1388). All fields are non-secret configuration.
     return {
         "corpus": corpus,
         "commit": commit,
@@ -487,6 +492,8 @@ def _run_fingerprint(
         "project": getattr(config, "project_id", None),
         "region": getattr(config, "region", None),
         "thinking_budget": getattr(config, "thinking_budget", None),
+        "agent_retries": agent_retries,
+        "shell_timeout": shell_timeout,
     }
 
 
@@ -626,7 +633,14 @@ def main(
     suffix = "" if QType(qtype) is QType.CALLS else f"_{qtype}"
     records_path = out_dir / ec.AGENTIC_RECORDS_FILE.format(suffix=suffix)
     fingerprint = _run_fingerprint(
-        corpus, spec.commit, qtype, sample, seed, settings.active_orchestrator_config
+        corpus,
+        spec.commit,
+        qtype,
+        sample,
+        seed,
+        settings.active_orchestrator_config,
+        agent_retries=settings.AGENT_RETRIES,
+        shell_timeout=settings.SHELL_COMMAND_TIMEOUT,
     )
     prior = _init_records_file(records_path, fingerprint, resume)
     done = {(c, r["name"]) for c, rs in prior.items() for r in rs}

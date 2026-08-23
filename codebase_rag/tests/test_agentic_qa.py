@@ -369,3 +369,27 @@ def test_run_fingerprint_includes_thinking_budget() -> None:
     fp_budgeted = _run_fingerprint("django", "abc", "calls", 2, 0, budgeted)
     assert fp_base != fp_budgeted
     assert fp_budgeted["thinking_budget"] == 1024
+
+
+def test_run_fingerprint_includes_execution_settings() -> None:
+    # AGENT_RETRIES and SHELL_COMMAND_TIMEOUT change how the agent executes
+    # (retry count and how long a shell probe may run), so records made under
+    # different settings must not resume together (Greptile review on
+    # PR #1388).
+    from codebase_rag.config import ModelConfig
+    from evals.agentic_qa import _run_fingerprint
+
+    cfg = ModelConfig(provider="anthropic", model_id="m1", endpoint=None)
+    base = _run_fingerprint(
+        "django", "abc", "calls", 2, 0, cfg, agent_retries=3, shell_timeout=30
+    )
+    retried = _run_fingerprint(
+        "django", "abc", "calls", 2, 0, cfg, agent_retries=5, shell_timeout=30
+    )
+    slower = _run_fingerprint(
+        "django", "abc", "calls", 2, 0, cfg, agent_retries=3, shell_timeout=60
+    )
+    assert base != retried
+    assert base != slower
+    assert base["agent_retries"] == 3
+    assert base["shell_timeout"] == 30
