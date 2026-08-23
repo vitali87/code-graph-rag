@@ -392,6 +392,84 @@ jobs:
         run: |
           uv run --no-sync pytest codebase_rag/tests/test_go_frontend.py -v --tb=short
 
+  greptile-gate:
+    name: Greptile 5/5 Gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 45
+    permissions:
+      # contents: read backs the commits API call that resolves an
+      # abbreviated reviewed-commit reference to a full SHA.
+      contents: read
+      pull-requests: read
+      issues: read
+
+    steps:
+      - name: Require a 5/5 Greptile review of the head commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The merge gate: a pull request is mergeable ONLY when Greptile has
+          # reviewed the CURRENT head commit and scored it 5/5. A stale review,
+          # a missing review, or any lower score fails this job, which fails
+          # "All Checks Pass", which the branch ruleset requires. Greptile
+          # posts its review minutes after a push, so poll until its summary
+          # comment covers this exact commit.
+          deadline=$(( $(date +%s) + 2400 ))
+          while :; do
+            # --jq would run per page; slurp the pages so every scored comment
+            # is considered across all of them. Walk candidates NEWEST FIRST
+            # and act on the first one that reviewed the head commit: picking
+            # the globally latest comment instead would let a late update to
+            # an old-commit review mask a valid 5/5 review of head. Bodies are
+            # multiline, so ship them through base64.
+            candidates=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+              | jq -rs 'add
+                        | [.[] | select(.user.login == "greptile-apps[bot]")
+                               | select(.body | contains("Confidence Score:"))]
+                        | sort_by(.updated_at) | reverse | .[].body | @base64')
+            score=""
+            for encoded in $candidates; do
+              body=$(printf '%s' "$encoded" | base64 -d)
+              # Greptile sometimes prints an abbreviated commit instead of a
+              # full-SHA link, so accept 7-40 hex chars.
+              reviewed=$(printf '%s' "$body" \
+                | grep -o 'Last reviewed commit.*' \
+                | grep -oE '[0-9a-f]{7,40}' | head -1 || true)
+              if [ -n "$reviewed" ] && [ "${#reviewed}" -lt 40 ]; then
+                # Resolve to the full SHA so the comparison below is exact
+                # equality, never a prefix guess; an unresolvable reference
+                # just skips this candidate.
+                reviewed=$(gh api "repos/$REPO/commits/$reviewed" \
+                  --jq .sha 2>/dev/null || true)
+              fi
+              [ "$reviewed" = "$HEAD_SHA" ] || continue
+              score=$(printf '%s' "$body" \
+                | grep -oE 'Confidence Score: [0-9]+/5' | tail -1 \
+                | grep -oE '[0-9]+' | head -1 || true)
+              [ -n "$score" ] && break
+            done
+            if [ -n "$score" ]; then
+              if [ "$score" = "5" ]; then
+                echo "✅ Greptile scored $HEAD_SHA at 5/5"
+                exit 0
+              fi
+              echo "❌ Greptile scored $HEAD_SHA at $score/5 — 5/5 is required to merge."
+              echo "Fix Greptile's findings and push; the next review must reach 5/5."
+              exit 1
+            fi
+            echo "No Greptile review of $HEAD_SHA yet, waiting ..."
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "❌ No Greptile review of $HEAD_SHA appeared within 40 minutes."
+              echo "Re-trigger the Greptile review, then re-run this job."
+              exit 1
+            fi
+            sleep 60
+          done
+
   all-checks-pass:
     name: All Checks Pass
     runs-on: ubuntu-latest
@@ -405,6 +483,7 @@ jobs:
         binary-smoke,
         wheel-fresh-resolution,
         go-frontend,
+        greptile-gate,
       ]
     timeout-minutes: 5
 
@@ -445,6 +524,13 @@ jobs:
           fi
           if [[ "${{ needs.go-frontend.result }}" != "success" ]]; then
             echo "❌ Go frontend job failed"
+            exit 1
+          fi
+          # Skipped on push events (Greptile only reviews pull requests); on a
+          # pull request anything but success blocks the merge.
+          if [[ "${{ needs.greptile-gate.result }}" != "success" \
+             && "${{ needs.greptile-gate.result }}" != "skipped" ]]; then
+            echo "❌ Greptile gate failed: a 5/5 review of the head commit is required"
             exit 1
           fi
           echo "✅ All checks passed!"
