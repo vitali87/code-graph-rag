@@ -20,7 +20,7 @@ from codebase_rag.dead_code import collect_dead_code
 from codebase_rag.types_defs import DeadCodeConfig
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 
 class TestBuildConstraintQueryUnit:
@@ -127,34 +127,30 @@ class TestBuildNodesByIdsQueryUnit:
 
 @pytest.mark.integration
 class TestCypherDeleteAllIntegration:
-    def test_deletes_all_nodes(self, memgraph_ingestor: MemgraphIngestor) -> None:
-        memgraph_ingestor._execute_query(
+    def test_deletes_all_nodes(self, graph_ingestor: GraphIngestor) -> None:
+        graph_ingestor.execute_write(
             "CREATE (n:TestNode {name: 'test1'}), (m:TestNode {name: 'test2'})"
         )
 
-        count_before = memgraph_ingestor._execute_query(
-            "MATCH (n) RETURN count(n) as count"
-        )
+        count_before = graph_ingestor.fetch_all("MATCH (n) RETURN count(n) as count")
         assert count_before[0]["count"] == 2
 
-        memgraph_ingestor._execute_query(CYPHER_DELETE_ALL)
+        graph_ingestor.execute_write(CYPHER_DELETE_ALL)
 
-        count_after = memgraph_ingestor._execute_query(
-            "MATCH (n) RETURN count(n) as count"
-        )
+        count_after = graph_ingestor.fetch_all("MATCH (n) RETURN count(n) as count")
         assert count_after[0]["count"] == 0
 
 
 @pytest.mark.integration
 class TestCypherExportNodesIntegration:
     def test_exports_node_with_labels_and_properties(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE (n:Function {qualified_name: 'module.func', name: 'func'})"
         )
 
-        results = memgraph_ingestor._execute_query(CYPHER_EXPORT_NODES)
+        results = graph_ingestor.fetch_all(CYPHER_EXPORT_NODES)
 
         assert len(results) == 1
         assert "node_id" in results[0]
@@ -162,13 +158,13 @@ class TestCypherExportNodesIntegration:
         assert results[0]["properties"]["qualified_name"] == "module.func"
         assert results[0]["properties"]["name"] == "func"
 
-    def test_exports_multiple_nodes(self, memgraph_ingestor: MemgraphIngestor) -> None:
-        memgraph_ingestor._execute_query(
+    def test_exports_multiple_nodes(self, graph_ingestor: GraphIngestor) -> None:
+        graph_ingestor.execute_write(
             "CREATE (a:Class {qualified_name: 'MyClass'}), "
             "(b:Method {qualified_name: 'MyClass.method'})"
         )
 
-        results = memgraph_ingestor._execute_query(CYPHER_EXPORT_NODES)
+        results = graph_ingestor.fetch_all(CYPHER_EXPORT_NODES)
 
         assert len(results) == 2
         labels = {tuple(r["labels"]) for r in results}
@@ -179,14 +175,14 @@ class TestCypherExportNodesIntegration:
 @pytest.mark.integration
 class TestCypherExportRelationshipsIntegration:
     def test_exports_relationship_with_type(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE (m:Module {qualified_name: 'mymodule'})-[:DEFINES]->"
             "(f:Function {qualified_name: 'mymodule.func'})"
         )
 
-        results = memgraph_ingestor._execute_query(CYPHER_EXPORT_RELATIONSHIPS)
+        results = graph_ingestor.fetch_all(CYPHER_EXPORT_RELATIONSHIPS)
 
         assert len(results) == 1
         assert results[0]["type"] == "DEFINES"
@@ -197,16 +193,16 @@ class TestCypherExportRelationshipsIntegration:
 @pytest.mark.integration
 class TestCypherFindByQualifiedNameIntegration:
     def test_finds_function_by_qualified_name(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE (m:Module {qualified_name: 'mymodule', path: 'src/mymodule.py'})"
             "-[:DEFINES]->"
             "(f:Function {qualified_name: 'mymodule.calculate', name: 'calculate', "
             "start_line: 10, end_line: 20})"
         )
 
-        results = memgraph_ingestor._execute_query(
+        results = graph_ingestor.fetch_all(
             CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "mymodule.calculate"}
         )
 
@@ -217,9 +213,9 @@ class TestCypherFindByQualifiedNameIntegration:
         assert results[0]["path"] == "src/mymodule.py"
 
     def test_returns_empty_for_nonexistent_name(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
-        results = memgraph_ingestor._execute_query(
+        results = graph_ingestor.fetch_all(
             CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "nonexistent.func"}
         )
 
@@ -229,21 +225,21 @@ class TestCypherFindByQualifiedNameIntegration:
 @pytest.mark.integration
 class TestCypherGetFunctionSourceLocationIntegration:
     def test_gets_source_location_by_node_id(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE (m:Module {qualified_name: 'pkg.utils', path: 'pkg/utils.py'})"
             "-[:DEFINES]->"
             "(f:Function {qualified_name: 'pkg.utils.helper', name: 'helper', "
             "start_line: 5, end_line: 15})"
         )
 
-        node_result = memgraph_ingestor._execute_query(
+        node_result = graph_ingestor.fetch_all(
             "MATCH (f:Function {qualified_name: 'pkg.utils.helper'}) RETURN id(f) as id"
         )
         node_id = node_result[0]["id"]
 
-        results = memgraph_ingestor._execute_query(
+        results = graph_ingestor.fetch_all(
             CYPHER_GET_FUNCTION_SOURCE_LOCATION, {"node_id": node_id}
         )
 
@@ -256,10 +252,10 @@ class TestCypherGetFunctionSourceLocationIntegration:
 
 @pytest.mark.integration
 class TestBuildMergeNodeQueryIntegration:
-    def test_merge_creates_new_node(self, memgraph_ingestor: MemgraphIngestor) -> None:
+    def test_merge_creates_new_node(self, graph_ingestor: GraphIngestor) -> None:
         query = build_merge_node_query("Function", "qualified_name")
 
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             wrap_with_unwind(query),
             {
                 "batch": [
@@ -271,7 +267,7 @@ class TestBuildMergeNodeQueryIntegration:
             },
         )
 
-        results = memgraph_ingestor._execute_query(
+        results = graph_ingestor.fetch_all(
             "MATCH (f:Function) RETURN f.qualified_name as qn, f.name as name, "
             "f.start_line as start"
         )
@@ -281,23 +277,19 @@ class TestBuildMergeNodeQueryIntegration:
         assert results[0]["name"] == "myfunc"
         assert results[0]["start"] == 1
 
-    def test_merge_updates_existing_node(
-        self, memgraph_ingestor: MemgraphIngestor
-    ) -> None:
-        memgraph_ingestor._execute_query(
+    def test_merge_updates_existing_node(self, graph_ingestor: GraphIngestor) -> None:
+        graph_ingestor.execute_write(
             "CREATE (f:Function {qualified_name: 'mod.func', name: 'old_name'})"
         )
 
         query = build_merge_node_query("Function", "qualified_name")
 
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             wrap_with_unwind(query),
             {"batch": [{"id": "mod.func", "props": {"name": "new_name"}}]},
         )
 
-        results = memgraph_ingestor._execute_query(
-            "MATCH (f:Function) RETURN f.name as name"
-        )
+        results = graph_ingestor.fetch_all("MATCH (f:Function) RETURN f.name as name")
 
         assert len(results) == 1
         assert results[0]["name"] == "new_name"
@@ -306,9 +298,9 @@ class TestBuildMergeNodeQueryIntegration:
 @pytest.mark.integration
 class TestBuildMergeRelationshipQueryIntegration:
     def test_creates_relationship_between_nodes(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE (m:Module {qualified_name: 'mymod'}), "
             "(f:Function {qualified_name: 'mymod.func'})"
         )
@@ -317,22 +309,22 @@ class TestBuildMergeRelationshipQueryIntegration:
             "Module", "qualified_name", "DEFINES", "Function", "qualified_name"
         )
 
-        results = memgraph_ingestor._execute_query(
+        results = graph_ingestor.fetch_all(
             wrap_with_unwind(query),
             {"batch": [{"from_val": "mymod", "to_val": "mymod.func", "props": {}}]},
         )
 
         assert results[0]["created"] == 1
 
-        verify = memgraph_ingestor._execute_query(
+        verify = graph_ingestor.fetch_all(
             "MATCH (m:Module)-[r:DEFINES]->(f:Function) RETURN count(r) as count"
         )
         assert verify[0]["count"] == 1
 
     def test_creates_calls_relationship_with_properties(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE (f1:Function {qualified_name: 'mod.caller'}), "
             "(f2:Function {qualified_name: 'mod.callee'})"
         )
@@ -346,7 +338,7 @@ class TestBuildMergeRelationshipQueryIntegration:
             has_props=True,
         )
 
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             wrap_with_unwind(query),
             {
                 "batch": [
@@ -359,7 +351,7 @@ class TestBuildMergeRelationshipQueryIntegration:
             },
         )
 
-        verify = memgraph_ingestor._execute_query(
+        verify = graph_ingestor.fetch_all(
             "MATCH (:Function)-[r:CALLS]->(:Function) RETURN r.line as line"
         )
         assert verify[0]["line"] == 42
@@ -396,12 +388,12 @@ def _dead_code_config(
 
 @pytest.mark.integration
 class TestCollectDeadCodeIntegration:
-    def _seed(self, ingestor: MemgraphIngestor) -> None:
+    def _seed(self, ingestor: GraphIngestor) -> None:
         # called -> live; orphan -> dead; handler is a @task root;
         # routed is a @app.route root calling routed_callee (decorators are
         # stored @-prefixed and dotted, exactly as the parser emits them);
         # test_runs is a test root that calls helper (so helper is live)
-        ingestor._execute_query(
+        ingestor.execute_write(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
             "(entry:Function {qualified_name: 'proj.mod.main', name: 'main', "
@@ -437,12 +429,12 @@ class TestCollectDeadCodeIntegration:
     }
 
     def test_reports_only_the_orphan_with_tests_included(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
-        self._seed(memgraph_ingestor)
+        self._seed(graph_ingestor)
 
         rows = collect_dead_code(
-            memgraph_ingestor,
+            graph_ingestor,
             "proj",
             _dead_code_config(include_tests=True, **self._SEED_CONFIG_ARGS),
         )
@@ -451,12 +443,12 @@ class TestCollectDeadCodeIntegration:
         assert names == {"proj.mod.orphan"}
 
     def test_excluding_tests_reports_orphan_and_test_only_code(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
-        self._seed(memgraph_ingestor)
+        self._seed(graph_ingestor)
 
         rows = collect_dead_code(
-            memgraph_ingestor,
+            graph_ingestor,
             "proj",
             _dead_code_config(include_tests=False, **self._SEED_CONFIG_ARGS),
         )
@@ -470,11 +462,11 @@ class TestCollectDeadCodeIntegration:
             "proj.mod.helper",
         }
 
-    def test_returns_row_shape(self, memgraph_ingestor: MemgraphIngestor) -> None:
-        self._seed(memgraph_ingestor)
+    def test_returns_row_shape(self, graph_ingestor: GraphIngestor) -> None:
+        self._seed(graph_ingestor)
 
         rows = collect_dead_code(
-            memgraph_ingestor,
+            graph_ingestor,
             "proj",
             _dead_code_config(include_tests=True, **self._SEED_CONFIG_ARGS),
         )
@@ -487,12 +479,12 @@ class TestCollectDeadCodeIntegration:
         assert row["end_line"] == 11
 
     def test_test_module_call_is_not_a_root_when_excluding_tests(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
         # a function reached only from a TEST module's top-level call must NOT
         # be kept alive when --no-include-tests, else test-only code hides as
         # live. The same call DOES keep it live when tests are included.
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE "
             "(tm:Module {qualified_name: 'proj.tests.test_x', "
             "  path: 'proj/tests/test_x.py'}), "
@@ -503,23 +495,23 @@ class TestCollectDeadCodeIntegration:
         )
 
         excluded = collect_dead_code(
-            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
+            graph_ingestor, "proj", _dead_code_config(include_tests=False)
         )
         assert {r["qualified_name"] for r in excluded} == {"proj.mod.tool_only"}
 
         included = collect_dead_code(
-            memgraph_ingestor, "proj", _dead_code_config(include_tests=True)
+            graph_ingestor, "proj", _dead_code_config(include_tests=True)
         )
         assert {r["qualified_name"] for r in included} == set()
 
     def test_class_candidates_when_classes_included(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
         # used is a module-load root that instantiates WithInit (INSTANTIATES
         # the class plus CALLS its __init__), NoInit (INSTANTIATES only, no
         # __init__) and Derived (INSTANTIATES; Derived INHERITS Base, so Base
         # is live too). Only DeadClass (and the orphan function) is unreachable.
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
             "(used:Function {qualified_name: 'proj.mod.used', name: 'used', "
@@ -550,14 +542,14 @@ class TestCollectDeadCodeIntegration:
         )
 
         without_classes = collect_dead_code(
-            memgraph_ingestor,
+            graph_ingestor,
             "proj",
             _dead_code_config(include_tests=False, include_classes=False),
         )
         assert {r["qualified_name"] for r in without_classes} == {"proj.mod.orphan_fn"}
 
         with_classes = collect_dead_code(
-            memgraph_ingestor,
+            graph_ingestor,
             "proj",
             _dead_code_config(include_tests=False, include_classes=True),
         )
@@ -567,14 +559,14 @@ class TestCollectDeadCodeIntegration:
         }
 
     def test_subclass_only_base_is_reported_when_subclass_is_unreachable(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
         # Base is subclassed by Derived, but nothing instantiates Derived, so
         # the traversal never reaches Derived and therefore never reaches Base
         # via INHERITS. The whole dead cluster (both classes) is reported: a
         # base kept alive only by an unreachable subclass is itself dead.
         # Live is present purely so the scan has a reachable root to anchor.
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
             "(live:Class {qualified_name: 'proj.mod.Live', name: 'Live', "
@@ -588,7 +580,7 @@ class TestCollectDeadCodeIntegration:
         )
 
         with_classes = collect_dead_code(
-            memgraph_ingestor,
+            graph_ingestor,
             "proj",
             _dead_code_config(include_tests=False, include_classes=True),
         )
@@ -597,12 +589,10 @@ class TestCollectDeadCodeIntegration:
             "proj.mod.Derived",
         }
 
-    def test_no_roots_reports_everything(
-        self, memgraph_ingestor: MemgraphIngestor
-    ) -> None:
+    def test_no_roots_reports_everything(self, graph_ingestor: GraphIngestor) -> None:
         # with no roots at all (nothing exported / entry-point / decorated /
         # called at module load), every function is unreachable and reported.
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE "
             "(a:Function {qualified_name: 'proj.mod.a', name: 'a', start_line: 1, "
             "  end_line: 2, decorators: [], is_exported: false, path: 'proj/mod.py'}), "
@@ -612,7 +602,7 @@ class TestCollectDeadCodeIntegration:
         )
 
         rows = collect_dead_code(
-            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
+            graph_ingestor, "proj", _dead_code_config(include_tests=False)
         )
         assert {r["qualified_name"] for r in rows} == {
             "proj.mod.a",
@@ -620,7 +610,7 @@ class TestCollectDeadCodeIntegration:
         }
 
     def test_registration_closure_and_protocol_stub_are_roots(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
         # a decorated closure DEFINED by a LIVE function (prompt_toolkit
         # @bindings.add, MCP @server.list_tools) is registered when its enclosing
@@ -628,7 +618,7 @@ class TestCollectDeadCodeIntegration:
         # method is an interface stub whose callers resolve to the implementations.
         # Neither is dead, while an undecorated closure, a plain private method, and
         # the whole cluster under a DEAD enclosing function are.
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
             "(outer:Function {qualified_name: 'proj.mod.outer', name: 'outer', "
@@ -673,7 +663,7 @@ class TestCollectDeadCodeIntegration:
         )
 
         rows = collect_dead_code(
-            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
+            graph_ingestor, "proj", _dead_code_config(include_tests=False)
         )
         assert {r["qualified_name"] for r in rows} == {
             "proj.mod.outer._unused",
@@ -683,13 +673,11 @@ class TestCollectDeadCodeIntegration:
             "proj.mod.victim",
         }
 
-    def test_module_load_callee_is_a_root(
-        self, memgraph_ingestor: MemgraphIngestor
-    ) -> None:
+    def test_module_load_callee_is_a_root(self, graph_ingestor: GraphIngestor) -> None:
         # a function called by a Module (e.g. `if __name__ == "__main__": main()`
         # or a bare decorator) runs at import, so it and its callees are live even
         # with no entry-point/decorator/export root.
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE "
             "(m:Module {qualified_name: 'proj.mod', path: 'proj/mod.py'}), "
             "(main:Function {qualified_name: 'proj.mod.main', name: 'main', "
@@ -703,7 +691,7 @@ class TestCollectDeadCodeIntegration:
         )
 
         rows = collect_dead_code(
-            memgraph_ingestor, "proj", _dead_code_config(include_tests=False)
+            graph_ingestor, "proj", _dead_code_config(include_tests=False)
         )
         names = {r["qualified_name"] for r in rows}
 
@@ -712,14 +700,14 @@ class TestCollectDeadCodeIntegration:
 
 @pytest.mark.integration
 class TestBuildNodesByIdsQueryIntegration:
-    def test_fetches_nodes_by_ids(self, memgraph_ingestor: MemgraphIngestor) -> None:
-        memgraph_ingestor._execute_query(
+    def test_fetches_nodes_by_ids(self, graph_ingestor: GraphIngestor) -> None:
+        graph_ingestor.execute_write(
             "CREATE (f1:Function {qualified_name: 'mod.func1', name: 'func1'}), "
             "(f2:Function {qualified_name: 'mod.func2', name: 'func2'}), "
             "(f3:Function {qualified_name: 'mod.func3', name: 'func3'})"
         )
 
-        id_results = memgraph_ingestor._execute_query(
+        id_results = graph_ingestor.fetch_all(
             "MATCH (f:Function) WHERE f.qualified_name IN ['mod.func1', 'mod.func2'] "
             "RETURN id(f) as id"
         )
@@ -728,19 +716,19 @@ class TestBuildNodesByIdsQueryIntegration:
         query = build_nodes_by_ids_query(node_ids)
         params = {str(i): nid for i, nid in enumerate(node_ids)}
 
-        results = memgraph_ingestor._execute_query(query, params)
+        results = graph_ingestor.fetch_all(query, params)
 
         assert len(results) == 2
         names = {r["name"] for r in results}
         assert names == {"func1", "func2"}
 
     def test_returns_empty_for_nonexistent_ids(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
         query = build_nodes_by_ids_query([99999, 99998])
         params = {"0": 99999, "1": 99998}
 
-        results = memgraph_ingestor._execute_query(query, params)
+        results = graph_ingestor.fetch_all(query, params)
 
         assert len(results) == 0
 
@@ -751,23 +739,23 @@ class TestFlowsToParallelProvenanceIntegration:
     edge per `via`, not collapse into a single edge under MERGE."""
 
     def test_parallel_via_edges_survive_merge(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE (a:Function {qualified_name: 'mod.caller', name: 'caller'}), "
             "(b:Function {qualified_name: 'mod.callee', name: 'callee'})"
         )
 
         for via in ("kw:username", "kw:password"):
-            memgraph_ingestor.ensure_relationship_batch(
+            graph_ingestor.ensure_relationship_batch(
                 ("Function", "qualified_name", "mod.caller"),
                 "FLOWS_TO",
                 ("Function", "qualified_name", "mod.callee"),
                 properties={"via": via, "kind": "arg"},
             )
-        memgraph_ingestor.flush_all()
+        graph_ingestor.flush_all()
 
-        rows = memgraph_ingestor._execute_query(
+        rows = graph_ingestor.fetch_all(
             "MATCH (:Function {qualified_name: 'mod.caller'})"
             "-[r:FLOWS_TO]->(:Function {qualified_name: 'mod.callee'}) "
             "RETURN r.via as via ORDER BY via"
@@ -776,12 +764,12 @@ class TestFlowsToParallelProvenanceIntegration:
         assert [r["via"] for r in rows] == ["kw:password", "kw:username"]
 
     def test_mixed_via_and_viales_edges_do_not_collapse(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
         # A batch mixing rows that carry `via` with a row that does not (same
         # endpoints) must keep every edge: the via-less row must not strip
         # `via` from the merge key for the rest (#722 mixed-batch regression).
-        memgraph_ingestor._execute_query(
+        graph_ingestor.execute_write(
             "CREATE (a:Function {qualified_name: 'mod.caller', name: 'caller'}), "
             "(b:Function {qualified_name: 'mod.callee', name: 'callee'})"
         )
@@ -791,15 +779,15 @@ class TestFlowsToParallelProvenanceIntegration:
             {"via": "kw:password", "kind": "arg"},
             {"kind": "return"},
         ):
-            memgraph_ingestor.ensure_relationship_batch(
+            graph_ingestor.ensure_relationship_batch(
                 ("Function", "qualified_name", "mod.caller"),
                 "FLOWS_TO",
                 ("Function", "qualified_name", "mod.callee"),
                 properties=props,
             )
-        memgraph_ingestor.flush_all()
+        graph_ingestor.flush_all()
 
-        rows = memgraph_ingestor._execute_query(
+        rows = graph_ingestor.fetch_all(
             "MATCH (:Function {qualified_name: 'mod.caller'})"
             "-[r:FLOWS_TO]->(:Function {qualified_name: 'mod.callee'}) "
             "RETURN r.via as via, r.kind as kind ORDER BY r.kind, r.via"

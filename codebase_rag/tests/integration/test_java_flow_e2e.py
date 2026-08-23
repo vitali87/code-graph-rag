@@ -12,14 +12,14 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 _FLOWS = cs.RelationshipType.FLOWS_TO.value
 
 
-def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, code: str) -> None:
     project = tmp_path / "flow_java"
     project.mkdir()
     (project / "App.java").write_text(code, encoding="utf-8")
@@ -33,7 +33,7 @@ def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
     ).run()
 
 
-def _flows(ingestor: MemgraphIngestor) -> list[dict[str, str | None]]:
+def _flows(ingestor: GraphIngestor) -> list[dict[str, str | None]]:
     rows = ingestor.fetch_all(
         f"MATCH (a)-[r:{_FLOWS}]->(b) "
         "RETURN a.qualified_name AS frm, b.qualified_name AS to, "
@@ -52,11 +52,11 @@ def _has(flows: list[dict[str, str | None]], frm: str, to: str, **props: str) ->
 
 
 def test_java_env_flows_to_stdout(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A local carries the env source to a later println: ENV -> STDOUT.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "class App {\n"
         "    void leak() {\n"
@@ -66,7 +66,7 @@ def test_java_env_flows_to_stdout(
         "}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::SECRET",
         "resource::STDOUT::<dynamic>",
         kind=FlowKind.RESOURCE.value,
@@ -74,11 +74,11 @@ def test_java_env_flows_to_stdout(
 
 
 def test_java_direct_env_argument_flows_to_stdout(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # The env read nested directly in the print call still flows ENV -> STDOUT.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "class App {\n"
         "    void leak() {\n"
@@ -87,7 +87,7 @@ def test_java_direct_env_argument_flows_to_stdout(
         "}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::TOKEN",
         "resource::STDOUT::<dynamic>",
         kind=FlowKind.RESOURCE.value,
@@ -95,11 +95,11 @@ def test_java_direct_env_argument_flows_to_stdout(
 
 
 def test_java_tainted_value_arg_edge_to_callee(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Passing a tainted local to a first-party method emits a caller->callee ARG edge.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "class App {\n"
         "    void leak() {\n"
@@ -110,20 +110,18 @@ def test_java_tainted_value_arg_edge_to_callee(
         "}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "leak()",
         "sink(String)",
         kind=FlowKind.ARG.value,
     )
 
 
-def test_java_return_taint_edge(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
-) -> None:
+def test_java_return_taint_edge(graph_ingestor: GraphIngestor, tmp_path: Path) -> None:
     # A method returning a tainted value emits a callee->caller RETURN edge to its
     # caller (resolved cross-method through the shared return-taint fixpoint).
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "class App {\n"
         "    String read() {\n"
@@ -136,7 +134,7 @@ def test_java_return_taint_edge(
         "}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "read()",
         "use()",
         kind=FlowKind.RETURN.value,
@@ -144,12 +142,12 @@ def test_java_return_taint_edge(
 
 
 def test_java_reassignment_kills_taint(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Overwriting the tainted local with a clean literal before the print kills the
     # taint, so no ENV -> STDOUT flow survives (Java assignment_expression bind).
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "class App {\n"
         "    void scrub() {\n"
@@ -159,17 +157,15 @@ def test_java_reassignment_kills_taint(
         "    }\n"
         "}\n",
     )
-    assert not any(
-        f["kind"] == FlowKind.RESOURCE.value for f in _flows(memgraph_ingestor)
-    )
+    assert not any(f["kind"] == FlowKind.RESOURCE.value for f in _flows(graph_ingestor))
 
 
 def test_java_untainted_local_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A println of a plain local (no source) emits no resource flow.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "class App {\n"
         "    void quiet() {\n"
@@ -178,6 +174,4 @@ def test_java_untainted_local_no_flow(
         "    }\n"
         "}\n",
     )
-    assert not any(
-        f["kind"] == FlowKind.RESOURCE.value for f in _flows(memgraph_ingestor)
-    )
+    assert not any(f["kind"] == FlowKind.RESOURCE.value for f in _flows(graph_ingestor))

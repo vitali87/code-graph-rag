@@ -18,7 +18,8 @@ from codebase_rag.parser_loader import load_parsers
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
+    from codebase_rag.services.graph.memgraph import MemgraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -37,7 +38,7 @@ def fetch_products():
 """
 
 
-def _index(ingestor: MemgraphIngestor, project_path: Path) -> None:
+def _index(ingestor: GraphIngestor, project_path: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -59,32 +60,32 @@ def _build_pair(tmp_path: Path) -> tuple[Path, Path]:
 
 class TestCrossProjectFolderIdentity:
     def test_same_layout_projects_get_distinct_folder_and_file_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, graph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         service, client = _build_pair(tmp_path)
-        _index(memgraph_ingestor, service)
-        _index(memgraph_ingestor, client)
+        _index(graph_ingestor, service)
+        _index(graph_ingestor, client)
 
-        folders = memgraph_ingestor.fetch_all(
+        folders = graph_ingestor.fetch_all(
             "MATCH (f:Folder {path: 'app'}) RETURN count(f) AS c"
         )
         assert folders[0]["c"] == 2
 
-        files = memgraph_ingestor.fetch_all(
+        files = graph_ingestor.fetch_all(
             "MATCH (f:File {path: 'app/main.py'}) RETURN count(f) AS c"
         )
         assert files[0]["c"] == 2
 
     def test_delete_project_spares_same_layout_sibling(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, graph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         service, client = _build_pair(tmp_path)
-        _index(memgraph_ingestor, service)
-        _index(memgraph_ingestor, client)
+        _index(graph_ingestor, service)
+        _index(graph_ingestor, client)
 
-        memgraph_ingestor.delete_project("cli-project")
+        graph_ingestor.delete_project("cli-project")
 
-        survivors = memgraph_ingestor.fetch_all(
+        survivors = graph_ingestor.fetch_all(
             "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'svc-project' "
             "RETURN f.qualified_name AS qn ORDER BY qn"
         )
@@ -94,7 +95,7 @@ class TestCrossProjectFolderIdentity:
         ]
 
         # The deleted project is gone entirely.
-        gone = memgraph_ingestor.fetch_all(
+        gone = graph_ingestor.fetch_all(
             "MATCH (n) WHERE n.qualified_name STARTS WITH 'cli-project' "
             "RETURN count(n) AS c"
         )
@@ -102,27 +103,57 @@ class TestCrossProjectFolderIdentity:
 
         # Folder and File nodes carry no qualified_name: check their
         # absolute-path identities directly.
-        folders = memgraph_ingestor.fetch_all(
+        folders = graph_ingestor.fetch_all(
             "MATCH (f:Folder {path: 'app'}) RETURN f.absolute_path AS ap"
         )
         assert [r["ap"] for r in folders] == [(service / "app").resolve().as_posix()]
-        files = memgraph_ingestor.fetch_all(
+        files = graph_ingestor.fetch_all(
             "MATCH (f:File {path: 'app/main.py'}) RETURN f.absolute_path AS ap"
         )
         assert [r["ap"] for r in files] == [
             (service / "app" / "main.py").resolve().as_posix()
         ]
 
+    def test_ensure_constraints_keeps_well_formed_data_untouched(
+        self, graph_ingestor: GraphIngestor
+    ) -> None:
+        # ensure_constraints() must be a no-op on data that already carries
+        # the current-schema identity (absolute_path set): re-running it
+        # (e.g. on every connect) must never drop healthy nodes.
+        graph_ingestor.execute_write(
+            "CREATE (p:Project {name: 'tidy'}), "
+            "(f:File {path: 'app/main.py', absolute_path: '/tidy/app/main.py'}), "
+            "(p)-[:CONTAINS_FILE]->(f)"
+        )
+
+        graph_ingestor.ensure_constraints()
+
+        survivor = graph_ingestor.fetch_all(
+            "MATCH (n:File {absolute_path: '/tidy/app/main.py'}) RETURN count(n) AS c"
+        )
+        assert survivor[0]["c"] == 1
+
 
 class TestLegacyPathKeyMigration:
     """A database written by the old relative-path key must be repaired on
     connect (issue #897): merged Folder/File nodes cannot be split, so they
-    are purged and rebuilt by the next re-index."""
+    are purged and rebuilt by the next re-index.
+
+    Memgraph-only by construction, not by omission: the migration under
+    test (`MemgraphIngestor._migrate_legacy_path_keys`) exists only on the
+    Memgraph engine, and the legacy schema it repairs is expressed in
+    Memgraph's proprietary constraint DDL (`CREATE/DROP/SHOW CONSTRAINT ON
+    ...`), which ArcadeDB's Cypher plugin does not parse. ArcadeDB was never
+    subject to the pre-#897 bug this migration retires, so there is no
+    equivalent behaviour to port -- these tests deliberately use the raw
+    `MemgraphIngestor` fixture and its private `_execute_query`, not the
+    backend-parametrised `graph_ingestor`.
+    """
 
     def test_ensure_constraints_purges_legacy_merged_nodes(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_only_ingestor: MemgraphIngestor
     ) -> None:
-        ing = memgraph_ingestor
+        ing = memgraph_only_ingestor
         # Recreate the pre-fix schema: relative-path uniqueness plus one
         # Folder shared by two projects, one keyless File beneath it, and a
         # healthy single-owner File that must survive.
@@ -168,11 +199,11 @@ class TestLegacyPathKeyMigration:
         assert survivor[0]["c"] == 1
 
     def test_purge_runs_when_constraints_already_dropped(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, memgraph_only_ingestor: MemgraphIngestor
     ) -> None:
         # An earlier partial upgrade already dropped the legacy constraints
         # but left the merged nodes behind: repair must still trigger.
-        ing = memgraph_ingestor
+        ing = memgraph_only_ingestor
         # The shared container only wipes nodes between tests, so make the
         # precondition explicit: the legacy constraints are gone before
         # seeding (Memgraph DROP CONSTRAINT is idempotent).
@@ -204,20 +235,3 @@ class TestLegacyPathKeyMigration:
             "MATCH (n:File) WHERE n.absolute_path IS NULL RETURN count(n) AS c"
         )
         assert keyless_left[0]["c"] == 0
-
-    def test_clean_database_keeps_structure_untouched(
-        self, memgraph_ingestor: MemgraphIngestor
-    ) -> None:
-        ing = memgraph_ingestor
-        ing._execute_query(
-            "CREATE (p:Project {name: 'tidy'}), "
-            "(f:File {path: 'app/main.py', absolute_path: '/tidy/app/main.py'}), "
-            "(p)-[:CONTAINS_FILE]->(f)"
-        )
-
-        ing.ensure_constraints()
-
-        survivor = ing.fetch_all(
-            "MATCH (n:File {absolute_path: '/tidy/app/main.py'}) RETURN count(n) AS c"
-        )
-        assert survivor[0]["c"] == 1

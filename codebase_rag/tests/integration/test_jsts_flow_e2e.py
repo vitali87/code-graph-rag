@@ -12,16 +12,14 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 _FLOWS = cs.RelationshipType.FLOWS_TO.value
 
 
-def _build(
-    ingestor: MemgraphIngestor, tmp_path: Path, filename: str, code: str
-) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, filename: str, code: str) -> None:
     project = tmp_path / "flow_js"
     project.mkdir()
     (project / filename).write_text(code, encoding="utf-8")
@@ -35,7 +33,7 @@ def _build(
     ).run()
 
 
-def _flows(ingestor: MemgraphIngestor) -> list[dict[str, str | None]]:
+def _flows(ingestor: GraphIngestor) -> list[dict[str, str | None]]:
     rows = ingestor.fetch_all(
         f"MATCH (a)-[r:{_FLOWS}]->(b) "
         "RETURN a.qualified_name AS frm, b.qualified_name AS to, "
@@ -53,11 +51,9 @@ def _has(flows: list[dict[str, str | None]], frm: str, to: str, **props: str) ->
     )
 
 
-def test_env_flows_to_stdout(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
-) -> None:
+def test_env_flows_to_stdout(graph_ingestor: GraphIngestor, tmp_path: Path) -> None:
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot() {\n"
@@ -66,7 +62,7 @@ def test_env_flows_to_stdout(
         "}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::SECRET",
         "resource::STDOUT::<dynamic>",
         kind=FlowKind.RESOURCE.value,
@@ -74,16 +70,16 @@ def test_env_flows_to_stdout(
 
 
 def test_direct_env_argument_flows_to_stdout(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot() {\n  console.log(process.env.TOKEN);\n}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::TOKEN",
         "resource::STDOUT::<dynamic>",
         kind=FlowKind.RESOURCE.value,
@@ -91,10 +87,10 @@ def test_direct_env_argument_flows_to_stdout(
 
 
 def test_network_read_flows_to_file(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function sync() {\n"
@@ -103,7 +99,7 @@ def test_network_read_flows_to_file(
         "}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::NETWORK::https://api.example.com/x",
         "resource::FILE::out.txt",
         kind=FlowKind.RESOURCE.value,
@@ -111,10 +107,10 @@ def test_network_read_flows_to_file(
 
 
 def test_tainted_value_arg_edge_to_callee(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function leak(x) {}\n\n\n"
@@ -124,39 +120,37 @@ def test_tainted_value_arg_edge_to_callee(
         "}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "app.boot",
         "app.leak",
         kind=FlowKind.ARG.value,
     )
 
 
-def test_untainted_value_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
-) -> None:
+def test_untainted_value_no_flow(graph_ingestor: GraphIngestor, tmp_path: Path) -> None:
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot() {\n  const s = 'safe';\n  console.log(s);\n}\n",
     )
-    flows = _flows(memgraph_ingestor)
+    flows = _flows(graph_ingestor)
     assert not any(f["kind"] == FlowKind.RESOURCE.value for f in flows)
 
 
 def test_return_taint_flows_across_call(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # getSecret() returns process.env.SECRET; the caller assigns and logs it,
     # so the return edge and the ENV -> STDOUT flow both appear (shared fixpoint).
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function getSecret() {\n  return process.env.SECRET;\n}\n\n\n"
         "function boot() {\n  const s = getSecret();\n  console.log(s);\n}\n",
     )
-    flows = _flows(memgraph_ingestor)
+    flows = _flows(graph_ingestor)
     assert _has(flows, "app.getSecret", "app.boot", kind=FlowKind.RETURN.value)
     assert _has(
         flows,
@@ -167,12 +161,12 @@ def test_return_taint_flows_across_call(
 
 
 def test_shadowed_console_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A local `console` object is not the global; logging through it must not
     # emit a resource flow.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot() {\n"
@@ -181,7 +175,7 @@ def test_shadowed_console_no_flow(
         "  console.log(s);\n"
         "}\n",
     )
-    flows = _flows(memgraph_ingestor)
+    flows = _flows(graph_ingestor)
     assert not any(
         (f["to"] or "").endswith("STDOUT::<dynamic>")
         and f["kind"] == FlowKind.RESOURCE.value
@@ -190,18 +184,18 @@ def test_shadowed_console_no_flow(
 
 
 def test_comment_in_arguments_does_not_break_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Comments are named children; they must not shift argument indices or hide
     # the taint of a directly-passed source.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot() {\n  console.log(/* note */ process.env.SECRET);\n}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::SECRET",
         "resource::STDOUT::<dynamic>",
         kind=FlowKind.RESOURCE.value,
@@ -209,18 +203,18 @@ def test_comment_in_arguments_does_not_break_flow(
 
 
 def test_parenthesized_source_flows(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A parenthesized source expression must be unwrapped like await, so
     # `console.log((process.env.SECRET))` still emits the flow.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot() {\n  console.log((process.env.SECRET));\n}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::SECRET",
         "resource::STDOUT::<dynamic>",
         kind=FlowKind.RESOURCE.value,
@@ -228,12 +222,12 @@ def test_parenthesized_source_flows(
 
 
 def test_comment_before_sink_target_keeps_identity(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A comment before the sink's target argument must not shift the positional
     # index used for the resource identity (literal_target filters comments).
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function sync() {\n"
@@ -242,7 +236,7 @@ def test_comment_before_sink_target_keeps_identity(
         "}\n",
     )
     assert _has(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::NETWORK::https://api.example.com/x",
         "resource::FILE::out.txt",
         kind=FlowKind.RESOURCE.value,
@@ -250,12 +244,12 @@ def test_comment_before_sink_target_keeps_identity(
 
 
 def test_module_import_plus_local_shadow_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # `fs` is imported module-wide, but a function-local `const fs = {}` shadows
     # it: fs.writeFileSync must not be the builtin, so no resource flow appears.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "import fs from 'fs';\n\n\n"
@@ -265,7 +259,7 @@ def test_module_import_plus_local_shadow_no_flow(
         "  fs.writeFileSync('out', data);\n"
         "}\n",
     )
-    flows = _flows(memgraph_ingestor)
+    flows = _flows(graph_ingestor)
     assert not any(
         (f["to"] or "").endswith("FILE::out") and f["kind"] == FlowKind.RESOURCE.value
         for f in flows
@@ -273,12 +267,12 @@ def test_module_import_plus_local_shadow_no_flow(
 
 
 def test_typescript_typed_param_shadows_source(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # A TS parameter is a required_parameter wrapper, not a bare identifier; a
     # `process` parameter must still shadow the global env source.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.ts",
         "function run(process: any) {\n"
@@ -286,5 +280,5 @@ def test_typescript_typed_param_shadows_source(
         "  console.log(a);\n"
         "}\n",
     )
-    flows = _flows(memgraph_ingestor)
+    flows = _flows(graph_ingestor)
     assert not any(f["kind"] == FlowKind.RESOURCE.value for f in flows)

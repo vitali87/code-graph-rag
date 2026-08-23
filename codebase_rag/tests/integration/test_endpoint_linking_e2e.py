@@ -19,7 +19,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -40,7 +40,7 @@ def get_user(id):
 """
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
+def _index(ingestor: GraphIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,
@@ -54,7 +54,7 @@ def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
 
 class TestEndpointLinkingE2E:
     def test_client_url_resolves_to_server_endpoint(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, graph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         client_repo = tmp_path / "order-service"
         client_repo.mkdir()
@@ -63,10 +63,10 @@ class TestEndpointLinkingE2E:
         server_repo.mkdir()
         (server_repo / "handlers.py").write_text(_SERVER_SOURCE, encoding="utf-8")
 
-        _index(memgraph_ingestor, server_repo)
-        _index(memgraph_ingestor, client_repo)
+        _index(graph_ingestor, server_repo)
+        _index(graph_ingestor, client_repo)
 
-        rows = memgraph_ingestor.fetch_all(
+        rows = graph_ingestor.fetch_all(
             "MATCH (caller)-[:READS_FROM]->(url:Resource {kind: 'NETWORK'})"
             "-[:RESOLVES_TO]->(ep:Resource {kind: 'ENDPOINT'})"
             "<-[:EXPOSES]-(handler) "
@@ -91,7 +91,7 @@ _BROWSER_CLIENT_SOURCE = """export async function loadUser() {
 
 class TestRootfulRelativeLinkingE2E:
     def test_rootful_fetch_resolves_to_same_project_endpoint(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, graph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         # Issue #908: a browser frontend fetches a rootful relative path;
         # the decorated handler lives in the same project.
@@ -100,9 +100,9 @@ class TestRootfulRelativeLinkingE2E:
         (repo / "client.js").write_text(_BROWSER_CLIENT_SOURCE, encoding="utf-8")
         (repo / "handlers.py").write_text(_SERVER_SOURCE, encoding="utf-8")
 
-        _index(memgraph_ingestor, repo)
+        _index(graph_ingestor, repo)
 
-        rows = memgraph_ingestor.fetch_all(
+        rows = graph_ingestor.fetch_all(
             "MATCH (caller)-[:READS_FROM]->(url:Resource {kind: 'NETWORK'})"
             "-[:RESOLVES_TO]->(ep:Resource {kind: 'ENDPOINT'})"
             "<-[:EXPOSES]-(handler) "

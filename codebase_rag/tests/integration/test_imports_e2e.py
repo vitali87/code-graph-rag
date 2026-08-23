@@ -9,12 +9,12 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
-def index_project(ingestor: MemgraphIngestor, project_path: Path) -> None:
+def index_project(ingestor: GraphIngestor, project_path: Path) -> None:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=ingestor,
@@ -25,7 +25,7 @@ def index_project(ingestor: MemgraphIngestor, project_path: Path) -> None:
     updater.run()
 
 
-def get_imports_relationships(ingestor: MemgraphIngestor) -> list[dict]:
+def get_imports_relationships(ingestor: GraphIngestor) -> list[dict]:
     query = """
     MATCH (from:Module)-[r:IMPORTS]->(to)
     WHERE to:Module OR to:ExternalModule
@@ -34,7 +34,7 @@ def get_imports_relationships(ingestor: MemgraphIngestor) -> list[dict]:
     return ingestor.fetch_all(query)
 
 
-def get_module_qualified_names(ingestor: MemgraphIngestor) -> set[str]:
+def get_module_qualified_names(ingestor: GraphIngestor) -> set[str]:
     query = "MATCH (m) WHERE m:Module OR m:ExternalModule RETURN m.qualified_name AS qn"
     results = ingestor.fetch_all(query)
     return {r["qn"] for r in results}
@@ -290,12 +290,12 @@ def lua_imports_project(tmp_path: Path) -> Path:
 
 class TestJavaImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, java_imports_project: Path
+        self, graph_ingestor: GraphIngestor, java_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, java_imports_project)
+        index_project(graph_ingestor, java_imports_project)
 
-        imports = get_imports_relationships(memgraph_ingestor)
-        modules = get_module_qualified_names(memgraph_ingestor)
+        imports = get_imports_relationships(graph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         project_name = java_imports_project.name
         main_module = f"{project_name}.main.Main"
@@ -316,11 +316,11 @@ class TestJavaImportsRelationships:
         )
 
     def test_external_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, java_imports_project: Path
+        self, graph_ingestor: GraphIngestor, java_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, java_imports_project)
+        index_project(graph_ingestor, java_imports_project)
 
-        modules = get_module_qualified_names(memgraph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         external_module = "java.util"
         assert external_module in modules, (
@@ -329,11 +329,11 @@ class TestJavaImportsRelationships:
         )
 
     def test_external_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, java_imports_project: Path
+        self, graph_ingestor: GraphIngestor, java_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, java_imports_project)
+        index_project(graph_ingestor, java_imports_project)
 
-        imports = get_imports_relationships(memgraph_ingestor)
+        imports = get_imports_relationships(graph_ingestor)
         project_name = java_imports_project.name
         main_module = f"{project_name}.main.Main"
 
@@ -351,12 +351,12 @@ class TestJavaImportsRelationships:
 
 class TestPythonImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, python_imports_project: Path
+        self, graph_ingestor: GraphIngestor, python_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, python_imports_project)
+        index_project(graph_ingestor, python_imports_project)
 
-        imports = get_imports_relationships(memgraph_ingestor)
-        modules = get_module_qualified_names(memgraph_ingestor)
+        imports = get_imports_relationships(graph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         project_name = python_imports_project.name
         main_module = f"{project_name}.main"
@@ -378,11 +378,11 @@ class TestPythonImportsRelationships:
         )
 
     def test_stdlib_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, python_imports_project: Path
+        self, graph_ingestor: GraphIngestor, python_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, python_imports_project)
+        index_project(graph_ingestor, python_imports_project)
 
-        modules = get_module_qualified_names(memgraph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         stdlib_modules = {"os", "json", "pathlib"}
         found_modules = {m for m in stdlib_modules if m in modules}
@@ -395,11 +395,11 @@ class TestPythonImportsRelationships:
         )
 
     def test_stdlib_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, python_imports_project: Path
+        self, graph_ingestor: GraphIngestor, python_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, python_imports_project)
+        index_project(graph_ingestor, python_imports_project)
 
-        imports = get_imports_relationships(memgraph_ingestor)
+        imports = get_imports_relationships(graph_ingestor)
         project_name = python_imports_project.name
         main_module = f"{project_name}.main"
 
@@ -416,12 +416,12 @@ class TestPythonImportsRelationships:
 
 class TestJsImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, js_imports_project: Path
+        self, graph_ingestor: GraphIngestor, js_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, js_imports_project)
+        index_project(graph_ingestor, js_imports_project)
 
-        imports = get_imports_relationships(memgraph_ingestor)
-        modules = get_module_qualified_names(memgraph_ingestor)
+        imports = get_imports_relationships(graph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         project_name = js_imports_project.name
         main_module = f"{project_name}.main"
@@ -443,11 +443,11 @@ class TestJsImportsRelationships:
         )
 
     def test_external_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, js_imports_project: Path
+        self, graph_ingestor: GraphIngestor, js_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, js_imports_project)
+        index_project(graph_ingestor, js_imports_project)
 
-        modules = get_module_qualified_names(memgraph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         external_modules = ["lodash", "lodash.default"]
         found_external = any(ext in modules for ext in external_modules)
@@ -459,12 +459,12 @@ class TestJsImportsRelationships:
 
 class TestTsImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, ts_imports_project: Path
+        self, graph_ingestor: GraphIngestor, ts_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, ts_imports_project)
+        index_project(graph_ingestor, ts_imports_project)
 
-        imports = get_imports_relationships(memgraph_ingestor)
-        modules = get_module_qualified_names(memgraph_ingestor)
+        imports = get_imports_relationships(graph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         project_name = ts_imports_project.name
         main_module = f"{project_name}.main"
@@ -486,11 +486,11 @@ class TestTsImportsRelationships:
         )
 
     def test_external_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, ts_imports_project: Path
+        self, graph_ingestor: GraphIngestor, ts_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, ts_imports_project)
+        index_project(graph_ingestor, ts_imports_project)
 
-        modules = get_module_qualified_names(memgraph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         external_modules = ["fs"]
         found_external = any(ext in modules for ext in external_modules)
@@ -502,12 +502,12 @@ class TestTsImportsRelationships:
 
 class TestRustImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, rust_imports_project: Path
+        self, graph_ingestor: GraphIngestor, rust_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, rust_imports_project)
+        index_project(graph_ingestor, rust_imports_project)
 
-        imports = get_imports_relationships(memgraph_ingestor)
-        modules = get_module_qualified_names(memgraph_ingestor)
+        imports = get_imports_relationships(graph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         project_name = rust_imports_project.name
         main_module = f"{project_name}.src.main"
@@ -529,11 +529,11 @@ class TestRustImportsRelationships:
         )
 
     def test_external_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, rust_imports_project: Path
+        self, graph_ingestor: GraphIngestor, rust_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, rust_imports_project)
+        index_project(graph_ingestor, rust_imports_project)
 
-        modules = get_module_qualified_names(memgraph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         external_modules = ["std", "std::collections", "std::collections::HashMap"]
         found_external = any(ext in modules for ext in external_modules)
@@ -545,12 +545,12 @@ class TestRustImportsRelationships:
 
 class TestGoImportsRelationships:
     def test_internal_import_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, go_imports_project: Path
+        self, graph_ingestor: GraphIngestor, go_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, go_imports_project)
+        index_project(graph_ingestor, go_imports_project)
 
-        imports = get_imports_relationships(memgraph_ingestor)
-        modules = get_module_qualified_names(memgraph_ingestor)
+        imports = get_imports_relationships(graph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         project_name = go_imports_project.name
         main_module = f"{project_name}.main"
@@ -572,11 +572,11 @@ class TestGoImportsRelationships:
         )
 
     def test_external_import_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, go_imports_project: Path
+        self, graph_ingestor: GraphIngestor, go_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, go_imports_project)
+        index_project(graph_ingestor, go_imports_project)
 
-        modules = get_module_qualified_names(memgraph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         external_modules = ["fmt"]
         found_external = any(ext in modules for ext in external_modules)
@@ -588,12 +588,12 @@ class TestGoImportsRelationships:
 
 class TestCppImportsRelationships:
     def test_internal_include_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_imports_project: Path
+        self, graph_ingestor: GraphIngestor, cpp_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, cpp_imports_project)
+        index_project(graph_ingestor, cpp_imports_project)
 
-        imports = get_imports_relationships(memgraph_ingestor)
-        modules = get_module_qualified_names(memgraph_ingestor)
+        imports = get_imports_relationships(graph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         project_name = cpp_imports_project.name
         main_module = f"{project_name}.main"
@@ -618,11 +618,11 @@ class TestCppImportsRelationships:
         )
 
     def test_external_include_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_imports_project: Path
+        self, graph_ingestor: GraphIngestor, cpp_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, cpp_imports_project)
+        index_project(graph_ingestor, cpp_imports_project)
 
-        modules = get_module_qualified_names(memgraph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         external_modules = {"std.iostream", "std.vector"}
         found_modules = {m for m in external_modules if m in modules}
@@ -637,12 +637,12 @@ class TestCppImportsRelationships:
 
 class TestLuaImportsRelationships:
     def test_internal_require_creates_relationship(
-        self, memgraph_ingestor: MemgraphIngestor, lua_imports_project: Path
+        self, graph_ingestor: GraphIngestor, lua_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, lua_imports_project)
+        index_project(graph_ingestor, lua_imports_project)
 
-        imports = get_imports_relationships(memgraph_ingestor)
-        modules = get_module_qualified_names(memgraph_ingestor)
+        imports = get_imports_relationships(graph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         project_name = lua_imports_project.name
         main_module = f"{project_name}.main"
@@ -664,11 +664,11 @@ class TestLuaImportsRelationships:
         )
 
     def test_external_require_creates_module_node(
-        self, memgraph_ingestor: MemgraphIngestor, lua_imports_project: Path
+        self, graph_ingestor: GraphIngestor, lua_imports_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, lua_imports_project)
+        index_project(graph_ingestor, lua_imports_project)
 
-        modules = get_module_qualified_names(memgraph_ingestor)
+        modules = get_module_qualified_names(graph_ingestor)
 
         external_module = "json"
         assert external_module in modules, (

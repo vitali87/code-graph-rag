@@ -18,7 +18,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tools.code_retrieval import CodeRetriever
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -45,7 +45,7 @@ def two_repos(tmp_path: Path) -> tuple[Path, Path]:
     return order_repo, user_repo
 
 
-def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
+def _index(ingestor: GraphIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor, repo_path=repo, parsers=parsers, queries=queries
@@ -55,13 +55,13 @@ def _index(ingestor: MemgraphIngestor, repo: Path) -> None:
 
 class TestCrossProjectRetrievalE2E:
     def test_snippet_from_other_project_resolves_via_absolute_path(
-        self, memgraph_ingestor: MemgraphIngestor, two_repos: tuple[Path, Path]
+        self, graph_ingestor: GraphIngestor, two_repos: tuple[Path, Path]
     ) -> None:
         order_repo, user_repo = two_repos
-        _index(memgraph_ingestor, order_repo)
-        _index(memgraph_ingestor, user_repo)
+        _index(graph_ingestor, order_repo)
+        _index(graph_ingestor, user_repo)
 
-        retriever = CodeRetriever(str(order_repo), memgraph_ingestor)
+        retriever = CodeRetriever(str(order_repo), graph_ingestor)
         result = asyncio.run(
             retriever.find_code_snippet("user-service.handlers.get_user")
         )
@@ -70,13 +70,13 @@ class TestCrossProjectRetrievalE2E:
         assert "Resolve a user by id" in result.source_code
 
     def test_projects_record_their_indexed_roots(
-        self, memgraph_ingestor: MemgraphIngestor, two_repos: tuple[Path, Path]
+        self, graph_ingestor: GraphIngestor, two_repos: tuple[Path, Path]
     ) -> None:
         order_repo, user_repo = two_repos
-        _index(memgraph_ingestor, order_repo)
-        _index(memgraph_ingestor, user_repo)
+        _index(graph_ingestor, order_repo)
+        _index(graph_ingestor, user_repo)
 
-        roots = memgraph_ingestor.list_project_roots()
+        roots = graph_ingestor.list_project_roots()
 
         assert roots["order-service"] == str(order_repo.resolve())
         assert roots["user-service"] == str(user_repo.resolve())

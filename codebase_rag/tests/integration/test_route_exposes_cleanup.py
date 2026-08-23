@@ -16,12 +16,12 @@ import pytest
 from codebase_rag.parsers.endpoint_routes import CYPHER_DELETE_MODULE_EXPOSES
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
-def _exposing_qns(ingestor: MemgraphIngestor) -> list[str]:
+def _exposing_qns(ingestor: GraphIngestor) -> list[str]:
     rows = ingestor.fetch_all(
         "MATCH (f)-[:EXPOSES]->(:Resource {kind: 'ENDPOINT'}) "
         "RETURN f.qualified_name AS qn ORDER BY qn"
@@ -31,12 +31,12 @@ def _exposing_qns(ingestor: MemgraphIngestor) -> list[str]:
 
 class TestModuleExposesCleanupOwnership:
     def test_prefix_sharing_sibling_module_survives(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
         # project.foo is a JS module; project.foo.bar is a DIFFERENT module
         # (a Python file under a sibling foo/ package) whose function only
         # shares the name prefix. Sweeping project.foo must not touch it.
-        memgraph_ingestor.execute_write(
+        graph_ingestor.execute_write(
             "CREATE (jsm:Module {qualified_name: 'project.foo'}), "
             "(jsf:Function {qualified_name: 'project.foo.setup'}), "
             "(pym:Module {qualified_name: 'project.foo.bar'}), "
@@ -47,34 +47,32 @@ class TestModuleExposesCleanupOwnership:
             "(jsf)-[:EXPOSES]->(r1), (pyf)-[:EXPOSES]->(r2)"
         )
 
-        memgraph_ingestor.execute_write(
+        graph_ingestor.execute_write(
             CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": ["project.foo"]}
         )
 
-        assert _exposing_qns(memgraph_ingestor) == ["project.foo.bar.handler"]
+        assert _exposing_qns(graph_ingestor) == ["project.foo.bar.handler"]
 
-    def test_module_level_edge_is_swept(
-        self, memgraph_ingestor: MemgraphIngestor
-    ) -> None:
+    def test_module_level_edge_is_swept(self, graph_ingestor: GraphIngestor) -> None:
         # Attribution can fall back to the module itself (zero-hop owner).
-        memgraph_ingestor.execute_write(
+        graph_ingestor.execute_write(
             "CREATE (m:Module {qualified_name: 'project.server'}), "
             "(r:Resource {qualified_name: 'e', kind: 'ENDPOINT'}) "
             "CREATE (m)-[:EXPOSES]->(r)"
         )
 
-        memgraph_ingestor.execute_write(
+        graph_ingestor.execute_write(
             CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": ["project.server"]}
         )
 
-        assert _exposing_qns(memgraph_ingestor) == []
+        assert _exposing_qns(graph_ingestor) == []
 
     def test_method_owned_through_class_is_swept(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
         # Ownership runs through the containment closure, including methods
         # reached via a class the module defines.
-        memgraph_ingestor.execute_write(
+        graph_ingestor.execute_write(
             "CREATE (m:Module {qualified_name: 'project.api'}), "
             "(c:Class {qualified_name: 'project.api.Router'}), "
             "(f:Method {qualified_name: 'project.api.Router.get'}), "
@@ -83,16 +81,16 @@ class TestModuleExposesCleanupOwnership:
             "(f)-[:EXPOSES]->(r)"
         )
 
-        memgraph_ingestor.execute_write(
+        graph_ingestor.execute_write(
             CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": ["project.api"]}
         )
 
-        assert _exposing_qns(memgraph_ingestor) == []
+        assert _exposing_qns(graph_ingestor) == []
 
 
 class TestResolvesToCleanupOwnership:
     def test_dispatch_resolution_survives_endpoint_relink(
-        self, memgraph_ingestor: MemgraphIngestor
+        self, graph_ingestor: GraphIngestor
     ) -> None:
         # The PRODUCTION relink (link_endpoints) sweeps its own stale URL
         # resolutions before recomputing; RESOLVES_TO edges owned by OTHER
@@ -100,7 +98,7 @@ class TestResolvesToCleanupOwnership:
         # the sweep, while the URL edge is recomputed from live sinks.
         from codebase_rag.parsers.endpoints import link_endpoints
 
-        memgraph_ingestor.execute_write(
+        graph_ingestor.execute_write(
             "CREATE (f:Function {qualified_name: 'project.app.fetch'}), "
             "(u:Resource {qualified_name: 'resource::NETWORK::/items/detail', "
             "kind: 'NETWORK', name: '/items/detail'}), "
@@ -116,9 +114,9 @@ class TestResolvesToCleanupOwnership:
             "kind: 'DISPATCH', name: 'k'}), "
             "(d)-[:RESOLVES_TO]->(dh)"
         )
-        link_endpoints(memgraph_ingestor)
-        memgraph_ingestor.flush_all()
-        survivors = memgraph_ingestor.fetch_all(
+        link_endpoints(graph_ingestor)
+        graph_ingestor.flush_all()
+        survivors = graph_ingestor.fetch_all(
             "MATCH (a)-[:RESOLVES_TO]->(b) "
             "RETURN a.qualified_name AS a, b.qualified_name AS b"
         )

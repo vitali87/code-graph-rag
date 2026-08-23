@@ -19,13 +19,13 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 
 def _index(
-    ingestor: MemgraphIngestor,
+    ingestor: GraphIngestor,
     repo_path: Path,
     exclude_paths: frozenset[str] | None = None,
 ) -> None:
@@ -39,7 +39,7 @@ def _index(
     ).run()
 
 
-def _function_names(ingestor: MemgraphIngestor) -> set[str]:
+def _function_names(ingestor: GraphIngestor) -> set[str]:
     rows = ingestor.fetch_all(
         "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'renamerepo.' "
         "RETURN f.qualified_name AS qn"
@@ -49,16 +49,14 @@ def _function_names(ingestor: MemgraphIngestor) -> set[str]:
 
 class TestCachelessRebuild:
     def test_rebuild_without_cache_drops_renamed_symbols(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, graph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         repo = tmp_path / "renamerepo"
         repo.mkdir()
         source = repo / "main.py"
         source.write_text("def old_name():\n    return 1\n", encoding="utf-8")
-        _index(memgraph_ingestor, repo)
-        assert any(
-            qn.endswith(".old_name") for qn in _function_names(memgraph_ingestor)
-        )
+        _index(graph_ingestor, repo)
+        assert any(qn.endswith(".old_name") for qn in _function_names(graph_ingestor))
 
         # A fresh clone: same repo content evolves, but the cache files are
         # gone while the database still holds the previous parse.
@@ -66,13 +64,13 @@ class TestCachelessRebuild:
         (repo / cs.HASH_CACHE_FILENAME).unlink()
         (repo / cs.DIR_MTIMES_FILENAME).unlink()
 
-        _index(memgraph_ingestor, repo)
-        names = _function_names(memgraph_ingestor)
+        _index(graph_ingestor, repo)
+        names = _function_names(graph_ingestor)
         assert any(qn.endswith(".new_name") for qn in names), names
         assert not any(qn.endswith(".old_name") for qn in names), names
 
     def test_rebuild_without_cache_drops_removed_files(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, graph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         # A file deleted between the previous index and a cacheless rebuild
         # appears nowhere: not in the (empty) old hashes and not on disk.
@@ -82,14 +80,14 @@ class TestCachelessRebuild:
         repo.mkdir()
         (repo / "kept.py").write_text("def kept():\n    return 1\n", encoding="utf-8")
         (repo / "gone.py").write_text("def gone():\n    return 1\n", encoding="utf-8")
-        _index(memgraph_ingestor, repo)
+        _index(graph_ingestor, repo)
 
         (repo / "gone.py").unlink()
         (repo / cs.HASH_CACHE_FILENAME).unlink()
         (repo / cs.DIR_MTIMES_FILENAME).unlink()
 
-        _index(memgraph_ingestor, repo)
-        rows = memgraph_ingestor.fetch_all(
+        _index(graph_ingestor, repo)
+        rows = graph_ingestor.fetch_all(
             "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'removedrepo.' "
             "RETURN f.qualified_name AS qn"
         )
@@ -98,7 +96,7 @@ class TestCachelessRebuild:
         assert not any(qn.endswith(".gone") for qn in names), names
 
     def test_rebuild_without_cache_drops_newly_excluded_files(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, graph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         # A file EXCLUDED between the previous index and a cacheless rebuild
         # still exists on disk, so orphan pruning keeps it, and the empty old
@@ -108,13 +106,13 @@ class TestCachelessRebuild:
         repo.mkdir()
         (repo / "kept.py").write_text("def kept():\n    return 1\n", encoding="utf-8")
         (repo / "gen.py").write_text("def gen():\n    return 1\n", encoding="utf-8")
-        _index(memgraph_ingestor, repo)
+        _index(graph_ingestor, repo)
 
         (repo / cs.HASH_CACHE_FILENAME).unlink()
         (repo / cs.DIR_MTIMES_FILENAME).unlink()
-        _index(memgraph_ingestor, repo, exclude_paths=frozenset({"gen.py"}))
+        _index(graph_ingestor, repo, exclude_paths=frozenset({"gen.py"}))
 
-        rows = memgraph_ingestor.fetch_all(
+        rows = graph_ingestor.fetch_all(
             "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'exclrepo.' "
             "RETURN f.qualified_name AS qn"
         )
@@ -123,7 +121,7 @@ class TestCachelessRebuild:
         assert not any(qn.endswith(".gen") for qn in names), names
 
     def test_rebuild_without_cache_drops_root_init_symbols(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, graph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         # A repository-level __init__.py's module qn IS the project name,
         # with no dot after it: a `STARTS WITH $project_prefix` scope misses
@@ -133,16 +131,16 @@ class TestCachelessRebuild:
         (repo / "__init__.py").write_text(
             "def old_root():\n    return 1\n", encoding="utf-8"
         )
-        _index(memgraph_ingestor, repo)
+        _index(graph_ingestor, repo)
 
         (repo / "__init__.py").write_text(
             "def new_root():\n    return 1\n", encoding="utf-8"
         )
         (repo / cs.HASH_CACHE_FILENAME).unlink()
         (repo / cs.DIR_MTIMES_FILENAME).unlink()
-        _index(memgraph_ingestor, repo)
+        _index(graph_ingestor, repo)
 
-        rows = memgraph_ingestor.fetch_all(
+        rows = graph_ingestor.fetch_all(
             "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'rootinitrepo' "
             "RETURN f.qualified_name AS qn"
         )
@@ -151,7 +149,7 @@ class TestCachelessRebuild:
         assert not any(qn.endswith(".old_root") for qn in names), names
 
     def test_cacheless_rebuild_spares_sibling_project_with_same_path(
-        self, memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+        self, graph_ingestor: GraphIngestor, tmp_path: Path
     ) -> None:
         # Two projects in the shared graph both hold lib/shared.py. The
         # delete-before-reingest of one project's cacheless rebuild must be
@@ -164,7 +162,7 @@ class TestCachelessRebuild:
             (repo / "lib" / "shared.py").write_text(
                 f"def {fn}():\n    return 1\n", encoding="utf-8"
             )
-            _index(memgraph_ingestor, repo)
+            _index(graph_ingestor, repo)
 
         # Rename alpha's function so the rebuild demonstrably DELETES the
         # old subtree; beta's survival then proves the delete was
@@ -174,9 +172,9 @@ class TestCachelessRebuild:
         )
         (alpha / cs.HASH_CACHE_FILENAME).unlink()
         (alpha / cs.DIR_MTIMES_FILENAME).unlink()
-        _index(memgraph_ingestor, alpha)
+        _index(graph_ingestor, alpha)
 
-        rows = memgraph_ingestor.fetch_all(
+        rows = graph_ingestor.fetch_all(
             "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'alphaproj.' "
             "OR f.qualified_name STARTS WITH 'betaproj.' "
             "RETURN f.qualified_name AS qn"
@@ -188,7 +186,7 @@ class TestCachelessRebuild:
 
     def test_unreadable_file_is_not_reconciled_away(
         self,
-        memgraph_ingestor: MemgraphIngestor,
+        graph_ingestor: GraphIngestor,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -202,7 +200,7 @@ class TestCachelessRebuild:
         (repo / "kept.py").write_text("def kept():\n    return 1\n", encoding="utf-8")
         locked = repo / "locked.py"
         locked.write_text("def locked_fn():\n    return 1\n", encoding="utf-8")
-        _index(memgraph_ingestor, repo)
+        _index(graph_ingestor, repo)
 
         (repo / cs.HASH_CACHE_FILENAME).unlink()
         (repo / cs.DIR_MTIMES_FILENAME).unlink()
@@ -216,9 +214,9 @@ class TestCachelessRebuild:
             return real_hash(path)
 
         monkeypatch.setattr(gu, "_hash_file_with_bytes", failing_hash)
-        _index(memgraph_ingestor, repo)
+        _index(graph_ingestor, repo)
 
-        rows = memgraph_ingestor.fetch_all(
+        rows = graph_ingestor.fetch_all(
             "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'unreadrepo.' "
             "RETURN f.qualified_name AS qn"
         )

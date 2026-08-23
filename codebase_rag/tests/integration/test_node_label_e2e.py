@@ -10,7 +10,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -283,7 +283,7 @@ return MyClass
 """
 
 
-def index_project(ingestor: MemgraphIngestor, project_path: Path) -> None:
+def index_project(ingestor: GraphIngestor, project_path: Path) -> None:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=ingestor,
@@ -294,7 +294,7 @@ def index_project(ingestor: MemgraphIngestor, project_path: Path) -> None:
     updater.run()
 
 
-def get_node_labels(ingestor: MemgraphIngestor) -> set[str]:
+def get_node_labels(ingestor: GraphIngestor) -> set[str]:
     result = ingestor.fetch_all("MATCH (n) RETURN DISTINCT labels(n) AS labels")
     labels: set[str] = set()
     for row in result:
@@ -303,11 +303,11 @@ def get_node_labels(ingestor: MemgraphIngestor) -> set[str]:
     return labels
 
 
-def get_nodes_by_label(ingestor: MemgraphIngestor, label: str) -> list[dict]:
+def get_nodes_by_label(ingestor: GraphIngestor, label: str) -> list[dict]:
     return ingestor.fetch_all(f"MATCH (n:{label}) RETURN n.name AS name")
 
 
-def get_relationship_types(ingestor: MemgraphIngestor) -> set[str]:
+def get_relationship_types(ingestor: GraphIngestor) -> set[str]:
     result = ingestor.fetch_all("MATCH ()-[r]->() RETURN DISTINCT type(r) AS type")
     return {row["type"] for row in result}
 
@@ -410,238 +410,238 @@ def lua_project(tmp_path: Path) -> Path:
 
 class TestPythonNodeLabels:
     def test_python_creates_class_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, python_project: Path
+        self, graph_ingestor: GraphIngestor, python_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, python_project)
+        index_project(graph_ingestor, python_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.CLASS.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        classes = get_nodes_by_label(graph_ingestor, NodeLabel.CLASS.value)
         class_names = {n["name"] for n in classes}
         assert "MyClass" in class_names
         assert "AnotherClass" in class_names
 
     def test_python_creates_function_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, python_project: Path
+        self, graph_ingestor: GraphIngestor, python_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, python_project)
+        index_project(graph_ingestor, python_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.FUNCTION.value in labels
 
-        functions = get_nodes_by_label(memgraph_ingestor, NodeLabel.FUNCTION.value)
+        functions = get_nodes_by_label(graph_ingestor, NodeLabel.FUNCTION.value)
         func_names = {n["name"] for n in functions}
         assert "standalone_function" in func_names
 
     def test_python_creates_method_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, python_project: Path
+        self, graph_ingestor: GraphIngestor, python_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, python_project)
+        index_project(graph_ingestor, python_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.METHOD.value in labels
 
-        methods = get_nodes_by_label(memgraph_ingestor, NodeLabel.METHOD.value)
+        methods = get_nodes_by_label(graph_ingestor, NodeLabel.METHOD.value)
         method_names = {n["name"] for n in methods}
         assert "method1" in method_names
         assert "method2" in method_names
 
     def test_python_creates_defines_relationships(
-        self, memgraph_ingestor: MemgraphIngestor, python_project: Path
+        self, graph_ingestor: GraphIngestor, python_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, python_project)
+        index_project(graph_ingestor, python_project)
 
-        rel_types = get_relationship_types(memgraph_ingestor)
+        rel_types = get_relationship_types(graph_ingestor)
         assert "DEFINES" in rel_types
 
     def test_python_creates_inherits_relationships(
-        self, memgraph_ingestor: MemgraphIngestor, python_project: Path
+        self, graph_ingestor: GraphIngestor, python_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, python_project)
+        index_project(graph_ingestor, python_project)
 
-        rel_types = get_relationship_types(memgraph_ingestor)
+        rel_types = get_relationship_types(graph_ingestor)
         assert "INHERITS" in rel_types
 
 
 class TestTypeScriptNodeLabels:
     def test_typescript_creates_interface_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, typescript_project: Path
+        self, graph_ingestor: GraphIngestor, typescript_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, typescript_project)
+        index_project(graph_ingestor, typescript_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.INTERFACE.value in labels, (
             f"Interface label missing. Got labels: {labels}"
         )
 
-        interfaces = get_nodes_by_label(memgraph_ingestor, NodeLabel.INTERFACE.value)
+        interfaces = get_nodes_by_label(graph_ingestor, NodeLabel.INTERFACE.value)
         interface_names = {n["name"] for n in interfaces}
         assert "MyInterface" in interface_names
 
     def test_typescript_creates_enum_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, typescript_project: Path
+        self, graph_ingestor: GraphIngestor, typescript_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, typescript_project)
+        index_project(graph_ingestor, typescript_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.ENUM.value in labels, (
             f"Enum label missing. Got labels: {labels}"
         )
 
-        enums = get_nodes_by_label(memgraph_ingestor, NodeLabel.ENUM.value)
+        enums = get_nodes_by_label(graph_ingestor, NodeLabel.ENUM.value)
         enum_names = {n["name"] for n in enums}
         assert "Status" in enum_names
 
     def test_typescript_creates_type_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, typescript_project: Path
+        self, graph_ingestor: GraphIngestor, typescript_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, typescript_project)
+        index_project(graph_ingestor, typescript_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.TYPE.value in labels, (
             f"Type label missing. Got labels: {labels}"
         )
 
-        types = get_nodes_by_label(memgraph_ingestor, NodeLabel.TYPE.value)
+        types = get_nodes_by_label(graph_ingestor, NodeLabel.TYPE.value)
         type_names = {n["name"] for n in types}
         assert "MyType" in type_names
 
     def test_typescript_creates_class_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, typescript_project: Path
+        self, graph_ingestor: GraphIngestor, typescript_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, typescript_project)
+        index_project(graph_ingestor, typescript_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.CLASS.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        classes = get_nodes_by_label(graph_ingestor, NodeLabel.CLASS.value)
         class_names = {n["name"] for n in classes}
         assert "MyTsClass" in class_names
 
     def test_typescript_creates_function_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, typescript_project: Path
+        self, graph_ingestor: GraphIngestor, typescript_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, typescript_project)
+        index_project(graph_ingestor, typescript_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.FUNCTION.value in labels
 
-        functions = get_nodes_by_label(memgraph_ingestor, NodeLabel.FUNCTION.value)
+        functions = get_nodes_by_label(graph_ingestor, NodeLabel.FUNCTION.value)
         func_names = {n["name"] for n in functions}
         assert "createInstance" in func_names
 
 
 class TestJavaScriptNodeLabels:
     def test_javascript_creates_class_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, javascript_project: Path
+        self, graph_ingestor: GraphIngestor, javascript_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, javascript_project)
+        index_project(graph_ingestor, javascript_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.CLASS.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        classes = get_nodes_by_label(graph_ingestor, NodeLabel.CLASS.value)
         class_names = {n["name"] for n in classes}
         assert "MyJsClass" in class_names
 
     def test_javascript_creates_function_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, javascript_project: Path
+        self, graph_ingestor: GraphIngestor, javascript_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, javascript_project)
+        index_project(graph_ingestor, javascript_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.FUNCTION.value in labels
 
-        functions = get_nodes_by_label(memgraph_ingestor, NodeLabel.FUNCTION.value)
+        functions = get_nodes_by_label(graph_ingestor, NodeLabel.FUNCTION.value)
         func_names = {n["name"] for n in functions}
         assert "createInstance" in func_names
 
 
 class TestRustNodeLabels:
     def test_rust_creates_class_nodes_for_structs(
-        self, memgraph_ingestor: MemgraphIngestor, rust_project: Path
+        self, graph_ingestor: GraphIngestor, rust_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, rust_project)
+        index_project(graph_ingestor, rust_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.CLASS.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        classes = get_nodes_by_label(graph_ingestor, NodeLabel.CLASS.value)
         class_names = {n["name"] for n in classes}
         assert "MyStruct" in class_names
 
     def test_rust_creates_function_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, rust_project: Path
+        self, graph_ingestor: GraphIngestor, rust_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, rust_project)
+        index_project(graph_ingestor, rust_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.FUNCTION.value in labels
 
-        functions = get_nodes_by_label(memgraph_ingestor, NodeLabel.FUNCTION.value)
+        functions = get_nodes_by_label(graph_ingestor, NodeLabel.FUNCTION.value)
         func_names = {n["name"] for n in functions}
         assert "standalone_fn" in func_names
 
     def test_rust_creates_enum_nodes_for_enums(
-        self, memgraph_ingestor: MemgraphIngestor, rust_project: Path
+        self, graph_ingestor: GraphIngestor, rust_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, rust_project)
+        index_project(graph_ingestor, rust_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.ENUM.value in labels
 
-        enums = get_nodes_by_label(memgraph_ingestor, NodeLabel.ENUM.value)
+        enums = get_nodes_by_label(graph_ingestor, NodeLabel.ENUM.value)
         enum_names = {n["name"] for n in enums}
         assert "Status" in enum_names
 
     def test_rust_creates_interface_nodes_for_traits(
-        self, memgraph_ingestor: MemgraphIngestor, rust_project: Path
+        self, graph_ingestor: GraphIngestor, rust_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, rust_project)
+        index_project(graph_ingestor, rust_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.INTERFACE.value in labels
 
-        interfaces = get_nodes_by_label(memgraph_ingestor, NodeLabel.INTERFACE.value)
+        interfaces = get_nodes_by_label(graph_ingestor, NodeLabel.INTERFACE.value)
         interface_names = {n["name"] for n in interfaces}
         assert "MyTrait" in interface_names
 
 
 class TestGoNodeLabels:
     def test_go_creates_class_nodes_for_structs(
-        self, memgraph_ingestor: MemgraphIngestor, go_project: Path
+        self, graph_ingestor: GraphIngestor, go_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, go_project)
+        index_project(graph_ingestor, go_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.CLASS.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        classes = get_nodes_by_label(graph_ingestor, NodeLabel.CLASS.value)
         class_names = {n["name"] for n in classes}
         assert "MyStruct" in class_names
 
     def test_go_creates_interface_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, go_project: Path
+        self, graph_ingestor: GraphIngestor, go_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, go_project)
+        index_project(graph_ingestor, go_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.INTERFACE.value in labels
 
-        interfaces = get_nodes_by_label(memgraph_ingestor, NodeLabel.INTERFACE.value)
+        interfaces = get_nodes_by_label(graph_ingestor, NodeLabel.INTERFACE.value)
         interface_names = {n["name"] for n in interfaces}
         assert "MyInterface" in interface_names
 
     def test_go_creates_function_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, go_project: Path
+        self, graph_ingestor: GraphIngestor, go_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, go_project)
+        index_project(graph_ingestor, go_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.FUNCTION.value in labels
 
-        functions = get_nodes_by_label(memgraph_ingestor, NodeLabel.FUNCTION.value)
+        functions = get_nodes_by_label(graph_ingestor, NodeLabel.FUNCTION.value)
         func_names = {n["name"] for n in functions}
         assert "NewMyStruct" in func_names
         assert "main" in func_names
@@ -650,141 +650,139 @@ class TestGoNodeLabels:
 @pytest.mark.skip(reason=SKIP_SCALA)
 class TestScalaNodeLabels:
     def test_scala_creates_class_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, scala_project: Path
+        self, graph_ingestor: GraphIngestor, scala_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, scala_project)
+        index_project(graph_ingestor, scala_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.CLASS.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        classes = get_nodes_by_label(graph_ingestor, NodeLabel.CLASS.value)
         class_names = {n["name"] for n in classes}
         assert "MyScalaClass" in class_names
 
     def test_scala_creates_interface_nodes_for_traits(
-        self, memgraph_ingestor: MemgraphIngestor, scala_project: Path
+        self, graph_ingestor: GraphIngestor, scala_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, scala_project)
+        index_project(graph_ingestor, scala_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.INTERFACE.value in labels
 
-        interfaces = get_nodes_by_label(memgraph_ingestor, NodeLabel.INTERFACE.value)
+        interfaces = get_nodes_by_label(graph_ingestor, NodeLabel.INTERFACE.value)
         interface_names = {n["name"] for n in interfaces}
         assert {"MyTrait", "Status"}.issubset(interface_names)
 
 
 class TestJavaNodeLabels:
     def test_java_creates_class_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, java_project: Path
+        self, graph_ingestor: GraphIngestor, java_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, java_project)
+        index_project(graph_ingestor, java_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.CLASS.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        classes = get_nodes_by_label(graph_ingestor, NodeLabel.CLASS.value)
         class_names = {n["name"] for n in classes}
         assert "Example" in class_names
 
     def test_java_creates_interface_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, java_project: Path
+        self, graph_ingestor: GraphIngestor, java_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, java_project)
+        index_project(graph_ingestor, java_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.INTERFACE.value in labels
 
-        interfaces = get_nodes_by_label(memgraph_ingestor, NodeLabel.INTERFACE.value)
+        interfaces = get_nodes_by_label(graph_ingestor, NodeLabel.INTERFACE.value)
         interface_names = {n["name"] for n in interfaces}
         assert "MyInterface" in interface_names
 
     def test_java_creates_enum_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, java_project: Path
+        self, graph_ingestor: GraphIngestor, java_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, java_project)
+        index_project(graph_ingestor, java_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.ENUM.value in labels
 
-        enums = get_nodes_by_label(memgraph_ingestor, NodeLabel.ENUM.value)
+        enums = get_nodes_by_label(graph_ingestor, NodeLabel.ENUM.value)
         enum_names = {n["name"] for n in enums}
         assert "Status" in enum_names
 
 
 class TestCppNodeLabels:
     def test_cpp_creates_class_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_project: Path
+        self, graph_ingestor: GraphIngestor, cpp_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, cpp_project)
+        index_project(graph_ingestor, cpp_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.CLASS.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        classes = get_nodes_by_label(graph_ingestor, NodeLabel.CLASS.value)
         class_names = {n["name"] for n in classes}
         assert "MyCppClass" in class_names
 
     def test_cpp_creates_enum_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_project: Path
+        self, graph_ingestor: GraphIngestor, cpp_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, cpp_project)
+        index_project(graph_ingestor, cpp_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.ENUM.value in labels
 
-        enums = get_nodes_by_label(memgraph_ingestor, NodeLabel.ENUM.value)
+        enums = get_nodes_by_label(graph_ingestor, NodeLabel.ENUM.value)
         enum_names = {n["name"] for n in enums}
         assert "Status" in enum_names
 
     def test_cpp_creates_function_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_project: Path
+        self, graph_ingestor: GraphIngestor, cpp_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, cpp_project)
+        index_project(graph_ingestor, cpp_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.FUNCTION.value in labels
 
-        functions = get_nodes_by_label(memgraph_ingestor, NodeLabel.FUNCTION.value)
+        functions = get_nodes_by_label(graph_ingestor, NodeLabel.FUNCTION.value)
         func_names = {n["name"] for n in functions}
         assert "standaloneFunction" in func_names
 
     def test_cpp_creates_union_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_project: Path
+        self, graph_ingestor: GraphIngestor, cpp_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, cpp_project)
+        index_project(graph_ingestor, cpp_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.UNION.value in labels
 
-        unions = get_nodes_by_label(memgraph_ingestor, NodeLabel.UNION.value)
+        unions = get_nodes_by_label(graph_ingestor, NodeLabel.UNION.value)
         union_names = {n["name"] for n in unions}
         assert "DataUnion" in union_names
 
     def test_cpp_creates_module_interface_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_module_interface_project: Path
+        self, graph_ingestor: GraphIngestor, cpp_module_interface_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, cpp_module_interface_project)
+        index_project(graph_ingestor, cpp_module_interface_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.MODULE_INTERFACE.value in labels
 
-        modules = get_nodes_by_label(
-            memgraph_ingestor, NodeLabel.MODULE_INTERFACE.value
-        )
+        modules = get_nodes_by_label(graph_ingestor, NodeLabel.MODULE_INTERFACE.value)
         module_names = {n["name"] for n in modules}
         assert "mymodule" in module_names
 
     def test_cpp_creates_module_implementation_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, cpp_module_impl_project: Path
+        self, graph_ingestor: GraphIngestor, cpp_module_impl_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, cpp_module_impl_project)
+        index_project(graph_ingestor, cpp_module_impl_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.MODULE_IMPLEMENTATION.value in labels
 
         modules = get_nodes_by_label(
-            memgraph_ingestor, NodeLabel.MODULE_IMPLEMENTATION.value
+            graph_ingestor, NodeLabel.MODULE_IMPLEMENTATION.value
         )
         module_names = {n["name"] for n in modules}
         assert "mymodule_impl" in module_names
@@ -792,64 +790,64 @@ class TestCppNodeLabels:
 
 class TestPhpNodeLabels:
     def test_php_creates_class_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, php_project: Path
+        self, graph_ingestor: GraphIngestor, php_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, php_project)
+        index_project(graph_ingestor, php_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.CLASS.value in labels
 
-        classes = get_nodes_by_label(memgraph_ingestor, NodeLabel.CLASS.value)
+        classes = get_nodes_by_label(graph_ingestor, NodeLabel.CLASS.value)
         class_names = {n["name"] for n in classes}
         assert "MyPhpClass" in class_names
 
     def test_php_creates_interface_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, php_project: Path
+        self, graph_ingestor: GraphIngestor, php_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, php_project)
+        index_project(graph_ingestor, php_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.INTERFACE.value in labels
 
-        interfaces = get_nodes_by_label(memgraph_ingestor, NodeLabel.INTERFACE.value)
+        interfaces = get_nodes_by_label(graph_ingestor, NodeLabel.INTERFACE.value)
         interface_names = {n["name"] for n in interfaces}
         assert "MyInterface" in interface_names
 
     def test_php_creates_function_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, php_project: Path
+        self, graph_ingestor: GraphIngestor, php_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, php_project)
+        index_project(graph_ingestor, php_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.FUNCTION.value in labels
 
-        functions = get_nodes_by_label(memgraph_ingestor, NodeLabel.FUNCTION.value)
+        functions = get_nodes_by_label(graph_ingestor, NodeLabel.FUNCTION.value)
         func_names = {n["name"] for n in functions}
         assert "standaloneFunction" in func_names
 
     def test_php_creates_enum_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, php_project: Path
+        self, graph_ingestor: GraphIngestor, php_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, php_project)
+        index_project(graph_ingestor, php_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.ENUM.value in labels
 
-        enums = get_nodes_by_label(memgraph_ingestor, NodeLabel.ENUM.value)
+        enums = get_nodes_by_label(graph_ingestor, NodeLabel.ENUM.value)
         enum_names = {n["name"] for n in enums}
         assert "Status" in enum_names
 
 
 class TestLuaNodeLabels:
     def test_lua_creates_function_nodes(
-        self, memgraph_ingestor: MemgraphIngestor, lua_project: Path
+        self, graph_ingestor: GraphIngestor, lua_project: Path
     ) -> None:
-        index_project(memgraph_ingestor, lua_project)
+        index_project(graph_ingestor, lua_project)
 
-        labels = get_node_labels(memgraph_ingestor)
+        labels = get_node_labels(graph_ingestor)
         assert NodeLabel.FUNCTION.value in labels
 
-        functions = get_nodes_by_label(memgraph_ingestor, NodeLabel.FUNCTION.value)
+        functions = get_nodes_by_label(graph_ingestor, NodeLabel.FUNCTION.value)
         func_names = {n["name"] for n in functions}
         assert {"new", "MyClass:getValue"}.issubset(func_names)
 
@@ -873,12 +871,12 @@ def test_language_has_defines(
     project_fixture: str,
     skip_reason: str | None,
     request: pytest.FixtureRequest,
-    memgraph_ingestor: MemgraphIngestor,
+    graph_ingestor: GraphIngestor,
 ) -> None:
     if skip_reason:
         pytest.skip(skip_reason)
 
     project_path = request.getfixturevalue(project_fixture)
-    index_project(memgraph_ingestor, project_path)
-    rel_types = get_relationship_types(memgraph_ingestor)
+    index_project(graph_ingestor, project_path)
+    rel_types = get_relationship_types(graph_ingestor)
     assert "DEFINES" in rel_types

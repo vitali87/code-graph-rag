@@ -4,16 +4,13 @@ import socket
 import time
 from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TypedDict
 
 import pytest
 
 from codebase_rag.constants import GraphBackend
 from codebase_rag.services.graph import GraphIngestor
 from codebase_rag.services.graph.memgraph import MemgraphIngestor
-
-if TYPE_CHECKING:
-    import mgclient
 
 _INTEGRATION_DIR = Path(__file__).parent
 
@@ -239,21 +236,22 @@ def graph_ingestor(
 
 
 @pytest.fixture(scope="function")
-def memgraph_ingestor(
+def memgraph_only_ingestor(
     memgraph_container: dict[str, str | int],
 ) -> Generator[GraphIngestor, None, None]:
-    """Deprecated alias, pinned to Memgraph regardless of BACKENDS.
+    """For tests that white-box a Memgraph-only implementation detail.
 
-    Retained so the 30 existing test modules keep working while they
-    migrate; delete once none reference it. Deliberately built on the
-    Memgraph-only `memgraph_container` fixture rather than the
-    backend-parametrized `graph_container`: those 30 modules call
-    Memgraph-only private methods (e.g. `_execute_query`), which
-    `ArcadeDBIngestor` does not implement, so once BACKENDS grew a second
-    entry, indirectly parametrizing this alias over `graph_container` would
-    have doubled every one of them onto ArcadeDB and failed with
-    AttributeError -- a fixture-wiring artifact, not a real backend
-    difference worth discovering.
+    The 30 legacy modules that used to depend on the deprecated
+    `memgraph_ingestor` alias have all migrated to the backend-parametrized
+    `graph_ingestor`. This fixture remains for the one case that genuinely
+    cannot: `TestLegacyPathKeyMigration` in
+    `test_cross_project_folder_identity.py` exercises
+    `MemgraphIngestor._migrate_legacy_path_keys`, an engine-specific
+    migration expressed in Memgraph's proprietary constraint DDL
+    (`CREATE/DROP/SHOW CONSTRAINT ON ...`) that ArcadeDB has no equivalent
+    for and was never subject to. Deliberately typed as the concrete
+    `MemgraphIngestor`, not `GraphIngestor`, so callers can reach its
+    private `_execute_query`.
     """
     host = str(memgraph_container["host"])
     port = int(memgraph_container["port"])
@@ -297,42 +295,3 @@ def memgraph_container() -> Generator[dict[str, str | int], None, None]:
     yield {"host": host, "port": port}
 
     container.stop()
-
-
-@pytest.fixture(scope="function")
-def memgraph_connection(
-    memgraph_container: dict[str, str | int],
-) -> Generator[mgclient.Connection, None, None]:
-    import mgclient  # ty: ignore[unresolved-import]
-
-    host = str(memgraph_container["host"])
-    port = int(memgraph_container["port"])
-
-    max_retries = 10
-    conn: mgclient.Connection | None = None
-
-    for attempt in range(max_retries):
-        try:
-            conn = mgclient.connect(host=host, port=port)
-            conn.autocommit = True
-            cursor = conn.cursor()
-            cursor.execute("MATCH (n) DETACH DELETE n")
-            cursor.close()
-            break
-        except Exception as e:
-            if attempt == max_retries - 1:
-                pytest.fail(
-                    f"Failed to connect to Memgraph after {max_retries} attempts: {e}"
-                )
-            time.sleep(0.5)
-
-    if conn is None:
-        pytest.fail("Failed to establish Memgraph connection")
-
-    yield conn
-
-    assert conn is not None
-    cursor = conn.cursor()
-    cursor.execute("MATCH (n) DETACH DELETE n")
-    cursor.close()
-    conn.close()

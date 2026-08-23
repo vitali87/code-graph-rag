@@ -19,7 +19,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -37,14 +37,14 @@ def repo(tmp_path: Path) -> Path:
     return project
 
 
-def _index(ingestor: MemgraphIngestor, repo_path: Path) -> None:
+def _index(ingestor: GraphIngestor, repo_path: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor, repo_path=repo_path, parsers=parsers, queries=queries
     ).run()
 
 
-def _module_count(ingestor: MemgraphIngestor) -> int:
+def _module_count(ingestor: GraphIngestor) -> int:
     rows = ingestor.fetch_all(
         "MATCH (m:Module) WHERE m.qualified_name STARTS WITH 'cachedrepo.' "
         "RETURN count(m) AS count"
@@ -54,28 +54,28 @@ def _module_count(ingestor: MemgraphIngestor) -> int:
 
 class TestStaleHashCache:
     def test_reindex_after_external_wipe_rebuilds_fully(
-        self, memgraph_ingestor: MemgraphIngestor, repo: Path
+        self, graph_ingestor: GraphIngestor, repo: Path
     ) -> None:
-        _index(memgraph_ingestor, repo)
-        assert _module_count(memgraph_ingestor) > 0
+        _index(graph_ingestor, repo)
+        assert _module_count(graph_ingestor) > 0
         assert (repo / cs.HASH_CACHE_FILENAME).is_file()
 
         # Anything outside this repo's own clean path can wipe the shared
         # database: --clean while indexing another repo, MCP wipe_database,
         # a fresh Memgraph container.
-        memgraph_ingestor._execute_query("MATCH (n) DETACH DELETE n")
+        graph_ingestor.execute_write("MATCH (n) DETACH DELETE n")
 
-        _index(memgraph_ingestor, repo)
-        assert _module_count(memgraph_ingestor) > 0
+        _index(graph_ingestor, repo)
+        assert _module_count(graph_ingestor) > 0
 
     def test_intact_graph_keeps_incremental_sync(
-        self, memgraph_ingestor: MemgraphIngestor, repo: Path
+        self, graph_ingestor: GraphIngestor, repo: Path
     ) -> None:
-        _index(memgraph_ingestor, repo)
+        _index(graph_ingestor, repo)
 
         parsers, queries = load_parsers()
         updater = GraphUpdater(
-            ingestor=memgraph_ingestor,
+            ingestor=graph_ingestor,
             repo_path=repo,
             parsers=parsers,
             queries=queries,

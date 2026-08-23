@@ -11,7 +11,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
@@ -19,7 +19,7 @@ pytestmark = [pytest.mark.integration]
 # must produce READS_FROM / WRITES_TO edges, mirroring requests / open.
 
 
-def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, code: str) -> None:
     project = tmp_path / "io_project"
     project.mkdir()
     (project / "io_mod.py").write_text(code, encoding="utf-8")
@@ -33,7 +33,7 @@ def _build(ingestor: MemgraphIngestor, tmp_path: Path, code: str) -> None:
     ).run()
 
 
-def _io_edges(ingestor: MemgraphIngestor) -> set[tuple[str, str]]:
+def _io_edges(ingestor: GraphIngestor) -> set[tuple[str, str]]:
     rows = ingestor.fetch_all(
         f"MATCH ()-[r:{cs.RelationshipType.READS_FROM.value}|"
         f"{cs.RelationshipType.WRITES_TO.value}]->(res:{cs.NodeLabel.RESOURCE.value}) "
@@ -47,10 +47,10 @@ _WRITES = cs.RelationshipType.WRITES_TO.value
 
 
 def test_httpx_module_level_get_and_post(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "import httpx\n\n\n"
         "def fetch():\n"
@@ -58,16 +58,16 @@ def test_httpx_module_level_get_and_post(
         "def send(payload):\n"
         "    httpx.post('https://api.example.com/upload')\n",
     )
-    edges = _io_edges(memgraph_ingestor)
+    edges = _io_edges(graph_ingestor)
     assert (_READS, "resource::NETWORK::https://api.example.com/data") in edges
     assert (_WRITES, "resource::NETWORK::https://api.example.com/upload") in edges
 
 
 def test_httpx_client_instance_methods(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "import httpx\n\n\n"
         "class Api:\n"
@@ -78,17 +78,15 @@ def test_httpx_client_instance_methods(
         "    def push(self):\n"
         "        self._http.post('x')\n",
     )
-    edges = _io_edges(memgraph_ingestor)
+    edges = _io_edges(graph_ingestor)
     kinds = {(rel, qn.split("::")[1]) for rel, qn in edges}
     assert (_READS, "NETWORK") in kinds
     assert (_WRITES, "NETWORK") in kinds
 
 
-def test_pathlib_read_and_write(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
-) -> None:
+def test_pathlib_read_and_write(graph_ingestor: GraphIngestor, tmp_path: Path) -> None:
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "from pathlib import Path\n\n\n"
         "def save(data):\n"
@@ -98,16 +96,16 @@ def test_pathlib_read_and_write(
         "    p = Path('in.txt')\n"
         "    return p.read_text()\n",
     )
-    edges = _io_edges(memgraph_ingestor)
+    edges = _io_edges(graph_ingestor)
     assert (_WRITES, "resource::FILE::out.txt") in edges
     assert (_READS, "resource::FILE::in.txt") in edges
 
 
 def test_pathlib_directory_listing_and_touch(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "from pathlib import Path\n\n\n"
         "def scan():\n"
@@ -117,6 +115,6 @@ def test_pathlib_directory_listing_and_touch(
         "    f = Path('flag')\n"
         "    f.touch()\n",
     )
-    edges = _io_edges(memgraph_ingestor)
+    edges = _io_edges(graph_ingestor)
     assert (_READS, "resource::FILE::data") in edges
     assert (_WRITES, "resource::FILE::flag") in edges

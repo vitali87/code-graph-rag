@@ -12,16 +12,14 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.flow_access import FlowKind
 
 if TYPE_CHECKING:
-    from codebase_rag.services.graph_service import MemgraphIngestor
+    from codebase_rag.services.graph import GraphIngestor
 
 pytestmark = [pytest.mark.integration]
 
 _FLOWS = cs.RelationshipType.FLOWS_TO.value
 
 
-def _build(
-    ingestor: MemgraphIngestor, tmp_path: Path, filename: str, code: str
-) -> None:
+def _build(ingestor: GraphIngestor, tmp_path: Path, filename: str, code: str) -> None:
     project = tmp_path / "flow_ps"
     project.mkdir()
     (project / filename).write_text(code, encoding="utf-8")
@@ -35,7 +33,7 @@ def _build(
     ).run()
 
 
-def _flows(ingestor: MemgraphIngestor) -> list[dict[str, str | None]]:
+def _flows(ingestor: GraphIngestor) -> list[dict[str, str | None]]:
     rows = ingestor.fetch_all(
         f"MATCH (a)-[r:{_FLOWS}]->(b) "
         "RETURN a.qualified_name AS frm, b.qualified_name AS to, r.kind AS kind"
@@ -57,13 +55,13 @@ def _has_resource(flows: list[dict[str, str | None]], frm: str, to: str) -> bool
 
 
 def test_conditional_kill_survives_skip_path(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # MAY: the kill happens only on the if-path, so the skip path keeps the taint;
     # after the merge `secret` is still tainted and the flow must survive. The flat
     # walk wrongly applied the kill unconditionally (false negative).
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot(cond) {\n"
@@ -73,19 +71,19 @@ def test_conditional_kill_survives_skip_path(
         "}\n",
     )
     assert _has_resource(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::SECRET",
         "resource::STDOUT::<dynamic>",
     )
 
 
 def test_kill_on_all_branches_no_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Killed on BOTH the if and the else path, so after the merge `secret` carries
     # no taint and no resource flow may appear.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot(cond) {\n"
@@ -94,16 +92,16 @@ def test_kill_on_all_branches_no_flow(
         "  console.log(secret);\n"
         "}\n",
     )
-    flows = _flows(memgraph_ingestor)
+    flows = _flows(graph_ingestor)
     assert not any(f["kind"] == FlowKind.RESOURCE.value for f in flows)
 
 
 def test_taint_introduced_in_one_branch_survives(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Taint introduced on only the if-path still reaches the sink after the merge.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot(cond) {\n"
@@ -113,18 +111,18 @@ def test_taint_introduced_in_one_branch_survives(
         "}\n",
     )
     assert _has_resource(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::SECRET",
         "resource::STDOUT::<dynamic>",
     )
 
 
 def test_else_if_branch_taint_survives(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # An else-if chain: taint introduced in the middle branch survives the merge.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot(a, b) {\n"
@@ -136,20 +134,20 @@ def test_else_if_branch_taint_survives(
         "}\n",
     )
     assert _has_resource(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::SECRET",
         "resource::STDOUT::<dynamic>",
     )
 
 
 def test_loop_carried_taint_reaches_earlier_sink(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # The write happens BEFORE the tainting assignment in source order, but a later
     # loop iteration carries the taint back to it; the body is walked twice so the
     # NETWORK -> FILE flow is caught. The flat walk missed this (false negative).
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function sync(items) {\n"
@@ -161,21 +159,21 @@ def test_loop_carried_taint_reaches_earlier_sink(
         "}\n",
     )
     assert _has_resource(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::NETWORK::https://api.example.com/x",
         "resource::FILE::out.txt",
     )
 
 
 def test_for_increment_carries_taint_to_next_iteration(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # The C-style `for` increment `x = y` runs AFTER the body each iteration: it
     # picks up the taint the body put on `y` and carries it into `x` for the next
     # iteration's write. Walking the increment in the header (before the body)
     # missed this; it is now walked after each body pass.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function sync() {\n"
@@ -188,18 +186,18 @@ def test_for_increment_carries_taint_to_next_iteration(
         "}\n",
     )
     assert _has_resource(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::NETWORK::https://api.example.com/x",
         "resource::FILE::out.txt",
     )
 
 
 def test_try_body_taint_survives_to_after(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # Taint assigned in the try body reaches the sink after the try/catch merge.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot() {\n"
@@ -209,18 +207,18 @@ def test_try_body_taint_survives_to_after(
         "}\n",
     )
     assert _has_resource(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::SECRET",
         "resource::STDOUT::<dynamic>",
     )
 
 
 def test_straight_line_still_works(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    graph_ingestor: GraphIngestor, tmp_path: Path
 ) -> None:
     # No branches: behaves exactly like the old flat walk.
     _build(
-        memgraph_ingestor,
+        graph_ingestor,
         tmp_path,
         "app.js",
         "function boot() {\n"
@@ -229,7 +227,7 @@ def test_straight_line_still_works(
         "}\n",
     )
     assert _has_resource(
-        _flows(memgraph_ingestor),
+        _flows(graph_ingestor),
         "resource::ENV::SECRET",
         "resource::STDOUT::<dynamic>",
     )
