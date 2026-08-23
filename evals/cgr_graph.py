@@ -18,8 +18,13 @@ class _CapturingIngestor:
         self.rels: list[_RelTuple] = []
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
+        # Production writes are MERGE (n {qn}) SET n += props: additive. Some
+        # passes deliberately re-emit a node with a PARTIAL row (the Rust
+        # external-trait-override flag carries only qualified_name +
+        # overrides_external), so replacing the dict would wipe path/span/
+        # fingerprint off the already-captured definition.
         uid = properties[cs.NODE_UNIQUE_CONSTRAINTS[label]]
-        self.nodes[(str(label), uid)] = dict(properties)
+        self.nodes.setdefault((str(label), uid), {}).update(properties)
 
     def ensure_relationship_batch(
         self,
@@ -112,8 +117,10 @@ class _StatefulIngestor:
         self.edge_props: dict[_RelTuple, PropertyDict] = {}
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
+        # Same += merge semantics as _CapturingIngestor: partial re-emissions
+        # must never wipe the properties of an already-ingested node.
         uid = properties[cs.NODE_UNIQUE_CONSTRAINTS[label]]
-        self.nodes[(str(label), uid)] = dict(properties)
+        self.nodes.setdefault((str(label), uid), {}).update(properties)
 
     def ensure_relationship_batch(
         self,
