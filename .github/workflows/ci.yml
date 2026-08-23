@@ -425,13 +425,17 @@ jobs:
                                | select(.body | contains("Confidence Score:"))]
                         | sort_by(.updated_at) | last | .body // empty')
             if [ -n "$body" ]; then
+              # Greptile sometimes prints an abbreviated commit instead of a
+              # full-SHA link, so accept 7-40 hex chars and compare as a
+              # prefix of the head SHA.
               reviewed=$(printf '%s' "$body" \
                 | grep -o 'Last reviewed commit.*' \
-                | grep -oE '[0-9a-f]{40}' | head -1 || true)
+                | grep -oE '[0-9a-f]{7,40}' | head -1 || true)
               score=$(printf '%s' "$body" \
                 | grep -oE 'Confidence Score: [0-9]+/5' | tail -1 \
                 | grep -oE '[0-9]+' | head -1 || true)
-              if [ "$reviewed" = "$HEAD_SHA" ] && [ -n "$score" ]; then
+              if [ -n "$reviewed" ] && [ -n "$score" ] \
+                 && [[ "$HEAD_SHA" == "$reviewed"* ]]; then
                 if [ "$score" = "5" ]; then
                   echo "✅ Greptile scored $HEAD_SHA at 5/5"
                   exit 0
