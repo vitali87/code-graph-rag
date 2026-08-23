@@ -13,14 +13,24 @@ doubles its quotes to embed one (`"a""b"` names `a"b`).
 
 from __future__ import annotations
 
+# A dot INSIDE a quoted identifier, encoded so the canonical key keeps it
+# apart from a qualifier separator: "billing.v1".usp_total and
+# billing."v1.usp_total" must not collide, and every downstream consumer
+# (FQN joining, the registry trie, dotted-suffix lookup) splits on ".".
+# ONE DOT LEADER renders as a dot to a human; an identifier that itself
+# contains U+2024 is not distinguished, which PostgreSQL identifiers do
+# not do in practice.
+QUOTED_DOT = "․"
+
 
 def normalize_sql_reference(reference: str) -> str:
-    """`App."My.Func"` -> `app.My.Func`; `"a""b"` -> `a"b`; `MyFunc` -> `myfunc`.
+    """`App."My.Func"` -> `app.My․Func`; `"a""b"` -> `a"b`; `MyFunc` -> `myfunc`.
 
     Splits into segments on dots OUTSIDE quotes only, folds unquoted segments
     to lowercase, and keeps quoted segments verbatim (quotes stripped, doubled
-    quotes unescaped). Empty segments vanish, so a malformed reference still
-    yields its salvageable parts rather than nothing.
+    quotes unescaped, embedded dots encoded as QUOTED_DOT). Empty segments
+    vanish, so a malformed reference still yields its salvageable parts
+    rather than nothing.
     """
     segments: list[str] = []
     buf: list[str] = []
@@ -30,7 +40,10 @@ def normalize_sql_reference(reference: str) -> str:
 
     def flush() -> None:
         nonlocal saw_quotes
-        segment = "".join(buf) if saw_quotes else "".join(buf).strip().lower()
+        if saw_quotes:
+            segment = "".join(buf).replace(".", QUOTED_DOT)
+        else:
+            segment = "".join(buf).strip().lower()
         if segment:
             segments.append(segment)
         buf.clear()

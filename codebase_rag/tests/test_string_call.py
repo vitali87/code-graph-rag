@@ -130,6 +130,11 @@ class TestStringCallTarget:
         node = _ts_call_node('callSp("usp_\\u0069nvoice_list");')
         assert string_call_target(node, "callSp", SPECS) == "usp_invoice_list"
 
+    def test_braced_unicode_escape_resolves_its_runtime_string(self) -> None:
+        # ECMAScript's braced form, which unicode_escape alone rejects.
+        node = _ts_call_node('callSp("usp\\u{005f}invoice_list");')
+        assert string_call_target(node, "callSp", SPECS) == "usp_invoice_list"
+
     def test_unquoted_target_folds_to_lowercase(self) -> None:
         # PostgreSQL folds MyFunc to myfunc on BOTH sides, so the call and
         # the definition meet at the same key.

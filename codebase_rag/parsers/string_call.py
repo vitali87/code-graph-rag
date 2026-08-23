@@ -51,6 +51,9 @@ _JDBC_CALL = re.compile(
     r"^\{\s*(?:\?\s*=\s*)?call\s+([^\s({}]+)\s*(?:\(.*\))?\s*\}$",
     re.IGNORECASE | re.DOTALL,
 )
+# ECMAScript's braced form (`\u{5f}` .. `\u{10FFFF}`), which the
+# unicode_escape codec does not know.
+_BRACED_UNICODE = re.compile(r"\\u\{([0-9a-fA-F]{1,6})\}")
 
 
 @dataclass(frozen=True)
@@ -131,8 +134,11 @@ def _string_literal_value(node: Node) -> str | None:
         # that the runtime string does not contain; resolve the runtime
         # string or the lookup misses the routine it plainly names.
         try:
+            value = _BRACED_UNICODE.sub(
+                lambda match: chr(int(match.group(1), 16)), value
+            )
             value = value.encode("latin-1", "backslashreplace").decode("unicode_escape")
-        except UnicodeDecodeError:
+        except (UnicodeDecodeError, ValueError):
             return None
     return value
 

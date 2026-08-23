@@ -129,13 +129,27 @@ class TestSqlGetName:
 
     def test_quoted_identifier_keeps_a_dot_inside_it(self) -> None:
         # A dot inside quotes is part of the identifier, not a qualifier
-        # separator: "billing.v1" is one schema name.
+        # separator: "billing.v1" is one schema name. The embedded dot is
+        # encoded (QUOTED_DOT) so the canonical key cannot collide with a
+        # genuinely qualified billing.v1.
+        from codebase_rag.sql_names import QUOTED_DOT
+
         node = _create_function_node(
             'CREATE FUNCTION "billing.v1".usp_total() RETURNS int '
             "AS $$ SELECT 1; $$ LANGUAGE sql;"
         )
         assert node is not None
-        assert _sql_get_name(node) == "billing.v1.usp_total"
+        assert _sql_get_name(node) == f"billing{QUOTED_DOT}v1.usp_total"
+
+    def test_quoted_dot_placement_stays_distinguishable(self) -> None:
+        # "billing.v1".usp_total and billing."v1.usp_total" are different
+        # objects; one canonical key for both would register the second as a
+        # duplicate and let a qualified call resolve to whichever came first.
+        from codebase_rag.sql_names import normalize_sql_reference
+
+        assert normalize_sql_reference('"billing.v1".usp_total') != (
+            normalize_sql_reference('billing."v1.usp_total"')
+        )
 
     def test_doubled_quotes_unescape_to_one(self) -> None:
         # Straight through the normalizer: the published grammar cannot yet
