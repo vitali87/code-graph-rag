@@ -1105,10 +1105,11 @@ def stop_command() -> None:
     rich_help_panel=ch.PANEL_MANAGE,
 )
 def status_command() -> None:
-    status = StackManager().status()
+    mgr = StackManager()
+    status = mgr.status()
     app_context.console.print(
         f"stack:    {status.state.value} "
-        f"(memgraph={status.memgraph_endpoint} reachable={status.memgraph_reachable}, "
+        f"({mgr.backend.value}={status.graph_endpoint} reachable={status.graph_reachable}, "
         f"qdrant={status.qdrant_endpoint} reachable={status.qdrant_reachable})"
     )
     app_context.console.print(f"compose:  {status.compose_file}")

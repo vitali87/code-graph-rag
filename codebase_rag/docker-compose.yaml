@@ -2,6 +2,11 @@
 # Qdrant are unauthenticated, so a bare "host:container" mapping (which Docker
 # binds to 0.0.0.0) puts the whole code graph on the local network (issue
 # #1012). Set CGR_STACK_BIND_HOST=0.0.0.0 to expose the stack deliberately.
+# Memgraph and ArcadeDB both default to Bolt port 7687, so they are gated
+# behind mutually exclusive profiles ("memgraph", "arcadedb") and only one
+# may be up at a time. "memgraph" is the default-active profile, so plain
+# `docker compose up` / `cgr daemon up` behave exactly as before for
+# existing users; select ArcadeDB with `--profile arcadedb`.
 services:
   memgraph:
     # Pinned by digest: engine upgrades change accepted Cypher syntax (issue
@@ -9,6 +14,7 @@ services:
     # patch-level tags, so even `3.3` can float to a rebuilt image. Bump
     # deliberately and run the integration suite against the new digest.
     image: memgraph/memgraph-mage:3.3@sha256:4579a70a2a095026d2e4039a5b0a4756e8e0e8a37ea0350f71240346efe343e8
+    profiles: ["memgraph"]
     ports:
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${MEMGRAPH_PORT:-7687}:7687"
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${MEMGRAPH_HTTP_PORT:-7444}:7444"
@@ -17,10 +23,41 @@ services:
       - memgraph_log:/var/log/memgraph
   lab:
     image: memgraph/lab
+    profiles: ["memgraph"]
     ports:
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${LAB_PORT:-3000}:3000"
     environment:
       QUICK_CONNECT_MG_HOST: memgraph
+  arcadedb:
+    # Pinned to an exact tag, not `latest`: an untagged pull is whatever a
+    # given host happens to have cached (a local `latest` here resolved to
+    # a 26.9.1-SNAPSHOT build instead of the validated 26.8.1 release), and
+    # SNAPSHOT builds are not a stable target for the compose stack.
+    image: arcadedata/arcadedb:26.8.1
+    profiles: ["arcadedb"]
+    environment:
+      # ARCADEDB_ROOT_PASSWORD as a plain env var is a no-op on this image --
+      # the server only reads the -Darcadedb.server.rootPassword system
+      # property. Without it, the server falls back to an interactive
+      # askForRootPassword prompt that hangs forever with no TTY attached.
+      # The Bolt listener is also a plugin and is off unless explicitly
+      # enabled here.
+      #
+      # defaultDatabases' per-database credential entry is
+      # `user:password:role`; the role is optional but without it root gets
+      # a roleless per-db account and every schema DDL statement 403s with
+      # "User 'root' is not allowed to update schema" even though root is
+      # the server's global superuser. Appending `:admin` grants the role
+      # schema DDL needs.
+      JAVA_OPTS: >-
+        -Darcadedb.server.rootPassword=${ARCADEDB_PASSWORD}
+        -Darcadedb.server.plugins=Bolt:com.arcadedb.bolt.BoltProtocolPlugin
+        -Darcadedb.server.defaultDatabases=${ARCADEDB_DATABASE:-codegraph}[root:${ARCADEDB_PASSWORD}:admin]
+    ports:
+      - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${ARCADEDB_BOLT_PORT:-7687}:7687"
+      - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${ARCADEDB_HTTP_PORT:-2480}:2480"
+    volumes:
+      - arcadedb_data:/home/arcadedb/databases
   qdrant:
     image: qdrant/qdrant
     ports:
@@ -33,3 +70,4 @@ volumes:
   qdrant_storage:
   memgraph_data:
   memgraph_log:
+  arcadedb_data:

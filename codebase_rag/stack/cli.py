@@ -23,7 +23,7 @@ def _print_status(mgr: StackManager) -> None:
     status = mgr.status()
     click.echo(f"state:    {status.state.value}")
     click.echo(
-        f"memgraph: {status.memgraph_endpoint} (reachable={status.memgraph_reachable})"
+        f"{mgr.backend.value}: {status.graph_endpoint} (reachable={status.graph_reachable})"
     )
     click.echo(
         f"qdrant:   {status.qdrant_endpoint} (reachable={status.qdrant_reachable})"

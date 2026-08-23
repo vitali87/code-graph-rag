@@ -3,14 +3,12 @@ from __future__ import annotations
 import os
 import subprocess
 
-import mgclient  # ty: ignore[unresolved-import]
-from loguru import logger
-
 from .. import constants as cs
 from .. import graph_audit
 from ..config import settings
+from ..constants import GraphBackend
 from ..schemas import HealthCheckResult
-from ..types_defs import ResultRow
+from ..services.graph.factory import get_ingestor
 
 
 class HealthChecker:
@@ -64,53 +62,35 @@ class HealthChecker:
                 error=str(e),
             )
 
-    def check_memgraph_connection(self) -> HealthCheckResult:
-        conn = None
-        cursor = None
-        try:
-            conn = mgclient.connect(
-                host=settings.MEMGRAPH_HOST,
-                port=settings.MEMGRAPH_PORT,
-            )
+    @staticmethod
+    def _graph_endpoint(backend: GraphBackend) -> tuple[str, int]:
+        if backend == GraphBackend.ARCADEDB:
+            return settings.ARCADEDB_HOST, settings.ARCADEDB_BOLT_PORT
+        return settings.MEMGRAPH_HOST, settings.MEMGRAPH_PORT
 
-            cursor = conn.cursor()
-            cursor.execute(cs.HEALTH_CHECK_MEMGRAPH_QUERY)
-            list(cursor.fetchall())
+    def check_graph_connection(self) -> HealthCheckResult:
+        backend = settings.GRAPH_BACKEND
+        host, port = self._graph_endpoint(backend)
+        try:
+            with get_ingestor(backend) as ingestor:
+                list(ingestor.fetch_all(cs.HEALTH_CHECK_GRAPH_QUERY))
 
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MEMGRAPH_SUCCESSFUL,
+                name=cs.HEALTH_CHECK_GRAPH_SUCCESSFUL.format(backend=backend),
                 passed=True,
-                message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG.format(
-                    host=settings.MEMGRAPH_HOST,
-                    port=settings.MEMGRAPH_PORT,
+                message=cs.HEALTH_CHECK_GRAPH_CONNECTED_MSG.format(
+                    host=host,
+                    port=port,
                 ),
             )
 
-        except mgclient.Error as e:
-            return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MEMGRAPH_FAILED,
-                passed=False,
-                message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG,
-                error=cs.HEALTH_CHECK_MEMGRAPH_ERROR.format(error=str(e)),
-            )
         except Exception as e:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MEMGRAPH_FAILED,
+                name=cs.HEALTH_CHECK_GRAPH_FAILED.format(backend=backend),
                 passed=False,
-                message=cs.HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG,
-                error=str(e),
+                message=cs.HEALTH_CHECK_GRAPH_CONNECTION_FAILED_MSG,
+                error=cs.HEALTH_CHECK_GRAPH_ERROR.format(backend=backend, error=str(e)),
             )
-        finally:
-            if cursor is not None:
-                try:
-                    cursor.close()
-                except Exception as e:
-                    logger.warning(f"Failed to close Memgraph cursor: {e}")
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception as e:
-                    logger.warning(f"Failed to close Memgraph connection: {e}")
 
     def check_api_key(self, env_name: str, display_name: str) -> HealthCheckResult:
         value = os.getenv(env_name) or getattr(settings, env_name, None)
@@ -188,26 +168,18 @@ class HealthChecker:
     def check_graph_integrity(self) -> list[HealthCheckResult]:
         """Structural audit of the live graph (issue #646).
 
-        Returns no results when Memgraph is unreachable: connectivity is
-        already reported by check_memgraph_connection.
+        Returns no results when the graph backend is unreachable:
+        connectivity is already reported by check_graph_connection.
         """
+        backend = settings.GRAPH_BACKEND
         try:
-            conn = mgclient.connect(
-                host=settings.MEMGRAPH_HOST,
-                port=settings.MEMGRAPH_PORT,
-            )
+            ingestor = get_ingestor(backend)
+            ingestor.__enter__()
         except Exception:
             return []
-        cursor = conn.cursor()
-
-        def fetch_all(query: str) -> list[ResultRow]:
-            cursor.execute(query)
-            # mgclient.Column is not subscriptable; the name is an attribute.
-            columns = [column.name for column in cursor.description or []]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
         try:
-            violations = graph_audit.collect_live_violations(fetch_all)
+            violations = graph_audit.collect_live_violations(ingestor.fetch_all)
         except Exception as e:
             return [
                 HealthCheckResult(
@@ -218,8 +190,7 @@ class HealthChecker:
                 )
             ]
         finally:
-            cursor.close()
-            conn.close()
+            ingestor.__exit__(None, None, None)
         if not violations:
             return [
                 HealthCheckResult(
@@ -244,7 +215,7 @@ class HealthChecker:
     def run_all_checks(self) -> list[HealthCheckResult]:
         self.results = []
         self.results.append(self.check_docker())
-        self.results.append(self.check_memgraph_connection())
+        self.results.append(self.check_graph_connection())
         self.results.extend(self.check_graph_integrity())
         self.results.extend(self.check_api_keys())
         for tool_name, cmd in cs.HEALTH_CHECK_EXTERNAL_TOOLS:

@@ -13,6 +13,7 @@ DEFAULT_DOCKER_TIMEOUT_S = 120.0
 DEFAULT_STATUS_TIMEOUT_S = 10.0
 
 SERVICE_MEMGRAPH = "memgraph"
+SERVICE_ARCADEDB = "arcadedb"
 SERVICE_QDRANT = "qdrant"
 SERVICE_LAB = "lab"
 
@@ -42,7 +43,7 @@ ERR_COMPOSE_FILE_MISSING = "Compose file not found at {path}."
 
 MSG_USING_COMPOSE_FILE = "Using compose file at {path}"
 MSG_STARTING_STACK = "Starting cgr stack..."
-MSG_STACK_HEALTHY = "Stack is healthy ({memgraph}, {qdrant})."
+MSG_STACK_HEALTHY = "Stack is healthy ({graph}, {qdrant})."
 MSG_STACK_ALREADY_RUNNING = "Stack already running."
 MSG_STOPPING_STACK = "Stopping cgr stack..."
 MSG_STACK_STOPPED = "Stack stopped."

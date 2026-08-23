@@ -65,7 +65,7 @@ def test_ports_are_still_published_at_their_documented_numbers() -> None:
     mappings = [mapping for _service, mapping in _published_ports()]
     container_ports = {mapping.rsplit(":", 1)[-1] for mapping in mappings}
 
-    assert container_ports == {"7687", "7444", "3000", "6333", "6334"}
+    assert container_ports == {"7687", "7444", "3000", "6333", "6334", "2480"}
 
 
 class TestPublicPortWarning:
@@ -179,7 +179,7 @@ class TestPublicPortWarning:
         assert manager.compose_file.read_text(encoding="utf-8") == rendered
 
 
-@pytest.mark.parametrize("service", ["memgraph", "lab", "qdrant"])
+@pytest.mark.parametrize("service", ["memgraph", "lab", "qdrant", "arcadedb"])
 def test_each_service_is_covered(service: str) -> None:
     assert any(name == service for name, _mapping in _published_ports())
 

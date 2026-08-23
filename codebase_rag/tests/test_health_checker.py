@@ -7,15 +7,21 @@ from codebase_rag.cypher_queries import CYPHER_AUDIT_ORPHANS
 from codebase_rag.tools.health_checker import HealthChecker
 
 
-def test_check_memgraph_connection_returns_failure_when_down(
+def test_check_graph_connection_returns_failure_when_down(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def raise_operational_error(**_: object) -> object:
         raise mgclient.OperationalError("connection refused")
 
-    monkeypatch.setattr(mgclient, "connect", raise_operational_error)
+    # health_checker.py no longer imports mgclient directly; it reaches the
+    # graph through get_ingestor(), which for the default Memgraph backend
+    # connects via codebase_rag.services.graph.memgraph's mgclient reference.
+    monkeypatch.setattr(
+        "codebase_rag.services.graph.memgraph.mgclient.connect",
+        raise_operational_error,
+    )
 
-    result = HealthChecker().check_memgraph_connection()
+    result = HealthChecker().check_graph_connection()
 
     assert result.passed is False
 
@@ -35,7 +41,7 @@ class _FakeCursor:
         self._rows: list[tuple] = []
         self.closed = False
 
-    def execute(self, query: str) -> None:
+    def execute(self, query: str, params: dict[str, object] | None = None) -> None:
         self._rows = []
         for marker, rows in self._rows_by_marker.items():
             if marker in query:
@@ -57,6 +63,7 @@ class _FakeConnection:
     def __init__(self, cursor: _FakeCursor):
         self._cursor = cursor
         self.closed = False
+        self.autocommit = False
 
     def cursor(self) -> _FakeCursor:
         return self._cursor
@@ -65,13 +72,19 @@ class _FakeConnection:
         self.closed = True
 
 
-def test_check_graph_integrity_skipped_when_memgraph_down(
+def _patch_mgclient_connect(monkeypatch: pytest.MonkeyPatch, connect: object) -> None:
+    monkeypatch.setattr(
+        "codebase_rag.services.graph.memgraph.mgclient.connect", connect
+    )
+
+
+def test_check_graph_integrity_skipped_when_graph_down(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def raise_operational_error(**_: object) -> object:
         raise mgclient.OperationalError("connection refused")
 
-    monkeypatch.setattr(mgclient, "connect", raise_operational_error)
+    _patch_mgclient_connect(monkeypatch, raise_operational_error)
 
     assert HealthChecker().check_graph_integrity() == []
 
@@ -80,7 +93,7 @@ def test_check_graph_integrity_passes_on_clean_graph(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cursor = _FakeCursor({}, [])
-    monkeypatch.setattr(mgclient, "connect", lambda **_: _FakeConnection(cursor))
+    _patch_mgclient_connect(monkeypatch, lambda **_: _FakeConnection(cursor))
 
     results = HealthChecker().check_graph_integrity()
 
@@ -94,7 +107,7 @@ def test_check_graph_integrity_reports_orphans(
     cursor = _FakeCursor(
         {CYPHER_AUDIT_ORPHANS: [("Method", 427)]}, ["label", "orphans"]
     )
-    monkeypatch.setattr(mgclient, "connect", lambda **_: _FakeConnection(cursor))
+    _patch_mgclient_connect(monkeypatch, lambda **_: _FakeConnection(cursor))
 
     results = HealthChecker().check_graph_integrity()
 

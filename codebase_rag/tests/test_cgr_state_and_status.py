@@ -55,10 +55,10 @@ class TestStatusCommand:
 
         fake = StackStatus(
             state=StackState.STOPPED,
-            memgraph_reachable=False,
+            graph_reachable=False,
             qdrant_reachable=False,
             compose_file=Path("/tmp/cgr/docker-compose.yaml"),
-            memgraph_endpoint="localhost:7687",
+            graph_endpoint="localhost:7687",
             qdrant_endpoint="localhost:6333",
         )
         with patch("codebase_rag.cli.StackManager") as mock_mgr:
@@ -76,10 +76,10 @@ class TestStatusCommand:
         cgr_state.record_sync("beta")
         fake = StackStatus(
             state=StackState.RUNNING,
-            memgraph_reachable=True,
+            graph_reachable=True,
             qdrant_reachable=True,
             compose_file=Path("/tmp/cgr/docker-compose.yaml"),
-            memgraph_endpoint="localhost:7687",
+            graph_endpoint="localhost:7687",
             qdrant_endpoint="localhost:6333",
         )
         with patch("codebase_rag.cli.StackManager") as mock_mgr:

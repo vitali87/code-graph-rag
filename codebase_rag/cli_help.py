@@ -53,7 +53,7 @@ CMD_LANGUAGE_LIST = "List configured languages and their node mappings"
 CMD_LANGUAGE_REMOVE = "Remove a language from cgr configuration"
 CMD_LANGUAGE_CLEANUP = "Remove orphaned grammar entries under .git/modules"
 
-CMD_DAEMON = "Manage the shared Memgraph and Qdrant stack"
+CMD_DAEMON = "Manage the shared graph backend and Qdrant stack"
 CMD_DAEMON_GROUP = CMD_DAEMON
 CMD_DAEMON_UP = "Start the shared stack and wait until it is healthy"
 CMD_DAEMON_DOWN = "Stop the shared stack and preserve its data volumes"

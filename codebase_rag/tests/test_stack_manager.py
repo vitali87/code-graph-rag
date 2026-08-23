@@ -107,7 +107,7 @@ def test_check_docker_raises_when_compose_missing(stack_home: Path) -> None:
 def test_status_returns_stopped_when_nothing_reachable(stack_home: Path) -> None:
     mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
     with (
-        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=False),
+        patch("codebase_rag.stack.manager.wait_for_graph", return_value=False),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=False),
     ):
         status = mgr.status()
@@ -117,19 +117,19 @@ def test_status_returns_stopped_when_nothing_reachable(stack_home: Path) -> None
 def test_status_returns_running_when_both_reachable(stack_home: Path) -> None:
     mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
     with (
-        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_graph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
     ):
         status = mgr.status()
     assert status.state == stack_cs.StackState.RUNNING
-    assert status.memgraph_reachable
+    assert status.graph_reachable
     assert status.qdrant_reachable
 
 
-def test_status_returns_partial_when_only_memgraph_reachable(stack_home: Path) -> None:
+def test_status_returns_partial_when_only_graph_reachable(stack_home: Path) -> None:
     mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
     with (
-        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_graph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=False),
     ):
         status = mgr.status()
@@ -154,7 +154,7 @@ def test_ensure_running_skips_docker_when_already_up(
     src = _make_compose_source(tmp_path)
     mgr = StackManager(home=stack_home, package_compose=src)
     with (
-        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_graph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
         patch.object(mgr, "up") as mock_up,
         patch.object(mgr, "wait_healthy") as mock_wait,
@@ -181,9 +181,7 @@ def test_ensure_running_starts_when_stopped(stack_home: Path, tmp_path: Path) ->
         reachable_state["qdrant"] = True
 
     with (
-        patch(
-            "codebase_rag.stack.manager.wait_for_memgraph", side_effect=memgraph_check
-        ),
+        patch("codebase_rag.stack.manager.wait_for_graph", side_effect=memgraph_check),
         patch("codebase_rag.stack.manager.wait_for_qdrant", side_effect=qdrant_check),
         patch.object(mgr, "up", side_effect=fake_up) as mock_up,
         patch.object(mgr, "wait_healthy") as mock_wait,
