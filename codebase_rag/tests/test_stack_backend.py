@@ -90,3 +90,83 @@ def test_graph_reachability_detail_reports_both_down(
     assert detail is not None
     assert "bolt unreachable" in detail
     assert "http unreachable" in detail
+
+
+def test_wait_for_graph_probes_the_passed_host_not_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression test: the HTTP readiness probe used to hardcode
+    # cs.LOOPBACK_HOST regardless of the `host` argument, so a remote
+    # ArcadeDB would be probed on 127.0.0.1 instead of where it actually
+    # runs.
+    seen_urls: list[str] = []
+    monkeypatch.setattr(
+        "codebase_rag.stack.health._arcade_bolt_reachable", lambda h, p: True
+    )
+
+    def fake_http_reachable(url: str) -> bool:
+        seen_urls.append(url)
+        return True
+
+    monkeypatch.setattr(
+        "codebase_rag.stack.health._http_reachable", fake_http_reachable
+    )
+    assert wait_for_graph(
+        GraphBackend.ARCADEDB, "remote.example.com", 7687, 2480, timeout=1.0
+    )
+    assert seen_urls == ["http://remote.example.com:2480/api/v1/ready"]
+
+
+def test_graph_reachability_detail_probes_the_passed_host_not_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_urls: list[str] = []
+    monkeypatch.setattr(
+        "codebase_rag.stack.health._arcade_bolt_reachable", lambda h, p: True
+    )
+
+    def fake_http_reachable(url: str) -> bool:
+        seen_urls.append(url)
+        return True
+
+    monkeypatch.setattr(
+        "codebase_rag.stack.health._http_reachable", fake_http_reachable
+    )
+    graph_reachability_detail(GraphBackend.ARCADEDB, "remote.example.com", 7687, 2480)
+    assert seen_urls == ["http://remote.example.com:2480/api/v1/ready"]
+
+
+def test_wait_for_graph_ready_url_uses_the_configured_scheme(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from codebase_rag.config import settings
+    from codebase_rag.constants import ArcadeHttpScheme
+
+    seen_urls: list[str] = []
+    monkeypatch.setattr(settings, "ARCADEDB_HTTP_SCHEME", ArcadeHttpScheme.HTTPS)
+    monkeypatch.setattr(
+        "codebase_rag.stack.health._arcade_bolt_reachable", lambda h, p: True
+    )
+
+    def fake_http_reachable(url: str) -> bool:
+        seen_urls.append(url)
+        return True
+
+    monkeypatch.setattr(
+        "codebase_rag.stack.health._http_reachable", fake_http_reachable
+    )
+    assert wait_for_graph(GraphBackend.ARCADEDB, "h", 7687, 2480, timeout=1.0)
+    assert seen_urls == ["https://h:2480/api/v1/ready"]
+
+
+def test_wait_for_graph_raises_when_arcadedb_http_port_is_none() -> None:
+    # http_port is `int | None` because Memgraph has no HTTP probe, but an
+    # ArcadeDB caller omitting it is a programming error -- it must not
+    # silently build ".../None/api/v1/ready".
+    with pytest.raises(ValueError, match="http_port"):
+        wait_for_graph(GraphBackend.ARCADEDB, "h", 7687, None, timeout=1.0)
+
+
+def test_graph_reachability_detail_raises_when_arcadedb_http_port_is_none() -> None:
+    with pytest.raises(ValueError, match="http_port"):
+        graph_reachability_detail(GraphBackend.ARCADEDB, "h", 7687, None)

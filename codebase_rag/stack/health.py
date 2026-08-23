@@ -6,6 +6,7 @@ import urllib.request
 
 import mgclient  # ty: ignore[unresolved-import]
 
+from ..config import settings
 from ..constants import GraphBackend
 from . import constants as cs
 
@@ -51,6 +52,18 @@ def _http_reachable(url: str, timeout: float = 1.5) -> bool:
         return False
 
 
+def _arcade_ready_url(host: str, http_port: int | None) -> str:
+    # http_port is `int | None` because this module also serves Memgraph
+    # (which has no HTTP probe), but every ArcadeDB caller must supply it --
+    # a silent `None` here would build ".../None/api/v1/ready" and just
+    # report ArcadeDB unreachable instead of surfacing the caller bug.
+    if http_port is None:
+        raise ValueError(cs.ERR_ARCADE_HTTP_PORT_REQUIRED)
+    # Matches ArcadeHttpClient's scheme (issue: CodeRabbit review, the
+    # probe used to hardcode http:// regardless of ARCADEDB_HTTP_SCHEME).
+    return f"{settings.ARCADEDB_HTTP_SCHEME}://{host}:{http_port}/api/v1/ready"
+
+
 def wait_for_graph(
     backend: GraphBackend,
     host: str,
@@ -59,15 +72,21 @@ def wait_for_graph(
     timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,
     interval: float = cs.DEFAULT_HEALTH_INTERVAL_S,
 ) -> bool:
+    # Resolved once up front, outside the poll loop: it is a fixed fact
+    # about the call (not something that can start being true), and a
+    # caller bug should fail immediately rather than after `timeout`
+    # seconds of silently polling a malformed URL.
+    ready_url = (
+        _arcade_ready_url(host, http_port) if backend == GraphBackend.ARCADEDB else None
+    )
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if backend == GraphBackend.ARCADEDB:
             # Both transports must answer: schema DDL goes over HTTP, so a
             # live Bolt listener alone would pass startup then fail at
             # ensure_constraints().
-            if _arcade_bolt_reachable(host, bolt_port) and _http_reachable(
-                f"http://{cs.LOOPBACK_HOST}:{http_port}/api/v1/ready"
-            ):
+            assert ready_url is not None
+            if _arcade_bolt_reachable(host, bolt_port) and _http_reachable(ready_url):
                 return True
         elif _bolt_reachable(host, bolt_port):
             return True
@@ -95,7 +114,7 @@ def graph_reachability_detail(
     if backend != GraphBackend.ARCADEDB:
         return None
     bolt_ok = _arcade_bolt_reachable(host, bolt_port)
-    http_ok = _http_reachable(f"http://{cs.LOOPBACK_HOST}:{http_port}/api/v1/ready")
+    http_ok = _http_reachable(_arcade_ready_url(host, http_port))
     if bolt_ok and http_ok:
         return None
     if not bolt_ok and not http_ok:
