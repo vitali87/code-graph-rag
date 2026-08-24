@@ -1541,3 +1541,21 @@ def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
             return False
         current = current.parent
     return False
+
+
+def module_qn_for_entity(
+    entity_qn: str, module_paths: Mapping[str, object]
+) -> str | None:
+    """The indexed module a fully-qualified entity belongs to, or None.
+
+    Entity qns extend their module's qn with class and member segments, so
+    the module is the longest strict prefix that names an indexed module
+    (issue #1347). Only key membership is read, so the mapping's value type
+    does not matter.
+    """
+    candidate = entity_qn
+    while cs.SEPARATOR_DOT in candidate:
+        candidate = candidate.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        if candidate in module_paths:
+            return candidate
+    return None

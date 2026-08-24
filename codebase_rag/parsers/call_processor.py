@@ -51,6 +51,7 @@ from .utils import (
     go_parameter_names,
     is_method_node,
     js_ts_parameter_names,
+    module_qn_for_entity,
     python_parameter_names,
     safe_decode_text,
     sorted_captures,
@@ -3633,6 +3634,21 @@ class CallProcessor:
                 continue
 
             callee_type, callee_qn = callee_info
+
+            if language == cs.SupportedLanguage.CSHARP and callee_qn.startswith(
+                f"{self.project_name}{cs.SEPARATOR_DOT}"
+            ):
+                # A resolved first-party callee pins the C# namespace import
+                # to the module that defines it (issue #1347); external
+                # resolutions (stdlib, builtins) never carry the project
+                # prefix and are skipped.
+                target_module = module_qn_for_entity(
+                    callee_qn, self.module_qn_to_file_path
+                )
+                if target_module is not None and target_module != module_qn:
+                    resolver.import_processor.record_resolved_cross_module_use(
+                        module_qn, target_module
+                    )
 
             if (
                 language == cs.SupportedLanguage.CPP

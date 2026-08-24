@@ -39,6 +39,7 @@ from ..utils import (
     extract_modifiers_and_decorators,
     function_span_key,
     ingest_method,
+    module_qn_for_entity,
     record_cpp_definition_span,
     safe_decode_text,
     sorted_captures,
@@ -513,6 +514,16 @@ class ClassIngestMixin:
             if resolved is None:
                 continue
             parent_qn, is_external = resolved
+            if not is_external and entry.language == cs.SupportedLanguage.CSHARP:
+                # A resolved first-party base pins the C# namespace import to
+                # the module defining it (issue #1347).
+                target_module = module_qn_for_entity(
+                    parent_qn, self.module_qn_to_file_path
+                )
+                if target_module is not None and target_module != entry.module_qn:
+                    self.import_processor.record_resolved_cross_module_use(
+                        entry.module_qn, target_module
+                    )
             external_label: str | None = None
             if is_external:
                 # The import pass mints the same node for IMPORTS edges, so

@@ -490,6 +490,8 @@ class ImportProcessor:
         "_cpp_module_qn_map",
         "_cpp_qn_to_rel",
         "_deferred_import_edges",
+        "_inferred_module_imports",
+        "_csharp_module_namespaces",
         "_cpp_declaration_mappings",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
@@ -549,6 +551,8 @@ class ImportProcessor:
         # IMPORTS edges held back until every file is parsed, so internal
         # targets verify against the full module registry (issue #652).
         self._deferred_import_edges: list[DeferredImportEdge] = []
+        self._inferred_module_imports: dict[str, set[str]] = {}
+        self._csharp_module_namespaces: dict[str, set[str]] = {}
         # Exact-case directory listings and entry-file `mod` declarations for
         # Rust path rewriting (issue #1007); cleared per run by
         # reset_rust_path_caches so watch re-runs re-observe the filesystem.
@@ -848,6 +852,13 @@ class ImportProcessor:
         lang_config = queries[language]["config"]
 
         self.import_mapping[module_qn] = {}
+        # A watch-mode re-parse must not carry references the edited file no
+        # longer makes (issue #1347).
+        self._inferred_module_imports.pop(module_qn, None)
+        if language == cs.SupportedLanguage.CSHARP:
+            self._csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
+                root_node
+            )
         # A re-parsed module that no longer directly exports one function
         # must not leave the stale whole-module alias mapping behind.
         self.commonjs_direct_exports.pop(module_qn, None)
@@ -937,6 +948,49 @@ class ImportProcessor:
             )
         )
 
+    def _collect_csharp_namespaces(self, root_node: Node) -> set[str]:
+        # Namespaces appear only at the top level and inside namespace bodies,
+        # so the walk prunes into nothing else; nesting composes dotted names.
+        found: set[str] = set()
+
+        def walk(container: Node, prefix: str) -> None:
+            for child in container.named_children:
+                if child.type not in (
+                    cs.TS_CSHARP_NAMESPACE_DECLARATION,
+                    cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION,
+                ):
+                    continue
+                name_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+                if name_node is None:
+                    continue
+                name = safe_decode_with_fallback(name_node)
+                if not name:
+                    continue
+                full = f"{prefix}{cs.SEPARATOR_DOT}{name}" if prefix else name
+                found.add(full)
+                if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
+                    continue
+                if (body := child.child_by_field_name(cs.FIELD_BODY)) is not None:
+                    walk(body, full)
+
+        walk(root_node, "")
+        return found
+
+    def record_resolved_cross_module_use(
+        self, importing_module_qn: str, target_module_qn: str
+    ) -> None:
+        """Remember that a resolved call/reference/inherit crossed modules.
+
+        A C# `using` names a NAMESPACE, not a file, so the import edge can
+        only be pinned to real Module nodes by observing which modules the
+        importing file actually resolved entities from (issue #1347).
+        """
+        if importing_module_qn == target_module_qn:
+            return
+        self._inferred_module_imports.setdefault(importing_module_qn, set()).add(
+            target_module_qn
+        )
+
     def set_java_generated_roots(self, roots: list[tuple[str, ...]]) -> None:
         # The probe closure reads the attribute late-bound, but its lru cache
         # may hold pre-discovery misses; clear so generated imports resolve.
@@ -963,6 +1017,17 @@ class ImportProcessor:
         self._deferred_import_edges = []
         known_module_qns = set(known_module_paths)
         module_aliases = self._module_alias_map(known_module_qns)
+        # namespace -> the indexed modules DECLARING it, from the per-file
+        # scan done at parse time: C# namespaces need not mirror directory
+        # names, so path-based guessing cannot answer "is this internal".
+        csharp_namespace_modules: dict[str, set[str]] = {}
+        for csharp_module_qn, namespaces in self._csharp_module_namespaces.items():
+            if csharp_module_qn not in known_module_qns:
+                continue
+            for namespace in namespaces:
+                csharp_namespace_modules.setdefault(namespace, set()).add(
+                    csharp_module_qn
+                )
         emitted = 0
         for entry in deferred:
             # `from pkg.transport import TTransport` is ambiguous in
@@ -1022,6 +1087,33 @@ class ImportProcessor:
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, target),
                 )
                 emitted += 1
+                continue
+            if entry.language == cs.SupportedLanguage.CSHARP and (
+                declaring := csharp_namespace_modules.get(entry.full_name)
+            ):
+                # A `using` names a NAMESPACE. When indexed modules declare
+                # that namespace, the edge lands on the specific modules this
+                # file actually resolved entities from; a namespace-keyed
+                # ExternalModule would be a dead end no edge ever connects to
+                # the defining files (issue #1347). A namespace nothing
+                # declares falls through to the external handling below.
+                inferred = self._inferred_module_imports.get(entry.module_qn, set())
+                for target_module_qn in sorted(inferred & declaring):
+                    if target_module_qn in known_module_qns:
+                        self.ingestor.ensure_relationship_batch(
+                            (
+                                cs.NodeLabel.MODULE,
+                                cs.KEY_QUALIFIED_NAME,
+                                entry.module_qn,
+                            ),
+                            cs.RelationshipType.IMPORTS,
+                            (
+                                cs.NodeLabel.MODULE,
+                                cs.KEY_QUALIFIED_NAME,
+                                target_module_qn,
+                            ),
+                        )
+                        emitted += 1
                 continue
             module_path = self._resolve_module_path(entry.full_name, entry.language)
             target_label = self._module_label(module_path)
