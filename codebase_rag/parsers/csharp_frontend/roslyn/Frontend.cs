@@ -751,9 +751,14 @@ public static class Frontend
             // over-approximating an incompatible construction only adds a
             // body to the conjunction, erring toward a missed edge.
             var target = invoked.ConstructedFrom;
+            // Open-ness on EITHER side widens the match: an open implementer
+            // serves every construction, and an open CALL SITE (inside
+            // generic code) can resolve to any construction, so closed
+            // implementations must join its conjunction too.
+            var openCallSite = ContainsTypeParameters(invoked.ContainingType);
             foreach (var iface in type.AllInterfaces)
             {
-                var open = ContainsTypeParameters(iface);
+                var open = openCallSite || ContainsTypeParameters(iface);
                 var matches = open
                     ? SymbolEqualityComparer.Default.Equals(
                         iface.OriginalDefinition,

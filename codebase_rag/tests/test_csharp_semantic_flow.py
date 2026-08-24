@@ -1480,3 +1480,36 @@ def test_an_override_of_another_construction_does_not_block_the_write(
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "gb1", _GENERIC_BASE_OVERRIDE_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_OPEN_CALLSITE_CLOSED_IMPL_REF = (
+    "using System;\n\n"
+    "public interface IHelper<T>\n{\n"
+    "    void Fill(string src, ref string dst);\n}\n\n"
+    "public class Both<T> : IHelper<T>, IHelper<int>\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n"
+    "    void IHelper<int>.Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    private void Pump<T>(IHelper<T> helper)\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n    }\n"
+    "    public void Run()\n    {\n"
+    "        Pump<int>(new Both<long>());\n    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_an_open_call_site_sees_closed_implementations_too(tmp_path: Path) -> None:
+    # Inside Pump<T> the interface construction is unbound, so the call can
+    # resolve to ANY construction at runtime, including the read-only
+    # explicit IHelper<int> body; the writing open implementation alone must
+    # not prove the write.
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "oc1", _OPEN_CALLSITE_CLOSED_IMPL_REF, cs.CSharpFrontend.HYBRID
+    )
