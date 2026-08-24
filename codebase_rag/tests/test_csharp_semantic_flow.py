@@ -970,3 +970,38 @@ def test_a_writing_derived_interface_default_proves_the_base_member_write(
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "dd2", _DERIVED_DEFAULT_WRITES_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_INTERFACE_TWO_WRITERS_REF = (
+    "using System;\n\n"
+    "public interface IHelper\n{\n"
+    "    void Fill(string src, ref string dst);\n}\n\n"
+    "public class WriterA : IHelper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class WriterB : IHelper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    '        dst = src + "!";\n    }\n}\n\n'
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IHelper helper = new WriterB();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_ref_through_an_interface_where_every_implementer_writes(
+    tmp_path: Path,
+) -> None:
+    # The must-agreement policy decided on #1356: with several implementers
+    # the edge exists exactly when ALL of them write, because whichever body
+    # actually runs then performs the write and nothing is fabricated.
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "if4", _INTERFACE_TWO_WRITERS_REF, cs.CSharpFrontend.HYBRID
+    )
