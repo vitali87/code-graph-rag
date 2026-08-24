@@ -194,6 +194,11 @@ EDITOR_URL_TEMPLATES: dict[str, str] = {
     "idea": "idea://open?file={path}&line={line}",
     "textmate": "txmt://open?url=file://{path}&line={line}",
 }
+# Two-file deep link for a group's side-by-side view. No single-file URL
+# scheme can carry a pair, so this is its own scheme; terminals that
+# understand it (Croft) open both members, others refuse it like any
+# custom URI. Values are fully percent-encoded `path:line`.
+DIFF_LINK_TEMPLATE = "diff://open?left={left}&right={right}"
 EDITOR_DIFF_COMMANDS: dict[str, str] = {
     "vscode": "code --diff {left} {right}",
     "cursor": "cursor --diff {left} {right}",

@@ -10,9 +10,14 @@ from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.cli import _duplicates_location_cell, app
+from codebase_rag.cli import _duplicates_group_cell, _duplicates_location_cell, app
 from codebase_rag.config import settings
-from codebase_rag.types_defs import DuplicateMember, PropertyValue, ResultRow
+from codebase_rag.types_defs import (
+    DuplicateGroup,
+    DuplicateMember,
+    PropertyValue,
+    ResultRow,
+)
 
 
 @pytest.fixture
@@ -202,6 +207,27 @@ class TestClickableLocations:
         member = _member(path="b.py", start_line=5, end_line=12)
         assert _duplicates_location_cell(member, Path("/repo")) == "b.py:5-12"
 
+    def test_group_cell_links_to_side_by_side_pair(self) -> None:
+        # Clicking the group number opens both members side by side in a
+        # terminal that understands diff:// (Croft).
+        group = _group(
+            _member(path="b.py", start_line=5, end_line=12),
+            _member(path="s.py", start_line=8, end_line=15),
+        )
+        cell = _duplicates_group_cell(1, group, Path("/repo"))
+        assert isinstance(cell, Text)
+        assert cell.plain == "1"
+        assert [span.style for span in cell.spans] == [
+            "link diff://open?left=%2Frepo%2Fb.py%3A5&right=%2Frepo%2Fs.py%3A8"
+        ]
+
+    def test_group_cell_is_plain_without_root(self) -> None:
+        group = _group(
+            _member(path="b.py", start_line=5, end_line=12),
+            _member(path="s.py", start_line=8, end_line=15),
+        )
+        assert _duplicates_group_cell(1, group, None) == "1"
+
 
 class TestOpenGroup:
     """--open N opens a group's first two members side by side."""
@@ -307,4 +333,13 @@ def _member(*, path: str, start_line: int, end_line: int) -> DuplicateMember:
         path=path,
         start_line=start_line,
         end_line=end_line,
+    )
+
+
+def _group(*members: DuplicateMember) -> DuplicateGroup:
+    return DuplicateGroup(
+        kind=cs.KIND_EXACT,
+        similarity=1.0,
+        node_count=24,
+        members=list(members),
     )

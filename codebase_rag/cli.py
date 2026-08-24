@@ -29,6 +29,7 @@ from .config import load_ignore_patterns, settings
 from .editor_links import (
     EditorTemplateError,
     diff_command,
+    diff_link,
     editor_url,
     resolve_editor,
     url_template_problem,
@@ -1519,6 +1520,29 @@ def _duplicates_location_cell(
     return cell
 
 
+def _duplicates_group_cell(
+    number: int, group: DuplicateGroup, root_path: Path | None
+) -> Text | str:
+    """Group number as a diff:// hyperlink opening the first two members
+    side by side in a terminal that understands the scheme (Croft); plain
+    text when rootless or links are off."""
+    label = str(number)
+    if root_path is None:
+        return label
+    first, second = group["members"][0], group["members"][1]
+    url = diff_link(
+        root_path / first["path"],
+        first["start_line"],
+        root_path / second["path"],
+        second["start_line"],
+    )
+    if url is None:
+        return label
+    cell = Text(label)
+    cell.stylize(cs.STYLE_LINK.format(url=url))
+    return cell
+
+
 def _build_duplicates_table(
     groups: list[DuplicateGroup], project_name: str, root_path: Path | None = None
 ) -> Table:
@@ -1540,7 +1564,7 @@ def _build_duplicates_table(
     for number, group in enumerate(groups, start=1):
         for at, member in enumerate(group["members"]):
             table.add_row(
-                str(number) if at == 0 else "",
+                _duplicates_group_cell(number, group, root_path) if at == 0 else "",
                 group["kind"] if at == 0 else "",
                 _similarity_text(group) if at == 0 else "",
                 member["qualified_name"],

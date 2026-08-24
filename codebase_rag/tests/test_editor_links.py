@@ -11,6 +11,7 @@ from codebase_rag.config import settings
 from codebase_rag.editor_links import (
     EditorTemplateError,
     diff_command,
+    diff_link,
     editor_url,
     resolve_editor,
     url_template_problem,
@@ -74,6 +75,41 @@ class TestDiffCommand:
     def test_unknown_editor_has_no_diff(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "CGR_EDITOR", "textmate")
         assert diff_command(Path("/r/a"), Path("/r/b")) is None
+
+
+class TestDiffLink:
+    def test_pair_link_encodes_both_locations(self) -> None:
+        url = diff_link(Path("/repo/a.py"), 5, Path("/repo/b.py"), 8)
+        assert url == "diff://open?left=%2Frepo%2Fa.py%3A5&right=%2Frepo%2Fb.py%3A8"
+
+    def test_spaces_are_encoded(self) -> None:
+        url = diff_link(Path("/My Repo/a.py"), 1, Path("/My Repo/b.py"), 2)
+        assert url is not None
+        assert "%2FMy%20Repo%2Fa.py%3A1" in url
+
+    def test_none_editor_disables_pair_links(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CGR_EDITOR", cs.EDITOR_NONE)
+        assert diff_link(Path("/r/a"), 1, Path("/r/b"), 2) is None
+
+
+class TestBlankTemplates:
+    """Whitespace-only settings read as unset, never as an empty command."""
+
+    def test_blank_diff_command_falls_back_to_editor_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "   ")
+        argv = diff_command(Path("/r/a.py"), Path("/r/b.py"))
+        assert argv == ["code", "--diff", "/r/a.py", "/r/b.py"]
+
+    def test_blank_url_template_falls_back_to_editor_scheme(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", "  ")
+        url = editor_url(Path("/r/a.py"), 3)
+        assert url == "vscode://file//r/a.py:3"
 
 
 class TestMalformedTemplates:

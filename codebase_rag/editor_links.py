@@ -36,8 +36,15 @@ class EditorTemplateError(ValueError):
     """
 
 
+def _configured(value: str | None) -> str | None:
+    """A user template setting, with blank/whitespace treated as unset."""
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 def _active_url_template() -> str | None:
-    return settings.CGR_EDITOR_URL_TEMPLATE or cs.EDITOR_URL_TEMPLATES.get(
+    return _configured(settings.CGR_EDITOR_URL_TEMPLATE) or cs.EDITOR_URL_TEMPLATES.get(
         resolve_editor()
     )
 
@@ -72,6 +79,20 @@ def editor_url(absolute_path: Path, line: int) -> str | None:
     )
 
 
+def diff_link(left: Path, left_line: int, right: Path, right_line: int) -> str | None:
+    """`diff://` deep link opening two files side by side, or None when
+    links are off. Terminals that understand the scheme (Croft) open the
+    pair; single-file editor schemes cannot express it, so the link is a
+    scheme of its own and other terminals refuse it like any custom URI.
+    """
+    if resolve_editor() == cs.EDITOR_NONE:
+        return None
+    return cs.DIFF_LINK_TEMPLATE.format(
+        left=quote(f"{left}:{left_line}", safe=""),
+        right=quote(f"{right}:{right_line}", safe=""),
+    )
+
+
 def diff_command(left: Path, right: Path) -> list[str] | None:
     """Argv opening left and right side by side, or None when unavailable.
 
@@ -80,7 +101,7 @@ def diff_command(left: Path, right: Path) -> list[str] | None:
     malformed CGR_DIFF_COMMAND (unbalanced quotes, unknown placeholders)
     raises EditorTemplateError with the actionable message.
     """
-    template = settings.CGR_DIFF_COMMAND or cs.EDITOR_DIFF_COMMANDS.get(
+    template = _configured(settings.CGR_DIFF_COMMAND) or cs.EDITOR_DIFF_COMMANDS.get(
         resolve_editor()
     )
     if not template:
@@ -90,10 +111,13 @@ def diff_command(left: Path, right: Path) -> list[str] | None:
         cs.TEMPLATE_KEY_RIGHT: str(right),
     }
     try:
-        return [token.format(**substitutions) for token in shlex.split(template)]
+        argv = [token.format(**substitutions) for token in shlex.split(template)]
     except (KeyError, IndexError, ValueError) as e:
         raise EditorTemplateError(
             cs.CLI_ERR_DUPLICATES_DIFF_TEMPLATE_INVALID.format(
                 template=template, error=e
             )
         ) from e
+    # A template that splits to nothing (stray quoting) must read as "no
+    # tool", never reach Popen as an empty argv.
+    return argv or None

@@ -459,8 +459,11 @@ CGR_EDITOR=zed                                    # vscode, cursor, windsurf, ze
 CGR_EDITOR_URL_TEMPLATE="myeditor://{path}:{line}" # full control over the URL
 ```
 
-**Open a group side by side.** A hyperlink can carry only one URL, so
-comparing two members is a flag rather than a click:
+**Click a group number to compare.** The group cell carries a `diff://`
+pair link naming both members; a terminal that understands the scheme
+([Croft](https://github.com/vitali87/croft)) opens the first two members
+side by side at their lines. Single-file URL schemes cannot express a
+pair, so in other terminals the same comparison is a flag:
 
 ```bash
 cgr duplicates --open 3
