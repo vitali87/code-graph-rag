@@ -719,7 +719,7 @@ public static class Frontend
                     }
                     continue;
                 }
-                if (OverrideOf(type, method) is { IsAbstract: false } overriding)
+                if (OverrideOf(type, invoked) is { IsAbstract: false } overriding)
                 {
                     candidates.Add(overriding);
                 }
@@ -799,16 +799,27 @@ public static class Frontend
         }
 
         private static IMethodSymbol? OverrideOf(
-            INamedTypeSymbol type, IMethodSymbol method)
+            INamedTypeSymbol type, IMethodSymbol invoked)
         {
-            foreach (var candidate in type.GetMembers(method.Name).OfType<IMethodSymbol>())
+            // The same construction discipline as the interface path: an
+            // override of Base<int> can never be reached through Base<string>,
+            // so the chain is compared against the CONSTRUCTED invoked member;
+            // a chain entry that still carries type parameters (an open
+            // derived class) matches by definition instead.
+            var target = invoked.ConstructedFrom;
+            foreach (var candidate in type.GetMembers(invoked.Name).OfType<IMethodSymbol>())
             {
                 for (var overridden = candidate.OverriddenMethod;
                      overridden is not null;
                      overridden = overridden.OverriddenMethod)
                 {
-                    if (SymbolEqualityComparer.Default.Equals(
-                            overridden.OriginalDefinition, method))
+                    var open = ContainsTypeParameters(overridden.ContainingType);
+                    var matches = open
+                        ? SymbolEqualityComparer.Default.Equals(
+                            overridden.OriginalDefinition, target.OriginalDefinition)
+                        : SymbolEqualityComparer.Default.Equals(
+                            overridden.ConstructedFrom, target);
+                    if (matches)
                     {
                         return candidate;
                     }

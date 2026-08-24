@@ -1447,3 +1447,36 @@ def test_every_matching_construction_of_an_open_implementer_participates(
     assert (_ENV_K, _STDOUT) not in _flows(
         tmp_path / "mc1", _MIXED_CONSTRUCTIONS_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_GENERIC_BASE_OVERRIDE_REF = (
+    "using System;\n\n"
+    "public class Base<T>\n{\n"
+    "    public virtual void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class IntReader : Base<int>\n{\n"
+    "    public override void Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        Base<string> helper = new Base<string>();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_an_override_of_another_construction_does_not_block_the_write(
+    tmp_path: Path,
+) -> None:
+    # IntReader overrides Base<int>.Fill only; a call through Base<string>
+    # can never reach it, so its read-only body must not join that call's
+    # conjunction and mask the base write.
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "gb1", _GENERIC_BASE_OVERRIDE_REF, cs.CSharpFrontend.HYBRID
+    )
