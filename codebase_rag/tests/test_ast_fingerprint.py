@@ -189,6 +189,24 @@ macro_rules! backtrace {
 }
 """
 
+MACRO_TWO_CALLS = """
+macro_rules! init_ctx {
+    ($cfg:expr) => {
+        let parsed = crate::config::Config::parse($cfg, crate::defaults::flags());
+        crate::ctx::Context::new(parsed, crate::defaults::pool_size())
+    };
+}
+"""
+
+MACRO_TWO_CALLS_EDITED = """
+macro_rules! init_ctx {
+    ($cfg:expr) => {
+        let parsed = crate::config::Config::parse($cfg, crate::defaults::flags());
+        crate::ctx::Context::new(parsed, crate::defaults::pool_size(), $cfg)
+    };
+}
+"""
+
 MACRO_CHANGED_ARM = """
 macro_rules! backtrace {
     () => {
@@ -235,7 +253,7 @@ class TestMacroRulesFingerprints:
         """Each substantial macro arm is a branch root for Type-3 scoring."""
         result = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
         assert result is not None
-        assert len(result.branch_fingerprints) == 2
+        assert len(result.branch_fingerprints) == 5
 
     def test_edited_macro_shares_arm_branches(self) -> None:
         """Macros differing by one arm still share the unchanged arm."""
@@ -243,8 +261,18 @@ class TestMacroRulesFingerprints:
         edited = compute_ast_fingerprint(self._macro_node(MACRO_SINGLE_ARM))
         assert base is not None
         assert edited is not None
-        assert len(edited.branch_fingerprints) == 1
+        assert len(edited.branch_fingerprints) == 3
         assert set(edited.branch_fingerprints) <= set(base.branch_fingerprints)
+
+    def test_edited_arm_interior_still_shares_branches(self) -> None:
+        """Editing inside an arm keeps the untouched token groups indexed."""
+        base = compute_ast_fingerprint(self._macro_node(MACRO_TWO_CALLS))
+        edited = compute_ast_fingerprint(self._macro_node(MACRO_TWO_CALLS_EDITED))
+        assert base is not None
+        assert edited is not None
+        assert base.fingerprint != edited.fingerprint
+        shared = set(base.branch_fingerprints) & set(edited.branch_fingerprints)
+        assert shared
 
     def test_trait_method_signature_stays_unfingerprinted(self) -> None:
         """Bodiless trait signatures stay out of clone detection."""

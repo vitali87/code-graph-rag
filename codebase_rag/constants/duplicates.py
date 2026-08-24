@@ -52,7 +52,13 @@ AST_FP_PUNCT_TYPES = frozenset(
 # the extras are the block containers named neither way.
 AST_FP_BLOCK_PARENT_SUBSTRINGS = ("block", "body")
 AST_FP_BLOCK_PARENT_EXTRAS = frozenset(
-    {"statement_list", "compound_statement", "macro_definition"}
+    {
+        "statement_list",
+        "compound_statement",
+        "macro_definition",
+        "macro_rule",
+        "token_tree",
+    }
 )
 
 # Branches below this skeleton-node count (`return x`, `break`) are shared by
