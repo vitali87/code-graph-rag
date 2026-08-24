@@ -740,18 +740,31 @@ public static class Frontend
             // Matched by the CONSTRUCTED interface, never the open definition:
             // a type implementing IGen<int> and IGen<string> with different
             // bodies answers only for the construction the call went through.
+            // An OPEN implementer (Reader<T> : IHelper<T>) is the exception:
+            // its interface instance still carries type parameters and can be
+            // constructed into any invocation, so it matches by definition;
+            // over-approximating an incompatible construction only adds a
+            // body to the conjunction, erring toward a missed edge.
             var target = invoked.ConstructedFrom;
             foreach (var iface in type.AllInterfaces)
             {
-                if (!SymbolEqualityComparer.Default.Equals(
-                        iface, invoked.ContainingType))
+                var open = ContainsTypeParameters(iface);
+                var matches = open
+                    ? SymbolEqualityComparer.Default.Equals(
+                        iface.OriginalDefinition,
+                        invoked.ContainingType.OriginalDefinition)
+                    : SymbolEqualityComparer.Default.Equals(
+                        iface, invoked.ContainingType);
+                if (!matches)
                 {
                     continue;
                 }
                 var member = iface.GetMembers(invoked.Name)
                     .OfType<IMethodSymbol>()
-                    .FirstOrDefault(m => SymbolEqualityComparer.Default.Equals(
-                        m, target));
+                    .FirstOrDefault(m => open
+                        ? SymbolEqualityComparer.Default.Equals(
+                            m.OriginalDefinition, target.OriginalDefinition)
+                        : SymbolEqualityComparer.Default.Equals(m, target));
                 if (member is not null
                     && type.FindImplementationForInterfaceMember(member)
                         is IMethodSymbol implementation)
@@ -760,6 +773,25 @@ public static class Frontend
                 }
             }
             return null;
+        }
+
+        private static bool ContainsTypeParameters(ITypeSymbol type)
+        {
+            if (type is ITypeParameterSymbol)
+            {
+                return true;
+            }
+            if (type is INamedTypeSymbol named)
+            {
+                foreach (var argument in named.TypeArguments)
+                {
+                    if (ContainsTypeParameters(argument))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         private static IMethodSymbol? OverrideOf(

@@ -1353,3 +1353,62 @@ def test_a_virtual_write_survives_when_every_override_also_writes(
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "vo2", _VIRTUAL_ALL_WRITE_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_OPEN_GENERIC_READER_REF = (
+    "using System;\n\n"
+    "public interface IHelper<T>\n{\n"
+    "    void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Reader<T> : IHelper<T>\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IHelper<int> helper = new Reader<int>();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_an_open_generic_reader_blocks_the_default_body_write(tmp_path: Path) -> None:
+    # Reader<T> implements every construction of IHelper<T>, so its read-only
+    # body is a candidate for the IHelper<int> call; the writing default must
+    # not be selected just because the open implementer failed to match the
+    # constructed interface exactly.
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "og1", _OPEN_GENERIC_READER_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+_OPEN_GENERIC_WRITER_REF = (
+    "using System;\n\n"
+    "public interface IHelper<T>\n{\n"
+    "    void Fill(string src, ref string dst);\n}\n\n"
+    "public class Writer<T> : IHelper<T>\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IHelper<int> helper = new Writer<int>();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_an_open_generic_writer_proves_the_constructed_call(tmp_path: Path) -> None:
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "og2", _OPEN_GENERIC_WRITER_REF, cs.CSharpFrontend.HYBRID
+    )
