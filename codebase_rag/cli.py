@@ -69,7 +69,7 @@ from .workspaces.cli import cli as workspace_cli
 
 
 def _vendored_click_exception() -> type[click.ClickException]:
-    # typer >= 0.22 raises its vendored click's exceptions, which do not
+    # A typer that vendors click raises the vendored exceptions, which do not
     # descend from the real click's; both flavors must be caught (#1409).
     try:
         vendored = importlib.import_module(cs.TYPER_VENDORED_CLICK_EXCEPTIONS_MODULE)
@@ -1079,8 +1079,8 @@ def help_command(
 
     root_command = root_context.command
     command_name, *command_args = requested
-    # Duck-typed, not isinstance(click.Group): typer >= 0.22 builds the app
-    # from its vendored click, whose Group is not the real click's (#1409).
+    # Duck-typed, not isinstance(click.Group): a typer that vendors click
+    # builds the app from a Group that is not the real click's (#1409).
     get_command = getattr(root_command, "get_command", None)
     if get_command is None:
         raise typer.Exit(1)

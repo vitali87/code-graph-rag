@@ -1,8 +1,8 @@
 """`cgr help` must work with both real and vendored click (#1409).
 
-typer >= 0.22 vendors click as `typer._click`, so the app's root command no
-longer descends from the real `click.Group` and usage errors raise the
-vendored `ClickException`. The help command duck-types the group and catches
+Newer typer generations vendor click as `typer._click`, so the app's root
+command no longer descends from the real `click.Group` and usage errors raise
+the vendored `ClickException`. The help command duck-types the group and catches
 both exception flavors; these tests pin the resolution helper's contract on
 whichever typer is installed.
 """
