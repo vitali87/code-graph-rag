@@ -282,8 +282,9 @@ class TestOpenGroup:
 
         assert result.exit_code == 0
         argv = popen.call_args.args[0]
-        # Members are path-sorted, so b.py is left and s.py right.
-        assert argv == ["difftool", "/repo/b.py", "/repo/s.py"]
+        # Members are path-sorted, so b.py is left and s.py right; argv
+        # paths are OS-native (backslashes on Windows), unlike link URLs.
+        assert argv == ["difftool", str(Path("/repo/b.py")), str(Path("/repo/s.py"))]
 
     def test_open_unknown_group_errors(
         self, runner: CliRunner, clone_rows: list[ResultRow]

@@ -60,17 +60,28 @@ class TestEditorUrl:
 
 
 class TestDiffCommand:
+    # Diff argv paths are intentionally OS-native (str(Path), backslashes
+    # on Windows): they go to the editor binary's argv, not into a URL.
     def test_default_vscode_diff(self) -> None:
         argv = diff_command(Path("/r/a.py"), Path("/r/b.py"))
-        assert argv == ["code", "--diff", "/r/a.py", "/r/b.py"]
+        assert argv == ["code", "--diff", str(Path("/r/a.py")), str(Path("/r/b.py"))]
 
     def test_paths_with_spaces_stay_single_arguments(self) -> None:
         argv = diff_command(Path("/My Repo/a.py"), Path("/My Repo/b.py"))
-        assert argv == ["code", "--diff", "/My Repo/a.py", "/My Repo/b.py"]
+        assert argv == [
+            "code",
+            "--diff",
+            str(Path("/My Repo/a.py")),
+            str(Path("/My Repo/b.py")),
+        ]
 
     def test_custom_command_template(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "meld {left} {right}")
-        assert diff_command(Path("/r/a"), Path("/r/b")) == ["meld", "/r/a", "/r/b"]
+        assert diff_command(Path("/r/a"), Path("/r/b")) == [
+            "meld",
+            str(Path("/r/a")),
+            str(Path("/r/b")),
+        ]
 
     def test_unknown_editor_has_no_diff(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "CGR_EDITOR", "textmate")
@@ -102,7 +113,7 @@ class TestBlankTemplates:
     ) -> None:
         monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "   ")
         argv = diff_command(Path("/r/a.py"), Path("/r/b.py"))
-        assert argv == ["code", "--diff", "/r/a.py", "/r/b.py"]
+        assert argv == ["code", "--diff", str(Path("/r/a.py")), str(Path("/r/b.py"))]
 
     def test_blank_url_template_falls_back_to_editor_scheme(
         self, monkeypatch: pytest.MonkeyPatch
@@ -122,7 +133,8 @@ class TestMalformedTemplates:
         assert editor_url(Path("/r/a.py"), 1) is None
         problem = url_template_problem()
         assert problem is not None
-        assert "{path}" in problem and "{line}" in problem
+        assert "{path}" in problem
+        assert "{line}" in problem
 
     def test_unmatched_url_brace_disables_links_with_problem(
         self, monkeypatch: pytest.MonkeyPatch

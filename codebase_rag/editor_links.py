@@ -74,13 +74,18 @@ def url_template_problem() -> str | None:
 
 
 def editor_url(absolute_path: Path, line: int) -> str | None:
-    """URL opening the editor at path:line, or None when links are off."""
+    """URL opening the editor at path:line, or None when links are off.
+
+    Paths go into the URL in POSIX form: editor deep links expect forward
+    slashes on every platform (vscode://file/C:/dir/mod.py), and Windows
+    backslashes would otherwise percent-encode into a broken %5C path.
+    """
     template = _active_url_template()
     if not template or url_template_problem() is not None:
         return None
     return template.format(
         **{
-            cs.TEMPLATE_KEY_PATH: quote(str(absolute_path)),
+            cs.TEMPLATE_KEY_PATH: quote(absolute_path.as_posix()),
             cs.TEMPLATE_KEY_LINE: line,
         }
     )
@@ -94,9 +99,11 @@ def diff_link(left: Path, left_line: int, right: Path, right_line: int) -> str |
     """
     if resolve_editor() == cs.EDITOR_NONE:
         return None
+    # POSIX form for the same reason as editor_url: URL consumers parse
+    # forward slashes; native Windows separators would arrive as %5C.
     return cs.DIFF_LINK_TEMPLATE.format(
-        left=quote(f"{left}:{left_line}", safe=""),
-        right=quote(f"{right}:{right_line}", safe=""),
+        left=quote(f"{left.as_posix()}:{left_line}", safe=""),
+        right=quote(f"{right.as_posix()}:{right_line}", safe=""),
     )
 
 
