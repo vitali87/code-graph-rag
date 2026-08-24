@@ -437,6 +437,15 @@ module is re-exported under its own name. A project that does
   registry tables the `READS_FROM`/`WRITES_TO` walk uses. Every catalogued
   handle-write shape across the lean languages now emits a flow edge rather than a
   false `NO_FLOW`.
+- Nested factory **identity resolution** (`Files.newBufferedWriter(Path.of("cfg"))`
+  and the static-imported `of("cfg")` spelling) is a lightweight registry-membership
+  check, not shadow-aware (issue #1216): a same-class or inherited method named
+  `of`, or a local nested class named `Path`, still matches the
+  `java.nio.file.Path.of` registry entry, so the handle gets a concrete literal
+  identity where `<dynamic>` would be correct. The trigger is contradictory Java
+  (shadowing a symbol you static-import leaves the import dead and linted), and
+  closing it would mean threading the full call resolver into an intentionally
+  cheap path shared by every language, so this stays an accepted limitation.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.

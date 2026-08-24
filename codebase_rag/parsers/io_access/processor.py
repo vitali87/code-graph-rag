@@ -1948,6 +1948,11 @@ class IOAccessProcessor:
             # A static import (`import static java.nio.file.Path.of`) spells the
             # factory bare (`of("cfg")`); resolve it through the import map to its
             # qualified form so the literal is still recovered (Greptile review, #1204).
+            # Membership is NOT shadow-aware (#1216, accepted limitation): a
+            # same-class/inherited `of(..)` or a local nested `Path` class still
+            # matches, mis-attributing a literal identity where `<dynamic>` would
+            # be correct. Fixing it needs the full call resolver in this
+            # deliberately lightweight path, for a contradictory-Java trigger.
             if raw is not None and (
                 raw in lean_handles.identity_calls
                 or import_map.get(raw) in lean_handles.identity_calls
