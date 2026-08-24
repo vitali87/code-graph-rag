@@ -492,8 +492,11 @@ public static class Frontend
             // The write is proven exactly when EVERY body the call can land
             // on writes the parameter; whichever implementation actually runs
             // then writes, so no flow is ever fabricated, and a read-only
-            // candidate anywhere keeps the write unproven.
-            if (DispatchCandidates(model.Compilation, method) is { } candidates)
+            // candidate anywhere keeps the write unproven. Dispatch works on
+            // the CONSTRUCTED symbol: a type can implement several
+            // constructions of one generic interface with different bodies,
+            // and only the invoked construction's implementation may answer.
+            if (DispatchCandidates(model.Compilation, reduced ?? invoked) is { } candidates)
             {
                 return candidates.Count > 0
                     && candidates.All(
@@ -572,6 +575,41 @@ public static class Frontend
             }
         }
 
+        private List<INamedTypeSymbol>? _referencedTypes;
+
+        // Every named type in the referenced (metadata) assemblies, memoized.
+        // A plugin compiled against an identical-identity assembly unifies
+        // with the source compilation, so a metadata type CAN implement a
+        // source-declared contract; it owns no analyzable body, and finding
+        // it must poison the write proof rather than stay invisible.
+        private IReadOnlyList<INamedTypeSymbol> ReferencedTypes(Compilation caller)
+        {
+            if (_referencedTypes is null)
+            {
+                var compilations = new HashSet<Compilation>(_treeOwners.Values) { caller };
+                var seenAssemblies = new HashSet<string>(StringComparer.Ordinal);
+                var types = new List<INamedTypeSymbol>();
+                foreach (var compilation in compilations)
+                {
+                    foreach (var assembly
+                        in compilation.SourceModule.ReferencedAssemblySymbols)
+                    {
+                        if (assembly.Locations.Any(location => location.IsInSource))
+                        {
+                            continue;
+                        }
+                        if (!seenAssemblies.Add(assembly.Identity.GetDisplayName()))
+                        {
+                            continue;
+                        }
+                        CollectNamedTypes(assembly.GlobalNamespace, types);
+                    }
+                }
+                _referencedTypes = types;
+            }
+            return _referencedTypes;
+        }
+
         // Every body a dispatched call can land on, or null when the invoked
         // member is not dispatched at all (an ordinary member analyses its own
         // body directly). For an interface or abstract member the candidates
@@ -580,10 +618,12 @@ public static class Frontend
         // (or nothing overrides it), because a default every implementer
         // overrides can never execute and must not mask the overrides.
         private IReadOnlyList<IMethodSymbol>? DispatchCandidates(
-            Compilation caller, IMethodSymbol method)
+            Compilation caller, IMethodSymbol invoked)
         {
+            var method = invoked.OriginalDefinition;
             var viaInterface = method.ContainingType.TypeKind == TypeKind.Interface;
-            if (!viaInterface && !method.IsAbstract)
+            if (!viaInterface && !method.IsAbstract
+                && !method.IsVirtual && !method.IsOverride)
             {
                 return null;
             }
@@ -593,8 +633,7 @@ public static class Frontend
             // have implementers in other referenced assemblies that a source
             // scan cannot see, and proving a write from the visible subset
             // could fabricate a flow for a runtime receiver from metadata.
-            if (!method.ContainingType.OriginalDefinition.Locations
-                    .Any(location => location.IsInSource))
+            if (!method.ContainingType.Locations.Any(location => location.IsInSource))
             {
                 return null;
             }
@@ -608,12 +647,12 @@ public static class Frontend
             // redundant.
             var candidates = new List<IMethodSymbol>();
             var defaultInherited = false;
-            foreach (var type in AllSourceTypes(caller))
+            foreach (var type in AllSourceTypes(caller).Concat(ReferencedTypes(caller)))
             {
                 IMethodSymbol? implementation;
                 if (viaInterface)
                 {
-                    implementation = InterfaceImplementation(type, method);
+                    implementation = InterfaceImplementation(type, invoked);
                     if (implementation is null)
                     {
                         continue;
@@ -644,13 +683,20 @@ public static class Frontend
                 {
                     continue;
                 }
-                if (implementation.DeclaringSyntaxReferences.Length == 0)
-                {
-                    continue;
-                }
+                // A bodiless (metadata) implementation stays IN the list: it
+                // fails the body proof, which is exactly right, because a
+                // runtime receiver from metadata cannot be shown to write.
                 candidates.Add(implementation);
             }
             if (hasDefaultBody && (defaultInherited || candidates.Count == 0))
+            {
+                candidates.Add(method);
+            }
+            // A virtual (or overridable override) member's own body is live
+            // for instances of its own type, so it joins its overrides in the
+            // conjunction; over-approximating for an abstract containing type
+            // errs toward a missed edge, never a fabricated one.
+            if (!viaInterface && !method.IsAbstract)
             {
                 candidates.Add(method);
             }
@@ -658,19 +704,23 @@ public static class Frontend
         }
 
         private static IMethodSymbol? InterfaceImplementation(
-            INamedTypeSymbol type, IMethodSymbol method)
+            INamedTypeSymbol type, IMethodSymbol invoked)
         {
+            // Matched by the CONSTRUCTED interface, never the open definition:
+            // a type implementing IGen<int> and IGen<string> with different
+            // bodies answers only for the construction the call went through.
+            var target = invoked.ConstructedFrom;
             foreach (var iface in type.AllInterfaces)
             {
                 if (!SymbolEqualityComparer.Default.Equals(
-                        iface.OriginalDefinition, method.ContainingType))
+                        iface, invoked.ContainingType))
                 {
                     continue;
                 }
-                var member = iface.GetMembers(method.Name)
+                var member = iface.GetMembers(invoked.Name)
                     .OfType<IMethodSymbol>()
                     .FirstOrDefault(m => SymbolEqualityComparer.Default.Equals(
-                        m.OriginalDefinition, method));
+                        m, target));
                 if (member is not null
                     && type.FindImplementationForInterfaceMember(member)
                         is IMethodSymbol implementation)

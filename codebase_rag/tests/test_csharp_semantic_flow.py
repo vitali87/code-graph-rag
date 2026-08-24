@@ -1040,6 +1040,9 @@ _LINKED_HELPER = (
 )
 _LINKED_LEAKY = (
     "using System;\n\n"
+    "public class LocalWriter\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
     "public class Leaky\n{\n"
     "    public void Run()\n    {\n"
     '        var token = Environment.GetEnvironmentVariable("K");\n'
@@ -1047,6 +1050,11 @@ _LINKED_LEAKY = (
     '        var sink = "";\n'
     "        helper.Fill(token, ref sink);\n"
     "        Console.WriteLine(sink);\n"
+    '        var token2 = Environment.GetEnvironmentVariable("K2");\n'
+    "        var direct = new LocalWriter();\n"
+    '        var sink2 = "";\n'
+    "        direct.Fill(token2, ref sink2);\n"
+    "        Console.WriteLine(sink2);\n"
     "    }\n}\n"
 )
 
@@ -1092,4 +1100,256 @@ def test_conditional_variants_of_a_shared_file_are_not_collapsed(
         for c in mock.ensure_relationship_batch.call_args_list
         if str(c.args[1]) == FLOWS_TO
     }
+    # Positive control first: the non-shared LocalWriter's direct write-back
+    # must be present, proving both projects loaded and ref facts flowed, so
+    # the absence below cannot pass vacuously.
+    assert ("resource::ENV::K2", _STDOUT) in flows
     assert (_ENV_K, _STDOUT) not in flows
+
+
+_GENERIC_CONSTRUCTIONS_REF = (
+    "using System;\n\n"
+    "public interface IGen<T>\n{\n"
+    "    void Fill(T src, ref string dst);\n}\n\n"
+    "public class Both : IGen<string>, IGen<int>\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n"
+    "    void IGen<int>.Fill(int src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src);\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IGen<int> helper = new Both();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token?.Length ?? 0, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_the_invoked_generic_construction_selects_its_own_implementation(
+    tmp_path: Path,
+) -> None:
+    # Both constructions of IGen are implemented with different bodies; the
+    # call goes through IGen<int>, whose explicit implementation only reads,
+    # so the writing IGen<string> body must not be selected for it.
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "gc1", _GENERIC_CONSTRUCTIONS_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+_GENERIC_CONSTRUCTION_WRITER_REF = (
+    "using System;\n\n"
+    "public interface IGen<T>\n{\n"
+    "    void Fill(string src, ref string dst);\n}\n\n"
+    "public class Both : IGen<string>, IGen<int>\n{\n"
+    "    void IGen<string>.Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n"
+    "    void IGen<int>.Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IGen<string> helper = new Both();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_the_invoked_generic_construction_proves_its_own_write(
+    tmp_path: Path,
+) -> None:
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "gc2", _GENERIC_CONSTRUCTION_WRITER_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+_PLUGIN_LIB_CSPROJ = (
+    '<Project Sdk="Microsoft.NET.Sdk">\n'
+    "  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>\n"
+    "</Project>\n"
+)
+_PLUGIN_CSPROJ = (
+    '<Project Sdk="Microsoft.NET.Sdk">\n'
+    "  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>\n"
+    "  <ItemGroup>\n"
+    '    <Reference Include="MetaLib"><HintPath>{dll}</HintPath></Reference>\n'
+    "  </ItemGroup>\n"
+    "</Project>\n"
+)
+_PLUGIN_READER = (
+    "using System;\n\n"
+    "public class Reader : ILib\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n"
+)
+_STALE_PLUGIN_APP_CSPROJ = (
+    '<Project Sdk="Microsoft.NET.Sdk">\n'
+    "  <PropertyGroup>\n"
+    "    <TargetFramework>net8.0</TargetFramework>\n"
+    "    <AssemblyName>MetaLib</AssemblyName>\n"
+    "  </PropertyGroup>\n"
+    "  <ItemGroup>\n"
+    '    <Reference Include="Plugin"><HintPath>{dll}</HintPath></Reference>\n'
+    "  </ItemGroup>\n"
+    "</Project>\n"
+)
+_STALE_PLUGIN_APP_PROGRAM = (
+    "using System;\n\n"
+    "public class Writer : ILib\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        ILib helper = new Writer();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    '        var token2 = Environment.GetEnvironmentVariable("K2");\n'
+    "        var direct = new Writer();\n"
+    '        var sink2 = "";\n'
+    "        direct.Fill(token2, ref sink2);\n"
+    "        Console.WriteLine(sink2);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_prebuilt_plugin_implementation_keeps_the_write_unproven(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A plugin compiled against an identical-identity assembly unifies with
+    # the analyzed source, so its metadata Reader genuinely implements the
+    # SOURCE-declared contract while owning no analyzable body. The proof
+    # must see it and stay unproven, or the visible source Writer would
+    # vouch for a runtime receiver that only reads.
+    import subprocess
+
+    lib = tmp_path / "libsrc"
+    lib.mkdir(parents=True)
+    (lib / "MetaLib.csproj").write_text(_PLUGIN_LIB_CSPROJ, encoding="utf-8")
+    (lib / "ILib.cs").write_text(_METADATA_IFACE_SOURCE, encoding="utf-8")
+    libout = tmp_path / "libbin"
+    built = subprocess.run(
+        ["dotnet", "build", str(lib), "-o", str(libout), "--nologo", "-v", "q"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    libdll = libout / "MetaLib.dll"
+    if built.returncode != 0 or not libdll.exists():
+        pytest.skip(f"could not prebuild the contract assembly: {built.stderr}")
+
+    plugin = tmp_path / "pluginsrc"
+    plugin.mkdir()
+    (plugin / "Plugin.csproj").write_text(
+        _PLUGIN_CSPROJ.format(dll=libdll), encoding="utf-8"
+    )
+    (plugin / "Reader.cs").write_text(_PLUGIN_READER, encoding="utf-8")
+    pluginout = tmp_path / "pluginbin"
+    built = subprocess.run(
+        ["dotnet", "build", str(plugin), "-o", str(pluginout), "--nologo", "-v", "q"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    plugindll = pluginout / "Plugin.dll"
+    if built.returncode != 0 or not plugindll.exists():
+        pytest.skip(f"could not prebuild the plugin assembly: {built.stderr}")
+
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "proj.csproj").write_text(
+        _STALE_PLUGIN_APP_CSPROJ.format(dll=plugindll), encoding="utf-8"
+    )
+    (repo / "ILib.cs").write_text(_METADATA_IFACE_SOURCE, encoding="utf-8")
+    (repo / "Program.cs").write_text(_STALE_PLUGIN_APP_PROGRAM, encoding="utf-8")
+    parsers, queries = load_parsers()
+    monkeypatch.setattr(settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=_CAPTURE_IO,
+    ).run()
+    flows = {
+        (c.args[0][2], c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == FLOWS_TO
+    }
+    assert ("resource::ENV::K2", _STDOUT) in flows
+    assert (_ENV_K, _STDOUT) not in flows
+
+
+_VIRTUAL_OVERRIDE_READS_REF = (
+    "using System;\n\n"
+    "public class HelperBase\n{\n"
+    "    public virtual void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Quiet : HelperBase\n{\n"
+    "    public override void Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        HelperBase helper = new Quiet();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_reading_override_blocks_the_virtual_base_write(tmp_path: Path) -> None:
+    # `virtual` dispatches like the interface cases: the base body is live
+    # for base instances, but the receiver here runs the read-only override,
+    # so proving the write from the base body alone would fabricate the flow.
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "vo1", _VIRTUAL_OVERRIDE_READS_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+_VIRTUAL_ALL_WRITE_REF = (
+    "using System;\n\n"
+    "public class HelperBase\n{\n"
+    "    public virtual void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Louder : HelperBase\n{\n"
+    "    public override void Fill(string src, ref string dst)\n    {\n"
+    '        dst = src + "!";\n    }\n}\n\n'
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        HelperBase helper = new Louder();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_virtual_write_survives_when_every_override_also_writes(
+    tmp_path: Path,
+) -> None:
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "vo2", _VIRTUAL_ALL_WRITE_REF, cs.CSharpFrontend.HYBRID
+    )
