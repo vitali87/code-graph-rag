@@ -170,15 +170,17 @@ def _unavailable_grammars() -> frozenset[rag_cs.SupportedLanguage]:
     return frozenset(lang for lang in LANGUAGE_SPECS if lang not in parsers)
 
 
-def _grammars_missing_for(repo_path: Path) -> frozenset[rag_cs.SupportedLanguage]:
+def _grammars_missing_for(updater: GraphUpdater) -> frozenset[rag_cs.SupportedLanguage]:
     unavailable = _unavailable_grammars()
     if not unavailable:
         return unavailable
+    # The updater's own eligibility walk, not a raw rglob: a file the run
+    # would ignore anyway (node_modules, exclusions, hidden dirs) must not
+    # gate the test on its language's grammar.
     return frozenset(
         language
-        for path in repo_path.rglob("*")
-        if path.is_file()
-        and (language := get_language_for_extension(path.suffix)) is not None
+        for path, _rel_path in updater._collect_eligible_files()
+        if (language := get_language_for_extension(path.suffix)) is not None
         and language in unavailable
     )
 
@@ -199,7 +201,7 @@ def _skip_when_grammar_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     original_run = GraphUpdater.run
 
     def run_or_skip_missing_grammars(self: GraphUpdater, force: bool = False) -> None:
-        missing = _grammars_missing_for(self.repo_path)
+        missing = _grammars_missing_for(self)
         if missing:
             names = ", ".join(sorted(str(lang.value) for lang in missing))
             pytest.skip(f"{names} parser not available")
