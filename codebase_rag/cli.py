@@ -68,20 +68,17 @@ from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
 
 
-def _click_exception_types() -> tuple[type[click.ClickException], ...]:
+def _vendored_click_exception() -> type[click.ClickException]:
     # typer >= 0.22 raises its vendored click's exceptions, which do not
     # descend from the real click's; both flavors must be caught (#1409).
     try:
         vendored = importlib.import_module(cs.TYPER_VENDORED_CLICK_EXCEPTIONS_MODULE)
     except ImportError:
-        return (click.ClickException,)
-    return (
-        click.ClickException,
-        getattr(vendored, "ClickException", click.ClickException),
-    )
+        return click.ClickException
+    return getattr(vendored, "ClickException", click.ClickException)
 
 
-_CLICK_EXCEPTIONS = _click_exception_types()
+_CLICK_EXCEPTIONS = (click.ClickException, _vendored_click_exception())
 
 app = typer.Typer(
     name=cs.PACKAGE_NAME,

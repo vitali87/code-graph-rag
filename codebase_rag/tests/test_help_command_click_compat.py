@@ -21,17 +21,17 @@ def test_real_click_exception_is_always_caught() -> None:
     assert click.ClickException in cgr_cli._CLICK_EXCEPTIONS
 
 
-def test_without_vendored_module_only_real_click_remains(
+def test_without_vendored_module_real_click_is_the_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def raise_import_error(name: str) -> types.ModuleType:
         raise ImportError(name)
 
     monkeypatch.setattr(cgr_cli.importlib, "import_module", raise_import_error)
-    assert cgr_cli._click_exception_types() == (click.ClickException,)
+    assert cgr_cli._vendored_click_exception() is click.ClickException
 
 
-def test_vendored_exception_class_is_included(
+def test_vendored_exception_class_is_resolved(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class VendoredClickException(Exception):
@@ -40,10 +40,7 @@ def test_vendored_exception_class_is_included(
     vendored = types.ModuleType("vendored_click_exceptions")
     vendored.ClickException = VendoredClickException
     monkeypatch.setattr(cgr_cli.importlib, "import_module", lambda _name: vendored)
-    assert cgr_cli._click_exception_types() == (
-        click.ClickException,
-        VendoredClickException,
-    )
+    assert cgr_cli._vendored_click_exception() is VendoredClickException
 
 
 def test_root_command_supports_duck_typed_group_resolution() -> None:
