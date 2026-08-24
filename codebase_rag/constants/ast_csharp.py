@@ -25,6 +25,7 @@ TS_CSHARP_STRUCT_DECLARATION = "struct_declaration"
 TS_CSHARP_RECORD_DECLARATION = "record_declaration"
 TS_CSHARP_INTERFACE_DECLARATION = "interface_declaration"
 TS_CSHARP_ENUM_DECLARATION = "enum_declaration"
+TS_CSHARP_DELEGATE_DECLARATION = "delegate_declaration"
 
 # A conditional-compilation block wrapping a declaration's attributes
 # (`#if SYMBOL [Attr] #endif`) parses as this node, which sits as the leading

@@ -363,7 +363,10 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # The re-parsed file queued deferred IMPORTS edges, and C# namespace
         # imports additionally pin to the cross-module uses the call pass
         # just recorded, so the flush must run on this path too or a watched
-        # edit leaves the live graph without its import edges (issue #1347).
+        # edit leaves the live graph without its import edges. Unchanged C#
+        # importers are requeued as well: editing a PROVIDER recreated its
+        # Module node and severed their edges (issue #1347).
+        self.updater.factory.import_processor.requeue_csharp_import_edges()
         self.updater.factory.import_processor.flush_deferred_import_edges(
             self.updater.known_module_paths()
         )

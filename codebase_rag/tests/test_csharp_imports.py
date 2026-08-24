@@ -372,3 +372,181 @@ public class RemoteStorageProvider
         and t.endswith(".PlatformLib.RemoteStorageProvider")
         for f, t in imports
     ), imports
+
+
+def test_a_locally_declared_name_is_not_evidence_for_an_import(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # The file declares its OWN RemoteStorageProvider and never uses the
+    # imported namespace: an unqualified mention binds to the local type, so
+    # the name must not count as evidence for the namespace's module.
+    host = csharp_project / "HostApp"
+    lib = csharp_project / "PlatformLib"
+    host.mkdir()
+    lib.mkdir()
+    (host / "Shadow.cs").write_text(
+        """
+using Acme.Core.PlatformLib;
+
+namespace Acme.Core.HostApp;
+public class RemoteStorageProvider
+{
+    public static void Ping() {}
+}
+
+public class Shadow
+{
+    public void Wire()
+    {
+        RemoteStorageProvider.Ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    (lib / "RemoteStorageProvider.cs").write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public class RemoteStorageProvider
+{
+    public static void Ping() {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    imports = {
+        (str(c.args[0][2]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    assert not any(
+        f.endswith(".HostApp.Shadow")
+        and t.endswith(".PlatformLib.RemoteStorageProvider")
+        for f, t in imports
+    ), imports
+
+
+def test_delegate_only_namespace_use_still_pins_the_import(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    host = csharp_project / "HostApp"
+    lib = csharp_project / "PlatformLib"
+    host.mkdir()
+    lib.mkdir()
+    (host / "Consumer.cs").write_text(
+        """
+using Acme.Core.PlatformLib;
+
+namespace Acme.Core.HostApp;
+public class Consumer
+{
+    private StorageChanged _handler;
+}
+""",
+        encoding="utf-8",
+    )
+    (lib / "Events.cs").write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public delegate void StorageChanged(string path);
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    imports = {
+        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    assert any(
+        f.endswith(".HostApp.Consumer")
+        and tl == "Module"
+        and t.endswith(".PlatformLib.Events")
+        for f, tl, t in imports
+    ), imports
+
+
+def test_watched_provider_edit_keeps_the_importers_edge(
+    csharp_project: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Editing the PROVIDER deletes and recreates its Module node, severing the
+    # unchanged importer's edge; the importer never re-parses, so its using
+    # entries must be requeued from the persistent import mapping or the edge
+    # stays lost until a full re-index (issue #1347).
+    import sys
+    from typing import Protocol, runtime_checkable
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, queries = load_parsers()
+    if "c_sharp" not in parsers:
+        pytest.skip("c_sharp parser not available")
+
+    host = csharp_project / "HostApp"
+    lib = csharp_project / "PlatformLib"
+    host.mkdir()
+    lib.mkdir()
+    (host / "Installer.cs").write_text(
+        """
+using Acme.Core.PlatformLib;
+
+namespace Acme.Core.HostApp;
+public class Installer
+{
+    public void Wire()
+    {
+        RemoteStorageProvider.Ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    provider = lib / "RemoteStorageProvider.cs"
+    provider.write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public class RemoteStorageProvider
+{
+    public static void Ping() {}
+}
+""",
+        encoding="utf-8",
+    )
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=csharp_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    provider.write_text(
+        provider.read_text(encoding="utf-8") + "\n// touched\n", encoding="utf-8"
+    )
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(provider)))
+
+    imports = {
+        (str(c.args[0][2]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    assert any(
+        f.endswith(".HostApp.Installer")
+        and t.endswith(".PlatformLib.RemoteStorageProvider")
+        for f, t in imports
+    ), imports

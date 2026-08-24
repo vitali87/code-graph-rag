@@ -959,6 +959,7 @@ class ImportProcessor:
         cs.TS_CSHARP_RECORD_DECLARATION,
         cs.TS_CSHARP_INTERFACE_DECLARATION,
         cs.TS_CSHARP_ENUM_DECLARATION,
+        cs.TS_CSHARP_DELEGATE_DECLARATION,
     )
 
     def _collect_csharp_namespaces(self, root_node: Node) -> dict[str, set[str]]:
@@ -1028,6 +1029,21 @@ class ImportProcessor:
                     break
         return frozenset(found)
 
+    def requeue_csharp_import_edges(self) -> None:
+        """Re-queue every parsed C# module's using entries for a fresh flush.
+
+        A watched edit to a PROVIDER file deletes and recreates its Module
+        node, severing edges from unchanged importers, whose deferred entries
+        were consumed by an earlier flush. The persistent import mapping still
+        holds their using directives, and re-emission is idempotent MERGEs
+        (issue #1347).
+        """
+        for module_qn in self._csharp_module_namespaces:
+            for imported_path in self.import_mapping.get(module_qn, {}).values():
+                self.defer_import_edge(
+                    module_qn, imported_path, cs.SupportedLanguage.CSHARP
+                )
+
     def _csharp_namespace_modules(
         self, known_module_qns: set[str]
     ) -> dict[str, dict[str, set[str]]]:
@@ -1092,7 +1108,17 @@ class ImportProcessor:
         if self.ingestor is None:
             return 0
         inferred = self._inferred_module_imports.get(entry.module_qn, set())
-        used = self._csharp_module_identifiers.get(entry.module_qn, frozenset())
+        # Names the importer DECLARES itself are not evidence: an unqualified
+        # mention binds to the local type, not the imported namespace's.
+        own_types: set[str] = set()
+        for own_declared in self._csharp_module_namespaces.get(
+            entry.module_qn, {}
+        ).values():
+            own_types.update(own_declared)
+        used = (
+            self._csharp_module_identifiers.get(entry.module_qn, frozenset())
+            - own_types
+        )
         targets = {
             target
             for target, declared_types in declaring.items()
