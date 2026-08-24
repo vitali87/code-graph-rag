@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -357,11 +356,11 @@ class TestMaybeStartStackWarns:
     (#1380)."""
 
     @pytest.fixture
-    def _disable_stack_autostart(self) -> Generator[None, None, None]:
+    def _disable_stack_autostart(self) -> None:
         # Override the conftest autouse mock of `_maybe_start_stack`: this
         # class exercises the real function. Docker stays untouched because
         # the manager and health checks are patched in `_invoke`.
-        yield
+        return
 
     def _invoke(self, stack_home: Path, tmp_path: Path) -> list[str]:
         from codebase_rag.cli import _maybe_start_stack
