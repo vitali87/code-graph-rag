@@ -33,9 +33,11 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
     export PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig:$PKG_CONFIG_PATH"
     ```
 
-    Run the install command again in the same shell so the variables are
-    picked up. See [Troubleshooting](../advanced/troubleshooting.md) for the
-    symptoms this fixes.
+    Then run the `pip install` command from
+    [Install from PyPI](#install-from-pypi) below (or rerun the one that just
+    failed) in the same shell so the variables are picked up. See
+    [Troubleshooting](../advanced/troubleshooting.md) for the symptoms this
+    fixes.
 
 === "Ubuntu/Debian"
 
