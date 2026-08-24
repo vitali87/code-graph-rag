@@ -748,3 +748,38 @@ def test_ref_write_back_through_sole_abstract_override(tmp_path: Path) -> None:
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "ab1", _ABSTRACT_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_DEFAULT_INTERFACE_REF = (
+    "using System;\n\n"
+    "public interface IHelper\n{\n"
+    "    void Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n\n"
+    "public class Writer : IHelper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Reader : IHelper\n{\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IHelper helper = new Reader();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_default_interface_method_never_resolves_to_an_override(
+    tmp_path: Path,
+) -> None:
+    # A DEFAULT interface member owns a body and is not abstract, so the call
+    # can land on the inherited default (Reader here). Resolving a sole
+    # override (Writer) would attribute the write to a body the call never
+    # reaches; the default body itself only reads, so no edge.
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "di1", _DEFAULT_INTERFACE_REF, cs.CSharpFrontend.HYBRID
+    )

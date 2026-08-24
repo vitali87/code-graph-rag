@@ -568,11 +568,17 @@ public static class Frontend
         // known, so the write stays unproven rather than guessed).
         private IMethodSymbol? SoleDispatchTarget(Compilation caller, IMethodSymbol method)
         {
-            var viaInterface = method.ContainingType.TypeKind == TypeKind.Interface;
-            if (!viaInterface && !method.IsAbstract)
+            // Abstract members only: a DEFAULT interface method owns a body
+            // and can be the member a call actually lands on (any implementer
+            // that does not override it inherits it), so resolving a sole
+            // override there would attribute the write to a body the call
+            // never reaches. Classic interface members are abstract, so they
+            // still resolve.
+            if (!method.IsAbstract)
             {
                 return null;
             }
+            var viaInterface = method.ContainingType.TypeKind == TypeKind.Interface;
             IMethodSymbol? sole = null;
             // A multi-targeted project compiles the same declaration once per
             // framework, so implementations are identified by their source
