@@ -227,6 +227,15 @@ CLI_ERR_DUPLICATES_OPEN_NO_TOOL = (
 )
 CLI_DUPLICATES_OPENED_DIFF = "Opened {left} and {right} side by side."
 DUPLICATES_OPEN_PAIR_SIZE = 2
+CLI_DUPLICATES_URL_TEMPLATE_INVALID = (
+    "CGR_EDITOR_URL_TEMPLATE {template!r} is invalid ({error}); locations "
+    "are shown as plain text. The template may use only {{path}} and "
+    "{{line}}."
+)
+CLI_ERR_DUPLICATES_DIFF_TEMPLATE_INVALID = (
+    "CGR_DIFF_COMMAND {template!r} is invalid ({error}). The command may "
+    "use only {{left}} and {{right}}."
+)
 CLI_DUPLICATES_OPEN_EXTRA_MEMBERS = (
     "Group {number} has {count} members; opened the first two side by side."
 )

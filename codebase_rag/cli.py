@@ -26,7 +26,13 @@ from . import cypher_queries as cq
 from . import logs as ls
 from .capture import CaptureSelection, resolve_capture, split_spec
 from .config import load_ignore_patterns, settings
-from .editor_links import diff_command, editor_url, resolve_editor
+from .editor_links import (
+    EditorTemplateError,
+    diff_command,
+    editor_url,
+    resolve_editor,
+    url_template_problem,
+)
 from .graph_updater import GraphUpdater
 from .main import (
     _create_configuration_table,
@@ -1587,6 +1593,10 @@ def _emit_duplicates(
         )
     if truncated:
         notices.append(cs.CLI_DUPLICATES_TRUNCATED_NOTICE)
+    # A broken CGR_EDITOR_URL_TEMPLATE degrades to plain locations; the
+    # notice says so instead of the template error aborting mid-table.
+    if root_path is not None and (problem := url_template_problem()) is not None:
+        notices.append(problem)
     table = _build_duplicates_table(groups, project_name, root_path)
     if output is not None:
         with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
@@ -1647,7 +1657,11 @@ def _open_duplicate_group(
     members = groups[number - 1]["members"]
     left = root_path / members[0]["path"]
     right = root_path / members[1]["path"]
-    argv = diff_command(left, right)
+    try:
+        argv = diff_command(left, right)
+    except EditorTemplateError as e:
+        app_context.console.print(style(str(e), cs.Color.RED))
+        raise typer.Exit(1) from e
     if argv is None:
         app_context.console.print(
             style(

@@ -259,6 +259,45 @@ class TestOpenGroup:
         assert "records no root path" in result.output
         popen.assert_not_called()
 
+    def test_open_with_malformed_diff_command_errors_cleanly(
+        self,
+        runner: CliRunner,
+        clone_rows: list[ResultRow],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "tool '{left} {right}")
+        mock_ingestor = _make_mock_ingestor(
+            projects=["myproj"], rows=clone_rows, root="/repo"
+        )
+        with (
+            patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor),
+            patch("codebase_rag.cli.subprocess.Popen") as popen,
+        ):
+            result = runner.invoke(app, ["duplicates", "--open", "1"])
+
+        assert result.exit_code == 1
+        assert "CGR_DIFF_COMMAND" in result.output
+        popen.assert_not_called()
+
+    def test_malformed_url_template_degrades_to_plain_with_notice(
+        self,
+        runner: CliRunner,
+        clone_rows: list[ResultRow],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A typo'd CGR_EDITOR_URL_TEMPLATE must not abort the report
+        # mid-table; locations render plain and a notice says why.
+        monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", "ed://{unknown}")
+        mock_ingestor = _make_mock_ingestor(
+            projects=["myproj"], rows=clone_rows, root="/repo"
+        )
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(app, ["duplicates"])
+
+        assert result.exit_code == 0
+        assert "total_price" in result.output
+        assert "CGR_EDITOR_URL_TEMPLATE" in result.output
+
 
 def _member(*, path: str, start_line: int, end_line: int) -> DuplicateMember:
     return DuplicateMember(

@@ -8,7 +8,13 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
-from codebase_rag.editor_links import diff_command, editor_url, resolve_editor
+from codebase_rag.editor_links import (
+    EditorTemplateError,
+    diff_command,
+    editor_url,
+    resolve_editor,
+    url_template_problem,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -68,3 +74,40 @@ class TestDiffCommand:
     def test_unknown_editor_has_no_diff(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "CGR_EDITOR", "textmate")
         assert diff_command(Path("/r/a"), Path("/r/b")) is None
+
+
+class TestMalformedTemplates:
+    """User template typos degrade or error cleanly, never traceback."""
+
+    def test_unknown_url_placeholder_disables_links_with_problem(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", "ed://{unknown}")
+        assert editor_url(Path("/r/a.py"), 1) is None
+        problem = url_template_problem()
+        assert problem is not None
+        assert "{path}" in problem and "{line}" in problem
+
+    def test_unmatched_url_brace_disables_links_with_problem(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", "ed://{path")
+        assert editor_url(Path("/r/a.py"), 1) is None
+        assert url_template_problem() is not None
+
+    def test_valid_builtin_template_reports_no_problem(self) -> None:
+        assert url_template_problem() is None
+
+    def test_unknown_diff_placeholder_raises_actionable_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "tool {oops}")
+        with pytest.raises(EditorTemplateError, match=r"\{left\}"):
+            diff_command(Path("/r/a"), Path("/r/b"))
+
+    def test_unbalanced_diff_quote_raises_actionable_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "tool '{left} {right}")
+        with pytest.raises(EditorTemplateError, match=r"\{right\}"):
+            diff_command(Path("/r/a"), Path("/r/b"))
