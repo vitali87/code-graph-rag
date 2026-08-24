@@ -6290,10 +6290,16 @@ def test_two_bodied_cfg_twin_mods_merge_into_one_module_node(
     )
     create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
     base = "rs_cfg_twin_merged_node.src"
-    modules = _module_qns(mock_ingestor)
-    assert f"{base}.foo.run" in modules, modules
-    twin_variants = {qn for qn in modules if qn.startswith(f"{base}.foo.run@")}
-    assert not twin_variants, twin_variants
+    module_qn_writes = [
+        props["qualified_name"]
+        for label, props in (
+            c[0] for c in mock_ingestor.ensure_node_batch.call_args_list
+        )
+        if label == "Module" and props["qualified_name"].startswith(f"{base}.foo.run")
+    ]
+    # Both twins must have been ingested, and both must have written the
+    # bare qn: one node identity, no @<start_line> variants.
+    assert module_qn_writes == [f"{base}.foo.run"] * 2, module_qn_writes
 
 
 def _module_qns(mock_ingestor: MagicMock) -> set[str]:
