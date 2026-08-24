@@ -976,6 +976,34 @@ class ImportProcessor:
         walk(root_node, "")
         return found
 
+    def _emit_csharp_internal_imports(
+        self,
+        entry: DeferredImportEdge,
+        declaring: set[str],
+        known_module_qns: set[str],
+    ) -> int:
+        """IMPORTS edges for a `using` of a namespace declared in the repo.
+
+        A `using` names a NAMESPACE. When indexed modules declare it, the edge
+        lands on the specific modules this file actually resolved entities
+        from; a namespace-keyed ExternalModule would be a dead end no edge
+        ever connects to the defining files (issue #1347).
+        """
+        if self.ingestor is None:
+            return 0
+        inferred = self._inferred_module_imports.get(entry.module_qn, set())
+        emitted = 0
+        for target_module_qn in sorted(inferred & declaring):
+            if target_module_qn not in known_module_qns:
+                continue
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, entry.module_qn),
+                cs.RelationshipType.IMPORTS,
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, target_module_qn),
+            )
+            emitted += 1
+        return emitted
+
     def record_resolved_cross_module_use(
         self, importing_module_qn: str, target_module_qn: str
     ) -> None:
@@ -1091,29 +1119,9 @@ class ImportProcessor:
             if entry.language == cs.SupportedLanguage.CSHARP and (
                 declaring := csharp_namespace_modules.get(entry.full_name)
             ):
-                # A `using` names a NAMESPACE. When indexed modules declare
-                # that namespace, the edge lands on the specific modules this
-                # file actually resolved entities from; a namespace-keyed
-                # ExternalModule would be a dead end no edge ever connects to
-                # the defining files (issue #1347). A namespace nothing
-                # declares falls through to the external handling below.
-                inferred = self._inferred_module_imports.get(entry.module_qn, set())
-                for target_module_qn in sorted(inferred & declaring):
-                    if target_module_qn in known_module_qns:
-                        self.ingestor.ensure_relationship_batch(
-                            (
-                                cs.NodeLabel.MODULE,
-                                cs.KEY_QUALIFIED_NAME,
-                                entry.module_qn,
-                            ),
-                            cs.RelationshipType.IMPORTS,
-                            (
-                                cs.NodeLabel.MODULE,
-                                cs.KEY_QUALIFIED_NAME,
-                                target_module_qn,
-                            ),
-                        )
-                        emitted += 1
+                emitted += self._emit_csharp_internal_imports(
+                    entry, declaring, known_module_qns
+                )
                 continue
             module_path = self._resolve_module_path(entry.full_name, entry.language)
             target_label = self._module_label(module_path)
