@@ -1,6 +1,7 @@
 """Command-line entry point wiring cgr subcommands to their handlers."""
 
 import asyncio
+import importlib
 import json
 import sys
 import time
@@ -65,6 +66,22 @@ from .utils.path_utils import derive_project_name, resolve_repo_path
 from .vector_store import clear_all_embeddings, delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
+
+
+def _click_exception_types() -> tuple[type[click.ClickException], ...]:
+    # typer >= 0.22 raises its vendored click's exceptions, which do not
+    # descend from the real click's; both flavors must be caught (#1409).
+    try:
+        vendored = importlib.import_module(cs.TYPER_VENDORED_CLICK_EXCEPTIONS_MODULE)
+    except ImportError:
+        return (click.ClickException,)
+    return (
+        click.ClickException,
+        getattr(vendored, "ClickException", click.ClickException),
+    )
+
+
+_CLICK_EXCEPTIONS = _click_exception_types()
 
 app = typer.Typer(
     name=cs.PACKAGE_NAME,
@@ -1065,10 +1082,13 @@ def help_command(
 
     root_command = root_context.command
     command_name, *command_args = requested
-    if not isinstance(root_command, click.Group):
+    # Duck-typed, not isinstance(click.Group): typer >= 0.22 builds the app
+    # from its vendored click, whose Group is not the real click's (#1409).
+    get_command = getattr(root_command, "get_command", None)
+    if get_command is None:
         raise typer.Exit(1)
 
-    target = root_command.get_command(root_context, command_name)
+    target = get_command(root_context, command_name)
     if target is None:
         typer.echo(f"cgr: '{command_name}' is not a cgr command.", err=True)
         typer.echo("See 'cgr help'.", err=True)
@@ -1080,7 +1100,7 @@ def help_command(
             prog_name=f"{root_context.command_path} {command_name}",
             standalone_mode=False,
         )
-    except click.ClickException as error:
+    except _CLICK_EXCEPTIONS as error:
         error.show()
         raise typer.Exit(error.exit_code) from error
 
