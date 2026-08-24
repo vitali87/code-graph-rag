@@ -613,7 +613,13 @@ public static class Frontend
                     {
                         continue;
                     }
-                    if (!seenAssemblies.Add(assembly.Identity.GetDisplayName()))
+                    // Keyed by origin as well as identity: a source assembly
+                    // and a resolved metadata assembly can share an identity
+                    // (a stale build of the same project), and one must never
+                    // suppress the other's walk.
+                    var seenKey = (inSource ? "source:" : "metadata:")
+                        + assembly.Identity.GetDisplayName();
+                    if (!seenAssemblies.Add(seenKey))
                     {
                         continue;
                     }
