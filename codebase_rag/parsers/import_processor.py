@@ -1006,32 +1006,47 @@ class ImportProcessor:
         self._walk_csharp_namespaces(root_node, "", found)
         return found
 
+    @staticmethod
+    def _csharp_field_of(node: Node) -> str | None:
+        parent = node.parent
+        if parent is None:
+            return None
+        for index, child in enumerate(parent.children):
+            if child.id == node.id:
+                return parent.field_name_for_child(index)
+        return None
+
     def _collect_csharp_identifiers(self, root_node: Node) -> frozenset[str]:
-        # Identifier MENTIONS minus every NAME-POSITION identifier: a name
-        # position (parameter, variable, member, type name) declares rather
-        # than references, and any same-named mention in the file most
-        # plausibly binds to that local declaration, so the whole name is
-        # withdrawn as evidence rather than risking a false import edge.
+        # Three tiers of identifier occurrences: TYPE-POSITION mentions are
+        # definitive references (a namesake property, `Widget Widget`, is
+        # idiomatic C# and must keep its evidence); NAME-POSITION identifiers
+        # declare rather than reference; everything else is a plain mention
+        # whose spelling is withdrawn when the file also declares it, because
+        # such a mention binds to the local declaration.
+        type_positions: set[str] = set()
         mentions: set[str] = set()
         declared: set[str] = set()
         stack = [root_node]
         while stack:
             node = stack.pop()
-            if node.type == cs.TS_CSHARP_IDENTIFIER and (
-                text := safe_decode_text(node)
-            ):
-                parent = node.parent
-                named_child = (
-                    parent.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-                    if parent is not None
-                    else None
-                )
-                if named_child is not None and named_child.id == node.id:
-                    declared.add(text)
-                else:
-                    mentions.add(text)
             stack.extend(node.children)
-        return frozenset(mentions - declared)
+            if node.type != cs.TS_CSHARP_IDENTIFIER:
+                continue
+            text = safe_decode_text(node)
+            if not text:
+                continue
+            field = self._csharp_field_of(node)
+            parent_type = node.parent.type if node.parent is not None else None
+            if field == cs.TS_CSHARP_FIELD_TYPE or parent_type in (
+                cs.TS_CSHARP_BASE_LIST,
+                cs.TS_CSHARP_TYPE_ARGUMENT_LIST,
+            ):
+                type_positions.add(text)
+            elif field == cs.TS_CSHARP_FIELD_NAME:
+                declared.add(text)
+            else:
+                mentions.add(text)
+        return frozenset(type_positions | (mentions - declared))
 
     def drop_csharp_module_import_state(self, module_qn: str) -> None:
         # A deleted C# file must stop declaring its namespaces, contributing

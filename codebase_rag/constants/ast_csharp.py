@@ -217,6 +217,7 @@ TS_CSHARP_EQUALS_VALUE_CLAUSE = "equals_value_clause"
 TS_CSHARP_FIELD_NAME = "name"
 TS_CSHARP_FIELD_OPERATOR = "operator"
 TS_CSHARP_FIELD_TYPE = "type"
+TS_CSHARP_TYPE_ARGUMENT_LIST = "type_argument_list"
 # method_declaration/local_function_statement expose the return type via
 # `returns` (there is no `type` field on them).
 TS_CSHARP_FIELD_RETURNS = "returns"

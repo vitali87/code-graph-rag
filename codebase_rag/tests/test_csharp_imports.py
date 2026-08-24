@@ -676,3 +676,49 @@ public class RemoteStorageProvider
         tl == "Module" and t.endswith(".PlatformLib.RemoteStorageProvider")
         for _f, tl, t in imports
     ), imports
+
+
+def test_a_namesake_property_keeps_the_type_evidence(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `RemoteStorageProvider RemoteStorageProvider { get; set; }` is idiomatic
+    # C#: the property NAME matches the TYPE. The type-position use is real
+    # evidence and must survive the name-position subtraction.
+    host = csharp_project / "HostApp"
+    lib = csharp_project / "PlatformLib"
+    host.mkdir()
+    lib.mkdir()
+    (host / "Options.cs").write_text(
+        """
+using Acme.Core.PlatformLib;
+
+namespace Acme.Core.HostApp;
+public class Options
+{
+    public RemoteStorageProvider RemoteStorageProvider { get; set; }
+}
+""",
+        encoding="utf-8",
+    )
+    (lib / "RemoteStorageProvider.cs").write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public class RemoteStorageProvider
+{
+    public static void Ping() {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    imports = {
+        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    assert any(
+        f.endswith(".HostApp.Options")
+        and tl == "Module"
+        and t.endswith(".PlatformLib.RemoteStorageProvider")
+        for f, tl, t in imports
+    ), imports
