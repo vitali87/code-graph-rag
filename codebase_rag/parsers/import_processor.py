@@ -976,6 +976,34 @@ class ImportProcessor:
         walk(root_node, "")
         return found
 
+    def _recover_unparsed_csharp_namespaces(
+        self, known_module_paths: dict[str, str]
+    ) -> None:
+        pending = [
+            (module_qn, path)
+            for module_qn, path in known_module_paths.items()
+            if module_qn not in self._csharp_module_namespaces
+            and str(path).endswith(cs.EXT_CS)
+        ]
+        if not pending:
+            return
+        from ..parser_loader import load_parsers
+
+        parsers, _queries = load_parsers()
+        if cs.SupportedLanguage.CSHARP not in parsers:
+            return
+        parser = parsers[cs.SupportedLanguage.CSHARP]
+        for module_qn, path in pending:
+            try:
+                source = Path(path).read_bytes()
+            except OSError:
+                self._csharp_module_namespaces[module_qn] = set()
+                continue
+            tree = parser.parse(source)
+            self._csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
+                tree.root_node
+            )
+
     def _emit_csharp_internal_imports(
         self,
         entry: DeferredImportEdge,
@@ -1047,7 +1075,12 @@ class ImportProcessor:
         module_aliases = self._module_alias_map(known_module_qns)
         # namespace -> the indexed modules DECLARING it, from the per-file
         # scan done at parse time: C# namespaces need not mirror directory
-        # names, so path-based guessing cannot answer "is this internal".
+        # names, so path-based guessing cannot answer "is this internal". An
+        # incremental run only re-parses CHANGED files, so unchanged C#
+        # modules recover their namespaces here from a targeted parse of
+        # their source, or the internal detection would silently fail in
+        # watch mode and resurrect the dead-end ExternalModule.
+        self._recover_unparsed_csharp_namespaces(known_module_paths)
         csharp_namespace_modules: dict[str, set[str]] = {}
         for csharp_module_qn, namespaces in self._csharp_module_namespaces.items():
             if csharp_module_qn not in known_module_qns:

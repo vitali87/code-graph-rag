@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.constants import SupportedLanguage
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 SKIP = "c_sharp"
@@ -117,3 +118,107 @@ public class UnusedThing
         edge[1] == installer and edge[2] == "ExternalModule" and edge[3] == "System"
         for edge in imports
     ), imports
+
+
+def test_method_group_only_usage_still_pins_the_import(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # The importing file never INVOKES anything from the namespace; it only
+    # passes a method group as a delegate. The reference resolution is the
+    # sole evidence, and it must still pin the IMPORTS edge (issue #1347).
+    host = csharp_project / "HostApp"
+    lib = csharp_project / "PlatformLib"
+    host.mkdir()
+    lib.mkdir()
+    (host / "Wiring.cs").write_text(
+        """
+using System;
+using Acme.Core.PlatformLib;
+
+namespace Acme.Core.HostApp;
+public class Wiring
+{
+    public void Hook()
+    {
+        Register(Provider.Handle);
+    }
+
+    private void Register(Action target)
+    {
+        target();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    (lib / "Provider.cs").write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public class Provider
+{
+    public static void Handle() {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    imports = {
+        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    wiring = next((f for f, _tl, _t in imports if f.endswith(".HostApp.Wiring")), None)
+    assert wiring is not None, imports
+    assert any(
+        f == wiring and t.endswith(".PlatformLib.Provider") and tl == "Module"
+        for f, tl, t in imports
+    ), imports
+    assert not any(
+        f == wiring and t == "Acme.Core.PlatformLib" for f, _tl, t in imports
+    ), imports
+
+
+def test_unparsed_module_namespaces_recover_at_flush(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # An incremental run re-parses only CHANGED files: the provider module is
+    # known (rehydrated) but its parse_imports never ran this run, so its
+    # declared namespace must be recovered from source at flush time or the
+    # internal detection silently fails (issue #1347).
+    from codebase_rag.parsers.import_processor import ImportProcessor
+
+    lib = csharp_project / "PlatformLib"
+    lib.mkdir()
+    provider_path = lib / "RemoteStorageProvider.cs"
+    provider_path.write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public class RemoteStorageProvider
+{
+    public static void Ping() {}
+}
+""",
+        encoding="utf-8",
+    )
+    processor = ImportProcessor(
+        repo_path=csharp_project, project_name="proj", ingestor=mock_ingestor
+    )
+    installer_qn = "proj.HostApp.Installer"
+    provider_qn = "proj.PlatformLib.RemoteStorageProvider"
+    processor.import_mapping[installer_qn] = {"PlatformLib": "Acme.Core.PlatformLib"}
+    processor.defer_import_edge(
+        installer_qn, "Acme.Core.PlatformLib", SupportedLanguage.CSHARP
+    )
+    processor.record_resolved_cross_module_use(installer_qn, provider_qn)
+    emitted = processor.flush_deferred_import_edges(
+        {
+            installer_qn: str(csharp_project / "HostApp" / "Installer.cs"),
+            provider_qn: str(provider_path),
+        }
+    )
+    assert emitted == 1
+    edges = {
+        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    assert (installer_qn, "Module", provider_qn) in edges, edges

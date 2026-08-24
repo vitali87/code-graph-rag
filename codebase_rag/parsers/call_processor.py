@@ -3635,20 +3635,8 @@ class CallProcessor:
 
             callee_type, callee_qn = callee_info
 
-            if language == cs.SupportedLanguage.CSHARP and callee_qn.startswith(
-                f"{self.project_name}{cs.SEPARATOR_DOT}"
-            ):
-                # A resolved first-party callee pins the C# namespace import
-                # to the module that defines it (issue #1347); external
-                # resolutions (stdlib, builtins) never carry the project
-                # prefix and are skipped.
-                target_module = module_qn_for_entity(
-                    callee_qn, self.module_qn_to_file_path
-                )
-                if target_module is not None and target_module != module_qn:
-                    resolver.import_processor.record_resolved_cross_module_use(
-                        module_qn, target_module
-                    )
+            if language == cs.SupportedLanguage.CSHARP:
+                self._record_csharp_cross_module_use(module_qn, callee_qn)
 
             if (
                 language == cs.SupportedLanguage.CPP
@@ -5706,6 +5694,7 @@ class CallProcessor:
                             rel_type,
                             (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
                         )
+                        self._record_csharp_cross_module_use(module_qn, target_qn)
                     return
         if not (
             resolved := resolve_func(
@@ -5738,6 +5727,20 @@ class CallProcessor:
                 source_spec,
                 rel_type,
                 (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
+            if language == cs.SupportedLanguage.CSHARP:
+                self._record_csharp_cross_module_use(module_qn, target_qn)
+
+    def _record_csharp_cross_module_use(self, module_qn: str, entity_qn: str) -> None:
+        # A resolved first-party entity pins the C# namespace import to the
+        # module that defines it (issue #1347); external resolutions (stdlib,
+        # builtins) never carry the project prefix and are skipped.
+        if not entity_qn.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}"):
+            return
+        target_module = module_qn_for_entity(entity_qn, self.module_qn_to_file_path)
+        if target_module is not None and target_module != module_qn:
+            self._resolver.import_processor.record_resolved_cross_module_use(
+                module_qn, target_module
             )
 
     def _ingest_callable_param_calls(
@@ -6572,6 +6575,7 @@ class CallProcessor:
                 seen.add(name)
                 if prop_qn != caller_qn:
                     ensure_rel(caller_spec, refs_rel, (method_label, qn_key, prop_qn))
+                    self._record_csharp_cross_module_use(module_qn, prop_qn)
 
         stack = list(caller_node.children)
         while stack:
