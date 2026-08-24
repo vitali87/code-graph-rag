@@ -311,10 +311,12 @@ def test_java_files_new_buffered_reader_path_of(tmp_path: Path) -> None:
 def test_java_nested_class_shadowing_pathof_pins_literal_identity(
     tmp_path: Path,
 ) -> None:
-    # Pins the accepted limitation (#1216) in the READS_FROM/WRITES_TO walk:
-    # `Path.of` here is a local nested class, not `java.nio.file.Path`, yet
-    # the textual `Path.of` matches the identity registry and the handle gets
-    # the concrete literal where FILE::<dynamic> would be correct.
+    """Pin the accepted limitation (#1216) in the READS_FROM/WRITES_TO walk.
+
+    `Path.of` here is a local nested class, not `java.nio.file.Path`, yet the
+    textual `Path.of` matches the identity registry and the handle gets the
+    concrete literal where FILE::<dynamic> would be correct.
+    """
     files = {
         "A.java": (
             "import java.nio.file.Files;\n"

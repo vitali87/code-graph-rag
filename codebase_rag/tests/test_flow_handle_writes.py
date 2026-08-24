@@ -491,13 +491,15 @@ def test_java_files_factory_static_import_identity(tmp_path: Path) -> None:
 def test_java_static_import_shadowed_by_method_pins_literal_identity(
     tmp_path: Path,
 ) -> None:
-    # Pins the accepted limitation (#1216): the same-class `of(..)` method
-    # shadows the static import in real Java, so the correct identity would be
-    # FILE::<dynamic>, but the membership check still maps the bare `of`
-    # through the import map to `java.nio.file.Path.of` and recovers the
-    # literal. Shadow-awareness would need the full call resolver in a
-    # deliberately lightweight path; the shadowing is valid but uncommon Java
-    # (the static import is unusable at this call site).
+    """Pin the accepted limitation (#1216), static-import spelling.
+
+    The same-class `of(..)` method shadows the static import in real Java, so
+    the correct identity would be FILE::<dynamic>, but the membership check
+    still maps the bare `of` through the import map to `java.nio.file.Path.of`
+    and recovers the literal. Shadow-awareness would need the full call
+    resolver in a deliberately lightweight path; the shadowing is valid but
+    uncommon Java (the static import is unusable at this call site).
+    """
     files = {
         "A.java": (
             "import static java.nio.file.Path.of;\n"
@@ -520,10 +522,12 @@ def test_java_static_import_shadowed_by_method_pins_literal_identity(
 def test_java_nested_class_shadowing_pathof_pins_literal_identity(
     tmp_path: Path,
 ) -> None:
-    # Pins the accepted limitation (#1216), qualified spelling: `Path.of` here
-    # is a local nested class, not `java.nio.file.Path`, yet the textual
-    # `Path.of` matches the registry entry and yields a literal identity where
-    # FILE::<dynamic> would be correct.
+    """Pin the accepted limitation (#1216), qualified spelling.
+
+    `Path.of` here is a local nested class, not `java.nio.file.Path`, yet the
+    textual `Path.of` matches the registry entry and yields a literal identity
+    where FILE::<dynamic> would be correct.
+    """
     files = {
         "A.java": (
             "import java.nio.file.Files;\n"

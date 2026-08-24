@@ -1924,6 +1924,10 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles,
         import_map: dict[str, str],
     ) -> str:
+        """Resolve the handle's resource identity: the constructor's literal
+        target, or -- when that is a factory call / `new` identity-carrier one
+        level down (`Files.newBufferedWriter(Path.of("cfg"))`) -- the literal
+        it carries."""
         identity = literal_target(
             call_node,
             ctor.target_arg,

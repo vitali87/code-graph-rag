@@ -1795,10 +1795,10 @@ class FlowProcessor:
     def _lean_ctor_identity(
         self, node: Node, ctor: HandleConstructor, jc: _JsCtx
     ) -> str:
-        # The handle's resource identity: the constructor's literal target, or -- when
-        # that is a factory call / `new` identity-carrier one level down
-        # (`Files.newBufferedWriter(Path.of("cfg"))`, `new PrintWriter(new File("x"))`)
-        # -- the literal it carries.
+        """Resolve the handle's resource identity: the constructor's literal
+        target, or -- when that is a factory call / `new` identity-carrier one
+        level down (`Files.newBufferedWriter(Path.of("cfg"))`,
+        `new PrintWriter(new File("x"))`) -- the literal it carries."""
         d = jc.descriptor
         identity = literal_target(
             node,
