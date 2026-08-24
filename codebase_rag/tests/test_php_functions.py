@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import get_relationships
@@ -43,7 +45,8 @@ function standaloneFunction() {
     )
 
     parsers, queries = load_parsers()
-    assert "php" in parsers, "PHP parser should be available"
+    if "php" not in parsers:
+        pytest.skip("php parser not available")
 
     updater = GraphUpdater(
         ingestor=mock_ingestor,

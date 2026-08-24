@@ -10,7 +10,9 @@ from codebase_rag.parsers.cpp import utils as cpp_utils
 @pytest.fixture(scope="module")
 def cpp_parser():
     parsers, _ = load_parsers()
-    return parsers.get(cs.SupportedLanguage.CPP)
+    if cs.SupportedLanguage.CPP not in parsers:
+        pytest.skip("cpp parser not available")
+    return parsers[cs.SupportedLanguage.CPP]
 
 
 def parse_cpp(cpp_parser, code: str):

@@ -5,6 +5,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
@@ -29,7 +31,8 @@ function main() {
         test_file.write_text(encoding="utf-8", data=test_code)
 
         parsers, queries = load_parsers()
-        assert "javascript" in parsers, "JavaScript parser not available"
+        if "javascript" not in parsers:
+            pytest.skip("javascript parser not available")
 
         mock_ingestor = MagicMock()
         updater = GraphUpdater(
@@ -84,7 +87,7 @@ public class Test {
 
         parsers, queries = load_parsers()
         if "java" not in parsers:
-            return
+            pytest.skip("java parser not available")
 
         mock_ingestor = MagicMock()
         updater = GraphUpdater(
@@ -137,7 +140,7 @@ fn main() {
 
         parsers, queries = load_parsers()
         if "rust" not in parsers:
-            return
+            pytest.skip("rust parser not available")
 
         mock_ingestor = MagicMock()
         updater = GraphUpdater(
@@ -206,7 +209,7 @@ fn main() {
 
         parsers, queries = load_parsers()
         if "rust" not in parsers:
-            return
+            pytest.skip("rust parser not available")
 
         mock_ingestor = MagicMock()
         updater = GraphUpdater(
@@ -278,7 +281,7 @@ func main() {
 
         parsers, queries = load_parsers()
         if "go" not in parsers:
-            return
+            pytest.skip("go parser not available")
 
         mock_ingestor = MagicMock()
         updater = GraphUpdater(
@@ -317,7 +320,7 @@ def test_go_dot_import_binds_sentinel_not_package_name() -> None:
 
         parsers, queries = load_parsers()
         if "go" not in parsers:
-            return
+            pytest.skip("go parser not available")
 
         updater = GraphUpdater(
             ingestor=MagicMock(),
