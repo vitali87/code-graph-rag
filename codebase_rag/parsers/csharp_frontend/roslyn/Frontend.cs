@@ -485,6 +485,18 @@ public static class Frontend
             // originals, so comparing the two reports no write.
             var method = (reduced ?? invoked).OriginalDefinition;
             method = method.PartialImplementationPart ?? method;
+            // An interface or abstract member owns no body, so the proof has
+            // nothing to analyze and every dispatched `ref` write was silently
+            // dropped (issue #1356). With exactly ONE implementing method in
+            // the loaded compilations, that implementation IS the callee; the
+            // Go frontend applies the same sole-implementer policy to
+            // interface edges. Any other count stays unproven, so a read-only
+            // implementation can never be invented into a writer.
+            if (SoleDispatchTarget(model.Compilation, method) is { } implementation)
+            {
+                method = implementation.OriginalDefinition;
+                method = method.PartialImplementationPart ?? method;
+            }
             var ordinal = bound.Ordinal + (reduced is null ? 0 : 1);
             if (ordinal >= method.Parameters.Length)
             {
@@ -511,6 +523,134 @@ public static class Frontend
                 return false;
             }
             return flow.WrittenInside.Contains(parameter, SymbolEqualityComparer.Default);
+        }
+
+        private List<INamedTypeSymbol>? _sourceTypes;
+
+        // Every named type declared in the loaded compilations, memoized: the
+        // dispatch resolution below scans them all, and the set never changes
+        // within a run.
+        private IReadOnlyList<INamedTypeSymbol> AllSourceTypes(Compilation caller)
+        {
+            if (_sourceTypes is null)
+            {
+                var compilations = new HashSet<Compilation>(_treeOwners.Values) { caller };
+                var types = new List<INamedTypeSymbol>();
+                foreach (var compilation in compilations)
+                {
+                    CollectNamedTypes(compilation.Assembly.GlobalNamespace, types);
+                }
+                _sourceTypes = types;
+            }
+            return _sourceTypes;
+        }
+
+        private static void CollectNamedTypes(
+            INamespaceOrTypeSymbol container, List<INamedTypeSymbol> into)
+        {
+            foreach (var member in container.GetMembers())
+            {
+                if (member is INamespaceSymbol ns)
+                {
+                    CollectNamedTypes(ns, into);
+                }
+                else if (member is INamedTypeSymbol named)
+                {
+                    into.Add(named);
+                    CollectNamedTypes(named, into);
+                }
+            }
+        }
+
+        // The single method a dispatched call can land on, or null: null when
+        // the invoked member already owns a body (nothing to resolve), and
+        // null when zero or several implementations exist (not statically
+        // known, so the write stays unproven rather than guessed).
+        private IMethodSymbol? SoleDispatchTarget(Compilation caller, IMethodSymbol method)
+        {
+            var viaInterface = method.ContainingType.TypeKind == TypeKind.Interface;
+            if (!viaInterface && !method.IsAbstract)
+            {
+                return null;
+            }
+            IMethodSymbol? sole = null;
+            // A multi-targeted project compiles the same declaration once per
+            // framework, so implementations are identified by their source
+            // location, not by symbol identity across compilations.
+            var seen = new HashSet<(string, int)>();
+            foreach (var type in AllSourceTypes(caller))
+            {
+                var implementation = viaInterface
+                    ? InterfaceImplementation(type, method)
+                    : OverrideOf(type, method);
+                if (implementation is null || implementation.IsAbstract)
+                {
+                    continue;
+                }
+                if (implementation.DeclaringSyntaxReferences.FirstOrDefault()
+                    is not { } declared)
+                {
+                    continue;
+                }
+                if (!seen.Add((declared.SyntaxTree.FilePath, declared.Span.Start)))
+                {
+                    continue;
+                }
+                if (sole is not null)
+                {
+                    return null;
+                }
+                sole = implementation;
+            }
+            return sole;
+        }
+
+        private static IMethodSymbol? InterfaceImplementation(
+            INamedTypeSymbol type, IMethodSymbol method)
+        {
+            foreach (var iface in type.AllInterfaces)
+            {
+                if (!SymbolEqualityComparer.Default.Equals(
+                        iface.OriginalDefinition, method.ContainingType))
+                {
+                    continue;
+                }
+                var member = iface.GetMembers(method.Name)
+                    .OfType<IMethodSymbol>()
+                    .FirstOrDefault(m => SymbolEqualityComparer.Default.Equals(
+                        m.OriginalDefinition, method));
+                // Only where the implementation is DECLARED: a derived type
+                // inherits its base's implementation, and counting it again
+                // there would make a genuinely sole writer look ambiguous.
+                if (member is not null
+                    && type.FindImplementationForInterfaceMember(member)
+                        is IMethodSymbol implementation
+                    && SymbolEqualityComparer.Default.Equals(
+                        implementation.ContainingType, type))
+                {
+                    return implementation;
+                }
+            }
+            return null;
+        }
+
+        private static IMethodSymbol? OverrideOf(
+            INamedTypeSymbol type, IMethodSymbol method)
+        {
+            foreach (var candidate in type.GetMembers(method.Name).OfType<IMethodSymbol>())
+            {
+                for (var overridden = candidate.OverriddenMethod;
+                     overridden is not null;
+                     overridden = overridden.OverriddenMethod)
+                {
+                    if (SymbolEqualityComparer.Default.Equals(
+                            overridden.OriginalDefinition, method))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+            return null;
         }
 
         // A NAMED argument (`Fill(dst: ref sink, src: token)`) does not sit at

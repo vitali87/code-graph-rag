@@ -621,3 +621,130 @@ def test_a_read_only_ref_local_function_never_gains_a_flow(tmp_path: Path) -> No
     assert (_ENV_K, _STDOUT) not in _flows(
         tmp_path / "lf3", _LOCAL_FUNCTION_READ_ONLY_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+# Interface dispatch hides the writer: GetSymbolInfo resolves the call to the
+# INTERFACE member, whose declaration has no body, so the write-back proof
+# answered false and the flow was silently dropped (issue #1356). With exactly
+# one implementing type in the loaded compilations, its body IS the callee,
+# the same sole-implementer policy the Go frontend applies to interface edges.
+_INTERFACE_REF = (
+    "using System;\n\n"
+    "public interface IHelper\n{\n"
+    "    void Fill(string src, ref string dst);\n}\n\n"
+    "public class Helper : IHelper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IHelper helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_ref_write_back_through_sole_interface_implementer(tmp_path: Path) -> None:
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "if1", _INTERFACE_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+_INTERFACE_READ_ONLY_REF = (
+    "using System;\n\n"
+    "public interface IHelper\n{\n"
+    "    void Inspect(string src, ref string other);\n}\n\n"
+    "public class Helper : IHelper\n{\n"
+    "    public void Inspect(string src, ref string other)\n    {\n"
+    "        Console.Error.WriteLine(other.Length + src.Length);\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IHelper helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Inspect(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_read_only_ref_through_an_interface_never_gains_a_flow(
+    tmp_path: Path,
+) -> None:
+    # Resolving the sole implementer must not weaken the no-fabrication rule:
+    # the implementation only READS the ref parameter, so no edge.
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "if2", _INTERFACE_READ_ONLY_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+_INTERFACE_TWO_IMPLEMENTERS_REF = (
+    "using System;\n\n"
+    "public interface IHelper\n{\n"
+    "    void Fill(string src, ref string dst);\n}\n\n"
+    "public class Writer : IHelper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Reader : IHelper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IHelper helper = new Reader();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_ref_through_an_interface_with_two_implementers_stays_unproven(
+    tmp_path: Path,
+) -> None:
+    # Two implementers means the writer is not statically known; assuming the
+    # writing one would fabricate a flow when the reached implementation only
+    # reads, exactly the failure the proof exists to prevent.
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "if3", _INTERFACE_TWO_IMPLEMENTERS_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+_ABSTRACT_REF = (
+    "using System;\n\n"
+    "public abstract class HelperBase\n{\n"
+    "    public abstract void Fill(string src, ref string dst);\n}\n\n"
+    "public class Helper : HelperBase\n{\n"
+    "    public override void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        HelperBase helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_ref_write_back_through_sole_abstract_override(tmp_path: Path) -> None:
+    # An abstract member has the same defect shape as an interface member: the
+    # invoked symbol's declaration carries no body (issue #1356).
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "ab1", _ABSTRACT_REF, cs.CSharpFrontend.HYBRID
+    )
