@@ -73,8 +73,11 @@ pip install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/c
 The wheel is pure Python (`py3-none-any`), so it installs on any platform with
 Python 3.12 or newer. The piwheels build for Debian Bookworm shows as failed
 because Bookworm's system Python is 3.11, which is below our floor. On
-Raspberry Pi OS Bookworm, install a newer interpreter first (for example
-`uv python install 3.12`) and the PyPI wheel installs normally.
+Raspberry Pi OS Bookworm, install into a Python 3.12 environment so the pip
+commands above actually run under 3.12: with [uv](https://docs.astral.sh/uv/)
+run `uv venv --python 3.12 && source .venv/bin/activate` (uv downloads 3.12
+automatically), or install CPython 3.12 yourself and use
+`python3.12 -m pip install ...`.
 
 ## CLI Quick Start
 

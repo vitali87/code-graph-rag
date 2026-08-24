@@ -6,7 +6,7 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
 
 ## Prerequisites
 
-- Python 3.12+ (the wheel is pure Python, but the interpreter floor is strict; Debian Bookworm ships Python 3.11, which is why the [piwheels](https://www.piwheels.org/project/code-graph-rag/) Bookworm build shows as failed. On Raspberry Pi OS Bookworm, install a newer interpreter first, for example `uv python install 3.12`.)
+- Python 3.12+ (the wheel is pure Python, but the interpreter floor is strict; Debian Bookworm ships Python 3.11, which is why the [piwheels](https://www.piwheels.org/project/code-graph-rag/) Bookworm build shows as failed. On Raspberry Pi OS Bookworm, run the install commands below inside a Python 3.12 environment, for example `uv venv --python 3.12 && source .venv/bin/activate`, so pip actually uses 3.12.)
 - Docker & Docker Compose (for Memgraph)
 - **cmake** (required for building pymgclient dependency)
 - **ripgrep** (`rg`) (required for shell command text searching)
