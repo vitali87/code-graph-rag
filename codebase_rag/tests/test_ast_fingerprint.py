@@ -192,14 +192,17 @@ macro_rules! backtrace {
 
 class TestMacroRulesFingerprints:
     def _macro(self, code: str) -> Node:
+        """Parse Rust source and return its macro_definition node."""
         return _function_node(cs.SupportedLanguage.RUST, code)
 
     def test_macro_rules_definition_gets_a_fingerprint(self) -> None:
+        """A macro_rules! definition fingerprints from its token trees."""
         result = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE))
         assert result is not None
         assert result.node_count > 1
 
     def test_renamed_macro_with_identical_rules_matches(self) -> None:
+        """Renaming the macro and its identifiers keeps the fingerprint."""
         first = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE))
         second = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE_RENAMED))
         assert first is not None
@@ -207,6 +210,7 @@ class TestMacroRulesFingerprints:
         assert first.fingerprint == second.fingerprint
 
     def test_macro_with_different_rules_differs(self) -> None:
+        """Dropping an arm changes the fingerprint."""
         both_arms = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE))
         one_arm = compute_ast_fingerprint(self._macro(MACRO_SINGLE_ARM))
         assert both_arms is not None
@@ -214,6 +218,7 @@ class TestMacroRulesFingerprints:
         assert both_arms.fingerprint != one_arm.fingerprint
 
     def test_trait_method_signature_stays_unfingerprinted(self) -> None:
+        """Bodiless trait signatures stay out of clone detection."""
         signature = _function_node(
             cs.SupportedLanguage.RUST,
             "trait T {\n    fn snapshot(&self) -> i32;\n}\n",

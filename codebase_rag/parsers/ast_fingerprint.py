@@ -46,6 +46,7 @@ def compute_ast_fingerprint(func_node: Node) -> AstFingerprintResult | None:
 
 
 def _resolve_body(func_node: Node) -> Node | None:
+    """The subtree holding a definition's logic, or None for bodiless nodes."""
     # A token-tree definition (Rust macro_rules!) has no body field; its
     # arms hang directly off the definition node, which the name identifier
     # cannot distinguish since identifiers collapse to one skeleton token.
