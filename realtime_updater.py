@@ -360,6 +360,14 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         ingestor.execute_write(CYPHER_DELETE_CALLS)
         self.updater._process_function_calls()
 
+        # The re-parsed file queued deferred IMPORTS edges, and C# namespace
+        # imports additionally pin to the cross-module uses the call pass
+        # just recorded, so the flush must run on this path too or a watched
+        # edit leaves the live graph without its import edges (issue #1347).
+        self.updater.factory.import_processor.flush_deferred_import_edges(
+            self.updater.known_module_paths()
+        )
+
         # Step 5: Flush changes to database
         self.updater.ingestor.flush_all()
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))

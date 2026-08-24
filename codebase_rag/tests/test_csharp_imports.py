@@ -222,3 +222,153 @@ public class RemoteStorageProvider
         for c in get_relationships(mock_ingestor, "IMPORTS")
     }
     assert (installer_qn, "Module", provider_qn) in edges, edges
+
+
+def test_type_only_namespace_use_still_pins_the_import(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # The importing file uses the namespace ONLY in type positions (a field
+    # declaration); no call, inherit, or delegate resolution ever fires, so
+    # the declared-type-name evidence must carry the edge (issue #1347).
+    host = csharp_project / "HostApp"
+    lib = csharp_project / "PlatformLib"
+    host.mkdir()
+    lib.mkdir()
+    (host / "Holder.cs").write_text(
+        """
+using Acme.Core.PlatformLib;
+
+namespace Acme.Core.HostApp;
+public class Holder
+{
+    private RemoteStorageProvider _provider;
+
+    public Holder(RemoteStorageProvider provider)
+    {
+        _provider = provider;
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    (lib / "RemoteStorageProvider.cs").write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public class RemoteStorageProvider
+{
+    public static void Ping() {}
+}
+""",
+        encoding="utf-8",
+    )
+    (lib / "Unused.cs").write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public class UnusedThing
+{
+    public static void Noop() {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    imports = {
+        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    holder = next((f for f, _tl, _t in imports if f.endswith(".HostApp.Holder")), None)
+    assert holder is not None, imports
+    assert any(
+        f == holder
+        and tl == "Module"
+        and t.endswith(".PlatformLib.RemoteStorageProvider")
+        for f, tl, t in imports
+    ), imports
+    assert not any(
+        f == holder and t.endswith(".PlatformLib.Unused") for f, _tl, t in imports
+    ), imports
+
+
+def test_watched_modification_reemits_internal_import_edges(
+    csharp_project: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A watched edit runs the realtime path, not run(): the deferred import
+    # flush must happen there too, or the live graph loses the module-level
+    # import edges until the next full index (issue #1347).
+    import sys
+    from typing import Protocol, runtime_checkable
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from watchdog.events import FileModifiedEvent
+
+    import realtime_updater
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, queries = load_parsers()
+    if "c_sharp" not in parsers:
+        pytest.skip("c_sharp parser not available")
+
+    host = csharp_project / "HostApp"
+    lib = csharp_project / "PlatformLib"
+    host.mkdir()
+    lib.mkdir()
+    installer = host / "Installer.cs"
+    installer.write_text(
+        """
+using Acme.Core.PlatformLib;
+
+namespace Acme.Core.HostApp;
+public class Installer
+{
+    public void Wire()
+    {
+        RemoteStorageProvider.Ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    (lib / "RemoteStorageProvider.cs").write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public class RemoteStorageProvider
+{
+    public static void Ping() {}
+}
+""",
+        encoding="utf-8",
+    )
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=csharp_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    installer.write_text(
+        installer.read_text(encoding="utf-8") + "\n// touched\n", encoding="utf-8"
+    )
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileModifiedEvent(str(installer)))
+
+    imports = {
+        (str(c.args[0][2]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    assert any(
+        f.endswith(".HostApp.Installer")
+        and t.endswith(".PlatformLib.RemoteStorageProvider")
+        for f, t in imports
+    ), imports
