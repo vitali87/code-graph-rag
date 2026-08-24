@@ -841,6 +841,11 @@ _METADATA_APP_PROGRAM = (
     '        var sink = "";\n'
     "        helper.Fill(token, ref sink);\n"
     "        Console.WriteLine(sink);\n"
+    '        var token2 = Environment.GetEnvironmentVariable("K2");\n'
+    "        var direct = new Writer();\n"
+    '        var sink2 = "";\n'
+    "        direct.Fill(token2, ref sink2);\n"
+    "        Console.WriteLine(sink2);\n"
     "    }\n}\n"
 )
 
@@ -849,7 +854,7 @@ _METADATA_APP_PROGRAM = (
     not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
 )
 def test_a_metadata_interface_never_resolves_to_source_implementers(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A contract living in a PREBUILT assembly can have implementers in other
     # referenced assemblies that source scanning cannot see, so the source
@@ -880,22 +885,88 @@ def test_a_metadata_interface_never_resolves_to_source_implementers(
     )
     (repo / "Program.cs").write_text(_METADATA_APP_PROGRAM, encoding="utf-8")
     parsers, queries = load_parsers()
-    previous = settings.CSHARP_FRONTEND
-    settings.CSHARP_FRONTEND = cs.CSharpFrontend.HYBRID
-    try:
-        mock = MagicMock()
-        GraphUpdater(
-            ingestor=mock,
-            repo_path=repo,
-            parsers=parsers,
-            queries=queries,
-            capture=_CAPTURE_IO,
-        ).run()
-    finally:
-        settings.CSHARP_FRONTEND = previous
+    monkeypatch.setattr(settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=_CAPTURE_IO,
+    ).run()
     flows = {
         (c.args[0][2], c.args[2][2])
         for c in mock.ensure_relationship_batch.call_args_list
         if str(c.args[1]) == FLOWS_TO
     }
+    # Positive control first: the DIRECT call's write-back must be present,
+    # proving the Roslyn frontend actually built and emitted ref facts, so
+    # the absence below cannot pass vacuously on a broken build.
+    assert ("resource::ENV::K2", _STDOUT) in flows
     assert (_ENV_K, _STDOUT) not in flows
+
+
+_DERIVED_DEFAULT_READS_REF = (
+    "using System;\n\n"
+    "public interface IBase\n{\n"
+    "    void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public interface IDerived : IBase\n{\n"
+    "    void IBase.Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n\n"
+    "public class Impl : IDerived\n{\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IBase helper = new Impl();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_reading_derived_interface_default_blocks_the_base_default_write(
+    tmp_path: Path,
+) -> None:
+    # The implementer receives the DERIVED interface's explicit default, which
+    # only reads; the writing base default never executes for it, so proving
+    # the write from the base body alone would fabricate the flow.
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "dd1", _DERIVED_DEFAULT_READS_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+_DERIVED_DEFAULT_WRITES_REF = (
+    "using System;\n\n"
+    "public interface IBase\n{\n"
+    "    void Fill(string src, ref string dst);\n}\n\n"
+    "public interface IDerived : IBase\n{\n"
+    "    void IBase.Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Impl : IDerived\n{\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IBase helper = new Impl();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_writing_derived_interface_default_proves_the_base_member_write(
+    tmp_path: Path,
+) -> None:
+    # The abstract base member's only reachable body is the derived
+    # interface's explicit default, and it writes.
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "dd2", _DERIVED_DEFAULT_WRITES_REF, cs.CSharpFrontend.HYBRID
+    )
