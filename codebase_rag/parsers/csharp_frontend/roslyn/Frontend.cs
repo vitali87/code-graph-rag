@@ -485,19 +485,29 @@ public static class Frontend
             // originals, so comparing the two reports no write.
             var method = (reduced ?? invoked).OriginalDefinition;
             method = method.PartialImplementationPart ?? method;
-            // An interface or abstract member owns no body, so the proof has
-            // nothing to analyze and every dispatched `ref` write was silently
-            // dropped (issue #1356). With exactly ONE implementing method in
-            // the loaded compilations, that implementation IS the callee; the
-            // Go frontend applies the same sole-implementer policy to
-            // interface edges. Any other count stays unproven, so a read-only
-            // implementation can never be invented into a writer.
-            if (SoleDispatchTarget(model.Compilation, method) is { } implementation)
-            {
-                method = implementation.OriginalDefinition;
-                method = method.PartialImplementationPart ?? method;
-            }
             var ordinal = bound.Ordinal + (reduced is null ? 0 : 1);
+            // A dispatched member does not name its own body: an interface or
+            // abstract member owns none, and a DEFAULT interface body runs
+            // only for implementers that do not override it (issue #1356).
+            // The write is proven exactly when EVERY body the call can land
+            // on writes the parameter; whichever implementation actually runs
+            // then writes, so no flow is ever fabricated, and a read-only
+            // candidate anywhere keeps the write unproven.
+            if (DispatchCandidates(model.Compilation, method) is { } candidates)
+            {
+                return candidates.Count > 0
+                    && candidates.All(
+                        candidate => ProvenWritten(model.Compilation, candidate, ordinal));
+            }
+            return ProvenWritten(model.Compilation, method, ordinal);
+        }
+
+        // The body-level half of the proof: does THIS method's body assign the
+        // parameter at the given ordinal?
+        private bool ProvenWritten(Compilation caller, IMethodSymbol method, int ordinal)
+        {
+            method = method.OriginalDefinition;
+            method = method.PartialImplementationPart ?? method;
             if (ordinal >= method.Parameters.Length)
             {
                 return false;
@@ -513,7 +523,7 @@ public static class Frontend
             // owner index covers every loaded project, so a cross-project callee
             // is now provable instead of silently treated as read-only. A tree
             // from outside the solution has no owner and stays unprovable.
-            if (ResolveOwner(model.Compilation, body.SyntaxTree) is not { } owner)
+            if (ResolveOwner(caller, body.SyntaxTree) is not { } owner)
             {
                 return false;
             }
@@ -562,33 +572,60 @@ public static class Frontend
             }
         }
 
-        // The single method a dispatched call can land on, or null: null when
-        // the invoked member already owns a body (nothing to resolve), and
-        // null when zero or several implementations exist (not statically
-        // known, so the write stays unproven rather than guessed).
-        private IMethodSymbol? SoleDispatchTarget(Compilation caller, IMethodSymbol method)
+        // Every body a dispatched call can land on, or null when the invoked
+        // member is not dispatched at all (an ordinary member analyses its own
+        // body directly). For an interface or abstract member the candidates
+        // are the declared implementations; a DEFAULT interface body is a
+        // candidate too, but only while some implementer actually inherits it
+        // (or nothing overrides it), because a default every implementer
+        // overrides can never execute and must not mask the overrides.
+        private IReadOnlyList<IMethodSymbol>? DispatchCandidates(
+            Compilation caller, IMethodSymbol method)
         {
-            // Abstract members only: a DEFAULT interface method owns a body
-            // and can be the member a call actually lands on (any implementer
-            // that does not override it inherits it), so resolving a sole
-            // override there would attribute the write to a body the call
-            // never reaches. Classic interface members are abstract, so they
-            // still resolve.
-            if (!method.IsAbstract)
+            var viaInterface = method.ContainingType.TypeKind == TypeKind.Interface;
+            if (!viaInterface && !method.IsAbstract)
             {
                 return null;
             }
-            var viaInterface = method.ContainingType.TypeKind == TypeKind.Interface;
-            IMethodSymbol? sole = null;
+            var hasDefaultBody = viaInterface && !method.IsAbstract;
+            var candidates = new List<IMethodSymbol>();
+            var defaultInherited = false;
             // A multi-targeted project compiles the same declaration once per
             // framework, so implementations are identified by their source
             // location, not by symbol identity across compilations.
             var seen = new HashSet<(string, int)>();
             foreach (var type in AllSourceTypes(caller))
             {
-                var implementation = viaInterface
-                    ? InterfaceImplementation(type, method)
-                    : OverrideOf(type, method);
+                IMethodSymbol? implementation;
+                if (viaInterface)
+                {
+                    implementation = InterfaceImplementation(type, method);
+                    if (implementation is null)
+                    {
+                        continue;
+                    }
+                    // The interface's own member answering for the type means
+                    // the type INHERITS the default body: that body is live.
+                    if (SymbolEqualityComparer.Default.Equals(
+                            implementation.OriginalDefinition.ContainingType,
+                            method.ContainingType))
+                    {
+                        defaultInherited = true;
+                        continue;
+                    }
+                    // Only where the implementation is DECLARED: a derived
+                    // type inherits its base's implementation, which is
+                    // already counted at the base.
+                    if (!SymbolEqualityComparer.Default.Equals(
+                            implementation.ContainingType, type))
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    implementation = OverrideOf(type, method);
+                }
                 if (implementation is null || implementation.IsAbstract)
                 {
                     continue;
@@ -602,13 +639,13 @@ public static class Frontend
                 {
                     continue;
                 }
-                if (sole is not null)
-                {
-                    return null;
-                }
-                sole = implementation;
+                candidates.Add(implementation);
             }
-            return sole;
+            if (hasDefaultBody && (defaultInherited || candidates.Count == 0))
+            {
+                candidates.Add(method);
+            }
+            return candidates;
         }
 
         private static IMethodSymbol? InterfaceImplementation(
@@ -625,14 +662,9 @@ public static class Frontend
                     .OfType<IMethodSymbol>()
                     .FirstOrDefault(m => SymbolEqualityComparer.Default.Equals(
                         m.OriginalDefinition, method));
-                // Only where the implementation is DECLARED: a derived type
-                // inherits its base's implementation, and counting it again
-                // there would make a genuinely sole writer look ambiguous.
                 if (member is not null
                     && type.FindImplementationForInterfaceMember(member)
-                        is IMethodSymbol implementation
-                    && SymbolEqualityComparer.Default.Equals(
-                        implementation.ContainingType, type))
+                        is IMethodSymbol implementation)
                 {
                     return implementation;
                 }

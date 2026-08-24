@@ -713,9 +713,11 @@ _INTERFACE_TWO_IMPLEMENTERS_REF = (
 def test_ref_through_an_interface_with_two_implementers_stays_unproven(
     tmp_path: Path,
 ) -> None:
-    # Two implementers means the writer is not statically known; assuming the
-    # writing one would fabricate a flow when the reached implementation only
-    # reads, exactly the failure the proof exists to prevent.
+    # With two implementers the writer is not statically known, and one of
+    # them only reads: the write is proven only when EVERY candidate body
+    # writes, so assuming the writing one would fabricate a flow when the
+    # reached implementation only reads, exactly the failure the proof
+    # exists to prevent.
     assert (_ENV_K, _STDOUT) not in _flows(
         tmp_path / "if3", _INTERFACE_TWO_IMPLEMENTERS_REF, cs.CSharpFrontend.HYBRID
     )
@@ -782,4 +784,35 @@ def test_a_default_interface_method_never_resolves_to_an_override(
     # reaches; the default body itself only reads, so no edge.
     assert (_ENV_K, _STDOUT) not in _flows(
         tmp_path / "di1", _DEFAULT_INTERFACE_REF, cs.CSharpFrontend.HYBRID
+    )
+
+
+_DEFAULT_INTERFACE_DEAD_DEFAULT_REF = (
+    "using System;\n\n"
+    "public interface IHelper\n{\n"
+    "    void Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n\n"
+    "public class Helper : IHelper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IHelper helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_dead_default_body_does_not_hide_the_sole_override(tmp_path: Path) -> None:
+    # Every implementing type overrides the default, so the default body can
+    # never execute; the sole override is the only reachable callee and its
+    # write must not be masked by the unreachable read-only default.
+    assert (_ENV_K, _STDOUT) in _flows(
+        tmp_path / "di2", _DEFAULT_INTERFACE_DEAD_DEFAULT_REF, cs.CSharpFrontend.HYBRID
     )
