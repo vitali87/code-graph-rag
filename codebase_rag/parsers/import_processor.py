@@ -1007,18 +1007,40 @@ class ImportProcessor:
         return found
 
     def _collect_csharp_identifiers(self, root_node: Node) -> frozenset[str]:
-        # Every identifier the file mentions, as coarse evidence for pinning
-        # type-only namespace uses; an explicit stack keeps it linear.
-        found: set[str] = set()
+        # Identifier MENTIONS minus every NAME-POSITION identifier: a name
+        # position (parameter, variable, member, type name) declares rather
+        # than references, and any same-named mention in the file most
+        # plausibly binds to that local declaration, so the whole name is
+        # withdrawn as evidence rather than risking a false import edge.
+        mentions: set[str] = set()
+        declared: set[str] = set()
         stack = [root_node]
         while stack:
             node = stack.pop()
             if node.type == cs.TS_CSHARP_IDENTIFIER and (
                 text := safe_decode_text(node)
             ):
-                found.add(text)
+                parent = node.parent
+                named_child = (
+                    parent.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+                    if parent is not None
+                    else None
+                )
+                if named_child is not None and named_child.id == node.id:
+                    declared.add(text)
+                else:
+                    mentions.add(text)
             stack.extend(node.children)
-        return frozenset(found)
+        return frozenset(mentions - declared)
+
+    def drop_csharp_module_import_state(self, module_qn: str) -> None:
+        # A deleted C# file must stop declaring its namespaces, contributing
+        # identifier evidence, and queueing its using entries, or the requeue
+        # would rebuild edges a clean rebuild of the same tree never emits.
+        self._csharp_module_namespaces.pop(module_qn, None)
+        self._csharp_module_identifiers.pop(module_qn, None)
+        self._inferred_module_imports.pop(module_qn, None)
+        self.import_mapping.pop(module_qn, None)
 
     def requeue_csharp_import_edges(self) -> None:
         """Re-queue every parsed C# module's using entries for a fresh flush.

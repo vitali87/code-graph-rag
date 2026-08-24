@@ -1804,6 +1804,15 @@ class GraphUpdater:
                 if path == file_path:
                     self.factory.import_processor.drop_rust_module_import_state(qn)
 
+        # Same discipline for C#: a deleted file's namespaces, identifier
+        # evidence, and using entries must not survive into the next flush
+        # (issue #1347).
+        if file_path.suffix == cs.EXT_CS:
+            qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+            for qn, path in qn_to_path.items():
+                if path == file_path:
+                    self.factory.import_processor.drop_csharp_module_import_state(qn)
+
         # Ownership guard for the prefix sweep: another file's inline-mod
         # chain can share this file's qn prefix (the #1017 shape), and a
         # sweep by prefix alone deregisters functions that file still owns —

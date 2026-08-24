@@ -548,3 +548,131 @@ public class RemoteStorageProvider
         and t.endswith(".PlatformLib.RemoteStorageProvider")
         for f, t in imports
     ), imports
+
+
+def test_a_name_position_identifier_is_not_import_evidence(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # The file's only textual match with the namespace's declared types is a
+    # PARAMETER NAME; a name position declares, it does not reference, so it
+    # must not pin the import.
+    host = csharp_project / "HostApp"
+    lib = csharp_project / "PlatformLib"
+    host.mkdir()
+    lib.mkdir()
+    (host / "Naming.cs").write_text(
+        """
+using Acme.Core.PlatformLib;
+
+namespace Acme.Core.HostApp;
+public class Naming
+{
+    public void Configure(string RemoteStorageProvider)
+    {
+        System.Console.WriteLine(RemoteStorageProvider);
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    (lib / "RemoteStorageProvider.cs").write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public class RemoteStorageProvider
+{
+    public static void Ping() {}
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    imports = {
+        (str(c.args[0][2]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    assert not any(
+        f.endswith(".HostApp.Naming")
+        and t.endswith(".PlatformLib.RemoteStorageProvider")
+        for f, t in imports
+    ), imports
+
+
+def test_watched_provider_deletion_stops_targeting_its_module(
+    csharp_project: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Deleting the provider must also drop its in-memory C# import state, or
+    # the requeue rebuilds an IMPORTS edge to a Module that no longer exists,
+    # diverging from what a clean rebuild of the same tree would produce.
+    from typing import Protocol, runtime_checkable
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    from watchdog.events import FileDeletedEvent
+
+    import realtime_updater
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, queries = load_parsers()
+    if "c_sharp" not in parsers:
+        pytest.skip("c_sharp parser not available")
+
+    host = csharp_project / "HostApp"
+    lib = csharp_project / "PlatformLib"
+    host.mkdir()
+    lib.mkdir()
+    (host / "Installer.cs").write_text(
+        """
+using Acme.Core.PlatformLib;
+
+namespace Acme.Core.HostApp;
+public class Installer
+{
+    public void Wire()
+    {
+        RemoteStorageProvider.Ping();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    provider = lib / "RemoteStorageProvider.cs"
+    provider.write_text(
+        """
+namespace Acme.Core.PlatformLib;
+public class RemoteStorageProvider
+{
+    public static void Ping() {}
+}
+""",
+        encoding="utf-8",
+    )
+    updater = GraphUpdater(
+        ingestor=mock_ingestor,
+        repo_path=csharp_project,
+        parsers=parsers,
+        queries=queries,
+    )
+    updater.run()
+
+    class _AnyProtocol(Protocol):
+        pass
+
+    monkeypatch.setattr(
+        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
+    )
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    provider.unlink()
+    mock_ingestor.reset_mock()
+    handler.dispatch(FileDeletedEvent(str(provider)))
+
+    imports = {
+        (str(c.args[0][2]), str(c.args[2][0]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    assert not any(
+        tl == "Module" and t.endswith(".PlatformLib.RemoteStorageProvider")
+        for _f, tl, t in imports
+    ), imports
