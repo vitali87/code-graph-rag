@@ -31,13 +31,23 @@ def _step_script(step: dict) -> str:
     return step.get("run", "") or ""
 
 
+def _installs_semantic_extra(steps: list[dict]) -> bool:
+    # Only a job that installs the semantic extra can reach the hub: without
+    # sentence-transformers the embedding tests importorskip, so the
+    # base-install job (issue #1410) has nothing to prefetch or cache and
+    # could not even run the huggingface_hub prefetch script.
+    return any("--extra semantic" in _step_script(step) for step in steps)
+
+
 def _jobs_running_the_unit_suite() -> list[tuple[str, str, list[dict]]]:
     found = []
     for path in _workflow_files():
         workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
         for job_name, job in (workflow.get("jobs") or {}).items():
             steps = job.get("steps") or []
-            if any(UNIT_SUITE_MARKER in _step_script(step) for step in steps):
+            if any(
+                UNIT_SUITE_MARKER in _step_script(step) for step in steps
+            ) and _installs_semantic_extra(steps):
                 found.append((path.name, job_name, steps))
     return found
 
