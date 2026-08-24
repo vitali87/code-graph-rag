@@ -680,44 +680,49 @@ public static class Frontend
             var defaultInherited = false;
             foreach (var type in AllSourceTypes(caller).Concat(ReferencedTypes(caller)))
             {
-                IMethodSymbol? implementation;
                 if (viaInterface)
                 {
-                    implementation = InterfaceImplementation(type, invoked);
-                    if (implementation is null)
+                    // EVERY matching interface instance contributes: an open
+                    // implementer can also carry an explicit implementation
+                    // for one construction, and the body actually reached
+                    // depends on the runtime type arguments.
+                    foreach (var implementation
+                        in InterfaceImplementations(type, invoked))
                     {
-                        continue;
+                        // The interface's own member answering for the type
+                        // means the type INHERITS the default body: that body
+                        // is live.
+                        if (SymbolEqualityComparer.Default.Equals(
+                                implementation.OriginalDefinition.ContainingType,
+                                method.ContainingType))
+                        {
+                            defaultInherited = true;
+                            continue;
+                        }
+                        // Only where the implementation is DECLARED: a derived
+                        // type inherits its base's implementation, which is
+                        // already counted at the base.
+                        if (!SymbolEqualityComparer.Default.Equals(
+                                implementation.ContainingType, type))
+                        {
+                            continue;
+                        }
+                        if (implementation.IsAbstract)
+                        {
+                            continue;
+                        }
+                        // A bodiless (metadata) implementation stays IN the
+                        // list: it fails the body proof, which is exactly
+                        // right, because a runtime receiver from metadata
+                        // cannot be shown to write.
+                        candidates.Add(implementation);
                     }
-                    // The interface's own member answering for the type means
-                    // the type INHERITS the default body: that body is live.
-                    if (SymbolEqualityComparer.Default.Equals(
-                            implementation.OriginalDefinition.ContainingType,
-                            method.ContainingType))
-                    {
-                        defaultInherited = true;
-                        continue;
-                    }
-                    // Only where the implementation is DECLARED: a derived
-                    // type inherits its base's implementation, which is
-                    // already counted at the base.
-                    if (!SymbolEqualityComparer.Default.Equals(
-                            implementation.ContainingType, type))
-                    {
-                        continue;
-                    }
-                }
-                else
-                {
-                    implementation = OverrideOf(type, method);
-                }
-                if (implementation is null || implementation.IsAbstract)
-                {
                     continue;
                 }
-                // A bodiless (metadata) implementation stays IN the list: it
-                // fails the body proof, which is exactly right, because a
-                // runtime receiver from metadata cannot be shown to write.
-                candidates.Add(implementation);
+                if (OverrideOf(type, method) is { IsAbstract: false } overriding)
+                {
+                    candidates.Add(overriding);
+                }
             }
             if (hasDefaultBody && (defaultInherited || candidates.Count == 0))
             {
@@ -734,7 +739,7 @@ public static class Frontend
             return candidates;
         }
 
-        private static IMethodSymbol? InterfaceImplementation(
+        private static IEnumerable<IMethodSymbol> InterfaceImplementations(
             INamedTypeSymbol type, IMethodSymbol invoked)
         {
             // Matched by the CONSTRUCTED interface, never the open definition:
@@ -769,10 +774,9 @@ public static class Frontend
                     && type.FindImplementationForInterfaceMember(member)
                         is IMethodSymbol implementation)
                 {
-                    return implementation;
+                    yield return implementation;
                 }
             }
-            return null;
         }
 
         private static bool ContainsTypeParameters(ITypeSymbol type)

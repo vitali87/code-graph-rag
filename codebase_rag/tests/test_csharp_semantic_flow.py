@@ -1412,3 +1412,38 @@ def test_an_open_generic_writer_proves_the_constructed_call(tmp_path: Path) -> N
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "og2", _OPEN_GENERIC_WRITER_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_MIXED_CONSTRUCTIONS_REF = (
+    "using System;\n\n"
+    "public interface IHelper<T>\n{\n"
+    "    void Fill(string src, ref string dst);\n}\n\n"
+    "public class Both<T> : IHelper<T>, IHelper<int>\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n"
+    "    void IHelper<int>.Fill(string src, ref string dst)\n    {\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IHelper<int> helper = new Both<long>();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_every_matching_construction_of_an_open_implementer_participates(
+    tmp_path: Path,
+) -> None:
+    # Both<T> satisfies IHelper<int> through its explicit read-only
+    # implementation, while its general body writes; selecting only the first
+    # matching interface instance would let the writer vouch for a call the
+    # reader actually serves.
+    assert (_ENV_K, _STDOUT) not in _flows(
+        tmp_path / "mc1", _MIXED_CONSTRUCTIONS_REF, cs.CSharpFrontend.HYBRID
+    )
