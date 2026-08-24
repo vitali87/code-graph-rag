@@ -153,6 +153,9 @@ CLI_ERR_DEADCODE_NO_PROJECTS = (
 CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT = (
     "Multiple projects found: {projects}. Specify which one with --project-name/-n."
 )
+CLI_ERR_DEADCODE_UNKNOWN_PROJECT = (
+    "Project '{project}' is not indexed. Indexed projects: {projects}."
+)
 
 CLI_DUPLICATES_CONNECTING = "Scanning for structurally duplicated functions..."
 CLI_DUPLICATES_TABLE_TITLE = "Duplicate Code Groups ({project_name})"
@@ -170,6 +173,11 @@ CLI_DUPLICATES_WRITTEN = "Wrote {count} group(s) to {path}"
 CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED = (
     "{count} symbol(s) were not analyzed (no structural fingerprint: "
     "pattern-tier language or bodiless declaration)."
+)
+CLI_DUPLICATES_STALE_GRAPH = (
+    "None of the {count} function(s)/method(s) in this project carry a "
+    "structural fingerprint; the graph predates fingerprint stamping. "
+    "Re-index the repository (cgr start --update-graph) and rerun."
 )
 CLI_DUPLICATES_TRUNCATED_NOTICE = (
     "Similar-group enumeration reached its cap; some qualifying groups may "
@@ -512,6 +520,10 @@ SEMANTIC_TYPE_UNKNOWN = "Unknown"
 
 MSG_DOC_NO_CANDIDATES = "No valid text found in response candidates."
 MSG_DOC_NO_CONTENT = "No text content received from the API."
+# Newer typer generations vendor click here for click 8.3+ compatibility;
+# commands and exceptions then descend from these classes instead of the
+# real click's.
+TYPER_VENDORED_CLICK_EXCEPTIONS_MODULE = "typer._click.exceptions"
 MIME_TYPE_DEFAULT = "application/octet-stream"
 DOC_PROMPT_PREFIX = (
     "Based on the document provided, please answer the following question: {question}"

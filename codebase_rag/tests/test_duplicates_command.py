@@ -134,6 +134,35 @@ class TestDuplicatesCommand:
         assert result.exit_code == 0
         assert cs.CLI_DUPLICATES_NONE in result.output
 
+    def test_stale_graph_with_zero_fingerprints_recommends_reindex(
+        self, runner: CliRunner
+    ) -> None:
+        # A graph indexed before fingerprint stamping has symbols but zero
+        # fingerprints: "No duplicated functions found" plus the pattern-tier
+        # notice misdiagnoses it. The command must say the graph predates
+        # structural fingerprints and recommend a re-index.
+        mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=[], skipped=30190)
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(app, ["duplicates"])
+
+        assert result.exit_code == 0
+        assert "re-index" in result.output.lower()
+        assert cs.CLI_DUPLICATES_NONE not in result.output
+
+    def test_some_fingerprints_and_no_groups_still_reports_clean(
+        self, runner: CliRunner, clone_rows: list[ResultRow]
+    ) -> None:
+        # Symbols WERE analyzed and none duplicated: the clean message stays,
+        # with the ordinary skipped notice for the bodiless remainder.
+        lone = [dict(clone_rows[0], ast_fingerprint="one-of-a-kind")]
+        mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=lone, skipped=3)
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(app, ["duplicates"])
+
+        assert result.exit_code == 0
+        assert cs.CLI_DUPLICATES_NONE in result.output
+        assert "re-index" not in result.output.lower()
+
     def test_unknown_project_errors(self, runner: CliRunner) -> None:
         # `-n typo` must error, not scan a nonexistent prefix and report a
         # clean project.
@@ -143,6 +172,9 @@ class TestDuplicatesCommand:
 
         assert result.exit_code == 1
         assert "is not indexed" in result.output
+        # The user error must be raised AFTER the connection closes cleanly,
+        # or the service layer logs a spurious ERROR + traceback on exit.
+        assert mock_ingestor.__exit__.call_args[0][0] is None
 
     def test_no_projects_errors(self, runner: CliRunner) -> None:
         mock_ingestor = _make_mock_ingestor(projects=[], rows=[])

@@ -51,11 +51,36 @@ AST_FP_PUNCT_TYPES = frozenset(
 # `statement_block`, `indented_block`, `function_body`, `template_body`, ...;
 # the extras are the block containers named neither way.
 AST_FP_BLOCK_PARENT_SUBSTRINGS = ("block", "body")
-AST_FP_BLOCK_PARENT_EXTRAS = frozenset({"statement_list", "compound_statement"})
+AST_FP_BLOCK_PARENT_EXTRAS = frozenset(
+    {
+        "statement_list",
+        "compound_statement",
+        "macro_definition",
+        "macro_rule",
+        "token_tree",
+    }
+)
 
 # Branches below this skeleton-node count (`return x`, `break`) are shared by
 # nearly every function and would dominate the candidate index.
 AST_FP_MIN_BRANCH_NODES = 5
+
+# Wrapper definitions (C++ template_declaration) carry no body field of
+# their own; the fingerprint walk descends into the child whose type carries
+# this marker (function_definition) to find the real body.
+AST_FP_WRAPPED_DEF_SUBSTRING = "function"
+
+# Expression-bodied definitions whose logic is a plain named child instead of
+# a body field: a C# property_declaration never has a body field, and its
+# `=> expr` form keeps the expression in an arrow_expression_clause.
+AST_FP_EXPRESSION_BODY_TYPES = frozenset({"arrow_expression_clause"})
+
+# Definitions whose logic lives in raw token trees on the definition node
+# itself rather than under a body field: a Rust macro_rules! definition keeps
+# its arms as macro_rule children (token_tree_pattern => token_tree), so the
+# whole node is the fingerprint root and cfg-gated near-identical macros
+# participate in clone detection.
+AST_FP_SELF_BODY_TYPES = frozenset({"macro_definition"})
 
 # Byte separators framing a node's token and child digests in the Merkle hash.
 AST_FP_HASH_OPEN = b"("

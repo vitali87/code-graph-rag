@@ -56,3 +56,4 @@ cgr-trace.jsonl
 evals/results/corpora/
 evals/results/**/agentic_qa*records*.jsonl
 evals/results/logs/
+.cgr-parser-fingerprint

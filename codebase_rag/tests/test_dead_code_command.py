@@ -179,6 +179,19 @@ class TestDeadCodeCommand:
         assert result.exit_code == 1
         mock_ingestor.fetch_all.assert_not_called()
 
+    def test_unknown_project_errors(self, runner: CliRunner) -> None:
+        # `-n typo` must error, not scan a nonexistent prefix and report a
+        # clean project (the duplicates command already guards this).
+        mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=[])
+        with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+            result = runner.invoke(app, ["dead-code", "-n", "typo"])
+
+        assert result.exit_code == 1
+        assert "is not indexed" in result.output
+        # The user error must be raised AFTER the connection closes cleanly,
+        # or the service layer logs a spurious ERROR + traceback on exit.
+        assert mock_ingestor.__exit__.call_args[0][0] is None
+
     def test_errors_when_no_projects(self, runner: CliRunner) -> None:
         mock_ingestor = _make_mock_ingestor(projects=[], fetch_result=[])
         with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):

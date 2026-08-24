@@ -486,6 +486,31 @@ public static class Frontend
             var method = (reduced ?? invoked).OriginalDefinition;
             method = method.PartialImplementationPart ?? method;
             var ordinal = bound.Ordinal + (reduced is null ? 0 : 1);
+            // A dispatched member does not name its own body: an interface or
+            // abstract member owns none, and a DEFAULT interface body runs
+            // only for implementers that do not override it (issue #1356).
+            // The write is proven exactly when EVERY body the call can land
+            // on writes the parameter; whichever implementation actually runs
+            // then writes, so no flow is ever fabricated, and a read-only
+            // candidate anywhere keeps the write unproven. Dispatch works on
+            // the CONSTRUCTED symbol: a type can implement several
+            // constructions of one generic interface with different bodies,
+            // and only the invoked construction's implementation may answer.
+            if (DispatchCandidates(model.Compilation, reduced ?? invoked) is { } candidates)
+            {
+                return candidates.Count > 0
+                    && candidates.All(
+                        candidate => ProvenWritten(model.Compilation, candidate, ordinal));
+            }
+            return ProvenWritten(model.Compilation, method, ordinal);
+        }
+
+        // The body-level half of the proof: does THIS method's body assign the
+        // parameter at the given ordinal?
+        private bool ProvenWritten(Compilation caller, IMethodSymbol method, int ordinal)
+        {
+            method = method.OriginalDefinition;
+            method = method.PartialImplementationPart ?? method;
             if (ordinal >= method.Parameters.Length)
             {
                 return false;
@@ -501,7 +526,7 @@ public static class Frontend
             // owner index covers every loaded project, so a cross-project callee
             // is now provable instead of silently treated as read-only. A tree
             // from outside the solution has no owner and stays unprovable.
-            if (ResolveOwner(model.Compilation, body.SyntaxTree) is not { } owner)
+            if (ResolveOwner(caller, body.SyntaxTree) is not { } owner)
             {
                 return false;
             }
@@ -511,6 +536,301 @@ public static class Frontend
                 return false;
             }
             return flow.WrittenInside.Contains(parameter, SymbolEqualityComparer.Default);
+        }
+
+        private List<INamedTypeSymbol>? _sourceTypes;
+
+        // Every named type declared in the loaded compilations, memoized: the
+        // dispatch resolution below scans them all, and the set never changes
+        // within a run.
+        private IReadOnlyList<INamedTypeSymbol> AllSourceTypes(Compilation caller)
+        {
+            if (_sourceTypes is null)
+            {
+                var compilations = new HashSet<Compilation>(_treeOwners.Values) { caller };
+                var types = new List<INamedTypeSymbol>();
+                foreach (var compilation in compilations)
+                {
+                    CollectNamedTypes(compilation.Assembly.GlobalNamespace, types);
+                }
+                _sourceTypes = types;
+            }
+            return _sourceTypes;
+        }
+
+        private static void CollectNamedTypes(
+            INamespaceOrTypeSymbol container, List<INamedTypeSymbol> into)
+        {
+            foreach (var member in container.GetMembers())
+            {
+                if (member is INamespaceSymbol ns)
+                {
+                    CollectNamedTypes(ns, into);
+                }
+                else if (member is INamedTypeSymbol named)
+                {
+                    into.Add(named);
+                    CollectNamedTypes(named, into);
+                }
+            }
+        }
+
+        private List<INamedTypeSymbol>? _referencedTypes;
+
+        // Every named type in the referenced (metadata) assemblies, memoized.
+        // A plugin compiled against an identical-identity assembly unifies
+        // with the source compilation, so a metadata type CAN implement a
+        // source-declared contract; it owns no analyzable body, and finding
+        // it must poison the write proof rather than stay invisible.
+        private IReadOnlyList<INamedTypeSymbol> ReferencedTypes(Compilation caller)
+        {
+            if (_referencedTypes is null)
+            {
+                var compilations = new HashSet<Compilation>(_treeOwners.Values) { caller };
+                var seenAssemblies = new HashSet<string>(StringComparer.Ordinal);
+                var types = new List<INamedTypeSymbol>();
+                // The full closure, not just direct references: a plugin can
+                // arrive only through another assembly's dependency list and
+                // still implement a unified source contract.
+                var pending = new Queue<IAssemblySymbol>();
+                foreach (var compilation in compilations)
+                {
+                    foreach (var assembly
+                        in compilation.SourceModule.ReferencedAssemblySymbols)
+                    {
+                        pending.Enqueue(assembly);
+                    }
+                }
+                while (pending.Count > 0)
+                {
+                    var assembly = pending.Dequeue();
+                    var inSource = assembly.Locations.Any(location => location.IsInSource);
+                    // A MISSING assembly symbol (unresolved reference) owns no
+                    // types and no module references; it must not consume the
+                    // identity, or a RESOLVED symbol for the same assembly
+                    // seen through another project would be skipped.
+                    if (!inSource && assembly.GetMetadata() is null)
+                    {
+                        continue;
+                    }
+                    // Keyed by origin as well as identity: a source assembly
+                    // and a resolved metadata assembly can share an identity
+                    // (a stale build of the same project), and one must never
+                    // suppress the other's walk.
+                    var seenKey = (inSource ? "source:" : "metadata:")
+                        + assembly.Identity.GetDisplayName();
+                    if (!seenAssemblies.Add(seenKey))
+                    {
+                        continue;
+                    }
+                    foreach (var module in assembly.Modules)
+                    {
+                        foreach (var referenced in module.ReferencedAssemblySymbols)
+                        {
+                            pending.Enqueue(referenced);
+                        }
+                    }
+                    if (inSource)
+                    {
+                        continue;
+                    }
+                    CollectNamedTypes(assembly.GlobalNamespace, types);
+                }
+                _referencedTypes = types;
+            }
+            return _referencedTypes;
+        }
+
+        // Every body a dispatched call can land on, or null when the invoked
+        // member is not dispatched at all (an ordinary member analyses its own
+        // body directly). For an interface or abstract member the candidates
+        // are the declared implementations; a DEFAULT interface body is a
+        // candidate too, but only while some implementer actually inherits it
+        // (or nothing overrides it), because a default every implementer
+        // overrides can never execute and must not mask the overrides.
+        private IReadOnlyList<IMethodSymbol>? DispatchCandidates(
+            Compilation caller, IMethodSymbol invoked)
+        {
+            var method = invoked.OriginalDefinition;
+            var viaInterface = method.ContainingType.TypeKind == TypeKind.Interface;
+            if (!viaInterface && !method.IsAbstract
+                && !method.IsVirtual && !method.IsOverride)
+            {
+                return null;
+            }
+            // Only a contract DECLARED in loaded source has a knowable
+            // implementation set: references are acyclic, so nothing prebuilt
+            // can implement a source interface, while a METADATA contract can
+            // have implementers in other referenced assemblies that a source
+            // scan cannot see, and proving a write from the visible subset
+            // could fabricate a flow for a runtime receiver from metadata.
+            if (!method.ContainingType.Locations.Any(location => location.IsInSource))
+            {
+                return null;
+            }
+            var hasDefaultBody = viaInterface && !method.IsAbstract;
+            // Deliberately NOT deduplicated by source location: a file linked
+            // into several projects (or a multi-targeted one) compiles once
+            // per compilation, and `#if` can give those variants different
+            // bodies at the same file and span. Every variant must reach the
+            // conjunction, or a writing variant could stand in for a
+            // read-only one; re-proving an identical body twice is merely
+            // redundant.
+            var candidates = new List<IMethodSymbol>();
+            var defaultInherited = false;
+            foreach (var type in AllSourceTypes(caller).Concat(ReferencedTypes(caller)))
+            {
+                if (viaInterface)
+                {
+                    // EVERY matching interface instance contributes: an open
+                    // implementer can also carry an explicit implementation
+                    // for one construction, and the body actually reached
+                    // depends on the runtime type arguments.
+                    foreach (var implementation
+                        in InterfaceImplementations(type, invoked))
+                    {
+                        // The interface's own member answering for the type
+                        // means the type INHERITS the default body: that body
+                        // is live.
+                        if (SymbolEqualityComparer.Default.Equals(
+                                implementation.OriginalDefinition.ContainingType,
+                                method.ContainingType))
+                        {
+                            defaultInherited = true;
+                            continue;
+                        }
+                        // Only where the implementation is DECLARED: a derived
+                        // type inherits its base's implementation, which is
+                        // already counted at the base.
+                        if (!SymbolEqualityComparer.Default.Equals(
+                                implementation.ContainingType, type))
+                        {
+                            continue;
+                        }
+                        if (implementation.IsAbstract)
+                        {
+                            continue;
+                        }
+                        // A bodiless (metadata) implementation stays IN the
+                        // list: it fails the body proof, which is exactly
+                        // right, because a runtime receiver from metadata
+                        // cannot be shown to write.
+                        candidates.Add(implementation);
+                    }
+                    continue;
+                }
+                if (OverrideOf(type, invoked) is { IsAbstract: false } overriding)
+                {
+                    candidates.Add(overriding);
+                }
+            }
+            if (hasDefaultBody && (defaultInherited || candidates.Count == 0))
+            {
+                candidates.Add(method);
+            }
+            // A virtual (or overridable override) member's own body is live
+            // for instances of its own type, so it joins its overrides in the
+            // conjunction; over-approximating for an abstract containing type
+            // errs toward a missed edge, never a fabricated one.
+            if (!viaInterface && !method.IsAbstract)
+            {
+                candidates.Add(method);
+            }
+            return candidates;
+        }
+
+        private static IEnumerable<IMethodSymbol> InterfaceImplementations(
+            INamedTypeSymbol type, IMethodSymbol invoked)
+        {
+            // Matched by the CONSTRUCTED interface, never the open definition:
+            // a type implementing IGen<int> and IGen<string> with different
+            // bodies answers only for the construction the call went through.
+            // An OPEN implementer (Reader<T> : IHelper<T>) is the exception:
+            // its interface instance still carries type parameters and can be
+            // constructed into any invocation, so it matches by definition;
+            // over-approximating an incompatible construction only adds a
+            // body to the conjunction, erring toward a missed edge.
+            var target = invoked.ConstructedFrom;
+            // Open-ness on EITHER side widens the match: an open implementer
+            // serves every construction, and an open CALL SITE (inside
+            // generic code) can resolve to any construction, so closed
+            // implementations must join its conjunction too.
+            var openCallSite = ContainsTypeParameters(invoked.ContainingType);
+            foreach (var iface in type.AllInterfaces)
+            {
+                var open = openCallSite || ContainsTypeParameters(iface);
+                var matches = open
+                    ? SymbolEqualityComparer.Default.Equals(
+                        iface.OriginalDefinition,
+                        invoked.ContainingType.OriginalDefinition)
+                    : SymbolEqualityComparer.Default.Equals(
+                        iface, invoked.ContainingType);
+                if (!matches)
+                {
+                    continue;
+                }
+                var member = iface.GetMembers(invoked.Name)
+                    .OfType<IMethodSymbol>()
+                    .FirstOrDefault(m => open
+                        ? SymbolEqualityComparer.Default.Equals(
+                            m.OriginalDefinition, target.OriginalDefinition)
+                        : SymbolEqualityComparer.Default.Equals(m, target));
+                if (member is not null
+                    && type.FindImplementationForInterfaceMember(member)
+                        is IMethodSymbol implementation)
+                {
+                    yield return implementation;
+                }
+            }
+        }
+
+        private static bool ContainsTypeParameters(ITypeSymbol type)
+        {
+            if (type is ITypeParameterSymbol)
+            {
+                return true;
+            }
+            if (type is INamedTypeSymbol named)
+            {
+                foreach (var argument in named.TypeArguments)
+                {
+                    if (ContainsTypeParameters(argument))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static IMethodSymbol? OverrideOf(
+            INamedTypeSymbol type, IMethodSymbol invoked)
+        {
+            // The same construction discipline as the interface path: an
+            // override of Base<int> can never be reached through Base<string>,
+            // so the chain is compared against the CONSTRUCTED invoked member;
+            // a chain entry that still carries type parameters (an open
+            // derived class) matches by definition instead.
+            var target = invoked.ConstructedFrom;
+            foreach (var candidate in type.GetMembers(invoked.Name).OfType<IMethodSymbol>())
+            {
+                for (var overridden = candidate.OverriddenMethod;
+                     overridden is not null;
+                     overridden = overridden.OverriddenMethod)
+                {
+                    var open = ContainsTypeParameters(overridden.ContainingType);
+                    var matches = open
+                        ? SymbolEqualityComparer.Default.Equals(
+                            overridden.OriginalDefinition, target.OriginalDefinition)
+                        : SymbolEqualityComparer.Default.Equals(
+                            overridden.ConstructedFrom, target);
+                    if (matches)
+                    {
+                        return candidate;
+                    }
+                }
+            }
+            return null;
         }
 
         // A NAMED argument (`Fill(dst: ref sink, src: token)`) does not sit at

@@ -25,6 +25,7 @@ TS_CSHARP_STRUCT_DECLARATION = "struct_declaration"
 TS_CSHARP_RECORD_DECLARATION = "record_declaration"
 TS_CSHARP_INTERFACE_DECLARATION = "interface_declaration"
 TS_CSHARP_ENUM_DECLARATION = "enum_declaration"
+TS_CSHARP_DELEGATE_DECLARATION = "delegate_declaration"
 
 # A conditional-compilation block wrapping a declaration's attributes
 # (`#if SYMBOL [Attr] #endif`) parses as this node, which sits as the leading
@@ -216,6 +217,7 @@ TS_CSHARP_EQUALS_VALUE_CLAUSE = "equals_value_clause"
 TS_CSHARP_FIELD_NAME = "name"
 TS_CSHARP_FIELD_OPERATOR = "operator"
 TS_CSHARP_FIELD_TYPE = "type"
+TS_CSHARP_TYPE_ARGUMENT_LIST = "type_argument_list"
 # method_declaration/local_function_statement expose the return type via
 # `returns` (there is no `type` field on them).
 TS_CSHARP_FIELD_RETURNS = "returns"

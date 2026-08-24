@@ -1,6 +1,7 @@
 """Command-line entry point wiring cgr subcommands to their handlers."""
 
 import asyncio
+import importlib
 import json
 import subprocess
 import sys
@@ -81,6 +82,19 @@ from .utils.path_utils import (
 from .vector_store import clear_all_embeddings, delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
+
+
+def _vendored_click_exception() -> type[click.ClickException]:
+    # A typer that vendors click raises the vendored exceptions, which do not
+    # descend from the real click's; both flavors must be caught (#1409).
+    try:
+        vendored = importlib.import_module(cs.TYPER_VENDORED_CLICK_EXCEPTIONS_MODULE)
+    except ImportError:
+        return click.ClickException
+    return getattr(vendored, "ClickException", click.ClickException)
+
+
+_CLICK_EXCEPTIONS = (click.ClickException, _vendored_click_exception())
 
 app = typer.Typer(
     name=cs.PACKAGE_NAME,
@@ -217,6 +231,9 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
 def _maybe_start_stack() -> None:
     mgr = StackManager()
     if mgr.status().state == StackState.RUNNING:
+        # This early return bypasses ensure_running, so it needs its own
+        # public-port check for a stack that is already up (issue #1380).
+        mgr.warn_if_ports_are_public()
         return
     try:
         mgr.ensure_running()
@@ -1078,10 +1095,13 @@ def help_command(
 
     root_command = root_context.command
     command_name, *command_args = requested
-    if not isinstance(root_command, click.Group):
+    # Duck-typed, not isinstance(click.Group): a typer that vendors click
+    # builds the app from a Group that is not the real click's (#1409).
+    get_command = getattr(root_command, "get_command", None)
+    if get_command is None:
         raise typer.Exit(1)
 
-    target = root_command.get_command(root_context, command_name)
+    target = get_command(root_context, command_name)
     if target is None:
         typer.echo(f"cgr: '{command_name}' is not a cgr command.", err=True)
         typer.echo("See 'cgr help'.", err=True)
@@ -1093,7 +1113,7 @@ def help_command(
             prog_name=f"{root_context.command_path} {command_name}",
             standalone_mode=False,
         )
-    except click.ClickException as error:
+    except _CLICK_EXCEPTIONS as error:
         error.show()
         raise typer.Exit(error.exit_code) from error
 
@@ -1454,7 +1474,7 @@ def dead_code(
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
             resolved = _resolve_dead_code_project(project_name, projects)
-            if resolved is not None:
+            if resolved is not None and resolved in projects:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
                 rows, structural_tier_symbols = collect_dead_code_with_coverage(
                     ingestor,
@@ -1469,6 +1489,21 @@ def dead_code(
         )
         logger.exception(ls.DEADCODE_ERROR.format(error=e))
         raise typer.Exit(1) from e
+
+    # An explicit name absent from the graph must error, not scan a
+    # nonexistent prefix and report a clean project (the duplicates command
+    # gained this guard first). Raised OUTSIDE the connection context so a
+    # user typo never trips the service layer's error logging on exit.
+    if resolved is not None and resolved not in projects:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_DEADCODE_UNKNOWN_PROJECT.format(
+                    project=resolved, projects=projects
+                ),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
 
     if resolved is None:
         message = (
@@ -1574,6 +1609,68 @@ def _build_duplicates_table(
     return table
 
 
+def _emit_duplicates_json(
+    groups: list[DuplicateGroup],
+    output: Path | None,
+    skipped_symbols: int,
+    truncated: bool,
+) -> None:
+    # Envelope, not a bare list: scan-completeness metadata must reach
+    # JSON consumers too, or a CI artifact reads as a complete scan when
+    # symbols went unanalyzed or group enumeration hit its cap.
+    payload = json.dumps(
+        {
+            cs.KEY_DUPLICATE_GROUPS: groups,
+            cs.KEY_SKIPPED_SYMBOLS: skipped_symbols,
+            cs.KEY_TRUNCATED: truncated,
+        },
+        indent=2,
+    )
+    if output is None:
+        typer.echo(payload)
+        return
+    output.write_text(payload, encoding=cs.ENCODING_UTF8)
+    _print_duplicates_written(len(groups), output)
+
+
+def _duplicates_notices(
+    skipped_symbols: int, truncated: bool, all_skipped: bool
+) -> list[str]:
+    # As with dead-code, the completeness notices follow the report into its
+    # sink so a saved artifact never reads as "all clean" when symbols went
+    # unanalyzed or group enumeration hit its cap.
+    notices = []
+    if all_skipped:
+        notices.append(cs.CLI_DUPLICATES_STALE_GRAPH.format(count=skipped_symbols))
+    elif skipped_symbols:
+        notices.append(
+            cs.CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED.format(count=skipped_symbols)
+        )
+    if truncated:
+        notices.append(cs.CLI_DUPLICATES_TRUNCATED_NOTICE)
+    return notices
+
+
+def _print_duplicates_written(count: int, output: Path) -> None:
+    app_context.console.print(
+        style(
+            cs.CLI_DUPLICATES_WRITTEN.format(count=count, path=output),
+            cs.Color.GREEN,
+        )
+    )
+
+
+def _write_duplicates_file(
+    table: Table, notices: list[str], group_count: int, output: Path
+) -> None:
+    with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
+        file_console = Console(file=fh)
+        file_console.print(table)
+        for notice in notices:
+            file_console.print(notice)
+    _print_duplicates_written(group_count, output)
+
+
 def _emit_duplicates(
     groups: list[DuplicateGroup],
     output_format: cs.DuplicatesFormat,
@@ -1581,65 +1678,32 @@ def _emit_duplicates(
     project_name: str,
     skipped_symbols: int = 0,
     truncated: bool = False,
+    analyzed_symbols: int = 0,
     root_path: Path | None = None,
 ) -> None:
     if output_format == cs.DuplicatesFormat.JSON:
-        # Envelope, not a bare list: scan-completeness metadata must reach
-        # JSON consumers too, or a CI artifact reads as a complete scan when
-        # symbols went unanalyzed or group enumeration hit its cap.
-        payload = json.dumps(
-            {
-                cs.KEY_DUPLICATE_GROUPS: groups,
-                cs.KEY_SKIPPED_SYMBOLS: skipped_symbols,
-                cs.KEY_TRUNCATED: truncated,
-            },
-            indent=2,
-        )
-        if output is not None:
-            output.write_text(payload, encoding=cs.ENCODING_UTF8)
-            app_context.console.print(
-                style(
-                    cs.CLI_DUPLICATES_WRITTEN.format(count=len(groups), path=output),
-                    cs.Color.GREEN,
-                )
-            )
-            return
-        typer.echo(payload)
+        _emit_duplicates_json(groups, output, skipped_symbols, truncated)
         return
 
-    # As with dead-code, the completeness notices follow the report into its
-    # sink so a saved artifact never reads as "all clean" when symbols went
-    # unanalyzed or group enumeration hit its cap.
-    notices = []
-    if skipped_symbols:
-        notices.append(
-            cs.CLI_DUPLICATES_STRUCTURAL_TIER_SKIPPED.format(count=skipped_symbols)
-        )
-    if truncated:
-        notices.append(cs.CLI_DUPLICATES_TRUNCATED_NOTICE)
+    # Every symbol skipped and none analyzed: the graph was indexed before
+    # fingerprint stamping, so "no duplicates" would be vacuous and the
+    # pattern-tier wording a misdiagnosis - recommend a re-index instead.
+    all_skipped = skipped_symbols > 0 and analyzed_symbols == 0
+    notices = _duplicates_notices(skipped_symbols, truncated, all_skipped)
     # A broken CGR_EDITOR_URL_TEMPLATE degrades to plain locations; the
     # notice says so instead of the template error aborting mid-table.
     if root_path is not None and (problem := url_template_problem()) is not None:
         notices.append(problem)
     table = _build_duplicates_table(groups, project_name, root_path)
     if output is not None:
-        with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
-            file_console = Console(file=fh)
-            file_console.print(table)
-            for notice in notices:
-                file_console.print(notice)
-        app_context.console.print(
-            style(
-                cs.CLI_DUPLICATES_WRITTEN.format(count=len(groups), path=output),
-                cs.Color.GREEN,
-            )
-        )
+        _write_duplicates_file(table, notices, len(groups), output)
         for notice in notices:
             app_context.console.print(style(notice, cs.Color.YELLOW))
         return
 
     if not groups:
-        app_context.console.print(style(cs.CLI_DUPLICATES_NONE, cs.Color.GREEN))
+        if not all_skipped:
+            app_context.console.print(style(cs.CLI_DUPLICATES_NONE, cs.Color.GREEN))
     else:
         app_context.console.print(table)
         members = sum(len(group["members"]) for group in groups)
@@ -1779,19 +1843,7 @@ def duplicates(
             # predating Project.root_path just degrades to plain text.
             roots = project_roots_from_rows(ingestor.fetch_all(cq.CYPHER_LIST_PROJECTS))
             resolved = _resolve_dead_code_project(project_name, projects)
-            # An explicit name absent from the graph must error, not scan a
-            # nonexistent prefix and report a clean project.
-            if resolved is not None and resolved not in projects:
-                app_context.console.print(
-                    style(
-                        cs.CLI_ERR_DUPLICATES_UNKNOWN_PROJECT.format(
-                            project=resolved, projects=projects
-                        ),
-                        cs.Color.RED,
-                    )
-                )
-                raise typer.Exit(1)
-            if resolved is not None:
+            if resolved is not None and resolved in projects:
                 logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
                 report = collect_duplicates_with_coverage(
                     ingestor,
@@ -1803,14 +1855,27 @@ def duplicates(
                         exclude_patterns=tuple(exclude),
                     ),
                 )
-    except typer.Exit:
-        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DUPLICATES_FAILED.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.DUPLICATES_ERROR.format(error=e))
         raise typer.Exit(1) from e
+
+    # An explicit name absent from the graph must error, not scan a
+    # nonexistent prefix and report a clean project. Raised OUTSIDE the
+    # connection context: a user typo is not a connection failure and must
+    # not trip the service layer's error logging on exit.
+    if resolved is not None and resolved not in projects:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_DUPLICATES_UNKNOWN_PROJECT.format(
+                    project=resolved, projects=projects
+                ),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
 
     if resolved is None:
         message = (
@@ -1830,6 +1895,7 @@ def duplicates(
         resolved,
         report.skipped_symbols,
         report.truncated,
+        report.analyzed_symbols,
         root_path,
     )
 

@@ -1017,12 +1017,6 @@ class GraphUpdater:
         if module_impls:
             logger.info("Resolved {} C++20 module implementation links", module_impls)
 
-        imports_emitted = self.factory.import_processor.flush_deferred_import_edges(
-            known_module_paths
-        )
-        if imports_emitted:
-            logger.info("Emitted {} verified IMPORTS edges", imports_emitted)
-
         # Last containment step: every node-registering pass above (deferred
         # C++ methods, Go receivers, kept forward declarations) must finish
         # before parent qns are verified against the registry.
@@ -1033,6 +1027,15 @@ class GraphUpdater:
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
+
+        # IMPORTS flush AFTER Pass 3: a C# namespace import lands on the
+        # modules the file actually resolved entities from, and those
+        # resolutions are recorded during call processing (issue #1347).
+        imports_emitted = self.factory.import_processor.flush_deferred_import_edges(
+            known_module_paths
+        )
+        if imports_emitted:
+            logger.info("Emitted {} verified IMPORTS edges", imports_emitted)
 
         # LINQ query-operator edges join AFTER Pass 3 with the complete
         # function-location registry (both ends must be registered nodes).
@@ -1800,6 +1803,15 @@ class GraphUpdater:
             for qn, path in qn_to_path.items():
                 if path == file_path:
                     self.factory.import_processor.drop_rust_module_import_state(qn)
+
+        # Same discipline for C#: a deleted file's namespaces, identifier
+        # evidence, and using entries must not survive into the next flush
+        # (issue #1347).
+        if file_path.suffix == cs.EXT_CS:
+            qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+            for qn, path in qn_to_path.items():
+                if path == file_path:
+                    self.factory.import_processor.drop_csharp_module_import_state(qn)
 
         # Ownership guard for the prefix sweep: another file's inline-mod
         # chain can share this file's qn prefix (the #1017 shape), and a

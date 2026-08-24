@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import functools
 import os
 import shutil
 import sys
@@ -14,9 +15,11 @@ from unittest.mock import MagicMock, call
 import pytest
 from loguru import logger
 
+from codebase_rag import constants as rag_cs
 from codebase_rag import graph_audit
 from codebase_rag.capture import CaptureSelection
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
 
@@ -157,6 +160,90 @@ def _disable_stack_autostart() -> Generator[None, None, None]:
 
     with patch("codebase_rag.cli._maybe_start_stack"):
         yield
+
+
+@functools.cache
+def _unavailable_grammars() -> frozenset[rag_cs.SupportedLanguage]:
+    # Probed once per process: `lang in parsers` makes the lazy store attempt
+    # the load, so this is the authoritative "installed or not" answer.
+    parsers, _queries = load_parsers()
+    return frozenset(lang for lang in LANGUAGE_SPECS if lang not in parsers)
+
+
+def _grammars_missing_for(updater: GraphUpdater) -> frozenset[rag_cs.SupportedLanguage]:
+    unavailable = _unavailable_grammars()
+    if not unavailable:
+        return unavailable
+    # Same discovery-before-walk ordering as run() itself: generated-source
+    # roots are carved out of the build-dir prune only once registered, and
+    # the registration is recomputed per run, so doing it here is idempotent.
+    updater._register_generated_sources()
+    # The updater's own eligibility walk, not a raw rglob: a file the run
+    # would ignore anyway (node_modules, exclusions, hidden dirs) must not
+    # gate the test on its language's grammar.
+    return frozenset(
+        language
+        for path, _rel_path in updater._collect_eligible_files()
+        if (language := get_language_for_extension(path.suffix)) is not None
+        and language in unavailable
+    )
+
+
+@pytest.fixture(autouse=True)
+def _skip_when_grammar_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip, not fail, when the test repo needs an uninstalled grammar (#1371).
+
+    A base install (no `treesitter-full` extra) ships only the Python grammar.
+    The updater silently ignores files whose parser is missing, so every
+    grammar-dependent test failed downstream on an empty graph instead of
+    skipping. Wrapped around `GraphUpdater.run` like the pass-failure gate
+    above: on a full install `_unavailable_grammars()` is empty and this is a
+    no-op, so CI behavior is unchanged; on a base install any run over a repo
+    that contains files of a missing language becomes a skip with the same
+    reason `create_and_run_updater`'s explicit `skip_if_missing` uses.
+    """
+    original_run = GraphUpdater.run
+
+    def run_or_skip_missing_grammars(self: GraphUpdater, force: bool = False) -> None:
+        missing = _grammars_missing_for(self)
+        if missing:
+            names = ", ".join(sorted(str(lang.value) for lang in missing))
+            pytest.skip(f"{names} parser not available")
+        original_run(self, force)
+
+    monkeypatch.setattr(GraphUpdater, "run", run_or_skip_missing_grammars)
+
+
+@pytest.fixture(autouse=True)
+def _skip_on_missing_grammar_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn a lookup of an uninstalled grammar into a skip (#1371).
+
+    Tests that grab a parser directly (`parsers[lang]`, `queries[lang]`, or
+    `.get(lang)` followed by use) fail with KeyError or AttributeError on a
+    base install. The lookup itself is the exact moment the missing optional
+    dependency is discovered, so it becomes the skip point. Only languages the
+    store genuinely cannot load are affected; on a full install the wrapper
+    re-raises and nothing changes.
+    """
+    from codebase_rag import parser_loader
+
+    # Primed before the patch goes on: the availability probe itself walks the
+    # views with `in`, whose Mapping default routes through __getitem__, so
+    # probing from inside the wrapper would recurse forever.
+    unavailable = _unavailable_grammars()
+    original_getitem = parser_loader._LazyLanguageView.__getitem__
+
+    def getitem_or_skip(
+        self: parser_loader._LazyLanguageView, lang_name: rag_cs.SupportedLanguage
+    ) -> object:
+        try:
+            return original_getitem(self, lang_name)
+        except KeyError:
+            if lang_name in LANGUAGE_SPECS and lang_name in unavailable:
+                pytest.skip(f"{lang_name} parser not available")
+            raise
+
+    monkeypatch.setattr(parser_loader._LazyLanguageView, "__getitem__", getitem_or_skip)
 
 
 @pytest.fixture(autouse=True)

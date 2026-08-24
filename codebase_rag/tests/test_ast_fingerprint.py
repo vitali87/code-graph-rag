@@ -159,6 +159,131 @@ class TestFingerprintProps:
         assert fingerprint_props(identifier) == {}
 
 
+MACRO_BACKTRACE = """
+macro_rules! backtrace {
+    () => {
+        Some(crate::backtrace::Backtrace::capture())
+    };
+    ($err:expr) => {
+        $err.backtrace()
+    };
+}
+"""
+
+MACRO_BACKTRACE_RENAMED = """
+macro_rules! trace_or {
+    () => {
+        Some(crate::tracing::Snapshot::grab())
+    };
+    ($e:expr) => {
+        $e.snapshot()
+    };
+}
+"""
+
+MACRO_SINGLE_ARM = """
+macro_rules! backtrace {
+    () => {
+        Some(crate::backtrace::Backtrace::capture())
+    };
+}
+"""
+
+MACRO_TWO_CALLS = """
+macro_rules! init_ctx {
+    ($cfg:expr) => {
+        let parsed = crate::config::Config::parse($cfg, crate::defaults::flags());
+        crate::ctx::Context::new(parsed, crate::defaults::pool_size())
+    };
+}
+"""
+
+MACRO_TWO_CALLS_EDITED = """
+macro_rules! init_ctx {
+    ($cfg:expr) => {
+        let parsed = crate::config::Config::parse($cfg, crate::defaults::flags());
+        crate::ctx::Context::new(parsed, crate::defaults::pool_size(), $cfg)
+    };
+}
+"""
+
+MACRO_CHANGED_ARM = """
+macro_rules! backtrace {
+    () => {
+        Some(crate::backtrace::Backtrace::capture())
+    };
+    ($err:expr, $extra:expr) => {
+        $err.backtrace()
+    };
+}
+"""
+
+
+class TestMacroRulesFingerprints:
+    def _macro_node(self, code: str) -> Node:
+        """Parse Rust source and return its macro_definition node."""
+        return _function_node(cs.SupportedLanguage.RUST, code)
+
+    def test_macro_rules_definition_gets_a_fingerprint(self) -> None:
+        """A macro_rules! definition fingerprints from its token trees."""
+        result = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
+        assert result is not None
+        assert result.node_count > 1
+
+    def test_renamed_macro_with_identical_rules_matches(self) -> None:
+        """Renaming the macro and its identifiers keeps the fingerprint."""
+        first = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
+        second = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE_RENAMED))
+        assert first is not None
+        assert second is not None
+        assert first.fingerprint == second.fingerprint
+
+    def test_macro_with_different_rules_differs(self) -> None:
+        """Dropping an arm or editing a matcher changes the fingerprint."""
+        both_arms = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
+        one_arm = compute_ast_fingerprint(self._macro_node(MACRO_SINGLE_ARM))
+        changed_arm = compute_ast_fingerprint(self._macro_node(MACRO_CHANGED_ARM))
+        assert both_arms is not None
+        assert one_arm is not None
+        assert changed_arm is not None
+        assert both_arms.fingerprint != one_arm.fingerprint
+        assert both_arms.fingerprint != changed_arm.fingerprint
+
+    def test_macro_arms_become_branch_fingerprints(self) -> None:
+        """Each substantial macro arm is a branch root for Type-3 scoring."""
+        result = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
+        assert result is not None
+        assert len(result.branch_fingerprints) == 5
+
+    def test_edited_macro_shares_arm_branches(self) -> None:
+        """Macros differing by one arm still share the unchanged arm."""
+        base = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
+        edited = compute_ast_fingerprint(self._macro_node(MACRO_SINGLE_ARM))
+        assert base is not None
+        assert edited is not None
+        assert len(edited.branch_fingerprints) == 3
+        assert set(edited.branch_fingerprints) <= set(base.branch_fingerprints)
+
+    def test_edited_arm_interior_still_shares_branches(self) -> None:
+        """Editing inside an arm keeps the untouched token groups indexed."""
+        base = compute_ast_fingerprint(self._macro_node(MACRO_TWO_CALLS))
+        edited = compute_ast_fingerprint(self._macro_node(MACRO_TWO_CALLS_EDITED))
+        assert base is not None
+        assert edited is not None
+        assert base.fingerprint != edited.fingerprint
+        shared = set(base.branch_fingerprints) & set(edited.branch_fingerprints)
+        assert shared
+
+    def test_trait_method_signature_stays_unfingerprinted(self) -> None:
+        """Bodiless trait signatures stay out of clone detection."""
+        signature = _function_node(
+            cs.SupportedLanguage.RUST,
+            "trait T {\n    fn snapshot(&self) -> i32;\n}\n",
+        )
+        assert signature.type == "function_signature_item"
+        assert compute_ast_fingerprint(signature) is None
+
+
 CROSS_LANGUAGE_PAIRS: dict[cs.SupportedLanguage, tuple[str, str]] = {
     cs.SupportedLanguage.JS: (
         "function total(items) {\n  let r = 0;\n  for (const i of items) {\n    r += i.price;\n  }\n  return r;\n}\n",

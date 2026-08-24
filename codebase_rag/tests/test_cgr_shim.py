@@ -7,7 +7,12 @@ class TestCgrShimExports:
             assert hasattr(cgr, name), f"{name!r} listed in __all__ but not importable"
 
     def test_all_matches_module_exports(self) -> None:
-        public_attrs = {k for k in vars(cgr) if not k.startswith("_")}
+        # Identifier names only: pytest's assertion rewriting injects
+        # "@py_builtins" and "@pytest_ar" into a module the first time it is
+        # imported under rewriting, which depends on import order (#1410).
+        public_attrs = {
+            k for k in vars(cgr) if not k.startswith("_") and k.isidentifier()
+        }
         assert set(cgr.__all__) == public_attrs
 
     def test_settings_is_canonical_instance(self) -> None:

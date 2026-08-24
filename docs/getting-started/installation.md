@@ -6,7 +6,7 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
 
 ## Prerequisites
 
-- Python 3.12+
+- Python 3.12+ (the wheel is pure Python, but the interpreter floor is strict; Debian Bookworm ships Python 3.11, which is why the [piwheels](https://www.piwheels.org/project/code-graph-rag/) Bookworm build shows as failed. On Raspberry Pi OS Bookworm, run the install commands below inside a Python 3.12 environment, for example `uv venv --python 3.12 --seed && source .venv/bin/activate`, so pip exists in the environment and actually uses 3.12.)
 - Docker & Docker Compose (for Memgraph)
 - **cmake** (required for building pymgclient dependency)
 - **ripgrep** (`rg`) (required for shell command text searching)
@@ -21,6 +21,23 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
     ```bash
     brew install cmake ripgrep
     ```
+
+    If `pymgclient` has no prebuilt wheel for your platform (for example older
+    macOS x86_64 setups) and pip falls back to building it from source, the
+    build also needs Homebrew's OpenSSL and, if CMake cannot find it,
+    `pkg-config`:
+
+    ```bash
+    brew install pkg-config openssl
+    export OPENSSL_ROOT_DIR="$(brew --prefix openssl)"
+    export PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig:$PKG_CONFIG_PATH"
+    ```
+
+    Then run the `pip install` command from
+    [Install from PyPI](#install-from-pypi) below (or rerun the one that just
+    failed) in the same shell so the variables are picked up. See
+    [Troubleshooting](../advanced/troubleshooting.md) for the symptoms this
+    fixes.
 
 === "Ubuntu/Debian"
 

@@ -4,6 +4,24 @@ description: "Troubleshoot common Code-Graph-RAG issues with Memgraph, Ollama, a
 
 # Troubleshooting
 
+## pymgclient Build Fails on macOS
+
+When pip has no prebuilt `pymgclient` wheel for your platform it builds from
+source, and the build can fail first on a missing CMake and then on OpenSSL
+headers CMake cannot locate (Homebrew does not put OpenSSL on the default
+search paths). Install the build dependencies and point CMake at Homebrew's
+OpenSSL:
+
+```bash
+brew install cmake pkg-config openssl
+export OPENSSL_ROOT_DIR="$(brew --prefix openssl)"
+export PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig:$PKG_CONFIG_PATH"
+```
+
+Then rerun the install in the same shell. Verified recipe: with those
+variables set, `pip install --no-binary pymgclient pymgclient` builds and
+imports cleanly.
+
 ## Check Memgraph Connection
 
 - Ensure Docker containers are running: `docker compose ps`
