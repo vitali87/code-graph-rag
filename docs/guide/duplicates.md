@@ -450,9 +450,12 @@ gives you two ways:
 **Click a location.** Every `file:line` cell is a terminal hyperlink
 (cmd/ctrl-click in iTerm2, Kitty, WezTerm, Windows Terminal, and VS Code's
 terminal) that opens the file in your editor at the function's first line.
-CGR picks the editor automatically — Cursor, Windsurf, and Zed are detected
-from the hosting app, and anything else falls back to VS Code — and two
-environment variables override the guess:
+CGR picks the editor automatically — on macOS, Cursor, Windsurf, and Zed are
+detected from the hosting app's bundle identifier; elsewhere, editors that
+announce themselves via `TERM_PROGRAM` (Zed, VS Code) are honored, and
+anything else falls back to VS Code. VS Code forks inherit
+`TERM_PROGRAM=vscode`, so on Linux and Windows set `CGR_EDITOR` to pick a
+fork explicitly. Two environment variables override the guess:
 
 ```bash
 CGR_EDITOR=zed                                    # vscode, cursor, windsurf, zed, idea, textmate, none

@@ -215,6 +215,7 @@ class TestClickableLocations:
     @pytest.fixture(autouse=True)
     def _neutral_editor(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(cs.ENV_CF_BUNDLE_ID, raising=False)
+        monkeypatch.delenv(cs.ENV_TERM_PROGRAM, raising=False)
         monkeypatch.setattr(settings, "CGR_EDITOR", cs.EDITOR_AUTO)
         monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", None)
         monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", None)

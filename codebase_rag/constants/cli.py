@@ -250,6 +250,7 @@ CLI_ERR_DUPLICATES_DIFF_TEMPLATE_INVALID = (
     "use only {{left}} and {{right}}."
 )
 EDITOR_ERR_EMPTY_COMMAND = "command is empty"
+EDITOR_ERR_UNSUPPORTED_FIELD = "unsupported placeholder {{{field}}}"
 CLI_DUPLICATES_OPEN_EXTRA_MEMBERS = (
     "Group {number} has {count} members; opened the first two side by side."
 )

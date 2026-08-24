@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import string
 from pathlib import Path
 from urllib.parse import quote
 
@@ -23,8 +24,13 @@ def resolve_editor() -> str:
     for marker, name in cs.EDITOR_BUNDLE_MARKERS:
         if marker in bundle_id:
             return name
-    # VS Code's integrated terminal (Cursor/Windsurf forks are caught above
-    # by bundle id) and the plain-terminal fallback share one answer.
+    # Off macOS there is no bundle id; editors that announce themselves via
+    # TERM_PROGRAM (zed, vscode) are honored when the name is one we can
+    # link to. VS Code forks inherit TERM_PROGRAM=vscode, so on Linux and
+    # Windows they need an explicit CGR_EDITOR to be told apart.
+    term_program = os.environ.get(cs.ENV_TERM_PROGRAM, "").strip().lower()
+    if term_program in cs.EDITOR_URL_TEMPLATES:
+        return term_program
     return cs.EDITOR_VSCODE
 
 
@@ -56,20 +62,47 @@ def _active_url_template() -> str | None:
     )
 
 
+def _fields_problem(template: str, allowed: frozenset[str]) -> str | None:
+    """Why template's replacement fields are unusable, or None when fine.
+
+    Only bare allowed names pass: conversions ({path!r}), format specs
+    ({line:>4}), indexing ({left[0]}), and attribute access ({path.foo})
+    all format *something* silently wrong (a repr-quoted URL, one
+    character of a path), so they are rejected up front rather than left
+    to produce broken links or argv entries.
+    """
+    try:
+        fields = list(string.Formatter().parse(template))
+    except ValueError as e:
+        return str(e)
+    for _, name, spec, conversion in fields:
+        if name is None:
+            continue
+        if name not in allowed or spec or conversion:
+            rendered = name + (f"!{conversion}" if conversion else "")
+            rendered += f":{spec}" if spec else ""
+            return cs.EDITOR_ERR_UNSUPPORTED_FIELD.format(field=rendered)
+    return None
+
+
 def url_template_problem() -> str | None:
     """Why the active URL template is unusable, or None when it is fine.
 
     Built-in templates always pass; this guards CGR_EDITOR_URL_TEMPLATE
-    typos ({unknown} placeholders, unmatched braces) so a report renders
-    with plain locations and a notice rather than aborting mid-table.
+    typos ({unknown} placeholders, unmatched braces, {path!r}) so a report
+    renders with plain locations and a notice rather than aborting
+    mid-table or linking to a mangled URL.
     """
     template = _active_url_template()
     if not template:
         return None
-    try:
-        template.format(**{cs.TEMPLATE_KEY_PATH: "", cs.TEMPLATE_KEY_LINE: 1})
-    except _TEMPLATE_ERRORS as e:
-        return cs.CLI_DUPLICATES_URL_TEMPLATE_INVALID.format(template=template, error=e)
+    problem = _fields_problem(
+        template, frozenset((cs.TEMPLATE_KEY_PATH, cs.TEMPLATE_KEY_LINE))
+    )
+    if problem is not None:
+        return cs.CLI_DUPLICATES_URL_TEMPLATE_INVALID.format(
+            template=template, error=problem
+        )
     return None
 
 
@@ -80,6 +113,8 @@ def editor_url(absolute_path: Path, line: int) -> str | None:
     slashes on every platform (vscode://file/C:/dir/mod.py), and Windows
     backslashes would otherwise percent-encode into a broken %5C path.
     """
+    if resolve_editor() == cs.EDITOR_NONE:
+        return None
     template = _active_url_template()
     if not template or url_template_problem() is not None:
         return None
@@ -120,6 +155,15 @@ def diff_command(left: Path, right: Path) -> list[str] | None:
     )
     if not template:
         return None
+    problem = _fields_problem(
+        template, frozenset((cs.TEMPLATE_KEY_LEFT, cs.TEMPLATE_KEY_RIGHT))
+    )
+    if problem is not None:
+        raise EditorTemplateError(
+            cs.CLI_ERR_DUPLICATES_DIFF_TEMPLATE_INVALID.format(
+                template=template, error=problem
+            )
+        )
     substitutions = {
         cs.TEMPLATE_KEY_LEFT: str(left),
         cs.TEMPLATE_KEY_RIGHT: str(right),

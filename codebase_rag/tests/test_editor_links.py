@@ -21,6 +21,7 @@ from codebase_rag.editor_links import (
 @pytest.fixture(autouse=True)
 def _neutral_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(cs.ENV_CF_BUNDLE_ID, raising=False)
+    monkeypatch.delenv(cs.ENV_TERM_PROGRAM, raising=False)
     monkeypatch.setattr(settings, "CGR_EDITOR", cs.EDITOR_AUTO)
     monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", None)
     monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", None)
@@ -39,6 +40,29 @@ class TestResolveEditor:
     def test_auto_falls_back_to_vscode(self) -> None:
         assert resolve_editor() == cs.EDITOR_VSCODE
 
+    def test_auto_detects_term_program_off_macos(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Linux/Windows have no macOS bundle id; editors announcing
+        # themselves via TERM_PROGRAM (Zed) must still be detected.
+        monkeypatch.setenv(cs.ENV_TERM_PROGRAM, "zed")
+        assert resolve_editor() == "zed"
+
+    def test_bundle_id_wins_over_term_program(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # VS Code forks inherit TERM_PROGRAM=vscode; on macOS the bundle
+        # id is the only signal that tells Cursor apart.
+        monkeypatch.setenv(cs.ENV_TERM_PROGRAM, cs.TERM_PROGRAM_VSCODE)
+        monkeypatch.setenv(cs.ENV_CF_BUNDLE_ID, "com.todesktop.cursor")
+        assert resolve_editor() == "cursor"
+
+    def test_unknown_term_program_falls_back_to_vscode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(cs.ENV_TERM_PROGRAM, "ghostty")
+        assert resolve_editor() == cs.EDITOR_VSCODE
+
 
 class TestEditorUrl:
     def test_default_vscode_url_carries_path_and_line(self) -> None:
@@ -55,8 +79,16 @@ class TestEditorUrl:
 
     def test_template_overrides_editor(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", "myed://{path}#{line}")
-        monkeypatch.setattr(settings, "CGR_EDITOR", cs.EDITOR_NONE)
         assert editor_url(Path("/repo/mod.py"), 3) == "myed:///repo/mod.py#3"
+
+    def test_none_editor_wins_over_custom_template(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # CGR_EDITOR=none means "no links", full stop; a leftover custom
+        # template must not resurrect them (diff_link already behaves so).
+        monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", "myed://{path}#{line}")
+        monkeypatch.setattr(settings, "CGR_EDITOR", cs.EDITOR_NONE)
+        assert editor_url(Path("/repo/mod.py"), 3) is None
 
 
 class TestDiffCommand:
@@ -173,6 +205,24 @@ class TestMalformedTemplates:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "tool {left.foo} {right}")
+        with pytest.raises(EditorTemplateError, match=r"\{left\}"):
+            diff_command(Path("/r/a"), Path("/r/b"))
+
+    def test_conversion_placeholder_in_url_template_degrades(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # {path!r} formats without raising but repr-quotes the path into
+        # a broken URL; only bare {path}/{line} fields are allowed.
+        monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", "ed://{path!r}:{line}")
+        assert editor_url(Path("/r/a.py"), 1) is None
+        assert url_template_problem() is not None
+
+    def test_index_placeholder_in_diff_raises_actionable_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # {left[0]} formats to one character of the path; rejected up
+        # front instead of launching the diff tool on a mangled argv.
+        monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "tool {left[0]} {right}")
         with pytest.raises(EditorTemplateError, match=r"\{left\}"):
             diff_command(Path("/r/a"), Path("/r/b"))
 
