@@ -46,6 +46,11 @@ def compute_ast_fingerprint(func_node: Node) -> AstFingerprintResult | None:
 
 
 def _resolve_body(func_node: Node) -> Node | None:
+    # A token-tree definition (Rust macro_rules!) has no body field; its
+    # arms hang directly off the definition node, which the name identifier
+    # cannot distinguish since identifiers collapse to one skeleton token.
+    if func_node.type in cs.AST_FP_SELF_BODY_TYPES:
+        return func_node
     # Every LanguageSpec keeps the default body field; Dart alone splits a
     # definition into a signature node and a sibling function_body.
     body = func_node.child_by_field_name(cs.FIELD_BODY)

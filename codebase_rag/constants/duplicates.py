@@ -67,6 +67,13 @@ AST_FP_WRAPPED_DEF_SUBSTRING = "function"
 # `=> expr` form keeps the expression in an arrow_expression_clause.
 AST_FP_EXPRESSION_BODY_TYPES = frozenset({"arrow_expression_clause"})
 
+# Definitions whose logic lives in raw token trees on the definition node
+# itself rather than under a body field: a Rust macro_rules! definition keeps
+# its arms as macro_rule children (token_tree_pattern => token_tree), so the
+# whole node is the fingerprint root and cfg-gated near-identical macros
+# participate in clone detection.
+AST_FP_SELF_BODY_TYPES = frozenset({"macro_definition"})
+
 # Byte separators framing a node's token and child digests in the Merkle hash.
 AST_FP_HASH_OPEN = b"("
 AST_FP_HASH_CLOSE = b")"

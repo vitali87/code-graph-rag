@@ -159,6 +159,69 @@ class TestFingerprintProps:
         assert fingerprint_props(identifier) == {}
 
 
+MACRO_BACKTRACE = """
+macro_rules! backtrace {
+    () => {
+        Some(crate::backtrace::Backtrace::capture())
+    };
+    ($err:expr) => {
+        $err.backtrace()
+    };
+}
+"""
+
+MACRO_BACKTRACE_RENAMED = """
+macro_rules! trace_or {
+    () => {
+        Some(crate::tracing::Snapshot::grab())
+    };
+    ($e:expr) => {
+        $e.snapshot()
+    };
+}
+"""
+
+MACRO_SINGLE_ARM = """
+macro_rules! backtrace {
+    () => {
+        Some(crate::backtrace::Backtrace::capture())
+    };
+}
+"""
+
+
+class TestMacroRulesFingerprints:
+    def _macro(self, code: str) -> Node:
+        return _function_node(cs.SupportedLanguage.RUST, code)
+
+    def test_macro_rules_definition_gets_a_fingerprint(self) -> None:
+        result = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE))
+        assert result is not None
+        assert result.node_count > 1
+
+    def test_renamed_macro_with_identical_rules_matches(self) -> None:
+        first = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE))
+        second = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE_RENAMED))
+        assert first is not None
+        assert second is not None
+        assert first.fingerprint == second.fingerprint
+
+    def test_macro_with_different_rules_differs(self) -> None:
+        both_arms = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE))
+        one_arm = compute_ast_fingerprint(self._macro(MACRO_SINGLE_ARM))
+        assert both_arms is not None
+        assert one_arm is not None
+        assert both_arms.fingerprint != one_arm.fingerprint
+
+    def test_trait_method_signature_stays_unfingerprinted(self) -> None:
+        signature = _function_node(
+            cs.SupportedLanguage.RUST,
+            "trait T {\n    fn snapshot(&self) -> i32;\n}\n",
+        )
+        assert signature.type == "function_signature_item"
+        assert compute_ast_fingerprint(signature) is None
+
+
 CROSS_LANGUAGE_PAIRS: dict[cs.SupportedLanguage, tuple[str, str]] = {
     cs.SupportedLanguage.JS: (
         "function total(items) {\n  let r = 0;\n  for (const i of items) {\n    r += i.price;\n  }\n  return r;\n}\n",
