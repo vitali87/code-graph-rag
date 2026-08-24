@@ -241,6 +241,7 @@ CLI_ERR_DUPLICATES_DIFF_TEMPLATE_INVALID = (
     "CGR_DIFF_COMMAND {template!r} is invalid ({error}). The command may "
     "use only {{left}} and {{right}}."
 )
+EDITOR_ERR_EMPTY_COMMAND = "command is empty"
 CLI_DUPLICATES_OPEN_EXTRA_MEMBERS = (
     "Group {number} has {count} members; opened the first two side by side."
 )

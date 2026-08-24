@@ -147,3 +147,29 @@ class TestMalformedTemplates:
         monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "tool '{left} {right}")
         with pytest.raises(EditorTemplateError, match=r"\{right\}"):
             diff_command(Path("/r/a"), Path("/r/b"))
+
+    def test_attribute_placeholder_in_url_template_degrades(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # str.format attribute access ({path.foo}) raises AttributeError,
+        # not KeyError; it must degrade like every other bad template.
+        monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", "ed://{path.foo}")
+        assert editor_url(Path("/r/a.py"), 1) is None
+        assert url_template_problem() is not None
+
+    def test_index_placeholder_on_int_in_diff_raises_actionable_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "tool {left.foo} {right}")
+        with pytest.raises(EditorTemplateError, match=r"\{left\}"):
+            diff_command(Path("/r/a"), Path("/r/b"))
+
+    def test_command_splitting_to_nothing_raises_actionable_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Unreachable via settings (blank reads as unset), so force a
+        # degenerate built-in: the guard must refuse an empty argv rather
+        # than let it reach Popen.
+        monkeypatch.setitem(cs.EDITOR_DIFF_COMMANDS, "vscode", "   ")
+        with pytest.raises(EditorTemplateError, match="empty"):
+            diff_command(Path("/r/a"), Path("/r/b"))

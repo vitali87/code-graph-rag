@@ -36,6 +36,13 @@ class EditorTemplateError(ValueError):
     """
 
 
+# Everything str.format can raise on a hostile template: unknown keyword
+# ({oops} -> KeyError), positional field ({} / {0} -> IndexError), unmatched
+# brace (-> ValueError), attribute access ({path.foo} -> AttributeError),
+# and indexing a non-subscriptable value ({line[0]} -> TypeError).
+_TEMPLATE_ERRORS = (KeyError, IndexError, ValueError, AttributeError, TypeError)
+
+
 def _configured(value: str | None) -> str | None:
     """A user template setting, with blank/whitespace treated as unset."""
     if value is None:
@@ -61,7 +68,7 @@ def url_template_problem() -> str | None:
         return None
     try:
         template.format(**{cs.TEMPLATE_KEY_PATH: "", cs.TEMPLATE_KEY_LINE: 1})
-    except (KeyError, IndexError, ValueError) as e:
+    except _TEMPLATE_ERRORS as e:
         return cs.CLI_DUPLICATES_URL_TEMPLATE_INVALID.format(template=template, error=e)
     return None
 
@@ -111,13 +118,16 @@ def diff_command(left: Path, right: Path) -> list[str] | None:
         cs.TEMPLATE_KEY_RIGHT: str(right),
     }
     try:
-        argv = [token.format(**substitutions) for token in shlex.split(template)]
-    except (KeyError, IndexError, ValueError) as e:
+        tokens = shlex.split(template)
+        # An argv that splits to nothing must never reach Popen; raise the
+        # actionable error instead (whitespace-only *settings* already read
+        # as unset above, so this guards degenerate built-ins/quoting).
+        if not tokens:
+            raise ValueError(cs.EDITOR_ERR_EMPTY_COMMAND)
+        return [token.format(**substitutions) for token in tokens]
+    except _TEMPLATE_ERRORS as e:
         raise EditorTemplateError(
             cs.CLI_ERR_DUPLICATES_DIFF_TEMPLATE_INVALID.format(
                 template=template, error=e
             )
         ) from e
-    # A template that splits to nothing (stray quoting) must read as "no
-    # tool", never reach Popen as an empty argv.
-    return argv or None
