@@ -128,7 +128,10 @@ To run code newer than the latest release, install from git:
 uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
-You also need Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
+You also need Python 3.12+, Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
+
+> [!NOTE]
+> The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. The [piwheels](https://www.piwheels.org/project/code-graph-rag/) build for Debian Bookworm shows as failed because Bookworm's system Python is 3.11, which is below our floor. On Raspberry Pi OS Bookworm, install a newer interpreter first (for example `uv python install 3.12`) and the PyPI wheel installs normally.
 
 ## Quick Start
 
