@@ -168,6 +168,40 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  test-unit-base:
+    name: Unit Tests (base install)
+    runs-on: ubuntu-latest
+    # A base install ships only the test extra: no treesitter-full, semantic
+    # or milvus. Grammar- and optional-dependency-gated tests must SKIP here,
+    # not fail (issues #1371 and #1410); this job keeps that enforced.
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@f98e06938123ccabd21905ea5d0069192241f9f1 # v8.3.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install base dependencies only
+        run: |
+          uv sync --extra test --group dev
+
+      - name: Run unit tests on the base install
+        run: |
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short
+
   test-integration:
     name: Integration Tests (ubuntu-latest)
     runs-on: ubuntu-latest
@@ -576,6 +610,7 @@ jobs:
         lint,
         typecheck,
         test-unit,
+        test-unit-base,
         test-integration,
         binary-smoke,
         wheel-fresh-resolution,
@@ -606,6 +641,10 @@ jobs:
           fi
           if [[ "${{ needs.test-unit.result }}" != "success" ]]; then
             echo "❌ Unit tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test-unit-base.result }}" != "success" ]]; then
+            echo "❌ Base-install unit tests failed"
             exit 1
           fi
           if [[ "${{ needs.test-integration.result }}" != "success" ]]; then

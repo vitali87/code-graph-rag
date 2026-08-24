@@ -416,6 +416,7 @@ def test_milvus_store_search_verify_delete_roundtrip(
     assert remaining_ids == {103}
 
 
+@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_clear_all_embeddings_qdrant_drops_and_recreates_collection(
     reset_global_client: None,
 ) -> None:

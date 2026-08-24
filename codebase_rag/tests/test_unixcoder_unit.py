@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import torch
-from torch import nn
+import pytest
 
-from codebase_rag.unixcoder import Beam, UniXcoder
+# Optional heavyweight dependency: a base install ships without the
+# `semantic` extra, so this module must SKIP rather than abort collection
+# (issue #1410).
+torch = pytest.importorskip("torch")
+_unixcoder = pytest.importorskip("codebase_rag.unixcoder")
+
+nn = torch.nn
+Beam = _unixcoder.Beam
+UniXcoder = _unixcoder.UniXcoder
 
 
 class TestBeamInit:
