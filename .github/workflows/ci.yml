@@ -481,7 +481,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request'
       && github.event.pull_request.base.ref == 'main'
-      && github.actor != 'dependabot[bot]'
+      && github.event.pull_request.user.login != 'dependabot[bot]'
       && github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 45
     permissions:
@@ -536,13 +536,23 @@ jobs:
               # Fail fast when the producer is already dead: a SonarCloud
               # Analysis job that completed without success will never
               # publish an analysis of this commit, so waiting out the
-              # deadline would only delay the same failure.
-              producer=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" \
-                --jq '[.check_runs[] | select(.name == "SonarCloud Analysis")]
-                      | sort_by(.started_at) | last
-                      | select(.status == "completed") | .conclusion // empty' \
+              # deadline would only delay the same failure. A queued or
+              # in-progress run holds the verdict open: a rerun sits at
+              # started_at null while queued, which jq sorts before every
+              # real timestamp, so only the completed runs are ranked and
+              # any active run suppresses the fast fail until it finishes.
+              runs=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" \
+                --jq '[.check_runs[] | select(.name == "SonarCloud Analysis")]' \
+                2>/dev/null || echo '[]')
+              active=$(printf '%s' "$runs" \
+                | jq '[.[] | select(.status != "completed")] | length' \
+                2>/dev/null || echo 1)
+              producer=$(printf '%s' "$runs" \
+                | jq -r 'map(select(.status == "completed"))
+                         | sort_by(.started_at) | last
+                         | .conclusion // empty' \
                 2>/dev/null || true)
-              if [ -n "$producer" ] && [ "$producer" != "success" ]; then
+              if [ "$active" = "0" ] && [ -n "$producer" ] && [ "$producer" != "success" ]; then
                 echo "❌ The SonarCloud Analysis job concluded '$producer', so no analysis of $HEAD_SHA is coming."
                 echo "Fix or re-run SonarCloud Analysis, then re-run this job."
                 exit 1
