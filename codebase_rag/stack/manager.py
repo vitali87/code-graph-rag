@@ -118,7 +118,14 @@ class StackManager:
         for service, spec in services.items():
             if not isinstance(spec, dict):
                 continue
-            for mapping in spec.get("ports") or []:
+            # The file is user-owned, so `ports` can be any YAML value; a
+            # scalar (`ports: 8080`) is not a mapping list and iterating it
+            # would crash the start and status paths over a file Compose
+            # itself would reject.
+            ports = spec.get("ports")
+            if not isinstance(ports, list):
+                continue
+            for mapping in ports:
                 if _publishes_on_all_interfaces(mapping):
                     public.append(f"{service}: {mapping}")
         return public

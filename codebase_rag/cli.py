@@ -201,6 +201,9 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
 def _maybe_start_stack() -> None:
     mgr = StackManager()
     if mgr.status().state == StackState.RUNNING:
+        # This early return bypasses ensure_running, so it needs its own
+        # public-port check for a stack that is already up (issue #1380).
+        mgr.warn_if_ports_are_public()
         return
     try:
         mgr.ensure_running()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -226,6 +227,36 @@ def _warnings_from(action: object) -> list[str]:
     return messages
 
 
+class TestMalformedPortsDeclarations:
+    """A user-owned compose file can hold any YAML; the warning scan must not
+    crash the start or status paths over an invalid `ports` value."""
+
+    def _mappings(self, stack_home: Path, rendered: str) -> list[str]:
+        target = stack_home / stack_cs.COMPOSE_FILENAME
+        target.write_text(rendered, encoding="utf-8")
+        return StackManager._public_port_mappings(target)
+
+    def test_scalar_ports_value_is_ignored(self, stack_home: Path) -> None:
+        # `ports: 8080` parses as an int; iterating it raised TypeError and
+        # aborted `up()` and `daemon status` before any real work.
+        assert (
+            self._mappings(stack_home, "services:\n  memgraph:\n    ports: 8080\n")
+            == []
+        )
+
+    def test_string_ports_value_is_ignored(self, stack_home: Path) -> None:
+        # A bare string iterates per character, which is never a mapping list.
+        assert (
+            self._mappings(
+                stack_home, 'services:\n  memgraph:\n    ports: "8080:8080"\n'
+            )
+            == []
+        )
+
+    def test_valid_list_still_reports(self, stack_home: Path) -> None:
+        assert self._mappings(stack_home, PUBLIC_COMPOSE) == ["memgraph: 7687:7687"]
+
+
 class TestAlreadyRunningStackWarns:
     """A stack that is already up must still warn about public ports (#1380).
 
@@ -318,3 +349,46 @@ class TestDaemonStatusWarns:
         self, stack_home: Path, tmp_path: Path
     ) -> None:
         assert self._invoke_status(stack_home, tmp_path) == []
+
+
+class TestMaybeStartStackWarns:
+    """`_maybe_start_stack` in the main CLI short-circuits on a running stack
+    without going through `ensure_running`, so it needs its own warning call
+    (#1380)."""
+
+    @pytest.fixture
+    def _disable_stack_autostart(self) -> Generator[None, None, None]:
+        # Override the conftest autouse mock of `_maybe_start_stack`: this
+        # class exercises the real function. Docker stays untouched because
+        # the manager and health checks are patched in `_invoke`.
+        yield
+
+    def _invoke(self, stack_home: Path, tmp_path: Path) -> list[str]:
+        from codebase_rag.cli import _maybe_start_stack
+
+        mgr = StackManager(
+            home=stack_home, package_compose=_make_compose_source(tmp_path)
+        )
+        with (
+            patch("codebase_rag.cli.StackManager", return_value=mgr),
+            patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+            patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        ):
+            return _warnings_from(_maybe_start_stack)
+
+    def test_warns_when_stack_already_running(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        (stack_home / stack_cs.COMPOSE_FILENAME).write_text(
+            PUBLIC_COMPOSE, encoding="utf-8"
+        )
+        messages = self._invoke(stack_home, tmp_path)
+        assert any("ALL interfaces" in message for message in messages), messages
+
+    def test_quiet_when_stack_already_running_with_loopback_file(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        (stack_home / stack_cs.COMPOSE_FILENAME).write_text(
+            LOOPBACK_COMPOSE, encoding="utf-8"
+        )
+        assert self._invoke(stack_home, tmp_path) == []
