@@ -62,3 +62,24 @@ def test_eligible_js_file_gates_the_run(
     missing = tests_conftest._grammars_missing_for(_updater_for(tmp_path))
 
     assert missing == frozenset({cs.SupportedLanguage.JS})
+
+
+def test_gradle_generated_java_gates_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Generated-source roots are carved out of the build-dir prune only once
+    # the run registers them, so the preflight must do that registration too
+    # or a repo whose only Java lives under build/generated escapes the gate.
+    monkeypatch.setattr(
+        tests_conftest,
+        "_unavailable_grammars",
+        lambda: frozenset({cs.SupportedLanguage.JAVA}),
+    )
+    (tmp_path / "build.gradle").write_text("plugins {}\n", encoding="utf-8")
+    gen = tmp_path / "build/generated/sources/annotationProcessor/java/main/com/x"
+    gen.mkdir(parents=True)
+    (gen / "Widget.java").write_text("public class Widget {}\n", encoding="utf-8")
+
+    missing = tests_conftest._grammars_missing_for(_updater_for(tmp_path))
+
+    assert missing == frozenset({cs.SupportedLanguage.JAVA})

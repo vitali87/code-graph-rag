@@ -174,6 +174,10 @@ def _grammars_missing_for(updater: GraphUpdater) -> frozenset[rag_cs.SupportedLa
     unavailable = _unavailable_grammars()
     if not unavailable:
         return unavailable
+    # Same discovery-before-walk ordering as run() itself: generated-source
+    # roots are carved out of the build-dir prune only once registered, and
+    # the registration is recomputed per run, so doing it here is idempotent.
+    updater._register_generated_sources()
     # The updater's own eligibility walk, not a raw rglob: a file the run
     # would ignore anyway (node_modules, exclusions, hidden dirs) must not
     # gate the test on its language's grammar.
