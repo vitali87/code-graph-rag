@@ -70,8 +70,9 @@ pip install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/c
 - `cmake` (for building pymgclient)
 - `ripgrep` (`rg`) (for shell command text searching)
 
-The wheel is pure Python (`py3-none-any`), so it installs on any platform with
-Python 3.12 or newer. The piwheels build for Debian Bookworm shows as failed
+The wheel is pure Python (`py3-none-any`), so the package itself installs on
+any platform with Python 3.12 or newer (dependencies may still need platform
+wheels or build tools, such as `cmake` for `pymgclient`). The piwheels build for Debian Bookworm shows as failed
 because Bookworm's system Python is 3.11, which is below our floor. On
 Raspberry Pi OS Bookworm, install into a Python 3.12 environment so the pip
 commands above actually run under 3.12: with [uv](https://docs.astral.sh/uv/)
