@@ -255,6 +255,14 @@ class TestMalformedPortsDeclarations:
     def test_valid_list_still_reports(self, stack_home: Path) -> None:
         assert self._mappings(stack_home, PUBLIC_COMPOSE) == ["memgraph: 7687:7687"]
 
+    def test_invalid_utf8_file_is_ignored(self, stack_home: Path) -> None:
+        # UnicodeDecodeError is a ValueError, not an OSError, so it escaped
+        # the unreadable-file handling and crashed `daemon status` and the
+        # already-running start path with a traceback.
+        target = stack_home / stack_cs.COMPOSE_FILENAME
+        target.write_bytes(b"services:\n  \xff\xfe broken\n")
+        assert StackManager._public_port_mappings(target) == []
+
 
 class TestAlreadyRunningStackWarns:
     """A stack that is already up must still warn about public ports (#1380).

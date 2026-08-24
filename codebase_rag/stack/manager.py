@@ -111,7 +111,7 @@ class StackManager:
         """
         try:
             compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError):
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
             return []
         if not isinstance(compose, dict):
             return []
