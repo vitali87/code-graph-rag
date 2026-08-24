@@ -604,6 +604,15 @@ public static class Frontend
                 while (pending.Count > 0)
                 {
                     var assembly = pending.Dequeue();
+                    var inSource = assembly.Locations.Any(location => location.IsInSource);
+                    // A MISSING assembly symbol (unresolved reference) owns no
+                    // types and no module references; it must not consume the
+                    // identity, or a RESOLVED symbol for the same assembly
+                    // seen through another project would be skipped.
+                    if (!inSource && assembly.GetMetadata() is null)
+                    {
+                        continue;
+                    }
                     if (!seenAssemblies.Add(assembly.Identity.GetDisplayName()))
                     {
                         continue;
@@ -615,7 +624,7 @@ public static class Frontend
                             pending.Enqueue(referenced);
                         }
                     }
-                    if (assembly.Locations.Any(location => location.IsInSource))
+                    if (inSource)
                     {
                         continue;
                     }
