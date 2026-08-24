@@ -22,6 +22,21 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
     brew install cmake ripgrep
     ```
 
+    If `pymgclient` has no prebuilt wheel for your platform (for example older
+    macOS x86_64 setups) and pip falls back to building it from source, the
+    build also needs Homebrew's OpenSSL and, if CMake cannot find it,
+    `pkg-config`:
+
+    ```bash
+    brew install pkg-config openssl
+    export OPENSSL_ROOT_DIR="$(brew --prefix openssl)"
+    export PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig:$PKG_CONFIG_PATH"
+    ```
+
+    Run the install command again in the same shell so the variables are
+    picked up. See [Troubleshooting](../advanced/troubleshooting.md) for the
+    symptoms this fixes.
+
 === "Ubuntu/Debian"
 
     ```bash
