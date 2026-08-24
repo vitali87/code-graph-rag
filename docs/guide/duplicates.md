@@ -449,7 +449,7 @@ test suites repeat scaffolding on purpose. Exclude them by file-path glob
 rather than raising the threshold:
 
 ```bash
-cgr duplicates --exact-only --exclude '*tests*' --exclude '*_generated*'
+cgr duplicates --exact-only --exclude 'tests/*' --exclude '*_generated*'
 ```
 
 Two rules keep a pattern from silently excluding nothing:
@@ -462,9 +462,10 @@ Two rules keep a pattern from silently excluding nothing:
 - **Cover the whole path.** Patterns are matched against the full
   repo-relative file path (`src/billing/cart.py`), and a glob only counts
   when it matches that entire string. A bare directory name like `tests`
-  matches nothing; write `'*tests*'`, `'*/tests/*'`, or spell out the path
-  from the repo root (`'src/tests/*'`). `*` spans `/`, so `'*tests*'` also
-  covers nested test directories.
+  matches nothing; spell the path out from the repo root (`'tests/*'`,
+  `'src/tests/*'`) and add `'*/tests/*'` when test directories nest deeper.
+  `*` spans `/`, so keep patterns path-scoped: a substring glob like
+  `'*tests*'` also excludes production paths such as `contests/entry.py`.
 
 ## Options
 
