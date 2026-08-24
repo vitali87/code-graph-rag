@@ -189,6 +189,17 @@ macro_rules! backtrace {
 }
 """
 
+MACRO_CHANGED_ARM = """
+macro_rules! backtrace {
+    () => {
+        Some(crate::backtrace::Backtrace::capture())
+    };
+    ($err:expr, $extra:expr) => {
+        $err.backtrace()
+    };
+}
+"""
+
 
 class TestMacroRulesFingerprints:
     def _macro_node(self, code: str) -> Node:
@@ -210,18 +221,21 @@ class TestMacroRulesFingerprints:
         assert first.fingerprint == second.fingerprint
 
     def test_macro_with_different_rules_differs(self) -> None:
-        """Dropping an arm changes the fingerprint."""
+        """Dropping an arm or editing a matcher changes the fingerprint."""
         both_arms = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
         one_arm = compute_ast_fingerprint(self._macro_node(MACRO_SINGLE_ARM))
+        changed_arm = compute_ast_fingerprint(self._macro_node(MACRO_CHANGED_ARM))
         assert both_arms is not None
         assert one_arm is not None
+        assert changed_arm is not None
         assert both_arms.fingerprint != one_arm.fingerprint
+        assert both_arms.fingerprint != changed_arm.fingerprint
 
     def test_macro_arms_become_branch_fingerprints(self) -> None:
         """Each substantial macro arm is a branch root for Type-3 scoring."""
         result = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
         assert result is not None
-        assert result.branch_fingerprints
+        assert len(result.branch_fingerprints) == 2
 
     def test_edited_macro_shares_arm_branches(self) -> None:
         """Macros differing by one arm still share the unchanged arm."""
@@ -229,8 +243,8 @@ class TestMacroRulesFingerprints:
         edited = compute_ast_fingerprint(self._macro_node(MACRO_SINGLE_ARM))
         assert base is not None
         assert edited is not None
-        shared = set(base.branch_fingerprints) & set(edited.branch_fingerprints)
-        assert shared
+        assert len(edited.branch_fingerprints) == 1
+        assert set(edited.branch_fingerprints) <= set(base.branch_fingerprints)
 
     def test_trait_method_signature_stays_unfingerprinted(self) -> None:
         """Bodiless trait signatures stay out of clone detection."""
