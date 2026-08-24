@@ -179,6 +179,57 @@ CLI_ERR_DUPLICATES_FAILED = "Failed to scan for duplicates: {error}"
 CLI_ERR_DUPLICATES_UNKNOWN_PROJECT = (
     "Project '{project}' is not indexed. Indexed projects: {projects}."
 )
+
+# Clickable report locations (OSC 8 hyperlinks) and `duplicates --open`.
+# A template receives {path} (absolute, URL-quoted for URLs) and {line};
+# diff-command templates receive {left} and {right}.
+EDITOR_AUTO = "auto"
+EDITOR_NONE = "none"
+EDITOR_VSCODE = "vscode"
+EDITOR_URL_TEMPLATES: dict[str, str] = {
+    "vscode": "vscode://file/{path}:{line}",
+    "cursor": "cursor://file/{path}:{line}",
+    "windsurf": "windsurf://file/{path}:{line}",
+    "zed": "zed://file/{path}:{line}",
+    "idea": "idea://open?file={path}&line={line}",
+    "textmate": "txmt://open?url=file://{path}&line={line}",
+}
+EDITOR_DIFF_COMMANDS: dict[str, str] = {
+    "vscode": "code --diff {left} {right}",
+    "cursor": "cursor --diff {left} {right}",
+    "windsurf": "windsurf --diff {left} {right}",
+}
+ENV_TERM_PROGRAM = "TERM_PROGRAM"
+TERM_PROGRAM_VSCODE = "vscode"
+ENV_CF_BUNDLE_ID = "__CFBundleIdentifier"
+# Substring of the hosting app's macOS bundle identifier -> editor name.
+EDITOR_BUNDLE_MARKERS: tuple[tuple[str, str], ...] = (
+    ("cursor", "cursor"),
+    ("windsurf", "windsurf"),
+    ("zed", "zed"),
+)
+STYLE_LINK = "link {url}"
+TEMPLATE_KEY_PATH = "path"
+TEMPLATE_KEY_LINE = "line"
+TEMPLATE_KEY_LEFT = "left"
+TEMPLATE_KEY_RIGHT = "right"
+
+CLI_ERR_DUPLICATES_OPEN_UNKNOWN_GROUP = (
+    "Group {number} does not exist; the report has {count} group(s)."
+)
+CLI_ERR_DUPLICATES_OPEN_NO_ROOT = (
+    "The graph records no root path for '{project}'; re-index with "
+    "'cgr start --update-graph' to enable --open and clickable locations."
+)
+CLI_ERR_DUPLICATES_OPEN_NO_TOOL = (
+    "No side-by-side diff command available for editor '{editor}'. Set "
+    'CGR_DIFF_COMMAND (e.g. "code --diff {{left}} {{right}}").'
+)
+CLI_DUPLICATES_OPENED_DIFF = "Opened {left} and {right} side by side."
+DUPLICATES_OPEN_PAIR_SIZE = 2
+CLI_DUPLICATES_OPEN_EXTRA_MEMBERS = (
+    "Group {number} has {count} members; opened the first two side by side."
+)
 CLI_MSG_AUTO_EXCLUDE = (
     "Auto-excluding common directories (venv, node_modules, .git, etc.). "
     "Use --interactive-setup to customize."

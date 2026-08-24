@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from rich.text import Text
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag.cli import app
-from codebase_rag.types_defs import PropertyValue, ResultRow
+from codebase_rag.cli import _duplicates_location_cell, app
+from codebase_rag.config import settings
+from codebase_rag.types_defs import DuplicateMember, PropertyValue, ResultRow
 
 
 @pytest.fixture
@@ -46,7 +49,11 @@ def clone_rows() -> list[ResultRow]:
 
 
 def _make_mock_ingestor(
-    *, projects: list[str], rows: list[ResultRow], skipped: int = 0
+    *,
+    projects: list[str],
+    rows: list[ResultRow],
+    skipped: int = 0,
+    root: str | None = None,
 ) -> MagicMock:
     mock = MagicMock()
     mock.list_projects.return_value = projects
@@ -56,6 +63,8 @@ def _make_mock_ingestor(
     ) -> list[ResultRow]:
         if query == cq.CYPHER_DUPLICATE_FINGERPRINTS:
             return rows
+        if query == cq.CYPHER_LIST_PROJECTS:
+            return [{cs.KEY_NAME: name, cs.KEY_ROOT_PATH: root} for name in projects]
         return [{cs.KEY_SKIPPED: skipped}]
 
     mock.fetch_all.side_effect = _fetch
@@ -160,3 +169,103 @@ class TestDuplicatesCommand:
 
         assert result.exit_code == 0
         assert "were not analyzed" in result.output
+
+
+class TestClickableLocations:
+    """Location cells become OSC 8 hyperlinks into the editor (issue: the
+    report was dead text; a member click must open the file at its line)."""
+
+    @pytest.fixture(autouse=True)
+    def _neutral_editor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(cs.ENV_CF_BUNDLE_ID, raising=False)
+        monkeypatch.setattr(settings, "CGR_EDITOR", cs.EDITOR_AUTO)
+        monkeypatch.setattr(settings, "CGR_EDITOR_URL_TEMPLATE", None)
+        monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", None)
+
+    def test_location_cell_links_to_editor_when_root_known(self) -> None:
+        member = _member(path="b.py", start_line=5, end_line=12)
+        cell = _duplicates_location_cell(member, Path("/repo"))
+        assert isinstance(cell, Text)
+        assert cell.plain == "b.py:5-12"
+        assert [span.style for span in cell.spans] == [
+            "link vscode://file//repo/b.py:5"
+        ]
+
+    def test_location_cell_is_plain_without_root(self) -> None:
+        member = _member(path="b.py", start_line=5, end_line=12)
+        assert _duplicates_location_cell(member, None) == "b.py:5-12"
+
+    def test_location_cell_is_plain_when_links_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CGR_EDITOR", cs.EDITOR_NONE)
+        member = _member(path="b.py", start_line=5, end_line=12)
+        assert _duplicates_location_cell(member, Path("/repo")) == "b.py:5-12"
+
+
+class TestOpenGroup:
+    """--open N opens a group's first two members side by side."""
+
+    @pytest.fixture(autouse=True)
+    def _diff_tool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "CGR_DIFF_COMMAND", "difftool {left} {right}")
+
+    def test_open_spawns_side_by_side_diff(
+        self, runner: CliRunner, clone_rows: list[ResultRow]
+    ) -> None:
+        mock_ingestor = _make_mock_ingestor(
+            projects=["myproj"], rows=clone_rows, root="/repo"
+        )
+        with (
+            patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor),
+            patch("codebase_rag.cli.subprocess.Popen") as popen,
+        ):
+            result = runner.invoke(app, ["duplicates", "--open", "1"])
+
+        assert result.exit_code == 0
+        argv = popen.call_args.args[0]
+        # Members are path-sorted, so b.py is left and s.py right.
+        assert argv == ["difftool", "/repo/b.py", "/repo/s.py"]
+
+    def test_open_unknown_group_errors(
+        self, runner: CliRunner, clone_rows: list[ResultRow]
+    ) -> None:
+        mock_ingestor = _make_mock_ingestor(
+            projects=["myproj"], rows=clone_rows, root="/repo"
+        )
+        with (
+            patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor),
+            patch("codebase_rag.cli.subprocess.Popen") as popen,
+        ):
+            result = runner.invoke(app, ["duplicates", "--open", "5"])
+
+        assert result.exit_code == 1
+        assert "does not exist" in result.output
+        popen.assert_not_called()
+
+    def test_open_without_recorded_root_errors(
+        self, runner: CliRunner, clone_rows: list[ResultRow]
+    ) -> None:
+        # Legacy graphs predate Project.root_path; --open must say why it
+        # cannot open rather than guessing a path.
+        mock_ingestor = _make_mock_ingestor(projects=["myproj"], rows=clone_rows)
+        with (
+            patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor),
+            patch("codebase_rag.cli.subprocess.Popen") as popen,
+        ):
+            result = runner.invoke(app, ["duplicates", "--open", "1"])
+
+        assert result.exit_code == 1
+        assert "records no root path" in result.output
+        popen.assert_not_called()
+
+
+def _member(*, path: str, start_line: int, end_line: int) -> DuplicateMember:
+    return DuplicateMember(
+        label="Function",
+        name="f",
+        qualified_name=f"myproj.{path}.f",
+        path=path,
+        start_line=start_line,
+        end_line=end_line,
+    )

@@ -442,6 +442,38 @@ to focus on substantial duplication:
 cgr duplicates --min-size 25
 ```
 
+## Jumping to the Code
+
+A report is only useful if you can get from a row to the code. The table
+gives you two ways:
+
+**Click a location.** Every `file:line` cell is a terminal hyperlink
+(cmd/ctrl-click in iTerm2, Kitty, WezTerm, Windows Terminal, and VS Code's
+terminal) that opens the file in your editor at the function's first line.
+CGR picks the editor automatically — Cursor, Windsurf, and Zed are detected
+from the hosting app, and anything else falls back to VS Code — and two
+environment variables override the guess:
+
+```bash
+CGR_EDITOR=zed                                    # vscode, cursor, windsurf, zed, idea, textmate, none
+CGR_EDITOR_URL_TEMPLATE="myeditor://{path}:{line}" # full control over the URL
+```
+
+**Open a group side by side.** A hyperlink can carry only one URL, so
+comparing two members is a flag rather than a click:
+
+```bash
+cgr duplicates --open 3
+```
+
+opens group 3's first two members in your editor's diff view (`code --diff`
+and equivalents; `CGR_DIFF_COMMAND="meld {left} {right}"` substitutes any
+tool). Groups with more than two members open their first pair — the two
+whose paths sort first.
+
+Both features need the graph to record where the project lives on disk;
+graphs indexed before this existed fall back to plain text until re-indexed.
+
 ## Options
 
 | Option | Description |
@@ -454,6 +486,7 @@ cgr duplicates --min-size 25
 | `--format` | Output format: `table` (default) or `json`. |
 | `--output`, `-o` | Write the report to this file instead of stdout. |
 | `--fail-on-found` | Exit with code 1 when any duplicate is found (useful in CI). |
+| `--open` | Open group N's first two members side by side in your editor. |
 
 The JSON report is an envelope carrying the group list and the scan's
 coverage, so an artifact never reads as a complete scan when some symbols

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -16,13 +17,16 @@ from loguru import logger
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from . import cgr_state
 from . import cli_help as ch
 from . import constants as cs
+from . import cypher_queries as cq
 from . import logs as ls
 from .capture import CaptureSelection, resolve_capture, split_spec
 from .config import load_ignore_patterns, settings
+from .editor_links import diff_command, editor_url, resolve_editor
 from .graph_updater import GraphUpdater
 from .main import (
     _create_configuration_table,
@@ -57,11 +61,16 @@ from .types_defs import (
     DeadCodeConfig,
     DeadCodeRow,
     DuplicateGroup,
+    DuplicateMember,
     DuplicatesConfig,
     DuplicatesReport,
     ResultRow,
 )
-from .utils.path_utils import derive_project_name, resolve_repo_path
+from .utils.path_utils import (
+    derive_project_name,
+    project_roots_from_rows,
+    resolve_repo_path,
+)
 from .vector_store import clear_all_embeddings, delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
@@ -1480,7 +1489,33 @@ def _similarity_text(group: DuplicateGroup) -> str:
     return cs.CLI_DUPLICATES_SIMILARITY_PCT.format(pct=group["similarity"] * 100)
 
 
-def _build_duplicates_table(groups: list[DuplicateGroup], project_name: str) -> Table:
+def _duplicates_location_cell(
+    member: DuplicateMember, root_path: Path | None
+) -> Text | str:
+    """Location as an OSC 8 hyperlink into the editor, plain when rootless.
+
+    Rich drops hyperlinks on non-terminal sinks, so file/JSON outputs are
+    unaffected; graphs indexed before Project.root_path existed fall back
+    to plain text.
+    """
+    location = cs.CLI_DUPLICATES_LOCATION.format(
+        path=member["path"],
+        start=member["start_line"],
+        end=member["end_line"],
+    )
+    if root_path is None:
+        return location
+    url = editor_url(root_path / member["path"], member["start_line"])
+    if url is None:
+        return location
+    cell = Text(location)
+    cell.stylize(cs.STYLE_LINK.format(url=url))
+    return cell
+
+
+def _build_duplicates_table(
+    groups: list[DuplicateGroup], project_name: str, root_path: Path | None = None
+) -> Table:
     table = Table(
         title=style(
             cs.CLI_DUPLICATES_TABLE_TITLE.format(project_name=project_name),
@@ -1503,11 +1538,7 @@ def _build_duplicates_table(groups: list[DuplicateGroup], project_name: str) -> 
                 group["kind"] if at == 0 else "",
                 _similarity_text(group) if at == 0 else "",
                 member["qualified_name"],
-                cs.CLI_DUPLICATES_LOCATION.format(
-                    path=member["path"],
-                    start=member["start_line"],
-                    end=member["end_line"],
-                ),
+                _duplicates_location_cell(member, root_path),
             )
         table.add_section()
     return table
@@ -1520,6 +1551,7 @@ def _emit_duplicates(
     project_name: str,
     skipped_symbols: int = 0,
     truncated: bool = False,
+    root_path: Path | None = None,
 ) -> None:
     if output_format == cs.DuplicatesFormat.JSON:
         # Envelope, not a bare list: scan-completeness metadata must reach
@@ -1555,7 +1587,7 @@ def _emit_duplicates(
         )
     if truncated:
         notices.append(cs.CLI_DUPLICATES_TRUNCATED_NOTICE)
-    table = _build_duplicates_table(groups, project_name)
+    table = _build_duplicates_table(groups, project_name, root_path)
     if output is not None:
         with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
             file_console = Console(file=fh)
@@ -1585,6 +1617,70 @@ def _emit_duplicates(
         )
     for notice in notices:
         app_context.console.print(style(notice, cs.Color.YELLOW))
+
+
+def _open_duplicate_group(
+    groups: list[DuplicateGroup],
+    number: int,
+    root_path: Path | None,
+    project_name: str,
+) -> None:
+    """Open a group's first two members side by side in the user's editor."""
+    if number > len(groups):
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_DUPLICATES_OPEN_UNKNOWN_GROUP.format(
+                    number=number, count=len(groups)
+                ),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
+    if root_path is None:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_DUPLICATES_OPEN_NO_ROOT.format(project=project_name),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
+    members = groups[number - 1]["members"]
+    left = root_path / members[0]["path"]
+    right = root_path / members[1]["path"]
+    argv = diff_command(left, right)
+    if argv is None:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_DUPLICATES_OPEN_NO_TOOL.format(editor=resolve_editor()),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
+    try:
+        subprocess.Popen(  # noqa: S603 - user-configured local editor command
+            argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    except OSError as e:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_DUPLICATES_OPEN_NO_TOOL.format(editor=argv[0]), cs.Color.RED
+            )
+        )
+        raise typer.Exit(1) from e
+    app_context.console.print(
+        style(
+            cs.CLI_DUPLICATES_OPENED_DIFF.format(left=left, right=right), cs.Color.GREEN
+        )
+    )
+    if len(members) > cs.DUPLICATES_OPEN_PAIR_SIZE:
+        app_context.console.print(
+            style(
+                cs.CLI_DUPLICATES_OPEN_EXTRA_MEMBERS.format(
+                    number=number, count=len(members)
+                ),
+                cs.Color.YELLOW,
+            )
+        )
 
 
 @app.command(
@@ -1624,6 +1720,9 @@ def duplicates(
     fail_on_found: bool = typer.Option(
         False, "--fail-on-found", help=ch.HELP_DUPLICATES_FAIL_ON_FOUND
     ),
+    open_group: int | None = typer.Option(
+        None, "--open", min=1, help=ch.HELP_DUPLICATES_OPEN
+    ),
 ) -> None:
     from .duplicates import collect_duplicates_with_coverage
 
@@ -1633,10 +1732,14 @@ def duplicates(
 
     projects: list[str] = []
     resolved: str | None = None
+    roots: dict[str, str | None] = {}
     report = DuplicatesReport(groups=[], skipped_symbols=0, truncated=False)
     try:
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
+            # Roots ride along for clickable locations and --open; a graph
+            # predating Project.root_path just degrades to plain text.
+            roots = project_roots_from_rows(ingestor.fetch_all(cq.CYPHER_LIST_PROJECTS))
             resolved = _resolve_dead_code_project(project_name, projects)
             # An explicit name absent from the graph must error, not scan a
             # nonexistent prefix and report a clean project.
@@ -1680,6 +1783,8 @@ def duplicates(
         app_context.console.print(style(message, cs.Color.RED))
         raise typer.Exit(1)
 
+    root = roots.get(resolved)
+    root_path = Path(root) if root else None
     _emit_duplicates(
         report.groups,
         output_format,
@@ -1687,7 +1792,11 @@ def duplicates(
         resolved,
         report.skipped_symbols,
         report.truncated,
+        root_path,
     )
+
+    if open_group is not None:
+        _open_duplicate_group(report.groups, open_group, root_path, resolved)
 
     if fail_on_found and report.groups:
         raise typer.Exit(1)

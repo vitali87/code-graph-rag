@@ -219,6 +219,14 @@ class AppConfig(BaseSettings):
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )
     CGR_HOME: Path = Field(default_factory=lambda: Path.home() / ".cgr")
+    # Editor integration for clickable report locations (OSC 8 hyperlinks)
+    # and `cgr duplicates --open`. AUTO sniffs the hosting app (Cursor,
+    # Windsurf, Zed, VS Code's terminal) and falls back to VS Code; the
+    # templates override any editor choice. See EDITOR_URL_TEMPLATES for
+    # the named editors and the {path}/{line} and {left}/{right} slots.
+    CGR_EDITOR: str = cs.EDITOR_AUTO
+    CGR_EDITOR_URL_TEMPLATE: str | None = None
+    CGR_DIFF_COMMAND: str | None = None
     SHELL_COMMAND_TIMEOUT: int = 30
     SHELL_COMMAND_ALLOWLIST: frozenset[str] = frozenset(
         {
