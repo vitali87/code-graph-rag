@@ -496,7 +496,8 @@ def test_java_static_import_shadowed_by_method_pins_literal_identity(
     # FILE::<dynamic>, but the membership check still maps the bare `of`
     # through the import map to `java.nio.file.Path.of` and recovers the
     # literal. Shadow-awareness would need the full call resolver in a
-    # deliberately lightweight path; the trigger is contradictory Java.
+    # deliberately lightweight path; the shadowing is valid but uncommon Java
+    # (the static import is unusable at this call site).
     files = {
         "A.java": (
             "import static java.nio.file.Path.of;\n"

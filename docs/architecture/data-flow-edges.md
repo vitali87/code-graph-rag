@@ -442,10 +442,12 @@ module is re-exported under its own name. A project that does
   check, not shadow-aware (issue #1216): a same-class or inherited method named
   `of`, or a local nested class named `Path`, still matches the
   `java.nio.file.Path.of` registry entry, so the handle gets a concrete literal
-  identity where `<dynamic>` would be correct. The trigger is contradictory Java
-  (shadowing a symbol you static-import leaves the import dead and linted), and
-  closing it would mean threading the full call resolver into an intentionally
-  cheap path shared by every language, so this stays an accepted limitation.
+  identity where `<dynamic>` would be correct. Both triggers are valid but
+  uncommon Java: for the static-import spelling, a same-class member shadows the
+  import (leaving it unusable at that call site); for the qualified spelling, a
+  local nested class reuses a well-known name like `Path`. Closing either would
+  mean threading the full call resolver into an intentionally cheap path shared
+  by every language, so this stays an accepted limitation.
 
 These are deliberate ceilings, chosen so the feature is correct and cheap where
 it applies rather than broad and noisy.

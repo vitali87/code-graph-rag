@@ -1952,7 +1952,9 @@ class IOAccessProcessor:
             # same-class/inherited `of(..)` or a local nested `Path` class still
             # matches, mis-attributing a literal identity where `<dynamic>` would
             # be correct. Fixing it needs the full call resolver in this
-            # deliberately lightweight path, for a contradictory-Java trigger.
+            # deliberately lightweight path, for triggers that are valid but
+            # uncommon Java (a shadowed static import, or a local nested class
+            # reusing a well-known name).
             if raw is not None and (
                 raw in lean_handles.identity_calls
                 or import_map.get(raw) in lean_handles.identity_calls
