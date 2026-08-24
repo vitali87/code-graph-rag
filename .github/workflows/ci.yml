@@ -396,7 +396,7 @@ jobs:
     name: Greptile 5/5 Gate
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    timeout-minutes: 45
+    timeout-minutes: 65
     permissions:
       # contents: read backs the commits API call that resolves an
       # abbreviated reviewed-commit reference to a full SHA.
@@ -417,8 +417,9 @@ jobs:
           # a missing review, or any lower score fails this job, which fails
           # "All Checks Pass", which the branch ruleset requires. Greptile
           # posts its review minutes after a push, so poll until its summary
-          # comment covers this exact commit.
-          deadline=$(( $(date +%s) + 2400 ))
+          # comment covers this exact commit. The deadline leaves headroom
+          # over Greptile's slowest observed review (37 minutes on PR #1404).
+          deadline=$(( $(date +%s) + 3600 ))
           while :; do
             # --jq would run per page; slurp the pages so every scored comment
             # is considered across all of them. Walk candidates NEWEST FIRST
@@ -463,8 +464,104 @@ jobs:
             fi
             echo "No Greptile review of $HEAD_SHA yet, waiting ..."
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "❌ No Greptile review of $HEAD_SHA appeared within 40 minutes."
+              echo "❌ No Greptile review of $HEAD_SHA appeared within 60 minutes."
               echo "Re-trigger the Greptile review, then re-run this job."
+              exit 1
+            fi
+            sleep 60
+          done
+
+  sonar-gate:
+    name: Sonar Zero Issues Gate
+    runs-on: ubuntu-latest
+    # Mirror the eligibility of the SonarCloud Analysis job in
+    # sonarcloud.yml (PRs targeting main, excluding Dependabot and fork
+    # heads): a PR that never gets analyzed must skip the gate instead of
+    # polling for an analysis that cannot exist.
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.base.ref == 'main'
+      && github.event.pull_request.user.login != 'dependabot[bot]'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 45
+    permissions:
+      # checks: read backs the check-runs API call that detects a failed
+      # SonarCloud Analysis job, so the gate fails fast instead of waiting
+      # out the full deadline for an analysis that will never arrive.
+      checks: read
+      contents: read
+
+    steps:
+      - name: Require a SonarCloud analysis of the head commit with zero open issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PROJECT_KEY: vitali87_code-graph-rag
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The merge gate: a pull request is mergeable ONLY when SonarCloud
+          # has analyzed the CURRENT head commit and reports zero open issues
+          # on the pull request. The built-in "Sonar way" quality gate passes
+          # with new issues of low severity (its conditions are ratings, not
+          # counts), so this job enforces the stricter bar the project wants:
+          # every issue fixed, or explicitly resolved (accepted / false
+          # positive) in the SonarCloud UI. Both endpoints are public for
+          # public projects, so no token is needed. Analysis lands minutes
+          # after the SonarCloud Analysis job finishes, so poll until the
+          # reported analyzed commit is this exact commit.
+          deadline=$(( $(date +%s) + 2400 ))
+          while :; do
+            analyzed=$(curl -sf "https://sonarcloud.io/api/project_pull_requests/list?project=$PROJECT_KEY" \
+              | jq -r --arg pr "$PR" \
+                  '.pullRequests[] | select(.key == $pr) | .commit.sha // empty' \
+              || true)
+            if [ "$analyzed" = "$HEAD_SHA" ]; then
+              issues=$(curl -sf "https://sonarcloud.io/api/issues/search?componentKeys=$PROJECT_KEY&pullRequest=$PR&resolved=false&ps=100" \
+                || true)
+              total=$(printf '%s' "$issues" | jq -r '.total // empty' || true)
+              if [ -z "$total" ]; then
+                echo "Issue search returned no usable payload, retrying ..."
+              elif [ "$total" = "0" ]; then
+                echo "✅ SonarCloud analyzed $HEAD_SHA and reports zero open issues"
+                exit 0
+              else
+                echo "❌ SonarCloud reports $total open issue(s) on this pull request:"
+                printf '%s' "$issues" | jq -r \
+                  '.issues[] | "  - [\(.severity)] \(.component | sub("^[^:]*:"; "")):\(.line // "?") \(.message) (\(.rule))"'
+                echo "Fix them and push, or resolve them as accepted/false positive in SonarCloud."
+                exit 1
+              fi
+            else
+              # Fail fast when the producer is already dead: a SonarCloud
+              # Analysis job that completed without success will never
+              # publish an analysis of this commit, so waiting out the
+              # deadline would only delay the same failure. A queued or
+              # in-progress run holds the verdict open: a rerun sits at
+              # started_at null while queued, which jq sorts before every
+              # real timestamp, so only the completed runs are ranked and
+              # any active run suppresses the fast fail until it finishes.
+              runs=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100" \
+                --jq '[.check_runs[] | select(.name == "SonarCloud Analysis")]' \
+                2>/dev/null || echo '[]')
+              active=$(printf '%s' "$runs" \
+                | jq '[.[] | select(.status != "completed")] | length' \
+                2>/dev/null || echo 1)
+              producer=$(printf '%s' "$runs" \
+                | jq -r 'map(select(.status == "completed"))
+                         | sort_by(.started_at) | last
+                         | .conclusion // empty' \
+                2>/dev/null || true)
+              if [ "$active" = "0" ] && [ -n "$producer" ] && [ "$producer" != "success" ]; then
+                echo "❌ The SonarCloud Analysis job concluded '$producer', so no analysis of $HEAD_SHA is coming."
+                echo "Fix or re-run SonarCloud Analysis, then re-run this job."
+                exit 1
+              fi
+              echo "No SonarCloud analysis of $HEAD_SHA yet (last analyzed: ${analyzed:-none}), waiting ..."
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "❌ No SonarCloud analysis of $HEAD_SHA appeared within 40 minutes."
+              echo "Check the SonarCloud Analysis job, then re-run this job."
               exit 1
             fi
             sleep 60
@@ -484,6 +581,7 @@ jobs:
         wheel-fresh-resolution,
         go-frontend,
         greptile-gate,
+        sonar-gate,
       ]
     timeout-minutes: 5
 
@@ -531,6 +629,14 @@ jobs:
           if [[ "${{ needs.greptile-gate.result }}" != "success" \
              && "${{ needs.greptile-gate.result }}" != "skipped" ]]; then
             echo "❌ Greptile gate failed: a 5/5 review of the head commit is required"
+            exit 1
+          fi
+          # Same skip semantics: the gate is skipped on non-PR events and on
+          # PRs SonarCloud never analyzes (Dependabot, forks, non-main base);
+          # wherever it does run, anything but success blocks the merge.
+          if [[ "${{ needs.sonar-gate.result }}" != "success" \
+             && "${{ needs.sonar-gate.result }}" != "skipped" ]]; then
+            echo "❌ Sonar gate failed: zero open SonarCloud issues on the head commit are required"
             exit 1
           fi
           echo "✅ All checks passed!"
