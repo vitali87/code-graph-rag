@@ -51,7 +51,9 @@ AST_FP_PUNCT_TYPES = frozenset(
 # `statement_block`, `indented_block`, `function_body`, `template_body`, ...;
 # the extras are the block containers named neither way.
 AST_FP_BLOCK_PARENT_SUBSTRINGS = ("block", "body")
-AST_FP_BLOCK_PARENT_EXTRAS = frozenset({"statement_list", "compound_statement"})
+AST_FP_BLOCK_PARENT_EXTRAS = frozenset(
+    {"statement_list", "compound_statement", "macro_definition"}
+)
 
 # Branches below this skeleton-node count (`return x`, `break`) are shared by
 # nearly every function and would dominate the candidate index.

@@ -191,31 +191,46 @@ macro_rules! backtrace {
 
 
 class TestMacroRulesFingerprints:
-    def _macro(self, code: str) -> Node:
+    def _macro_node(self, code: str) -> Node:
         """Parse Rust source and return its macro_definition node."""
         return _function_node(cs.SupportedLanguage.RUST, code)
 
     def test_macro_rules_definition_gets_a_fingerprint(self) -> None:
         """A macro_rules! definition fingerprints from its token trees."""
-        result = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE))
+        result = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
         assert result is not None
         assert result.node_count > 1
 
     def test_renamed_macro_with_identical_rules_matches(self) -> None:
         """Renaming the macro and its identifiers keeps the fingerprint."""
-        first = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE))
-        second = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE_RENAMED))
+        first = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
+        second = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE_RENAMED))
         assert first is not None
         assert second is not None
         assert first.fingerprint == second.fingerprint
 
     def test_macro_with_different_rules_differs(self) -> None:
         """Dropping an arm changes the fingerprint."""
-        both_arms = compute_ast_fingerprint(self._macro(MACRO_BACKTRACE))
-        one_arm = compute_ast_fingerprint(self._macro(MACRO_SINGLE_ARM))
+        both_arms = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
+        one_arm = compute_ast_fingerprint(self._macro_node(MACRO_SINGLE_ARM))
         assert both_arms is not None
         assert one_arm is not None
         assert both_arms.fingerprint != one_arm.fingerprint
+
+    def test_macro_arms_become_branch_fingerprints(self) -> None:
+        """Each substantial macro arm is a branch root for Type-3 scoring."""
+        result = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
+        assert result is not None
+        assert result.branch_fingerprints
+
+    def test_edited_macro_shares_arm_branches(self) -> None:
+        """Macros differing by one arm still share the unchanged arm."""
+        base = compute_ast_fingerprint(self._macro_node(MACRO_BACKTRACE))
+        edited = compute_ast_fingerprint(self._macro_node(MACRO_SINGLE_ARM))
+        assert base is not None
+        assert edited is not None
+        shared = set(base.branch_fingerprints) & set(edited.branch_fingerprints)
+        assert shared
 
     def test_trait_method_signature_stays_unfingerprinted(self) -> None:
         """Bodiless trait signatures stay out of clone detection."""
