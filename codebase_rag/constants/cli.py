@@ -454,6 +454,10 @@ SEMANTIC_TYPE_UNKNOWN = "Unknown"
 
 MSG_DOC_NO_CANDIDATES = "No valid text found in response candidates."
 MSG_DOC_NO_CONTENT = "No text content received from the API."
+# Newer typer generations vendor click here for click 8.3+ compatibility;
+# commands and exceptions then descend from these classes instead of the
+# real click's.
+TYPER_VENDORED_CLICK_EXCEPTIONS_MODULE = "typer._click.exceptions"
 MIME_TYPE_DEFAULT = "application/octet-stream"
 DOC_PROMPT_PREFIX = (
     "Based on the document provided, please answer the following question: {question}"
