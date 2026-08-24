@@ -100,7 +100,7 @@ The first definition keeps the plain dotted qualified name; each later definitio
 
 A `CALLS` edge to a name that has more than one definition links to every variant, since each is a runtime-possible target.
 
-`Module`, `File`, and `Folder` nodes are also identified by `qualified_name`, but without the `@<start_line>` suffix mechanism: two bodied modules that share one qualified name (for example mutually-exclusive `#[cfg]` twin `mod` blocks in one Rust file) merge into a single `Module` node whose location properties come from the last definition ingested. This is an accepted representational merge: call resolution is unaffected, because each twin's functions bind through their own module body's imports rather than a merged import map.
+`Module` nodes are also identified by `qualified_name` (`File` and `Folder` nodes are keyed by `absolute_path` instead, so they stay per-checkout), but without the `@<start_line>` suffix mechanism: two bodied modules that share one qualified name (for example mutually-exclusive `#[cfg]` twin `mod` blocks in one Rust file) merge into a single `Module` node whose location properties come from the last definition ingested. This is an accepted representational merge: call resolution is unaffected, because each twin's functions bind through their own module body's imports rather than a merged import map.
 
 ## Macros
 
