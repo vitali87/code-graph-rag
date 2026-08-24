@@ -78,6 +78,20 @@ library invokes and reports noisily. Exclude it by file-path glob:
 cgr dead-code --exclude '*client/core*' --exclude '*.gen.*'
 ```
 
+Two rules keep a pattern from silently excluding nothing:
+
+- **Quote the glob.** Unquoted, the shell expands `--exclude src/gen/*` into
+  a file listing before `cgr` runs — the first file becomes the pattern and
+  the rest are rejected as extra arguments (or, if the glob matches nothing,
+  some shells pass it through and others error out). Quotes make the shell
+  hand the pattern over untouched.
+- **Cover the whole path.** Patterns are matched against the full
+  repo-relative file path (`src/client/core/api.py`), and a glob only counts
+  when it matches that entire string. A bare directory name like `tests`
+  matches nothing; write `'*tests*'`, `'*/tests/*'`, or spell out the path
+  from the repo root (`'src/tests/*'`). `*` spans `/`, so `'*tests*'` also
+  covers nested test directories.
+
 ## Options
 
 | Option | Description |
@@ -85,7 +99,7 @@ cgr dead-code --exclude '*client/core*' --exclude '*.gen.*'
 | `--project-name`, `-n` | Project to scan. Defaults to the sole indexed project. |
 | `--entry-point`, `-e` | Treat symbols whose qualified name ends with this value as reachable roots. Repeatable. |
 | `--decorator-root` | Treat symbols carrying this decorator as roots. Extends the built-in set. Repeatable. |
-| `--exclude` | Glob matched against a symbol's file path to exclude from the report. Repeatable. |
+| `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it from the report; quote it. Repeatable. |
 | `--include-tests` / `--no-include-tests` | Treat test code as reachable roots so the production code it exercises is not reported. On by default. |
 | `--classes` / `--no-classes` | Also report unreachable classes. Off by default. |
 | `--format` | Output format: `table` (default) or `json`. |

@@ -78,7 +78,7 @@ cgr dead-code [OPTIONS]
 | `--project-name`, `-n` | Project to scan. Defaults to the sole indexed project. |
 | `--entry-point`, `-e` | Treat symbols whose qualified name ends with this value as reachable roots. Repeatable. |
 | `--decorator-root` | Treat symbols carrying this decorator as roots. Repeatable. |
-| `--exclude` | Glob matched against a symbol's file path to exclude. Repeatable. |
+| `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it; quote it. Repeatable. |
 | `--include-tests` / `--no-include-tests` | Treat test code as reachable roots. On by default. |
 | `--classes` / `--no-classes` | Also report unreachable classes. Off by default. |
 | `--format` | Output format: `table` (default) or `json`. |
@@ -101,7 +101,7 @@ cgr duplicates [OPTIONS]
 | `--threshold` | Minimum similarity for a near-duplicate pair, 0-1. Default `0.8`. |
 | `--min-size` | Minimum skeleton size (tree nodes) for a function to be considered. Default `15`. |
 | `--exact-only` | Report only identical-fingerprint clone groups; skip similarity scoring. |
-| `--exclude` | Glob matched against a symbol's file path to exclude. Repeatable. |
+| `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it; quote it. Repeatable. |
 | `--format` | Output format: `table` (default) or `json`. |
 | `--output`, `-o` | Write the report to a file instead of stdout. |
 | `--fail-on-found` | Exit with code 1 when any duplicate is found (useful in CI). |
