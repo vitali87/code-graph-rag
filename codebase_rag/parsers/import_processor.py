@@ -1028,6 +1028,20 @@ class ImportProcessor:
                     break
         return frozenset(found)
 
+    def _csharp_namespace_modules(
+        self, known_module_qns: set[str]
+    ) -> dict[str, dict[str, set[str]]]:
+        # namespace -> {declaring module qn -> type names it declares there}.
+        # C# namespaces need not mirror directory names, so path-based
+        # guessing cannot answer "is this internal"; the per-file scans can.
+        namespace_modules: dict[str, dict[str, set[str]]] = {}
+        for module_qn, namespaces in self._csharp_module_namespaces.items():
+            if module_qn not in known_module_qns:
+                continue
+            for namespace, declared_types in namespaces.items():
+                namespace_modules.setdefault(namespace, {})[module_qn] = declared_types
+        return namespace_modules
+
     def _recover_unparsed_csharp_namespaces(
         self, known_module_paths: dict[str, str]
     ) -> None:
@@ -1146,14 +1160,7 @@ class ImportProcessor:
         # their source, or the internal detection would silently fail in
         # watch mode and resurrect the dead-end ExternalModule.
         self._recover_unparsed_csharp_namespaces(known_module_paths)
-        csharp_namespace_modules: dict[str, dict[str, set[str]]] = {}
-        for csharp_module_qn, namespaces in self._csharp_module_namespaces.items():
-            if csharp_module_qn not in known_module_qns:
-                continue
-            for namespace, declared_types in namespaces.items():
-                csharp_namespace_modules.setdefault(namespace, {})[csharp_module_qn] = (
-                    declared_types
-                )
+        csharp_namespace_modules = self._csharp_namespace_modules(known_module_qns)
         emitted = 0
         for entry in deferred:
             # `from pkg.transport import TTransport` is ambiguous in
