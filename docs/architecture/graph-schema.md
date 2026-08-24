@@ -100,6 +100,8 @@ The first definition keeps the plain dotted qualified name; each later definitio
 
 A `CALLS` edge to a name that has more than one definition links to every variant, since each is a runtime-possible target.
 
+`Module`, `File`, and `Folder` nodes are also identified by `qualified_name`, but without the `@<start_line>` suffix mechanism: two bodied modules that share one qualified name (for example mutually-exclusive `#[cfg]` twin `mod` blocks in one Rust file) merge into a single `Module` node whose location properties come from the last definition ingested. This is an accepted representational merge: call resolution is unaffected, because each twin's functions bind through their own module body's imports rather than a merged import map.
+
 ## Macros
 
 Macro definitions map onto the existing `Function` label rather than a dedicated node type, since macros are a cross-language concept (C and C++ `#define`, Rust `macro_rules!`). Macro Function nodes carry `is_macro: true`, macro invocations resolve to their definitions and emit `CALLS` edges, and dead-code analysis treats macros like any function.

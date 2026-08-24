@@ -1782,6 +1782,12 @@ class ClassIngestMixin:
                     name=module_name, qn=inline_module_qn
                 )
             )
+            # Same-qn bodied twins (mutually-exclusive cfg mods, or two impls
+            # each declaring a method-local mod) upsert this ONE node: Module
+            # identity is the global qualified_name, so the last twin's
+            # properties win. Accepted representational merge (#1164); call
+            # resolution stays per-twin through each mod body's own uses
+            # (#1163), so only the node's location properties are lossy.
             self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
             # Record the inline module qn so deferred import verification
             # counts it as a real internal target.

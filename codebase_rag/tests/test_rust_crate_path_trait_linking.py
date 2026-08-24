@@ -6257,6 +6257,45 @@ def test_two_bodied_cfg_twin_mods_keep_separate_uses(
     assert (f"{base}.foo.run.gb", f"{base}.alpha.helper") not in calls, calls
 
 
+def test_two_bodied_cfg_twin_mods_merge_into_one_module_node(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Pins the accepted representational merge (#1164): Module identity is
+    # the global qualified_name, so same-qn bodied cfg twins upsert ONE
+    # Module node (no @<start_line> variant, unlike Function/Method/Class
+    # twins). Resolution stays per-twin regardless, per the test above.
+    project = temp_repo / "rs_cfg_twin_merged_node"
+    _write(
+        project,
+        {
+            "Cargo.toml": (
+                '[package]\nname = "rs_cfg_twin_merged_node"\nversion = "0.1.0"\n'
+            ),
+            "src/lib.rs": "pub mod foo;\n",
+            "src/foo.rs": (
+                '#[cfg(feature = "ext")]\n'
+                "pub mod run {\n"
+                "    pub fn ga() -> u32 {\n"
+                "        2\n"
+                "    }\n"
+                "}\n\n"
+                '#[cfg(not(feature = "ext"))]\n'
+                "pub mod run {\n"
+                "    pub fn gb() -> u32 {\n"
+                "        3\n"
+                "    }\n"
+                "}\n"
+            ),
+        },
+    )
+    create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
+    base = "rs_cfg_twin_merged_node.src"
+    modules = _module_qns(mock_ingestor)
+    assert f"{base}.foo.run" in modules, modules
+    twin_variants = {qn for qn in modules if qn.startswith(f"{base}.foo.run@")}
+    assert not twin_variants, twin_variants
+
+
 def _module_qns(mock_ingestor: MagicMock) -> set[str]:
     return {
         props["qualified_name"]
