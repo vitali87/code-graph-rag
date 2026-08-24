@@ -589,21 +589,37 @@ public static class Frontend
                 var compilations = new HashSet<Compilation>(_treeOwners.Values) { caller };
                 var seenAssemblies = new HashSet<string>(StringComparer.Ordinal);
                 var types = new List<INamedTypeSymbol>();
+                // The full closure, not just direct references: a plugin can
+                // arrive only through another assembly's dependency list and
+                // still implement a unified source contract.
+                var pending = new Queue<IAssemblySymbol>();
                 foreach (var compilation in compilations)
                 {
                     foreach (var assembly
                         in compilation.SourceModule.ReferencedAssemblySymbols)
                     {
-                        if (assembly.Locations.Any(location => location.IsInSource))
-                        {
-                            continue;
-                        }
-                        if (!seenAssemblies.Add(assembly.Identity.GetDisplayName()))
-                        {
-                            continue;
-                        }
-                        CollectNamedTypes(assembly.GlobalNamespace, types);
+                        pending.Enqueue(assembly);
                     }
+                }
+                while (pending.Count > 0)
+                {
+                    var assembly = pending.Dequeue();
+                    if (!seenAssemblies.Add(assembly.Identity.GetDisplayName()))
+                    {
+                        continue;
+                    }
+                    foreach (var module in assembly.Modules)
+                    {
+                        foreach (var referenced in module.ReferencedAssemblySymbols)
+                        {
+                            pending.Enqueue(referenced);
+                        }
+                    }
+                    if (assembly.Locations.Any(location => location.IsInSource))
+                    {
+                        continue;
+                    }
+                    CollectNamedTypes(assembly.GlobalNamespace, types);
                 }
                 _referencedTypes = types;
             }
