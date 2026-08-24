@@ -587,6 +587,17 @@ public static class Frontend
             {
                 return null;
             }
+            // Only a contract DECLARED in loaded source has a knowable
+            // implementation set: references are acyclic, so nothing prebuilt
+            // can implement a source interface, while a METADATA contract can
+            // have implementers in other referenced assemblies that a source
+            // scan cannot see, and proving a write from the visible subset
+            // could fabricate a flow for a runtime receiver from metadata.
+            if (!method.ContainingType.OriginalDefinition.Locations
+                    .Any(location => location.IsInSource))
+            {
+                return null;
+            }
             var hasDefaultBody = viaInterface && !method.IsAbstract;
             var candidates = new List<IMethodSymbol>();
             var defaultInherited = false;

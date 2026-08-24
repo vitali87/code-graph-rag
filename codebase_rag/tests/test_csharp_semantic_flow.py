@@ -816,3 +816,86 @@ def test_a_dead_default_body_does_not_hide_the_sole_override(tmp_path: Path) -> 
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "di2", _DEFAULT_INTERFACE_DEAD_DEFAULT_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_METADATA_IFACE_SOURCE = (
+    "public interface ILib\n{\n    void Fill(string src, ref string dst);\n}\n"
+)
+_METADATA_APP_CSPROJ = (
+    '<Project Sdk="Microsoft.NET.Sdk">\n'
+    "  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>\n"
+    "  <ItemGroup>\n"
+    '    <Reference Include="MetaLib"><HintPath>{dll}</HintPath></Reference>\n'
+    "  </ItemGroup>\n"
+    "</Project>\n"
+)
+_METADATA_APP_PROGRAM = (
+    "using System;\n\n"
+    "public class Writer : ILib\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "        dst = src;\n    }\n}\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        ILib helper = new Writer();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_a_metadata_interface_never_resolves_to_source_implementers(
+    tmp_path: Path,
+) -> None:
+    # A contract living in a PREBUILT assembly can have implementers in other
+    # referenced assemblies that source scanning cannot see, so the source
+    # implementation set is never complete and proving a write from it could
+    # fabricate a flow for a runtime receiver from metadata. Only contracts
+    # declared in loaded source resolve.
+    import subprocess
+
+    lib = tmp_path / "libsrc"
+    lib.mkdir(parents=True)
+    (lib / "MetaLib.csproj").write_text(_LIB_CSPROJ, encoding="utf-8")
+    (lib / "ILib.cs").write_text(_METADATA_IFACE_SOURCE, encoding="utf-8")
+    out = tmp_path / "libbin"
+    built = subprocess.run(
+        ["dotnet", "build", str(lib), "-o", str(out), "--nologo", "-v", "q"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    dll = out / "MetaLib.dll"
+    if built.returncode != 0 or not dll.exists():
+        pytest.skip(f"could not prebuild the metadata assembly: {built.stderr}")
+
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "proj.csproj").write_text(
+        _METADATA_APP_CSPROJ.format(dll=dll), encoding="utf-8"
+    )
+    (repo / "Program.cs").write_text(_METADATA_APP_PROGRAM, encoding="utf-8")
+    parsers, queries = load_parsers()
+    previous = settings.CSHARP_FRONTEND
+    settings.CSHARP_FRONTEND = cs.CSharpFrontend.HYBRID
+    try:
+        mock = MagicMock()
+        GraphUpdater(
+            ingestor=mock,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+            capture=_CAPTURE_IO,
+        ).run()
+    finally:
+        settings.CSHARP_FRONTEND = previous
+    flows = {
+        (c.args[0][2], c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == FLOWS_TO
+    }
+    assert (_ENV_K, _STDOUT) not in flows
