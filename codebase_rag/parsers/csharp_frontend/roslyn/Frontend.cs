@@ -599,12 +599,15 @@ public static class Frontend
                 return null;
             }
             var hasDefaultBody = viaInterface && !method.IsAbstract;
+            // Deliberately NOT deduplicated by source location: a file linked
+            // into several projects (or a multi-targeted one) compiles once
+            // per compilation, and `#if` can give those variants different
+            // bodies at the same file and span. Every variant must reach the
+            // conjunction, or a writing variant could stand in for a
+            // read-only one; re-proving an identical body twice is merely
+            // redundant.
             var candidates = new List<IMethodSymbol>();
             var defaultInherited = false;
-            // A multi-targeted project compiles the same declaration once per
-            // framework, so implementations are identified by their source
-            // location, not by symbol identity across compilations.
-            var seen = new HashSet<(string, int)>();
             foreach (var type in AllSourceTypes(caller))
             {
                 IMethodSymbol? implementation;
@@ -641,12 +644,7 @@ public static class Frontend
                 {
                     continue;
                 }
-                if (implementation.DeclaringSyntaxReferences.FirstOrDefault()
-                    is not { } declared)
-                {
-                    continue;
-                }
-                if (!seen.Add((declared.SyntaxTree.FilePath, declared.Span.Start)))
+                if (implementation.DeclaringSyntaxReferences.Length == 0)
                 {
                     continue;
                 }

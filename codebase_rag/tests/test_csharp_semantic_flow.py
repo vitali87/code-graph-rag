@@ -1005,3 +1005,91 @@ def test_ref_through_an_interface_where_every_implementer_writes(
     assert (_ENV_K, _STDOUT) in _flows(
         tmp_path / "if4", _INTERFACE_TWO_WRITERS_REF, cs.CSharpFrontend.HYBRID
     )
+
+
+_LINKED_IFACE_CSPROJ = (
+    '<Project Sdk="Microsoft.NET.Sdk">\n'
+    "  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>\n"
+    "</Project>\n"
+)
+_LINKED_IMPL_CSPROJ = (
+    '<Project Sdk="Microsoft.NET.Sdk">\n'
+    "  <PropertyGroup>\n"
+    "    <TargetFramework>net8.0</TargetFramework>\n"
+    "    <DefineConstants>{defines}</DefineConstants>\n"
+    "  </PropertyGroup>\n"
+    "  <ItemGroup>\n"
+    '    <ProjectReference Include="../Iface/Iface.csproj" />\n'
+    '    <Compile Include="../Shared/Helper.cs" />\n'
+    "  </ItemGroup>\n"
+    "</Project>\n"
+)
+_LINKED_IFACE = (
+    "public interface IHelper\n{\n    void Fill(string src, ref string dst);\n}\n"
+)
+_LINKED_HELPER = (
+    "using System;\n\n"
+    "public class Helper : IHelper\n{\n"
+    "    public void Fill(string src, ref string dst)\n    {\n"
+    "#if WRITES\n"
+    "        dst = src;\n"
+    "#else\n"
+    "        Console.Error.WriteLine(dst.Length + src.Length);\n"
+    "#endif\n"
+    "    }\n}\n"
+)
+_LINKED_LEAKY = (
+    "using System;\n\n"
+    "public class Leaky\n{\n"
+    "    public void Run()\n    {\n"
+    '        var token = Environment.GetEnvironmentVariable("K");\n'
+    "        IHelper helper = new Helper();\n"
+    '        var sink = "";\n'
+    "        helper.Fill(token, ref sink);\n"
+    "        Console.WriteLine(sink);\n"
+    "    }\n}\n"
+)
+
+
+@pytest.mark.skipif(
+    not csharp_frontend_available(), reason="Roslyn frontend needs a dotnet toolchain"
+)
+def test_conditional_variants_of_a_shared_file_are_not_collapsed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The same source file linked into two projects with different
+    # DefineConstants yields candidates that share their file and span while
+    # their bodies differ: one compiles the writing branch, the other the
+    # read-only one. Both must survive into the must-agreement conjunction,
+    # so the disagreement keeps the write unproven.
+    repo = tmp_path / "repo"
+    (repo / "Iface").mkdir(parents=True)
+    (repo / "Shared").mkdir()
+    (repo / "ImplA").mkdir()
+    (repo / "ImplB").mkdir()
+    (repo / "Iface" / "Iface.csproj").write_text(_LINKED_IFACE_CSPROJ, encoding="utf-8")
+    (repo / "Iface" / "IHelper.cs").write_text(_LINKED_IFACE, encoding="utf-8")
+    (repo / "Shared" / "Helper.cs").write_text(_LINKED_HELPER, encoding="utf-8")
+    (repo / "ImplA" / "ImplA.csproj").write_text(
+        _LINKED_IMPL_CSPROJ.format(defines="WRITES"), encoding="utf-8"
+    )
+    (repo / "ImplB" / "ImplB.csproj").write_text(
+        _LINKED_IMPL_CSPROJ.format(defines=""), encoding="utf-8"
+    )
+    (repo / "ImplB" / "Leaky.cs").write_text(_LINKED_LEAKY, encoding="utf-8")
+    parsers, queries = load_parsers()
+    monkeypatch.setattr(settings, "CSHARP_FRONTEND", cs.CSharpFrontend.HYBRID)
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=_CAPTURE_IO,
+    ).run()
+    flows = {
+        (c.args[0][2], c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == FLOWS_TO
+    }
+    assert (_ENV_K, _STDOUT) not in flows
