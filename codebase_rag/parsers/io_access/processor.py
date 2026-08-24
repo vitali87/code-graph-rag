@@ -1924,6 +1924,10 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles,
         import_map: dict[str, str],
     ) -> str:
+        """Resolve the handle's resource identity: the constructor's literal
+        target, or -- when that is a factory call / `new` identity-carrier one
+        level down (`Files.newBufferedWriter(Path.of("cfg"))`) -- the literal
+        it carries."""
         identity = literal_target(
             call_node,
             ctor.target_arg,
@@ -1948,6 +1952,13 @@ class IOAccessProcessor:
             # A static import (`import static java.nio.file.Path.of`) spells the
             # factory bare (`of("cfg")`); resolve it through the import map to its
             # qualified form so the literal is still recovered (Greptile review, #1204).
+            # Membership is NOT shadow-aware (#1216, accepted limitation): a
+            # same-class/inherited `of(..)` or a local nested `Path` class still
+            # matches, mis-attributing a literal identity where `<dynamic>` would
+            # be correct. Fixing it needs the full call resolver in this
+            # deliberately lightweight path, for triggers that are valid but
+            # uncommon Java (a shadowed static import, or a local nested class
+            # reusing a well-known name).
             if raw is not None and (
                 raw in lean_handles.identity_calls
                 or import_map.get(raw) in lean_handles.identity_calls

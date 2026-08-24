@@ -1795,10 +1795,10 @@ class FlowProcessor:
     def _lean_ctor_identity(
         self, node: Node, ctor: HandleConstructor, jc: _JsCtx
     ) -> str:
-        # The handle's resource identity: the constructor's literal target, or -- when
-        # that is a factory call / `new` identity-carrier one level down
-        # (`Files.newBufferedWriter(Path.of("cfg"))`, `new PrintWriter(new File("x"))`)
-        # -- the literal it carries.
+        """Resolve the handle's resource identity: the constructor's literal
+        target, or -- when that is a factory call / `new` identity-carrier one
+        level down (`Files.newBufferedWriter(Path.of("cfg"))`,
+        `new PrintWriter(new File("x"))`) -- the literal it carries."""
         d = jc.descriptor
         identity = literal_target(
             node,
@@ -1822,6 +1822,13 @@ class FlowProcessor:
             # factory bare (`of("cfg")`); resolve it through the import map to its
             # qualified form before the identity-call check, so the literal is still
             # recovered (Greptile review, #1204).
+            # Membership is NOT shadow-aware (#1216, accepted limitation): a
+            # same-class/inherited `of(..)` or a local nested `Path` class still
+            # matches, mis-attributing a literal identity where `<dynamic>` would
+            # be correct. Fixing it needs the full call resolver in this
+            # deliberately lightweight path, for triggers that are valid but
+            # uncommon Java (a shadowed static import, or a local nested class
+            # reusing a well-known name).
             if raw is not None and (
                 raw in jc.identity_calls
                 or jc.flow.import_map.get(raw) in jc.identity_calls
