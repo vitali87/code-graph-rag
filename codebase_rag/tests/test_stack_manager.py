@@ -5,7 +5,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from click.testing import CliRunner
+from loguru import logger
 
+from codebase_rag.stack import cli as stack_cli
 from codebase_rag.stack import constants as stack_cs
 from codebase_rag.stack.manager import StackError, StackManager
 
@@ -207,3 +210,111 @@ def test_up_propagates_failure(stack_home: Path, tmp_path: Path) -> None:
         with pytest.raises(StackError) as exc:
             mgr.up()
     assert "boom" in str(exc.value) or "Failed" in str(exc.value)
+
+
+PUBLIC_COMPOSE = 'services:\n  memgraph:\n    ports:\n      - "7687:7687"\n'
+LOOPBACK_COMPOSE = 'services:\n  memgraph:\n    ports:\n      - "127.0.0.1:7687:7687"\n'
+
+
+def _warnings_from(action: object) -> list[str]:
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="WARNING")
+    try:
+        action()  # type: ignore[operator]
+    finally:
+        logger.remove(sink_id)
+    return messages
+
+
+class TestAlreadyRunningStackWarns:
+    """A stack that is already up must still warn about public ports (#1380).
+
+    `ensure_running` returns before `up()` when the stack is healthy, so the
+    only warning path never ran for exactly the long-lived installs that still
+    carry a pre-#1012 compose file.
+    """
+
+    def _running_manager(self, stack_home: Path, tmp_path: Path) -> StackManager:
+        return StackManager(
+            home=stack_home, package_compose=_make_compose_source(tmp_path)
+        )
+
+    def test_warns_when_already_up_with_public_ports(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        (stack_home / stack_cs.COMPOSE_FILENAME).write_text(
+            PUBLIC_COMPOSE, encoding="utf-8"
+        )
+        mgr = self._running_manager(stack_home, tmp_path)
+        with (
+            patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+            patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+            patch.object(mgr, "up") as mock_up,
+        ):
+            messages = _warnings_from(mgr.ensure_running)
+        mock_up.assert_not_called()
+        assert any("ALL interfaces" in message for message in messages), messages
+
+    def test_quiet_when_already_up_with_loopback_ports(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        (stack_home / stack_cs.COMPOSE_FILENAME).write_text(
+            LOOPBACK_COMPOSE, encoding="utf-8"
+        )
+        mgr = self._running_manager(stack_home, tmp_path)
+        with (
+            patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+            patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        ):
+            assert _warnings_from(mgr.ensure_running) == []
+
+    def test_quiet_when_already_up_without_compose_file(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        # A stack can be reachable while the file is absent (deleted by the
+        # user, or containers started by other means); there is nothing to
+        # inspect and nothing to warn about.
+        mgr = self._running_manager(stack_home, tmp_path)
+        with (
+            patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+            patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        ):
+            assert _warnings_from(mgr.ensure_running) == []
+
+
+class TestDaemonStatusWarns:
+    """`cgr daemon status` is what a user runs against an already-up stack, so
+    it must surface the public-port exposure too (#1380)."""
+
+    def _invoke_status(self, stack_home: Path, tmp_path: Path) -> list[str]:
+        mgr = StackManager(
+            home=stack_home, package_compose=_make_compose_source(tmp_path)
+        )
+        with (
+            patch("codebase_rag.stack.cli.StackManager", return_value=mgr),
+            patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+            patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        ):
+            return _warnings_from(lambda: CliRunner().invoke(stack_cli.status_cmd, []))
+
+    def test_status_reports_public_ports(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        (stack_home / stack_cs.COMPOSE_FILENAME).write_text(
+            PUBLIC_COMPOSE, encoding="utf-8"
+        )
+        messages = self._invoke_status(stack_home, tmp_path)
+        assert any("ALL interfaces" in message for message in messages), messages
+
+    def test_status_is_quiet_for_loopback_file(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        (stack_home / stack_cs.COMPOSE_FILENAME).write_text(
+            LOOPBACK_COMPOSE, encoding="utf-8"
+        )
+        assert self._invoke_status(stack_home, tmp_path) == []
+
+    def test_status_is_quiet_without_compose_file(
+        self, stack_home: Path, tmp_path: Path
+    ) -> None:
+        assert self._invoke_status(stack_home, tmp_path) == []

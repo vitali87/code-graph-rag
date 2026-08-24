@@ -142,6 +142,16 @@ class StackManager:
             )
         )
 
+    def warn_if_ports_are_public(self) -> None:
+        """Warn about public port bindings independently of the start path.
+
+        `ensure_compose_file` only runs when the stack is being started, so a
+        stack that is already up would keep its pre-#1012 exposure silent
+        (issue #1380). Callers that never render the file go through here.
+        """
+        if self.compose_file.exists():
+            self._warn_if_ports_are_public(self.compose_file)
+
     def check_docker(self) -> None:
         if shutil.which(cs.DOCKER_BIN) is None:
             raise StackError(cs.ERR_DOCKER_NOT_INSTALLED)
@@ -292,6 +302,10 @@ class StackManager:
         current = self.status()
         if current.state == cs.StackState.RUNNING:
             logger.info(cs.MSG_STACK_ALREADY_RUNNING)
+            # The start path warns via ensure_compose_file; a stack that is
+            # already up never reaches it, and its long-lived compose file is
+            # exactly the profile of a pre-#1012 public binding (issue #1380).
+            self.warn_if_ports_are_public()
             return current
         self.up()
         self.wait_healthy()
