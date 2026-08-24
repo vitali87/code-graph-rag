@@ -75,8 +75,8 @@ Python 3.12 or newer. The piwheels build for Debian Bookworm shows as failed
 because Bookworm's system Python is 3.11, which is below our floor. On
 Raspberry Pi OS Bookworm, install into a Python 3.12 environment so the pip
 commands above actually run under 3.12: with [uv](https://docs.astral.sh/uv/)
-run `uv venv --python 3.12 && source .venv/bin/activate` (uv downloads 3.12
-automatically), or install CPython 3.12 yourself and use
+run `uv venv --python 3.12 --seed && source .venv/bin/activate` (uv downloads
+3.12 automatically; `--seed` puts pip in the environment), or install CPython 3.12 yourself and use
 `python3.12 -m pip install ...`.
 
 ## CLI Quick Start
