@@ -474,7 +474,15 @@ jobs:
   sonar-gate:
     name: Sonar Zero Issues Gate
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # Mirror the eligibility of the SonarCloud Analysis job in
+    # sonarcloud.yml (PRs targeting main, excluding Dependabot and fork
+    # heads): a PR that never gets analyzed must skip the gate instead of
+    # polling for an analysis that cannot exist.
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.base.ref == 'main'
+      && github.actor != 'dependabot[bot]'
+      && github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 45
     permissions:
       # checks: read backs the check-runs API call that detects a failed
@@ -613,8 +621,9 @@ jobs:
             echo "❌ Greptile gate failed: a 5/5 review of the head commit is required"
             exit 1
           fi
-          # Same skip semantics: Sonar analyzes pull requests; on a pull
-          # request anything but success blocks the merge.
+          # Same skip semantics: the gate is skipped on non-PR events and on
+          # PRs SonarCloud never analyzes (Dependabot, forks, non-main base);
+          # wherever it does run, anything but success blocks the merge.
           if [[ "${{ needs.sonar-gate.result }}" != "success" \
              && "${{ needs.sonar-gate.result }}" != "skipped" ]]; then
             echo "❌ Sonar gate failed: zero open SonarCloud issues on the head commit are required"
