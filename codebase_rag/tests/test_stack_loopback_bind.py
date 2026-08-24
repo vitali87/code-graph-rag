@@ -170,6 +170,19 @@ class TestPublicPortWarning:
 
         assert self._warnings(manager) == []
 
+    def test_long_form_null_host_ip_warns(self, tmp_path: Path) -> None:
+        # YAML parses `host_ip: null` (or a bare `host_ip:`) as None, which
+        # Compose treats exactly like an omitted host: publish on every
+        # interface. Stringifying it to "None" made it look host-bound.
+        manager = self._manager(
+            tmp_path,
+            "services:\n  qdrant:\n    ports:\n"
+            "      - target: 6333\n        published: 6333\n"
+            "        host_ip: null\n",
+        )
+
+        assert any("ALL interfaces" in message for message in self._warnings(manager))
+
     def test_a_user_edited_file_is_not_clobbered(self, tmp_path: Path) -> None:
         rendered = 'services:\n  memgraph:\n    ports:\n      - "7687:7687"\n'
         manager = self._manager(tmp_path, rendered)

@@ -22,8 +22,12 @@ def _publishes_on_all_interfaces(mapping: object) -> bool:
     even though it names a host.
     """
     if isinstance(mapping, dict):
+        # YAML parses `host_ip: null` (or a bare `host_ip:`) as None, which
+        # Compose treats exactly like an omitted host: publish everywhere.
         declared = [
-            str(value).strip() for key, value in mapping.items() if key == "host_ip"
+            "" if value is None else str(value).strip()
+            for key, value in mapping.items()
+            if key == "host_ip"
         ]
         return not declared or declared[0] in ("", "0.0.0.0", "::")
     if not isinstance(mapping, str):
