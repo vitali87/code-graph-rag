@@ -57,7 +57,11 @@ def down_cmd() -> None:
 
 @cli.command("status", help=ch.CMD_DAEMON_STATUS, short_help=ch.CMD_DAEMON_STATUS)
 def status_cmd() -> None:
-    _print_status(StackManager())
+    mgr = StackManager()
+    # Status is what a user runs against an already-up stack, the one case the
+    # start path's warning never covers (issue #1380).
+    mgr.warn_if_ports_are_public()
+    _print_status(mgr)
 
 
 @cli.command("restart", help=ch.CMD_DAEMON_RESTART, short_help=ch.CMD_DAEMON_RESTART)

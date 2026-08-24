@@ -22,8 +22,12 @@ def _publishes_on_all_interfaces(mapping: object) -> bool:
     even though it names a host.
     """
     if isinstance(mapping, dict):
+        # YAML parses `host_ip: null` (or a bare `host_ip:`) as None, which
+        # Compose treats exactly like an omitted host: publish everywhere.
         declared = [
-            str(value).strip() for key, value in mapping.items() if key == "host_ip"
+            "" if value is None else str(value).strip()
+            for key, value in mapping.items()
+            if key == "host_ip"
         ]
         return not declared or declared[0] in ("", "0.0.0.0", "::")
     if not isinstance(mapping, str):
@@ -107,7 +111,7 @@ class StackManager:
         """
         try:
             compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError):
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
             return []
         if not isinstance(compose, dict):
             return []
@@ -118,7 +122,14 @@ class StackManager:
         for service, spec in services.items():
             if not isinstance(spec, dict):
                 continue
-            for mapping in spec.get("ports") or []:
+            # The file is user-owned, so `ports` can be any YAML value; a
+            # scalar (`ports: 8080`) is not a mapping list and iterating it
+            # would crash the start and status paths over a file Compose
+            # itself would reject.
+            ports = spec.get("ports")
+            if not isinstance(ports, list):
+                continue
+            for mapping in ports:
                 if _publishes_on_all_interfaces(mapping):
                     public.append(f"{service}: {mapping}")
         return public
@@ -141,6 +152,16 @@ class StackManager:
                 path=compose_file, mappings=", ".join(public)
             )
         )
+
+    def warn_if_ports_are_public(self) -> None:
+        """Warn about public port bindings independently of the start path.
+
+        `ensure_compose_file` only runs when the stack is being started, so a
+        stack that is already up would keep its pre-#1012 exposure silent
+        (issue #1380). Callers that never render the file go through here.
+        """
+        if self.compose_file.exists():
+            self._warn_if_ports_are_public(self.compose_file)
 
     def check_docker(self) -> None:
         if shutil.which(cs.DOCKER_BIN) is None:
@@ -292,6 +313,10 @@ class StackManager:
         current = self.status()
         if current.state == cs.StackState.RUNNING:
             logger.info(cs.MSG_STACK_ALREADY_RUNNING)
+            # The start path warns via ensure_compose_file; a stack that is
+            # already up never reaches it, and its long-lived compose file is
+            # exactly the profile of a pre-#1012 public binding (issue #1380).
+            self.warn_if_ports_are_public()
             return current
         self.up()
         self.wait_healthy()
