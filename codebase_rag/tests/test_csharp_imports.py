@@ -296,10 +296,9 @@ def test_watched_modification_reemits_internal_import_edges(
     # A watched edit runs the realtime path, not run(): the deferred import
     # flush must happen there too, or the live graph loses the module-level
     # import edges until the next full index (issue #1347).
-    import sys
     from typing import Protocol, runtime_checkable
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
     from watchdog.events import FileModifiedEvent
 
     import realtime_updater
@@ -474,10 +473,9 @@ def test_watched_provider_edit_keeps_the_importers_edge(
     # unchanged importer's edge; the importer never re-parses, so its using
     # entries must be requeued from the persistent import mapping or the edge
     # stays lost until a full re-index (issue #1347).
-    import sys
     from typing import Protocol, runtime_checkable
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
     from watchdog.events import FileModifiedEvent
 
     import realtime_updater

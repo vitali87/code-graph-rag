@@ -962,71 +962,62 @@ class ImportProcessor:
         cs.TS_CSHARP_DELEGATE_DECLARATION,
     )
 
+    def _csharp_declared_type_names(self, container: Node) -> set[str]:
+        names: set[str] = set()
+        for child in container.named_children:
+            if child.type not in self._CSHARP_TYPE_DECLARATIONS:
+                continue
+            name_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+            if name_node is not None and (name := safe_decode_with_fallback(name_node)):
+                names.add(name)
+        return names
+
+    def _walk_csharp_namespaces(
+        self, container: Node, prefix: str, found: dict[str, set[str]]
+    ) -> None:
+        for child in container.named_children:
+            if child.type not in (
+                cs.TS_CSHARP_NAMESPACE_DECLARATION,
+                cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION,
+            ):
+                continue
+            name_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+            if name_node is None or not (name := safe_decode_with_fallback(name_node)):
+                continue
+            full = f"{prefix}{cs.SEPARATOR_DOT}{name}" if prefix else name
+            if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
+                found.setdefault(full, set()).update(
+                    self._csharp_declared_type_names(container)
+                )
+                continue
+            body = child.child_by_field_name(cs.FIELD_BODY)
+            if body is None:
+                found.setdefault(full, set())
+                continue
+            found.setdefault(full, set()).update(self._csharp_declared_type_names(body))
+            self._walk_csharp_namespaces(body, full, found)
+
     def _collect_csharp_namespaces(self, root_node: Node) -> dict[str, set[str]]:
         # Namespaces appear only at the top level and inside namespace bodies,
         # so the walk prunes into nothing else; nesting composes dotted names.
         # Each namespace carries the TYPE NAMES it declares in this file: the
         # name-level evidence that pins a type-only `using` to the module.
         found: dict[str, set[str]] = {}
-
-        def type_names(container: Node) -> set[str]:
-            names: set[str] = set()
-            for child in container.named_children:
-                if child.type not in self._CSHARP_TYPE_DECLARATIONS:
-                    continue
-                name_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-                if name_node is not None and (
-                    name := safe_decode_with_fallback(name_node)
-                ):
-                    names.add(name)
-            return names
-
-        def walk(container: Node, prefix: str) -> None:
-            for child in container.named_children:
-                if child.type not in (
-                    cs.TS_CSHARP_NAMESPACE_DECLARATION,
-                    cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION,
-                ):
-                    continue
-                name_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-                if name_node is None:
-                    continue
-                name = safe_decode_with_fallback(name_node)
-                if not name:
-                    continue
-                full = f"{prefix}{cs.SEPARATOR_DOT}{name}" if prefix else name
-                if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
-                    found.setdefault(full, set()).update(type_names(container))
-                    continue
-                body = child.child_by_field_name(cs.FIELD_BODY)
-                if body is not None:
-                    found.setdefault(full, set()).update(type_names(body))
-                    walk(body, full)
-                else:
-                    found.setdefault(full, set())
-
-        walk(root_node, "")
+        self._walk_csharp_namespaces(root_node, "", found)
         return found
 
     def _collect_csharp_identifiers(self, root_node: Node) -> frozenset[str]:
         # Every identifier the file mentions, as coarse evidence for pinning
-        # type-only namespace uses; a linear cursor walk keeps it cheap.
+        # type-only namespace uses; an explicit stack keeps it linear.
         found: set[str] = set()
-        cursor = root_node.walk()
-        reached_root = False
-        while not reached_root:
-            node = cursor.node
-            if node is not None and node.type == cs.TS_CSHARP_IDENTIFIER:
-                if text := safe_decode_text(node):
-                    found.add(text)
-            if cursor.goto_first_child():
-                continue
-            while True:
-                if cursor.goto_next_sibling():
-                    break
-                if not cursor.goto_parent():
-                    reached_root = True
-                    break
+        stack = [root_node]
+        while stack:
+            node = stack.pop()
+            if node.type == cs.TS_CSHARP_IDENTIFIER and (
+                text := safe_decode_text(node)
+            ):
+                found.add(text)
+            stack.extend(node.children)
         return frozenset(found)
 
     def requeue_csharp_import_edges(self) -> None:
