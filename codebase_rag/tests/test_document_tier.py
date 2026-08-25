@@ -47,7 +47,12 @@ def _run(tmp_path: Path, files: dict[str, str]) -> MagicMock:
     for rel, content in files.items():
         path = tmp_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        # newline="" disables the platform newline translation write_text
+        # applies by default: on Windows a "\n" in a fixture would reach disk
+        # as "\r\n", so a heading spanning lines would parse as "Alpha\r\nBeta"
+        # and any assertion naming the literal text would fail there only.
+        # Fixtures are byte-for-byte what the test wrote on every platform.
+        path.write_text(content, encoding="utf-8", newline="")
     mock = MagicMock()
     GraphUpdater(
         ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
@@ -275,6 +280,32 @@ class TestQualifiedNames:
         # The display name keeps the dots.
         assert _node_names(mock, SECTION) == {"Release 1.2.3"}
 
+    def test_runs_of_whitespace_collapse_in_the_qualified_name(
+        self, tmp_path: Path
+    ) -> None:
+        # Repeated spaces within one heading line. The display name keeps the
+        # original spacing; only the qualified name collapses.
+        mock = _run(tmp_path, {"w.md": "# Alpha   Beta\n"})
+        assert _qns(mock, SECTION) == {f"{_module_qn(tmp_path, 'w.md')}.Alpha Beta"}
+        assert _node_names(mock, SECTION) == {"Alpha   Beta"}
+
+    def test_heading_text_spanning_lines_keeps_one_identity(
+        self, tmp_path: Path
+    ) -> None:
+        # A setext heading's text really can span physical lines, which the
+        # single-line fixture above does not exercise. The newline must not
+        # reach the qualified name, or reflowing a heading would rename it.
+        mock = _run(tmp_path, {"r.md": "Alpha\nBeta\n=====\n"})
+        assert _qns(mock, SECTION) == {f"{_module_qn(tmp_path, 'r.md')}.Alpha Beta"}
+        assert _node_names(mock, SECTION) == {"Alpha\nBeta"}
+
+    def test_heading_with_no_text_gets_a_placeholder_name(self, tmp_path: Path) -> None:
+        # A bare "##" has nothing to name a node after; an empty name would
+        # produce a qualified name ending in a bare separator.
+        mock = _run(tmp_path, {"e.md": "# Top\n\n##\n"})
+        assert "(untitled)" in _node_names(mock, SECTION)
+        assert f"{_module_qn(tmp_path, 'e.md')}.Top.(untitled)" in _qns(mock, SECTION)
+
     def test_heading_literally_containing_the_marker_stays_distinct(
         self, tmp_path: Path
     ) -> None:
@@ -285,6 +316,18 @@ class TestQualifiedNames:
         doc = "# Top\n\n## Notes\n\n## Notes@9\n\nx\n\n## Notes\n"
         mock = _run(tmp_path, {"marker.md": doc})
         qns = _qns(mock, SECTION)
+        # Assert the NAMES, not merely that they are distinct: distinctness is
+        # the property the suffixing establishes, so any scheme that separates
+        # them satisfies it — a counter would pass this test while renaming
+        # the third section "Notes@1", which points at no line in the file.
+        # The suffix has to be the start line for the name to stay meaningful.
+        top = f"{_module_qn(tmp_path, 'marker.md')}.Top"
+        assert qns == {
+            top,
+            f"{top}.Notes",
+            f"{top}.Notes@9",
+            f"{top}.Notes@9@9",
+        }, f"unexpected qualified names: {sorted(qns)}"
         assert len(qns) == len(_nodes(mock, SECTION)), (
             f"qualified names collided, sections merged: {sorted(qns)}"
         )
@@ -321,13 +364,22 @@ class TestFileHandling:
             tmp_path,
             {"docs/guide.md": "# Alpha\n", "docs/guide.markdown": "# Alpha\n"},
         )
-        modules = [
-            p
+        # Asserts the qualified names each file actually gets, not merely
+        # that they differ: a rule that mangled the stem would still produce
+        # two distinct names and satisfy a uniqueness-only check.
+        by_path = {
+            str(p[cs.KEY_PATH]): p[cs.KEY_QUALIFIED_NAME]
             for p in _nodes(mock, MODULE)
             if str(p.get(cs.KEY_PATH, "")).startswith("docs/guide")
-        ]
-        assert len({p[cs.KEY_QUALIFIED_NAME] for p in modules}) == 2
-        assert len(_qns(mock, SECTION)) == 2
+        }
+        assert by_path == {
+            "docs/guide.md": f"{tmp_path.name}.docs.guide_md",
+            "docs/guide.markdown": f"{tmp_path.name}.docs.guide_markdown",
+        }
+        assert _qns(mock, SECTION) == {
+            f"{tmp_path.name}.docs.guide_md.Alpha",
+            f"{tmp_path.name}.docs.guide_markdown.Alpha",
+        }
 
     def test_nested_directory_paths_recorded(self, tmp_path: Path) -> None:
         mock = _run(tmp_path, {"docs/guide/plan.md": "# Deep\n"})
