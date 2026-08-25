@@ -2470,6 +2470,12 @@ class GraphUpdater:
         file_bytes: bytes | None = None,
         pre_parsed: tuple[Node, dict[str, list] | None] | None = None,
     ) -> None:
+        """Ingest one file through the first tier that claims it.
+
+        Tries tree-sitter, then dependency manifests, then the secondary
+        tiers; every file gets a File node regardless, so an unclaimed
+        extension is still represented in the graph.
+        """
         if self._cpp_frontend_covered:
             rel = cached_relative_path(filepath, self.repo_path).as_posix()
             if rel in self._cpp_frontend_covered:
