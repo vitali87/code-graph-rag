@@ -2500,16 +2500,31 @@ class GraphUpdater:
                 self._parsed_files.append((filepath, language))
         elif self._is_dependency_file(filepath.name, filepath):
             self.factory.definition_processor.process_dependencies(filepath)
-        elif self.ast_grep_tier.handles(filepath.suffix):
-            self.ast_grep_tier.process_file(
-                filepath, self.factory.structure_processor.structural_elements
-            )
-        elif self.document_tier.handles(filepath.suffix):
-            self.document_tier.process_file(
-                filepath, self.factory.structure_processor.structural_elements
-            )
+        else:
+            self.process_with_secondary_tier(filepath)
 
         self.factory.structure_processor.process_generic_file(filepath, filepath.name)
+
+    def process_with_secondary_tier(self, filepath: Path) -> bool:
+        """Parse a file with whichever non-tree-sitter tier claims it.
+
+        Shared with the file watcher, which re-parses one changed file and
+        would otherwise handle only tree-sitter languages: it deletes a
+        file's Module (and everything hanging off it) before re-parsing, so
+        a tier it does not know about loses its symbols entirely rather than
+        merely going stale (issue #1427).
+
+        Returns True when a tier took the file, so the batch path can keep
+        its if/elif chain.
+        """
+        structural_elements = self.factory.structure_processor.structural_elements
+        if self.ast_grep_tier.handles(filepath.suffix):
+            self.ast_grep_tier.process_file(filepath, structural_elements)
+            return True
+        if self.document_tier.handles(filepath.suffix):
+            self.document_tier.process_file(filepath, structural_elements)
+            return True
+        return False
 
     def _ast_for(self, file_path: Path) -> Node | None:
         entry = self.ast_cache.load(file_path)

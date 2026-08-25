@@ -145,6 +145,56 @@ class TestNonCodeFileHandling:
         mock_updater.factory.definition_processor.process_file.assert_not_called()
 
 
+class TestSecondaryTierReparse:
+    # Step 1 of a change always deletes the file's Module and everything
+    # hanging off it (DEFINES for the ast-grep tier, CONTAINS_SECTION for the
+    # document tier). If Step 3 does not re-parse, the edit EMPTIES the file
+    # in the graph rather than refreshing it, while still logging success
+    # (issue #1427). Tree-sitter languages have always re-parsed; these tiers
+    # did not.
+    def test_markdown_edit_reparses_through_the_document_tier(
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+    ) -> None:
+        f = temp_repo / "plan.md"
+        f.write_text("# Heading\n", encoding="utf-8")
+        handler.dispatch(FileModifiedEvent(str(f)))
+        mock_updater.process_with_secondary_tier.assert_called_once_with(f)
+
+    def test_ruby_edit_reparses_through_the_secondary_tier(
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+    ) -> None:
+        f = temp_repo / "app.rb"
+        f.write_text("def hi\n  1\nend\n", encoding="utf-8")
+        handler.dispatch(FileModifiedEvent(str(f)))
+        mock_updater.process_with_secondary_tier.assert_called_once_with(f)
+
+    def test_created_file_also_reparses(
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+    ) -> None:
+        f = temp_repo / "new.md"
+        f.write_text("# New\n", encoding="utf-8")
+        handler.dispatch(FileCreatedEvent(str(f)))
+        mock_updater.process_with_secondary_tier.assert_called_once_with(f)
+
+    def test_tree_sitter_file_does_not_take_the_secondary_path(
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+    ) -> None:
+        # Python is handled by definition_processor; routing it through the
+        # secondary tiers too would parse it twice.
+        f = temp_repo / "mod.py"
+        f.write_text("def f():\n    return 1\n", encoding="utf-8")
+        handler.dispatch(FileModifiedEvent(str(f)))
+        mock_updater.factory.definition_processor.process_file.assert_called_once()
+        mock_updater.process_with_secondary_tier.assert_not_called()
+
+    def test_deletion_does_not_reparse(
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+    ) -> None:
+        f = temp_repo / "gone.md"
+        handler.dispatch(FileDeletedEvent(str(f)))
+        mock_updater.process_with_secondary_tier.assert_not_called()
+
+
 class TestMixedEventSequences:
     def test_rapid_create_modify_delete(
         self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
