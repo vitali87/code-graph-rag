@@ -60,7 +60,15 @@ def validate_labels(text: str) -> int:
         if name in seen:
             raise LabelError(f"{where}: duplicate label name {name!r}")
         seen.add(name)
-        color = str(entry["color"])
+        raw_color = entry["color"]
+        if raw_color is None:
+            # An unquoted '#rrggbb' is a YAML comment, so the value parses as
+            # null: report the cause rather than the confusing 'None'.
+            raise LabelError(
+                f"{where} ({name}): color is empty. An unquoted '#' starts a "
+                f"YAML comment, so write six bare hex digits (b60205)."
+            )
+        color = str(raw_color)
         if not COLOR_RE.match(color):
             raise LabelError(
                 f"{where} ({name}): color must be six lowercase hex digits "

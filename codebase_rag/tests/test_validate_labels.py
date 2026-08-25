@@ -52,6 +52,12 @@ class TestRejectsMalformed:
         with pytest.raises(LabelError, match="color"):
             validate_labels("- name: a\n  color: '#b60205'\n  description: d\n")
 
+    def test_unquoted_hash_colour_explains_the_yaml_comment(self) -> None:
+        """An unquoted '#rrggbb' parses as null, so say why rather than
+        reporting the value as 'None'."""
+        with pytest.raises(LabelError, match="YAML comment"):
+            validate_labels("- name: a\n  color: #b60205\n  description: d\n")
+
     def test_short_colour_is_rejected(self) -> None:
         """Three-digit shorthand is not accepted by the API."""
         with pytest.raises(LabelError, match="color"):
