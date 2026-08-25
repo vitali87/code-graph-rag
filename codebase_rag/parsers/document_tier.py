@@ -141,12 +141,17 @@ def _section_end_line(
     of the file when nothing closes it. Using the heading node's own end
     instead would report a one- or two-line span for every section.
     """
-    for next_heading, next_level in levelled[index + 1 :]:
+    # Indexed rather than sliced: `levelled[index + 1:]` would copy the tail
+    # for every heading, which is quadratic across a heading-dense document
+    # even though the loop below usually stops at the very first entry.
+    heading_end = levelled[index][0].end_point[0] + 1
+    for next_index in range(index + 1, len(levelled)):
+        next_heading, next_level = levelled[next_index]
         if next_level <= level:
             # The line before the closing heading; a heading immediately
             # after another leaves the parent owning only its own line.
-            return max(next_heading.start_point[0], levelled[index][0].end_point[0] + 1)
-    return max(last_line, levelled[index][0].end_point[0] + 1)
+            return max(next_heading.start_point[0], heading_end)
+    return max(last_line, heading_end)
 
 
 def _sanitize(name: str) -> str:
