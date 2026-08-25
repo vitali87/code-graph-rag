@@ -92,6 +92,13 @@ def _rels(mock: MagicMock, rel_type: str) -> set[tuple[str, str]]:
     }
 
 
+def _module_qn(tmp_path: Path, rel: str) -> str:
+    """The Module qn for a document, whose suffix is part of its identity."""
+    stem, _, suffix = rel.rpartition(".")
+    parts = f"{stem}_{suffix}".split("/")
+    return ".".join([tmp_path.name, *parts])
+
+
 def _section_by_name(mock: MagicMock, name: str) -> dict:
     matches = [p for p in _nodes(mock, SECTION) if p.get(cs.KEY_NAME) == name]
     assert matches, f"no Section named {name!r}"
@@ -175,27 +182,27 @@ class TestNesting:
     ) -> None:
         mock = _run(tmp_path, {"plan.md": NESTED})
         edges = _rels(mock, CONTAINS_SECTION)
-        top = f"{tmp_path.name}.plan.Project Plan"
+        top = f"{_module_qn(tmp_path, 'plan.md')}.Project Plan"
         assert (top, f"{top}.Phase One") in edges
         assert (f"{top}.Phase One", f"{top}.Phase One.Subtask A") in edges
         assert (top, f"{top}.Phase Two") in edges
 
     def test_top_level_heading_hangs_off_the_module(self, tmp_path: Path) -> None:
         mock = _run(tmp_path, {"plan.md": NESTED})
-        module_qn = f"{tmp_path.name}.plan"
+        module_qn = _module_qn(tmp_path, "plan.md")
         assert (module_qn, f"{module_qn}.Project Plan") in _rels(mock, CONTAINS_SECTION)
 
     def test_sibling_closes_the_deeper_heading(self, tmp_path: Path) -> None:
         # "## Phase Two" must not land under "### Subtask A" that precedes it.
         mock = _run(tmp_path, {"plan.md": NESTED})
-        top = f"{tmp_path.name}.plan.Project Plan"
+        top = f"{_module_qn(tmp_path, 'plan.md')}.Project Plan"
         assert f"{top}.Phase Two" in _qns(mock, SECTION)
         assert f"{top}.Phase One.Subtask A.Phase Two" not in _qns(mock, SECTION)
 
     def test_skipped_level_nests_under_the_open_heading(self, tmp_path: Path) -> None:
         # h1 -> h3 with no h2: the h3 is a child of the h1, not an orphan.
         mock = _run(tmp_path, {"skip.md": "# One\n\n### Three\n"})
-        base = f"{tmp_path.name}.skip"
+        base = _module_qn(tmp_path, "skip.md")
         assert (f"{base}.One", f"{base}.One.Three") in _rels(mock, CONTAINS_SECTION)
 
 
@@ -217,14 +224,14 @@ class TestSetextHeadings:
     def test_setext_h2_nests_under_h1(self, tmp_path: Path) -> None:
         # The grammar makes these flat siblings; nesting comes from levels.
         mock = _run(tmp_path, {"setext.md": self.SETEXT})
-        base = f"{tmp_path.name}.setext"
+        base = _module_qn(tmp_path, "setext.md")
         assert (f"{base}.Title Here", f"{base}.Title Here.Sub Here") in _rels(
             mock, CONTAINS_SECTION
         )
 
     def test_mixed_atx_and_setext(self, tmp_path: Path) -> None:
         mock = _run(tmp_path, {"mixed.md": "Setext Top\n==========\n\n## Atx Child\n"})
-        base = f"{tmp_path.name}.mixed"
+        base = _module_qn(tmp_path, "mixed.md")
         assert (f"{base}.Setext Top", f"{base}.Setext Top.Atx Child") in _rels(
             mock, CONTAINS_SECTION
         )
@@ -264,7 +271,7 @@ class TestQualifiedNames:
     ) -> None:
         mock = _run(tmp_path, {"v.md": "# Release 1.2.3\n"})
         qn = next(iter(_qns(mock, SECTION)))
-        assert qn == f"{tmp_path.name}.v.Release 1_2_3"
+        assert qn == f"{_module_qn(tmp_path, 'v.md')}.Release 1_2_3"
         # The display name keeps the dots.
         assert _node_names(mock, SECTION) == {"Release 1.2.3"}
 
@@ -298,11 +305,29 @@ class TestFileHandling:
 
     def test_module_node_emitted_for_the_document(self, tmp_path: Path) -> None:
         mock = _run(tmp_path, {"plan.md": NESTED})
-        assert f"{tmp_path.name}.plan" in _qns(mock, MODULE)
+        assert _module_qn(tmp_path, "plan.md") in _qns(mock, MODULE)
 
     def test_markdown_extension_variant_handled(self, tmp_path: Path) -> None:
         mock = _run(tmp_path, {"doc.markdown": "# Heading\n"})
         assert _node_names(mock, SECTION) == {"Heading"}
+
+    def test_same_stem_with_different_suffixes_stays_separate(
+        self, tmp_path: Path
+    ) -> None:
+        # Both suffixes are handled by this tier, so dropping the extension
+        # from the module qn would merge the two files onto one Module node
+        # and merge their identically-named sections with it.
+        mock = _run(
+            tmp_path,
+            {"docs/guide.md": "# Alpha\n", "docs/guide.markdown": "# Alpha\n"},
+        )
+        modules = [
+            p
+            for p in _nodes(mock, MODULE)
+            if str(p.get(cs.KEY_PATH, "")).startswith("docs/guide")
+        ]
+        assert len({p[cs.KEY_QUALIFIED_NAME] for p in modules}) == 2
+        assert len(_qns(mock, SECTION)) == 2
 
     def test_nested_directory_paths_recorded(self, tmp_path: Path) -> None:
         mock = _run(tmp_path, {"docs/guide/plan.md": "# Deep\n"})

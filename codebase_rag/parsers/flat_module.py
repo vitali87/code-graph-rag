@@ -26,17 +26,26 @@ def emit_flat_module(
     project_name: str,
     file_path: Path,
     structural_elements: dict[Path, str | None],
+    distinguish_suffix: bool = False,
 ) -> str:
     """Emit a file's Module node and its containment edge; return its qn.
 
-    The qualified name is flat: no ``__init__``/``mod`` special case and no
-    stem disambiguation, so two files whose stems collide in one directory
-    would share a qn. Add disambiguation here if a tier ever needs it.
+    The qualified name is flat: no ``__init__``/``mod`` special case, and by
+    default the suffix is dropped, so ``a/b.sh`` and ``a/b.bash`` share a qn
+    and therefore one Module node.
+
+    ``distinguish_suffix`` keeps the extension in the name (``guide_md``) for
+    tiers that accept several suffixes for the same language and must not
+    merge two such files. It is opt-in because turning it on changes the qn
+    of every module a tier emits.
     """
     relative_path = cached_relative_path(file_path, repo_path)
-    module_qn = cs.SEPARATOR_DOT.join(
-        [project_name, *relative_path.with_suffix("").parts]
-    )
+    parts = list(relative_path.with_suffix("").parts)
+    if distinguish_suffix and relative_path.suffix and parts:
+        # "guide.md" -> "guide_md": the dot would read as another level of
+        # hierarchy to every consumer that splits a qn on it.
+        parts[-1] = f"{parts[-1]}_{relative_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
+    module_qn = cs.SEPARATOR_DOT.join([project_name, *parts])
     ingestor.ensure_node_batch(
         cs.NodeLabel.MODULE,
         {

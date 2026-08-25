@@ -266,6 +266,10 @@ class DocumentTier:
             self._project_name,
             file_path,
             structural_elements,
+            # This tier accepts .md AND .markdown, so dropping the suffix
+            # would merge "guide.md" and "guide.markdown" onto one Module
+            # node and merge their same-named sections with it.
+            distinguish_suffix=True,
         )
 
     def _emit_section(
