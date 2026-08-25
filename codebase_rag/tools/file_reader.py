@@ -58,6 +58,9 @@ class FileReader:
 def create_file_reader_tool(
     file_reader: FileReader, read_record: ReadContentRecord | None = None
 ) -> Tool:
+    """Build the `read_file` tool, recording file content in `read_record` so
+    it feeds the egress taint gate (issue #1128)."""
+
     async def read_file_content(file_path: str) -> str:
         result = await file_reader.read_file(file_path)
         if result.error_message:

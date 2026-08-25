@@ -60,10 +60,14 @@ def create_research_tool(
         return agent_cache[0]
 
     async def research(query: str) -> str:
-        # Gate BEFORE the sub-agent runs: its model is a hosted provider, so
-        # dispatching the query is itself egress. Gating only inside
-        # web_search would hand repository content to the provider first
-        # (issue #1128).
+        """Delegate a web question to the sandboxed sub-agent and return its
+        summary wrapped as data.
+
+        The taint gate runs BEFORE the sub-agent: its model is a hosted
+        provider, so dispatching the query is itself egress. Gating only
+        inside web_search would hand repository content to the provider
+        first (issue #1128).
+        """
         if read_record is not None and read_record.taints(query):
             logger.warning(
                 ls.RESEARCH_TAINTED_REFUSED.format(digest=_query_digest(query))

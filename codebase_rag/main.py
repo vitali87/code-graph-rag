@@ -601,9 +601,12 @@ def _price_current_run(
 
 
 def _absorb_research_usage(usage: RunUsage) -> None:
-    # Research sub-agent runs happen inside a tool call, outside the turn's
-    # own response.usage; fold them into the session totals here (#1128). The
-    # sub-agent reuses the orchestrator model, so orchestrator pricing holds.
+    """Fold research sub-agent token usage into the session totals.
+
+    Sub-agent runs happen inside a tool call, outside the turn's own
+    `response.usage` (#1128). The sub-agent reuses the orchestrator model, so
+    orchestrator pricing holds.
+    """
     session = app_context.session
     session.total_input_tokens += usage.input_tokens
     session.total_output_tokens += usage.output_tokens

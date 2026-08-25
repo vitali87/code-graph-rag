@@ -27,6 +27,9 @@ def format_matches(matches: list[StructuralSearchMatch]) -> str:
 def create_structural_search_tool(
     service: AstGrepService, read_record: ReadContentRecord | None = None
 ) -> Tool:
+    """Build the `structural_search` tool, recording matched source in
+    `read_record` so it feeds the egress taint gate (issue #1128)."""
+
     async def structural_search(pattern: str, language: str | None = None) -> str:
         if not has_ast_grep():
             return cs.AST_GREP_NOT_AVAILABLE

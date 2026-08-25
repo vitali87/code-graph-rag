@@ -519,6 +519,9 @@ class ShellCommander:
 def create_shell_command_tool(
     shell_commander: ShellCommander, read_record: ReadContentRecord | None = None
 ) -> Tool:
+    """Build the `execute_shell_command` tool, recording stdout in
+    `read_record` so it feeds the egress taint gate (issue #1128)."""
+
     async def run_shell_command(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:

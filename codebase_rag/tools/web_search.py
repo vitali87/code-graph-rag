@@ -237,6 +237,8 @@ class WebSearcher:
         self.backend = backend
 
     def search_web(self, query: str, max_results: int = 5) -> str:
+        """Run a search through the configured backend and format the hits,
+        capping the result count and logging the query by digest."""
         if not (query := query.strip()):
             return te.WEB_SEARCH_EMPTY_QUERY
         capped = max(1, min(int(max_results), _MAX_RESULTS))

@@ -158,6 +158,9 @@ class CodeRetriever:
 def create_code_retrieval_tool(
     code_retriever: CodeRetriever, read_record: ReadContentRecord | None = None
 ) -> Tool:
+    """Build the `get_code_snippet` tool, recording returned source in
+    `read_record` so it feeds the egress taint gate (issue #1128)."""
+
     async def get_code_snippet(qualified_name: str) -> CodeSnippet:
         logger.info(ls.CODE_TOOL_RETRIEVE.format(name=qualified_name))
         snippet = await code_retriever.find_code_snippet(qualified_name)

@@ -28,6 +28,9 @@ def format_changes(changes: list[StructuralReplaceChange], dry_run: bool) -> str
 def create_structural_editor_tool(
     service: AstGrepService, read_record: ReadContentRecord | None = None
 ) -> Tool:
+    """Build the `structural_replace` tool, recording rewrite diffs in
+    `read_record` so they feed the egress taint gate (issue #1128)."""
+
     async def structural_replace(
         pattern: str,
         rewrite: str,

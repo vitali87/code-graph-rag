@@ -191,6 +191,8 @@ def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
 def create_get_function_source_tool(
     ingestor: QueryProtocol, read_record: ReadContentRecord | None = None
 ) -> Tool:
+    """Build the `get_function_source` tool, recording returned source in
+    `read_record` so it feeds the egress taint gate (issue #1128)."""
     # ponytail: tool-lifetime roots cache; a project indexed after the first
     # lookup is treated as unknown (permissive) until a new tool instance.
     roots_cache: dict[str, dict[str, str | None]] = {}
