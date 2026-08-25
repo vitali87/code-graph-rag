@@ -39,6 +39,14 @@ repos:
         pass_filenames: false
   - repo: local
     hooks:
+      - id: validate-labels
+        name: validate labels.yml
+        entry: uv run --frozen --no-sync python scripts/validate_labels.py
+        language: system
+        files: ^\.github/labels\.yml$
+        pass_filenames: false
+  - repo: local
+    hooks:
       - id: generate-readme
         name: generate README sections
         entry: uv run --frozen --no-sync python scripts/hooks/generate_readme.py
