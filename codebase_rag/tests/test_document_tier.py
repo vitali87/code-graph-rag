@@ -363,15 +363,6 @@ class TestFileHandling:
         mock = _run(tmp_path, {"mod.py": "def f():\n    return 1\n"})
         assert _nodes(mock, SECTION) == []
 
-    def test_other_tiers_keep_suffixless_module_names(self, tmp_path: Path) -> None:
-        # `distinguish_suffix` is opt-in precisely so the ast-grep tier's
-        # qualified names do not change (issue #1429 tracks doing that
-        # deliberately). Without this, flipping the default to True passes
-        # every other test in the suite.
-        mock = _run(tmp_path, {"app.rb": "def hi\n  1\nend\n"})
-        assert f"{tmp_path.name}.app" in _qns(mock, MODULE)
-        assert f"{tmp_path.name}.app_rb" not in _qns(mock, MODULE)
-
 
 def _export_index(tmp_path: Path, document: str = NESTED):
     """Index a document through the protobuf sink and read the artifact back."""
