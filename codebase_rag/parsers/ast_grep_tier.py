@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, cast
 
 from .. import constants as cs
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
+from .flat_module import emit_flat_module
 
 if TYPE_CHECKING:
     from ast_grep_py import SgNode
@@ -349,40 +350,13 @@ class AstGrepTier:
     def _emit_module(
         self, file_path: Path, structural_elements: dict[Path, str | None]
     ) -> str:
-        relative_path = cached_relative_path(file_path, self._repo_path)
-        # flat module qn, no init/mod special-case or stem disambiguation;
-        # add if a config language collides with another file's stem in the
-        # same directory.
-        module_qn = cs.SEPARATOR_DOT.join(
-            [self._project_name, *relative_path.with_suffix("").parts]
+        return emit_flat_module(
+            self._ingestor,
+            self._repo_path,
+            self._project_name,
+            file_path,
+            structural_elements,
         )
-        self._ingestor.ensure_node_batch(
-            cs.NodeLabel.MODULE,
-            {
-                cs.KEY_QUALIFIED_NAME: module_qn,
-                cs.KEY_NAME: file_path.name,
-                cs.KEY_PATH: relative_path.as_posix(),
-                cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
-            },
-        )
-        parent_rel_path = relative_path.parent
-        parent_container_qn = structural_elements.get(parent_rel_path)
-        if parent_container_qn:
-            parent = (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
-        elif parent_rel_path != Path("."):
-            parent = (
-                cs.NodeLabel.FOLDER,
-                cs.KEY_ABSOLUTE_PATH,
-                cached_resolve_posix(self._repo_path / parent_rel_path),
-            )
-        else:
-            parent = (cs.NodeLabel.PROJECT, cs.KEY_NAME, self._project_name)
-        self._ingestor.ensure_relationship_batch(
-            parent,
-            cs.RelationshipType.CONTAINS_MODULE,
-            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
-        )
-        return module_qn
 
     def _emit_definition(
         self,
