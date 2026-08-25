@@ -41,10 +41,24 @@ def _query_digest(query: str) -> str:
 
 
 def create_research_tool(
-    research_agent: Agent,
+    build_research_agent: Callable[[], Agent],
     read_record: ReadContentRecord | None = None,
     on_usage: Callable[[RunUsage], None] | None = None,
 ) -> Tool:
+    """Build the orchestrator's `research` delegation tool (issue #1128).
+
+    The sub-agent is built on first use and cached, never at wiring time:
+    constructing its model validates the provider (for Ollama, a liveness
+    probe), so ordinary sessions must not pay for a capability they may never
+    invoke.
+    """
+    agent_cache: list[Agent] = []
+
+    def _agent() -> Agent:
+        if not agent_cache:
+            agent_cache.append(build_research_agent())
+        return agent_cache[0]
+
     async def research(query: str) -> str:
         # Gate BEFORE the sub-agent runs: its model is a hosted provider, so
         # dispatching the query is itself egress. Gating only inside
@@ -57,7 +71,10 @@ def create_research_tool(
             return te.WEB_SEARCH_TAINTED_QUERY
         logger.info(ls.RESEARCH_DELEGATED.format(digest=_query_digest(query)))
         try:
-            result = await research_agent.run(query)
+            # Construction is inside the try: a lazily built sub-agent can
+            # fail here (misconfigured or unreachable provider), and that must
+            # surface as a tool error, not a crashed turn.
+            result = await _agent().run(query)
         except Exception as e:
             logger.error(
                 ls.RESEARCH_FAILED.format(digest=_query_digest(query), error=e)

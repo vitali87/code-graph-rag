@@ -1692,17 +1692,24 @@ def _initialize_services_and_agent(
         structural_editor_tool,
         find_duplicates_tool,
     ]
+
     # Web search is deliberately NOT an orchestrator tool (issue #1128): it
     # lives alone in a leaf research sub-agent, so external web content never
     # shares a context with repository reads and shell. The orchestrator gets
     # a `research` delegation tool whose summary crosses back as data. The
     # search backend registers unconditionally as before: keyless DuckDuckGo
     # by default, WEB_SEARCH_PROVIDER=serpdive (with SERPDIVE_API_KEY) opt-in.
-    web_search_tool = create_web_search_tool(make_web_searcher(), read_record)
-    research_agent = create_research_agent([web_search_tool])
+    # Built lazily on first research call: constructing the sub-agent's model
+    # validates the provider (an Ollama liveness probe, for one), which
+    # ordinary sessions should not pay for when they never research anything.
+    def _build_research_agent() -> Agent:
+        return create_research_agent(
+            [create_web_search_tool(make_web_searcher(), read_record)]
+        )
+
     agentic_tools.append(
         create_research_tool(
-            research_agent, read_record, on_usage=_absorb_research_usage
+            _build_research_agent, read_record, on_usage=_absorb_research_usage
         )
     )
 

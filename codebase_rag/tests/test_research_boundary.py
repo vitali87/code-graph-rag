@@ -9,6 +9,7 @@ before anything leaves the machine.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -146,7 +147,7 @@ class TestResearchTool:
     async def test_summary_returns_inside_a_data_only_envelope(self) -> None:
         summary = "Rust 1.80 stabilized LazyCell.\nSources:\nhttps://blog.rust-lang.org"
         agent = self._agent_returning(summary)
-        tool = create_research_tool(agent)
+        tool = create_research_tool(lambda: agent)
 
         out = await tool.function(query="rust 1.80 changes")
 
@@ -158,7 +159,7 @@ class TestResearchTool:
     async def test_usage_is_reported_to_the_callback(self) -> None:
         agent = self._agent_returning("summary")
         usages: list[RunUsage] = []
-        tool = create_research_tool(agent, on_usage=usages.append)
+        tool = create_research_tool(lambda: agent, on_usage=usages.append)
 
         await tool.function(query="q")
 
@@ -167,14 +168,14 @@ class TestResearchTool:
     async def test_subagent_failure_returns_an_error_string(self) -> None:
         agent = MagicMock()
         agent.run = AsyncMock(side_effect=RuntimeError("boom"))
-        tool = create_research_tool(agent)
+        tool = create_research_tool(lambda: agent)
 
         out = await tool.function(query="q")
 
         assert out == te.RESEARCH_FAILED.format(error="boom")
 
     def test_tool_is_registered_with_the_expected_name(self) -> None:
-        tool = create_research_tool(MagicMock())
+        tool = create_research_tool(MagicMock)
         assert tool.name == str(AgenticToolName.RESEARCH)
 
 
@@ -188,7 +189,7 @@ class TestResearchEgressGate:
         record.record(SECRET)
         agent = MagicMock()
         agent.run = AsyncMock()
-        tool = create_research_tool(agent, record)
+        tool = create_research_tool(lambda: agent, record)
 
         out = await tool.function(query=f"what is {SECRET} for")
 
@@ -204,7 +205,7 @@ class TestResearchEgressGate:
         result.output = "summary"
         result.usage = RunUsage(input_tokens=1, output_tokens=1)
         agent.run = AsyncMock(return_value=result)
-        tool = create_research_tool(agent, record)
+        tool = create_research_tool(lambda: agent, record)
 
         await tool.function(query="pydantic-ai agent retries semantics")
 
@@ -299,16 +300,52 @@ class TestOrchestratorWiring:
             patch.object(main_mod, "create_research_agent") as mock_research_agent,
             patch.object(main_mod, "create_rag_orchestrator") as mock_orchestrator,
         ):
-            mock_research_agent.return_value = MagicMock()
+            agent = MagicMock()
+            agent.run = AsyncMock()
+            mock_research_agent.return_value = agent
             mock_orchestrator.return_value = (MagicMock(), "prompt")
 
             main_mod._initialize_services_and_agent(str(tmp_path), MagicMock())
 
-        orchestrator_names = {
-            t.name for t in mock_orchestrator.call_args.kwargs["tools"]
-        }
-        assert str(AgenticToolName.WEB_SEARCH) not in orchestrator_names
-        assert str(AgenticToolName.RESEARCH) in orchestrator_names
+            orchestrator_tools = mock_orchestrator.call_args.kwargs["tools"]
+            orchestrator_names = {t.name for t in orchestrator_tools}
+            assert str(AgenticToolName.WEB_SEARCH) not in orchestrator_names
+            assert str(AgenticToolName.RESEARCH) in orchestrator_names
+
+            # The sub-agent is built lazily, so nothing is constructed until
+            # the research tool is actually used.
+            mock_research_agent.assert_not_called()
+
+            research_tool = next(
+                t for t in orchestrator_tools if t.name == str(AgenticToolName.RESEARCH)
+            )
+            asyncio.run(research_tool.function(query="a harmless research question"))
 
         subagent_tools = mock_research_agent.call_args.args[0]
         assert [t.name for t in subagent_tools] == [str(AgenticToolName.WEB_SEARCH)]
+
+    def test_subagent_is_built_once_and_reused(self, tmp_path: Path) -> None:
+        from codebase_rag import main as main_mod
+
+        with (
+            patch.object(main_mod, "_validate_provider_config"),
+            patch.object(main_mod, "CypherGenerator"),
+            patch.object(main_mod, "create_research_agent") as mock_research_agent,
+            patch.object(main_mod, "create_rag_orchestrator") as mock_orchestrator,
+        ):
+            agent = MagicMock()
+            agent.run = AsyncMock()
+            mock_research_agent.return_value = agent
+            mock_orchestrator.return_value = (MagicMock(), "prompt")
+
+            main_mod._initialize_services_and_agent(str(tmp_path), MagicMock())
+
+            research_tool = next(
+                t
+                for t in mock_orchestrator.call_args.kwargs["tools"]
+                if t.name == str(AgenticToolName.RESEARCH)
+            )
+            asyncio.run(research_tool.function(query="first question"))
+            asyncio.run(research_tool.function(query="second question"))
+
+        assert mock_research_agent.call_count == 1
