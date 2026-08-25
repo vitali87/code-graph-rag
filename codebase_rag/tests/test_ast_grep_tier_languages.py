@@ -492,5 +492,84 @@ def test_kotlin_object_modifier_and_delegation_forms(tmp_path: Path) -> None:
 
 
 def test_kotlin_object_members_still_extracted(tmp_path: Path) -> None:
+    """Functions declared inside an object are still emitted."""
     counts = _node_name_counts(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), FUNCTION)
     assert counts == Counter({"a": 1, "b": 1, "c": 1}), counts
+
+
+def _module_qns(mock: MagicMock) -> list[str]:
+    """Module qualified names in emission order, duplicates kept."""
+    return [
+        c.args[1].get(cs.KEY_QUALIFIED_NAME)
+        for c in mock.ensure_node_batch.call_args_list
+        if str(c.args[0]) == MODULE
+    ]
+
+
+def test_stems_colliding_across_bash_extensions_stay_separate(
+    tmp_path: Path,
+) -> None:
+    """build.sh and build.bash must not merge onto one Module node."""
+    # Module is keyed on qualified_name, so two files whose qn matches MERGE
+    # onto one node: the second file's path overwrites the first's and both
+    # files' functions hang off it (issue #1429).
+    mock = _run(
+        tmp_path,
+        {
+            "build.sh": "foo() { echo hi; }\n",
+            "build.bash": "bar() { echo yo; }\n",
+        },
+    )
+    qns = _module_qns(mock)
+    assert len(set(qns)) == len(qns), f"module qns collided: {qns}"
+
+
+def test_stems_colliding_across_kotlin_extensions_stay_separate(
+    tmp_path: Path,
+) -> None:
+    """Main.kt beside Main.kts must yield two Module nodes."""
+    # A .kts script beside a .kt source sharing a stem is an ordinary Kotlin
+    # layout, so this collision is reachable without unusual naming.
+    mock = _run(
+        tmp_path,
+        {
+            "Main.kt": "fun a() = 1\n",
+            "Main.kts": "fun b() = 2\n",
+        },
+    )
+    qns = _module_qns(mock)
+    assert len(set(qns)) == len(qns), f"module qns collided: {qns}"
+
+
+def test_stems_colliding_across_elixir_extensions_stay_separate(
+    tmp_path: Path,
+) -> None:
+    """mix.ex beside mix.exs must yield two Module nodes."""
+    mock = _run(
+        tmp_path,
+        {
+            "mix.ex": "defmodule A do\n  def a, do: 1\nend\n",
+            "mix.exs": "defmodule B do\n  def b, do: 2\nend\n",
+        },
+    )
+    qns = _module_qns(mock)
+    assert len(set(qns)) == len(qns), f"module qns collided: {qns}"
+
+
+def test_colliding_modules_keep_their_own_paths(tmp_path: Path) -> None:
+    """Each colliding file keeps its own path rather than the last writer's."""
+    # The visible damage: whichever file is written second overwrites the
+    # first's path/absolute_path on the shared node.
+    mock = _run(
+        tmp_path,
+        {
+            "build.sh": "foo() { echo hi; }\n",
+            "build.bash": "bar() { echo yo; }\n",
+        },
+    )
+    by_qn = {
+        c.args[1].get(cs.KEY_QUALIFIED_NAME): c.args[1].get(cs.KEY_PATH)
+        for c in mock.ensure_node_batch.call_args_list
+        if str(c.args[0]) == MODULE
+    }
+    assert set(by_qn.values()) == {"build.sh", "build.bash"}, by_qn

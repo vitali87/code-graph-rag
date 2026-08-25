@@ -350,12 +350,18 @@ class AstGrepTier:
     def _emit_module(
         self, file_path: Path, structural_elements: dict[Path, str | None]
     ) -> str:
+        """Emit the file's Module node and return its qualified name."""
         return emit_flat_module(
             self._ingestor,
             self._repo_path,
             self._project_name,
             file_path,
             structural_elements,
+            # Several tier languages declare two extensions (.sh/.bash,
+            # .kt/.kts, .ex/.exs), and Module is keyed on qualified_name, so
+            # dropping the suffix merges a colliding pair onto one node
+            # (issue #1429).
+            distinguish_suffix=True,
         )
 
     def _emit_definition(
@@ -367,6 +373,7 @@ class AstGrepTier:
         relative_path: str,
         absolute_path: str,
     ) -> None:
+        """Emit one definition node and its DEFINES edge from the module."""
         qualified_name = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
         node_range = node.range()
         self._ingestor.ensure_node_batch(
