@@ -162,6 +162,7 @@ def create_code_retrieval_tool(
     `read_record` so it feeds the egress taint gate (issue #1128)."""
 
     async def get_code_snippet(qualified_name: str) -> CodeSnippet:
+        """Fetch the source for a qualified name, recording what it returns."""
         logger.info(ls.CODE_TOOL_RETRIEVE.format(name=qualified_name))
         snippet = await code_retriever.find_code_snippet(qualified_name)
         if read_record is not None and snippet.found:

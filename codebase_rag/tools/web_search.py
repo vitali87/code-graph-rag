@@ -286,7 +286,12 @@ def make_web_searcher() -> WebSearcher:
 def create_web_search_tool(
     web_searcher: WebSearcher, read_record: ReadContentRecord | None = None
 ) -> Tool:
+    """Build the `web_search` tool, gated by the egress taint check when a
+    `read_record` is supplied (issue #1128)."""
+
     def search_web(query: str, max_results: int = 5) -> str:
+        """Search the web, refusing queries that carry recorded repository
+        content before anything leaves the machine."""
         # Egress taint gate (issue #1128): a query carrying a verbatim span
         # of repository content read this session must not leave the machine.
         if read_record is not None and read_record.taints(query):

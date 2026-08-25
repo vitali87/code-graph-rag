@@ -37,6 +37,7 @@ def create_structural_editor_tool(
         language: str | None = None,
         dry_run: bool = True,
     ) -> str:
+        """Rewrite by AST pattern, recording the diff it returns."""
         if not has_ast_grep():
             return cs.AST_GREP_NOT_AVAILABLE
         try:

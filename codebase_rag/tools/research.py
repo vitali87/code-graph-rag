@@ -55,6 +55,7 @@ def create_research_tool(
     agent_cache: list[Agent] = []
 
     def _agent() -> Agent:
+        """Return the sub-agent, building it on first use."""
         if not agent_cache:
             agent_cache.append(build_research_agent())
         return agent_cache[0]

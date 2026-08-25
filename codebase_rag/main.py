@@ -1642,6 +1642,12 @@ def _initialize_services_and_agent(
     ingestor: QueryProtocol,
     active_projects: list[str] | None = None,
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames, str]:
+    """Build the orchestrator, its tools, and the shared session services.
+
+    Tools returning repository content share one `ReadContentRecord`, and web
+    search is deliberately absent from the orchestrator: it belongs to the
+    research sub-agent instead (issue #1128).
+    """
     _validate_provider_config(
         cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
     )
@@ -1706,6 +1712,7 @@ def _initialize_services_and_agent(
     # validates the provider (an Ollama liveness probe, for one), which
     # ordinary sessions should not pay for when they never research anything.
     def _build_research_agent() -> Agent:
+        """Construct the research sub-agent with web_search as its only tool."""
         return create_research_agent(
             [create_web_search_tool(make_web_searcher(), read_record)]
         )

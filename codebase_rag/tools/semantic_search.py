@@ -198,6 +198,7 @@ def create_get_function_source_tool(
     roots_cache: dict[str, dict[str, str | None]] = {}
 
     async def get_function_source_by_id(node_id: int) -> str:
+        """Fetch a function's source by node id, recording what it returns."""
         logger.info(ls.SEMANTIC_TOOL_SOURCE.format(id=node_id))
 
         source_code = await asyncio.to_thread(

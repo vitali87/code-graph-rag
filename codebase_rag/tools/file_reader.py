@@ -62,6 +62,7 @@ def create_file_reader_tool(
     it feeds the egress taint gate (issue #1128)."""
 
     async def read_file_content(file_path: str) -> str:
+        """Read a file, recording its content on success."""
         result = await file_reader.read_file(file_path)
         if result.error_message:
             return te.ERROR_WRAPPER.format(message=result.error_message)

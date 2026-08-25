@@ -63,6 +63,7 @@ class TestReadContentRecord:
         assert not record.taints("latest pydantic-ai release notes and changelog")
 
     def test_short_query_is_never_tainted(self) -> None:
+        """A query below the span threshold does not trip the windowed rule."""
         # Runs below the span threshold are dominated by identifiers and
         # stock phrases; they must not trip the gate.
         record = ReadContentRecord()
@@ -107,6 +108,7 @@ class TestWebSearchEgressGate:
     ride an outbound web query, even when injected content asks for it."""
 
     def _tool(self, record: ReadContentRecord | None) -> Tool:
+        """Build a web_search tool wired to the given record."""
         return create_web_search_tool(WebSearcher(DuckDuckGoBackend()), record)
 
     def test_tainted_query_is_refused_with_no_egress(self, monkeypatch) -> None:
@@ -129,6 +131,7 @@ class TestWebSearchEgressGate:
         calls: list[str] = []
 
         def fake_post(url, **kwargs):
+            """Record the call and return a benign response."""
             calls.append(url)
             response = MagicMock()
             response.status_code = 200
@@ -148,6 +151,7 @@ class TestWebSearchEgressGate:
         calls: list[str] = []
 
         def fake_post(url, **kwargs):
+            """Record the call and return a benign response."""
             calls.append(url)
             response = MagicMock()
             response.status_code = 200
@@ -209,6 +213,7 @@ class TestShellFeedsTheRecord:
 
 class TestResearchTool:
     def _agent_returning(self, output: str) -> MagicMock:
+        """A sub-agent double whose run() returns the given output."""
         agent = MagicMock()
         result = MagicMock()
         result.output = output
@@ -351,6 +356,7 @@ class TestResearchAgentIsolation:
         """The sub-agent is built with exactly the tools it is handed."""
 
         def _noop(query: str) -> str:
+            """Stand-in web_search callable."""
             return ""
 
         web_tool = Tool(

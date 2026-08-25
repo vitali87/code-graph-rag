@@ -525,6 +525,7 @@ def create_shell_command_tool(
     async def run_shell_command(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:
+        """Run a shell command, recording both output streams."""
         if (
             not shell_commander.is_yolo()
             and _requires_approval(command)

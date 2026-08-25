@@ -44,6 +44,7 @@ class ReadContentRecord:
     __slots__ = ("_contents", "_short_values")
 
     def __init__(self) -> None:
+        """Start an empty record for this session."""
         # Recorded content is already in the LLM context for the rest of the
         # session, so holding it here does not change the memory order.
         self._contents: list[str] = []
