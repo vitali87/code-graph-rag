@@ -275,6 +275,24 @@ class TestQualifiedNames:
         # The display name keeps the dots.
         assert _node_names(mock, SECTION) == {"Release 1.2.3"}
 
+    def test_runs_of_whitespace_collapse_in_the_qualified_name(
+        self, tmp_path: Path
+    ) -> None:
+        # So the same heading reflowed across lines keeps one identity. The
+        # display name keeps the original spacing.
+        mock = _run(tmp_path, {"w.md": "# Alpha   Beta\n"})
+        assert _qns(mock, SECTION) == {f"{_module_qn(tmp_path, 'w.md')}.Alpha Beta"}
+        assert _node_names(mock, SECTION) == {"Alpha   Beta"}
+
+    def test_heading_with_no_text_gets_a_placeholder_name(
+        self, tmp_path: Path
+    ) -> None:
+        # A bare "##" has nothing to name a node after; an empty name would
+        # produce a qualified name ending in a bare separator.
+        mock = _run(tmp_path, {"e.md": "# Top\n\n##\n"})
+        assert "(untitled)" in _node_names(mock, SECTION)
+        assert f"{_module_qn(tmp_path, 'e.md')}.Top.(untitled)" in _qns(mock, SECTION)
+
     def test_heading_literally_containing_the_marker_stays_distinct(
         self, tmp_path: Path
     ) -> None:
