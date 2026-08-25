@@ -46,8 +46,10 @@ A module's qualified name carries its extension: `app.rb` becomes
 `<project>.app_rb`. Several of these languages accept two extensions, and a
 `Module` is identified by its qualified name, so dropping the suffix would
 merge `Main.kt` and `Main.kts` onto one node. Graphs indexed before this keep
-the unsuffixed names until re-indexed with `--clean`, so a saved query written
-against the old shape will not match a re-indexed module.
+the unsuffixed names until the repository is re-indexed (`--update-graph`),
+so a saved query written against the old shape will not match a re-indexed
+module. Re-indexing replaces the old node rather than leaving both: a module
+is cleared by file path, which this change does not alter.
 
 | Language | Extensions | Functions | Classes/Types | Imports |
 |---|---|---|---|---|
