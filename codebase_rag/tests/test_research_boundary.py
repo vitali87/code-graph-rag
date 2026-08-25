@@ -21,6 +21,8 @@ from codebase_rag.prompts import build_research_agent_prompt
 from codebase_rag.taint import TAINT_SPAN_CHARS, ReadContentRecord
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.research import create_research_tool
+from codebase_rag.tools.structural_editor import create_structural_editor_tool
+from codebase_rag.tools.structural_search import create_structural_search_tool
 from codebase_rag.tools.tool_descriptions import AgenticToolName
 from codebase_rag.tools.web_search import (
     DuckDuckGoBackend,
@@ -174,6 +176,76 @@ class TestResearchTool:
     def test_tool_is_registered_with_the_expected_name(self) -> None:
         tool = create_research_tool(MagicMock())
         assert tool.name == str(AgenticToolName.RESEARCH)
+
+
+class TestResearchEgressGate:
+    """The sub-agent runs on a hosted provider, so dispatching a query is
+    itself egress. A tainted query must be refused BEFORE the agent runs, not
+    only inside the downstream web_search call."""
+
+    async def test_tainted_query_never_reaches_the_subagent_model(self) -> None:
+        record = ReadContentRecord()
+        record.record(SECRET)
+        agent = MagicMock()
+        agent.run = AsyncMock()
+        tool = create_research_tool(agent, record)
+
+        out = await tool.function(query=f"what is {SECRET} for")
+
+        assert out == te.WEB_SEARCH_TAINTED_QUERY
+        # Nothing was sent to the hosted provider.
+        agent.run.assert_not_awaited()
+
+    async def test_clean_query_reaches_the_subagent(self) -> None:
+        record = ReadContentRecord()
+        record.record(SECRET)
+        agent = MagicMock()
+        result = MagicMock()
+        result.output = "summary"
+        result.usage = RunUsage(input_tokens=1, output_tokens=1)
+        agent.run = AsyncMock(return_value=result)
+        tool = create_research_tool(agent, record)
+
+        await tool.function(query="pydantic-ai agent retries semantics")
+
+        agent.run.assert_awaited_once()
+
+
+class TestStructuralToolsFeedTheRecord:
+    """structural_search returns matched source and structural_replace returns
+    diffs; both are repository content and must feed the egress gate."""
+
+    async def test_structural_search_output_is_recorded(self) -> None:
+        service = MagicMock()
+        service.search = MagicMock(
+            return_value=[
+                {"file": "a.py", "line": 1, "column": 0, "text": SECRET},
+            ]
+        )
+        record = ReadContentRecord()
+        tool = create_structural_search_tool(service, record)
+
+        with patch(
+            "codebase_rag.tools.structural_search.has_ast_grep", return_value=True
+        ):
+            await tool.function(pattern="$X")
+
+        assert record.taints(f"lookup {SECRET} meaning")
+
+    async def test_structural_replace_diff_is_recorded(self) -> None:
+        service = MagicMock()
+        service.replace = MagicMock(
+            return_value=[{"file": "a.py", "matches": 1, "diff": f"-{SECRET}"}]
+        )
+        record = ReadContentRecord()
+        tool = create_structural_editor_tool(service, record)
+
+        with patch(
+            "codebase_rag.tools.structural_editor.has_ast_grep", return_value=True
+        ):
+            await tool.function(pattern="$X", rewrite="$Y")
+
+        assert record.taints(f"lookup {SECRET} meaning")
 
 
 class TestResearchAgentIsolation:

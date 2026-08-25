@@ -7,9 +7,9 @@ from __future__ import annotations
 TAINT_SPAN_CHARS = 24
 
 
-def _normalize(text: str) -> str:
-    # Whitespace-insensitive matching: reflowing a span across lines must not
-    # defeat the check.
+def _normalize_whitespace(text: str) -> str:
+    """Collapse runs of whitespace so matching is whitespace-insensitive:
+    reflowing a span across lines must not defeat the check."""
     return " ".join(text.split())
 
 
@@ -26,6 +26,12 @@ class ReadContentRecord:
     check closes the remaining direct channel, the orchestrator pasting
     repository bytes into a research query. Paraphrased content still
     passes; that residual is accepted in the issue's design discussion.
+
+    Egress is gated at every hop that can carry a query off the machine: the
+    research tool refuses before the sub-agent's hosted provider is called,
+    and web_search refuses again before the search backend. The provider is
+    itself a network egress point, so gating only at the backend would leak
+    to it first.
     """
 
     __slots__ = ("_contents",)
@@ -36,11 +42,14 @@ class ReadContentRecord:
         self._contents: list[str] = []
 
     def record(self, content: str) -> None:
-        if normalized := _normalize(content):
+        """Record repository content returned to the model this session."""
+        if normalized := _normalize_whitespace(content):
             self._contents.append(normalized)
 
     def taints(self, query: str) -> bool:
-        normalized = _normalize(query)
+        """Report whether the query carries a verbatim span of recorded
+        repository content, and so must not leave the machine."""
+        normalized = _normalize_whitespace(query)
         if len(normalized) < TAINT_SPAN_CHARS:
             return False
         windows = [

@@ -8,6 +8,7 @@ from pydantic_ai import Agent, Tool
 
 from .. import logs as ls
 from .. import tool_errors as te
+from ..taint import ReadContentRecord
 from . import tool_descriptions as td
 
 if TYPE_CHECKING:
@@ -31,17 +32,29 @@ _ENVELOPE = (
 
 
 def _query_digest(query: str) -> str:
-    # Queries can carry user data, so logs identify them by a non-reversible
-    # digest instead of persisting the raw text (same convention as
-    # web_search).
+    """Identify a query in logs by a non-reversible digest.
+
+    Queries can carry user data, so logs never persist the raw text (same
+    convention as web_search).
+    """
     return hashlib.sha256(query.encode()).hexdigest()[:_DIGEST_LENGTH]
 
 
 def create_research_tool(
     research_agent: Agent,
+    read_record: ReadContentRecord | None = None,
     on_usage: Callable[[RunUsage], None] | None = None,
 ) -> Tool:
     async def research(query: str) -> str:
+        # Gate BEFORE the sub-agent runs: its model is a hosted provider, so
+        # dispatching the query is itself egress. Gating only inside
+        # web_search would hand repository content to the provider first
+        # (issue #1128).
+        if read_record is not None and read_record.taints(query):
+            logger.warning(
+                ls.RESEARCH_TAINTED_REFUSED.format(digest=_query_digest(query))
+            )
+            return te.WEB_SEARCH_TAINTED_QUERY
         logger.info(ls.RESEARCH_DELEGATED.format(digest=_query_digest(query)))
         try:
             result = await research_agent.run(query)

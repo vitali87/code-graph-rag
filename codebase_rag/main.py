@@ -1670,8 +1670,12 @@ def _initialize_services_and_agent(
     directory_lister_tool = create_directory_lister_tool(directory_lister)
     semantic_search_tool = create_semantic_search_tool(ingestor)
     function_source_tool = create_get_function_source_tool(ingestor, read_record)
-    structural_search_tool = create_structural_search_tool(ast_grep_service)
-    structural_editor_tool = create_structural_editor_tool(ast_grep_service)
+    structural_search_tool = create_structural_search_tool(
+        ast_grep_service, read_record
+    )
+    structural_editor_tool = create_structural_editor_tool(
+        ast_grep_service, read_record
+    )
     find_duplicates_tool = create_find_duplicates_tool(ingestor)
 
     agentic_tools = [
@@ -1697,7 +1701,9 @@ def _initialize_services_and_agent(
     web_search_tool = create_web_search_tool(make_web_searcher(), read_record)
     research_agent = create_research_agent([web_search_tool])
     agentic_tools.append(
-        create_research_tool(research_agent, on_usage=_absorb_research_usage)
+        create_research_tool(
+            research_agent, read_record, on_usage=_absorb_research_usage
+        )
     )
 
     confirmation_tool_names = ConfirmationToolNames(

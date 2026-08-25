@@ -919,6 +919,9 @@ WEB_SEARCH_UNKNOWN_PROVIDER = (
 WEB_SEARCH_TAINTED_REFUSED = (
     "Web search refused query {digest}: verbatim repository content"
 )
+RESEARCH_TAINTED_REFUSED = (
+    "Research refused query {digest}: verbatim repository content"
+)
 RESEARCH_DELEGATED = "Research sub-agent: query {digest}"
 RESEARCH_FAILED = "Research sub-agent failed for query {digest}: {error}"
 PY_FRONTEND_RUNNING = "Jedi Python frontend: resolving semantic call facts"

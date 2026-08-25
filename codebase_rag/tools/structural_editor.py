@@ -8,6 +8,7 @@ import asyncio
 from pydantic_ai import Tool
 
 from .. import constants as cs
+from ..taint import ReadContentRecord
 from ..types_defs import StructuralReplaceChange
 from ..utils.dependencies import has_ast_grep
 from . import tool_descriptions as td
@@ -15,6 +16,8 @@ from .ast_grep_service import AstGrepService
 
 
 def format_changes(changes: list[StructuralReplaceChange], dry_run: bool) -> str:
+    """Render each changed file and its diff under a header stating whether
+    the rewrite was a dry-run preview or actually applied."""
     header = (
         cs.AST_GREP_DRY_RUN_HEADER if dry_run else cs.AST_GREP_APPLIED_HEADER
     ).format(count=len(changes))
@@ -22,7 +25,9 @@ def format_changes(changes: list[StructuralReplaceChange], dry_run: bool) -> str
     return "\n\n".join([header, *bodies])
 
 
-def create_structural_editor_tool(service: AstGrepService) -> Tool:
+def create_structural_editor_tool(
+    service: AstGrepService, read_record: ReadContentRecord | None = None
+) -> Tool:
     async def structural_replace(
         pattern: str,
         rewrite: str,
@@ -47,7 +52,12 @@ def create_structural_editor_tool(service: AstGrepService) -> Tool:
             return str(e)
         if not changes:
             return cs.AST_GREP_NO_MATCHES.format(pattern=pattern)
-        return format_changes(changes, dry_run)
+        formatted = format_changes(changes, dry_run)
+        if read_record is not None:
+            # Diffs carry repository source on both sides; feed the egress
+            # taint gate (issue #1128).
+            read_record.record(formatted)
+        return formatted
 
     return Tool(
         function=structural_replace,

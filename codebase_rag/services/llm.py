@@ -156,11 +156,14 @@ class CypherGenerator:
 
 
 def create_research_agent(tools: list[Tool]) -> Agent:
-    # The trust boundary for external web content (issue #1128): this leaf
-    # agent holds ONLY external-content tools - no repository reads, no shell
-    # - so a poisoned page has no repository tool to steer. Its transcript
-    # never reaches the orchestrator; only the final summary crosses back,
-    # wrapped as data by the research tool.
+    """Build the leaf research sub-agent, the trust boundary for external web
+    content (issue #1128).
+
+    This agent holds ONLY the external-content tools it is handed: no
+    repository reads, no shell, so a poisoned page has no repository tool to
+    steer. Its transcript never reaches the orchestrator; only the final
+    summary crosses back, wrapped as data by the research tool.
+    """
     try:
         config = settings.active_orchestrator_config
         llm = _create_provider_model(config)

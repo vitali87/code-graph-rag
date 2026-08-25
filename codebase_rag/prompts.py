@@ -221,9 +221,11 @@ def build_rag_orchestrator_prompt(
 
 
 def build_research_agent_prompt() -> str:
-    # The system prompt of the leaf research sub-agent (issue #1128). The
-    # enforcement is structural (the agent holds only web_search); this prompt
-    # shapes behaviour inside that boundary.
+    """Build the system prompt of the leaf research sub-agent (issue #1128).
+
+    The enforcement is structural (the agent holds only web_search); this
+    prompt shapes behaviour inside that boundary.
+    """
     return (
         "You are a web research assistant. Your ONLY capability is the "
         f"`{AgenticToolName.WEB_SEARCH}` tool; you have no access to any "
