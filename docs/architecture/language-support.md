@@ -95,9 +95,14 @@ so a saved query written against the old names stops matching once the graph
 is rebuilt. An incremental sync will not move it: `.md` files were already
 hashed before this tier existed, so `--update-graph` sees them unchanged and
 skips them, leaving the graph exactly as it was. Rebuilding needs
-`cgr start --clean`, which is the remedy `cgr` itself recommends when parser
-code has changed — note that it clears **every** project in the shared graph,
-so run it only when that graph holds just this repository.
+`cgr start --clean --update-graph`: `--clean` on its own wipes the database,
+clears the embeddings, drops the hash cache and returns without indexing
+anything, so it would leave you with an empty graph rather than renamed
+document modules. Both flags together wipe and then re-index in one pass —
+and because the wipe drops the hash cache, the re-index treats every file as
+new, which is what re-emits the documents under their suffixed names. Note
+that the wipe clears **every** project in the shared graph, so run it only
+when that graph holds just this repository.
 Requires the `treesitter-full` extra.
 
 ## Language-Agnostic Design
