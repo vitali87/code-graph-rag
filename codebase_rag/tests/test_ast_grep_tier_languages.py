@@ -506,6 +506,16 @@ def _module_qns(mock: MagicMock) -> list[str]:
     ]
 
 
+def _module_leaf_names(mock: MagicMock) -> set[str]:
+    """Last segment of each module qn.
+
+    Asserted instead of mere uniqueness: a mangled-but-distinct name would
+    satisfy a uniqueness check while still being wrong, so the tests pin the
+    name the suffix rule is supposed to produce.
+    """
+    return {qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] for qn in _module_qns(mock)}
+
+
 def test_stems_colliding_across_bash_extensions_stay_separate(
     tmp_path: Path,
 ) -> None:
@@ -522,6 +532,7 @@ def test_stems_colliding_across_bash_extensions_stay_separate(
     )
     qns = _module_qns(mock)
     assert len(set(qns)) == len(qns), f"module qns collided: {qns}"
+    assert _module_leaf_names(mock) == {"build_sh", "build_bash"}
 
 
 def test_stems_colliding_across_kotlin_extensions_stay_separate(
@@ -539,6 +550,7 @@ def test_stems_colliding_across_kotlin_extensions_stay_separate(
     )
     qns = _module_qns(mock)
     assert len(set(qns)) == len(qns), f"module qns collided: {qns}"
+    assert _module_leaf_names(mock) == {"Main_kt", "Main_kts"}
 
 
 def test_stems_colliding_across_elixir_extensions_stay_separate(
@@ -554,6 +566,7 @@ def test_stems_colliding_across_elixir_extensions_stay_separate(
     )
     qns = _module_qns(mock)
     assert len(set(qns)) == len(qns), f"module qns collided: {qns}"
+    assert _module_leaf_names(mock) == {"mix_ex", "mix_exs"}
 
 
 def test_colliding_modules_keep_their_own_paths(tmp_path: Path) -> None:
