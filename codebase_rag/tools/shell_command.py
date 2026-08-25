@@ -519,8 +519,8 @@ class ShellCommander:
 def create_shell_command_tool(
     shell_commander: ShellCommander, read_record: ReadContentRecord | None = None
 ) -> Tool:
-    """Build the `execute_shell_command` tool, recording stdout in
-    `read_record` so it feeds the egress taint gate (issue #1128)."""
+    """Build the `execute_shell_command` tool, recording stdout and stderr in
+    `read_record` so they feed the egress taint gate (issue #1128)."""
 
     async def run_shell_command(
         ctx: RunContext[None], command: str
@@ -535,8 +535,11 @@ def create_shell_command_tool(
         result = await shell_commander.execute(command)
         if read_record is not None:
             # Shell output is repository content too (`cat`, `grep`); feed
-            # the egress taint gate (issue #1128).
+            # the egress taint gate (issue #1128). Both streams reach the
+            # model, and stderr carries source just as readily (compiler
+            # diagnostics, tracebacks quoting the offending line).
             read_record.record(result.stdout)
+            read_record.record(result.stderr)
         return result
 
     return Tool(

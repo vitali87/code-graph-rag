@@ -34,6 +34,21 @@ from codebase_rag.tools.web_search import (
 SECRET = "-----BEGIN OPENSSH PRIVATE KEY----- b3BlbnNzaC1rZXktdjEAAAAA"
 
 
+def _stub_agent(output: str = "summary") -> MagicMock:
+    """A sub-agent double whose run() yields concrete output and usage.
+
+    The usage must be a real RunUsage: the research tool feeds it to the
+    session accounting callback, and MagicMock token counts would replace the
+    live session totals with mocks.
+    """
+    agent = MagicMock()
+    result = MagicMock()
+    result.output = output
+    result.usage = RunUsage(input_tokens=1, output_tokens=1)
+    agent.run = AsyncMock(return_value=result)
+    return agent
+
+
 class TestReadContentRecord:
     def test_verbatim_span_taints(self) -> None:
         """A verbatim span of recorded content taints a query."""
@@ -141,6 +156,29 @@ class TestFileReaderFeedsTheRecord:
         await tool.function(file_path="missing.py")
 
         assert not record.taints(f"lookup {SECRET} meaning")
+
+
+class TestShellFeedsTheRecord:
+    """Both shell streams reach the model, so both must feed the gate."""
+
+    async def test_stdout_and_stderr_are_recorded(self) -> None:
+        """stderr carries source too (diagnostics, tracebacks)."""
+        from codebase_rag.schemas import ShellCommandResult
+        from codebase_rag.tools.shell_command import create_shell_command_tool
+
+        commander = MagicMock()
+        commander.is_yolo = MagicMock(return_value=True)
+        commander.execute = AsyncMock(
+            return_value=ShellCommandResult(
+                return_code=1, stdout="", stderr=f"error near: {SECRET}"
+            )
+        )
+        record = ReadContentRecord()
+        tool = create_shell_command_tool(commander, record)
+
+        await tool.function(MagicMock(tool_call_approved=True), command="cat key")
+
+        assert record.taints(f"lookup {SECRET} meaning")
 
 
 class TestResearchTool:
@@ -320,9 +358,7 @@ class TestOrchestratorWiring:
             patch.object(main_mod, "create_research_agent") as mock_research_agent,
             patch.object(main_mod, "create_rag_orchestrator") as mock_orchestrator,
         ):
-            agent = MagicMock()
-            agent.run = AsyncMock()
-            mock_research_agent.return_value = agent
+            mock_research_agent.return_value = _stub_agent()
             mock_orchestrator.return_value = (MagicMock(), "prompt")
 
             main_mod._initialize_services_and_agent(str(tmp_path), MagicMock())
@@ -354,9 +390,7 @@ class TestOrchestratorWiring:
             patch.object(main_mod, "create_research_agent") as mock_research_agent,
             patch.object(main_mod, "create_rag_orchestrator") as mock_orchestrator,
         ):
-            agent = MagicMock()
-            agent.run = AsyncMock()
-            mock_research_agent.return_value = agent
+            mock_research_agent.return_value = _stub_agent()
             mock_orchestrator.return_value = (MagicMock(), "prompt")
 
             main_mod._initialize_services_and_agent(str(tmp_path), MagicMock())
