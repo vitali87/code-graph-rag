@@ -375,13 +375,22 @@ cgr daemon up
 cgr start --repo-path /path/to/your/repo --update-graph --clean
 ```
 
-Graphs indexed before duplicate detection existed carry no fingerprints.
-Backfilling them needs `--clean`: fingerprints are stamped while a file is
-parsed, and an incremental sync skips files whose content has not changed, so
-`--update-graph` alone re-parses nothing and backfills nothing. Note that
+Graphs indexed before duplicate detection existed carry no fingerprints, and
+fingerprints are stamped while a file is parsed, so backfilling them means
+re-parsing. Which command does that depends on the hash cache:
+
+- **No hash cache for the repo** (never synced from this machine, or the
+  cache was cleared): `--update-graph` re-parses everything, because a file
+  is skipped only when the cache already holds a matching hash. This
+  backfills fingerprints without touching any other project.
+- **A populated hash cache**: `--update-graph` skips every unchanged file and
+  so backfills nothing. Use `--clean --update-graph` together, which drops
+  the cache and re-indexes in one pass.
+
 `--clean` deletes **every** project in the shared graph, not just this one —
 it prompts before destroying others, so confirm only when that graph holds
-this repository alone.
+this repository alone. `--clean` on its own wipes without re-indexing and
+leaves an empty graph; pair it with `--update-graph`.
 
 ## Basic Usage
 
