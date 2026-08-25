@@ -59,6 +59,29 @@ To add another language, drop a YAML file into
 there for the rule format. Only languages with an ast-grep built-in grammar
 are supported.
 
+## Document Support (document tier)
+
+Markdown files are parsed for **heading structure**. Each heading becomes a
+`Section` node carrying its text, heading level (1-6) and line span, and
+sections nest through `CONTAINS_SECTION` edges so a subheading hangs off the
+heading above it; top-level headings hang off the file's `Module`.
+
+| Format | Extensions | Nodes | Edges |
+|---|---|---|---|
+| Markdown | .md, .markdown | Section (per heading) | CONTAINS_SECTION |
+
+Nesting follows heading **levels**, not the grammar's own `section` nodes:
+ATX headings (`## Heading`) nest in the parse tree, but setext headings
+(text underlined with `===` or `---`) are flat siblings, and only level
+arithmetic treats both alike. A skipped level nests naturally — an `h3`
+directly under an `h1` becomes that `h1`'s child.
+
+Documents have no functions, classes, or calls, so they get neither of the
+code tiers above and are absent from call-graph analyses such as dead-code
+detection. Markdown files still receive the `File` node every indexed file
+gets, so a base install without the grammar simply indexes them as files.
+Requires the `treesitter-full` extra.
+
 ## Language-Agnostic Design
 
 All languages share a unified graph schema, meaning queries work the same way regardless of language. You can query across languages in the same knowledge graph when analysing polyglot repositories.

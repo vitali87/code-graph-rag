@@ -27,6 +27,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | ExternalPackage | `{name: string}` |
 | ExternalModule | `{qualified_name: string, name: string, path: string}` |
 | Resource | `{qualified_name: string, name: string, kind: string}` |
+| Section | `{qualified_name: string, name: string, heading_level: int, start_line: int, end_line: int, path: string, absolute_path: string}` |
 | Pattern | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
 | CodeSmell | same as Pattern |
 | SecurityIssue | same as Pattern |
@@ -34,6 +35,8 @@ The knowledge graph uses a unified schema across all supported languages.
 `ExternalModule` stands for an imported module that lives outside the repository (a third-party or stdlib target of `IMPORTS`, or a positively-external base class target of `INHERITS`/`IMPLEMENTS`).
 
 `Resource` is a synthetic node standing for an external I/O target (a file, environment variable, network endpoint, database, standard stream, socket). Its `qualified_name` has the form `resource::<KIND>::<identity>`, where `identity` is a static string literal when one is available and `<dynamic>` otherwise, and `kind` is one of `FILE`, `NETWORK`, `DATABASE`, `STDIN`, `STDOUT`, `STDERR`, `ENV`, `SOCKET`. Resource nodes are captured only when the `io` capture group is enabled (see below).
+
+`Section` is a heading in a document (Markdown), holding the heading's text, its level (1-6) and its line span. Sections nest through `CONTAINS_SECTION` by heading level, so a subheading hangs off the heading above it rather than off the file; a top-level heading hangs off the document's `Module`.
 
 `Pattern`, `CodeSmell`, and `SecurityIssue` are ast-grep finding nodes, captured only when the `findings` capture group is enabled.
 
@@ -45,6 +48,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | Project, Package, Folder | CONTAINS_FOLDER | Folder |
 | Project, Package, Folder | CONTAINS_FILE | File |
 | Project, Package, Folder | CONTAINS_MODULE | Module |
+| Module, Section | CONTAINS_SECTION | Section |
 | Module, Function, Method, Class | DEFINES | Class, Function, Method, Enum, Interface, Type, Union, Module |
 | Class, Interface, Enum, Type, Union | DEFINES_METHOD | Method |
 | Module | IMPORTS | Module, ExternalModule |
