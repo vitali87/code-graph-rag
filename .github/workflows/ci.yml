@@ -38,6 +38,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Before `uv sync`, which rewrites the lock and would mask the drift.
+      # uv.lock carries its own copy of the project version; when a release
+      # bumps pyproject.toml without it the two disagree on committed main,
+      # and every clone then shows a spurious uv.lock diff as soon as any uv
+      # command resolves the workspace (issue #1432). Runs per PR rather than
+      # at release time so a reintroduced drift fails on the PR that causes
+      # it, instead of surfacing during someone else's release.
+      - name: Check uv.lock is in sync with pyproject.toml
+        run: |
+          uv lock --check
+
       - name: Install dependencies
         run: |
           uv sync --group dev
@@ -49,6 +60,13 @@ jobs:
       - name: Run ruff format check
         run: |
           uv run ruff format --check .
+
+      # label-sync.yml runs only on push to main, so a malformed manifest
+      # would fail after merge rather than on the PR that broke it. Checking
+      # it here puts the failure on the change that causes it (issue #1434).
+      - name: Validate labels.yml
+        run: |
+          uv run python scripts/validate_labels.py
 
   typecheck:
     name: Type Check

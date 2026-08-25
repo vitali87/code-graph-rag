@@ -492,5 +492,139 @@ def test_kotlin_object_modifier_and_delegation_forms(tmp_path: Path) -> None:
 
 
 def test_kotlin_object_members_still_extracted(tmp_path: Path) -> None:
+    """Functions declared inside an object are still emitted."""
     counts = _node_name_counts(_run(tmp_path, {"O.kt": KOTLIN_OBJECTS}), FUNCTION)
     assert counts == Counter({"a": 1, "b": 1, "c": 1}), counts
+
+
+def _module_qns(mock: MagicMock) -> list[str]:
+    """Module qualified names in emission order, duplicates kept."""
+    return [
+        c.args[1].get(cs.KEY_QUALIFIED_NAME)
+        for c in mock.ensure_node_batch.call_args_list
+        if str(c.args[0]) == MODULE
+    ]
+
+
+def _module_leaf_names(mock: MagicMock) -> set[str]:
+    """Last segment of each module qn.
+
+    Asserted instead of mere uniqueness: a mangled-but-distinct name would
+    satisfy a uniqueness check while still being wrong, so the tests pin the
+    name the suffix rule is supposed to produce.
+    """
+    return {qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] for qn in _module_qns(mock)}
+
+
+def test_stems_colliding_across_bash_extensions_stay_separate(
+    tmp_path: Path,
+) -> None:
+    """build.sh and build.bash must not merge onto one Module node."""
+    # Module is keyed on qualified_name, so two files whose qn matches MERGE
+    # onto one node (issue #1429). The path and DEFINES consequences of that
+    # merge have their own tests below.
+    mock = _run(
+        tmp_path,
+        {
+            "build.sh": "foo() { echo hi; }\n",
+            "build.bash": "bar() { echo yo; }\n",
+        },
+    )
+    qns = _module_qns(mock)
+    assert len(set(qns)) == len(qns), f"module qns collided: {qns}"
+    assert _module_leaf_names(mock) == {"build_sh", "build_bash"}
+
+
+def test_stems_colliding_across_kotlin_extensions_stay_separate(
+    tmp_path: Path,
+) -> None:
+    """Main.kt beside Main.kts must yield two Module nodes."""
+    # A .kts script beside a .kt source sharing a stem is an ordinary Kotlin
+    # layout, so this collision is reachable without unusual naming.
+    mock = _run(
+        tmp_path,
+        {
+            "Main.kt": "fun a() = 1\n",
+            "Main.kts": "fun b() = 2\n",
+        },
+    )
+    qns = _module_qns(mock)
+    assert len(set(qns)) == len(qns), f"module qns collided: {qns}"
+    assert _module_leaf_names(mock) == {"Main_kt", "Main_kts"}
+
+
+def test_stems_colliding_across_elixir_extensions_stay_separate(
+    tmp_path: Path,
+) -> None:
+    """mix.ex beside mix.exs must yield two Module nodes."""
+    mock = _run(
+        tmp_path,
+        {
+            "mix.ex": "defmodule A do\n  def a, do: 1\nend\n",
+            "mix.exs": "defmodule B do\n  def b, do: 2\nend\n",
+        },
+    )
+    qns = _module_qns(mock)
+    assert len(set(qns)) == len(qns), f"module qns collided: {qns}"
+    assert _module_leaf_names(mock) == {"mix_ex", "mix_exs"}
+
+
+def _defines_edges(mock: MagicMock) -> set[tuple[str, str]]:
+    """(parent qn, child qn) for every DEFINES edge."""
+    return {
+        (c.args[0][2], c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == DEFINES
+    }
+
+
+def test_colliding_files_keep_their_own_functions(tmp_path: Path) -> None:
+    """Each file's functions hang off its own module, not a shared one.
+
+    The merge's other half: with one Module for both files, `foo` and `bar`
+    both attach to it, so the graph claims build.sh defines a function it
+    does not contain (issue #1429).
+    """
+    mock = _run(
+        tmp_path,
+        {
+            "build.sh": "foo() { echo hi; }\n",
+            "build.bash": "bar() { echo yo; }\n",
+        },
+    )
+    edges = {
+        (parent.rsplit(cs.SEPARATOR_DOT, 1)[-1], child.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        for parent, child in _defines_edges(mock)
+    }
+    assert edges == {("build_sh", "foo"), ("build_bash", "bar")}, edges
+
+
+def test_colliding_modules_keep_their_own_paths(tmp_path: Path) -> None:
+    """Each colliding file keeps its own path rather than the last writer's."""
+    # The visible damage: whichever file is written second overwrites the
+    # first's path/absolute_path on the shared node.
+    mock = _run(
+        tmp_path,
+        {
+            "build.sh": "foo() { echo hi; }\n",
+            "build.bash": "bar() { echo yo; }\n",
+        },
+    )
+    by_qn = {
+        c.args[1].get(cs.KEY_QUALIFIED_NAME): c.args[1].get(cs.KEY_PATH)
+        for c in mock.ensure_node_batch.call_args_list
+        if str(c.args[0]) == MODULE
+    }
+    assert set(by_qn.values()) == {"build.sh", "build.bash"}, by_qn
+
+
+def test_single_extension_language_also_carries_its_suffix(tmp_path: Path) -> None:
+    """The suffix rule applies to every tier language, not only colliding ones.
+
+    Ruby declares one extension, so nothing forces `app_rb` for correctness
+    here -- but the flag is tier-wide, and this pins the shape so a later
+    change to the flag or the separator has to update this test explicitly
+    rather than silently renaming every ast-grep module (issue #1429).
+    """
+    mock = _run(tmp_path, {"app.rb": "def hello\n  1\nend\n"})
+    assert _module_leaf_names(mock) == {"app_rb"}
