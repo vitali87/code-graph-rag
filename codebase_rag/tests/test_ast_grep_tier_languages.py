@@ -521,8 +521,8 @@ def test_stems_colliding_across_bash_extensions_stay_separate(
 ) -> None:
     """build.sh and build.bash must not merge onto one Module node."""
     # Module is keyed on qualified_name, so two files whose qn matches MERGE
-    # onto one node: the second file's path overwrites the first's and both
-    # files' functions hang off it (issue #1429).
+    # onto one node (issue #1429). The path and DEFINES consequences of that
+    # merge have their own tests below.
     mock = _run(
         tmp_path,
         {
@@ -567,6 +567,36 @@ def test_stems_colliding_across_elixir_extensions_stay_separate(
     qns = _module_qns(mock)
     assert len(set(qns)) == len(qns), f"module qns collided: {qns}"
     assert _module_leaf_names(mock) == {"mix_ex", "mix_exs"}
+
+
+def _defines_edges(mock: MagicMock) -> set[tuple[str, str]]:
+    """(parent qn, child qn) for every DEFINES edge."""
+    return {
+        (c.args[0][2], c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == DEFINES
+    }
+
+
+def test_colliding_files_keep_their_own_functions(tmp_path: Path) -> None:
+    """Each file's functions hang off its own module, not a shared one.
+
+    The merge's other half: with one Module for both files, `foo` and `bar`
+    both attach to it, so the graph claims build.sh defines a function it
+    does not contain (issue #1429).
+    """
+    mock = _run(
+        tmp_path,
+        {
+            "build.sh": "foo() { echo hi; }\n",
+            "build.bash": "bar() { echo yo; }\n",
+        },
+    )
+    edges = {
+        (parent.rsplit(cs.SEPARATOR_DOT, 1)[-1], child.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        for parent, child in _defines_edges(mock)
+    }
+    assert edges == {("build_sh", "foo"), ("build_bash", "bar")}, edges
 
 
 def test_colliding_modules_keep_their_own_paths(tmp_path: Path) -> None:
