@@ -278,11 +278,21 @@ class TestQualifiedNames:
     def test_runs_of_whitespace_collapse_in_the_qualified_name(
         self, tmp_path: Path
     ) -> None:
-        # So the same heading reflowed across lines keeps one identity. The
-        # display name keeps the original spacing.
+        # Repeated spaces within one heading line. The display name keeps the
+        # original spacing; only the qualified name collapses.
         mock = _run(tmp_path, {"w.md": "# Alpha   Beta\n"})
         assert _qns(mock, SECTION) == {f"{_module_qn(tmp_path, 'w.md')}.Alpha Beta"}
         assert _node_names(mock, SECTION) == {"Alpha   Beta"}
+
+    def test_heading_text_spanning_lines_keeps_one_identity(
+        self, tmp_path: Path
+    ) -> None:
+        # A setext heading's text really can span physical lines, which the
+        # single-line fixture above does not exercise. The newline must not
+        # reach the qualified name, or reflowing a heading would rename it.
+        mock = _run(tmp_path, {"r.md": "Alpha\nBeta\n=====\n"})
+        assert _qns(mock, SECTION) == {f"{_module_qn(tmp_path, 'r.md')}.Alpha Beta"}
+        assert _node_names(mock, SECTION) == {"Alpha\nBeta"}
 
     def test_heading_with_no_text_gets_a_placeholder_name(self, tmp_path: Path) -> None:
         # A bare "##" has nothing to name a node after; an empty name would
