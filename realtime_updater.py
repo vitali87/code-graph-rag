@@ -227,6 +227,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self._process_change_locked(event)
 
     def _process_change_locked(self, event: FileSystemEvent) -> None:
+        """Re-ingest one changed file, holding the updater lock.
+
+        Deletes what the file previously contributed to the graph, then
+        re-parses it. The delete comes first, so every path that can reach
+        this must re-parse through some tier or the file is left empty.
+        """
         src_path = event.src_path
         if isinstance(src_path, bytes):
             src_path = src_path.decode()
@@ -303,6 +309,13 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                     root_node, language = result
                     self.updater.ast_cache[path] = (root_node, language)
                     self.updater.register_parsed_file(path, language)
+            else:
+                # Step 1 deleted this file's Module and everything hanging
+                # off it. Without this the ast-grep and document tiers never
+                # re-parse, so an edit EMPTIES a Ruby file's definitions or a
+                # Markdown file's sections from the graph instead of
+                # refreshing them (issue #1427).
+                self.updater.process_with_secondary_tier(path)
 
             # Create File node for ALL files (code and non-code like .md, .json, etc.)
             self.updater.factory.structure_processor.process_generic_file(
