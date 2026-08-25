@@ -284,9 +284,7 @@ class TestQualifiedNames:
         assert _qns(mock, SECTION) == {f"{_module_qn(tmp_path, 'w.md')}.Alpha Beta"}
         assert _node_names(mock, SECTION) == {"Alpha   Beta"}
 
-    def test_heading_with_no_text_gets_a_placeholder_name(
-        self, tmp_path: Path
-    ) -> None:
+    def test_heading_with_no_text_gets_a_placeholder_name(self, tmp_path: Path) -> None:
         # A bare "##" has nothing to name a node after; an empty name would
         # produce a qualified name ending in a bare separator.
         mock = _run(tmp_path, {"e.md": "# Top\n\n##\n"})
