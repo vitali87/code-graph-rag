@@ -67,6 +67,12 @@ def validate_labels(text: str) -> int:
         name = entry["name"]
         if not isinstance(name, str) or not name.strip():
             raise LabelError(f"{where}: name must be a non-empty string, got {name!r}")
+        if name != name.strip():
+            # Surrounding whitespace survives into the label and is invisible
+            # in review, so `gh pr edit --add-label` then misses it.
+            raise LabelError(
+                f"{where}: name has leading or trailing whitespace: {name!r}"
+            )
         if name in seen:
             raise LabelError(f"{where}: duplicate label name {name!r}")
         seen.add(name)

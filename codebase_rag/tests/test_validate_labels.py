@@ -78,6 +78,12 @@ class TestRejectsMalformed:
         with pytest.raises(LabelError, match="parse"):
             validate_labels("- name: [unclosed\n")
 
+    def test_padded_name_is_rejected(self) -> None:
+        """Surrounding whitespace survives into the label name and is
+        invisible in review, so `--add-label` would then miss it."""
+        with pytest.raises(LabelError, match="whitespace"):
+            validate_labels("- name: '  a  '\n  color: b60205\n  description: d\n")
+
     def test_empty_list_is_rejected(self) -> None:
         """`[]` parses fine but would leave the sync managing no labels, so a
         PR could silently empty the configuration."""
