@@ -189,6 +189,10 @@ MCP_SEMANTIC_SEARCH = (
     "Requires the 'semantic' extra to be installed."
 )
 
+MCP_FIND_DUPLICATE_CODE = FIND_DUPLICATE_CODE
+
+MCP_GET_FUNCTION_SOURCE = GET_FUNCTION_SOURCE
+
 MCP_PARAM_PROJECT_NAME = "Name of the project to delete (e.g., 'my-project')"
 MCP_PARAM_CONFIRM = "Must be true to confirm the wipe operation"
 MCP_PARAM_NATURAL_LANGUAGE_QUERY = "Your question in plain English about the codebase"
@@ -203,6 +207,19 @@ MCP_PARAM_LIMIT = "Maximum number of lines to read (optional)"
 MCP_PARAM_CONTENT = "Content to write to the file"
 MCP_PARAM_DIRECTORY_PATH = "Relative path to directory from project root (default: '.')"
 MCP_PARAM_TOP_K = "Max number of results to return (optional, default: 5)"
+MCP_PARAM_NODE_ID = (
+    "Internal graph node id of the function or method, as returned by "
+    "semantic_search results"
+)
+MCP_PARAM_PROJECT = "Project to scan (optional; required only when several are indexed)"
+MCP_PARAM_THRESHOLD = (
+    "Similarity threshold between 0 and 1 for 'similar' groups (default: 0.8)"
+)
+MCP_PARAM_MIN_SIZE = (
+    "Minimum skeleton nodes a function must have to be considered, which "
+    "filters trivial getters (default: 15)"
+)
+MCP_PARAM_DUPLICATES_LIMIT = "Max number of duplicate groups to report (default: 20)"
 MCP_PARAM_QUESTION = (
     "A question about the codebase, architecture, functionality, or code relationships"
 )
@@ -297,6 +314,8 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.SEMANTIC_SEARCH: MCP_SEMANTIC_SEARCH,
     MCPToolName.STRUCTURAL_SEARCH: MCP_STRUCTURAL_SEARCH,
     MCPToolName.STRUCTURAL_REPLACE: MCP_STRUCTURAL_REPLACE,
+    MCPToolName.FIND_DUPLICATE_CODE: MCP_FIND_DUPLICATE_CODE,
+    MCPToolName.GET_FUNCTION_SOURCE: MCP_GET_FUNCTION_SOURCE,
     MCPToolName.ASK_AGENT: MCP_ASK_AGENT,
     MCPToolName.FLOW_VERDICT: MCP_FLOW_VERDICT,
     MCPToolName.EXPLAIN_TRACEBACK: MCP_EXPLAIN_TRACEBACK,

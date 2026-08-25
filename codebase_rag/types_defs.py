@@ -428,13 +428,16 @@ class FunctionNodeProps(TypedDict, total=False):
     docstring: str | None
 
 
-MCPToolArguments = dict[str, str | int | None]
+# float admits find_duplicate_code's 0-1 similarity threshold (issue #1342).
+# bool is listed for documentation only, being already a subtype of int, and
+# structural_replace's dry_run default has relied on that since it was added.
+MCPToolArguments = dict[str, str | int | float | bool | None]
 
 
 class MCPInputSchemaProperty(TypedDict, total=False):
     type: str
     description: str
-    default: str | int
+    default: str | int | float | bool
 
 
 MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]
