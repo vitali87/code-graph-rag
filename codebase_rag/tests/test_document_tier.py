@@ -316,6 +316,18 @@ class TestQualifiedNames:
         doc = "# Top\n\n## Notes\n\n## Notes@9\n\nx\n\n## Notes\n"
         mock = _run(tmp_path, {"marker.md": doc})
         qns = _qns(mock, SECTION)
+        # Assert the NAMES, not merely that they are distinct: distinctness is
+        # the property the suffixing establishes, so any scheme that separates
+        # them satisfies it — a counter would pass this test while renaming
+        # the third section "Notes@1", which points at no line in the file.
+        # The suffix has to be the start line for the name to stay meaningful.
+        top = f"{_module_qn(tmp_path, 'marker.md')}.Top"
+        assert qns == {
+            top,
+            f"{top}.Notes",
+            f"{top}.Notes@9",
+            f"{top}.Notes@9@9",
+        }, f"unexpected qualified names: {sorted(qns)}"
         assert len(qns) == len(_nodes(mock, SECTION)), (
             f"qualified names collided, sections merged: {sorted(qns)}"
         )
