@@ -87,6 +87,20 @@ jobs:
               ;;
           esac
 
+          # MAJOR and MINOR are carried through from pyproject.toml's version
+          # string unchanged (only PATCH passes through arithmetic), so a
+          # crafted value there reaches every downstream `sed` that
+          # interpolates this output into a shell command in this
+          # write-enabled job. Refuse anything that is not three plain
+          # numbers, once, here — rather than at each of the three use sites.
+          # Bash pattern matching, not `grep -E`: grep anchors ^...$ per LINE,
+          # so a value whose FIRST line is well-formed passes while carrying a
+          # newline and a payload after it.
+          if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::refusing malformed version '$NEW_VERSION' from pyproject.toml"
+            exit 1
+          fi
+
           echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "Bumping version from $CURRENT to $NEW_VERSION (type: ${{ steps.bump_type.outputs.type }})"
 
@@ -241,12 +255,78 @@ jobs:
         run: |
           sed -i 's/"version": "[^"]*"/"version": "${{ steps.bump_version.outputs.new }}"/g' server.json
 
+      # uv.lock carries its own copy of the project version. Left behind, it
+      # disagrees with pyproject.toml on committed main (`uv lock --check`
+      # fails on a clean checkout), and every clone then shows a spurious
+      # one-line diff the moment any uv command resolves the workspace
+      # (issue #1432). Rewritten in place rather than via `uv lock` because uv
+      # is installed only on release runs while this bump runs on every push,
+      # and because re-resolving here could pull in unrelated dependency
+      # updates that no one reviewed.
+      #
+      # Scoped to the `[[package]]` stanza whose name is code-graph-rag, and
+      # to whichever line in it holds the version, so no dependency's version
+      # can match. A `sed` that assumed `version` follows `name` would keep
+      # working today and silently no-op the day uv emits another field
+      # between them, failing during a release with the stale value committed.
+      # The step therefore ASSERTS the result instead of trusting the edit.
+      - name: Update uv.lock project version
+        if: steps.check_manual.outputs.skip == 'false'
+        env:
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+
+          new = os.environ["NEW_VERSION"]
+          path = "uv.lock"
+          text = open(path, encoding="utf-8").read()
+
+          # Split on stanza boundaries and rewrite only the project's own.
+          # Counts the version lines PRESENT rather than the ones replaced: a
+          # capped substitution would rewrite the first of two and report
+          # success, committing a lockfile that names two versions.
+          version_re = re.compile(r'^version = "[^"]*"$', re.M)
+          stanzas = text.split("[[package]]")
+          hits = 0
+          for i, stanza in enumerate(stanzas):
+              if not re.search(r'^name = "code-graph-rag"$', stanza, re.M):
+                  continue
+              found = len(version_re.findall(stanza))
+              if found != 1:
+                  sys.exit(f"project stanza has {found} version lines, expected 1")
+              stanzas[i] = version_re.sub(f'version = "{new}"', stanza)
+              hits += found
+
+          if hits != 1:
+              sys.exit(f"expected exactly 1 project version line, rewrote {hits}")
+
+          open(path, "w", encoding="utf-8").write("[[package]]".join(stanzas))
+
+          # Re-read and re-locate the stanza rather than pattern-matching a
+          # name-then-version adjacency: the rewrite above deliberately does
+          # not assume that order, so a check that does would fail a release
+          # whose output was correct.
+          written = [
+              stanza
+              for stanza in open(path, encoding="utf-8").read().split("[[package]]")
+              if re.search(r'^name = "code-graph-rag"$', stanza, re.M)
+          ]
+          if len(written) != 1:
+              sys.exit(f"expected 1 project stanza after rewrite, found {len(written)}")
+          versions = version_re.findall(written[0])
+          if versions != [f'version = "{new}"']:
+              sys.exit(f"uv.lock project version is not {new} after rewrite: {versions}")
+          print(f"uv.lock project version set to {new}")
+          PY
+          git diff --stat uv.lock || true
+
       - name: Commit version bump
         if: steps.check_manual.outputs.skip == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml server.json NEWS.md README.md
+          git add pyproject.toml server.json uv.lock NEWS.md README.md
           git commit -m "chore: bump version to ${{ steps.bump_version.outputs.new }}"
           git push
 
