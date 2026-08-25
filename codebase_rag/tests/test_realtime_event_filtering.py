@@ -123,6 +123,7 @@ class TestNonCodeFileHandling:
     def test_non_code_file_deletion_removes_file_node(
         self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
     ) -> None:
+        """Deleting a non-code file removes its File node and nothing else."""
         f = temp_repo / "notes.md"
         handler.dispatch(FileDeletedEvent(str(f)))
         delete_file_calls = [

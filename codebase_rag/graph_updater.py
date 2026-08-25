@@ -2540,9 +2540,11 @@ class GraphUpdater:
     def _load_ast_from_disk(
         self, file_path: Path
     ) -> tuple[Node, cs.SupportedLanguage] | None:
-        # BoundedASTCache loader: re-parse an evicted file. Evicted files carry
-        # stale captures (nodes from the discarded tree), so drop them:
-        # downstream recomputes captures from the fresh tree.
+        """Re-parse a file the AST cache evicted, for BoundedASTCache.
+
+        Evicted files carry stale captures (nodes from the discarded tree),
+        so those are dropped: downstream recomputes them from the fresh tree.
+        """
         language = get_language_for_extension(file_path.suffix)
         if language is None or language not in self.parsers:
             return None
