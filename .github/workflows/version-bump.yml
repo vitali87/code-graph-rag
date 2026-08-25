@@ -303,13 +303,20 @@ jobs:
 
           open(path, "w", encoding="utf-8").write("[[package]]".join(stanzas))
 
-          check = open(path, encoding="utf-8").read()
-          if not re.search(
-              r'^name = "code-graph-rag"$(?:\n(?!\[\[package\]\]).*)*?\n'
-              rf'version = "{re.escape(new)}"$',
-              check, re.M,
-          ):
-              sys.exit(f"uv.lock project version is not {new} after rewrite")
+          # Re-read and re-locate the stanza rather than pattern-matching a
+          # name-then-version adjacency: the rewrite above deliberately does
+          # not assume that order, so a check that does would fail a release
+          # whose output was correct.
+          written = [
+              stanza
+              for stanza in open(path, encoding="utf-8").read().split("[[package]]")
+              if re.search(r'^name = "code-graph-rag"$', stanza, re.M)
+          ]
+          if len(written) != 1:
+              sys.exit(f"expected 1 project stanza after rewrite, found {len(written)}")
+          versions = version_re.findall(written[0])
+          if versions != [f'version = "{new}"']:
+              sys.exit(f"uv.lock project version is not {new} after rewrite: {versions}")
           print(f"uv.lock project version set to {new}")
           PY
           git diff --stat uv.lock || true
