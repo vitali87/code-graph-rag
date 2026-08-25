@@ -87,6 +87,20 @@ jobs:
               ;;
           esac
 
+          # MAJOR and MINOR are carried through from pyproject.toml's version
+          # string unchanged (only PATCH passes through arithmetic), so a
+          # crafted value there reaches every downstream `sed` that
+          # interpolates this output into a shell command in this
+          # write-enabled job. Refuse anything that is not three plain
+          # numbers, once, here — rather than at each of the three use sites.
+          # Bash pattern matching, not `grep -E`: grep anchors ^...$ per LINE,
+          # so a value whose FIRST line is well-formed passes while carrying a
+          # newline and a payload after it.
+          if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::refusing malformed version '$NEW_VERSION' from pyproject.toml"
+            exit 1
+          fi
+
           echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "Bumping version from $CURRENT to $NEW_VERSION (type: ${{ steps.bump_type.outputs.type }})"
 
