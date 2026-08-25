@@ -350,7 +350,15 @@ class AstGrepTier:
     def _emit_module(
         self, file_path: Path, structural_elements: dict[Path, str | None]
     ) -> str:
-        """Emit the file's Module node and return its qualified name."""
+        """Emit the file's Module node and return its qualified name.
+
+        The name carries the extension (`app.rb` -> `<project>.app_rb`) for
+        every tier language, not only the ones that can collide. Graphs
+        indexed before this carry the unsuffixed names and keep them until
+        re-indexed, so a graph holding both vintages holds both shapes; a
+        query written against the old shape will not match a re-indexed
+        module (issue #1429).
+        """
         return emit_flat_module(
             self._ingestor,
             self._repo_path,

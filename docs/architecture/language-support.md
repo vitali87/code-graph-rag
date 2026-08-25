@@ -42,6 +42,13 @@ and there is **no call-graph (`CALLS`) resolution**, so call-graph analyses
 such as dead-code detection skip these files. It requires the `ast-grep`
 extra (`pip install 'code-graph-rag[ast-grep]'`).
 
+A module's qualified name carries its extension: `app.rb` becomes
+`<project>.app_rb`. Several of these languages accept two extensions, and a
+`Module` is identified by its qualified name, so dropping the suffix would
+merge `Main.kt` and `Main.kts` onto one node. Graphs indexed before this keep
+the unsuffixed names until re-indexed with `--clean`, so a saved query written
+against the old shape will not match a re-indexed module.
+
 | Language | Extensions | Functions | Classes/Types | Imports |
 |---|---|---|---|---|
 | Ruby | .rb | methods, singleton methods | classes, modules | require, require_relative |
