@@ -82,3 +82,12 @@ WEB_SEARCH_BAD_RESPONSE = (
     "Error: The web search service returned an unreadable response."
 )
 WEB_SEARCH_NO_RESULTS = "No web results found for '{query}'."
+WEB_SEARCH_TAINTED_QUERY = (
+    "Error: Query refused: it contains a verbatim span of repository content "
+    "read this session, and web search queries must not carry local data off "
+    "the machine. Rephrase the query without quoting local content."
+)
+RESEARCH_FAILED = (
+    "Error: Web research failed. The cause was logged; it is withheld here "
+    "because provider error text is untrusted external content."
+)

@@ -12,6 +12,7 @@ from ..constants import ENCODING_UTF8
 from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME, CYPHER_LIST_PROJECTS
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
+from ..taint import ReadContentRecord
 from ..utils.path_utils import (
     absolute_path_within_project_root,
     project_roots_from_rows,
@@ -31,6 +32,7 @@ class CodeRetriever:
         logger.info(ls.CODE_RETRIEVER_INIT.format(root=self.project_root))
 
     async def _get_project_roots(self) -> dict[str, str | None]:
+        """Return the indexed projects' roots, caching after the first query."""
         if self._project_roots is None:
             self._project_roots = project_roots_from_rows(
                 await asyncio.to_thread(self.ingestor.fetch_all, CYPHER_LIST_PROJECTS)
@@ -38,6 +40,7 @@ class CodeRetriever:
         return self._project_roots
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
+        """Look up a qualified name in the graph and read back its source."""
         logger.info(ls.CODE_RETRIEVER_SEARCH.format(name=qualified_name))
 
         params = {"qn": qualified_name}
@@ -154,10 +157,20 @@ class CodeRetriever:
             )
 
 
-def create_code_retrieval_tool(code_retriever: CodeRetriever) -> Tool:
+def create_code_retrieval_tool(
+    code_retriever: CodeRetriever, read_record: ReadContentRecord | None = None
+) -> Tool:
+    """Build the `get_code_snippet` tool, recording returned source in
+    `read_record` so it feeds the egress taint gate (issue #1128)."""
+
     async def get_code_snippet(qualified_name: str) -> CodeSnippet:
+        """Fetch the source for a qualified name, recording what it returns."""
         logger.info(ls.CODE_TOOL_RETRIEVE.format(name=qualified_name))
-        return await code_retriever.find_code_snippet(qualified_name)
+        snippet = await code_retriever.find_code_snippet(qualified_name)
+        if read_record is not None and snippet.found:
+            # Feed the egress taint gate (issue #1128).
+            read_record.record(snippet.source_code)
+        return snippet
 
     return Tool(
         function=get_code_snippet,
