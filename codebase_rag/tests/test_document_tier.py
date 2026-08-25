@@ -127,6 +127,37 @@ class TestHeadingExtraction:
         # "## Phase One" is the fifth.
         assert _section_by_name(mock, "Phase One")[cs.KEY_START_LINE] == 5
 
+    def test_section_span_covers_the_prose_beneath_the_heading(
+        self, tmp_path: Path
+    ) -> None:
+        # The heading node's own end line would report a 1-2 line span for
+        # every section, losing the body the section actually owns.
+        doc = "# Top\n\nline3\nline4\n\n## Child\n\nline8\nline9\n"
+        mock = _run(tmp_path, {"span.md": doc})
+        child = _section_by_name(mock, "Child")
+        assert (child[cs.KEY_START_LINE], child[cs.KEY_END_LINE]) == (6, 9)
+
+    def test_section_closes_before_the_next_sibling(self, tmp_path: Path) -> None:
+        doc = "# Top\n\n## A\n\na-body\n\n## B\n\nb-body\n"
+        mock = _run(tmp_path, {"sib.md": doc})
+        first = _section_by_name(mock, "A")
+        # "## B" starts on line 7, so A owns through line 6.
+        assert (first[cs.KEY_START_LINE], first[cs.KEY_END_LINE]) == (3, 6)
+
+    def test_parent_span_contains_its_subsections(self, tmp_path: Path) -> None:
+        # A deeper heading is a child, so it stays inside the parent's span
+        # rather than closing it.
+        doc = "# Top\n\n## A\n\na-body\n\n## B\n\nb-body\n"
+        mock = _run(tmp_path, {"sib.md": doc})
+        top = _section_by_name(mock, "Top")
+        assert (top[cs.KEY_START_LINE], top[cs.KEY_END_LINE]) == (1, 9)
+
+    def test_final_section_runs_to_end_of_file(self, tmp_path: Path) -> None:
+        # A trailing newline ends the last line; it must not invent one more.
+        mock = _run(tmp_path, {"eof.md": "# Only\n\nbody\n"})
+        only = _section_by_name(mock, "Only")
+        assert only[cs.KEY_END_LINE] == 3
+
     def test_prose_before_any_heading_emits_no_section(self, tmp_path: Path) -> None:
         # The grammar wraps a preamble in a headingless `section`; emitting it
         # would put a nameless node in the graph.
@@ -237,6 +268,20 @@ class TestQualifiedNames:
         # The display name keeps the dots.
         assert _node_names(mock, SECTION) == {"Release 1.2.3"}
 
+    def test_heading_literally_containing_the_marker_stays_distinct(
+        self, tmp_path: Path
+    ) -> None:
+        # "Notes" is claimed first, then a LITERAL "Notes@9" heading takes
+        # the name the third heading would generate: it repeats "Notes" and
+        # starts on line 9, so one suffix pass yields the already-owned
+        # "Notes@9" and the two sections would merge into one node.
+        doc = "# Top\n\n## Notes\n\n## Notes@9\n\nx\n\n## Notes\n"
+        mock = _run(tmp_path, {"marker.md": doc})
+        qns = _qns(mock, SECTION)
+        assert len(qns) == len(_nodes(mock, SECTION)), (
+            f"qualified names collided, sections merged: {sorted(qns)}"
+        )
+
     def test_same_name_at_different_depths_does_not_collide(
         self, tmp_path: Path
     ) -> None:
@@ -269,82 +314,68 @@ class TestFileHandling:
         assert _nodes(mock, SECTION) == []
 
 
+def _export_index(tmp_path: Path, document: str = NESTED):
+    """Index a document through the protobuf sink and read the artifact back."""
+    import codec.schema_pb2 as pb
+    from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    (project_dir / "d.md").write_text(document, encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ProtobufFileIngestor(str(out), split_index=False),
+        project_dir,
+        parsers,
+        queries,
+    ).run()
+
+    index = pb.GraphCodeIndex()
+    index.ParseFromString((out / "index.bin").read_bytes())
+    return index
+
+
+def _exported_sections(index) -> dict:
+    return {
+        node.section.name: node.section
+        for node in index.nodes
+        if node.WhichOneof("payload") == "section"
+    }
+
+
 class TestProtobufExport:
     # `cgr index --output` serialises through ProtobufFileIngestor, which
     # DROPS any label with no oneof mapping (logging a warning) and writes
     # RELATIONSHIP_TYPE_UNSPECIFIED for an unmapped edge. Without the schema
     # entries the exported index would silently lose the whole hierarchy.
     def test_sections_survive_protobuf_export(self, tmp_path: Path) -> None:
-        import codec.schema_pb2 as pb
-        from codebase_rag.services.protobuf_service import ProtobufFileIngestor
-
-        project_dir = tmp_path / "proj"
-        project_dir.mkdir()
-        (project_dir / "d.md").write_text(NESTED, encoding="utf-8")
-        out = tmp_path / "out"
-        out.mkdir()
-
-        parsers, queries = load_parsers()
-        ingestor = ProtobufFileIngestor(str(out), split_index=False)
-        GraphUpdater(ingestor, project_dir, parsers, queries).run()
-
-        index = pb.GraphCodeIndex()
-        index.ParseFromString((out / "index.bin").read_bytes())
-
-        names = {
-            node.section.name
-            for node in index.nodes
-            if node.WhichOneof("payload") == "section"
+        sections = _exported_sections(_export_index(tmp_path))
+        assert set(sections) == {
+            "Project Plan",
+            "Phase One",
+            "Subtask A",
+            "Phase Two",
         }
-        assert names == {"Project Plan", "Phase One", "Subtask A", "Phase Two"}
 
     def test_section_payload_keeps_its_properties(self, tmp_path: Path) -> None:
-        import codec.schema_pb2 as pb
-        from codebase_rag.services.protobuf_service import ProtobufFileIngestor
-
-        project_dir = tmp_path / "proj"
-        project_dir.mkdir()
-        (project_dir / "d.md").write_text(NESTED, encoding="utf-8")
-        out = tmp_path / "out"
-        out.mkdir()
-
-        parsers, queries = load_parsers()
-        ingestor = ProtobufFileIngestor(str(out), split_index=False)
-        GraphUpdater(ingestor, project_dir, parsers, queries).run()
-
-        index = pb.GraphCodeIndex()
-        index.ParseFromString((out / "index.bin").read_bytes())
-        by_name = {
-            n.section.name: n.section
-            for n in index.nodes
-            if n.WhichOneof("payload") == "section"
-        }
-        assert by_name["Subtask A"].heading_level == 3
-        assert by_name["Project Plan"].start_line == 1
-        assert by_name["Subtask A"].path == "d.md"
+        sections = _exported_sections(_export_index(tmp_path))
+        assert sections["Subtask A"].heading_level == 3
+        assert sections["Project Plan"].start_line == 1
+        assert sections["Subtask A"].path == "d.md"
 
     def test_contains_section_edges_are_typed(self, tmp_path: Path) -> None:
         import codec.schema_pb2 as pb
-        from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 
-        project_dir = tmp_path / "proj"
-        project_dir.mkdir()
-        (project_dir / "d.md").write_text(NESTED, encoding="utf-8")
-        out = tmp_path / "out"
-        out.mkdir()
-
-        parsers, queries = load_parsers()
-        ingestor = ProtobufFileIngestor(str(out), split_index=False)
-        GraphUpdater(ingestor, project_dir, parsers, queries).run()
-
-        index = pb.GraphCodeIndex()
-        index.ParseFromString((out / "index.bin").read_bytes())
+        index = _export_index(tmp_path)
         section_rels = [r for r in index.relationships if r.target_label == SECTION]
         assert section_rels, "no relationships target a Section"
-        unspecified = pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED
+        contains_section = pb.Relationship.RelationshipType.CONTAINS_SECTION
         for rel in section_rels:
-            assert rel.type != unspecified, (
-                f"CONTAINS_SECTION serialised as UNSPECIFIED: {rel}"
+            assert rel.type == contains_section, (
+                f"expected CONTAINS_SECTION, got {rel.type}: {rel}"
             )
 
 

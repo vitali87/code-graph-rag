@@ -36,7 +36,7 @@ The knowledge graph uses a unified schema across all supported languages.
 
 `Resource` is a synthetic node standing for an external I/O target (a file, environment variable, network endpoint, database, standard stream, socket). Its `qualified_name` has the form `resource::<KIND>::<identity>`, where `identity` is a static string literal when one is available and `<dynamic>` otherwise, and `kind` is one of `FILE`, `NETWORK`, `DATABASE`, `STDIN`, `STDOUT`, `STDERR`, `ENV`, `SOCKET`. Resource nodes are captured only when the `io` capture group is enabled (see below).
 
-`Section` is a heading in a document (Markdown), holding the heading's text, its level (1-6) and its line span. Sections nest through `CONTAINS_SECTION` by heading level, so a subheading hangs off the heading above it rather than off the file; a top-level heading hangs off the document's `Module`.
+`Section` is a heading in a document (Markdown), holding the heading's text, its level (1-6) and its line span. Sections nest through `CONTAINS_SECTION` by heading level, so a subheading hangs off the heading above it rather than off the file; a top-level heading hangs off the document's `Module`. The span covers the heading and the prose beneath it, ending at the line before the next heading at the same or a shallower level (or at end of file), so a parent section's span contains its subsections.
 
 `Pattern`, `CodeSmell`, and `SecurityIssue` are ast-grep finding nodes, captured only when the `findings` capture group is enabled.
 

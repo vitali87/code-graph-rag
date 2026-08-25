@@ -66,6 +66,10 @@ Markdown files are parsed for **heading structure**. Each heading becomes a
 sections nest through `CONTAINS_SECTION` edges so a subheading hangs off the
 heading above it; top-level headings hang off the file's `Module`.
 
+A section's span runs from its heading to the line before the next heading at
+the same or a shallower level, or to the end of the file. A deeper heading is
+a child, so a parent's span contains its subsections.
+
 | Format | Extensions | Nodes | Edges |
 |---|---|---|---|
 | Markdown | .md, .markdown | Section (per heading) | CONTAINS_SECTION |

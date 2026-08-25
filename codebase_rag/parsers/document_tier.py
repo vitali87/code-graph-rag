@@ -119,6 +119,36 @@ def _collect_headings(root: Node) -> list[Node]:
     return found
 
 
+def _last_line(source: bytes) -> int:
+    """The 1-based last line of the document.
+
+    A trailing newline ends the final line rather than starting an empty one,
+    so it must not add a line the file does not have.
+    """
+    if not source:
+        return 1
+    trimmed = source[:-1] if source.endswith(b"\n") else source
+    return trimmed.count(b"\n") + 1
+
+
+def _section_end_line(
+    levelled: list[tuple[Node, int]], index: int, level: int, last_line: int
+) -> int:
+    """The last line a section owns: its heading plus the prose beneath it.
+
+    A section runs until the next heading at the same or a shallower level
+    (a deeper heading is its child and stays inside its span), or to the end
+    of the file when nothing closes it. Using the heading node's own end
+    instead would report a one- or two-line span for every section.
+    """
+    for next_heading, next_level in levelled[index + 1 :]:
+        if next_level <= level:
+            # The line before the closing heading; a heading immediately
+            # after another leaves the parent owning only its own line.
+            return max(next_heading.start_point[0], levelled[index][0].end_point[0] + 1)
+    return max(last_line, levelled[index][0].end_point[0] + 1)
+
+
 def _sanitize(name: str) -> str:
     """A heading rendered safe for a dot-separated qualified name.
 
@@ -181,10 +211,16 @@ class DocumentTier:
         # still recover the heading name.
         claimed_qns: set[str] = set()
 
+        # (heading node, level) for every heading, so each section's end can
+        # be read off the NEXT heading that closes it.
+        levelled: list[tuple[Node, int]] = []
         for heading in _collect_headings(root):
             level = _heading_level(heading)
-            if level is None:
-                continue
+            if level is not None:
+                levelled.append((heading, level))
+        last_line = _last_line(source)
+
+        for index, (heading, level) in enumerate(levelled):
             text = _heading_text(heading, source).strip()
             name = _sanitize(text)
 
@@ -194,7 +230,10 @@ class DocumentTier:
             parent_qn = open_headings[-1][1] if open_headings else module_qn
             start_line = heading.start_point[0] + 1
             qualified_name = f"{parent_qn}{cs.SEPARATOR_DOT}{name}"
-            if qualified_name in claimed_qns:
+            # A literal heading can already carry the marker ("## Notes@5"),
+            # so one suffix is not guaranteed to be free; keep suffixing
+            # until the name is unclaimed.
+            while qualified_name in claimed_qns:
                 qualified_name = f"{qualified_name}{cs.DUP_QN_MARKER}{start_line}"
             claimed_qns.add(qualified_name)
 
@@ -203,7 +242,7 @@ class DocumentTier:
                 name=text or _UNTITLED,
                 level=level,
                 start_line=start_line,
-                end_line=heading.end_point[0] + 1,
+                end_line=_section_end_line(levelled, index, level, last_line),
                 parent_qn=parent_qn,
                 parent_is_module=not open_headings,
                 module_qn=module_qn,
