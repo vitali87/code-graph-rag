@@ -93,6 +93,7 @@ ONEOF_ENUM = "enum_node"
 ONEOF_TYPE = "type_node"
 ONEOF_UNION = "union_node"
 ONEOF_RESOURCE = "resource"
+ONEOF_SECTION = "section"
 
 
 class UniqueKeyType(StrEnum):
@@ -120,6 +121,9 @@ class NodeLabel(StrEnum):
     EXTERNAL_PACKAGE = "ExternalPackage"
     EXTERNAL_MODULE = "ExternalModule"
     RESOURCE = "Resource"
+    # A heading and the prose beneath it in a document (issue #1426). Sections
+    # nest by heading level, so a Section CONTAINS_SECTION its subsections.
+    SECTION = "Section"
     # ast-grep findings (issue #413): quality/security signals attached to a
     # Module. Opt-in via CaptureGroup.FINDINGS.
     PATTERN = "Pattern"
@@ -149,6 +153,7 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
     NodeLabel.EXTERNAL_MODULE: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.RESOURCE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.SECTION: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.PATTERN: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.CODE_SMELL: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.SECURITY_ISSUE: UniqueKeyType.QUALIFIED_NAME,
@@ -167,6 +172,7 @@ class RelationshipType(StrEnum):
     CONTAINS_FOLDER = "CONTAINS_FOLDER"
     CONTAINS_FILE = "CONTAINS_FILE"
     CONTAINS_MODULE = "CONTAINS_MODULE"
+    CONTAINS_SECTION = "CONTAINS_SECTION"
     DEFINES = "DEFINES"
     DEFINES_METHOD = "DEFINES_METHOD"
     IMPORTS = "IMPORTS"
@@ -209,6 +215,7 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.CONTAINS_FOLDER,
             RelationshipType.CONTAINS_FILE,
             RelationshipType.CONTAINS_MODULE,
+            RelationshipType.CONTAINS_SECTION,
             RelationshipType.DEFINES,
             RelationshipType.DEFINES_METHOD,
         }
@@ -339,6 +346,10 @@ KEY_DECORATORS = "decorators"
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
 KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
+# Depth of a document heading, 1-6 (issue #1426). Kept distinct from the
+# nesting a Section's CONTAINS_SECTION edges describe: skipped levels mean a
+# level-3 heading can be the direct child of a level-1 one.
+KEY_HEADING_LEVEL = "heading_level"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"
 # Marks a method that overrides a method of an EXTERNAL stdlib base class
@@ -376,7 +387,10 @@ CYPHER_DELETE_MODULE = (
     "MATCH (m:Module {path: $path}) "
     "WHERE m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix "
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..]->(c) "
+    # CONTAINS_SECTION is in the walk because document headings hang off the
+    # Module through it, not DEFINES; without it a re-indexed document keeps
+    # every Section from its previous parse (issue #1426).
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout

@@ -125,6 +125,7 @@ treesitter-full = [
     "tree-sitter-c-sharp>=0.23.5",
     "tree-sitter-dart>=0.1.0",
     "tree-sitter-sql>=0.3.11",
+    "tree-sitter-markdown>=0.5.1",
 ]
 
 semantic = [

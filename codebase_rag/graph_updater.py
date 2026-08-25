@@ -36,6 +36,7 @@ from .parsers.cpp_frontend import (
     run_cpp_frontend_hybrid,
 )
 from .parsers.csharp_frontend import find_csharp_project
+from .parsers.document_tier import DocumentTier
 from .parsers.endpoint_prefixes import (
     CYPHER_DELETE_HANDLER_EXPOSES,
     CYPHER_PROJECT_PY_MODULES,
@@ -371,6 +372,10 @@ class GraphUpdater:
         # Fallback structural tier for languages with no tree-sitter
         # LanguageSpec (e.g. Ruby), driven by ast-grep pattern configs.
         self.ast_grep_tier = AstGrepTier(self._sink, self.repo_path, self.project_name)
+        # Heading structure for documents (issue #1426): Section nodes nested
+        # by heading level. Documents have no calls, so they get neither of
+        # the code tiers above.
+        self.document_tier = DocumentTier(self._sink, self.repo_path, self.project_name)
         # Opt-in ast-grep finding analyzer (issue #413): Pattern/CodeSmell/
         # SecurityIssue nodes from categorized YAML rules, run as a post-pass.
         self.finding_analyzer = FindingAnalyzer(
@@ -2497,6 +2502,10 @@ class GraphUpdater:
             self.factory.definition_processor.process_dependencies(filepath)
         elif self.ast_grep_tier.handles(filepath.suffix):
             self.ast_grep_tier.process_file(
+                filepath, self.factory.structure_processor.structural_elements
+            )
+        elif self.document_tier.handles(filepath.suffix):
+            self.document_tier.process_file(
                 filepath, self.factory.structure_processor.structural_elements
             )
 

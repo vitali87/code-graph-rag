@@ -886,6 +886,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         NodeLabel.RESOURCE,
         "{qualified_name: string, name: string, kind: string}",
     ),
+    NodeSchema(
+        NodeLabel.SECTION,
+        "{qualified_name: string, name: string, heading_level: int, "
+        "start_line: int, end_line: int, path: string, absolute_path: string}",
+    ),
     NodeSchema(NodeLabel.PATTERN, _FINDING_NODE_PROPS),
     NodeSchema(NodeLabel.CODE_SMELL, _FINDING_NODE_PROPS),
     NodeSchema(NodeLabel.SECURITY_ISSUE, _FINDING_NODE_PROPS),
@@ -912,6 +917,11 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.PROJECT, NodeLabel.PACKAGE, NodeLabel.FOLDER),
         RelationshipType.CONTAINS_MODULE,
         (NodeLabel.MODULE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.SECTION),
+        RelationshipType.CONTAINS_SECTION,
+        (NodeLabel.SECTION,),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
