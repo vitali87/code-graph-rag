@@ -283,15 +283,20 @@ jobs:
           text = open(path, encoding="utf-8").read()
 
           # Split on stanza boundaries and rewrite only the project's own.
+          # Counts the version lines PRESENT rather than the ones replaced: a
+          # capped substitution would rewrite the first of two and report
+          # success, committing a lockfile that names two versions.
+          version_re = re.compile(r'^version = "[^"]*"$', re.M)
           stanzas = text.split("[[package]]")
           hits = 0
           for i, stanza in enumerate(stanzas):
               if not re.search(r'^name = "code-graph-rag"$', stanza, re.M):
                   continue
-              stanzas[i], n = re.subn(
-                  r'^version = "[^"]*"$', f'version = "{new}"', stanza, count=1, flags=re.M
-              )
-              hits += n
+              found = len(version_re.findall(stanza))
+              if found != 1:
+                  sys.exit(f"project stanza has {found} version lines, expected 1")
+              stanzas[i] = version_re.sub(f'version = "{new}"', stanza)
+              hits += found
 
           if hits != 1:
               sys.exit(f"expected exactly 1 project version line, rewrote {hits}")
