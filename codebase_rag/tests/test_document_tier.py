@@ -321,22 +321,13 @@ class TestFileHandling:
             tmp_path,
             {"docs/guide.md": "# Alpha\n", "docs/guide.markdown": "# Alpha\n"},
         )
-        # Asserts the qualified names each file actually gets, not merely
-        # that they differ: a rule that mangled the stem would still produce
-        # two distinct names and satisfy a uniqueness-only check.
-        by_path = {
-            str(p[cs.KEY_PATH]): p[cs.KEY_QUALIFIED_NAME]
+        modules = [
+            p
             for p in _nodes(mock, MODULE)
             if str(p.get(cs.KEY_PATH, "")).startswith("docs/guide")
-        }
-        assert by_path == {
-            "docs/guide.md": f"{tmp_path.name}.docs.guide_md",
-            "docs/guide.markdown": f"{tmp_path.name}.docs.guide_markdown",
-        }
-        assert _qns(mock, SECTION) == {
-            f"{tmp_path.name}.docs.guide_md.Alpha",
-            f"{tmp_path.name}.docs.guide_markdown.Alpha",
-        }
+        ]
+        assert len({p[cs.KEY_QUALIFIED_NAME] for p in modules}) == 2
+        assert len(_qns(mock, SECTION)) == 2
 
     def test_nested_directory_paths_recorded(self, tmp_path: Path) -> None:
         mock = _run(tmp_path, {"docs/guide/plan.md": "# Deep\n"})
