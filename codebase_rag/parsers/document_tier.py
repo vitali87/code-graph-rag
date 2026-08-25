@@ -251,7 +251,6 @@ class DocumentTier:
                 end_line=_section_end_line(levelled, index, level, last_line),
                 parent_qn=parent_qn,
                 parent_is_module=not open_headings,
-                module_qn=module_qn,
                 relative_path=relative_path,
                 absolute_path=absolute_path,
             )
@@ -282,7 +281,6 @@ class DocumentTier:
         end_line: int,
         parent_qn: str,
         parent_is_module: bool,
-        module_qn: str,
         relative_path: str,
         absolute_path: str,
     ) -> None:
