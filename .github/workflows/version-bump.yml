@@ -245,16 +245,55 @@ jobs:
       # disagrees with pyproject.toml on committed main (`uv lock --check`
       # fails on a clean checkout), and every clone then shows a spurious
       # one-line diff the moment any uv command resolves the workspace
-      # (issue #1432). Done with sed rather than `uv lock` because uv is
-      # installed only on release runs while this bump runs on every push,
+      # (issue #1432). Rewritten in place rather than via `uv lock` because uv
+      # is installed only on release runs while this bump runs on every push,
       # and because re-resolving here could pull in unrelated dependency
-      # updates that no one reviewed. Anchored to the sole editable
-      # code-graph-rag stanza so no dependency's version can match.
+      # updates that no one reviewed.
+      #
+      # Scoped to the `[[package]]` stanza whose name is code-graph-rag, and
+      # to whichever line in it holds the version, so no dependency's version
+      # can match. A `sed` that assumed `version` follows `name` would keep
+      # working today and silently no-op the day uv emits another field
+      # between them, failing during a release with the stale value committed.
+      # The step therefore ASSERTS the result instead of trusting the edit.
       - name: Update uv.lock project version
         if: steps.check_manual.outputs.skip == 'false'
+        env:
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
         run: |
-          sed -i '/^name = "code-graph-rag"$/{n;s/^version = ".*"$/version = "${{ steps.bump_version.outputs.new }}"/}' uv.lock
-          git diff --quiet uv.lock && echo "uv.lock already current" || git diff --stat uv.lock
+          python3 - <<'PY'
+          import os, re, sys
+
+          new = os.environ["NEW_VERSION"]
+          path = "uv.lock"
+          text = open(path, encoding="utf-8").read()
+
+          # Split on stanza boundaries and rewrite only the project's own.
+          stanzas = text.split("[[package]]")
+          hits = 0
+          for i, stanza in enumerate(stanzas):
+              if not re.search(r'^name = "code-graph-rag"$', stanza, re.M):
+                  continue
+              stanzas[i], n = re.subn(
+                  r'^version = "[^"]*"$', f'version = "{new}"', stanza, count=1, flags=re.M
+              )
+              hits += n
+
+          if hits != 1:
+              sys.exit(f"expected exactly 1 project version line, rewrote {hits}")
+
+          open(path, "w", encoding="utf-8").write("[[package]]".join(stanzas))
+
+          check = open(path, encoding="utf-8").read()
+          if not re.search(
+              r'^name = "code-graph-rag"$(?:\n(?!\[\[package\]\]).*)*?\n'
+              rf'version = "{re.escape(new)}"$',
+              check, re.M,
+          ):
+              sys.exit(f"uv.lock project version is not {new} after rewrite")
+          print(f"uv.lock project version set to {new}")
+          PY
+          git diff --stat uv.lock || true
 
       - name: Commit version bump
         if: steps.check_manual.outputs.skip == 'false'
