@@ -2533,6 +2533,7 @@ class GraphUpdater:
         return False
 
     def _ast_for(self, file_path: Path) -> Node | None:
+        """The cached AST root for a file, or None when it is not cached."""
         entry = self.ast_cache.load(file_path)
         return entry[0] if entry else None
 

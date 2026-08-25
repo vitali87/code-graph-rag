@@ -139,6 +139,7 @@ class TestNonCodeFileHandling:
     def test_non_code_file_has_no_module_node(
         self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
     ) -> None:
+        """A non-code file gets no Module node, only its File node."""
         f = temp_repo / "data.md"
         f.write_text("text", encoding="utf-8")
         handler.dispatch(FileCreatedEvent(str(f)))
@@ -206,6 +207,7 @@ class TestMixedEventSequences:
     def test_rapid_create_modify_delete(
         self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
     ) -> None:
+        """A create/modify/delete burst ends with the file fully removed."""
         f = temp_repo / "ephemeral.py"
         f.write_text("a = 1", encoding="utf-8")
         handler.dispatch(FileCreatedEvent(str(f)))
