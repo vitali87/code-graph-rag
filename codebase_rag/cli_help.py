@@ -318,7 +318,10 @@ HELP_DEADCODE_DECORATOR_ROOT = (
     "Mark symbols with this decorator as entry points. Extends the built-in set."
 )
 HELP_DEADCODE_EXCLUDE = (
-    "Exclude symbols whose file path matches GLOB. '*' spans directories. Repeatable."
+    "Exclude symbols whose file path matches GLOB. The glob must cover the "
+    "whole repo-relative path ('*' spans directories) and be quoted "
+    "('tests/*' for a root-level tests directory, '*/tests/*' for nested "
+    "ones) so the shell cannot expand it first. Repeatable."
 )
 HELP_DEADCODE_INCLUDE_TESTS = (
     "Treat test code as reachable so exercised production code is not reported."
@@ -347,7 +350,10 @@ HELP_DUPLICATES_EXACT_ONLY = (
     "Report only identical-fingerprint clone groups; skip similarity scoring."
 )
 HELP_DUPLICATES_EXCLUDE = (
-    "Exclude symbols whose file path matches GLOB. '*' spans directories. Repeatable."
+    "Exclude symbols whose file path matches GLOB. The glob must cover the "
+    "whole repo-relative path ('*' spans directories) and be quoted "
+    "('tests/*' for a root-level tests directory, '*/tests/*' for nested "
+    "ones) so the shell cannot expand it first. Repeatable."
 )
 HELP_DUPLICATES_FORMAT = "Report format: table or json."
 HELP_DUPLICATES_OUTPUT = "Write the report to this file instead of stdout."

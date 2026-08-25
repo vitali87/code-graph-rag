@@ -442,6 +442,31 @@ to focus on substantial duplication:
 cgr duplicates --min-size 25
 ```
 
+## Excluding Paths
+
+Generated code (protobuf stubs, API clients) is duplication by design, and
+test suites repeat scaffolding on purpose. Exclude them by file-path glob
+rather than raising the threshold:
+
+```bash
+cgr duplicates --exact-only --exclude 'tests/*' --exclude '*_generated*'
+```
+
+Two rules keep a pattern from silently excluding nothing:
+
+- **Quote the glob.** Unquoted, the shell expands `--exclude src/tests/*`
+  into a file listing before `cgr` runs — the first file becomes the pattern
+  and the rest are rejected as extra arguments (or, if the glob matches
+  nothing, some shells pass it through and others error out). Quotes make
+  the shell hand the pattern over untouched.
+- **Cover the whole path.** Patterns are matched against the full
+  repo-relative file path (`src/billing/cart.py`), and a glob only counts
+  when it matches that entire string. A bare directory name like `tests`
+  matches nothing; spell the path out from the repo root (`'tests/*'`,
+  `'src/tests/*'`) and add `'*/tests/*'` when test directories nest deeper.
+  `*` spans `/`, so keep patterns path-scoped: a substring glob like
+  `'*tests*'` also excludes production paths such as `contests/entry.py`.
+
 ## Jumping to the Code
 
 A report is only useful if you can get from a row to the code. The table
@@ -488,7 +513,7 @@ graphs indexed before this existed fall back to plain text until re-indexed.
 | `--threshold` | Minimum similarity score for a near-duplicate pair, between 0 and 1. Default `0.8`. |
 | `--exact-only` | Report only identical-fingerprint clone groups; skip similarity scoring. |
 | `--min-size` | Minimum structural size (skeleton nodes) for a function to be considered. Default `15`. |
-| `--exclude` | Glob matched against a symbol's file path to exclude from the report. Repeatable. |
+| `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it from the report; quote it. Repeatable. |
 | `--format` | Output format: `table` (default) or `json`. |
 | `--output`, `-o` | Write the report to this file instead of stdout. |
 | `--fail-on-found` | Exit with code 1 when any duplicate is found (useful in CI). |
@@ -539,8 +564,8 @@ cgr duplicates --format json --output duplicates.json --fail-on-found \
   --exclude '*_generated*'
 ```
 
-Generated code (protobuf stubs, API clients) is duplication by design;
-exclude it rather than raising the threshold.
+The exclude globs follow the same rules as everywhere else: quoted, and
+covering the whole repo-relative path.
 
 ## Asking the Agent
 
