@@ -47,6 +47,7 @@ evals/oracles/scala_oracle/.scala-build/
 evals/oracles/scala_oracle/.bsp/
 .cgr-hash-cache.json
 .cgr-dir-mtimes.json
+.cgr-parser-fingerprint
 
 # Runtime call traces (pytest --cgr-trace default output)
 cgr-trace.jsonl

@@ -308,6 +308,33 @@ def test_java_files_new_buffered_reader_path_of(tmp_path: Path) -> None:
     assert _has(rels, "A.load", READS_FROM, "resource::FILE::cfg.txt")
 
 
+def test_java_nested_class_shadowing_pathof_pins_literal_identity(
+    tmp_path: Path,
+) -> None:
+    """Pin the accepted limitation (#1216) in the READS_FROM/WRITES_TO walk.
+
+    `Path.of` here is a local nested class, not `java.nio.file.Path`, yet the
+    textual `Path.of` matches the identity registry and the handle gets the
+    concrete literal where FILE::<dynamic> would be correct.
+    """
+    files = {
+        "A.java": (
+            "import java.nio.file.Files;\n"
+            "class A {\n"
+            "  static class Path {\n"
+            "    static java.nio.file.Path of(String p) { return null; }\n"
+            "  }\n"
+            "  void load() throws Exception {\n"
+            '    var r = Files.newBufferedReader(Path.of("cfg.txt"));\n'
+            "    r.readLine();\n"
+            "  }\n"
+            "}\n"
+        )
+    }
+    rels = _run_io(tmp_path, files)
+    assert _has(rels, "A.load", READS_FROM, "resource::FILE::cfg.txt")
+
+
 def test_java_connection_statement_query(tmp_path: Path) -> None:
     # DriverManager.getConnection binds a DATABASE handle; createStatement
     # DERIVES a same-resource handle; executeQuery reads through it.

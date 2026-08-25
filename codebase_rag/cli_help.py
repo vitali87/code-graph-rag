@@ -358,6 +358,10 @@ HELP_DUPLICATES_OUTPUT = "Write the report to this file instead of stdout."
 HELP_DUPLICATES_FAIL_ON_FOUND = (
     "Exit with status 1 when any duplicate is found. Useful in CI."
 )
+HELP_DUPLICATES_OPEN = (
+    "Open group N's first two members side by side in your editor "
+    "(CGR_EDITOR picks the editor; CGR_DIFF_COMMAND overrides the command)."
+)
 
 HELP_DELETE_PROJECT_NAME = "Project name to delete from the graph."
 HELP_DELETE_PROJECT_REPO_PATH = (
