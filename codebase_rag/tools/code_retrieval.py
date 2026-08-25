@@ -32,6 +32,7 @@ class CodeRetriever:
         logger.info(ls.CODE_RETRIEVER_INIT.format(root=self.project_root))
 
     async def _get_project_roots(self) -> dict[str, str | None]:
+        """Return the indexed projects' roots, caching after the first query."""
         if self._project_roots is None:
             self._project_roots = project_roots_from_rows(
                 await asyncio.to_thread(self.ingestor.fetch_all, CYPHER_LIST_PROJECTS)

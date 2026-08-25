@@ -39,13 +39,20 @@ class ReadContentRecord:
     repository bytes into a research query. Paraphrased content still
     passes; that residual is accepted in the issue's design discussion.
 
-    Two match rules, split by length. Long recordings match on any verbatim
-    span of TAINT_SPAN_CHARS, since a fragment of a source file is still that
-    file's content. Short values match only as complete tokens, never as
-    substrings: recording `main` must not refuse "explain the domain model".
-    A short query is checked the same way against long recordings too, so a
-    credential embedded in a larger file is still caught when asked about on
-    its own.
+    Two match rules, split by what was recorded. Long recordings match on any
+    verbatim span of TAINT_SPAN_CHARS, since a fragment of a source file is
+    still that file's content. Short standalone recordings (a file or command
+    output that is entirely a token or key) match as complete tokens, never
+    as substrings: recording `main` must not refuse "explain the domain
+    model".
+
+    A short token appearing INSIDE a long recording is deliberately not
+    matched. Doing so refuses ordinary research: after reading three files of
+    this repo, 9 of 13 realistic short queries (`httpx`, `logger`, `json`,
+    `Agent`, `str`) were refused because those identifiers occur in the
+    source. The protection it would buy is illusory anyway, since padding the
+    query past the span threshold evades it, so it costs the feature's
+    usability and buys nothing an attacker cannot trivially sidestep.
 
     Egress is gated at every hop that can carry a query off the machine: the
     research tool refuses before the sub-agent's hosted provider is called,
@@ -91,13 +98,8 @@ class ReadContentRecord:
             _contains_whole_value(normalized, value) for value in self._short_values
         ):
             return True
-        # A short query is itself a candidate value: "hunter2" asked on its
-        # own must be refused when that token sits inside a longer recorded
-        # file, which the windowed check below cannot see (issue #1128).
         if len(normalized) < TAINT_SPAN_CHARS:
-            return any(
-                _contains_whole_value(content, normalized) for content in self._contents
-            )
+            return False
         windows = [
             normalized[i : i + TAINT_SPAN_CHARS]
             for i in range(len(normalized) - TAINT_SPAN_CHARS + 1)

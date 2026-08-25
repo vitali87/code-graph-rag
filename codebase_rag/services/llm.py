@@ -113,6 +113,7 @@ class CypherGenerator:
     __slots__ = ("agent",)
 
     def __init__(self, active_projects: list[str] | None = None) -> None:
+        """Build the Cypher agent, scoped to the given projects if any."""
         try:
             config = settings.active_cypher_config
             llm = _create_provider_model(config)

@@ -111,14 +111,30 @@ class TestShortStandaloneValues:
         record.record("main")
         assert record.taints("what is main used for in this project")
 
-    def test_short_secret_inside_a_long_file_is_caught(self) -> None:
-        """A credential embedded in a larger file is caught when asked about
-        on its own, which the windowed span check alone cannot see."""
+    def test_short_token_inside_long_content_is_a_documented_limit(self) -> None:
+        """A short token embedded in a long recording is deliberately NOT
+        matched.
+
+        Matching it refuses ordinary research: identifiers like `json` and
+        `logger` occur in any source file, so every short query about them
+        would be refused for the rest of the session. The protection is
+        illusory regardless, since padding the query past the span threshold
+        evades it (issue #1128).
+        """
         record = ReadContentRecord()
         record.record(
             "# config\nDATABASE_PASSWORD=hunter2\nHOST=localhost\n" + "y" * 200
         )
-        assert record.taints("hunter2")
+        assert not record.taints("hunter2")
+
+    def test_common_identifiers_stay_researchable(self) -> None:
+        """Reading source must not block researching its identifiers."""
+        import codebase_rag.taint as taint_module
+
+        record = ReadContentRecord()
+        record.record(Path(taint_module.__file__).read_text(encoding="utf-8"))
+        for query in ("re", "query", "record", "normalized"):
+            assert not record.taints(query), f"wrongly refused {query!r}"
 
     def test_short_query_unrelated_to_long_content_is_clean(self) -> None:
         """Ordinary short questions stay clean against recorded source."""
