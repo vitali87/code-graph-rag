@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 # The narrowest verbatim run (in normalized characters) that counts as
 # repository content appearing in an outbound query. Below this, matches are
 # dominated by identifiers and stock phrases that legitimately appear both in
@@ -11,6 +13,16 @@ def _normalize_whitespace(text: str) -> str:
     """Collapse runs of whitespace so matching is whitespace-insensitive:
     reflowing a span across lines must not defeat the check."""
     return " ".join(text.split())
+
+
+def _contains_whole_value(haystack: str, value: str) -> bool:
+    """Report whether `value` occurs in `haystack` as a complete token.
+
+    Substring containment is wrong for short values: recording `main` would
+    otherwise refuse "explain the domain model". A match must not be flanked
+    by characters that would make it part of a longer word.
+    """
+    return re.search(rf"(?<!\w){re.escape(value)}(?!\w)", haystack) is not None
 
 
 class ReadContentRecord:
@@ -27,12 +39,13 @@ class ReadContentRecord:
     repository bytes into a research query. Paraphrased content still
     passes; that residual is accepted in the issue's design discussion.
 
-    Two match rules, split by what the recording is. Long recordings match on
-    any verbatim span of TAINT_SPAN_CHARS, since a fragment of a source file
-    is still that file's content. Short standalone recordings (a file or a
-    command output that is entirely a token or key) match only in full: they
-    are complete values, and matching them as substrings would refuse
-    ordinary queries that happen to share a few characters with source.
+    Two match rules, split by length. Long recordings match on any verbatim
+    span of TAINT_SPAN_CHARS, since a fragment of a source file is still that
+    file's content. Short values match only as complete tokens, never as
+    substrings: recording `main` must not refuse "explain the domain model".
+    A short query is checked the same way against long recordings too, so a
+    credential embedded in a larger file is still caught when asked about on
+    its own.
 
     Egress is gated at every hop that can carry a query off the machine: the
     research tool refuses before the sub-agent's hosted provider is called,
@@ -58,10 +71,10 @@ class ReadContentRecord:
         if not (normalized := _normalize_whitespace(content)):
             return
         if len(normalized) < TAINT_SPAN_CHARS:
-            # Matched whole, never as a substring: a short recording is a
-            # complete value (a token, a key), so requiring the full value in
-            # the query keeps this free of the false positives that a
-            # sub-threshold substring rule would cause on ordinary source.
+            # Matched as a complete token, never as a substring: a short
+            # recording is a whole value (a token, a key), and substring
+            # matching would let a common one like `main` refuse every later
+            # query containing it inside a longer word.
             self._short_values.append(normalized)
         else:
             self._contents.append(normalized)
@@ -70,14 +83,21 @@ class ReadContentRecord:
         """Report whether the query carries recorded repository content, and
         so must not leave the machine.
 
-        Long recordings match on any verbatim span; short standalone
-        recordings match only in full.
+        Long recordings match on any verbatim span; short values match only
+        as complete tokens, in either direction.
         """
         normalized = _normalize_whitespace(query)
-        if any(value in normalized for value in self._short_values):
+        if any(
+            _contains_whole_value(normalized, value) for value in self._short_values
+        ):
             return True
+        # A short query is itself a candidate value: "hunter2" asked on its
+        # own must be refused when that token sits inside a longer recorded
+        # file, which the windowed check below cannot see (issue #1128).
         if len(normalized) < TAINT_SPAN_CHARS:
-            return False
+            return any(
+                _contains_whole_value(content, normalized) for content in self._contents
+            )
         windows = [
             normalized[i : i + TAINT_SPAN_CHARS]
             for i in range(len(normalized) - TAINT_SPAN_CHARS + 1)

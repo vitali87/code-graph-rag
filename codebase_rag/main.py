@@ -590,6 +590,11 @@ def _cancel_orphaned_tool_calls(message_history: list[ModelMessage]) -> None:
 def _price_current_run(
     usage: RunUsage, model_config: ModelConfig | None
 ) -> Decimal | None:
+    """Price a run's usage, defaulting to the active orchestrator config.
+
+    Returns None when pricing is unavailable; pricing is display-only and
+    never fatal.
+    """
     if model_config is None:
         try:
             model_config = settings.active_orchestrator_config
@@ -620,6 +625,7 @@ def _absorb_research_usage(usage: RunUsage) -> None:
 def _record_and_print_turn_usage(
     turn_input: int, turn_output: int, turn_cost: Decimal, turn_priced: bool
 ) -> None:
+    """Fold one turn's tokens and cost into the session totals and show them."""
     session = app_context.session
     session.total_input_tokens += turn_input
     session.total_output_tokens += turn_output
@@ -1628,6 +1634,7 @@ def prompt_for_unignored_directories(
 
 
 def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
+    """Fail fast at startup when a model role is misconfigured."""
     from .providers.base import get_provider_from_config
 
     try:

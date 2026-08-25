@@ -234,6 +234,7 @@ class WebSearcher:
     __slots__ = ("backend",)
 
     def __init__(self, backend: DuckDuckGoBackend | SerpdiveBackend) -> None:
+        """Wrap a search backend."""
         self.backend = backend
 
     def search_web(self, query: str, max_results: int = 5) -> str:
@@ -271,6 +272,11 @@ class WebSearcher:
 
 
 def make_web_searcher() -> WebSearcher:
+    """Build the searcher for the configured backend.
+
+    Keyless DuckDuckGo by default; WEB_SEARCH_PROVIDER=serpdive with
+    SERPDIVE_API_KEY opts into Serpdive.
+    """
     provider = (
         os.environ.get(WEB_SEARCH_PROVIDER_ENV, DuckDuckGoBackend.name).strip().lower()
     )
@@ -290,10 +296,11 @@ def create_web_search_tool(
     `read_record` is supplied (issue #1128)."""
 
     def search_web(query: str, max_results: int = 5) -> str:
-        """Search the web, refusing queries that carry recorded repository
-        content before anything leaves the machine."""
-        # Egress taint gate (issue #1128): a query carrying a verbatim span
-        # of repository content read this session must not leave the machine.
+        """Search the web through the configured backend.
+
+        Egress taint gate (issue #1128): a query carrying a verbatim span of
+        repository content read this session must not leave the machine.
+        """
         if read_record is not None and read_record.taints(query):
             logger.warning(
                 ls.WEB_SEARCH_TAINTED_REFUSED.format(digest=_query_digest(query))

@@ -133,6 +133,7 @@ class CypherGenerator:
             raise ex.LLMGenerationError(ex.LLM_INIT_CYPHER.format(error=e)) from e
 
     async def generate(self, natural_language_query: str) -> str:
+        """Translate a natural-language question into a read-only Cypher query."""
         logger.info(ls.CYPHER_GENERATING.format(query=natural_language_query))
         try:
             result = await self.agent.run(natural_language_query)
@@ -184,6 +185,7 @@ def create_rag_orchestrator(
     load_instructions: bool = True,
     active_projects: list[str] | None = None,
 ) -> tuple[Agent, str]:
+    """Build the main agent and return it with its system prompt."""
     try:
         config = settings.active_orchestrator_config
         llm = _create_provider_model(config)

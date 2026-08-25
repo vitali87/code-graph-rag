@@ -157,9 +157,16 @@ def get_function_source_code(
 
 
 def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
+    """Build the `semantic_search` tool.
+
+    It returns an index of qualified names and scores, never source, so it
+    does not feed the egress taint record (issue #1128).
+    """
+
     async def semantic_search_functions(
         query: str, top_k: int = 5, project: str | None = None
     ) -> str:
+        """Find functions by intent, returning qualified names and scores."""
         logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
 
         results = await asyncio.to_thread(

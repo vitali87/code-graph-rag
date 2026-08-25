@@ -137,6 +137,7 @@ def build_rag_orchestrator_prompt(
     project_instructions: str | None = None,
     active_projects: list[str] | None = None,
 ) -> str:
+    """Build the orchestrator system prompt for the given toolset."""
     t = extract_tool_names(tools)
     base = f"""You are an expert AI assistant for analyzing codebases. Your answers are based **EXCLUSIVELY** on information retrieved using your tools.
 
@@ -244,7 +245,8 @@ def build_research_agent_prompt() -> str:
 
 
 def _cypher_literal(name: str) -> str:
-    # Escape for a single-quoted Cypher literal so apostrophe names stay valid.
+    """Escape a name for a single-quoted Cypher literal, so that apostrophes
+    in names stay valid."""
     return name.replace("\\", "\\\\").replace("'", "\\'")
 
 

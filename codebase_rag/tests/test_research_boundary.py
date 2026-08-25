@@ -63,9 +63,8 @@ class TestReadContentRecord:
         assert not record.taints("latest pydantic-ai release notes and changelog")
 
     def test_short_query_is_never_tainted(self) -> None:
-        """A query below the span threshold does not trip the windowed rule."""
-        # Runs below the span threshold are dominated by identifiers and
-        # stock phrases; they must not trip the gate.
+        """Runs below the span threshold are dominated by identifiers and
+        stock phrases, so they must not trip the gate."""
         record = ReadContentRecord()
         record.record(SECRET)
         assert not record.taints(SECRET[: TAINT_SPAN_CHARS - 1])
@@ -93,6 +92,42 @@ class TestShortStandaloneValues:
         record = ReadContentRecord()
         record.record("hunter2")
         assert not record.taints("what does the hunt subcommand do")
+
+    def test_common_short_value_does_not_poison_the_session(self) -> None:
+        """Recording a common word must not refuse every later question that
+        happens to contain it inside a longer word."""
+        for value, query in (
+            ("main", "how do I explain the domain model"),
+            ("true", "what does construe mean in this parser"),
+            ("x", "does this function exist"),
+        ):
+            record = ReadContentRecord()
+            record.record(value)
+            assert not record.taints(query), f"{value!r} wrongly refused {query!r}"
+
+    def test_short_value_taints_as_a_whole_token(self) -> None:
+        """Whole-token occurrences are still refused."""
+        record = ReadContentRecord()
+        record.record("main")
+        assert record.taints("what is main used for in this project")
+
+    def test_short_secret_inside_a_long_file_is_caught(self) -> None:
+        """A credential embedded in a larger file is caught when asked about
+        on its own, which the windowed span check alone cannot see."""
+        record = ReadContentRecord()
+        record.record(
+            "# config\nDATABASE_PASSWORD=hunter2\nHOST=localhost\n" + "y" * 200
+        )
+        assert record.taints("hunter2")
+
+    def test_short_query_unrelated_to_long_content_is_clean(self) -> None:
+        """Ordinary short questions stay clean against recorded source."""
+        import codebase_rag.taint as taint_module
+
+        record = ReadContentRecord()
+        record.record(Path(taint_module.__file__).read_text(encoding="utf-8"))
+        for query in ("what does this do", "is it async", "why None"):
+            assert not record.taints(query), f"wrongly refused {query!r}"
 
     def test_ordinary_query_stays_clean_with_source_recorded(self) -> None:
         """Recording real source must not refuse ordinary questions."""

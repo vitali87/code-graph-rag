@@ -27,6 +27,7 @@ class FileReader:
 
     @validate_project_path(FileReadResult, path_arg_name="file_path")
     async def _read_validated(self, file_path: Path) -> FileReadResult:
+        """Read a path already checked to be inside the project root."""
         try:
             if not file_path.is_file():
                 return FileReadResult(

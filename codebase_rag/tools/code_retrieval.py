@@ -39,6 +39,7 @@ class CodeRetriever:
         return self._project_roots
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
+        """Look up a qualified name in the graph and read back its source."""
         logger.info(ls.CODE_RETRIEVER_SEARCH.format(name=qualified_name))
 
         params = {"qn": qualified_name}

@@ -403,6 +403,7 @@ class ShellCommander:
 
     @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
+        """Run a command after the safety checks, capturing both streams."""
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
             if subshell_pattern := _has_subshell(command):
