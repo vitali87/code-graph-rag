@@ -90,6 +90,22 @@ class TestRejectsMalformed:
         with pytest.raises(LabelError, match="differing only in case"):
             validate_labels(text)
 
+    def test_trailing_newline_colour_is_rejected(self) -> None:
+        """`re.match` stops at `$`, which sits before a final newline, so a
+        quoted "b60205\\n" would pass an anchored-looking pattern."""
+        with pytest.raises(LabelError, match="color"):
+            validate_labels('- name: a\n  color: "b60205\\n"\n  description: d\n')
+
+    def test_non_ascii_case_collision_is_rejected(self) -> None:
+        """`str.lower()` leaves 'Straße' and 'STRASSE' distinct; casefold is
+        the comparison built for caseless matching."""
+        text = (
+            "- name: Straße\n  color: b60205\n  description: d\n"
+            "- name: STRASSE\n  color: c60205\n  description: e\n"
+        )
+        with pytest.raises(LabelError, match="differing only in case"):
+            validate_labels(text)
+
     def test_padded_name_is_rejected(self) -> None:
         """Surrounding whitespace survives into the label name and is
         invisible in review, so `--add-label` would then miss it."""

@@ -78,8 +78,9 @@ def validate_labels(text: str) -> int:
         # GitHub matches label names case-insensitively (GET /labels/BUG
         # returns `bug`), but the syncer keys a case-SENSITIVE map on the
         # exact name, so two entries differing only in case become two
-        # concurrent operations against one real label.
-        if name.lower() in {other.lower() for other in seen}:
+        # concurrent operations against one real label. casefold, not lower:
+        # lower() leaves 'Straße' and 'STRASSE' distinct.
+        if name.casefold() in {other.casefold() for other in seen}:
             raise LabelError(
                 f"{where}: label name {name!r} duplicates an earlier entry "
                 f"differing only in case; GitHub treats them as one label"
@@ -109,7 +110,7 @@ def validate_labels(text: str) -> int:
                 f"{raw_color!r}; quote it so leading zeros and digit-only "
                 f"values stay text (color: '000000')."
             )
-        if not COLOR_RE.match(raw_color):
+        if not COLOR_RE.fullmatch(raw_color):
             raise LabelError(
                 f"{where} ({name}): color must be six lowercase hex digits "
                 f"with no '#', got {raw_color!r}"
