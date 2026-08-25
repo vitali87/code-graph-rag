@@ -91,5 +91,5 @@
   description: Skip automated code review
 
 - name: claimed
-  color: B60205
+  color: b60205
   description: An agent/session is actively working this — check before taking it over

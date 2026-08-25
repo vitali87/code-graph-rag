@@ -50,6 +50,13 @@ jobs:
         run: |
           uv run ruff format --check .
 
+      # label-sync.yml runs only on push to main, so a malformed manifest
+      # would fail after merge rather than on the PR that broke it. Checking
+      # it here puts the failure on the change that causes it (issue #1434).
+      - name: Validate labels.yml
+        run: |
+          uv run python scripts/validate_labels.py
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
