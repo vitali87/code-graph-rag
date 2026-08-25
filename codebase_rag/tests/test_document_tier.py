@@ -47,7 +47,12 @@ def _run(tmp_path: Path, files: dict[str, str]) -> MagicMock:
     for rel, content in files.items():
         path = tmp_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        # newline="" disables the platform newline translation write_text
+        # applies by default: on Windows a "\n" in a fixture would reach disk
+        # as "\r\n", so a heading spanning lines would parse as "Alpha\r\nBeta"
+        # and any assertion naming the literal text would fail there only.
+        # Fixtures are byte-for-byte what the test wrote on every platform.
+        path.write_text(content, encoding="utf-8", newline="")
     mock = MagicMock()
     GraphUpdater(
         ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
