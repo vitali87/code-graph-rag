@@ -84,6 +84,14 @@ Documents have no functions, classes, or calls, so they get neither of the
 code tiers above and are absent from call-graph analyses such as dead-code
 detection. Markdown files still receive the `File` node every indexed file
 gets, so a base install without the grammar simply indexes them as files.
+
+A document's qualified name keeps its extension, so `docs/guide.md` becomes
+`<project>.docs.guide_md`. The suffix is part of the name because both `.md`
+and `.markdown` are handled here, and dropping it would merge `guide.md` and
+`guide.markdown` onto one `Module` node along with any identically-named
+sections. Graphs indexed before document support existed hold unsuffixed
+document module names; re-index to move them to the current shape, and note
+that a saved query written against the old names will stop matching.
 Requires the `treesitter-full` extra.
 
 ## Language-Agnostic Design
