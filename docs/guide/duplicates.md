@@ -375,8 +375,13 @@ cgr daemon up
 cgr start --repo-path /path/to/your/repo --update-graph --clean
 ```
 
-Graphs indexed before duplicate detection existed carry no fingerprints;
-re-index once with `--clean` to backfill them.
+Graphs indexed before duplicate detection existed carry no fingerprints.
+Backfilling them needs `--clean`: fingerprints are stamped while a file is
+parsed, and an incremental sync skips files whose content has not changed, so
+`--update-graph` alone re-parses nothing and backfills nothing. Note that
+`--clean` deletes **every** project in the shared graph, not just this one —
+it prompts before destroying others, so confirm only when that graph holds
+this repository alone.
 
 ## Basic Usage
 
