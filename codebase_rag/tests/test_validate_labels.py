@@ -78,6 +78,18 @@ class TestRejectsMalformed:
         with pytest.raises(LabelError, match="parse"):
             validate_labels("- name: [unclosed\n")
 
+    def test_case_differing_duplicate_is_rejected(self) -> None:
+        """GitHub matches label names case-insensitively (GET /labels/BUG
+        returns `bug`), but the syncer keys a case-sensitive map on the exact
+        name. Two such entries become two sync operations racing over one
+        real label, so the outcome depends on goroutine ordering."""
+        text = (
+            "- name: Bug\n  color: b60205\n  description: d\n"
+            "- name: bug\n  color: c60205\n  description: e\n"
+        )
+        with pytest.raises(LabelError, match="differing only in case"):
+            validate_labels(text)
+
     def test_padded_name_is_rejected(self) -> None:
         """Surrounding whitespace survives into the label name and is
         invisible in review, so `--add-label` would then miss it."""

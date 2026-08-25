@@ -75,6 +75,15 @@ def validate_labels(text: str) -> int:
             )
         if name in seen:
             raise LabelError(f"{where}: duplicate label name {name!r}")
+        # GitHub matches label names case-insensitively (GET /labels/BUG
+        # returns `bug`), but the syncer keys a case-SENSITIVE map on the
+        # exact name, so two entries differing only in case become two
+        # concurrent operations against one real label.
+        if name.lower() in {other.lower() for other in seen}:
+            raise LabelError(
+                f"{where}: label name {name!r} duplicates an earlier entry "
+                f"differing only in case; GitHub treats them as one label"
+            )
         seen.add(name)
 
         description = entry["description"]
