@@ -78,6 +78,38 @@ class TestRejectsMalformed:
         with pytest.raises(LabelError, match="parse"):
             validate_labels("- name: [unclosed\n")
 
+    def test_empty_list_is_rejected(self) -> None:
+        """`[]` parses fine but would leave the sync managing no labels, so a
+        PR could silently empty the configuration."""
+        with pytest.raises(LabelError, match="no labels"):
+            validate_labels("[]\n")
+
+    def test_null_name_is_rejected(self) -> None:
+        """The syncer consumes name as a string; null would become 'None'."""
+        with pytest.raises(LabelError, match="name"):
+            validate_labels("- name: null\n  color: b60205\n  description: d\n")
+
+    def test_numeric_name_is_rejected(self) -> None:
+        """An unquoted numeric name must not be coerced into a string."""
+        with pytest.raises(LabelError, match="name"):
+            validate_labels("- name: 123\n  color: b60205\n  description: d\n")
+
+    def test_null_description_is_rejected(self) -> None:
+        """Present-but-null is not a usable description."""
+        with pytest.raises(LabelError, match="description"):
+            validate_labels("- name: a\n  color: b60205\n  description: null\n")
+
+    def test_collection_description_is_rejected(self) -> None:
+        """A list where a string belongs would reach the API malformed."""
+        with pytest.raises(LabelError, match="description"):
+            validate_labels("- name: a\n  color: b60205\n  description: [a, b]\n")
+
+    def test_unquoted_numeric_colour_explains_the_quoting(self) -> None:
+        """`color: 000000` parses as the integer 0, so say why rather than
+        reporting a value the file does not visibly contain."""
+        with pytest.raises(LabelError, match="quote"):
+            validate_labels("- name: a\n  color: 000000\n  description: d\n")
+
     def test_empty_manifest_is_rejected(self) -> None:
         """An empty file would silently sync nothing."""
         with pytest.raises(LabelError, match="empty"):

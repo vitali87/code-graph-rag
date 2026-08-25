@@ -47,6 +47,10 @@ def validate_labels(text: str) -> int:
         raise LabelError(
             f"labels.yml must be a list of labels, got {type(data).__name__}"
         )
+    if not data:
+        # An empty list parses cleanly and would leave the syncer managing
+        # nothing, so a change that empties the file must not read as valid.
+        raise LabelError("labels.yml defines no labels")
 
     seen: set[str] = set()
     for index, entry in enumerate(data):
@@ -56,10 +60,24 @@ def validate_labels(text: str) -> int:
         for key in REQUIRED_KEYS:
             if key not in entry:
                 raise LabelError(f"{where}: missing '{key}'")
-        name = str(entry["name"])
+
+        # The syncer consumes name and description as strings. Coercing a
+        # null, number or list here would push a malformed value through to
+        # the API instead of reporting it against the line that wrote it.
+        name = entry["name"]
+        if not isinstance(name, str) or not name.strip():
+            raise LabelError(f"{where}: name must be a non-empty string, got {name!r}")
         if name in seen:
             raise LabelError(f"{where}: duplicate label name {name!r}")
         seen.add(name)
+
+        description = entry["description"]
+        if not isinstance(description, str) or not description.strip():
+            raise LabelError(
+                f"{where} ({name}): description must be a non-empty string, "
+                f"got {description!r}"
+            )
+
         raw_color = entry["color"]
         if raw_color is None:
             # An unquoted '#rrggbb' is a YAML comment, so the value parses as
@@ -68,11 +86,18 @@ def validate_labels(text: str) -> int:
                 f"{where} ({name}): color is empty. An unquoted '#' starts a "
                 f"YAML comment, so write six bare hex digits (b60205)."
             )
-        color = str(raw_color)
-        if not COLOR_RE.match(color):
+        if not isinstance(raw_color, str):
+            # `color: 000000` is the integer 0, and `color: 123456` is an int
+            # too: both need quoting to survive as six digits.
+            raise LabelError(
+                f"{where} ({name}): color parsed as {type(raw_color).__name__} "
+                f"{raw_color!r}; quote it so leading zeros and digit-only "
+                f"values stay text (color: '000000')."
+            )
+        if not COLOR_RE.match(raw_color):
             raise LabelError(
                 f"{where} ({name}): color must be six lowercase hex digits "
-                f"with no '#', got {color!r}"
+                f"with no '#', got {raw_color!r}"
             )
     return len(data)
 
