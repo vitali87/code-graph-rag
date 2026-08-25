@@ -106,6 +106,12 @@ class TestRejectsMalformed:
         with pytest.raises(LabelError, match="differing only in case"):
             validate_labels(text)
 
+    def test_control_character_in_name_is_rejected(self) -> None:
+        """A newline inside a name is invisible in review and makes the label
+        ambiguous with a two-label list wherever names are passed as text."""
+        with pytest.raises(LabelError, match="control character"):
+            validate_labels('- name: "a\\nb"\n  color: b60205\n  description: d\n')
+
     def test_padded_name_is_rejected(self) -> None:
         """Surrounding whitespace survives into the label name and is
         invisible in review, so `--add-label` would then miss it."""

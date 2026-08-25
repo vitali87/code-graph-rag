@@ -67,6 +67,11 @@ def validate_labels(text: str) -> int:
         name = entry["name"]
         if not isinstance(name, str) or not name.strip():
             raise LabelError(f"{where}: name must be a non-empty string, got {name!r}")
+        if any(ord(char) < 32 for char in name):
+            # Invisible in review, and a name holding a newline is
+            # indistinguishable from a two-label list wherever names are
+            # passed as text.
+            raise LabelError(f"{where}: name contains a control character: {name!r}")
         if name != name.strip():
             # Surrounding whitespace survives into the label and is invisible
             # in review, so `gh pr edit --add-label` then misses it.
