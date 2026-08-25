@@ -155,6 +155,7 @@ class TestSecondaryTierReparse:
     def test_markdown_edit_reparses_through_the_document_tier(
         self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
     ) -> None:
+        """A watched Markdown edit re-parses instead of losing its Sections."""
         f = temp_repo / "plan.md"
         f.write_text("# Heading\n", encoding="utf-8")
         handler.dispatch(FileModifiedEvent(str(f)))
@@ -163,6 +164,7 @@ class TestSecondaryTierReparse:
     def test_ruby_edit_reparses_through_the_secondary_tier(
         self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
     ) -> None:
+        """A watched Ruby edit re-parses instead of losing its definitions."""
         f = temp_repo / "app.rb"
         f.write_text("def hi\n  1\nend\n", encoding="utf-8")
         handler.dispatch(FileModifiedEvent(str(f)))
@@ -171,6 +173,7 @@ class TestSecondaryTierReparse:
     def test_created_file_also_reparses(
         self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
     ) -> None:
+        """A newly created file is parsed by its tier, not only deleted-and-skipped."""
         f = temp_repo / "new.md"
         f.write_text("# New\n", encoding="utf-8")
         handler.dispatch(FileCreatedEvent(str(f)))
@@ -179,8 +182,11 @@ class TestSecondaryTierReparse:
     def test_tree_sitter_file_does_not_take_the_secondary_path(
         self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
     ) -> None:
-        # Python is handled by definition_processor; routing it through the
-        # secondary tiers too would parse it twice.
+        """A tree-sitter file takes only its own branch, so it is parsed once.
+
+        Python is handled by definition_processor; routing it through the
+        secondary tiers as well would parse it twice.
+        """
         f = temp_repo / "mod.py"
         f.write_text("def f():\n    return 1\n", encoding="utf-8")
         handler.dispatch(FileModifiedEvent(str(f)))
@@ -190,6 +196,7 @@ class TestSecondaryTierReparse:
     def test_deletion_does_not_reparse(
         self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
     ) -> None:
+        """A delete has nothing to re-parse, so no tier runs for it."""
         f = temp_repo / "gone.md"
         handler.dispatch(FileDeletedEvent(str(f)))
         mock_updater.process_with_secondary_tier.assert_not_called()

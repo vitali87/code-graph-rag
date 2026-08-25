@@ -227,6 +227,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self._process_change_locked(event)
 
     def _process_change_locked(self, event: FileSystemEvent) -> None:
+        """Re-ingest one changed file, holding the updater lock.
+
+        Deletes what the file previously contributed to the graph, then
+        re-parses it. The delete comes first, so every path that can reach
+        this must re-parse through some tier or the file is left empty.
+        """
         src_path = event.src_path
         if isinstance(src_path, bytes):
             src_path = src_path.decode()
