@@ -586,3 +586,15 @@ def test_colliding_modules_keep_their_own_paths(tmp_path: Path) -> None:
         if str(c.args[0]) == MODULE
     }
     assert set(by_qn.values()) == {"build.sh", "build.bash"}, by_qn
+
+
+def test_single_extension_language_also_carries_its_suffix(tmp_path: Path) -> None:
+    """The suffix rule applies to every tier language, not only colliding ones.
+
+    Ruby declares one extension, so nothing forces `app_rb` for correctness
+    here -- but the flag is tier-wide, and this pins the shape so a later
+    change to the flag or the separator has to update this test explicitly
+    rather than silently renaming every ast-grep module (issue #1429).
+    """
+    mock = _run(tmp_path, {"app.rb": "def hello\n  1\nend\n"})
+    assert _module_leaf_names(mock) == {"app_rb"}
