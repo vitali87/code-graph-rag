@@ -269,6 +269,85 @@ class TestFileHandling:
         assert _nodes(mock, SECTION) == []
 
 
+class TestProtobufExport:
+    # `cgr index --output` serialises through ProtobufFileIngestor, which
+    # DROPS any label with no oneof mapping (logging a warning) and writes
+    # RELATIONSHIP_TYPE_UNSPECIFIED for an unmapped edge. Without the schema
+    # entries the exported index would silently lose the whole hierarchy.
+    def test_sections_survive_protobuf_export(self, tmp_path: Path) -> None:
+        import codec.schema_pb2 as pb
+        from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+
+        project_dir = tmp_path / "proj"
+        project_dir.mkdir()
+        (project_dir / "d.md").write_text(NESTED, encoding="utf-8")
+        out = tmp_path / "out"
+        out.mkdir()
+
+        parsers, queries = load_parsers()
+        ingestor = ProtobufFileIngestor(str(out), split_index=False)
+        GraphUpdater(ingestor, project_dir, parsers, queries).run()
+
+        index = pb.GraphCodeIndex()
+        index.ParseFromString((out / "index.bin").read_bytes())
+
+        names = {
+            node.section.name
+            for node in index.nodes
+            if node.WhichOneof("payload") == "section"
+        }
+        assert names == {"Project Plan", "Phase One", "Subtask A", "Phase Two"}
+
+    def test_section_payload_keeps_its_properties(self, tmp_path: Path) -> None:
+        import codec.schema_pb2 as pb
+        from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+
+        project_dir = tmp_path / "proj"
+        project_dir.mkdir()
+        (project_dir / "d.md").write_text(NESTED, encoding="utf-8")
+        out = tmp_path / "out"
+        out.mkdir()
+
+        parsers, queries = load_parsers()
+        ingestor = ProtobufFileIngestor(str(out), split_index=False)
+        GraphUpdater(ingestor, project_dir, parsers, queries).run()
+
+        index = pb.GraphCodeIndex()
+        index.ParseFromString((out / "index.bin").read_bytes())
+        by_name = {
+            n.section.name: n.section
+            for n in index.nodes
+            if n.WhichOneof("payload") == "section"
+        }
+        assert by_name["Subtask A"].heading_level == 3
+        assert by_name["Project Plan"].start_line == 1
+        assert by_name["Subtask A"].path == "d.md"
+
+    def test_contains_section_edges_are_typed(self, tmp_path: Path) -> None:
+        import codec.schema_pb2 as pb
+        from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+
+        project_dir = tmp_path / "proj"
+        project_dir.mkdir()
+        (project_dir / "d.md").write_text(NESTED, encoding="utf-8")
+        out = tmp_path / "out"
+        out.mkdir()
+
+        parsers, queries = load_parsers()
+        ingestor = ProtobufFileIngestor(str(out), split_index=False)
+        GraphUpdater(ingestor, project_dir, parsers, queries).run()
+
+        index = pb.GraphCodeIndex()
+        index.ParseFromString((out / "index.bin").read_bytes())
+        section_rels = [r for r in index.relationships if r.target_label == SECTION]
+        assert section_rels, "no relationships target a Section"
+        unspecified = pb.Relationship.RelationshipType.RELATIONSHIP_TYPE_UNSPECIFIED
+        for rel in section_rels:
+            assert rel.type != unspecified, (
+                f"CONTAINS_SECTION serialised as UNSPECIFIED: {rel}"
+            )
+
+
 class TestDegradedGrammar:
     def test_handles_is_false_without_the_grammar(self, tmp_path: Path) -> None:
         # A base install has no markdown grammar; indexing must fall through

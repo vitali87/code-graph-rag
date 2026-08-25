@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12\x63odec/schema.proto\x12\x0cgraphcode.v1\x1a\x1cgoogle/protobuf/struct.proto\"f\n\x0eGraphCodeIndex\x12!\n\x05nodes\x18\x01 \x03(\x0b\x32\x12.graphcode.v1.Node\x12\x31\n\rrelationships\x18\x02 \x03(\x0b\x32\x1a.graphcode.v1.Relationship\"\xa8\x06\n\x04Node\x12(\n\x07project\x18\x01 \x01(\x0b\x32\x15.graphcode.v1.ProjectH\x00\x12(\n\x07package\x18\x02 \x01(\x0b\x32\x15.graphcode.v1.PackageH\x00\x12&\n\x06\x66older\x18\x03 \x01(\x0b\x32\x14.graphcode.v1.FolderH\x00\x12&\n\x06module\x18\x04 \x01(\x0b\x32\x14.graphcode.v1.ModuleH\x00\x12)\n\nclass_node\x18\x05 \x01(\x0b\x32\x13.graphcode.v1.ClassH\x00\x12*\n\x08\x66unction\x18\x06 \x01(\x0b\x32\x16.graphcode.v1.FunctionH\x00\x12&\n\x06method\x18\x07 \x01(\x0b\x32\x14.graphcode.v1.MethodH\x00\x12\"\n\x04\x66ile\x18\x08 \x01(\x0b\x32\x12.graphcode.v1.FileH\x00\x12\x39\n\x10\x65xternal_package\x18\t \x01(\x0b\x32\x1d.graphcode.v1.ExternalPackageH\x00\x12\x43\n\x15module_implementation\x18\n \x01(\x0b\x32\".graphcode.v1.ModuleImplementationH\x00\x12\x39\n\x10module_interface\x18\x0b \x01(\x0b\x32\x1d.graphcode.v1.ModuleInterfaceH\x00\x12\x31\n\x0einterface_node\x18\x0c \x01(\x0b\x32\x17.graphcode.v1.InterfaceH\x00\x12\'\n\tenum_node\x18\r \x01(\x0b\x32\x12.graphcode.v1.EnumH\x00\x12\'\n\ttype_node\x18\x0e \x01(\x0b\x32\x12.graphcode.v1.TypeH\x00\x12)\n\nunion_node\x18\x0f \x01(\x0b\x32\x13.graphcode.v1.UnionH\x00\x12\x37\n\x0f\x65xternal_module\x18\x10 \x01(\x0b\x32\x1c.graphcode.v1.ExternalModuleH\x00\x12*\n\x08resource\x18\x11 \x01(\x0b\x32\x16.graphcode.v1.ResourceH\x00\x42\t\n\x07payload\"\xa9\x04\n\x0cRelationship\x12\x39\n\x04type\x18\x01 \x01(\x0e\x32+.graphcode.v1.Relationship.RelationshipType\x12\x11\n\tsource_id\x18\x02 \x01(\t\x12\x11\n\ttarget_id\x18\x03 \x01(\t\x12+\n\nproperties\x18\x04 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x14\n\x0csource_label\x18\x05 \x01(\t\x12\x14\n\x0ctarget_label\x18\x06 \x01(\t\"\xde\x02\n\x10RelationshipType\x12!\n\x1dRELATIONSHIP_TYPE_UNSPECIFIED\x10\x00\x12\x14\n\x10\x43ONTAINS_PACKAGE\x10\x01\x12\x13\n\x0f\x43ONTAINS_FOLDER\x10\x02\x12\x11\n\rCONTAINS_FILE\x10\x03\x12\x13\n\x0f\x43ONTAINS_MODULE\x10\x04\x12\x0b\n\x07\x44\x45\x46INES\x10\x05\x12\x12\n\x0e\x44\x45\x46INES_METHOD\x10\x06\x12\x0b\n\x07IMPORTS\x10\x07\x12\x0c\n\x08INHERITS\x10\x08\x12\r\n\tOVERRIDES\x10\t\x12\t\n\x05\x43\x41LLS\x10\n\x12\x17\n\x13\x44\x45PENDS_ON_EXTERNAL\x10\x0b\x12\x15\n\x11IMPLEMENTS_MODULE\x10\x0c\x12\x0e\n\nIMPLEMENTS\x10\r\x12\x0b\n\x07\x45XPORTS\x10\x0e\x12\x12\n\x0e\x45XPORTS_MODULE\x10\x0f\x12\x0e\n\nREADS_FROM\x10\x10\x12\r\n\tWRITES_TO\x10\x11\"\x17\n\x07Project\x12\x0c\n\x04name\x18\x01 \x01(\t\"=\n\x07Package\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\"$\n\x06\x46older\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\"5\n\x04\x46ile\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x11\n\textension\x18\x03 \x01(\t\"\xc3\x01\n\x06Module\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\x12\x12\n\ndecorators\x18\x04 \x03(\t\x12\x1a\n\x12rust_cfg_test_mods\x18\x05 \x03(\t\x12\x19\n\x11rust_ungated_mods\x18\x06 \x03(\t\x12\x14\n\x0c\x66low_covered\x18\x07 \x01(\x08\x12\x11\n\tgenerated\x18\x08 \x01(\x08\x12\x11\n\tgenerator\x18\t \x01(\t\"D\n\x0e\x45xternalModule\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\"e\n\x14ModuleImplementation\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\x12\x19\n\x11implements_module\x18\x04 \x01(\t\"E\n\x0fModuleInterface\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\"\x1f\n\x0f\x45xternalPackage\x12\x0c\n\x04name\x18\x01 \x01(\t\">\n\x08Resource\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04kind\x18\x03 \x01(\t\"\xeb\x01\n\x08\x46unction\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x11\n\tdocstring\x18\x03 \x01(\t\x12\x12\n\nstart_line\x18\x04 \x01(\x05\x12\x10\n\x08\x65nd_line\x18\x05 \x01(\x05\x12\x12\n\ndecorators\x18\x06 \x03(\t\x12\x13\n\x0bis_exported\x18\x07 \x01(\x08\x12\x17\n\x0f\x61st_fingerprint\x18\x08 \x01(\t\x12\x1d\n\x15\x61st_fingerprint_nodes\x18\t \x01(\x05\x12\x1f\n\x17\x61st_branch_fingerprints\x18\n \x03(\t\"\xd4\x01\n\x06Method\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x11\n\tdocstring\x18\x03 \x01(\t\x12\x12\n\nstart_line\x18\x04 \x01(\x05\x12\x10\n\x08\x65nd_line\x18\x05 \x01(\x05\x12\x12\n\ndecorators\x18\x06 \x03(\t\x12\x17\n\x0f\x61st_fingerprint\x18\x07 \x01(\t\x12\x1d\n\x15\x61st_fingerprint_nodes\x18\x08 \x01(\x05\x12\x1f\n\x17\x61st_branch_fingerprints\x18\t \x03(\t\"\x8f\x01\n\x05\x43lass\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x11\n\tdocstring\x18\x03 \x01(\t\x12\x12\n\nstart_line\x18\x04 \x01(\x05\x12\x10\n\x08\x65nd_line\x18\x05 \x01(\x05\x12\x12\n\ndecorators\x18\x06 \x03(\t\x12\x13\n\x0bis_exported\x18\x07 \x01(\x08\"V\n\tInterface\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\x12\x15\n\rabsolute_path\x18\x04 \x01(\t\"Q\n\x04\x45num\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\x12\x15\n\rabsolute_path\x18\x04 \x01(\t\",\n\x04Type\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\"-\n\x05Union\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\tb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12\x63odec/schema.proto\x12\x0cgraphcode.v1\x1a\x1cgoogle/protobuf/struct.proto\"f\n\x0eGraphCodeIndex\x12!\n\x05nodes\x18\x01 \x03(\x0b\x32\x12.graphcode.v1.Node\x12\x31\n\rrelationships\x18\x02 \x03(\x0b\x32\x1a.graphcode.v1.Relationship\"\xd2\x06\n\x04Node\x12(\n\x07project\x18\x01 \x01(\x0b\x32\x15.graphcode.v1.ProjectH\x00\x12(\n\x07package\x18\x02 \x01(\x0b\x32\x15.graphcode.v1.PackageH\x00\x12&\n\x06\x66older\x18\x03 \x01(\x0b\x32\x14.graphcode.v1.FolderH\x00\x12&\n\x06module\x18\x04 \x01(\x0b\x32\x14.graphcode.v1.ModuleH\x00\x12)\n\nclass_node\x18\x05 \x01(\x0b\x32\x13.graphcode.v1.ClassH\x00\x12*\n\x08\x66unction\x18\x06 \x01(\x0b\x32\x16.graphcode.v1.FunctionH\x00\x12&\n\x06method\x18\x07 \x01(\x0b\x32\x14.graphcode.v1.MethodH\x00\x12\"\n\x04\x66ile\x18\x08 \x01(\x0b\x32\x12.graphcode.v1.FileH\x00\x12\x39\n\x10\x65xternal_package\x18\t \x01(\x0b\x32\x1d.graphcode.v1.ExternalPackageH\x00\x12\x43\n\x15module_implementation\x18\n \x01(\x0b\x32\".graphcode.v1.ModuleImplementationH\x00\x12\x39\n\x10module_interface\x18\x0b \x01(\x0b\x32\x1d.graphcode.v1.ModuleInterfaceH\x00\x12\x31\n\x0einterface_node\x18\x0c \x01(\x0b\x32\x17.graphcode.v1.InterfaceH\x00\x12\'\n\tenum_node\x18\r \x01(\x0b\x32\x12.graphcode.v1.EnumH\x00\x12\'\n\ttype_node\x18\x0e \x01(\x0b\x32\x12.graphcode.v1.TypeH\x00\x12)\n\nunion_node\x18\x0f \x01(\x0b\x32\x13.graphcode.v1.UnionH\x00\x12\x37\n\x0f\x65xternal_module\x18\x10 \x01(\x0b\x32\x1c.graphcode.v1.ExternalModuleH\x00\x12*\n\x08resource\x18\x11 \x01(\x0b\x32\x16.graphcode.v1.ResourceH\x00\x12(\n\x07section\x18\x12 \x01(\x0b\x32\x15.graphcode.v1.SectionH\x00\x42\t\n\x07payload\"\xbf\x04\n\x0cRelationship\x12\x39\n\x04type\x18\x01 \x01(\x0e\x32+.graphcode.v1.Relationship.RelationshipType\x12\x11\n\tsource_id\x18\x02 \x01(\t\x12\x11\n\ttarget_id\x18\x03 \x01(\t\x12+\n\nproperties\x18\x04 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x14\n\x0csource_label\x18\x05 \x01(\t\x12\x14\n\x0ctarget_label\x18\x06 \x01(\t\"\xf4\x02\n\x10RelationshipType\x12!\n\x1dRELATIONSHIP_TYPE_UNSPECIFIED\x10\x00\x12\x14\n\x10\x43ONTAINS_PACKAGE\x10\x01\x12\x13\n\x0f\x43ONTAINS_FOLDER\x10\x02\x12\x11\n\rCONTAINS_FILE\x10\x03\x12\x13\n\x0f\x43ONTAINS_MODULE\x10\x04\x12\x0b\n\x07\x44\x45\x46INES\x10\x05\x12\x12\n\x0e\x44\x45\x46INES_METHOD\x10\x06\x12\x0b\n\x07IMPORTS\x10\x07\x12\x0c\n\x08INHERITS\x10\x08\x12\r\n\tOVERRIDES\x10\t\x12\t\n\x05\x43\x41LLS\x10\n\x12\x17\n\x13\x44\x45PENDS_ON_EXTERNAL\x10\x0b\x12\x15\n\x11IMPLEMENTS_MODULE\x10\x0c\x12\x0e\n\nIMPLEMENTS\x10\r\x12\x0b\n\x07\x45XPORTS\x10\x0e\x12\x12\n\x0e\x45XPORTS_MODULE\x10\x0f\x12\x0e\n\nREADS_FROM\x10\x10\x12\r\n\tWRITES_TO\x10\x11\x12\x14\n\x10\x43ONTAINS_SECTION\x10\x12\"\x17\n\x07Project\x12\x0c\n\x04name\x18\x01 \x01(\t\"=\n\x07Package\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\"$\n\x06\x46older\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\"5\n\x04\x46ile\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x11\n\textension\x18\x03 \x01(\t\"\xc3\x01\n\x06Module\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\x12\x12\n\ndecorators\x18\x04 \x03(\t\x12\x1a\n\x12rust_cfg_test_mods\x18\x05 \x03(\t\x12\x19\n\x11rust_ungated_mods\x18\x06 \x03(\t\x12\x14\n\x0c\x66low_covered\x18\x07 \x01(\x08\x12\x11\n\tgenerated\x18\x08 \x01(\x08\x12\x11\n\tgenerator\x18\t \x01(\t\"D\n\x0e\x45xternalModule\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\"e\n\x14ModuleImplementation\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\x12\x19\n\x11implements_module\x18\x04 \x01(\t\"E\n\x0fModuleInterface\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\"\x1f\n\x0f\x45xternalPackage\x12\x0c\n\x04name\x18\x01 \x01(\t\">\n\x08Resource\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04kind\x18\x03 \x01(\t\"\x91\x01\n\x07Section\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x15\n\rheading_level\x18\x03 \x01(\x05\x12\x12\n\nstart_line\x18\x04 \x01(\x05\x12\x10\n\x08\x65nd_line\x18\x05 \x01(\x05\x12\x0c\n\x04path\x18\x06 \x01(\t\x12\x15\n\rabsolute_path\x18\x07 \x01(\t\"\xeb\x01\n\x08\x46unction\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x11\n\tdocstring\x18\x03 \x01(\t\x12\x12\n\nstart_line\x18\x04 \x01(\x05\x12\x10\n\x08\x65nd_line\x18\x05 \x01(\x05\x12\x12\n\ndecorators\x18\x06 \x03(\t\x12\x13\n\x0bis_exported\x18\x07 \x01(\x08\x12\x17\n\x0f\x61st_fingerprint\x18\x08 \x01(\t\x12\x1d\n\x15\x61st_fingerprint_nodes\x18\t \x01(\x05\x12\x1f\n\x17\x61st_branch_fingerprints\x18\n \x03(\t\"\xd4\x01\n\x06Method\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x11\n\tdocstring\x18\x03 \x01(\t\x12\x12\n\nstart_line\x18\x04 \x01(\x05\x12\x10\n\x08\x65nd_line\x18\x05 \x01(\x05\x12\x12\n\ndecorators\x18\x06 \x03(\t\x12\x17\n\x0f\x61st_fingerprint\x18\x07 \x01(\t\x12\x1d\n\x15\x61st_fingerprint_nodes\x18\x08 \x01(\x05\x12\x1f\n\x17\x61st_branch_fingerprints\x18\t \x03(\t\"\x8f\x01\n\x05\x43lass\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x11\n\tdocstring\x18\x03 \x01(\t\x12\x12\n\nstart_line\x18\x04 \x01(\x05\x12\x10\n\x08\x65nd_line\x18\x05 \x01(\x05\x12\x12\n\ndecorators\x18\x06 \x03(\t\x12\x13\n\x0bis_exported\x18\x07 \x01(\x08\"V\n\tInterface\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\x12\x15\n\rabsolute_path\x18\x04 \x01(\t\"Q\n\x04\x45num\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\x12\x15\n\rabsolute_path\x18\x04 \x01(\t\",\n\x04Type\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\"-\n\x05Union\x12\x16\n\x0equalified_name\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\tb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,43 +35,45 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_GRAPHCODEINDEX']._serialized_start=66
   _globals['_GRAPHCODEINDEX']._serialized_end=168
   _globals['_NODE']._serialized_start=171
-  _globals['_NODE']._serialized_end=979
-  _globals['_RELATIONSHIP']._serialized_start=982
-  _globals['_RELATIONSHIP']._serialized_end=1535
-  _globals['_RELATIONSHIP_RELATIONSHIPTYPE']._serialized_start=1185
-  _globals['_RELATIONSHIP_RELATIONSHIPTYPE']._serialized_end=1535
-  _globals['_PROJECT']._serialized_start=1537
-  _globals['_PROJECT']._serialized_end=1560
-  _globals['_PACKAGE']._serialized_start=1562
-  _globals['_PACKAGE']._serialized_end=1623
-  _globals['_FOLDER']._serialized_start=1625
-  _globals['_FOLDER']._serialized_end=1661
-  _globals['_FILE']._serialized_start=1663
-  _globals['_FILE']._serialized_end=1716
-  _globals['_MODULE']._serialized_start=1719
-  _globals['_MODULE']._serialized_end=1914
-  _globals['_EXTERNALMODULE']._serialized_start=1916
-  _globals['_EXTERNALMODULE']._serialized_end=1984
-  _globals['_MODULEIMPLEMENTATION']._serialized_start=1986
-  _globals['_MODULEIMPLEMENTATION']._serialized_end=2087
-  _globals['_MODULEINTERFACE']._serialized_start=2089
-  _globals['_MODULEINTERFACE']._serialized_end=2158
-  _globals['_EXTERNALPACKAGE']._serialized_start=2160
-  _globals['_EXTERNALPACKAGE']._serialized_end=2191
-  _globals['_RESOURCE']._serialized_start=2193
-  _globals['_RESOURCE']._serialized_end=2255
-  _globals['_FUNCTION']._serialized_start=2258
-  _globals['_FUNCTION']._serialized_end=2493
-  _globals['_METHOD']._serialized_start=2496
-  _globals['_METHOD']._serialized_end=2708
-  _globals['_CLASS']._serialized_start=2711
-  _globals['_CLASS']._serialized_end=2854
-  _globals['_INTERFACE']._serialized_start=2856
-  _globals['_INTERFACE']._serialized_end=2942
-  _globals['_ENUM']._serialized_start=2944
-  _globals['_ENUM']._serialized_end=3025
-  _globals['_TYPE']._serialized_start=3027
-  _globals['_TYPE']._serialized_end=3071
-  _globals['_UNION']._serialized_start=3073
-  _globals['_UNION']._serialized_end=3118
+  _globals['_NODE']._serialized_end=1021
+  _globals['_RELATIONSHIP']._serialized_start=1024
+  _globals['_RELATIONSHIP']._serialized_end=1599
+  _globals['_RELATIONSHIP_RELATIONSHIPTYPE']._serialized_start=1227
+  _globals['_RELATIONSHIP_RELATIONSHIPTYPE']._serialized_end=1599
+  _globals['_PROJECT']._serialized_start=1601
+  _globals['_PROJECT']._serialized_end=1624
+  _globals['_PACKAGE']._serialized_start=1626
+  _globals['_PACKAGE']._serialized_end=1687
+  _globals['_FOLDER']._serialized_start=1689
+  _globals['_FOLDER']._serialized_end=1725
+  _globals['_FILE']._serialized_start=1727
+  _globals['_FILE']._serialized_end=1780
+  _globals['_MODULE']._serialized_start=1783
+  _globals['_MODULE']._serialized_end=1978
+  _globals['_EXTERNALMODULE']._serialized_start=1980
+  _globals['_EXTERNALMODULE']._serialized_end=2048
+  _globals['_MODULEIMPLEMENTATION']._serialized_start=2050
+  _globals['_MODULEIMPLEMENTATION']._serialized_end=2151
+  _globals['_MODULEINTERFACE']._serialized_start=2153
+  _globals['_MODULEINTERFACE']._serialized_end=2222
+  _globals['_EXTERNALPACKAGE']._serialized_start=2224
+  _globals['_EXTERNALPACKAGE']._serialized_end=2255
+  _globals['_RESOURCE']._serialized_start=2257
+  _globals['_RESOURCE']._serialized_end=2319
+  _globals['_SECTION']._serialized_start=2322
+  _globals['_SECTION']._serialized_end=2467
+  _globals['_FUNCTION']._serialized_start=2470
+  _globals['_FUNCTION']._serialized_end=2705
+  _globals['_METHOD']._serialized_start=2708
+  _globals['_METHOD']._serialized_end=2920
+  _globals['_CLASS']._serialized_start=2923
+  _globals['_CLASS']._serialized_end=3066
+  _globals['_INTERFACE']._serialized_start=3068
+  _globals['_INTERFACE']._serialized_end=3154
+  _globals['_ENUM']._serialized_start=3156
+  _globals['_ENUM']._serialized_end=3237
+  _globals['_TYPE']._serialized_start=3239
+  _globals['_TYPE']._serialized_end=3283
+  _globals['_UNION']._serialized_start=3285
+  _globals['_UNION']._serialized_end=3330
 # @@protoc_insertion_point(module_scope)

@@ -93,6 +93,7 @@ ONEOF_ENUM = "enum_node"
 ONEOF_TYPE = "type_node"
 ONEOF_UNION = "union_node"
 ONEOF_RESOURCE = "resource"
+ONEOF_SECTION = "section"
 
 
 class UniqueKeyType(StrEnum):
@@ -386,7 +387,10 @@ CYPHER_DELETE_MODULE = (
     "MATCH (m:Module {path: $path}) "
     "WHERE m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix "
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..]->(c) "
+    # CONTAINS_SECTION is in the walk because document headings hang off the
+    # Module through it, not DEFINES; without it a re-indexed document keeps
+    # every Section from its previous parse (issue #1426).
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
