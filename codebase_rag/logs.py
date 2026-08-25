@@ -845,8 +845,10 @@ HASH_CACHE_ORPHANED = (
 PARSER_FINGERPRINT_SAVE_FAILED = "Failed to save parser fingerprint to {path}: {error}"
 PARSER_FINGERPRINT_MISMATCH = (
     "Parser code changed since this graph was built. Incremental sync keeps "
-    "results from the old parser for unchanged files, so the graph may be "
-    "stale. Run 'cgr start --clean' to rebuild it from scratch."
+    "results from the old parser for files not touched since the last sync, so "
+    "the graph may be stale. Run 'cgr start --clean --update-graph' to rebuild "
+    "it from scratch. '--clean' on its own deletes the graph without rebuilding "
+    "it, and deletes every project in a shared database, not just this one."
 )
 
 REHYDRATE_QUERY_FAILED = (
