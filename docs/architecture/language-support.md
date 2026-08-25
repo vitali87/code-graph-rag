@@ -45,11 +45,15 @@ extra (`pip install 'code-graph-rag[ast-grep]'`).
 A module's qualified name carries its extension: `app.rb` becomes
 `<project>.app_rb`. Several of these languages accept two extensions, and a
 `Module` is identified by its qualified name, so dropping the suffix would
-merge `Main.kt` and `Main.kts` onto one node. Graphs indexed before this keep
-the unsuffixed names until the repository is re-indexed (`--update-graph`),
-so a saved query written against the old shape will not match a re-indexed
-module. Re-indexing replaces the old node rather than leaving both: a module
-is cleared by file path, which this change does not alter.
+merge `Main.kt` and `Main.kts` onto one node.
+
+Graphs indexed before this keep the unsuffixed names, and a saved query
+written against the old shape stops matching once they move. An incremental
+sync will not move them: it skips files whose content is unchanged, and this
+change alters how a name is emitted rather than the file itself, so cgr warns
+that the parser changed but keeps the old results. Rebuilding with
+`cgr start --clean` is what re-emits them. Note that it clears **every**
+project in a shared graph, so re-index the others afterwards.
 
 | Language | Extensions | Functions | Classes/Types | Imports |
 |---|---|---|---|---|
