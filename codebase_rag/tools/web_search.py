@@ -11,6 +11,7 @@ from pydantic_ai import Tool
 
 from .. import logs as ls
 from .. import tool_errors as te
+from ..taint import ReadContentRecord
 from . import tool_descriptions as td
 
 # Backend selection follows the provider convention the LLM and embedding
@@ -280,9 +281,21 @@ def make_web_searcher() -> WebSearcher:
     return WebSearcher(DuckDuckGoBackend())
 
 
-def create_web_search_tool(web_searcher: WebSearcher) -> Tool:
+def create_web_search_tool(
+    web_searcher: WebSearcher, read_record: ReadContentRecord | None = None
+) -> Tool:
+    def search_web(query: str, max_results: int = 5) -> str:
+        # Egress taint gate (issue #1128): a query carrying a verbatim span
+        # of repository content read this session must not leave the machine.
+        if read_record is not None and read_record.taints(query):
+            logger.warning(
+                ls.WEB_SEARCH_TAINTED_REFUSED.format(digest=_query_digest(query))
+            )
+            return te.WEB_SEARCH_TAINTED_QUERY
+        return web_searcher.search_web(query, max_results)
+
     return Tool(
-        function=web_searcher.search_web,
+        function=search_web,
         name=td.AgenticToolName.WEB_SEARCH,
         description=td.WEB_SEARCH,
     )

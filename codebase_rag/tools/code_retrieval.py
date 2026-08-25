@@ -12,6 +12,7 @@ from ..constants import ENCODING_UTF8
 from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME, CYPHER_LIST_PROJECTS
 from ..schemas import CodeSnippet
 from ..services import QueryProtocol
+from ..taint import ReadContentRecord
 from ..utils.path_utils import (
     absolute_path_within_project_root,
     project_roots_from_rows,
@@ -154,10 +155,16 @@ class CodeRetriever:
             )
 
 
-def create_code_retrieval_tool(code_retriever: CodeRetriever) -> Tool:
+def create_code_retrieval_tool(
+    code_retriever: CodeRetriever, read_record: ReadContentRecord | None = None
+) -> Tool:
     async def get_code_snippet(qualified_name: str) -> CodeSnippet:
         logger.info(ls.CODE_TOOL_RETRIEVE.format(name=qualified_name))
-        return await code_retriever.find_code_snippet(qualified_name)
+        snippet = await code_retriever.find_code_snippet(qualified_name)
+        if read_record is not None and snippet.found:
+            # Feed the egress taint gate (issue #1128).
+            read_record.record(snippet.source_code)
+        return snippet
 
     return Tool(
         function=get_code_snippet,

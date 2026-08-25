@@ -89,6 +89,7 @@ LLM_DISALLOWED_PROCEDURE = (
 )
 LLM_GENERATION_FAILED = "Cypher generation failed: {error}"
 LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
+LLM_INIT_RESEARCH = "Failed to initialize research sub-agent: {error}"
 
 # Graph service errors
 BATCH_SIZE = "batch_size must be a positive integer"

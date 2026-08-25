@@ -19,6 +19,7 @@ from .. import tool_errors as te
 from ..config import settings
 from ..decorators import async_timing_decorator
 from ..schemas import ShellCommandResult
+from ..taint import ReadContentRecord
 from . import tool_descriptions as td
 
 PIPELINE_PATTERNS_COMPILED = tuple(
@@ -515,7 +516,9 @@ class ShellCommander:
             )
 
 
-def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
+def create_shell_command_tool(
+    shell_commander: ShellCommander, read_record: ReadContentRecord | None = None
+) -> Tool:
     async def run_shell_command(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:
@@ -526,7 +529,12 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
         ):
             raise ApprovalRequired(metadata={"command": command})
 
-        return await shell_commander.execute(command)
+        result = await shell_commander.execute(command)
+        if read_record is not None:
+            # Shell output is repository content too (`cat`, `grep`); feed
+            # the egress taint gate (issue #1128).
+            read_record.record(result.stdout)
+        return result
 
     return Tool(
         function=run_shell_command,

@@ -10,6 +10,7 @@ from .. import logs as ls
 from .. import tool_errors as te
 from ..decorators import validate_project_path
 from ..schemas import FileReadResult
+from ..taint import ReadContentRecord
 from . import tool_descriptions as td
 
 
@@ -54,12 +55,19 @@ class FileReader:
             )
 
 
-def create_file_reader_tool(file_reader: FileReader) -> Tool:
+def create_file_reader_tool(
+    file_reader: FileReader, read_record: ReadContentRecord | None = None
+) -> Tool:
     async def read_file_content(file_path: str) -> str:
         result = await file_reader.read_file(file_path)
         if result.error_message:
             return te.ERROR_WRAPPER.format(message=result.error_message)
-        return result.content or ""
+        content = result.content or ""
+        if read_record is not None:
+            # Feed the egress taint gate (issue #1128): this content must
+            # never later appear verbatim in an outbound web query.
+            read_record.record(content)
+        return content
 
     return Tool(
         function=read_file_content,

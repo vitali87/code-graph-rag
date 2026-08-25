@@ -916,6 +916,11 @@ WEB_SEARCH_KEYLESS_FALLBACK = (
 WEB_SEARCH_UNKNOWN_PROVIDER = (
     "Unknown web search provider '{provider}'; using duckduckgo"
 )
+WEB_SEARCH_TAINTED_REFUSED = (
+    "Web search refused query {digest}: verbatim repository content"
+)
+RESEARCH_DELEGATED = "Research sub-agent: query {digest}"
+RESEARCH_FAILED = "Research sub-agent failed for query {digest}: {error}"
 PY_FRONTEND_RUNNING = "Jedi Python frontend: resolving semantic call facts"
 PY_FRONTEND_UNAVAILABLE = (
     "PYTHON_FRONTEND=jedi but jedi is not installed (python-semantics extra); "

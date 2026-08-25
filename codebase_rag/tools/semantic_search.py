@@ -15,6 +15,7 @@ from ..cypher_queries import (
     CYPHER_LIST_PROJECTS,
     build_nodes_by_ids_query,
 )
+from ..taint import ReadContentRecord
 from ..types_defs import SemanticSearchResult
 from ..utils.dependencies import has_semantic_dependencies
 from ..utils.path_utils import (
@@ -187,7 +188,9 @@ def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
     )
 
 
-def create_get_function_source_tool(ingestor: QueryProtocol) -> Tool:
+def create_get_function_source_tool(
+    ingestor: QueryProtocol, read_record: ReadContentRecord | None = None
+) -> Tool:
     # ponytail: tool-lifetime roots cache; a project indexed after the first
     # lookup is treated as unknown (permissive) until a new tool instance.
     roots_cache: dict[str, dict[str, str | None]] = {}
@@ -202,6 +205,9 @@ def create_get_function_source_tool(ingestor: QueryProtocol) -> Tool:
         if source_code is None:
             return cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id)
 
+        if read_record is not None:
+            # Feed the egress taint gate (issue #1128).
+            read_record.record(source_code)
         return cs.MSG_SEMANTIC_SOURCE_FORMAT.format(id=node_id, code=source_code)
 
     return Tool(
