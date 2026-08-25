@@ -56,7 +56,12 @@ from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
 from .services import QueryProtocol
 from .services.graph_service import MemgraphIngestor
-from .services.llm import CypherGenerator, create_rag_orchestrator
+from .services.llm import (
+    CypherGenerator,
+    create_rag_orchestrator,
+    create_research_agent,
+)
+from .taint import ReadContentRecord
 from .tools.ast_grep_service import AstGrepService
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
@@ -65,6 +70,7 @@ from .tools.duplicate_detection import create_find_duplicates_tool
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
+from .tools.research import create_research_tool
 from .tools.semantic_search import (
     create_get_function_source_tool,
     create_semantic_search_tool,
@@ -584,6 +590,11 @@ def _cancel_orphaned_tool_calls(message_history: list[ModelMessage]) -> None:
 def _price_current_run(
     usage: RunUsage, model_config: ModelConfig | None
 ) -> Decimal | None:
+    """Price a run's usage, defaulting to the active orchestrator config.
+
+    Returns None when pricing is unavailable; pricing is display-only and
+    never fatal.
+    """
     if model_config is None:
         try:
             model_config = settings.active_orchestrator_config
@@ -594,9 +605,27 @@ def _price_current_run(
     return price_run(usage, model_config.provider, model_config.model_id)
 
 
+def _absorb_research_usage(usage: RunUsage) -> None:
+    """Fold research sub-agent token usage into the session totals.
+
+    Sub-agent runs happen inside a tool call, outside the turn's own
+    `response.usage` (#1128). The sub-agent reuses the orchestrator model, so
+    orchestrator pricing holds.
+    """
+    session = app_context.session
+    session.total_input_tokens += usage.input_tokens
+    session.total_output_tokens += usage.output_tokens
+    cost = _price_current_run(usage, None)
+    if cost is not None:
+        session.total_cost_usd += cost
+    else:
+        session.cost_incomplete = True
+
+
 def _record_and_print_turn_usage(
     turn_input: int, turn_output: int, turn_cost: Decimal, turn_priced: bool
 ) -> None:
+    """Fold one turn's tokens and cost into the session totals and show them."""
     session = app_context.session
     session.total_input_tokens += turn_input
     session.total_output_tokens += turn_output
@@ -1605,6 +1634,7 @@ def prompt_for_unignored_directories(
 
 
 def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
+    """Fail fast at startup when a model role is misconfigured."""
     from .providers.base import get_provider_from_config
 
     try:
@@ -1619,6 +1649,12 @@ def _initialize_services_and_agent(
     ingestor: QueryProtocol,
     active_projects: list[str] | None = None,
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames, str]:
+    """Build the orchestrator, its tools, and the shared session services.
+
+    Tools returning repository content share one `ReadContentRecord`, and web
+    search is deliberately absent from the orchestrator: it belongs to the
+    research sub-agent instead (issue #1128).
+    """
     _validate_provider_config(
         cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
     )
@@ -1637,22 +1673,27 @@ def _initialize_services_and_agent(
     directory_lister = DirectoryLister(project_root=repo_path)
     ast_grep_service = AstGrepService(project_root=repo_path)
 
+    # Tools returning raw repository content feed this record; the web search
+    # egress gate refuses queries carrying verbatim spans of it (issue #1128).
+    read_record = ReadContentRecord()
+
     query_tool = create_query_tool(ingestor, cypher_generator, app_context.console)
-    code_tool = create_code_retrieval_tool(code_retriever)
-    file_reader_tool = create_file_reader_tool(file_reader)
+    code_tool = create_code_retrieval_tool(code_retriever, read_record)
+    file_reader_tool = create_file_reader_tool(file_reader, read_record)
     file_writer_tool = create_file_writer_tool(file_writer)
     file_editor_tool = create_file_editor_tool(file_editor)
-    shell_command_tool = create_shell_command_tool(shell_commander)
+    shell_command_tool = create_shell_command_tool(shell_commander, read_record)
     directory_lister_tool = create_directory_lister_tool(directory_lister)
     semantic_search_tool = create_semantic_search_tool(ingestor)
-    function_source_tool = create_get_function_source_tool(ingestor)
-    structural_search_tool = create_structural_search_tool(ast_grep_service)
-    structural_editor_tool = create_structural_editor_tool(ast_grep_service)
+    function_source_tool = create_get_function_source_tool(ingestor, read_record)
+    structural_search_tool = create_structural_search_tool(
+        ast_grep_service, read_record
+    )
+    structural_editor_tool = create_structural_editor_tool(
+        ast_grep_service, read_record
+    )
     find_duplicates_tool = create_find_duplicates_tool(ingestor)
 
-    # Web search always registers: the default DuckDuckGo backend needs no key,
-    # and WEB_SEARCH_PROVIDER=serpdive (with SERPDIVE_API_KEY) swaps in the
-    # free-tier SERPdive backend behind the same tool.
     agentic_tools = [
         query_tool,
         code_tool,
@@ -1667,7 +1708,27 @@ def _initialize_services_and_agent(
         structural_editor_tool,
         find_duplicates_tool,
     ]
-    agentic_tools.append(create_web_search_tool(make_web_searcher()))
+
+    # Web search is deliberately NOT an orchestrator tool (issue #1128): it
+    # lives alone in a leaf research sub-agent, so external web content never
+    # shares a context with repository reads and shell. The orchestrator gets
+    # a `research` delegation tool whose summary crosses back as data. The
+    # search backend registers unconditionally as before: keyless DuckDuckGo
+    # by default, WEB_SEARCH_PROVIDER=serpdive (with SERPDIVE_API_KEY) opt-in.
+    # Built lazily on first research call: constructing the sub-agent's model
+    # validates the provider (an Ollama liveness probe, for one), which
+    # ordinary sessions should not pay for when they never research anything.
+    def _build_research_agent() -> Agent:
+        """Construct the research sub-agent with web_search as its only tool."""
+        return create_research_agent(
+            [create_web_search_tool(make_web_searcher(), read_record)]
+        )
+
+    agentic_tools.append(
+        create_research_tool(
+            _build_research_agent, read_record, on_usage=_absorb_research_usage
+        )
+    )
 
     confirmation_tool_names = ConfirmationToolNames(
         replace_code=file_editor_tool.name,

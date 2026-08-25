@@ -16,6 +16,7 @@ from ..prompts import (
     build_cypher_system_prompt,
     build_local_cypher_system_prompt,
     build_rag_orchestrator_prompt,
+    build_research_agent_prompt,
 )
 from ..providers.base import get_provider_from_config
 
@@ -112,6 +113,7 @@ class CypherGenerator:
     __slots__ = ("agent",)
 
     def __init__(self, active_projects: list[str] | None = None) -> None:
+        """Build the Cypher agent, scoped to the given projects if any."""
         try:
             config = settings.active_cypher_config
             llm = _create_provider_model(config)
@@ -132,6 +134,7 @@ class CypherGenerator:
             raise ex.LLMGenerationError(ex.LLM_INIT_CYPHER.format(error=e)) from e
 
     async def generate(self, natural_language_query: str) -> str:
+        """Translate a natural-language question into a read-only Cypher query."""
         logger.info(ls.CYPHER_GENERATING.format(query=natural_language_query))
         try:
             result = await self.agent.run(natural_language_query)
@@ -154,12 +157,36 @@ class CypherGenerator:
             raise ex.LLMGenerationError(ex.LLM_GENERATION_FAILED.format(error=e)) from e
 
 
+def create_research_agent(tools: list[Tool]) -> Agent:
+    """Build the leaf research sub-agent, the trust boundary for external web
+    content (issue #1128).
+
+    This agent holds ONLY the external-content tools it is handed: no
+    repository reads, no shell, so a poisoned page has no repository tool to
+    steer. Its transcript never reaches the orchestrator; only the final
+    summary crosses back, wrapped as data by the research tool.
+    """
+    try:
+        config = settings.active_orchestrator_config
+        llm = _create_provider_model(config)
+        return Agent(
+            model=llm,
+            system_prompt=build_research_agent_prompt(),
+            tools=tools,
+            retries=settings.AGENT_RETRIES,
+            output_type=str,
+        )
+    except Exception as e:
+        raise ex.LLMGenerationError(ex.LLM_INIT_RESEARCH.format(error=e)) from e
+
+
 def create_rag_orchestrator(
     tools: list[Tool],
     project_root: Path | None = None,
     load_instructions: bool = True,
     active_projects: list[str] | None = None,
 ) -> tuple[Agent, str]:
+    """Build the main agent and return it with its system prompt."""
     try:
         config = settings.active_orchestrator_config
         llm = _create_provider_model(config)

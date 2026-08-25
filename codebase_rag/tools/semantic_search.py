@@ -15,6 +15,7 @@ from ..cypher_queries import (
     CYPHER_LIST_PROJECTS,
     build_nodes_by_ids_query,
 )
+from ..taint import ReadContentRecord
 from ..types_defs import SemanticSearchResult
 from ..utils.dependencies import has_semantic_dependencies
 from ..utils.path_utils import (
@@ -156,9 +157,16 @@ def get_function_source_code(
 
 
 def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
+    """Build the `semantic_search` tool.
+
+    It returns an index of qualified names and scores, never source, so it
+    does not feed the egress taint record (issue #1128).
+    """
+
     async def semantic_search_functions(
         query: str, top_k: int = 5, project: str | None = None
     ) -> str:
+        """Find functions by intent, returning qualified names and scores."""
         logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
 
         results = await asyncio.to_thread(
@@ -187,12 +195,17 @@ def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
     )
 
 
-def create_get_function_source_tool(ingestor: QueryProtocol) -> Tool:
+def create_get_function_source_tool(
+    ingestor: QueryProtocol, read_record: ReadContentRecord | None = None
+) -> Tool:
+    """Build the `get_function_source` tool, recording returned source in
+    `read_record` so it feeds the egress taint gate (issue #1128)."""
     # ponytail: tool-lifetime roots cache; a project indexed after the first
     # lookup is treated as unknown (permissive) until a new tool instance.
     roots_cache: dict[str, dict[str, str | None]] = {}
 
     async def get_function_source_by_id(node_id: int) -> str:
+        """Fetch a function's source by node id, recording what it returns."""
         logger.info(ls.SEMANTIC_TOOL_SOURCE.format(id=node_id))
 
         source_code = await asyncio.to_thread(
@@ -202,6 +215,9 @@ def create_get_function_source_tool(ingestor: QueryProtocol) -> Tool:
         if source_code is None:
             return cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id)
 
+        if read_record is not None:
+            # Feed the egress taint gate (issue #1128).
+            read_record.record(source_code)
         return cs.MSG_SEMANTIC_SOURCE_FORMAT.format(id=node_id, code=source_code)
 
     return Tool(

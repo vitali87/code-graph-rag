@@ -10,6 +10,7 @@ from .. import logs as ls
 from .. import tool_errors as te
 from ..decorators import validate_project_path
 from ..schemas import FileReadResult
+from ..taint import ReadContentRecord
 from . import tool_descriptions as td
 
 
@@ -26,6 +27,7 @@ class FileReader:
 
     @validate_project_path(FileReadResult, path_arg_name="file_path")
     async def _read_validated(self, file_path: Path) -> FileReadResult:
+        """Read a path already checked to be inside the project root."""
         try:
             if not file_path.is_file():
                 return FileReadResult(
@@ -54,12 +56,23 @@ class FileReader:
             )
 
 
-def create_file_reader_tool(file_reader: FileReader) -> Tool:
+def create_file_reader_tool(
+    file_reader: FileReader, read_record: ReadContentRecord | None = None
+) -> Tool:
+    """Build the `read_file` tool, recording file content in `read_record` so
+    it feeds the egress taint gate (issue #1128)."""
+
     async def read_file_content(file_path: str) -> str:
+        """Read a file, recording its content on success."""
         result = await file_reader.read_file(file_path)
         if result.error_message:
             return te.ERROR_WRAPPER.format(message=result.error_message)
-        return result.content or ""
+        content = result.content or ""
+        if read_record is not None:
+            # Feed the egress taint gate (issue #1128): this content must
+            # never later appear verbatim in an outbound web query.
+            read_record.record(content)
+        return content
 
     return Tool(
         function=read_file_content,

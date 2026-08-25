@@ -6,6 +6,7 @@ import asyncio
 from pydantic_ai import Tool
 
 from .. import constants as cs
+from ..taint import ReadContentRecord
 from ..types_defs import StructuralSearchMatch
 from ..utils.dependencies import has_ast_grep
 from . import tool_descriptions as td
@@ -13,6 +14,8 @@ from .ast_grep_service import AstGrepService
 
 
 def format_matches(matches: list[StructuralSearchMatch]) -> str:
+    """Render matches as `file:line:column  text`, flagging a truncated
+    result list so the agent does not read a capped list as complete."""
     lines = [f"{m['file']}:{m['line']}:{m['column']}  {m['text']}" for m in matches]
     # make the result cap visible to the caller: without this the agent sees
     # a truncated list and assumes it is complete.
@@ -21,8 +24,14 @@ def format_matches(matches: list[StructuralSearchMatch]) -> str:
     return "\n".join(lines)
 
 
-def create_structural_search_tool(service: AstGrepService) -> Tool:
+def create_structural_search_tool(
+    service: AstGrepService, read_record: ReadContentRecord | None = None
+) -> Tool:
+    """Build the `structural_search` tool, recording matched source in
+    `read_record` so it feeds the egress taint gate (issue #1128)."""
+
     async def structural_search(pattern: str, language: str | None = None) -> str:
+        """Search by AST pattern, recording the matched source it returns."""
         if not has_ast_grep():
             return cs.AST_GREP_NOT_AVAILABLE
         try:
@@ -37,7 +46,12 @@ def create_structural_search_tool(service: AstGrepService) -> Tool:
             return str(e)
         if not matches:
             return cs.AST_GREP_NO_MATCHES.format(pattern=pattern)
-        return format_matches(matches)
+        formatted = format_matches(matches)
+        if read_record is not None:
+            # Matched lines are repository source; feed the egress taint gate
+            # (issue #1128).
+            read_record.record(formatted)
+        return formatted
 
     return Tool(
         function=structural_search,

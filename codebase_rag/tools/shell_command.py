@@ -19,6 +19,7 @@ from .. import tool_errors as te
 from ..config import settings
 from ..decorators import async_timing_decorator
 from ..schemas import ShellCommandResult
+from ..taint import ReadContentRecord
 from . import tool_descriptions as td
 
 PIPELINE_PATTERNS_COMPILED = tuple(
@@ -402,6 +403,7 @@ class ShellCommander:
 
     @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
+        """Run a command after the safety checks, capturing both streams."""
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
             if subshell_pattern := _has_subshell(command):
@@ -515,10 +517,16 @@ class ShellCommander:
             )
 
 
-def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
+def create_shell_command_tool(
+    shell_commander: ShellCommander, read_record: ReadContentRecord | None = None
+) -> Tool:
+    """Build the `execute_shell_command` tool, recording stdout and stderr in
+    `read_record` so they feed the egress taint gate (issue #1128)."""
+
     async def run_shell_command(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:
+        """Run a shell command, recording both output streams."""
         if (
             not shell_commander.is_yolo()
             and _requires_approval(command)
@@ -526,7 +534,15 @@ def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
         ):
             raise ApprovalRequired(metadata={"command": command})
 
-        return await shell_commander.execute(command)
+        result = await shell_commander.execute(command)
+        if read_record is not None:
+            # Shell output is repository content too (`cat`, `grep`); feed
+            # the egress taint gate (issue #1128). Both streams reach the
+            # model, and stderr carries source just as readily (compiler
+            # diagnostics, tracebacks quoting the offending line).
+            read_record.record(result.stdout)
+            read_record.record(result.stderr)
+        return result
 
     return Tool(
         function=run_shell_command,
