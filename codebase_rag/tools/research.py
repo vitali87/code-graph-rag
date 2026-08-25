@@ -80,10 +80,16 @@ def create_research_tool(
             # surface as a tool error, not a crashed turn.
             result = await _agent().run(query)
         except Exception as e:
+            # The detail stays in the log (repo convention, and the operator
+            # needs it to diagnose a bad key or model id). What crosses back
+            # is a fixed string: the exception text is provider-controlled
+            # and can echo an upstream response body, so returning it raw
+            # would put external content in the orchestrator's context
+            # OUTSIDE the envelope that marks such content as data (#1128).
             logger.error(
                 ls.RESEARCH_FAILED.format(digest=_query_digest(query), error=e)
             )
-            return te.RESEARCH_FAILED.format(error=e)
+            return te.RESEARCH_FAILED
         if on_usage is not None:
             # Sub-agent runs happen inside a tool call, outside the turn's
             # own usage accounting; the caller folds them into the session.

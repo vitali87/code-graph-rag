@@ -87,4 +87,7 @@ WEB_SEARCH_TAINTED_QUERY = (
     "read this session, and web search queries must not carry local data off "
     "the machine. Rephrase the query without quoting local content."
 )
-RESEARCH_FAILED = "Error: Web research failed: {error}"
+RESEARCH_FAILED = (
+    "Error: Web research failed. The cause was logged; it is withheld here "
+    "because provider error text is untrusted external content."
+)
