@@ -76,6 +76,32 @@ class TestReadContentRecord:
         assert record.taints("alpha beta gamma delta epsilon zeta eta theta?")
 
 
+class TestShortStandaloneValues:
+    """A file or command output that IS a short secret must not leak: the
+    windowed span check can never match it, so short recordings are held
+    separately and matched whole."""
+
+    def test_short_standalone_value_taints_in_full(self) -> None:
+        """A recorded short token taints a query that carries it."""
+        record = ReadContentRecord()
+        record.record("AKIAIOSFODNN7EXAMPLE")
+        assert record.taints("which account owns AKIAIOSFODNN7EXAMPLE")
+
+    def test_short_value_does_not_taint_by_substring(self) -> None:
+        """Short values match whole, so a shared fragment stays clean."""
+        record = ReadContentRecord()
+        record.record("hunter2")
+        assert not record.taints("what does the hunt subcommand do")
+
+    def test_ordinary_query_stays_clean_with_source_recorded(self) -> None:
+        """Recording real source must not refuse ordinary questions."""
+        import codebase_rag.taint as taint_module
+
+        record = ReadContentRecord()
+        record.record(Path(taint_module.__file__).read_text(encoding="utf-8"))
+        assert not record.taints("is there a test for this function")
+
+
 class TestWebSearchEgressGate:
     """The exfiltration direction of issue #1128: repository bytes must not
     ride an outbound web query, even when injected content asks for it."""

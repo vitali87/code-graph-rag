@@ -27,6 +27,13 @@ class ReadContentRecord:
     repository bytes into a research query. Paraphrased content still
     passes; that residual is accepted in the issue's design discussion.
 
+    Two match rules, split by what the recording is. Long recordings match on
+    any verbatim span of TAINT_SPAN_CHARS, since a fragment of a source file
+    is still that file's content. Short standalone recordings (a file or a
+    command output that is entirely a token or key) match only in full: they
+    are complete values, and matching them as substrings would refuse
+    ordinary queries that happen to share a few characters with source.
+
     Egress is gated at every hop that can carry a query off the machine: the
     research tool refuses before the sub-agent's hosted provider is called,
     and web_search refuses again before the search backend. The provider is
@@ -34,22 +41,40 @@ class ReadContentRecord:
     to it first.
     """
 
-    __slots__ = ("_contents",)
+    __slots__ = ("_contents", "_short_values")
 
     def __init__(self) -> None:
         # Recorded content is already in the LLM context for the rest of the
         # session, so holding it here does not change the memory order.
         self._contents: list[str] = []
+        # Recordings shorter than the span threshold, kept separately: the
+        # windowed check can never match them, but a whole file (or command
+        # output) that IS a short secret is exactly what must not leak.
+        self._short_values: list[str] = []
 
     def record(self, content: str) -> None:
         """Record repository content returned to the model this session."""
-        if normalized := _normalize_whitespace(content):
+        if not (normalized := _normalize_whitespace(content)):
+            return
+        if len(normalized) < TAINT_SPAN_CHARS:
+            # Matched whole, never as a substring: a short recording is a
+            # complete value (a token, a key), so requiring the full value in
+            # the query keeps this free of the false positives that a
+            # sub-threshold substring rule would cause on ordinary source.
+            self._short_values.append(normalized)
+        else:
             self._contents.append(normalized)
 
     def taints(self, query: str) -> bool:
-        """Report whether the query carries a verbatim span of recorded
-        repository content, and so must not leave the machine."""
+        """Report whether the query carries recorded repository content, and
+        so must not leave the machine.
+
+        Long recordings match on any verbatim span; short standalone
+        recordings match only in full.
+        """
         normalized = _normalize_whitespace(query)
+        if any(value in normalized for value in self._short_values):
+            return True
         if len(normalized) < TAINT_SPAN_CHARS:
             return False
         windows = [
