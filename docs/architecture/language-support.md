@@ -89,9 +89,15 @@ A document's qualified name keeps its extension, so `docs/guide.md` becomes
 `<project>.docs.guide_md`. The suffix is part of the name because both `.md`
 and `.markdown` are handled here, and dropping it would merge `guide.md` and
 `guide.markdown` onto one `Module` node along with any identically-named
-sections. Graphs indexed before document support existed hold unsuffixed
-document module names; re-index to move them to the current shape, and note
-that a saved query written against the old names will stop matching.
+sections. A graph indexed before document support existed holds no `Section`
+nodes at all, and any document `Module` it holds carries an unsuffixed name,
+so a saved query written against the old names stops matching once the graph
+is rebuilt. An incremental sync will not move it: `.md` files were already
+hashed before this tier existed, so `--update-graph` sees them unchanged and
+skips them, leaving the graph exactly as it was. Rebuilding needs
+`cgr start --clean`, which is the remedy `cgr` itself recommends when parser
+code has changed — note that it clears **every** project in the shared graph,
+so run it only when that graph holds just this repository.
 Requires the `treesitter-full` extra.
 
 ## Language-Agnostic Design
