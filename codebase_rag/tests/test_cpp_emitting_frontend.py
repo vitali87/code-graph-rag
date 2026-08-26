@@ -8,7 +8,12 @@
 # pass produces and must run after.
 from __future__ import annotations
 
+from unittest.mock import patch
+
+import pytest
+
 from codebase_rag import constants as cs
+from codebase_rag.config import settings
 from codebase_rag.parsers.frontends import EMITTING_FRONTENDS, FrontendPhase
 
 
@@ -24,16 +29,36 @@ def test_cpp_registers_an_emitting_frontend() -> None:
     )
 
 
-def test_the_cpp_frontend_declares_a_real_phase() -> None:
-    """The phase decides whether the definition pass has already run.
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        # LIBCLANG emits its own definition nodes and reports covered files, so
+        # the definition pass must not have run yet.
+        (cs.CppFrontend.LIBCLANG, FrontendPhase.BEFORE_DEFINITIONS),
+        # HYBRID attributes macro uses to tree-sitter spans, which do not exist
+        # until the definition pass has produced them.
+        (cs.CppFrontend.HYBRID, FrontendPhase.AFTER_DEFINITIONS),
+    ],
+)
+def test_each_cpp_mode_maps_to_its_own_phase(
+    mode: cs.CppFrontend, expected: FrontendPhase
+) -> None:
+    """Each mode must map to its SPECIFIC phase, not merely to a valid one.
 
-    Getting it wrong does not raise: HYBRID running before definitions would
-    find no tree-sitter spans to attribute macro calls to, and would silently
-    attribute nothing.
+    Asserting `phase in FrontendPhase` is satisfied by both the correct
+    mapping and an inverted one, so it cannot detect the regression it exists
+    to prevent. Greptile demonstrated exactly that: swapping the two values
+    left the weaker assertion green.
+
+    The consequence of an inverted mapping is silent. HYBRID running before
+    the definition pass finds no tree-sitter spans to attribute macro calls
+    to and attributes nothing; nothing raises, and the graph is quietly
+    missing every macro edge.
     """
     frontend = EMITTING_FRONTENDS[cs.SupportedLanguage.CPP]
 
-    assert frontend.phase in tuple(FrontendPhase), frontend.phase
+    with patch.object(settings, "CPP_FRONTEND", mode):
+        assert frontend.phase is expected, f"{mode.value} -> {frontend.phase}"
 
 
 def test_the_frontend_reports_availability_without_raising() -> None:
