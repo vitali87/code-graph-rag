@@ -80,17 +80,39 @@ def cgr_semantic_ranking(
     return ranking
 
 
+def _rank_of(expected_qn: str, hits: list[str], k: int | None) -> int | None:
+    """1-based rank of `expected_qn` within the top k, or None if absent.
+
+    Truncating HERE rather than upstream is what makes the score respond to
+    order: a reranker returns a permutation, and membership in the full list
+    is invariant under permutation (issue #1474).
+    """
+    considered = hits if k is None else hits[:k]
+    try:
+        return considered.index(expected_qn) + 1
+    except ValueError:
+        return None
+
+
 def score_semantic(
-    cases: list[SemanticCase], ranking: dict[str, list[str]]
+    cases: list[SemanticCase], ranking: dict[str, list[str]], k: int | None = None
 ) -> ScoreResult:
     # recall@k: a case is a hit when its expected function is in the query's
     # top-k. Modelled as a set of satisfied cases vs all cases, so precision is
     # 1.0 by construction and the headline number is recall.
+    #
+    # `k` truncates before the membership check so that a hit demoted out of
+    # the top k genuinely costs recall. Without it any reranker scores exactly
+    # as the baseline for every input -- not approximately, but by
+    # construction, since reordering cannot change what a list contains
+    # (issue #1474). `k=None` scores the whole ranking, which is what callers
+    # that already truncated upstream in `cgr_semantic_ranking` want; it keeps
+    # the published retrieval numbers comparable.
     oracle = {(case.query, case.expected_qn) for case in cases}
     hits = {
         (case.query, case.expected_qn)
         for case in cases
-        if case.expected_qn in ranking.get(case.query, [])
+        if _rank_of(case.expected_qn, ranking.get(case.query, []), k) is not None
     }
     rows: list[ScoreRow] = []
     diff: dict[str, DiffBucket] = {}
@@ -105,6 +127,33 @@ def score_semantic(
             extra=[],
         )
     return ScoreResult(rows=rows, location=_EMPTY_LOCATION, diff=diff)
+
+
+def score_semantic_mrr(
+    cases: list[SemanticCase], ranking: dict[str, list[str]], k: int | None = None
+) -> float:
+    """Mean reciprocal rank of the expected function over all cases.
+
+    The order-sensitive counterpart to `score_semantic` (issue #1474). Where
+    recall@k asks only whether the answer survived the cutoff, MRR measures
+    WHERE it landed, so a promotion from rank 3 to rank 2 registers even
+    though it crosses no boundary. That makes it the instrument for ranking
+    work: position is the quantity being measured rather than a property the
+    metric discards.
+
+    A case whose answer is absent (or below k) contributes 0.0 rather than
+    being skipped, so adding an unretrievable case lowers the mean instead of
+    quietly leaving it unchanged. No cases means no evidence, which scores 0.0
+    rather than a vacuous 1.0.
+    """
+    if not cases:
+        return 0.0
+    total = 0.0
+    for case in cases:
+        rank = _rank_of(case.expected_qn, ranking.get(case.query, []), k)
+        if rank is not None:
+            total += 1.0 / rank
+    return total / len(cases)
 
 
 def proximity_edges(target: Path, project: str) -> dict[str, set[str]]:

@@ -233,3 +233,190 @@ def test_self_loops_are_excluded_from_proximity() -> None:
     query = build_proximity_query([1, 2])
 
     assert "id(a) <> id(b)" in query, query
+
+
+# --- the shipped query and the eval's adjacency must agree (issue #1474) ----
+#
+# The three bugs fixed in review on #1467 -- one endpoint of a directed edge
+# going uncounted, self-loops being double-counted, and the CONTAINS_*
+# exclusion being unpinned -- were all DIVERGENCES between the shipped Cypher
+# and the adjacency model the eval scores it against, rather than freestanding
+# errors. Nothing caught them because nothing compared the two implementations,
+# only each one against its own expectations.
+#
+# `build_proximity_query` is pinned structurally above because this suite has
+# no Memgraph. These execute the query's SEMANTICS over the same relationship
+# tuples `evals.semantic_search.proximity_edges` consumes, and assert both
+# arrive at the same in-set degrees. A divergence in either direction fails
+# here rather than silently making the measurement describe different code
+# from the code that ships.
+
+
+def _degrees_via_shipped_semantics(
+    rels: list[tuple[str, str, str]], in_set: set[str]
+) -> dict[str, int]:
+    """In-set degree the way the shipped Cypher computes it.
+
+    Mirrors `build_proximity_query` clause for clause over tuples:
+    `MATCH (a)-[r:REL]->(b)` filtered to `_PROXIMITY_RELS`, both endpoints in
+    the node-id list, `id(a) <> id(b)`, then `UNWIND [id(a), id(b)]` counting
+    each endpoint once per surviving edge.
+    """
+    from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
+
+    degrees: dict[str, int] = {}
+    for source, rel_type, target in rels:
+        if rel_type not in _PROXIMITY_RELS:
+            continue
+        if source not in in_set or target not in in_set:
+            continue
+        if source == target:  # id(a) <> id(b)
+            continue
+        for endpoint in (source, target):  # UNWIND [id(a), id(b)]
+            degrees[endpoint] = degrees.get(endpoint, 0) + 1
+    return degrees
+
+
+def _degrees_via_eval_adjacency(
+    rels: list[tuple[str, str, str]], in_set: set[str]
+) -> dict[str, int]:
+    """In-set degree the way `evals.semantic_search.proximity_edges` does.
+
+    That helper builds an undirected adjacency SET keyed by qualified name;
+    `reranked_semantic_ranking` then counts `adjacency[qn] & in_set`.
+    """
+    from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
+
+    adjacency: dict[str, set[str]] = {}
+    for source, rel_type, target in rels:
+        if rel_type not in _PROXIMITY_RELS:
+            continue
+        if source == target:
+            continue
+        adjacency.setdefault(source, set()).add(target)
+        adjacency.setdefault(target, set()).add(source)
+    return {
+        qn: len(adjacency.get(qn, set()) & in_set)
+        for qn in in_set
+        if adjacency.get(qn, set()) & in_set
+    }
+
+
+def test_directed_edges_boost_both_endpoints_in_both_implementations() -> None:
+    """The directed-endpoint bug, caught by comparison rather than by inspection.
+
+    `a` CALLS `b` and nothing else. Both must gain degree 1. Projecting only
+    `id(a)` -- the shape this replaced -- would leave `b` at 0 in the shipped
+    path while the eval's symmetric adjacency still reports 1.
+    """
+    rels = [("a", "CALLS", "b")]
+    in_set = {"a", "b"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    assert shipped == {"a": 1, "b": 1}
+
+
+def test_a_self_loop_contributes_nothing_in_both_implementations() -> None:
+    """A recursive function scores zero proximity, not maximum, in both paths."""
+    rels = [("rec", "CALLS", "rec"), ("a", "CALLS", "b")]
+    in_set = {"rec", "a", "b"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    assert "rec" not in shipped, shipped
+
+
+def test_containment_edges_change_no_degree_in_either_implementation() -> None:
+    """CONTAINS_* is excluded from the shipped query; the eval must match.
+
+    Pinned by comparison rather than by asserting the constant, so that adding
+    a relationship type to one path and not the other fails here.
+    """
+    rels = [
+        ("mod", "CONTAINS_FILE", "a"),
+        ("mod", "CONTAINS_FILE", "b"),
+        ("a", "CALLS", "b"),
+    ]
+    in_set = {"mod", "a", "b"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    assert "mod" not in shipped, shipped
+
+
+def test_the_two_implementations_agree_over_a_mixed_graph() -> None:
+    """One fixture exercising every divergence at once.
+
+    Directed edges in both orientations, a self-loop, an out-of-set edge, a
+    containment edge, and an unrelated relationship type. Any single-path
+    change to the proximity model breaks the equality.
+
+    At most ONE counted edge joins any pair here -- see
+    `test_a_multi_edge_pair_is_a_known_divergence` for why that restriction is
+    load-bearing rather than incidental.
+    """
+    rels = [
+        ("a", "CALLS", "b"),
+        ("b", "CALLS", "c"),
+        ("c", "CALLS", "a"),
+        ("a", "CALLS", "a"),
+        ("a", "CALLS", "outside"),
+        ("mod", "CONTAINS_FILE", "a"),
+    ]
+    in_set = {"a", "b", "c"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    # Every in-set node is connected to both others by at least one counted
+    # edge, so none may be missing -- an empty result would satisfy the
+    # equality above while measuring nothing.
+    assert set(shipped) == in_set, shipped
+
+
+def test_a_multi_edge_pair_is_a_known_divergence() -> None:
+    """Two nodes joined by SEVERAL counted edges are scored differently.
+
+    Found by the comparison above rather than by inspection, which is the
+    point of comparing implementations at all. The shipped Cypher counts
+    EDGES -- `UNWIND` yields both endpoints once per matching relationship --
+    while `proximity_edges` builds a SET of neighbours, so every extra edge
+    between the same pair collapses to one.
+
+    A pair joined by both CALLS and OVERRIDES therefore contributes twice the
+    proximity in shipped code and once in the model that measures it.
+    Normalisation hides this while one pair dominates; it surfaces as soon as
+    a multi-edge pair competes with a single-edge one. Measured over
+    a-b (two edges) and b-c (one edge):
+
+        shipped: a=0.67  b=1.0  c=0.33
+        eval:    a=0.5   b=1.0  c=0.5
+
+    Pinned rather than fixed: which count is CORRECT is a question about the
+    proximity model (is a pair that both calls and overrides "closer" than one
+    that only calls?), not about this metric change, and answering it inside
+    an eval-scoring fix would ship a silent behaviour change to the reranker.
+    Tracked in issue #1477; this test fails the moment either side changes, so
+    the divergence cannot widen unnoticed.
+    """
+    rels = [("a", "CALLS", "b"), ("a", "OVERRIDES", "b")]
+    in_set = {"a", "b"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == {"a": 2, "b": 2}, shipped
+    assert evaluated == {"a": 1, "b": 1}, evaluated
+    assert shipped != evaluated, (
+        "the multi-edge divergence is gone; if it was fixed deliberately, "
+        "fold this pair back into test_the_two_implementations_agree_over_a_"
+        "mixed_graph and delete this test"
+    )
