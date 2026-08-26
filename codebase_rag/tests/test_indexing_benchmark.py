@@ -260,3 +260,46 @@ def test_a_missing_proc_status_falls_back_rather_than_failing(
     monkeypatch.setattr("builtins.open", _no_proc)
 
     assert module._proc_peak_rss_bytes() is None
+
+
+def test_linux_without_proc_reports_unavailable_not_ru_maxrss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On Linux an unreadable /proc must NOT fall back to ru_maxrss.
+
+    `ru_maxrss` survives fork/exec on Linux, so the fallback would report the
+    parent's high-water mark as the child's peak -- reinstating the exact bug
+    the subprocess isolation exists to prevent. Greptile measured a released
+    192 MiB parent allocation moving the fallback's answer by 199,208,960
+    bytes for an identical one-file workload.
+
+    macOS cannot execute this path (it has no /proc and its ru_maxrss IS
+    child-local), so the platform is faked. That is the point: the previous
+    version of this fallback was wrong on Linux and every local run passed.
+    """
+    import benchmarks.bench_indexing as module
+
+    monkeypatch.setattr(module, "_proc_peak_rss_bytes", lambda: None)
+    monkeypatch.setattr(module.sys, "platform", "linux")
+
+    assert module._self_peak_rss_bytes() == RSS_UNAVAILABLE
+
+
+def test_non_linux_without_proc_still_uses_ru_maxrss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """macOS keeps the fallback, because there it is genuinely child-local.
+
+    Paired with the test above so the Linux guard cannot be implemented by
+    disabling the fallback everywhere -- that would lose a real measurement on
+    the platform where it works.
+    """
+    import benchmarks.bench_indexing as module
+
+    if module.resource is None:  # pragma: no cover - Windows
+        pytest.skip("no resource module on this platform")
+
+    monkeypatch.setattr(module, "_proc_peak_rss_bytes", lambda: None)
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+
+    assert module._self_peak_rss_bytes() > 0

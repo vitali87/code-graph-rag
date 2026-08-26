@@ -97,15 +97,26 @@ def _proc_peak_rss_bytes() -> int | None:
 def _self_peak_rss_bytes() -> int:
     """This process's peak RSS, or `RSS_UNAVAILABLE` where unsupported.
 
-    Only meaningful in the freshly-spawned child. `/proc` is preferred because
-    `VmHWM` is exec-scoped on Linux; `ru_maxrss` is the fallback for platforms
-    with no `/proc` (macOS), where fork/exec does reset the high-water mark and
-    so the value is already child-local.
+    Only meaningful in the freshly-spawned child, and the source depends on
+    the platform because `ru_maxrss` is not child-local everywhere:
+
+    - Linux: `/proc/self/status` `VmHWM`, which IS exec-scoped. If it cannot
+      be read, this reports unavailable rather than falling back --
+      `ru_maxrss` survives fork/exec here, so the fallback would report the
+      parent's history as the child's peak. Measured: a released 192 MiB
+      parent allocation moved the fallback's answer by 199,208,960 bytes for
+      an identical one-file workload.
+    - macOS and other non-Linux Unix: `ru_maxrss`, where fork/exec does reset
+      the high-water mark, so the value is already child-local.
+    - Windows: no `resource` module, so unavailable.
+
+    Reporting unavailable beats reporting a number that is wrong in the
+    direction of "this run used memory it never touched".
     """
     from_proc = _proc_peak_rss_bytes()
     if from_proc is not None:
         return from_proc
-    if resource is None:
+    if resource is None or sys.platform.startswith("linux"):
         return RSS_UNAVAILABLE
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * _RSS_SCALE
 
