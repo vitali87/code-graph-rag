@@ -395,8 +395,13 @@ class GraphUpdater:
         # #include IMPORTS, whose qns are scheme-identical, and hands back
         # macro uses for span attribution after Pass 2. Missing either
         # condition falls back to tree-sitter.
+        # Both pending lists, not just the macro one: an early return below
+        # (mode off, libclang absent, no compile_commands.json) would otherwise
+        # leave a previous run's expansion calls in place, and the Pass-3
+        # consumer would emit CALLS edges for expansions that no longer apply.
         self._cpp_frontend_covered = frozenset()
         self._pending_cpp_macro_calls = []
+        self._pending_cpp_expansion_calls = []
         if settings.CPP_FRONTEND not in (
             cs.CppFrontend.LIBCLANG,
             cs.CppFrontend.HYBRID,
