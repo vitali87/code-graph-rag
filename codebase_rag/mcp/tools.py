@@ -758,15 +758,28 @@ class MCPToolsRegistry:
         min_size: int = cs.DUPLICATES_DEFAULT_MIN_NODES,
         limit: int = cs.DUPLICATES_DEFAULT_GROUP_LIMIT,
     ) -> str:
-        """Report structurally duplicated functions (issue #1342)."""
-        result = await self._find_duplicates_tool.function(
-            project=project, threshold=threshold, min_size=min_size, limit=limit
-        )
+        """Report structurally duplicated functions (issue #1342).
+
+        Duplicate detection spans several graph reads -- fingerprints, then
+        skipped-symbol coverage -- so it takes the lock for the same reason
+        `flow_verdict` does: index/update delete and rebuild while holding it,
+        and an interleaved read would report groups from one generation with
+        coverage from another.
+        """
+        async with self._ingestor_lock:
+            result = await self._find_duplicates_tool.function(
+                project=project, threshold=threshold, min_size=min_size, limit=limit
+            )
         return str(result)
 
     async def get_function_source(self, node_id: int) -> str:
-        """Fetch a function's source by graph node id (issue #1342)."""
-        result = await self._function_source_tool.function(node_id=node_id)
+        """Fetch a function's source by graph node id (issue #1342).
+
+        A node id is only meaningful within one generation of the graph, so
+        the lookup must not straddle a rebuild that could reassign it.
+        """
+        async with self._ingestor_lock:
+            result = await self._function_source_tool.function(node_id=node_id)
         return str(result)
 
     async def structural_search(self, pattern: str, language: str | None = None) -> str:

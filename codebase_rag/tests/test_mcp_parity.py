@@ -187,6 +187,72 @@ class TestGetFunctionSourceIsExposed:
         mcp_registry._function_source_tool.function.assert_awaited_once_with(node_id=42)
 
 
+class TestGraphReadsAreSerialisedAgainstMutation:
+    """Graph reads must hold `_ingestor_lock` for the whole read.
+
+    `index` and `update` delete and rebuild under this lock, so a read that
+    does not take it can observe one generation for part of its work and
+    another for the rest. `flow_verdict` states the rule in a comment:
+    "the edge scan and coverage read must see one consistent graph ...
+    an interleaved read would mix generations".
+
+    Asserting the lock is HELD WHILE the tool runs is the property that
+    matters. Asserting merely that the handler completes, or that the lock
+    exists, is satisfied by the unlocked implementation too (Greptile P1,
+    issue #1342).
+    """
+
+    async def test_find_duplicate_code_holds_the_lock(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        held: list[bool] = []
+
+        async def _probe(**_kwargs: object) -> str:
+            # A concurrent index/update would have to wait here.
+            held.append(mcp_registry._ingestor_lock.locked())
+            return "no duplicates"
+
+        mcp_registry._find_duplicates_tool = MagicMock()
+        mcp_registry._find_duplicates_tool.function = _probe
+
+        await mcp_registry.find_duplicate_code()
+
+        assert held == [True], (
+            "find_duplicate_code read the graph without holding _ingestor_lock; "
+            "a mutation can interleave between its reads"
+        )
+
+    async def test_get_function_source_holds_the_lock(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        held: list[bool] = []
+
+        async def _probe(**_kwargs: object) -> str:
+            held.append(mcp_registry._ingestor_lock.locked())
+            return "def f(): ..."
+
+        mcp_registry._function_source_tool = MagicMock()
+        mcp_registry._function_source_tool.function = _probe
+
+        await mcp_registry.get_function_source(node_id=1)
+
+        assert held == [True], (
+            "get_function_source read the graph without holding _ingestor_lock"
+        )
+
+    async def test_lock_is_released_after_the_read(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        """Holding the lock must not leak past the handler, or the first read
+        would deadlock every later index/update."""
+        mcp_registry._find_duplicates_tool = MagicMock()
+        mcp_registry._find_duplicates_tool.function = AsyncMock(return_value="{}")
+
+        await mcp_registry.find_duplicate_code()
+
+        assert not mcp_registry._ingestor_lock.locked()
+
+
 class TestDeliberateAbsencesAreUnchanged:
     """The other three CLI tools are absent by design, not by oversight."""
 
