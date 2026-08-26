@@ -2,6 +2,7 @@
 attribute lines: the newline-crossing attribute group let every line of the
 run restart a match attempt that consumed the rest of the run (issue #1089)."""
 
+import os
 import time
 
 import pytest
@@ -55,23 +56,35 @@ def _best_scan_time(source: str, repeats: int = 5) -> float:
     return min(_scan_time(source) for _ in range(repeats))
 
 
-# Pinned to its own xdist worker (issue #1473). Even on CPU time this test
-# flaked roughly one run in four under `-n auto`, because process_time still
-# counts cycles this process spends contending for shared caches and memory
-# bandwidth -- it excludes descheduled time, not interference.
+# Skipped under xdist (issue #1473). A timing assertion cannot be made
+# reliable on a shared parallel runner, and this file is the evidence: it has
+# now been hardened FOUR times -- best-of-N sampling (#1089),
+# ratio-not-absolute (#1382), CPU time instead of wall clock, and an
+# xdist_group marker -- and each round reduced the flake rate without
+# reaching zero.
 #
-# The two earlier hardening rounds (#1089 best-of-N, #1382 ratio-not-absolute)
-# and the CPU-time switch each reduced the flake rate without reaching zero.
-# The remaining fix is not another statistical trick: it is to stop sharing
-# the machine. `--dist=loadgroup` is already configured, and the integration
-# suite already uses this marker for the same reason.
+# The marker was the instructive failure. `xdist_group` groups marked tests
+# with EACH OTHER; it does not reserve a worker. Probed directly, two
+# workers, three runs: the grouped test landed on gw0 every time and an
+# unmarked test landed on gw0 with it every time. The integration suite uses
+# the same marker correctly, for the opposite purpose -- serialising its own
+# tests onto one worker so they do not race a shared container.
 #
-# A quadratic control was briefly added here to prove the bound still
-# separates linear from quadratic. It was removed: it is itself a timing
-# assertion, so it could flake for the same reason, and it took the file from
-# 4s to 35s. Verified once by hand instead -- the #1089 shape measures 15.6x
-# against a 10x bound, and linear measures ~4x.
-@pytest.mark.xdist_group("rust_attr_scan_perf")
+# So there is no marker that buys isolation, and `re` exposes no step counter
+# to measure work deterministically (match COUNTS are identical for the
+# linear and quadratic shapes; the cost is backtracking). What remains is to
+# stop asserting timing where the measurement is not trustworthy, and keep
+# asserting it where it is.
+#
+# CPU time is retained because it is strictly better than wall clock when the
+# test does run -- measured spread under full load, 0.30 wall vs 0.10 CPU.
+@pytest.mark.skipif(
+    os.environ.get("PYTEST_XDIST_WORKER") is not None,
+    reason=(
+        "timing assertion is not trustworthy on a shared xdist worker; "
+        "run this file serially to exercise it (issue #1473)"
+    ),
+)
 def test_unbroken_attribute_run_scans_linearly() -> None:
     # Compare a RATIO, never an absolute duration: the machine's speed cancels
     # out, which an absolute ceiling cannot do. The previous absolute floor was
