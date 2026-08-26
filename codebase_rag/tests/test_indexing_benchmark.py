@@ -132,8 +132,12 @@ def test_the_markdown_row_carries_what_was_measured(tmp_path: Path) -> None:
     assert result.corpus_name in row
     assert result.cgr_version in row
     assert str(result.file_count) in row
-    # A pipe-delimited row, so it can be pasted into the README table.
-    assert row.startswith("|") and row.endswith("|")
+    # A pipe-delimited row, so it can be pasted into the README table. Split
+    # rather than combined with `and`: a composite failure cannot say which
+    # end is malformed, and a row missing its trailing pipe renders as broken
+    # markdown in a way the leading-pipe check would not reveal.
+    assert row.startswith("|"), row
+    assert row.endswith("|"), row
 
 
 def test_peak_memory_is_local_to_the_run_not_the_process(tmp_path: Path) -> None:
