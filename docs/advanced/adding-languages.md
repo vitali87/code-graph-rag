@@ -44,6 +44,40 @@ When you add a language, the tool automatically:
 4. **Updates Configuration**: Adds the language to `codebase_rag/language_spec.py`
 5. **Enables Parsing**: Makes the language available for codebase analysis (the grammar itself is compiled on first use by the parser loader)
 
+## What does NOT happen automatically
+
+Everything above is derived from the grammar's own `tree-sitter.json` and
+`node-types.json`. Anything that depends on what the language *means* is not,
+and cannot be, inferred from those files.
+
+A grammar added this way gets **definitions and calls**. It does not get a
+`LanguageHandler`, and several capabilities live there:
+
+| Derived from the grammar | Needs a language handler |
+|---|---|
+| Functions, methods, classes | Inheritance (`extends`, `with`, mixins) |
+| Modules and files | Import resolution and aliasing |
+| Call sites | Qualified-name construction rules |
+
+Measured example: Scala shipped with its node types wired and no handler. It
+produced classes, objects, traits, methods, modules and CALLS edges — and
+**no inheritance edges at all**, because `extends A with B` is a grammar
+production nothing had been taught to read. Its imports resolved to nothing
+for every form. Both took reading the grammar and deciding what the
+constructs mean; neither is in `node-types.json`.
+
+**The failure is silent.** A partially-supported language produces a graph,
+not an error. Queries return fewer results rather than reporting that a
+relationship kind is missing, so nothing tells you the graph is thinner than
+the code.
+
+So treat `add-grammar` as *"parse this language"*, not *"support this
+language"*. If you need inheritance or import edges, the language needs a
+handler in `codebase_rag/parsers/handlers/` — see
+[Adding a Language Frontend](../architecture/language-frontends.md) and the
+[support matrix](../architecture/language-support.md) for what each shipped
+language actually provides.
+
 ## Example: Adding C# Support
 
 ```bash
