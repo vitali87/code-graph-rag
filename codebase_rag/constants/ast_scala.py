@@ -19,6 +19,13 @@ TS_SCALA_IMPORT_DECLARATION = "import_declaration"
 TS_SCALA_NAMESPACE_SELECTORS = "namespace_selectors"
 TS_SCALA_ARROW_RENAMED_IDENTIFIER = "arrow_renamed_identifier"
 TS_SCALA_NAMESPACE_WILDCARD = "namespace_wildcard"
+
+# Wrappers the grammar puts between an `extends` clause and the
+# `type_identifier` naming the base. `type_arguments` is deliberately ABSENT:
+# it also holds a type_identifier (the `Int` of `Service[Int]`), so descending
+# into it would return the type ARGUMENT as the base class.
+TS_SCALA_GENERIC_TYPE = "generic_type"
+TS_SCALA_STABLE_TYPE_IDENTIFIER = "stable_type_identifier"
 TS_SCALA_STRING = "string"
 TS_SCALA_BLOCK = "block"
 TS_SCALA_TEMPLATE_BODY = "template_body"

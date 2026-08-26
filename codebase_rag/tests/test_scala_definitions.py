@@ -201,3 +201,61 @@ object Solo {
 
     modules = get_node_names(mock_ingestor, NodeType.MODULE)
     assert _endswith_any(modules, "mod"), sorted(modules)
+
+
+def test_qualified_and_generic_bases_still_inherit(
+    scala_project: Path, mock_ingestor: MagicMock
+) -> None:
+    """A base written as `foo.Service[Int]` is still a base.
+
+    Scala writes four shapes into one `extends_clause`, and the grammar nests
+    them differently:
+
+        Service              -> type_identifier
+        Service[Int]         -> generic_type > type_identifier
+        foo.Bar              -> stable_type_identifier > type_identifier
+        foo.Service[Int]     -> generic_type > stable_type_identifier > type_identifier
+
+    A lookup that checks only the direct child and one level down finds the
+    first two and silently drops the last two -- and dropping a base is
+    invisible: the class still exists, it just floats free of its parent.
+
+    Qualified bases are the NORM in real Scala (`extends akka.Actor`), so the
+    missed cases are the common ones rather than the exotic ones.
+    """
+    (scala_project / "qualified.scala").write_text(
+        """
+package com.example
+
+class Plain extends Service {
+  def a(): Int = 1
+}
+
+class Generic extends Service[Int] {
+  def b(): Int = 2
+}
+
+class Qualified extends foo.Bar {
+  def c(): Int = 3
+}
+
+class QualifiedGeneric extends foo.Service[Int] {
+  def d(): Int = 4
+}
+"""
+    )
+
+    run_updater(scala_project, mock_ingestor, skip_if_missing=SKIP)
+
+    # Keyed by SOURCE class, not by target name. An earlier version asserted
+    # only that some edge ended in "Service", which the unqualified `Plain`
+    # case already satisfies -- so it passed while `QualifiedGeneric` produced
+    # no edge at all. The classes share base NAMES on purpose; only the source
+    # distinguishes them.
+    sources = {
+        str(c.args[0][2]).split(".")[-1]
+        for c in get_relationships(mock_ingestor, "INHERITS")
+    }
+
+    for cls in ("Plain", "Generic", "Qualified", "QualifiedGeneric"):
+        assert cls in sources, (cls, sorted(sources))

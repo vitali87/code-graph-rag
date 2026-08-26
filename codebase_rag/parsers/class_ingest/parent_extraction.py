@@ -197,6 +197,33 @@ def extract_parent_classes(
     return parent_classes
 
 
+# Only these wrappers are descended; see the constants module for why
+# `type_arguments` must not be.
+_SCALA_BASE_WRAPPERS = (
+    cs.TS_SCALA_GENERIC_TYPE,
+    cs.TS_SCALA_STABLE_TYPE_IDENTIFIER,
+)
+
+
+def _scala_base_type_identifier(node: Node) -> Node | None:
+    """The `type_identifier` naming a Scala base, at whatever depth it sits.
+
+    Descends the LAST type-bearing child at each level, which is what picks
+    the simple name out of `foo.bar.Baz`: the qualifier segments come first
+    and the type name is last. Bounded to the wrapper kinds the grammar
+    actually produces, so this never walks into a type argument list and
+    returns `Int` from `foo.Service[Int]`.
+    """
+    if node.type == cs.TS_TYPE_IDENTIFIER:
+        return node
+    if node.type not in _SCALA_BASE_WRAPPERS:
+        return None
+    for child in reversed(node.children):
+        if found := _scala_base_type_identifier(child):
+            return found
+    return None
+
+
 def extract_scala_parent_classes(
     class_node: Node,
     module_qn: str,
@@ -214,9 +241,18 @@ def extract_scala_parent_classes(
     `extends_clause`, so the type nodes are collected by kind rather than by
     position: no keyword marks where the base list stops.
 
-    Both plain (`Named`) and generic (`Seq[Int]`) bases appear as
-    `type_identifier` or wrap one, so a nested lookup catches the generic form
-    while a direct child catches the plain one.
+    The grammar nests the four base spellings to different depths, so the
+    `type_identifier` is found by descending rather than at a fixed level:
+
+        Named                -> type_identifier
+        Seq[Int]             -> generic_type > type_identifier
+        foo.Bar              -> stable_type_identifier > type_identifier
+        foo.Seq[Int]         -> generic_type > stable_type_identifier > type_identifier
+
+    A fixed one-level lookup finds the first three and drops the fourth, which
+    is the combination real Scala uses most (`extends akka.actor.Actor[T]`).
+    Dropping a base is invisible in the graph: the class still exists, it just
+    floats free of its parent.
     """
     extends_clause = find_child_by_type(class_node, cs.TS_EXTENDS_CLAUSE)
     if extends_clause is None:
@@ -224,11 +260,7 @@ def extract_scala_parent_classes(
 
     parents: list[str] = []
     for child in extends_clause.children:
-        base_node = (
-            child
-            if child.type == cs.TS_TYPE_IDENTIFIER
-            else find_child_by_type(child, cs.TS_TYPE_IDENTIFIER)
-        )
+        base_node = _scala_base_type_identifier(child)
         if base_node is None or not base_node.text:
             continue
         if name := safe_decode_text(base_node):
