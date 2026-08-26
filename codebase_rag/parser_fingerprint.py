@@ -7,6 +7,7 @@
 import hashlib
 import shutil
 import subprocess
+from collections.abc import Callable
 from importlib import metadata
 from pathlib import Path
 
@@ -92,29 +93,53 @@ def _probe_version(executable: str, argument: str) -> str:
     return output.splitlines()[0].strip() if output else _TOOL_ABSENT
 
 
-def _active_tools() -> dict[str, bool]:
-    """Whether each tool's frontend is resolved to a mode that USES it.
+def _active_tools(repo_path: Path | None = None) -> dict[str, bool]:
+    """Whether each tool can participate in extraction for THIS repository.
 
-    A tool no frontend can use contributes nothing to extraction, so hashing
-    its version invalidates the graph for a change that cannot affect it --
-    false staleness, which costs more than the drift the version was added to
-    catch (issue #1465 review). Imported lazily, as `_frontend_settings` does,
-    to keep this module free of the parsers package at import time.
+    Two gates, and both are needed. The resolved frontend mode says the
+    frontend could run at all; the repository markers say it can run *here*.
+    Go resolves to `gotypes` whenever a go toolchain exists, so without the
+    second gate a Go upgrade invalidates the graph of a Python-only repo it
+    can extract nothing from -- false staleness, which costs more than the
+    drift the versions were added to catch (issue #1465 review).
+
+    A repo-less call keeps mode gating only, matching `_repo_frontend_inputs`:
+    those callers have no repository to ask, and reporting everything inactive
+    would make their fingerprint disagree with a repo-scoped one for the same
+    toolchain.
+
+    Imported lazily, as `_frontend_settings` does, to keep this module free of
+    the parsers package at import time.
     """
-    from .parsers.csharp_frontend import resolve_csharp_frontend
-    from .parsers.go_frontend import resolve_go_frontend
+    from .parsers.csharp_frontend import find_csharp_project, resolve_csharp_frontend
+    from .parsers.go_frontend import find_go_module, resolve_go_frontend
     from .parsers.java_frontend import resolve_java_frontend
 
+    def _in_repo(probe: Callable[[Path], object | None]) -> bool:
+        # No repository to ask: fall back to mode gating alone rather than
+        # declaring the tool inactive. A probe that raises on a malformed
+        # tree must not abort a fingerprint computed on every index.
+        if repo_path is None:
+            return True
+        try:
+            return probe(repo_path) is not None
+        except OSError:
+            return True
+
     return {
-        "GO_VERSION": resolve_go_frontend() is not cs.GoFrontend.TREESITTER,
+        "GO_VERSION": (
+            resolve_go_frontend() is not cs.GoFrontend.TREESITTER
+            and _in_repo(find_go_module)
+        ),
         "JAVAC_VERSION": resolve_java_frontend() is not cs.JavaFrontend.HEURISTIC,
         "DOTNET_VERSION": (
             resolve_csharp_frontend() is not cs.CSharpFrontend.TREESITTER
+            and _in_repo(find_csharp_project)
         ),
     }
 
 
-def _tool_versions() -> list[str]:
+def _tool_versions(repo_path: Path | None = None) -> list[str]:
     """`KEY=version` for each ACTIVE external toolchain, in a stable order.
 
     Stable order matters as much as the values: the entries are hashed in
@@ -127,7 +152,7 @@ def _tool_versions() -> list[str]:
     those are different states: turning a frontend off changes what is
     extracted and must still trip the warning.
     """
-    active = _active_tools()
+    active = _active_tools(repo_path)
     return [
         f"{key}={_probe_version(executable, argument) if active.get(key) else _TOOL_INACTIVE}"
         for key, executable, argument in _VERSIONED_TOOLS
@@ -156,7 +181,7 @@ def compute_parser_fingerprint(
     # compiler upgrade changes the emitted edges with the mode unchanged, so
     # without this an incremental run reuses a graph the older tool produced
     # (issue #1465).
-    for entry in _tool_versions():
+    for entry in _tool_versions(repo_path):
         hasher.update(entry.encode())
     return hasher.hexdigest()
 

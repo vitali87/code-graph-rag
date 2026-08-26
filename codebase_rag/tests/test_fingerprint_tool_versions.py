@@ -129,3 +129,54 @@ def test_an_inactive_tool_version_does_not_change_the_fingerprint() -> None:
         active_second = pf.compute_parser_fingerprint()
 
     assert active_first != active_second, "an ACTIVE tool's version was ignored"
+
+
+def test_a_tool_is_inactive_when_the_repo_cannot_use_it(tmp_path) -> None:
+    """A Python-only repo must not be invalidated by a Go upgrade.
+
+    Gating on the resolved frontend MODE is not enough: Go resolves to
+    `gotypes` whenever a go toolchain exists, regardless of whether the
+    indexed repository contains a single `go.mod`. Upgrading Go then
+    invalidates the graph of a repo it can extract nothing from.
+
+    Same false-staleness failure as the inactive-mode case, one level down --
+    the mode says the frontend COULD run, `applies()` says whether it can run
+    HERE.
+    """
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    active = pf._active_tools(tmp_path)
+
+    assert not active["GO_VERSION"], "Go counted for a repo with no go.mod"
+    assert not active["DOTNET_VERSION"], "dotnet counted for a repo with no project"
+
+
+def test_a_tool_is_active_when_the_repo_does_use_it(tmp_path) -> None:
+    """The paired control: a repo that DOES contain the language still counts.
+
+    Without it, an implementation that reported every tool inactive would pass
+    the test above and silently stop detecting real toolchain upgrades.
+    """
+    (tmp_path / "go.mod").write_text("module example.com/x\n\ngo 1.23\n", encoding="utf-8")
+
+    with patch(
+        "codebase_rag.parsers.go_frontend.resolve_go_frontend",
+        return_value=__import__(
+            "codebase_rag.constants", fromlist=["GoFrontend"]
+        ).GoFrontend.GOTYPES,
+    ):
+        active = pf._active_tools(tmp_path)
+
+    assert active["GO_VERSION"], "Go ignored for a repo that has a go.mod"
+
+
+def test_a_repo_less_call_keeps_mode_gating_only(tmp_path) -> None:
+    """`compute_parser_fingerprint()` is called without a repo in places.
+
+    Those calls must stay stable rather than reporting everything inactive,
+    which would make a repo-less fingerprint disagree with a repo-scoped one
+    for the same toolchain.
+    """
+    assert set(pf._active_tools(None)) == {
+        key for key, _exe, _arg in pf._VERSIONED_TOOLS
+    }
