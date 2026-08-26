@@ -39,7 +39,15 @@ _LANGUAGE_SUPPORT_DOC = (
 # command launders a destructive leading one: "Run cgr start --clean then run
 # cgr start --update-graph" captured as a single string, whose
 # `--update-graph` satisfied the check for a command that does not have it.
-_CONNECTOR = r"(?:\s+(?:and\s+)?then\b|\s+followed\s+by\b|\s+before\b|\s+&&)"
+#
+# `and` is a connector on its own, not merely an optional prefix to `then`. The
+# first version of this fix only ever matched `and` as part of `and then`, so
+# "Run cgr start --clean and run cgr start --update-graph" still captured as one
+# string and laundered exactly as before -- the bug the connector list exists to
+# prevent, surviving in the conjunction nobody enumerated (Greptile P1, #1444).
+_CONNECTOR = (
+    r"(?:\s+and\s+then\b|\s+and\b|\s+then\b|\s+followed\s+by\b|\s+before\b|\s+&&)"
+)
 
 _REMEDY = re.compile(
     r"run\s+(?:'([^'\n]*--clean[^'\n]*)'"
@@ -140,6 +148,12 @@ class TestCleanRemedyStrings:
             "Run cgr start --clean followed by cgr start --update-graph",
             "Run cgr start --clean && cgr start --update-graph",
             "Run cgr start --clean before cgr start --update-graph",
+            # Standalone "and", with no "then" after it, was the hole the first
+            # connector fix left: `and` was only ever optional *before* `then`,
+            # never a boundary on its own (Greptile P1, #1444).
+            "Run cgr start --clean and run cgr start --update-graph",
+            "Run cgr start --clean, and run cgr start --update-graph",
+            "Run cgr start --clean and cgr start --update-graph",
         ],
     )
     def test_bare_match_stops_at_a_command_connector(self, text: str) -> None:
