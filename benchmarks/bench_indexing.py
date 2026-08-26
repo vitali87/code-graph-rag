@@ -71,13 +71,40 @@ class IndexingMeasurement:
     peak_rss_bytes: int
 
 
+def _proc_peak_rss_bytes() -> int | None:
+    """This process's peak RSS from `/proc/self/status`, or None if unreadable.
+
+    `VmHWM` is per-process and genuinely reset by exec, which `ru_maxrss` is
+    NOT on Linux -- there the child inherits the parent's high-water mark
+    across fork/exec, so a freshly spawned child reports whatever the parent
+    had already peaked at. Measured: a released 192 MiB parent ballast moved
+    the child's reported peak by 201,375,744 bytes.
+
+    Returns None rather than a sentinel so the caller can fall back; absent
+    `/proc` (macOS, Windows) is not the same as "cannot measure".
+    """
+    try:
+        with open("/proc/self/status", encoding=cs.ENCODING_UTF8) as handle:
+            for line in handle:
+                if line.startswith("VmHWM:"):
+                    # "VmHWM:\t  123456 kB"
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def _self_peak_rss_bytes() -> int:
     """This process's peak RSS, or `RSS_UNAVAILABLE` where unsupported.
 
-    Only meaningful in the freshly-spawned child, whose high-water mark starts
-    clean. Read in the parent it is the cumulative peak of everything that
-    process has ever done.
+    Only meaningful in the freshly-spawned child. `/proc` is preferred because
+    `VmHWM` is exec-scoped on Linux; `ru_maxrss` is the fallback for platforms
+    with no `/proc` (macOS), where fork/exec does reset the high-water mark and
+    so the value is already child-local.
     """
+    from_proc = _proc_peak_rss_bytes()
+    if from_proc is not None:
+        return from_proc
     if resource is None:
         return RSS_UNAVAILABLE
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * _RSS_SCALE

@@ -208,3 +208,51 @@ def test_the_benchmark_imports_where_resource_is_missing(
     module = importlib.import_module("benchmarks.bench_indexing")
 
     assert module.measure_indexing is not None
+
+
+def test_vmhwm_is_parsed_from_proc_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Linux peak comes from VmHWM, parsed in kB and returned in bytes.
+
+    macOS has no /proc, so this path cannot run here and CI Linux is the only
+    place it executes for real -- exactly the gap that let the previous
+    ru_maxrss bug reach CI green on this machine. Parsing a synthetic status
+    file exercises it everywhere.
+    """
+    import benchmarks.bench_indexing as module
+
+    status = tmp_path / "status"
+    status.write_text(
+        "Name:\tpython3\nVmPeak:\t 900000 kB\nVmHWM:\t  123456 kB\nVmRSS:\t 100000 kB\n"
+    )
+
+    real_open = open
+
+    def _fake_open(path, *args, **kwargs):
+        if path == "/proc/self/status":
+            return real_open(status, *args, **kwargs)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", _fake_open)
+
+    assert module._proc_peak_rss_bytes() == 123456 * 1024
+
+
+def test_a_missing_proc_status_falls_back_rather_than_failing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No /proc is not the same as "cannot measure".
+
+    macOS resets the high-water mark across exec, so ru_maxrss is already
+    child-local there; the fallback must engage rather than reporting the
+    unavailable sentinel and losing a figure the platform can supply.
+    """
+    import benchmarks.bench_indexing as module
+
+    def _no_proc(path, *args, **kwargs):
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr("builtins.open", _no_proc)
+
+    assert module._proc_peak_rss_bytes() is None
