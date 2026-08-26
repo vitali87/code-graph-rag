@@ -473,6 +473,31 @@ LUA_ORACLE_SCRIPT = "lua_ast.js"
 LUA_SCORES_FILENAME = "lua_scores.csv"
 LUA_DIFF_FILENAME = "lua_diff.json"
 
+# Ruby structure eval (issue #1190): cgr nodes graded against Prism, Ruby's
+# official parser. Ruby reaches the graph through the ast-grep structural tier.
+#
+# Ruby MODULES are excluded from the graded set rather than mapped onto Class.
+# cgr has no Module label, so grading them would report a recall miss no
+# implementation could fix; calling a module a Class instead would make ground
+# truth assert something false (modules cannot be instantiated and join the
+# ancestor chain by inclusion, not inheritance) and would score a future Module
+# label as a regression. The exclusion keeps that gap visible and honest.
+# Definitions nested inside a module are still graded — they are real nodes cgr
+# emits.
+RUBY_SUFFIX = ".rb"
+RUBY_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+)
+RUBY_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in RUBY_SCORED_NODE_KINDS
+)
+RUBY_ORACLE_DIRNAME = "ruby_oracle"
+RUBY_ORACLE_SCRIPT = "ruby_ast.js"
+RUBY_SCORES_FILENAME = "ruby_scores.csv"
+RUBY_DIFF_FILENAME = "ruby_diff.json"
+
 # PHP structure eval: cgr nodes graded against a php-parser oracle.
 PHP_SUFFIX = ".php"
 PHP_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (

@@ -96,3 +96,29 @@ def test_failed_oracle_surfaces_stderr(tmp_path: Path) -> None:
         pytest.raises(RuntimeError, match="Cannot find module"),
     ):
         run_node_oracle_payload(tmp_path, script, ())
+
+
+def test_oracle_output_is_decoded_as_utf8_not_the_locale(tmp_path: Path) -> None:
+    """Node writes UTF-8; the locale decides nothing about how it is read.
+
+    `text=True` alone decodes with the locale encoding, which is cp1252 on a
+    Windows runner. A Ruby class named `Café` then came back mangled and the
+    failure surfaced far from here as a lookup miss rather than a decode
+    error, so the encoding is pinned explicitly.
+
+    Asserting on the kwarg rather than on round-tripped text keeps this
+    meaningful on a UTF-8 machine, where the bug is invisible by definition.
+    """
+    (tmp_path / ec.NODE_DEPS_MARKER).touch()
+    proc = MagicMock()
+    proc.returncode = 0
+    proc.stdout = '{"nodes": [], "edges": [], "calls": []}'
+    proc.stderr = ""
+    script = tmp_path / "ruby_ast.js"
+    with (
+        patch("evals.oracles._common.shutil.which", return_value="node"),
+        patch("evals.oracles._common.subprocess.run", return_value=proc) as run_mock,
+    ):
+        run_node_oracle_payload(tmp_path, script, ())
+
+    assert run_mock.call_args.kwargs["encoding"] == "utf-8"
