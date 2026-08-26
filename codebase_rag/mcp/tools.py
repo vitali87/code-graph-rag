@@ -558,7 +558,10 @@ class MCPToolsRegistry:
     async def list_projects(self) -> ListProjectsResult:
         logger.info(lg.MCP_LISTING_PROJECTS)
         try:
-            projects = await asyncio.to_thread(self.ingestor.list_projects)
+            # Serialise against index/update, which delete and rebuild the
+            # graph under this lock; an interleaved read mixes generations.
+            async with self._ingestor_lock:
+                projects = await asyncio.to_thread(self.ingestor.list_projects)
             return ListProjectsSuccessResult(projects=projects, count=len(projects))
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
@@ -682,9 +685,12 @@ class MCPToolsRegistry:
     async def semantic_search(self, natural_language_query: str, top_k: int = 5) -> str:
         assert self._semantic_search_tool is not None
         logger.info(lg.MCP_SEMANTIC_SEARCH.format(query=natural_language_query))
-        result = await self._semantic_search_tool.function(
-            query=natural_language_query, top_k=top_k
-        )
+        # Serialise against index/update, which delete and rebuild the graph
+        # under this lock; an interleaved read mixes generations.
+        async with self._ingestor_lock:
+            result = await self._semantic_search_tool.function(
+                query=natural_language_query, top_k=top_k
+            )
         return str(result)
 
     async def structural_search(self, pattern: str, language: str | None = None) -> str:
@@ -717,7 +723,10 @@ class MCPToolsRegistry:
     async def query_code_graph(self, natural_language_query: str) -> QueryResultDict:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
-            graph_data = await self._query_tool.function(natural_language_query)
+            # Serialise against index/update, which delete and rebuild the
+            # graph under this lock; an interleaved read mixes generations.
+            async with self._ingestor_lock:
+                graph_data = await self._query_tool.function(natural_language_query)
             result_dict: QueryResultDict = graph_data.model_dump()
             logger.info(
                 lg.MCP_QUERY_RESULTS.format(
@@ -739,7 +748,10 @@ class MCPToolsRegistry:
     async def get_code_snippet(self, qualified_name: str) -> CodeSnippetResultDict:
         logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
         try:
-            snippet = await self._code_tool.function(qualified_name=qualified_name)
+            # Serialise against index/update, which delete and rebuild the
+            # graph under this lock; an interleaved read mixes generations.
+            async with self._ingestor_lock:
+                snippet = await self._code_tool.function(qualified_name=qualified_name)
             result: CodeSnippetResultDict | None = snippet.model_dump()
             if result is None:
                 return CodeSnippetResultDict(
