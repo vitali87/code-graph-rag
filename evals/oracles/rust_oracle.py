@@ -44,6 +44,7 @@ def _binary_path() -> Path:
         ],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=True,
     )
     target_dir = Path(json.loads(proc.stdout)[ec.CARGO_META_TARGET_DIR_KEY])
@@ -86,6 +87,7 @@ def _ensure_oracle_built() -> Path:
                 ],
                 capture_output=True,
                 text=True,
+                encoding=cs.ENCODING_UTF8,
                 check=True,
             )
     return binary
@@ -96,6 +98,7 @@ def _run_rust_oracle_payload(target: Path) -> OraclePayload:
         [str(_ensure_oracle_built()), str(target)],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=True,
     )
     payload: OraclePayload = json.loads(proc.stdout or "{}")

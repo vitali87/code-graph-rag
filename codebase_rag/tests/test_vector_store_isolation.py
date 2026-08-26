@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.config import settings
 
 
@@ -52,6 +53,7 @@ def test_isolation_fixture_neutralises_env_qdrant_url() -> None:
         check=False,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         cwd=Path(__file__).resolve().parents[2],
         timeout=120,
     )

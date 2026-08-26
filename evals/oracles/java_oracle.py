@@ -38,6 +38,7 @@ def _toolchain_runs(bin_name: str) -> bool:
             [path, "-version"],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_PROBE_TIMEOUT_SECONDS,
         )
@@ -76,6 +77,7 @@ def _ensure_compiled() -> None:
             cwd=str(_ORACLE_DIR),
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=True,
         )
 
@@ -89,6 +91,7 @@ def _run_java_oracle_payload(target: Path) -> OraclePayload:
         [java, ec.JAVA_CP_FLAG, str(_ORACLE_DIR), ec.JAVA_ORACLE_CLASS, str(target)],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=True,
     )
     payload: OraclePayload = json.loads(proc.stdout or "{}")

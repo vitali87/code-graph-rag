@@ -221,7 +221,11 @@ def _capture_path(command: tuple[str, ...]) -> str | None:
         return None
     try:
         out = subprocess.run(
-            command, capture_output=True, text=True, check=True
+            command,
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=True,
         ).stdout.strip()
     except (subprocess.SubprocessError, OSError):
         return None

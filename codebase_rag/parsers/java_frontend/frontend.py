@@ -78,6 +78,7 @@ def _toolchain_runs(binary: str) -> bool:
             [path, "-version"],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_PROBE_TIMEOUT,
         )
@@ -149,6 +150,7 @@ def _compile_tool(javac: str, cache: Path, out_dir: Path) -> bool:
             [javac, "-d", str(staging), str(_TOOL_SRC / _TOOL_SOURCE)],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_BUILD_TIMEOUT,
         )

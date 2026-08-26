@@ -235,6 +235,7 @@ def _compile_tool(dotnet: str, src: Path, out: Path) -> bool:
             capture_output=True,
             text=True,
             check=False,
+            encoding=cs.ENCODING_UTF8,
             timeout=_BUILD_TIMEOUT,
             env={**os.environ, **_DOTNET_ENV},
         )
@@ -280,6 +281,7 @@ def _restore(dotnet: str, project: Path) -> None:
             [dotnet, "restore", str(project), "--verbosity", "quiet"],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_RESTORE_TIMEOUT,
             env={**os.environ, **_DOTNET_ENV},
@@ -461,6 +463,7 @@ def run_csharp_frontend(repo_path: Path) -> CSharpSemanticFacts:
             [dotnet, str(dll), str(repo_path), str(project), *map(str, uncovered)],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_RUN_TIMEOUT,
             env={

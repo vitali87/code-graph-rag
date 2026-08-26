@@ -151,7 +151,13 @@ def _atos_symbolizer(
         hex(slide),
         *[hex(address) for address in addresses],
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=True,
+    )
     symbols: dict[int, tuple[str, str, int]] = {}
     lines = result.stdout.splitlines()
     for address, line in zip(addresses, lines, strict=False):
@@ -180,7 +186,13 @@ def _addr2line_symbolizer(
         "-C",
         *[hex(address - slide) for address in addresses],
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=True,
+    )
     lines = result.stdout.splitlines()
     symbols: dict[int, tuple[str, str, int]] = {}
     for index, address in enumerate(addresses):

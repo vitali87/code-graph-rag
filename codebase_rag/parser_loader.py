@@ -42,6 +42,7 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
                     cwd=str(submodule_path),
                     capture_output=True,
                     text=True,
+                    encoding=cs.ENCODING_UTF8,
                 )
 
                 if result.returncode != 0:

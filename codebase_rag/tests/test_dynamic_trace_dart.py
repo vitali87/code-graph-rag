@@ -116,6 +116,7 @@ def _run_collector(tmp_path: Path, source: str) -> tuple:
         cwd=_COLLECTOR_DIR,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
         timeout=300,
     )
@@ -223,6 +224,7 @@ def test_collector_traces_a_dart_test_file(tmp_path):
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     if pub_get.returncode != 0:
@@ -232,6 +234,7 @@ def test_collector_traces_a_dart_test_file(tmp_path):
         cwd=_COLLECTOR_DIR,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     if collector_pub_get.returncode != 0:
@@ -255,6 +258,7 @@ def test_collector_traces_a_dart_test_file(tmp_path):
         cwd=_COLLECTOR_DIR,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
         timeout=300,
     )
