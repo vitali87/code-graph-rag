@@ -50,18 +50,30 @@ const calls = [];
 
 // Prism's JS location exposes only `startOffset` and `length` — no line
 // numbers (verified against @ruby/prism 1.9.0: the location object's own keys
-// are exactly ["startOffset", "length"]). Lines are therefore computed from the
-// byte offset against a prefix table built once per file. Reading
+// are exactly ["startOffset", "length"]). Those offsets are in BYTES. Lines are
+// therefore computed from the byte offset against a prefix table built once per
+// file, itself indexed in bytes for the same reason. Reading
 // `location.startLine` yields undefined, and JSON.stringify silently DROPS an
 // undefined value, so the omission surfaces far away as a KeyError on the
 // Python side rather than as an error here.
 //
-// `newlineOffsets` holds the offset of each line start, so the 1-based line for
-// an offset is the count of line starts at or below it.
+// The table is built over the UTF-8 BYTES, not over the JS string. A JS string
+// is indexed in UTF-16 code units, so for any source containing a character
+// outside ASCII the two disagree and every span below that character drifts by
+// the difference — a `def` on line 2 reporting an end_line of 6, or a class in
+// a 10-line file ending at line 11. Ruby routinely carries non-ASCII in
+// comments and string literals, so this is ordinary input rather than an edge
+// case.
+//
+// `starts` holds the byte offset of each line start, so the 1-based line for an
+// offset is the count of line starts at or below it.
 function makeLineLookup(source) {
+  const bytes = Buffer.from(source, "utf8");
   const starts = [0];
-  for (let i = 0; i < source.length; i++) {
-    if (source[i] === "\n") starts.push(i + 1);
+  for (let i = 0; i < bytes.length; i++) {
+    // 0x0A is "\n"; a UTF-8 continuation byte can never collide with it,
+    // since every byte of a multibyte sequence has the high bit set.
+    if (bytes[i] === 0x0a) starts.push(i + 1);
   }
   return (offset) => {
     // Binary search for the last line start <= offset.

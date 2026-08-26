@@ -140,6 +140,46 @@ def test_oracle_line_numbers_are_one_based(tmp_path: Path) -> None:
     assert by_name["Greeter"].start_line == 5, by_name["Greeter"]
 
 
+def test_multibyte_characters_do_not_shift_line_numbers(tmp_path: Path) -> None:
+    """Prism reports BYTE offsets; a JS string is indexed in UTF-16 units.
+
+    A comment or identifier outside ASCII makes those two disagree, and every
+    span after it drifts by the difference. Ruby source routinely carries
+    non-ASCII in comments and string literals, so this is not an edge case.
+
+    Both ends are asserted, and against a file whose length is known: an
+    end_line past the end of the file is the symptom that shows up first,
+    because the error accumulates across the whole document.
+    """
+    _require_ruby()
+    project = tmp_path / "ruby_multibyte"
+    project.mkdir()
+    # 10 lines. The first carries multibyte characters, so a UTF-16 index
+    # under-counts the bytes Prism reports for everything below it.
+    source = (
+        "# コメント: a multibyte comment\n"
+        "def first_fn\n"
+        "  1\n"
+        "end\n"
+        "\n"
+        "class Café\n"
+        "  def método\n"
+        "    2\n"
+        "  end\n"
+        "end\n"
+    )
+    (project / "mb.rb").write_text(source, encoding="utf-8")
+
+    oracle = run_ruby_oracle(project)
+    spans = {
+        node.name: (key.start_line, node.end_line) for key, node in oracle.nodes.items()
+    }
+
+    assert spans["first_fn"] == (2, 4), spans
+    assert spans["Café"] == (6, 10), spans
+    assert spans["método"] == (7, 9), spans
+
+
 def test_oracle_on_an_empty_project_returns_no_nodes(tmp_path: Path) -> None:
     _require_ruby()
     project = tmp_path / "empty_ruby"
