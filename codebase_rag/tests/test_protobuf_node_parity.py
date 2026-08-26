@@ -68,6 +68,40 @@ def test_every_node_label_maps_to_a_oneof_field() -> None:
     assert not unmapped, f"node labels with no oneof mapping: {unmapped}"
 
 
+def test_every_mapping_value_names_its_own_payload_field() -> None:
+    """The mapped STRING must be a real oneof field carrying that label's message.
+
+    Asserting only that the key exists leaves the value unchecked, and the
+    value is what `ensure_node_batch` hands to `getattr`. A misspelling
+    (``pattern`` -> ``patern``) satisfies every other assertion here and then
+    raises ``AttributeError`` at export time, so the failure lands on a user
+    running `cgr index` rather than in CI.
+
+    Both halves matter: the field must EXIST, and it must carry the message
+    type for this label. A mapping pointing at a valid field belonging to a
+    different label would not raise, and would silently file nodes under the
+    wrong payload.
+    """
+    from codebase_rag.services.protobuf_service import LABEL_TO_ONEOF_FIELD
+
+    oneof = pb.Node.DESCRIPTOR.oneofs_by_name[cs.PROTOBUF_PAYLOAD_ONEOF]
+    message_by_field = {field.name: field.message_type.name for field in oneof.fields}
+
+    wrong: list[str] = []
+    for label, field_name in LABEL_TO_ONEOF_FIELD.items():
+        if field_name not in message_by_field:
+            wrong.append(f"{label.value} -> {field_name!r} (no such oneof field)")
+        elif message_by_field[field_name] != label.value:
+            wrong.append(
+                f"{label.value} -> {field_name!r} "
+                f"(carries {message_by_field[field_name]})"
+            )
+
+    assert not wrong, "node label oneof mappings that do not resolve: " + "; ".join(
+        sorted(wrong)
+    )
+
+
 def test_the_payload_oneof_reads_non_empty() -> None:
     """A control for the three tests above.
 
