@@ -61,6 +61,7 @@ from .parsers.frontends import (
     EMITTING_FRONTENDS,
     FRONTENDS,
     FrontendEmitContext,
+    FrontendPhase,
     SemanticFacts,
 )
 from .parsers.frontends.protocol import QueryCall
@@ -385,6 +386,49 @@ class GraphUpdater:
         self.finding_analyzer = FindingAnalyzer(
             self._sink, self.repo_path, self.capture
         )
+
+    def _run_emitting_frontends(self, phase: FrontendPhase) -> None:
+        """Run every registered emitting frontend declaring this phase.
+
+        C++ is dispatched by `_run_cpp_frontend`, which owns the mode gating
+        and the compile-database discovery its two modes need, so it is skipped
+        here to avoid running it twice (issue #1460).
+
+        A frontend that is unavailable or does not apply is skipped rather than
+        failing the run: a missing toolchain must degrade to the tree-sitter
+        backbone, which covers every file anyway.
+        """
+        for language, frontend in EMITTING_FRONTENDS.items():
+            if language == cs.SupportedLanguage.CPP:
+                continue
+            if frontend.phase != phase:
+                continue
+            try:
+                if not frontend.available() or not frontend.applies(self.repo_path):
+                    continue
+            except Exception:
+                logger.warning(ls.EMITTING_FRONTEND_PROBE_FAILED.format(lang=language))
+                continue
+            result = frontend.emit(
+                FrontendEmitContext(
+                    ingestor=self._sink,
+                    repo_path=self.repo_path,
+                    project_name=self.project_name,
+                    compdb_dir=self.repo_path,
+                    function_registry=self.function_registry,
+                    simple_name_lookup=self.simple_name_lookup,
+                    structural_elements=(
+                        self.factory.structure_processor.structural_elements
+                    ),
+                    exclude_paths=self.exclude_paths,
+                    unignore_paths=self.unignore_paths,
+                    owned_qns=self._frontend_owned_qns,
+                )
+            )
+            # Covered files union across frontends: each one reports the files
+            # it fully owns, and the definition pass must skip all of them.
+            if result.covered_files:
+                self._cpp_frontend_covered |= result.covered_files
 
     def _run_cpp_frontend(self) -> None:
         # Optional libclang C++ pre-pass when a compile_commands.json is
@@ -903,6 +947,7 @@ class GraphUpdater:
         # covered-file set to skip those files.
         if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID:
             self._run_cpp_frontend()
+        self._run_emitting_frontends(FrontendPhase.BEFORE_DEFINITIONS)
 
         # The C# Roslyn frontend must run before Pass 2: it produces a
         # base-classification oracle that split_csharp_bases consults while
@@ -952,6 +997,7 @@ class GraphUpdater:
         # it and vanish until a forced rebuild.
         if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
             self._run_cpp_frontend()
+        self._run_emitting_frontends(FrontendPhase.AFTER_DEFINITIONS)
 
         corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
         if corrected:
