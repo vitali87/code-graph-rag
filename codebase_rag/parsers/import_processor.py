@@ -3701,18 +3701,48 @@ class ImportProcessor:
     def _parse_scala_import_declaration(
         self, import_node: Node, module_qn: str
     ) -> None:
+        """One declaration, which may hold SEVERAL comma-separated imports.
+
+        `import a.b.C, d.e.F` is a single import_declaration whose children
+        run straight through the comma. Collecting identifiers across the
+        whole node merges the two into one prefix, yielding the nonsense path
+        `a.b.C.d.e.F` for `F` and losing `C` entirely -- so the children are
+        split on `,` and each group parsed independently.
+        """
+        group: list[Node] = []
+        for child in import_node.children:
+            if child.type == cs.CHAR_COMMA:
+                self._parse_scala_import_group(group, module_qn)
+                group = []
+            elif child.type != cs.TS_SCALA_IMPORT_KEYWORD:
+                group.append(child)
+        self._parse_scala_import_group(group, module_qn)
+
+    def _parse_scala_import_group(self, children: list[Node], module_qn: str) -> None:
         prefix_parts: list[str] = []
         selectors: Node | None = None
         wildcard: Node | None = None
+        renamed: Node | None = None
 
-        for child in import_node.children:
+        for child in children:
             if child.type == cs.TS_SCALA_NAMESPACE_SELECTORS:
                 selectors = child
             elif child.type == cs.TS_SCALA_NAMESPACE_WILDCARD:
                 wildcard = child
+            elif child.type == cs.TS_SCALA_AS_RENAMED_IDENTIFIER:
+                # Scala 3 `import a.b as Alias`: the renamed node sits directly
+                # under the declaration rather than inside a selector group, so
+                # this path is distinct from the braced `{C as Alias}` form.
+                renamed = child
             elif child.type == cs.TS_IDENTIFIER:
                 if name := safe_decode_with_fallback(child):
                     prefix_parts.append(name)
+
+        if renamed is not None:
+            self._bind_scala_rename(
+                renamed, cs.SEPARATOR_DOT.join(prefix_parts), module_qn
+            )
+            return
 
         if not prefix_parts:
             return
@@ -3734,25 +3764,40 @@ class ImportProcessor:
         full_path = cs.SEPARATOR_DOT.join(prefix_parts)
         self.import_mapping[module_qn][prefix_parts[-1]] = full_path
 
+    def _bind_scala_rename(self, node: Node, package: str, module_qn: str) -> None:
+        """Bind `original as/=> alias` to the ALIAS only.
+
+        Binding the original as well would make it resolvable under a name
+        this file never introduced, which is precisely what a rename avoids --
+        and a presence-only test would not notice.
+
+        `package` is the prefix the rename hangs off: the selector group's
+        package for `a.b.{C as X}`, and the leading segments for the top-level
+        `a.b as X`, where the renamed node itself carries the last segment.
+        """
+        names = [
+            decoded
+            for child in node.children
+            if child.type == cs.TS_IDENTIFIER
+            and (decoded := safe_decode_with_fallback(child))
+        ]
+        if len(names) != 2:
+            return
+        original, alias = names
+        full = f"{package}{cs.SEPARATOR_DOT}{original}" if package else original
+        self.import_mapping[module_qn][alias] = full
+
     def _parse_scala_selectors(
         self, selectors: Node, package: str, module_qn: str
     ) -> None:
         for child in selectors.children:
-            if child.type == cs.TS_SCALA_ARROW_RENAMED_IDENTIFIER:
-                # `Map => MMap`: bind the ALIAS only. Binding the original too
-                # would make it resolvable under a name this file never
-                # introduced, which is precisely what the rename avoids.
-                names = [
-                    decoded
-                    for grandchild in child.children
-                    if grandchild.type == cs.TS_IDENTIFIER
-                    and (decoded := safe_decode_with_fallback(grandchild))
-                ]
-                if len(names) == 2:
-                    original, alias = names
-                    self.import_mapping[module_qn][alias] = (
-                        f"{package}{cs.SEPARATOR_DOT}{original}"
-                    )
+            if child.type in (
+                cs.TS_SCALA_ARROW_RENAMED_IDENTIFIER,
+                cs.TS_SCALA_AS_RENAMED_IDENTIFIER,
+            ):
+                # `{Map => MMap}` (Scala 2) and `{Map as MMap}` (Scala 3) are
+                # different node types spelling the same thing.
+                self._bind_scala_rename(child, package, module_qn)
             elif child.type == cs.TS_SCALA_NAMESPACE_WILDCARD:
                 # `import a.{b, _}` -- a wildcard alongside explicit names.
                 self.import_mapping[module_qn][f"*{package}"] = package

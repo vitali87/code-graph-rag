@@ -19,6 +19,9 @@ TS_SCALA_IMPORT_DECLARATION = "import_declaration"
 TS_SCALA_NAMESPACE_SELECTORS = "namespace_selectors"
 TS_SCALA_ARROW_RENAMED_IDENTIFIER = "arrow_renamed_identifier"
 TS_SCALA_NAMESPACE_WILDCARD = "namespace_wildcard"
+# Scala 3 spells a rename `as`; Scala 2 spells it `=>`. Different node types.
+TS_SCALA_AS_RENAMED_IDENTIFIER = "as_renamed_identifier"
+TS_SCALA_IMPORT_KEYWORD = "import"
 
 # Wrappers the grammar puts between an `extends` clause and the
 # `type_identifier` naming the base. `type_arguments` is deliberately ABSENT:

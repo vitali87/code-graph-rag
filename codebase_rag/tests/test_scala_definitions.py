@@ -247,15 +247,22 @@ class QualifiedGeneric extends foo.Service[Int] {
 
     run_updater(scala_project, mock_ingestor, skip_if_missing=SKIP)
 
-    # Keyed by SOURCE class, not by target name. An earlier version asserted
-    # only that some edge ended in "Service", which the unqualified `Plain`
-    # case already satisfies -- so it passed while `QualifiedGeneric` produced
-    # no edge at all. The classes share base NAMES on purpose; only the source
-    # distinguishes them.
-    sources = {
-        str(c.args[0][2]).split(".")[-1]
+    # Keyed by (SOURCE, TARGET) pairs. Asserting sources alone passed while
+    # `QualifiedGeneric` resolved to `Int` -- the type ARGUMENT of
+    # `foo.Service[Int]` rather than its base class -- which is the specific
+    # trap the bounded descent exists to avoid. An earlier version before that
+    # asserted only target names, which the unqualified `Plain` case already
+    # satisfied. The fixtures share base names on purpose, so only the pair
+    # distinguishes a correct edge from a plausible wrong one.
+    pairs = {
+        (str(c.args[0][2]).split(".")[-1], str(c.args[2][2]).split(".")[-1])
         for c in get_relationships(mock_ingestor, "INHERITS")
     }
 
-    for cls in ("Plain", "Generic", "Qualified", "QualifiedGeneric"):
-        assert cls in sources, (cls, sorted(sources))
+    for expected in (
+        ("Plain", "Service"),
+        ("Generic", "Service"),
+        ("Qualified", "Bar"),
+        ("QualifiedGeneric", "Service"),
+    ):
+        assert expected in pairs, (expected, sorted(pairs))

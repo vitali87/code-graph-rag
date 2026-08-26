@@ -127,3 +127,76 @@ object Solo { def run(): Int = 1 }
     assert any(
         key.startswith("*") and value == "java.util" for key, value in mapping.items()
     ), mapping
+
+
+def test_comma_separated_imports_bind_every_name(
+    scala_project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`import a.b.C, d.e.F` binds BOTH names to their own paths.
+
+    One `import_declaration` can hold several comma-separated expressions. A
+    parser that collects identifiers across the whole node merges them into a
+    single prefix, so `a.b.C, d.e.F` yields the nonsense path
+    `a.b.C.d.e.F` for `F` and loses `C` entirely.
+    """
+    (scala_project / "a.scala").write_text(
+        """
+package com.example
+import scala.util.Try, scala.io.Source
+
+object Solo { def run(): Int = 1 }
+"""
+    )
+
+    mapping = _import_mapping(scala_project, mock_ingestor)
+
+    assert mapping.get("Try") == "scala.util.Try", mapping
+    assert mapping.get("Source") == "scala.io.Source", mapping
+
+
+def test_scala3_as_rename_binds_the_alias(
+    scala_project: Path, mock_ingestor: MagicMock
+) -> None:
+    """Scala 3 spells a rename `as`, and it binds the alias only.
+
+    `tree-sitter-scala` emits `as_renamed_identifier` for both the top-level
+    form and the selector-group form. Ignoring that node drops the binding
+    entirely -- the alias resolves to nothing, so every use of it falls back
+    to a heuristic.
+    """
+    (scala_project / "a.scala").write_text(
+        """
+package com.example
+import scala.collection.mutable.{Map as MMap}
+
+object Solo { def run(): Int = 1 }
+"""
+    )
+
+    mapping = _import_mapping(scala_project, mock_ingestor)
+
+    assert mapping.get("MMap") == "scala.collection.mutable.Map", mapping
+    assert "Map" not in mapping, mapping
+
+
+def test_scala3_top_level_as_rename_binds_the_alias(
+    scala_project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`import a.b as Alias` -- the rename without a selector group.
+
+    A different AST shape from the braced form: the `as_renamed_identifier`
+    sits directly under the import_declaration rather than inside
+    `namespace_selectors`, so handling one path does not handle the other.
+    """
+    (scala_project / "a.scala").write_text(
+        """
+package com.example
+import scala.util as ScalaUtil
+
+object Solo { def run(): Int = 1 }
+"""
+    )
+
+    mapping = _import_mapping(scala_project, mock_ingestor)
+
+    assert mapping.get("ScalaUtil") == "scala.util", mapping
