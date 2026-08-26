@@ -180,9 +180,16 @@ non-functional — probe by invoking it, and treat any failure as unavailable.
 
 Register a per-language enum following the existing pattern
 (`constants/languages.py`), for example `PythonFrontend.HEURISTIC | JEDI`, and
-register with `parser_fingerprint.py` so that changing mode or tool version
-invalidates the incremental graph. A graph built with one frontend and updated
-with another is worse than either.
+register with `parser_fingerprint.py` so that changing mode invalidates the
+incremental graph. A graph built with one frontend and updated with another is
+worse than either.
+
+The fingerprint currently records the **resolved mode**, not the external
+tool's version — so upgrading `go`, `javac` or `dotnet` reuses a graph the
+older tool produced. That gap is tracked in #1465; `LOMBOK=` in
+`_frontend_settings` shows the shape the fix takes. If your frontend drives a
+tool whose output changes between versions, say so on that issue rather than
+assuming the mode covers it.
 
 ## Shelling out
 
@@ -204,10 +211,13 @@ fails the build if you forget, so this is enforced rather than advisory.
 4. Fill only the fact families your compiler genuinely models.
 5. Build keys with byte columns, re-measuring if your tool reports otherwise.
 6. Omit rather than guess whenever resolution is ambiguous.
-7. Call `register_frontend(...)` at module scope and import the module in
-   `frontends/__init__.py`. For an **emitting** frontend, also add its dispatch
-   in `graph_updater.py` — registration alone is currently inert (see the
-   warning above).
+7. Register at module scope and import the module in `frontends/__init__.py`:
+   `register_frontend(...)` for a `LanguageFrontend`, or
+   `register_emitting_frontend(...)` for an `EmittingFrontend`. The two
+   registries are separate, so the wrong call registers into the wrong one and
+   nothing reports it. For an emitting frontend, also add its dispatch in
+   `graph_updater.py` — registration alone is currently inert (see the warning
+   above).
 8. Add a per-language enum and a `parser_fingerprint.py` registration.
 9. Write fixtures with a non-ASCII character **before the asserted token on the
    same line** (byte columns are line-relative), and prove they fail when
