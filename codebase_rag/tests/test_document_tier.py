@@ -483,3 +483,242 @@ class TestDegradedGrammar:
         tier = DocumentTier(ingestor, tmp_path, "proj")
         tier.process_file(tmp_path / "missing.md", {})
         ingestor.ensure_node_batch.assert_not_called()
+
+
+LINKS_TO = cs.RelationshipType.LINKS_TO.value
+
+
+def _link_targets(mock: MagicMock) -> set[str]:
+    """The absolute path of every LINKS_TO edge target."""
+    return {target for _, target in _rels(mock, LINKS_TO)}
+
+
+class TestLinkExtraction:
+    """Issue #164: relative links to other repository files become edges."""
+
+    def test_relative_link_becomes_an_edge(self, tmp_path: Path) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\nSee [the API](api.md) for details.\n",
+                "api.md": "# API\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "api.md").resolve().as_posix()}
+
+    def test_link_edge_starts_at_the_linking_module(self, tmp_path: Path) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[api](api.md)\n",
+                "api.md": "# API\n",
+            },
+        )
+        assert _rels(mock, LINKS_TO) == {
+            (
+                _module_qn(tmp_path, "guide.md"),
+                (tmp_path / "api.md").resolve().as_posix(),
+            )
+        }
+
+    def test_link_into_a_subdirectory_resolves(self, tmp_path: Path) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[deep](docs/deep.md)\n",
+                "docs/deep.md": "# Deep\n",
+            },
+        )
+        assert _link_targets(mock) == {
+            (tmp_path / "docs" / "deep.md").resolve().as_posix()
+        }
+
+    def test_link_out_of_a_subdirectory_resolves(self, tmp_path: Path) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "docs/guide.md": "# Guide\n\n[root](../root.md)\n",
+                "root.md": "# Root\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "root.md").resolve().as_posix()}
+
+    def test_root_relative_link_resolves_against_the_repo(self, tmp_path: Path) -> None:
+        """A leading "/" conventionally means repo root, not filesystem root."""
+        mock = _run(
+            tmp_path,
+            {
+                "docs/guide.md": "# Guide\n\n[root](/root.md)\n",
+                "root.md": "# Root\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "root.md").resolve().as_posix()}
+
+    def test_anchor_is_stripped_from_the_target(self, tmp_path: Path) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[install](api.md#installation)\n",
+                "api.md": "# API\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "api.md").resolve().as_posix()}
+
+    def test_links_to_non_markdown_files_are_edges_too(self, tmp_path: Path) -> None:
+        """A guide linking source is stating what it documents."""
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[the module](mod.py)\n",
+                "mod.py": "x = 1\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "mod.py").resolve().as_posix()}
+
+    def test_repeated_link_to_one_target_emits_one_edge(self, tmp_path: Path) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[a](api.md) and again [b](api.md)\n",
+                "api.md": "# API\n",
+            },
+        )
+        assert len(_rels(mock, LINKS_TO)) == 1
+
+    def test_several_distinct_targets_all_emit(self, tmp_path: Path) -> None:
+        """Guards the de-duplication above from collapsing distinct targets."""
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[a](a.md) [b](b.md) [c](c.md)\n",
+                "a.md": "# A\n",
+                "b.md": "# B\n",
+                "c.md": "# C\n",
+            },
+        )
+        assert _link_targets(mock) == {
+            (tmp_path / name).resolve().as_posix() for name in ("a.md", "b.md", "c.md")
+        }
+
+
+class TestLinksThatAreNotFileReferences:
+    """Each case pairs its negative with a resolvable link in the same file.
+
+    A bare "no edges emitted" assertion passes just as well when extraction
+    never ran at all, so every test here proves the extractor was live by
+    requiring the control link to land.
+    """
+
+    CONTROL = "api.md"
+
+    def _assert_only_control(self, mock: MagicMock, tmp_path: Path) -> None:
+        assert _link_targets(mock) == {(tmp_path / self.CONTROL).resolve().as_posix()}
+
+    def test_external_url_is_not_a_file_link(self, tmp_path: Path) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": (
+                    "# Guide\n\n[site](https://example.com/x.md) [api](api.md)\n"
+                ),
+                "api.md": "# API\n",
+            },
+        )
+        self._assert_only_control(mock, tmp_path)
+
+    def test_mailto_is_not_a_file_link(self, tmp_path: Path) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[mail](mailto:a@b.com) [api](api.md)\n",
+                "api.md": "# API\n",
+            },
+        )
+        self._assert_only_control(mock, tmp_path)
+
+    def test_bare_fragment_is_not_a_file_link(self, tmp_path: Path) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[here](#section) [api](api.md)\n",
+                "api.md": "# API\n",
+            },
+        )
+        self._assert_only_control(mock, tmp_path)
+
+    def test_link_to_a_missing_file_emits_nothing(self, tmp_path: Path) -> None:
+        """A broken link must not invent an edge to a nonexistent node."""
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[gone](deleted.md) [api](api.md)\n",
+                "api.md": "# API\n",
+            },
+        )
+        self._assert_only_control(mock, tmp_path)
+
+    def test_traversal_outside_the_repo_is_rejected(self, tmp_path: Path) -> None:
+        """`../` past the repo root must not attach an edge to a foreign file."""
+        outside = tmp_path.parent / "outside_the_repo.md"
+        outside.write_text("# Outside\n", encoding="utf-8")
+        try:
+            mock = _run(
+                tmp_path,
+                {
+                    "guide.md": (
+                        f"# Guide\n\n[out](../{outside.name}) [api](api.md)\n"
+                    ),
+                    "api.md": "# API\n",
+                },
+            )
+            self._assert_only_control(mock, tmp_path)
+        finally:
+            outside.unlink()
+
+    def test_directory_target_is_not_a_file_link(self, tmp_path: Path) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[dir](docs) [api](api.md)\n",
+                "docs/deep.md": "# Deep\n",
+                "api.md": "# API\n",
+            },
+        )
+        self._assert_only_control(mock, tmp_path)
+
+
+class TestReferenceStyleLinks:
+    """``[text][label]`` with the target defined elsewhere in the document.
+
+    A reference link carries no destination at its use site, so the naive
+    reading is that it cannot be resolved. The definition (``[label]: path``)
+    does carry one, and a document that links its files that way would
+    otherwise contribute no edges at all.
+    """
+
+    def test_reference_link_definition_resolves_to_an_edge(
+        self, tmp_path: Path
+    ) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\nSee [the API][api].\n\n[api]: api.md\n",
+                "api.md": "# API\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "api.md").resolve().as_posix()}
+
+    def test_external_reference_definition_is_not_a_file_link(
+        self, tmp_path: Path
+    ) -> None:
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": (
+                    "# Guide\n\n[site][s] and [api][a].\n\n"
+                    "[s]: https://example.com/x.md\n[a]: api.md\n"
+                ),
+                "api.md": "# API\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "api.md").resolve().as_posix()}

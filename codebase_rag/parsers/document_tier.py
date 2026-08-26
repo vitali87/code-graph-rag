@@ -54,6 +54,34 @@ _MAX_HEADING_LEVEL = 6
 
 DOCUMENT_EXTENSIONS: frozenset[str] = frozenset({".md", ".markdown"})
 
+# Link grammar nodes. `inline_link` is ``[text](target)``; the destination sits
+# in a `link_destination` child. Reference-style links (``[text][label]``) name
+# a definition elsewhere and carry no destination of their own, so they are not
+# resolvable to a file here.
+#
+# These come from the INLINE grammar, not the block one. tree-sitter-markdown
+# ships a split grammar: the block parser leaves every span of inline content
+# as one opaque `inline` node whose children are bare punctuation tokens, so a
+# link is simply not present in the block tree. Each `inline` node's text has
+# to be re-parsed with `inline_language()` for links to appear at all.
+_INLINE_LINK = "inline_link"
+_LINK_DESTINATION = "link_destination"
+
+# ``[label]: path`` — the target of a reference-style link (``[text][label]``).
+# The use site carries no destination, so without reading definitions a
+# document that links its files that way contributes no edges at all. Unlike
+# inline links these sit in the BLOCK tree, needing no inline re-parse.
+_LINK_REFERENCE_DEFINITION = "link_reference_definition"
+
+# A destination that names something other than a file in this repository.
+# Scheme-bearing targets (http:, https:, mailto:, ftp:) are external, and a
+# bare fragment ("#section") points inside the current document.
+_URI_SCHEME_SEPARATOR = "://"
+_MAILTO_PREFIX = "mailto:"
+_FRAGMENT_PREFIX = "#"
+# Windows drive letters ("C:/x") would otherwise read as a scheme.
+_MIN_SCHEME_LENGTH = 2
+
 # A heading with no text (`##` alone) has nothing to name a node after.
 _UNTITLED = "(untitled)"
 
@@ -155,6 +183,114 @@ def _section_end_line(
     return max(last_line, heading_end)
 
 
+def _collect_by_type(root: Node, node_type: str) -> list[Node]:
+    """Every node of one type in the tree, in source order.
+
+    Does not descend into a match: neither an `inline` span nor a link
+    reference definition nests another of its own kind.
+    """
+    found: list[Node] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == node_type:
+            found.append(node)
+            continue
+        stack.extend(reversed(node.children))
+    found.sort(key=lambda n: n.start_byte)
+    return found
+
+
+def _collect_inline_spans(root: Node) -> list[Node]:
+    """Every `inline` node in the block tree, in source order."""
+    return _collect_by_type(root, _INLINE)
+
+
+def _link_destinations_in(inline_root: Node, text: bytes) -> list[tuple[int, str]]:
+    """(offset, destination) for each link in one parsed inline span."""
+    found: list[tuple[int, str]] = []
+    stack = [inline_root]
+    while stack:
+        node = stack.pop()
+        if node.type == _INLINE_LINK:
+            for child in node.children:
+                if child.type == _LINK_DESTINATION:
+                    found.append((child.start_byte, _decode(child, text)))
+                    break
+            # A link cannot nest another link; no need to descend.
+            continue
+        stack.extend(reversed(node.children))
+    return found
+
+
+def _collect_link_destinations(
+    root: Node, source: bytes, inline_parser: Parser | None
+) -> list[str]:
+    """Every inline-link destination in the document, in source order.
+
+    Duplicates are kept: the same target linked twice is two link sites, and
+    de-duplication is the caller's business once targets are resolved.
+
+    Returns nothing when the inline grammar is unavailable, so heading
+    extraction still works on an install where only the block parser loaded.
+    """
+    found: list[tuple[int, int, str]] = []
+
+    # Reference definitions are block-level, so they are read whether or not
+    # the inline grammar loaded.
+    for node in _collect_by_type(root, _LINK_REFERENCE_DEFINITION):
+        for child in node.children:
+            if child.type == _LINK_DESTINATION:
+                found.append((child.start_byte, 0, _decode(child, source)))
+                break
+
+    if inline_parser is not None:
+        for span in _collect_inline_spans(root):
+            text = source[span.start_byte : span.end_byte]
+            try:
+                inline_root = inline_parser.parse(text).root_node
+            except (RuntimeError, ValueError):
+                continue
+            for offset, destination in _link_destinations_in(inline_root, text):
+                found.append((span.start_byte, offset, destination))
+
+    found.sort()
+    return [destination for _, _, destination in found]
+
+
+def _is_external(destination: str) -> bool:
+    """True when the destination does not name a file in this repository.
+
+    Absolute URLs, mail links, and bare fragments all resolve somewhere other
+    than a repo-relative path, so treating them as file links would invent
+    edges to files that do not exist.
+    """
+    if not destination or destination.startswith(_FRAGMENT_PREFIX):
+        return True
+    if _URI_SCHEME_SEPARATOR in destination:
+        return True
+    lowered = destination.lower()
+    if lowered.startswith(_MAILTO_PREFIX):
+        return True
+    # "scheme:rest" with a plausible scheme, excluding "C:/path".
+    scheme, separator, _ = destination.partition(":")
+    return bool(separator) and len(scheme) > _MIN_SCHEME_LENGTH and scheme.isalpha()
+
+
+def _strip_target(destination: str) -> str:
+    """The path part of a destination, without any anchor or title.
+
+    ``guide.md#install`` points at a section of ``guide.md``; the file is the
+    part before the fragment. Angle-bracket forms (``<a b.md>``) wrap targets
+    containing spaces.
+    """
+    target = destination.strip()
+    if target.startswith("<") and target.endswith(">"):
+        target = target[1:-1]
+    target, _, _ = target.partition(_FRAGMENT_PREFIX)
+    return target.strip()
+
+
 def _sanitize(name: str) -> str:
     """A heading rendered safe for a dot-separated qualified name.
 
@@ -169,7 +305,13 @@ def _sanitize(name: str) -> str:
 class DocumentTier:
     """Extracts a nested Section graph from heading-structured documents."""
 
-    __slots__ = ("_ingestor", "_repo_path", "_project_name", "_parser")
+    __slots__ = (
+        "_ingestor",
+        "_repo_path",
+        "_project_name",
+        "_parser",
+        "_inline_parser",
+    )
 
     def __init__(
         self, ingestor: IngestorProtocol, repo_path: Path, project_name: str
@@ -178,6 +320,7 @@ class DocumentTier:
         self._repo_path = repo_path
         self._project_name = project_name
         self._parser = _load_parser()
+        self._inline_parser = _load_inline_parser()
 
     def handles(self, suffix: str) -> bool:
         """True when this tier can parse the extension.
@@ -256,6 +399,61 @@ class DocumentTier:
             )
             open_headings.append((level, qualified_name))
 
+        self._emit_links(root, source, file_path, module_qn)
+
+    def _emit_links(
+        self, root: Node, source: bytes, file_path: Path, module_qn: str
+    ) -> None:
+        """A LINKS_TO edge per relative link that resolves to a repo file.
+
+        Only links whose target exists on disk become edges. An unresolvable
+        target — a typo, a file deleted since the link was written, a path
+        outside the repository — would otherwise create an edge to a node
+        nobody emits, which reads in the graph as a file that does not exist.
+        Dropping them keeps a broken link out of the graph rather than
+        inventing a phantom.
+        """
+        emitted: set[str] = set()
+        for destination in _collect_link_destinations(
+            root, source, self._inline_parser
+        ):
+            if _is_external(destination):
+                continue
+            target = _strip_target(destination)
+            if not target:
+                continue
+            resolved = self._resolve_link(file_path, target)
+            if resolved is None or resolved in emitted:
+                continue
+            emitted.add(resolved)
+            self._ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                cs.RelationshipType.LINKS_TO,
+                (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, resolved),
+            )
+
+    def _resolve_link(self, file_path: Path, target: str) -> str | None:
+        """The absolute path a link target names, or None when it is not a file.
+
+        Targets are relative to the linking document's directory, except a
+        leading "/" which the common convention treats as repo-root-relative
+        rather than filesystem-absolute. Anything landing outside the
+        repository is rejected, so a "../../.." traversal cannot attach an
+        edge to a file the project does not contain.
+        """
+        try:
+            if target.startswith("/"):
+                candidate = self._repo_path / target.lstrip("/")
+            else:
+                candidate = file_path.parent / target
+            resolved = candidate.resolve()
+            if not resolved.is_file():
+                return None
+            resolved.relative_to(self._repo_path.resolve())
+        except (OSError, ValueError):
+            return None
+        return resolved.as_posix()
+
     def _emit_module(
         self, file_path: Path, structural_elements: dict[Path, str | None]
     ) -> str:
@@ -319,4 +517,24 @@ def _load_parser() -> Parser | None:
         return Parser(Language(tree_sitter_markdown.language()))
     except Exception as exc:  # noqa: BLE001
         logger.warning("markdown grammar unavailable, document tier disabled: {}", exc)
+        return None
+
+
+def _load_inline_parser() -> Parser | None:
+    """A markdown *inline* Parser, or None when it is unavailable.
+
+    Separate from `_load_parser` because tree-sitter-markdown splits block and
+    inline grammars: links live only in the inline tree. Its absence disables
+    link edges alone — heading extraction runs off the block parser and must
+    keep working, so this never disables the tier.
+    """
+    try:
+        import tree_sitter_markdown
+        from tree_sitter import Language, Parser
+    except ImportError:
+        return None
+    try:
+        return Parser(Language(tree_sitter_markdown.inline_language()))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("markdown inline grammar unavailable, no link edges: {}", exc)
         return None
