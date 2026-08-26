@@ -213,7 +213,10 @@ def test_the_query_counts_both_endpoints_explicitly() -> None:
     # distinct-type counting in #1477 introduced. What matters is that neither
     # endpoint is dropped, not which expression names them.
     assert "UNWIND [low, high]" in query, query
-    assert "AS low" in query and "AS high" in query, query
+    # Asserted separately so a failure names WHICH endpoint alias went
+    # missing; a composite assertion reports only that one of them did.
+    assert "AS low" in query, query
+    assert "AS high" in query, query
     # A bare undirected match with a single projected endpoint is the shape
     # this replaced; it must not come back.
     assert "RETURN id(a) AS node_id" not in query, query
