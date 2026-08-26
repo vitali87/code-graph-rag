@@ -52,9 +52,26 @@ class EmittingFrontend(Protocol):
     def emit(self, ctx: FrontendEmitContext) -> FrontendEmitResult: ...
 ```
 
-`FrontendPhase` decides when: `BEFORE_DEFINITIONS` for a frontend that emits its
-own definition nodes (the definition pass then skips the files it covered), or
-`AFTER_DEFINITIONS` for one that attaches to spans Tree-sitter already produced.
+`FrontendPhase` declares when it should run: `BEFORE_DEFINITIONS` for a frontend
+that emits its own definition nodes (the definition pass then skips the files it
+covered), or `AFTER_DEFINITIONS` for one that attaches to spans Tree-sitter
+already produced.
+
+!!! warning "Registration alone does not run an emitting frontend yet"
+
+    `EMITTING_FRONTENDS` is not yet dispatched generically. The graph builder
+    looks up **C++ specifically**, and the ordering between the two phases comes
+    from two hardcoded call sites in `graph_updater.py` rather than from the
+    `phase` attribute.
+
+    So registering an emitting frontend for a new language today is silently
+    inert: the registration succeeds, the frontend is never called, and its
+    nodes and edges are simply absent. Nothing errors.
+
+    Adding one therefore means adding its dispatch as well, until generic
+    phase-ordered dispatch exists. `phase` is still worth declaring correctly —
+    it is asserted by tests and it is what generic dispatch will read — but it
+    does not yet decide anything on its own.
 
 **Choose `LanguageFrontend` unless you are emitting nodes.** The two live in
 separate registries precisely because they are different jobs, and a fact
@@ -171,8 +188,10 @@ fails the build if you forget, so this is enforced rather than advisory.
 4. Fill only the fact families your compiler genuinely models.
 5. Build keys with byte columns, re-measuring if your tool reports otherwise.
 6. Omit rather than guess whenever resolution is ambiguous.
-7. Call `register_frontend(...)` or `register_emitting_frontend(...)` at module
-   scope, and import the module in `frontends/__init__.py`.
+7. Call `register_frontend(...)` at module scope and import the module in
+   `frontends/__init__.py`. For an **emitting** frontend, also add its dispatch
+   in `graph_updater.py` — registration alone is currently inert (see the
+   warning above).
 8. Add a per-language enum and a `parser_fingerprint.py` registration.
 9. Write fixtures that include a non-ASCII identifier, and prove they fail when
    the offset conversion is broken.
