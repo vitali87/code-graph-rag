@@ -153,10 +153,13 @@ def _tool_versions(repo_path: Path | None = None) -> list[str]:
     extracted and must still trip the warning.
     """
     active = _active_tools(repo_path)
-    return [
-        f"{key}={_probe_version(executable, argument) if active.get(key) else _TOOL_INACTIVE}"
-        for key, executable, argument in _VERSIONED_TOOLS
-    ]
+    entries: list[str] = []
+    for key, executable, argument in _VERSIONED_TOOLS:
+        value = (
+            _probe_version(executable, argument) if active.get(key) else _TOOL_INACTIVE
+        )
+        entries.append(f"{key}={value}")
+    return entries
 
 
 def compute_parser_fingerprint(

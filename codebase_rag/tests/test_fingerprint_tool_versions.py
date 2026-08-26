@@ -157,7 +157,9 @@ def test_a_tool_is_active_when_the_repo_does_use_it(tmp_path) -> None:
     Without it, an implementation that reported every tool inactive would pass
     the test above and silently stop detecting real toolchain upgrades.
     """
-    (tmp_path / "go.mod").write_text("module example.com/x\n\ngo 1.23\n", encoding="utf-8")
+    (tmp_path / "go.mod").write_text(
+        "module example.com/x\n\ngo 1.23\n", encoding="utf-8"
+    )
 
     with patch(
         "codebase_rag.parsers.go_frontend.resolve_go_frontend",
