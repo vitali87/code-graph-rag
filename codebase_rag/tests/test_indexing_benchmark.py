@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from benchmarks.bench_indexing import (
+    RSS_UNAVAILABLE,
     IndexingMeasurement,
     format_markdown_row,
     measure_indexing,
@@ -55,13 +56,49 @@ def test_measure_indexing_records_wall_clock_and_memory(tmp_path: Path) -> None:
 
     Zero would be indistinguishable from "the timer was never started", which
     is the failure this asserts against.
+
+    Memory has a third legitimate state. Where `resource` is unavailable
+    (Windows) the benchmark reports `RSS_UNAVAILABLE` deliberately, so the
+    assertion admits the sentinel while still rejecting 0 -- what must never
+    appear is a value that reads as a measurement without being one.
+
+    An earlier version asserted `> 0` unconditionally and contradicted the
+    module's own Windows path: the fix landed in the implementation and not in
+    the test, and every local run passed because macOS has `resource` and
+    never takes that branch.
     """
     corpus = _write_corpus(tmp_path / "repo")
 
     result = measure_indexing(corpus, project_name="bench_fixture")
 
     assert result.duration_seconds > 0.0
-    assert result.peak_rss_bytes > 0
+    assert result.peak_rss_bytes == RSS_UNAVAILABLE or result.peak_rss_bytes > 0
+
+
+def test_unavailable_memory_renders_as_not_a_measurement() -> None:
+    """The sentinel must never reach a published table as a number.
+
+    Paired with the assertion above: that one permits `RSS_UNAVAILABLE` to
+    exist, so this one pins what it must look like when rendered. Without it,
+    admitting the sentinel would widen the contract with nothing checking the
+    consequence -- a row reading "-1 MiB", or worse "0 MiB", looks measured.
+    """
+    result = IndexingMeasurement(
+        corpus_name="corpus",
+        corpus_path="/tmp/corpus",
+        cgr_version="0.0.0",
+        file_count=1,
+        node_count=1,
+        edge_count=0,
+        duration_seconds=1.0,
+        peak_rss_bytes=RSS_UNAVAILABLE,
+    )
+
+    row = format_markdown_row(result)
+
+    assert "n/a" in row
+    assert "-1" not in row
+    assert "0 MiB" not in row
 
 
 def test_an_empty_corpus_is_refused_rather_than_reported_as_zero(
@@ -122,6 +159,12 @@ def test_peak_memory_is_local_to_the_run_not_the_process(tmp_path: Path) -> None
     corpus = _write_corpus(tmp_path / "repo", files=1)
 
     before = measure_indexing(corpus, project_name="bench_fixture")
+    if before.peak_rss_bytes == RSS_UNAVAILABLE:
+        # Windows: both readings are the sentinel, so the drift check would
+        # compare -1 with -1 and pass without exercising anything. Skipping is
+        # honest; a vacuous pass would report coverage this platform has not
+        # got.
+        pytest.skip("peak RSS unavailable on this platform")
 
     ballast = bytearray(192 * 1024 * 1024)
     ballast_size = len(ballast)
