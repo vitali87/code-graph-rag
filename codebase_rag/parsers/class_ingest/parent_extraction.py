@@ -189,7 +189,51 @@ def extract_parent_classes(
             extract_dart_parent_classes(class_node, module_qn, resolve_to_qn)
         )
 
+    if class_node.type in cs.SPEC_SCALA_CLASS_TYPES:
+        parent_classes.extend(
+            extract_scala_parent_classes(class_node, module_qn, resolve_to_qn)
+        )
+
     return parent_classes
+
+
+def extract_scala_parent_classes(
+    class_node: Node,
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> list[str]:
+    """Bases from a Scala `extends A with B with C` clause.
+
+    Every base is taken, not just the one after `extends`. Scala composes
+    behaviour by mixing traits in with `with`, so reading the first base only
+    would capture the superclass and silently drop the mixins -- which is most
+    of the structure in idiomatic Scala, and the linearization #1186 asks to
+    record.
+
+    `extends` and `with` are anonymous keyword children of the same
+    `extends_clause`, so the type nodes are collected by kind rather than by
+    position: no keyword marks where the base list stops.
+
+    Both plain (`Named`) and generic (`Seq[Int]`) bases appear as
+    `type_identifier` or wrap one, so a nested lookup catches the generic form
+    while a direct child catches the plain one.
+    """
+    extends_clause = find_child_by_type(class_node, cs.TS_EXTENDS_CLAUSE)
+    if extends_clause is None:
+        return []
+
+    parents: list[str] = []
+    for child in extends_clause.children:
+        base_node = (
+            child
+            if child.type == cs.TS_TYPE_IDENTIFIER
+            else find_child_by_type(child, cs.TS_TYPE_IDENTIFIER)
+        )
+        if base_node is None or not base_node.text:
+            continue
+        if name := safe_decode_text(base_node):
+            parents.append(resolve_to_qn(name, module_qn))
+    return parents
 
 
 def extract_dart_parent_classes(
