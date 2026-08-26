@@ -87,3 +87,38 @@ def test_a_real_label_round_trips_its_known_properties() -> None:
     assert module["qualified_name"].type_name == "string"
     assert module["qualified_name"].optional is False
     assert "name" in module
+
+
+def test_an_unnamed_property_raises() -> None:
+    """An unnamed property generates an unnamed column.
+
+    The backend then rejects the table with an error naming nothing useful,
+    which is a worse failure than refusing to parse.
+    """
+    with pytest.raises(SchemaParseError):
+        parse_properties("{: string}")
+
+
+def test_a_duplicate_property_raises() -> None:
+    """Consumers key by name, so a duplicate silently loses one declaration.
+
+    The declaration would look complete while the generated table was short by
+    a column -- the same silent-shrinkage shape as the drift this module
+    exists to detect.
+    """
+    with pytest.raises(SchemaParseError):
+        parse_properties("{a: string, a: int}")
+
+
+def test_the_live_declarations_have_no_duplicates() -> None:
+    """A control against the real schemas, not only synthetic strings.
+
+    `parsed_node_schemas` now raises on a duplicate, so this passing means the
+    21 shipped declarations are genuinely duplicate-free rather than that the
+    check is untested.
+    """
+    parsed = parsed_node_schemas()
+
+    for label, specs in parsed.items():
+        names = [spec.name for spec in specs]
+        assert len(names) == len(set(names)), (label.value, names)

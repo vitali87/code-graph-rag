@@ -89,14 +89,26 @@ def parse_properties(declaration: str) -> list[PropertySpec]:
     if not body:
         return []
     specs: list[PropertySpec] = []
+    seen: set[str] = set()
     for field in body.split(","):
         name, separator, raw_type = field.partition(":")
         if not separator:
             raise SchemaParseError(f"property has no type: {field.strip()!r}")
+        property_name = name.strip()
+        if not property_name:
+            # An unnamed property would generate an unnamed column, which the
+            # backend rejects with an error naming nothing useful.
+            raise SchemaParseError(f"property has no name: {field.strip()!r}")
+        if property_name in seen:
+            # Consumers key by name, so a duplicate silently loses one of the
+            # two declarations -- the declaration would look complete while
+            # the generated table was short by a column.
+            raise SchemaParseError(f"duplicate property: {property_name!r}")
+        seen.add(property_name)
         type_name, optional, element = _parse_type(raw_type)
         specs.append(
             PropertySpec(
-                name=name.strip(),
+                name=property_name,
                 type_name=type_name,
                 optional=optional,
                 element=element,
