@@ -49,11 +49,15 @@ merge `Main.kt` and `Main.kts` onto one node.
 
 Graphs indexed before this keep the unsuffixed names, and a saved query
 written against the old shape stops matching once they move. An incremental
-sync will not move them: it skips files whose content is unchanged, and this
-change alters how a name is emitted rather than the file itself, so cgr warns
-that the parser changed but keeps the old results. Rebuilding with
-`cgr start --clean` is what re-emits them. Note that it clears **every**
-project in a shared graph, so re-index the others afterwards.
+sync will not move them: it compares each file's mtime against the hash cache
+rather than hashing its content, so it skips every file whose mtime has not
+advanced since the last sync. This change alters how a name is emitted rather
+than the file itself, so cgr warns that the parser changed but keeps the old
+results. Rebuilding with
+`cgr start --clean --update-graph` is what re-emits them. Both flags are
+required: `--clean` on its own deletes the graph and returns without
+rebuilding. Note that it clears **every** project in a shared graph, so
+re-index the others afterwards.
 
 | Language | Extensions | Functions | Classes/Types | Imports |
 |---|---|---|---|---|
