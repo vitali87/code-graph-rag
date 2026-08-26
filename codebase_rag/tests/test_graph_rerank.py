@@ -213,3 +213,23 @@ def test_the_query_counts_both_endpoints_explicitly() -> None:
     # A bare undirected match with a single projected endpoint is the shape
     # this replaced; it must not come back.
     assert "RETURN id(a) AS node_id" not in query, query
+
+
+def test_self_loops_are_excluded_from_proximity() -> None:
+    """A function calling itself is not "close to" anything.
+
+    The eval's adjacency skips `a == b`, so the query must too. Without the
+    exclusion a recursive function is unwound TWICE by
+    `UNWIND [id(a), id(b)]` and scores maximum normalised proximity purely
+    from its own self-reference -- outranking hits that are genuinely
+    connected to the rest of the result set.
+
+    That would also make the shipped reranker and the model it is measured
+    against compute different quantities, which is worse than either being
+    wrong: the measurement stops describing the thing being shipped.
+    """
+    from codebase_rag.tools.graph_rerank import build_proximity_query
+
+    query = build_proximity_query([1, 2])
+
+    assert "id(a) <> id(b)" in query, query

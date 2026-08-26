@@ -93,12 +93,20 @@ def build_proximity_query(node_ids: list[int]) -> str:
     Unwinding removes the dependency instead of documenting it. The result is
     the same where the undirected match does double-count, and correct where
     it does not.
+
+    Self-loops are excluded (`id(a) <> id(b)`), matching the eval's adjacency
+    which skips `a == b`. A recursive function calling only itself would
+    otherwise be unwound TWICE and score maximum normalised proximity -- from
+    a relationship that says nothing about whether it belongs with the other
+    hits, which is the entire criterion. The exclusion is not defensive: it is
+    what keeps the shipped reranker and the model it is measured against
+    computing the same quantity.
     """
     placeholders = ", ".join(f"${i}" for i in range(len(node_ids)))
     rel_filter = "|".join(_PROXIMITY_RELS)
     return f"""
 MATCH (a)-[r:{rel_filter}]->(b)
-WHERE id(a) IN [{placeholders}] AND id(b) IN [{placeholders}]
+WHERE id(a) IN [{placeholders}] AND id(b) IN [{placeholders}] AND id(a) <> id(b)
 UNWIND [id(a), id(b)] AS node_id
 RETURN node_id, count(*) AS degree
 """
