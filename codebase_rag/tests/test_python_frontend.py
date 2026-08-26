@@ -170,3 +170,28 @@ def test_column_conversions_round_trip() -> None:
     for char_col in range(len(line)):
         byte_col = _char_to_byte_col(line, char_col)
         assert _byte_to_char_col(line, byte_col) == char_col
+
+
+def test_column_conversions_are_absolutely_correct() -> None:
+    """Pin the conversions to reality, not just to each other.
+
+    A round trip only proves the pair is mutually inverse, which two symmetric
+    wrongs also satisfy: replacing BOTH functions with the identity function
+    passes `test_column_conversions_round_trip` unchanged. Identity is wrong
+    here -- every column after the two-byte 'é' diverges by one -- so without an
+    absolute assertion the suite cannot tell a working conversion from no
+    conversion at all.
+    """
+    line = 'x = "café" + f("a")'
+    assert line.index("é") == 8
+
+    # Before the 'é' the two units agree, so these cannot discriminate.
+    assert _char_to_byte_col(line, 8) == 8
+    # After it they must not: char 9 is the 10th byte.
+    assert _char_to_byte_col(line, 9) == 10
+    assert _char_to_byte_col(line, 12) == 13
+    assert _char_to_byte_col(line, 15) == 16
+
+    assert _byte_to_char_col(line, 10) == 9
+    assert _byte_to_char_col(line, 13) == 12
+    assert _byte_to_char_col(line, 16) == 15
