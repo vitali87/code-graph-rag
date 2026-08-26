@@ -61,10 +61,14 @@ def test_the_comparison_scores_both_conditions_the_same_way() -> None:
 
     # Both find the expected qn in top-k, so recall is equal here; the point is
     # that both produce a comparable ScoreResult from one scorer.
-    assert before.rows and after.rows
+    # Asserted separately so a failure names which condition produced no rows;
+    # a composite assertion here would report "one of them was empty".
+    assert before.rows
+    assert after.rows
     # ScoreRow is a TypedDict, so the fields are subscripts.
     assert before.rows[0]["label"] == after.rows[0]["label"]
-    assert before.rows[0]["recall"] == after.rows[0]["recall"] == 1.0
+    assert before.rows[0]["recall"] == 1.0
+    assert after.rows[0]["recall"] == 1.0
 
 
 def test_an_edge_outside_the_result_set_does_not_count() -> None:

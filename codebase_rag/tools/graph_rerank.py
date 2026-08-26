@@ -125,14 +125,16 @@ def rerank_by_graph_proximity(
     if not results:
         return []
     proximity = _proximity_scores(ingestor, [node_id for node_id, _ in results])
-    hits = [
-        RerankedHit(
-            node_id=node_id,
-            similarity=similarity,
-            proximity=(prox := proximity.get(node_id, 0.0)),
-            score=similarity + weight * prox,
+    hits: list[RerankedHit] = []
+    for node_id, similarity in results:
+        prox = proximity.get(node_id, 0.0)
+        hits.append(
+            RerankedHit(
+                node_id=node_id,
+                similarity=similarity,
+                proximity=prox,
+                score=similarity + weight * prox,
+            )
         )
-        for node_id, similarity in results
-    ]
     # `sorted` is stable, so equal scores keep their incoming order.
     return sorted(hits, key=lambda hit: hit.score, reverse=True)
