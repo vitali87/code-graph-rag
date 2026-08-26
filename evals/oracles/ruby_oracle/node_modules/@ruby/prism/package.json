@@ -1,0 +1,19 @@
+{
+  "name": "@ruby/prism",
+  "version": "1.9.0",
+  "description": "Prism Ruby parser",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "scripts": {
+    "prepublishOnly": "npm run type",
+    "test": "node test.js",
+    "type": "tsc --allowJs -d --target ES2015 --emitDeclarationOnly --outDir src src/index.js"
+  },
+  "author": "Shopify <ruby@shopify.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ruby/prism.git"
+  }
+}
