@@ -245,6 +245,11 @@ def test_version_probes_run_from_the_indexed_repository(tmp_path) -> None:
 
     with (
         patch.object(pf, "_active_tools", return_value={"GO_VERSION": True}),
+        # `_probe_version` calls shutil.which BEFORE subprocess.run, so without
+        # this the probe short-circuits to `absent` on any machine lacking the
+        # toolchain and the capture never fires -- which is why these passed
+        # locally (go installed) and failed on the macOS runner (go absent).
+        patch.object(pf.shutil, "which", return_value="/usr/bin/go"),
         patch.object(pf.subprocess, "run", _capture),
     ):
         pf._tool_versions(tmp_path)
@@ -270,6 +275,11 @@ def test_a_repo_less_probe_does_not_force_a_working_directory(tmp_path) -> None:
 
     with (
         patch.object(pf, "_active_tools", return_value={"GO_VERSION": True}),
+        # `_probe_version` calls shutil.which BEFORE subprocess.run, so without
+        # this the probe short-circuits to `absent` on any machine lacking the
+        # toolchain and the capture never fires -- which is why these passed
+        # locally (go installed) and failed on the macOS runner (go absent).
+        patch.object(pf.shutil, "which", return_value="/usr/bin/go"),
         patch.object(pf.subprocess, "run", _capture),
     ):
         pf._tool_versions(None)
