@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -264,10 +265,6 @@ def test_non_finite_sample_weights_default_to_one():
     assert _sample_weight([2.5], 0) == 2.5
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="the fixture is a #!/bin/sh script, which Windows cannot execute",
-)
 def test_dotnet_trace_probe_rejects_a_tool_that_cannot_run(tmp_path, monkeypatch):
     """A present-but-unrunnable dotnet-trace must read as absent (issue #1449).
 
@@ -278,34 +275,36 @@ def test_dotnet_trace_probe_rejects_a_tool_that_cannot_run(tmp_path, monkeypatch
     not the question `skipif` needs answered, so the suite fails on an
     environment problem with a message about .NET rather than skipping.
 
-    Unix-only, and the skip is about the FIXTURE rather than the behaviour.
-    Both halves need a file that is executable and exits with a chosen status,
-    which here is a ``#!/bin/sh`` script; Windows cannot run one, so the
-    positive control fails there for a reason unrelated to what is under test.
-    The probe itself is platform-neutral, and the live test it guards is
-    already Unix-only for its own reason (EventPipe is validated on Unix).
+    The candidate on disk is real, so discovery is genuinely exercised, but
+    the PROBE's exit status is mocked. Writing an executable that exits with a
+    chosen status means a ``#!/bin/sh`` script, which Windows cannot run, so a
+    real fixture would fail the positive control on a third of the CI matrix
+    for a reason unrelated to what is under test. Mocking the one call keeps
+    the test meaningful everywhere.
     """
     fake_home = tmp_path / "home"
     tools = fake_home / ".dotnet" / "tools"
     tools.mkdir(parents=True)
-    broken = tools / "dotnet-trace"
-    # Exits non-zero however it is called, like an apphost with no runtime.
-    broken.write_text("#!/bin/sh\necho 'You must install .NET' >&2\nexit 131\n")
-    broken.chmod(0o755)
+    candidate = tools / "dotnet-trace"
+    candidate.touch()
 
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
     # Nothing on PATH, so the global-tools directory is the only candidate.
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
 
-    assert _runnable_dotnet_trace() is None
+    def _probe(returncode: int):
+        return subprocess.CompletedProcess(args=[], returncode=returncode, stdout="")
+
+    # An apphost whose runtime is missing exits 131 however it is invoked.
+    with patch("subprocess.run", return_value=_probe(131)):
+        assert _runnable_dotnet_trace() is None
 
     # Positive control: the same probe must still ACCEPT a working tool, or
     # this test would pass just as well against a guard that returns None
-    # unconditionally. Same path, same discovery route -- only the exit status
+    # unconditionally. Same file, same discovery route -- only the exit status
     # differs, which is the single dimension under test.
-    broken.write_text("#!/bin/sh\necho 9.0.0\nexit 0\n")
-    broken.chmod(0o755)
-    assert _runnable_dotnet_trace() == str(broken)
+    with patch("subprocess.run", return_value=_probe(0)):
+        assert _runnable_dotnet_trace() == str(candidate)
 
 
 def _dotnet_with_sdk() -> str | None:
