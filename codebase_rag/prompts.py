@@ -30,8 +30,14 @@ if TYPE_CHECKING:
 def extract_tool_names(tools: list["Tool"]) -> ToolNames:
     registered = {t.name for t in tools}
 
-    def resolve_tool_name(canonical: AgenticToolName) -> str:
-        if canonical not in registered:
+    def resolve_tool_name(
+        canonical: AgenticToolName, *, absence_is_handled: bool = False
+    ) -> str:
+        # `absence_is_handled` marks a tool the prompt can build around. Warning
+        # about one would fire on precisely the configuration that now works,
+        # and a warning that cries wolf gets the other five ignored too
+        # (CodeRabbit, #1446).
+        if canonical not in registered and not absence_is_handled:
             logger.warning(
                 f"Tool '{canonical}' is not registered on the agent; "
                 "the orchestrator prompt references it anyway"
@@ -41,7 +47,9 @@ def extract_tool_names(tools: list["Tool"]) -> ToolNames:
     return ToolNames(
         query_graph=resolve_tool_name(AgenticToolName.QUERY_GRAPH),
         read_file=resolve_tool_name(AgenticToolName.READ_FILE),
-        semantic_search=resolve_tool_name(AgenticToolName.SEMANTIC_SEARCH),
+        semantic_search=resolve_tool_name(
+            AgenticToolName.SEMANTIC_SEARCH, absence_is_handled=True
+        ),
         create_file=resolve_tool_name(AgenticToolName.CREATE_FILE),
         edit_file=resolve_tool_name(AgenticToolName.REPLACE_CODE),
         shell_command=resolve_tool_name(AgenticToolName.EXECUTE_SHELL),

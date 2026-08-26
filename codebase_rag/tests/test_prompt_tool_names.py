@@ -1,6 +1,10 @@
 """Regression tests for issue #1199: the orchestrator system prompt must only
 reference tool names that are actually registered on the agent."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
+from loguru import logger
 from pydantic_ai import Tool
 
 from codebase_rag.prompts import build_rag_orchestrator_prompt, extract_tool_names
@@ -121,3 +125,54 @@ def test_prompt_retains_semantic_section_when_registered() -> None:
     assert "WHEN TO USE SEMANTIC SEARCH FIRST" in prompt
     assert "HYBRID APPROACH" in prompt
     assert f"`{AgenticToolName.SEMANTIC_SEARCH}`" in prompt
+
+
+@contextmanager
+def _captured_warnings() -> Iterator[list[str]]:
+    """Collect loguru WARNING messages; loguru does not feed pytest's caplog."""
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        yield messages
+    finally:
+        logger.remove(sink_id)
+
+
+def test_absent_semantic_search_does_not_warn() -> None:
+    """A supported absence must stay quiet.
+
+    `resolve_tool_name` warns that "the orchestrator prompt references it
+    anyway", which was true when every tool name was interpolated
+    unconditionally. Since #1201 the graph-first branch deliberately omits
+    `semantic_search`, so the warning fires on exactly the configuration the
+    prompt now handles correctly, and it trains operators to ignore a warning
+    that is real for the other five tools (CodeRabbit, #1446).
+    """
+    semantic = str(AgenticToolName.SEMANTIC_SEARCH)
+
+    with _captured_warnings() as messages:
+        extract_tool_names(_tools_without_semantic_search())
+
+    assert not [m for m in messages if semantic in m], (
+        f"warned about a supported semantic-search absence: {messages}"
+    )
+
+
+def test_absent_other_tool_still_warns() -> None:
+    """The warning must survive for absences that are genuinely unhandled.
+
+    Only `semantic_search` has a conditional prompt branch. Suppressing the
+    warning wholesale would silence the five tools whose absence really does
+    leave a dangling reference in the prompt.
+    """
+    read_file = str(AgenticToolName.READ_FILE)
+    tools = [tool for tool in _all_registered_tools() if tool.name != read_file]
+
+    with _captured_warnings() as messages:
+        extract_tool_names(tools)
+
+    assert [m for m in messages if read_file in m], (
+        f"unhandled absence of {read_file} was not reported: {messages}"
+    )
