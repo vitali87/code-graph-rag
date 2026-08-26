@@ -807,6 +807,7 @@ def _git_state() -> tuple[str, bool] | None:
             ["git", "status", "--porcelain", "--branch"],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             timeout=1.0,
             check=True,
             cwd=repo,

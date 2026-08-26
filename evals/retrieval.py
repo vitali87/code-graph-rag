@@ -176,6 +176,7 @@ def grep_call_edges(
         input=_grep_patterns(first_party, mode),
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     if completed.returncode not in ec.RG_OK_RETURNCODES:

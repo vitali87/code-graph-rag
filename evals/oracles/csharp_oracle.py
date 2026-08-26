@@ -69,6 +69,7 @@ def _ensure_built(dotnet: str) -> bool:
                 ],
                 capture_output=True,
                 text=True,
+                encoding=cs.ENCODING_UTF8,
                 check=True,
                 env={**os.environ, **_DOTNET_ENV},
             )
@@ -85,6 +86,7 @@ def _run_csharp_oracle_payload(target: Path) -> OraclePayload:
         [dotnet, str(_DLL), str(target)],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=True,
         env={
             **os.environ,

@@ -444,12 +444,14 @@ def test_live_cmake_project_produces_dynamic_edges(tmp_path):
         check=True,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
     )
     subprocess.run(
         [str(cmake), "--build", str(build)],
         check=True,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
     )
     addrs = tmp_path / "cgr-trace.addrs"
     subprocess.run(

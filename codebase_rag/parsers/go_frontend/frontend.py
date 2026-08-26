@@ -171,6 +171,7 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool:
             cwd=src,
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_BUILD_TIMEOUT,
             env={**os.environ, **_GO_ENV},
@@ -335,6 +336,7 @@ def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts | None:
             [str(binary), str(module_root)],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_RUN_TIMEOUT,
             env={

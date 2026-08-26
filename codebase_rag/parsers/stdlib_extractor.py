@@ -313,6 +313,7 @@ class StdlibExtractor:
                     check=False,
                     capture_output=True,
                     text=True,
+                    encoding=cs.ENCODING_UTF8,
                     timeout=5,
                     env=env,
                 )
@@ -362,6 +363,7 @@ class StdlibExtractor:
                     check=False,
                     capture_output=True,
                     text=True,
+                    encoding=cs.ENCODING_UTF8,
                     timeout=5,
                 )
 
@@ -455,6 +457,7 @@ func main() {
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
+                    encoding=cs.ENCODING_UTF8,
                     env=env,
                 ) as proc:
                     stdout, _ = proc.communicate(go_script, timeout=10)
@@ -666,6 +669,7 @@ end
                     check=False,
                     capture_output=True,
                     text=True,
+                    encoding=cs.ENCODING_UTF8,
                     timeout=5,
                     env=env,
                 )

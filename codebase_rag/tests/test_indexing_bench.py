@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from codebase_rag import constants as cs
 from evals.indexing_bench import CORPORA, markdown_row, measure_indexing_run
 from evals.types_defs import IndexingStats
 
@@ -104,6 +105,7 @@ def _git(checkout: Path, *args: str) -> str:
         ],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=True,
     )
     return proc.stdout.strip()

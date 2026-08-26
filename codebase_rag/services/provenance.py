@@ -63,6 +63,7 @@ def _git_line(repo_path: Path, *args: str) -> str | None:
             ["git", "-C", str(repo_path), *args],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
         )
     except OSError:

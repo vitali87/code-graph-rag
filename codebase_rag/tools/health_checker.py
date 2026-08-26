@@ -25,6 +25,7 @@ class HealthChecker:
                 ["docker", "info", "--format", "{{.ServerVersion}}"],
                 capture_output=True,
                 text=True,
+                encoding=cs.ENCODING_UTF8,
                 timeout=5,
                 check=False,
             )
@@ -153,6 +154,7 @@ class HealthChecker:
                 check_cmd,
                 capture_output=True,
                 text=True,
+                encoding=cs.ENCODING_UTF8,
                 timeout=4,
                 check=False,
             )

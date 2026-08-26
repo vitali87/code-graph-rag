@@ -48,6 +48,7 @@ def _add_git_submodule(grammar_url: str, grammar_path: str) -> SubmoduleResult |
             check=True,
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
         )
         click.echo(f"OK Submodule added at: {grammar_path}")
         return SubmoduleResult(success=True, grammar_path=grammar_path)
@@ -88,12 +89,14 @@ def _reinstall_existing_submodule(
             check=True,
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
         )
         subprocess.run(
             ["git", "rm", "-f", grammar_path],
             check=True,
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
         )
 
         modules_path = cs.LANG_GIT_MODULES_PATH.format(path=grammar_path)
@@ -106,6 +109,7 @@ def _reinstall_existing_submodule(
             check=True,
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
         )
         click.echo(f"OK {cs.LANG_MSG_REINSTALL_SUCCESS.format(path=grammar_path)}")
         return SubmoduleResult(success=True, grammar_path=grammar_path)

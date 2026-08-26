@@ -34,6 +34,7 @@ def test_help_command_works() -> None:
         cwd=repo_root,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         timeout=30,
         env={**__import__("os").environ, "NO_COLOR": "1"},
     )
@@ -64,6 +65,7 @@ def test_version_flag() -> None:
             cwd=repo_root,
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             timeout=30,
         )
 

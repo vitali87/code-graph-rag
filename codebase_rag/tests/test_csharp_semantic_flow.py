@@ -872,6 +872,7 @@ def test_a_metadata_interface_never_resolves_to_source_implementers(
         ["dotnet", "build", str(lib), "-o", str(out), "--nologo", "-v", "q"],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     dll = out / "MetaLib.dll"
@@ -1245,6 +1246,7 @@ def test_a_prebuilt_plugin_implementation_keeps_the_write_unproven(
         ["dotnet", "build", str(lib), "-o", str(libout), "--nologo", "-v", "q"],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     libdll = libout / "MetaLib.dll"
@@ -1262,6 +1264,7 @@ def test_a_prebuilt_plugin_implementation_keeps_the_write_unproven(
         ["dotnet", "build", str(plugin), "-o", str(pluginout), "--nologo", "-v", "q"],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     plugindll = pluginout / "Plugin.dll"

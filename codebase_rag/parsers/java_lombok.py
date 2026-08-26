@@ -86,6 +86,7 @@ def _run_delombok(java: str, jar: Path, source_root: Path, out_dir: Path) -> boo
             ],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_DELOMBOK_TIMEOUT,
         )
