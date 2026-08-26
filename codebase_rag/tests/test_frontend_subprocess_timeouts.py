@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 import ast
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_ROOT = _REPO_ROOT / "codebase_rag" / "parsers"
@@ -129,3 +131,52 @@ def test_the_detector_recognises_bounded_and_unbounded_calls() -> None:
     # every non-literal would make the established `timeout=_RUN_TIMEOUT`
     # convention unusable.
     assert _unbounded_run_calls(ast.parse("subprocess.run(['x'], timeout=T)")) == []
+
+
+def test_a_timed_out_go_build_degrades_rather_than_raising(tmp_path: Path) -> None:
+    """A wedged `go build` must return False, not propagate TimeoutExpired.
+
+    The timeout is only half the fix. Letting TimeoutExpired escape would turn
+    a hung toolchain into a FAILED INDEX, which inverts the protocol's
+    invariant that a missing toolchain degrades to the tree-sitter backbone and
+    never worse.
+    """
+    from codebase_rag.parsers.go_frontend import frontend as gof
+
+    with patch.object(
+        gof.subprocess, "run", side_effect=subprocess.TimeoutExpired("go", 1)
+    ):
+        assert (
+            gof._compile_tool("/usr/bin/go", tmp_path / "src", tmp_path / "out")
+            is False
+        )
+
+
+def test_a_timed_out_dotnet_build_degrades_rather_than_raising(
+    tmp_path: Path,
+) -> None:
+    """The same for `dotnet build`, which restores packages over the network."""
+    from codebase_rag.parsers.csharp_frontend import frontend as csf
+
+    with patch.object(
+        csf.subprocess, "run", side_effect=subprocess.TimeoutExpired("dotnet", 1)
+    ):
+        assert (
+            csf._compile_tool("/usr/bin/dotnet", tmp_path / "s", tmp_path / "o")
+            is False
+        )
+
+
+def test_a_successful_build_still_reports_success(tmp_path: Path) -> None:
+    """The control: without it, a `_compile_tool` hardcoded to False would pass.
+
+    Both assertions above are satisfied by an implementation that never
+    succeeds, so the boundary has to be pinned from the other side too.
+    """
+    from codebase_rag.parsers.go_frontend import frontend as gof
+
+    ok = subprocess.CompletedProcess(["go"], 0, stdout="", stderr="")
+    with patch.object(gof.subprocess, "run", return_value=ok):
+        assert (
+            gof._compile_tool("/usr/bin/go", tmp_path / "src", tmp_path / "out") is True
+        )
