@@ -145,3 +145,39 @@ def test_a_frontend_that_does_not_apply_is_not_invoked(
 
     assert not frontend.emitted
     assert "marker.from.frontend" not in _emitted_qns(mock)
+
+
+def test_a_frontend_whose_probe_raises_is_skipped(tmp_path: Path, monkeypatch) -> None:
+    """A raising `available()` must not fail the whole index.
+
+    The protocol's invariant is that a missing toolchain degrades to the
+    tree-sitter backbone, never worse. A frontend whose PROBE throws -- a
+    broken install, a permissions error reading a marker -- would otherwise
+    take the entire run down with it, which is the opposite of degrading.
+
+    Asserting the other frontends still run is what makes this meaningful:
+    a dispatch loop that swallowed the exception and then stopped iterating
+    would satisfy "no crash" while silently dropping every later frontend.
+    """
+    raiser = _RecordingFrontend(
+        cs.SupportedLanguage.RUST, FrontendPhase.AFTER_DEFINITIONS
+    )
+    raiser.available = lambda: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        RuntimeError("broken install")
+    )
+    survivor = _RecordingFrontend(
+        cs.SupportedLanguage.JAVA, FrontendPhase.AFTER_DEFINITIONS
+    )
+
+    patched = dict(EMITTING_FRONTENDS)
+    patched[raiser.language] = raiser
+    patched[survivor.language] = survivor
+    monkeypatch.setattr(
+        "codebase_rag.graph_updater.EMITTING_FRONTENDS", patched, raising=False
+    )
+
+    mock = _index(tmp_path)
+
+    assert not raiser.emitted, "a raising probe should skip its frontend"
+    assert survivor.emitted, "one broken frontend stopped the others running"
+    assert "marker.from.frontend" in _emitted_qns(mock)
