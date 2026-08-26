@@ -1,15 +1,24 @@
 # Scala baseline tree-sitter parity (issues #105, #1186 stage 1).
 #
-# Before this work Scala was the emptiest slot in the language matrix: the
-# constants, the LanguageSpec node-type tuples and the grammar module all
-# existed, but the spec carried no function_query/class_query/call_query, so a
-# .scala file produced Project/Folder/File and nothing else. Measured on a
-# fixture with a trait, a class, an object and a case class: zero Module, zero
-# Class, zero Function, zero Method, zero CALLS.
+# Only ONE behaviour here is new: INHERITS from `extends ... with ...`.
+# Classes, objects, traits, case classes, methods, modules and CALLS were all
+# already extracted before this change -- their node-type tuples are wired
+# into the Scala LanguageSpec on the merge base and are untouched by this PR.
+# Those four tests are REGRESSION COVERAGE for behaviour that already worked,
+# not proof of work done here.
 #
-# That is why these tests assert node KINDS and specific qualified names
-# rather than "some nodes were produced" -- the pre-existing behaviour already
-# produced nodes, just never the ones that matter.
+# An earlier version of this comment claimed Scala emitted Project/Folder/File
+# and nothing else. That came from a probe run against a bare directory with
+# no project marker, so the file was never treated as source at all -- the
+# measurement was of my harness, not of Scala support. Recorded because a
+# false baseline in a test file is worse than none: it is exactly where a
+# later reader looks to learn what the language could already do, and #1186
+# carries the same overstatement.
+#
+# The assertions are on node KINDS and specific qualified names rather than
+# "some nodes were produced", because Scala already produced nodes -- a test
+# that only counted them would pass against both the working and the broken
+# implementation.
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -141,8 +150,10 @@ def test_calls_between_methods_are_recorded(
 ) -> None:
     """A method calling a sibling produces a CALLS edge.
 
-    The pre-existing behaviour produced no CALLS at all for Scala, so this is
-    the edge that makes the graph useful rather than merely populated.
+    This already worked before this change; the test is regression coverage,
+    not new behaviour. It earns its place because CALLS is the edge that makes
+    the graph useful rather than merely populated, and the call node types it
+    depends on sit in the same LanguageSpec this PR's sibling commit edits.
     """
     (scala_project / "calls.scala").write_text(
         """
@@ -171,8 +182,10 @@ def test_a_module_node_exists_for_the_file(
 ) -> None:
     """Every parsed source file gets a Module node.
 
-    Without it the file is seen but never parsed -- which is exactly the
-    pre-existing state, where Scala produced Project/Folder/File only.
+    Already worked before this change -- regression coverage. Worth pinning
+    because a missing Module node means the file was seen but never parsed,
+    and every other assertion in this file depends on it: they would all fail
+    together, so this one names the reason.
     """
     (scala_project / "mod.scala").write_text(
         """
