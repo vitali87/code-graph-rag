@@ -170,10 +170,22 @@ def test_the_proximity_query_filters_on_the_declared_relationships() -> None:
     The tuple and the generated Cypher are two representations of one
     decision; if they diverge, the constant documents something the query does
     not do.
+
+    Compares the SET extracted from the `r:` pattern, not membership of each
+    declared value. An earlier version asserted only that every declared
+    relationship appeared somewhere in the query text, which still passed if
+    the query filtered on an UNDECLARED one -- including a `CONTAINS_*` edge,
+    the exact thing the sibling test exists to keep out. Containment answers
+    "are the declared ones present"; the question is "are these exactly the
+    ones used".
     """
+    import re
+
     from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS, build_proximity_query
 
     query = build_proximity_query([1, 2])
 
-    for rel in _PROXIMITY_RELS:
-        assert rel in query, rel
+    match = re.search(r"\[r:([^\]]+)\]", query)
+    assert match is not None, query
+
+    assert set(match.group(1).split("|")) == set(_PROXIMITY_RELS), match.group(1)
