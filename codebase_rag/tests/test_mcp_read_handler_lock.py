@@ -38,6 +38,11 @@ _GRAPH_READERS = frozenset(
         "semantic_search",
         "query_code_graph",
         "get_code_snippet",
+        # The agent reads the graph through the RAW tool objects rather than
+        # the handlers above, so its bypass is total: none of the wrappers
+        # apply. It needs the lock for the whole run because its answer is
+        # composed across several tool calls.
+        "ask_agent",
     }
 )
 
@@ -49,7 +54,21 @@ _GRAPH_READERS = frozenset(
 
 # Handlers that mutate and already hold the lock; included so the test fails
 # if one ever loses it.
-_GRAPH_WRITERS = frozenset({"delete_project", "wipe_database"})
+#
+# `index_repository` and `update_repository` are the load-bearing pair: they
+# DELETE AND REBUILD the graph, which is the only reason a reader needs the
+# lock at all. An earlier version of this file listed only delete_project and
+# wipe_database and still claimed to pin the invariant "from both directions"
+# -- so the two handlers whose locks make every reader's lock meaningful were
+# the two it did not guard.
+_GRAPH_WRITERS = frozenset(
+    {
+        "index_repository",
+        "update_repository",
+        "delete_project",
+        "wipe_database",
+    }
+)
 
 
 def _holds_ingestor_lock(node: ast.AsyncFunctionDef) -> bool:
@@ -125,10 +144,17 @@ def test_the_mutating_handlers_still_hold_the_lock() -> None:
     """
     handlers = _handlers()
 
-    missing = sorted(
-        name
-        for name in _GRAPH_WRITERS
-        if name in handlers and not _holds_ingestor_lock(handlers[name])
+    unknown = sorted(_GRAPH_WRITERS - handlers.keys())
+    assert not unknown, (
+        f"{len(unknown)} name(s) in _GRAPH_WRITERS are not handlers; the "
+        "guard is checking nothing for them:\n" + "\n".join(unknown)
     )
 
-    assert not missing, missing
+    missing = sorted(
+        name for name in _GRAPH_WRITERS if not _holds_ingestor_lock(handlers[name])
+    )
+
+    assert not missing, (
+        f"{len(missing)} rebuild/mutate handler(s) lost _ingestor_lock, which "
+        "makes every reader's lock decorative:\n" + "\n".join(missing)
+    )

@@ -714,7 +714,19 @@ class MCPToolsRegistry:
     async def ask_agent(self, question: str) -> dict[str, str]:
         logger.info(lg.MCP_ASK_AGENT.format(question=question))
         try:
-            response = await self.rag_agent.run(question, message_history=[])
+            # The agent is given the RAW tool objects (self._query_tool,
+            # self._code_tool, the semantic search tool), not the locked
+            # handler methods on this class -- so its graph reads bypass every
+            # wrapper below. The lock therefore has to be taken here, around
+            # the whole run: an agent answer assembled from two graph
+            # generations is wrong in a way no single tool call would reveal.
+            #
+            # Held for the full run rather than per tool call, because the
+            # answer is composed ACROSS calls. Serialising each call
+            # individually would still let a rebuild land between them, which
+            # is the case this is meant to exclude.
+            async with self._ingestor_lock:
+                response = await self.rag_agent.run(question, message_history=[])
             return {"output": str(response.output)}
         except Exception as e:
             logger.error(lg.MCP_ASK_AGENT_ERROR.format(error=e))
