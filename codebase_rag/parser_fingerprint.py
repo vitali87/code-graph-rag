@@ -126,6 +126,23 @@ def _active_tools(repo_path: Path | None = None) -> dict[str, bool]:
         except OSError:
             return True
 
+    # The probes below are DELIBERATELY the same predicates the frontends use
+    # in their own `applies()` (`frontends/go.py`, `frontends/csharp.py`), so
+    # "tool active" means exactly "this frontend will run against this repo".
+    # That identity is the point, not a coincidence: a fingerprint describes
+    # what produced the graph, so any divergence from the thing that produced
+    # it is a bug by construction.
+    #
+    # Do NOT tighten one side alone. Requiring matching source files here --
+    # a `go.mod` with no `.go` files, say -- looks safe and is the inverse
+    # defect: the frontend still runs, so a toolchain upgrade before someone
+    # adds the first `.go` file would go unrecorded and that file would be
+    # indexed by a compiler the fingerprint does not name. False staleness
+    # costs a re-index; missed staleness costs a silently wrong graph.
+    #
+    # The source-file question is already answered a layer up: the updater
+    # gates on the files it actually parsed, which is why `applies()` only
+    # asks about project markers (see the comment in `frontends/python.py`).
     return {
         "GO_VERSION": (
             resolve_go_frontend() is not cs.GoFrontend.TREESITTER

@@ -182,3 +182,38 @@ def test_a_repo_less_call_keeps_mode_gating_only(tmp_path) -> None:
     assert set(pf._active_tools(None)) == {
         key for key, _exe, _arg in pf._VERSIONED_TOOLS
     }
+
+
+def test_the_fingerprint_uses_the_frontends_own_applicability_predicate(
+    tmp_path,
+) -> None:
+    """The fingerprint and `applies()` must agree, and stay agreed.
+
+    A fingerprint describes what produced the graph, so it has to gate on the
+    same question the graph builder asks before running a frontend. The two
+    predicates being identical is deliberate, and a comment saying so is not
+    checkable -- this is.
+
+    Tightening one side alone looks safe and is the inverse defect: a `go.mod`
+    with no `.go` files would report the tool inactive while the frontend still
+    runs, so a toolchain upgrade before the first `.go` file appears goes
+    unrecorded. False staleness costs a re-index; missed staleness costs a
+    silently wrong graph.
+    """
+    from codebase_rag import constants as cs
+    from codebase_rag.parsers.frontends import FRONTENDS
+
+    (tmp_path / "go.mod").write_text("module example.com/x\n\ngo 1.23\n")
+
+    go_frontend = FRONTENDS[cs.SupportedLanguage.GO]
+    with patch(
+        "codebase_rag.parsers.go_frontend.resolve_go_frontend",
+        return_value=cs.GoFrontend.GOTYPES,
+    ):
+        fingerprint_says = pf._active_tools(tmp_path)["GO_VERSION"]
+
+    assert fingerprint_says is go_frontend.applies(tmp_path), (
+        "the fingerprint's activity predicate diverged from GoFrontend.applies(); "
+        "they must answer the same question or the fingerprint describes a "
+        "different run than the one that happened"
+    )
