@@ -105,3 +105,100 @@ def score_semantic(
             extra=[],
         )
     return ScoreResult(rows=rows, location=_EMPTY_LOCATION, diff=diff)
+
+
+def proximity_edges(target: Path, project: str) -> dict[str, set[str]]:
+    """Undirected adjacency between first-party definitions, keyed by qn.
+
+    Built from the captured relationship tuples rather than a live graph, so
+    the comparison runs in the same harness as the baseline and needs no
+    Memgraph. Only the relationship types that mean "these two definitions are
+    about the same thing" count -- see `tools/graph_rerank._PROXIMITY_RELS`.
+    """
+    from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
+
+    ingestor = _capture(target, project)
+    wanted = set(_PROXIMITY_RELS)
+    adjacency: dict[str, set[str]] = {}
+    for _from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
+        if rel_type not in wanted:
+            continue
+        a, b = str(from_val), str(to_val)
+        if a == b:
+            continue
+        adjacency.setdefault(a, set()).add(b)
+        adjacency.setdefault(b, set()).add(a)
+    return adjacency
+
+
+def reranked_semantic_ranking(
+    ranking: dict[str, list[str]],
+    adjacency: dict[str, set[str]],
+    weight: float | None = None,
+) -> dict[str, list[str]]:
+    """The same rankings, reordered by in-set graph proximity (issue #385).
+
+    Takes the BASELINE ranking as input rather than recomputing embeddings, so
+    the two conditions differ by exactly one variable: the reranking step. Any
+    difference in recall@k is attributable to it and to nothing else, which is
+    what makes the comparison in criterion 3 meaningful.
+
+    Scores are positional rather than cosine values: the baseline discards the
+    similarity when it truncates to top-k, and a rank-derived score preserves
+    the ordering that ranking expressed. Ties keep their baseline position
+    because `rerank_by_graph_proximity` sorts stably.
+    """
+    from codebase_rag.tools.graph_rerank import (
+        DEFAULT_PROXIMITY_WEIGHT,
+        rerank_by_graph_proximity,
+    )
+
+    effective = DEFAULT_PROXIMITY_WEIGHT if weight is None else weight
+    reranked: dict[str, list[str]] = {}
+    for query, qns in ranking.items():
+        if len(qns) < 2:
+            reranked[query] = list(qns)
+            continue
+        index = {position: qn for position, qn in enumerate(qns)}
+        in_set = set(qns)
+        # Degree counted only against OTHER HITS for this query, matching the
+        # reranker: an edge to some unrelated definition says nothing about
+        # whether this hit belongs with the rest of the result set.
+        degrees = {
+            position: float(len(adjacency.get(qn, set()) & in_set))
+            for position, qn in index.items()
+        }
+        highest = max(degrees.values(), default=0.0)
+        # Descending positional similarity in 0..1, so first place scores 1.0.
+        span = max(len(qns) - 1, 1)
+        similarity = {position: 1.0 - (position / span) for position in index}
+        ordered = rerank_by_graph_proximity(
+            _AdjacencyIngestor(degrees, highest),
+            [(position, similarity[position]) for position in index],
+            weight=effective,
+        )
+        reranked[query] = [index[hit.node_id] for hit in ordered]
+    return reranked
+
+
+class _AdjacencyIngestor:
+    """Feeds precomputed degrees to the reranker's query seam.
+
+    The reranker asks the graph for in-set degree; here that answer is already
+    known from the captured relationships, so this returns it rather than
+    running Cypher. Keeping the reranker unmodified is the point -- the thing
+    being measured must be the code that would ship.
+    """
+
+    def __init__(self, degrees: dict[int, float], highest: float) -> None:
+        self._degrees = degrees
+        self._highest = highest
+
+    def fetch_all(self, query: str, params: dict | None = None) -> list[dict]:
+        return [
+            {"node_id": node_id, "degree": degree}
+            for node_id, degree in self._degrees.items()
+        ]
+
+    def execute_write(self, query: str, params: dict | None = None) -> None:
+        return None
