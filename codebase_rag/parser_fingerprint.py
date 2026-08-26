@@ -62,13 +62,20 @@ def _digest_file(path: Path) -> str:
     return hasher.hexdigest()
 
 
-def _probe_version(executable: str, argument: str) -> str:
+def _probe_version(executable: str, argument: str, cwd: Path | None = None) -> str:
     """One tool's version string, or `absent` when it cannot be determined.
 
     Never raises: the fingerprint is computed on every index, so a probe that
     escaped would turn a missing or wedged toolchain into a failed run. Some
     tools print their version on stderr (javac before 9), so both streams are
     considered.
+
+    Run from `cwd` when one is given, because Go and .NET SELECT a toolchain
+    from the working directory: a `go.work` or `global.json` can pin a
+    different version, so the same command answers differently depending on
+    where it runs. Probing from the caller's directory would record a
+    toolchain the indexed repository never uses. `None` inherits the caller's
+    cwd rather than inventing one.
     """
     binary = shutil.which(executable)
     if binary is None:
@@ -81,6 +88,7 @@ def _probe_version(executable: str, argument: str) -> str:
             encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_VERSION_PROBE_TIMEOUT,
+            cwd=None if cwd is None else str(cwd),
         )
     except (subprocess.SubprocessError, OSError):
         return _TOOL_ABSENT
@@ -173,7 +181,9 @@ def _tool_versions(repo_path: Path | None = None) -> list[str]:
     entries: list[str] = []
     for key, executable, argument in _VERSIONED_TOOLS:
         value = (
-            _probe_version(executable, argument) if active.get(key) else _TOOL_INACTIVE
+            _probe_version(executable, argument, repo_path)
+            if active.get(key)
+            else _TOOL_INACTIVE
         )
         entries.append(f"{key}={value}")
     return entries

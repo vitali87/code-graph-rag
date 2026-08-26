@@ -11,6 +11,7 @@
 # one tool and simply did not apply it to the others.
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import patch
 
 from codebase_rag import parser_fingerprint as pf
@@ -217,3 +218,61 @@ def test_the_fingerprint_uses_the_frontends_own_applicability_predicate(
         "they must answer the same question or the fingerprint describes a "
         "different run than the one that happened"
     )
+
+
+def test_version_probes_run_from_the_indexed_repository(tmp_path) -> None:
+    """Go and .NET select a toolchain from the working directory.
+
+    `go.work` (and .NET's `global.json`) can pin a different toolchain, so the
+    same `go version` command answers differently depending on cwd. Verified
+    directly: a clean directory reports the installed 1.26.6, while one with a
+    `go.work` pinning 1.99.0 tries to download that instead.
+
+    Probing from the caller's cwd therefore records a version the indexed
+    repository would never use, and the fingerprint then describes a toolchain
+    that did not produce the graph -- missed staleness, the expensive
+    direction.
+    """
+    (tmp_path / "go.mod").write_text("module example.com/x\n\ngo 1.23\n")
+
+    seen: list[object] = []
+
+    def _capture(cmd, **kwargs):
+        seen.append(kwargs.get("cwd"))
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="go version go1.23", stderr=""
+        )
+
+    with (
+        patch.object(pf, "_active_tools", return_value={"GO_VERSION": True}),
+        patch.object(pf.subprocess, "run", _capture),
+    ):
+        pf._tool_versions(tmp_path)
+
+    assert seen, "no probe ran"
+    assert all(cwd == str(tmp_path) for cwd in seen), seen
+
+
+def test_a_repo_less_probe_does_not_force_a_working_directory(tmp_path) -> None:
+    """The control: with no repository, the probe must not invent a cwd.
+
+    Passing a bogus directory would be worse than inheriting the caller's, and
+    asserting only the positive case above would pass against an
+    implementation that hardcoded some path.
+    """
+    seen: list[object] = []
+
+    def _capture(cmd, **kwargs):
+        seen.append(kwargs.get("cwd"))
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="go version go1.23", stderr=""
+        )
+
+    with (
+        patch.object(pf, "_active_tools", return_value={"GO_VERSION": True}),
+        patch.object(pf.subprocess, "run", _capture),
+    ):
+        pf._tool_versions(None)
+
+    assert seen, "no probe ran"
+    assert all(cwd is None for cwd in seen), seen
