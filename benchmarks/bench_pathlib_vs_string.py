@@ -1,7 +1,10 @@
 import os
-import statistics
+import sys
 import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import harness  # noqa: E402
 
 WARMUP_RUNS = 3
 BENCH_RUNS = 50
@@ -118,33 +121,13 @@ def bench_string_name(paths: list[str]) -> float:
 
 
 def run_benchmark(name: str, func, *args) -> dict[str, float]:
-    for _ in range(WARMUP_RUNS):
-        func(*args)
-
-    times = []
-    for _ in range(BENCH_RUNS):
-        times.append(func(*args))
-
-    return {
-        "name": name,
-        "median_ms": statistics.median(times) * 1000,
-        "mean_ms": statistics.mean(times) * 1000,
-        "stddev_ms": statistics.stdev(times) * 1000 if len(times) > 1 else 0,
-        "min_ms": min(times) * 1000,
-        "max_ms": max(times) * 1000,
-        "p95_ms": sorted(times)[int(len(times) * 0.95)] * 1000,
-    }
+    return harness.run_benchmark(
+        name, func, *args, warmup_runs=WARMUP_RUNS, bench_runs=BENCH_RUNS
+    )
 
 
 def print_results(results: list[dict[str, float]]) -> None:
-    print(f"\n{'Benchmark':<55} {'Median':>10} {'Mean':>10} {'StdDev':>10} {'Min':>10} {'Max':>10} {'P95':>10}")
-    print("-" * 125)
-    for r in results:
-        print(
-            f"{r['name']:<55} {r['median_ms']:>9.3f}ms {r['mean_ms']:>9.3f}ms "
-            f"{r['stddev_ms']:>9.3f}ms {r['min_ms']:>9.3f}ms {r['max_ms']:>9.3f}ms "
-            f"{r['p95_ms']:>9.3f}ms"
-        )
+    harness.print_results(results, 55)
 
 
 def main() -> None:

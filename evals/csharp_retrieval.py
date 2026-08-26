@@ -11,23 +11,20 @@ from typing import Annotated
 import typer
 from loguru import logger
 
-from codebase_rag import constants as cs
-
 from . import constants as ec
 from . import logs as ls
-from .cgr_graph import _capture
 from .oracles import csharp_oracle_available, run_csharp_call_oracle
-from .score import _prf
+from .retrieval_eval import (
+    CALLS,
+    INSTANTIATES,
+    CallEdge,
+    cgr_call_edges,
+    score_retrieval,
+)
 from .structure_report import render, write_outputs
-from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
+from .types_defs import ScoreResult
 
 console_target = Path(ec.CSHARP_DEFAULT_TARGET)
-
-_CALLS = cs.RelationshipType.CALLS.value
-_INSTANTIATES = cs.RelationshipType.INSTANTIATES.value
-_EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
-
-CallEdge = tuple[str, str]
 
 
 def oracle_csharp_call_edges(target: Path) -> tuple[set[CallEdge], frozenset[str]]:
@@ -37,45 +34,29 @@ def oracle_csharp_call_edges(target: Path) -> tuple[set[CallEdge], frozenset[str
 def cgr_csharp_call_edges(
     target: Path, project: str, declared: frozenset[str]
 ) -> set[CallEdge]:
-    ingestor = _capture(target, project)
-    caller_path: dict[tuple[str, str], str] = {
-        (str(label), str(uid)): str(props[cs.KEY_PATH])
-        for (label, uid), props in ingestor.nodes.items()
-        if props.get(cs.KEY_PATH) and str(props[cs.KEY_PATH]).endswith(ec.CS_SUFFIX)
-    }
-    edges: set[CallEdge] = set()
-    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
-        # INSTANTIATES counts too (as in the Python retrieval): `new T()` on a
-        # type with no explicit constructor has no ctor node to CALL, only an
-        # INSTANTIATES edge to the class, which the oracle records by type name.
-        if rel_type not in (_CALLS, _INSTANTIATES):
-            continue
-        path = caller_path.get((str(from_label), str(from_val)))
-        if path is None:
-            continue
-        # A C# Method qn carries its overload signature (Class.Name(args)); strip
-        # it to recover the simple callee name the oracle records.
-        name = str(to_val).split(cs.SEPARATOR_DOT)[-1].split(cs.CHAR_PAREN_OPEN)[0]
-        if name in declared:
-            edges.add((path, name))
-    return edges
-
-
-def _edge_repr(edge: CallEdge) -> str:
-    return ec.CSHARP_CALL_EDGE_REPR.format(file=edge[0], name=edge[1])
+    return cgr_call_edges(
+        target,
+        project,
+        declared,
+        suffixes=ec.CS_SUFFIX,
+        # INSTANTIATES counts too (as in the Python retrieval): `new T()` on
+        # a type with no explicit constructor has no ctor node to CALL, only
+        # an INSTANTIATES edge to the class, which the oracle records by type
+        # name.
+        rel_types=(CALLS, INSTANTIATES),
+        # A C# Method qn carries its overload signature (Class.Name(args)).
+        strip_signature=True,
+    )
 
 
 def score_csharp_retrieval(cgr: set[CallEdge], oracle: set[CallEdge]) -> ScoreResult:
-    rows: list[ScoreRow] = []
-    diff: dict[str, DiffBucket] = {}
-    row = _prf(ec.Category.RETRIEVAL.value, ec.CSHARP_RETRIEVAL_LABEL, cgr, oracle)
-    if row is not None:
-        rows.append(row)
-        diff[ec.CSHARP_RETRIEVAL_DIFF_PREFIX + ec.CSHARP_RETRIEVAL_LABEL] = DiffBucket(
-            missing=[_edge_repr(e) for e in sorted(oracle - cgr)],
-            extra=[_edge_repr(e) for e in sorted(cgr - oracle)],
-        )
-    return ScoreResult(rows=rows, location=_EMPTY_LOCATION, diff=diff)
+    return score_retrieval(
+        cgr,
+        oracle,
+        label=ec.CSHARP_RETRIEVAL_LABEL,
+        diff_prefix=ec.CSHARP_RETRIEVAL_DIFF_PREFIX,
+        edge_repr=ec.CSHARP_CALL_EDGE_REPR,
+    )
 
 
 def main(

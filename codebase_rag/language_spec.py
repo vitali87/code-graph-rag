@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,15 +23,30 @@ def _python_get_name(node: Node) -> str | None:
     )
 
 
-def _python_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
+def _file_to_module(
+    file_path: Path,
+    repo_root: Path,
+    *,
+    package_marker: str | None = None,
+    source_roots: tuple[str, ...] = (),
+) -> list[str]:
+    # The repo-relative path parts, minus the extension. `package_marker`
+    # drops a trailing package sentinel (__init__/index/mod) so the file maps
+    # to its package; `source_roots` drops a leading source dir (PHP's
+    # src/app/lib), which is not part of the namespace.
     try:
         rel = file_path.relative_to(repo_root)
-        parts = list(rel.with_suffix("").parts)
-        if parts and parts[-1] == cs.INDEX_INIT:
-            parts = parts[:-1]
-        return parts
     except ValueError:
         return []
+    parts = list(rel.with_suffix("").parts)
+    if package_marker and parts and parts[-1] == package_marker:
+        parts = parts[:-1]
+    if source_roots and parts and parts[0] in source_roots:
+        parts = parts[1:]
+    return parts
+
+
+_python_file_to_module = partial(_file_to_module, package_marker=cs.INDEX_INIT)
 
 
 def _js_get_name(node: Node) -> str | None:
@@ -51,15 +67,7 @@ def _js_get_name(node: Node) -> str | None:
     return None
 
 
-def _js_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
-    try:
-        rel = file_path.relative_to(repo_root)
-        parts = list(rel.with_suffix("").parts)
-        if parts and parts[-1] == cs.INDEX_INDEX:
-            parts = parts[:-1]
-        return parts
-    except ValueError:
-        return []
+_js_file_to_module = partial(_file_to_module, package_marker=cs.INDEX_INDEX)
 
 
 def _generic_get_name(node: Node) -> str | None:
@@ -107,12 +115,7 @@ def _sql_get_name(node: Node) -> str | None:
     return None
 
 
-def _generic_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
-    try:
-        rel = file_path.relative_to(repo_root)
-        return list(rel.with_suffix("").parts)
-    except ValueError:
-        return []
+_generic_file_to_module = _file_to_module
 
 
 def _rust_get_name(node: Node) -> str | None:
@@ -136,26 +139,10 @@ def _rust_get_name(node: Node) -> str | None:
     return _generic_get_name(node)
 
 
-def _rust_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
-    try:
-        rel = file_path.relative_to(repo_root)
-        parts = list(rel.with_suffix("").parts)
-        if parts and parts[-1] == cs.INDEX_MOD:
-            parts = parts[:-1]
-        return parts
-    except ValueError:
-        return []
+_rust_file_to_module = partial(_file_to_module, package_marker=cs.INDEX_MOD)
 
 
-def _php_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
-    try:
-        rel = file_path.relative_to(repo_root)
-        parts = list(rel.with_suffix("").parts)
-        if parts and parts[0] in ("src", "app", "lib"):
-            parts = parts[1:]
-        return parts
-    except ValueError:
-        return []
+_php_file_to_module = partial(_file_to_module, source_roots=("src", "app", "lib"))
 
 
 def _c_unwrap_declarator(declarator: Node | None) -> Node | None:
@@ -234,25 +221,12 @@ def _csharp_get_name(node: Node) -> str | None:
 
 
 def _dart_get_name(node: Node) -> str | None:
-    # Most Dart declarations expose a `name` field (functions, getters,
-    # setters, classes, enums, extensions). Constructors/factories and mixins
-    # do not: their LAST bare `identifier` child is the declared name
-    # (`C.named` -> `named`, `mixin Swimmer` -> `Swimmer`, a default
-    # constructor `C(...)` -> `C`). The constructor check comes FIRST: the
-    # grammar's `name` field on constructor_signature is the CLASS identifier,
-    # which would collapse every named constructor into a duplicate default.
-    if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
-        ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
-        if ids:
-            return ids[-1].text.decode(cs.ENCODING_UTF8)
-        return None
-    name_node = node.child_by_field_name(cs.FIELD_NAME)
-    if name_node and name_node.text:
-        return name_node.text.decode(cs.ENCODING_UTF8)
-    ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
-    if ids:
-        return ids[-1].text.decode(cs.ENCODING_UTF8)
-    return None
+    # The single implementation lives in parsers.dart.utils, which the
+    # parsers-internal callers (ingest_method) reach directly; the import is
+    # deferred here because language_spec is imported from inside parsers.
+    from .parsers.dart import utils as dart_utils
+
+    return dart_utils.dart_get_name(node)
 
 
 PYTHON_FQN_SPEC = FQNSpec(

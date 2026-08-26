@@ -21,7 +21,8 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
-from ..build_lock import acquire_build_lock, release_build_lock
+from ..build_lock import build_cached_artifact
+from ..frontend_mode import resolve_frontend_mode
 from ..go.module_paths import discover_go_module_paths
 
 # Call-site join key: (rel_file, name_token_line, name_token_byte_col, simple_name).
@@ -118,16 +119,14 @@ def resolve_go_frontend() -> cs.GoFrontend:
     # The single source of truth for the EFFECTIVE frontend: without a go
     # toolchain every gotypes-backed mode (AUTO, and an explicit GOTYPES, which
     # the graph build degrades to tree-sitter with a warning) resolves to
-    # TREESITTER; with one, AUTO means GOTYPES. The parser fingerprint resolves
-    # through here so a graph's recorded identity matches the frontend that ran.
-    mode = settings.GO_FRONTEND
-    if mode == cs.GoFrontend.TREESITTER:
-        return mode
-    if not go_frontend_available():
-        return cs.GoFrontend.TREESITTER
-    if mode == cs.GoFrontend.AUTO:
-        return cs.GoFrontend.GOTYPES
-    return mode
+    # TREESITTER; with one, AUTO means GOTYPES.
+    return resolve_frontend_mode(
+        settings.GO_FRONTEND,
+        cs.GoFrontend.TREESITTER,
+        go_frontend_available,
+        auto=cs.GoFrontend.AUTO,
+        auto_resolves_to=cs.GoFrontend.GOTYPES,
+    )
 
 
 def find_go_module(repo_path: Path) -> Path | None:
@@ -196,21 +195,15 @@ def _build_tool(go: str) -> Path | None:
     src = cache / "src"
     out = cache / "out"
     binary = out / _BINARY_NAME
-    if _binary_fresh(binary):
-        return binary
-    cache.mkdir(parents=True, exist_ok=True)
-    lock = cache / _BUILD_LOCK
-    handle = acquire_build_lock(
-        lock, lambda: _binary_fresh(binary), _LOCK_TRIES, _LOCK_POLL_SECONDS
+    return build_cached_artifact(
+        cache,
+        binary,
+        lambda: _binary_fresh(binary),
+        lambda: _compile_tool(go, src, out),
+        _BUILD_LOCK,
+        _LOCK_TRIES,
+        _LOCK_POLL_SECONDS,
     )
-    if handle is None:
-        return binary if _binary_fresh(binary) else None
-    try:
-        if not _binary_fresh(binary) and not _compile_tool(go, src, out):
-            return None
-    finally:
-        release_build_lock(handle)
-    return binary if _binary_fresh(binary) else None
 
 
 def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:

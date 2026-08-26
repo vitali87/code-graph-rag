@@ -6,13 +6,15 @@ from ... import constants as cs
 
 
 def dart_get_name(node: Node) -> str | None:
-    # Mirror of language_spec._dart_get_name for the parsers-internal callers
-    # (ingest_method) that cannot import language_spec without a cycle. Most
-    # nodes expose a `name` field; constructors/factories/mixins take their
-    # LAST bare identifier child (`C.named` -> `named`, default `C(...)` -> `C`).
-    # The constructor check comes FIRST: the grammar's `name` field on
-    # constructor_signature is the CLASS identifier, which would collapse
-    # every named constructor into a duplicate of the default one.
+    # The single source of truth for Dart declaration names; language_spec's
+    # DART_FQN_SPEC delegates here. Most Dart declarations expose a `name`
+    # field (functions, getters, setters, classes, enums, extensions).
+    # Constructors/factories and mixins do not: their LAST bare `identifier`
+    # child is the declared name (`C.named` -> `named`, `mixin Swimmer` ->
+    # `Swimmer`, a default constructor `C(...)` -> `C`). The constructor check
+    # comes FIRST: the grammar's `name` field on constructor_signature is the
+    # CLASS identifier, which would collapse every named constructor into a
+    # duplicate of the default one.
     if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
         ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
         if ids:

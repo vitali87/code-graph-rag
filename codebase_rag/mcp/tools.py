@@ -1,6 +1,7 @@
 import asyncio
 import itertools
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from loguru import logger
@@ -644,14 +645,30 @@ class MCPToolsRegistry:
             path=self.project_root, project_name=project_name
         )
 
-    async def index_repository(self) -> str:
-        logger.info(lg.MCP_INDEXING_REPO.format(path=self.project_root))
+    async def _run_ingest(
+        self,
+        sync_fn: Callable[[], str],
+        start_log: str,
+        error_log: str,
+        error_message: str,
+    ) -> str:
+        # Indexing and updating differ only in their sync body and their three
+        # messages; the lock/thread/error protocol is one implementation.
+        logger.info(start_log.format(path=self.project_root))
         try:
             async with self._ingestor_lock:
-                return await asyncio.to_thread(self._index_repository_sync)
+                return await asyncio.to_thread(sync_fn)
         except Exception as e:
-            logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
-            return cs.MCP_INDEX_ERROR.format(error=e)
+            logger.error(error_log.format(error=e))
+            return error_message.format(error=e)
+
+    async def index_repository(self) -> str:
+        return await self._run_ingest(
+            self._index_repository_sync,
+            lg.MCP_INDEXING_REPO,
+            lg.MCP_ERROR_INDEXING,
+            cs.MCP_INDEX_ERROR,
+        )
 
     def _update_repository_sync(self) -> str:
         project_name = derive_project_name(Path(self.project_root))
@@ -671,13 +688,12 @@ class MCPToolsRegistry:
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
 
     async def update_repository(self) -> str:
-        logger.info(lg.MCP_UPDATING_REPO.format(path=self.project_root))
-        try:
-            async with self._ingestor_lock:
-                return await asyncio.to_thread(self._update_repository_sync)
-        except Exception as e:
-            logger.error(lg.MCP_ERROR_UPDATING.format(error=e))
-            return cs.MCP_UPDATE_ERROR.format(error=e)
+        return await self._run_ingest(
+            self._update_repository_sync,
+            lg.MCP_UPDATING_REPO,
+            lg.MCP_ERROR_UPDATING,
+            cs.MCP_UPDATE_ERROR,
+        )
 
     async def semantic_search(self, natural_language_query: str, top_k: int = 5) -> str:
         assert self._semantic_search_tool is not None

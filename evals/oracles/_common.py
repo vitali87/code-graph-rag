@@ -23,6 +23,14 @@ from ..types_defs import (
 )
 
 
+# The node-backed oracles (Lua, PHP, Ruby, TypeScript/JavaScript) all shell
+# out to the same toolchain, so they share one availability probe.
+def node_oracle_available() -> bool:
+    return (
+        shutil.which(ec.NODE_BIN) is not None and shutil.which(ec.NPM_BIN) is not None
+    )
+
+
 def _node_deps_ready(oracle_dir: Path) -> bool:
     # Both must hold: the marker proves npm completed, node_modules proves a
     # later cache cleanup did not delete the installed tree under the marker.

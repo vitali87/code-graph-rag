@@ -213,20 +213,20 @@ class ProtobufFileIngestor:
         # order with the type enum's integer as the middle tiebreak.
         return [rel for _key, rel in sorted(self._relationships.items())]
 
-    def _flush_joint(self) -> None:
-        index = pb.GraphCodeIndex()
-        index.nodes.extend(self._sorted_nodes())
-        index.relationships.extend(self._sorted_relationships())
-
-        serialised_file = index.SerializeToString(deterministic=True)
+    def _write_layout(
+        self,
+        written: dict[str, bytes],
+        stale: tuple[str, ...],
+    ) -> None:
+        # The two layouts are mutually exclusive: a leftover file from the
+        # other one beside a fresh index would double every manifest coverage
+        # count, so publishing a layout always unlinks the other's files.
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = self.output_dir / cs.PROTOBUF_INDEX_FILE
-        with open(out_path, "wb") as f:
-            f.write(serialised_file)
-        # The two layouts are mutually exclusive: a leftover split pair beside
-        # a fresh joint index would double every manifest coverage count.
-        (self.output_dir / cs.PROTOBUF_NODES_FILE).unlink(missing_ok=True)
-        (self.output_dir / cs.PROTOBUF_RELS_FILE).unlink(missing_ok=True)
+        for name, payload in written.items():
+            with open(self.output_dir / name, "wb") as f:
+                f.write(payload)
+        for name in stale:
+            (self.output_dir / name).unlink(missing_ok=True)
 
         logger.success(
             ls.PROTOBUF_FLUSH_SUCCESS.format(
@@ -236,33 +236,30 @@ class ProtobufFileIngestor:
             )
         )
 
+    def _flush_joint(self) -> None:
+        index = pb.GraphCodeIndex()
+        index.nodes.extend(self._sorted_nodes())
+        index.relationships.extend(self._sorted_relationships())
+
+        self._write_layout(
+            {cs.PROTOBUF_INDEX_FILE: index.SerializeToString(deterministic=True)},
+            (cs.PROTOBUF_NODES_FILE, cs.PROTOBUF_RELS_FILE),
+        )
+
     def _flush_split(self) -> None:
         nodes_index = pb.GraphCodeIndex()
         rels_index = pb.GraphCodeIndex()
         nodes_index.nodes.extend(self._sorted_nodes())
         rels_index.relationships.extend(self._sorted_relationships())
 
-        serialised_nodes = nodes_index.SerializeToString(deterministic=True)
-        serialised_rels = rels_index.SerializeToString(deterministic=True)
-
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        nodes_path = self.output_dir / cs.PROTOBUF_NODES_FILE
-        rels_path = self.output_dir / cs.PROTOBUF_RELS_FILE
-
-        with open(nodes_path, "wb") as f:
-            f.write(serialised_nodes)
-
-        with open(rels_path, "wb") as f:
-            f.write(serialised_rels)
-
-        (self.output_dir / cs.PROTOBUF_INDEX_FILE).unlink(missing_ok=True)
-
-        logger.success(
-            ls.PROTOBUF_FLUSH_SUCCESS.format(
-                nodes=len(self._nodes),
-                rels=len(self._relationships),
-                path=self.output_dir,
-            )
+        self._write_layout(
+            {
+                cs.PROTOBUF_NODES_FILE: nodes_index.SerializeToString(
+                    deterministic=True
+                ),
+                cs.PROTOBUF_RELS_FILE: rels_index.SerializeToString(deterministic=True),
+            },
+            (cs.PROTOBUF_INDEX_FILE,),
         )
 
     def flush_all(self) -> None:
