@@ -64,7 +64,13 @@ def _unbounded_run_calls(tree: ast.AST) -> list[int]:
             name = target.id
         if name != "run":
             continue
-        if "timeout" not in {kw.arg for kw in node.keywords if kw.arg}:
+        timeout = next((kw for kw in node.keywords if kw.arg == "timeout"), None)
+        # `timeout=None` is the same as no timeout at all: subprocess treats it
+        # as "wait forever". A presence check would accept it and report the
+        # call bounded, so an explicit literal None counts as unbounded.
+        if timeout is None or (
+            isinstance(timeout.value, ast.Constant) and timeout.value.value is None
+        ):
             found.append(node.lineno)
     return found
 
@@ -116,4 +122,10 @@ def test_the_detector_recognises_bounded_and_unbounded_calls() -> None:
     """
     assert _unbounded_run_calls(ast.parse("subprocess.run(['x'])")) == [1]
     assert _unbounded_run_calls(ast.parse("run(['x'])")) == [1]
+    # `timeout=None` means wait forever, so a presence check is not enough.
+    assert _unbounded_run_calls(ast.parse("subprocess.run(['x'], timeout=None)")) == [1]
     assert _unbounded_run_calls(ast.parse("subprocess.run(['x'], timeout=5)")) == []
+    # A named constant is accepted: the gate cannot evaluate it, and rejecting
+    # every non-literal would make the established `timeout=_RUN_TIMEOUT`
+    # convention unusable.
+    assert _unbounded_run_calls(ast.parse("subprocess.run(['x'], timeout=T)")) == []
