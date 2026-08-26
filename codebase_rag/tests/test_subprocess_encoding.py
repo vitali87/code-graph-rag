@@ -26,7 +26,9 @@ _VENDORED = ("evals/results/corpora/",)
 
 # Call sites that legitimately decode as something other than UTF-8 must be
 # listed here with the reason, so an exemption is a decision rather than an
-# omission. Empty today.
+# omission. Empty today, and it should stay hard to add to: a too-broad
+# exemption makes this gate quiet, and quiet is indistinguishable from clean.
+# Every entry needs a comment saying why that path may decode by locale.
 _EXEMPT: frozenset[str] = frozenset()
 
 
@@ -36,6 +38,20 @@ def _subprocess_calls_missing_encoding(tree: ast.AST) -> list[int]:
     Only calls that actually decode are reported: `text=True` (or its aliases
     `universal_newlines=True`) with no `encoding=`. A bytes-mode call has no
     encoding to get wrong.
+
+    Two deliberate limits, both measured rather than assumed:
+
+    - Any call is matched, not only `subprocess.*`. Naming the module would
+      miss `run()` imported directly, and the asymmetry favours over-reporting:
+      a false positive costs one `_EXEMPT` line, while a false negative costs
+      silent mojibake on Windows that surfaces as a wrong graph rather than an
+      error.
+    - Only a literal `True` counts as decoding; `text=some_flag` is not
+      chased, since that would need dataflow in a lint gate. Measured across
+      the repo: 15 calls pass a non-literal `text=`, and **none** is a
+      subprocess call — they are Rich `Text`, ast-grep matches and web-search
+      page bodies. So the hole costs nothing today. Re-measure before assuming
+      it still costs nothing.
     """
     found: list[int] = []
     for node in ast.walk(tree):
