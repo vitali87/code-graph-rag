@@ -1,0 +1,10 @@
+{
+  "name": "ruby_oracle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Authoritative Ruby structure oracle for the cgr eval harness",
+  "bin": { "ruby_oracle": "ruby_ast.js" },
+  "dependencies": {
+    "@ruby/prism": "^1.9.0"
+  }
+}
