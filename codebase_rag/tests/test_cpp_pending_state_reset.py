@@ -63,3 +63,44 @@ def test_covered_files_also_reset(tmp_path: Path, monkeypatch) -> None:
     updater._run_cpp_frontend()
 
     assert updater._cpp_frontend_covered == frozenset()
+
+
+def test_covered_set_resets_before_pass_two_on_a_hybrid_rerun(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A reused updater must not carry a LIBCLANG covered-set into HYBRID.
+
+    In HYBRID mode `_run_cpp_frontend` runs AFTER Pass 2, so its reset is too
+    late: `_process_files` consumes the covered set to skip files, and a stale
+    entry makes it skip a file whose Module subtree was just deleted. The file
+    then gets only a generic `File` node, and the later hybrid pass cannot
+    restore the tree-sitter definitions it never produced.
+
+    Asserting on the covered set after `run()` rather than on the emitted
+    nodes keeps this about the state, which is what the ordering bug is.
+    """
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=MagicMock(), repo_path=tmp_path, parsers=parsers, queries=queries
+    )
+    # Simulate a previous LIBCLANG run on the same instance.
+    updater._cpp_frontend_covered = frozenset({"stale.cpp"})
+
+    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
+
+    # The value AT PASS 2 is what matters: _run_cpp_frontend runs after it in
+    # HYBRID and resets the set on the way out, so asserting after run()
+    # returns would pass against the bug.
+    seen: list[frozenset[str]] = []
+    original = updater._process_files
+
+    def _record(*args, **kwargs):
+        seen.append(updater._cpp_frontend_covered)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(updater, "_process_files", _record)
+    updater.run()
+
+    assert seen, "_process_files was never called"
+    assert seen[0] == frozenset(), seen[0]

@@ -890,6 +890,15 @@ class GraphUpdater:
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
 
+        # Cleared here, not only in _run_cpp_frontend: in HYBRID that method
+        # runs AFTER Pass 2, so its reset is too late for a REUSED updater
+        # whose previous run was LIBCLANG. _process_files consumes this set to
+        # skip files, and a stale entry makes it skip a file whose Module
+        # subtree was just deleted -- leaving only a generic File node that the
+        # later hybrid pass cannot repair, because it never produced the
+        # tree-sitter definitions to restore.
+        self._cpp_frontend_covered = frozenset()
+
         # LIBCLANG must run before Pass 2: _process_files consumes the
         # covered-file set to skip those files.
         if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID:
