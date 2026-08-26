@@ -65,6 +65,20 @@ class GoSemanticFacts(NamedTuple):
     # First-party concrete-type -> first-party interface pairs the compiler
     # proved; the only source of Go IMPLEMENTS edges (no syntactic base list).
     implements: list[GoImplements]
+    # Module anchors whose tool run FAILED (timeout, crash, unparseable
+    # output). A failed anchor drops only its own module to the heuristics,
+    # which is deliberate -- one wedged build must not blind a ten-module repo
+    # -- but the degradation has to be recorded or it is invisible: a module
+    # the tool never analysed is otherwise indistinguishable from one it
+    # analysed and found nothing in, and the graph ends up compiler-accurate
+    # for some modules and heuristic for others with nothing saying which
+    # (issue #1462). Empty on a fully successful run, so a reader can trust it.
+    #
+    # A TUPLE, not a list, and that is why it can carry a default at all: a
+    # NamedTuple default is one shared object, so a mutable `[]` would alias
+    # across every run that omitted it -- the aliasing `_empty_facts` exists to
+    # avoid. An empty tuple is immutable and safe to share.
+    degraded_modules: tuple[str, ...] = ()
 
 
 def _empty_facts() -> GoSemanticFacts:
@@ -284,7 +298,14 @@ def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
     )
 
 
-def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts:
+def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts | None:
+    """Facts for one module anchor, or None when the tool run FAILED.
+
+    None rather than empty facts, because they are different facts and the
+    caller must tell them apart: a module the tool analysed and found nothing
+    in yields empty facts and is fine, while a timed-out or crashed run means
+    that module was never analysed at all (issue #1462).
+    """
     try:
         proc = subprocess.run(
             [str(binary), str(module_root)],
@@ -300,7 +321,7 @@ def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts:
         )
     except (subprocess.SubprocessError, OSError) as error:
         logger.warning(ls.GO_FRONTEND_RUN_FAILED.format(error=error))
-        return _empty_facts()
+        return None
     return _parse_payload(proc.stdout, proc.stderr)
 
 
@@ -316,10 +337,20 @@ def run_go_frontend(repo_path: Path) -> GoSemanticFacts:
         logger.warning(ls.GO_FRONTEND_BUILD_FAILED.format(stderr=""))
         return _empty_facts()
     merged = _empty_facts()
+    degraded: list[str] = []
     for anchor in anchors:
         prefix = "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
-        facts = _prefix_facts(_run_tool_once(binary, anchor), prefix)
+        raw = _run_tool_once(binary, anchor)
+        if raw is None:
+            # This module drops to the heuristics, and the others keep their
+            # compiler facts -- one wedged build must not blind a ten-module
+            # repo. Recording it is what stops that degradation being
+            # invisible (issue #1462).
+            degraded.append(prefix or ".")
+            logger.warning(ls.GO_FRONTEND_ANCHOR_DEGRADED.format(anchor=anchor))
+            continue
+        facts = _prefix_facts(raw, prefix)
         merged.call_sites.update(facts.call_sites)
         merged.external_sites.update(facts.external_sites)
         merged.implements.extend(facts.implements)
-    return merged
+    return merged._replace(degraded_modules=tuple(degraded))
