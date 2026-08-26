@@ -96,6 +96,11 @@ _BUILD_LOCK = ".build-lock"
 # parallel workers run it read-only and never race a shared build output.
 _LOCK_TRIES = 600
 _LOCK_POLL_SECONDS = 0.5
+# `go build` may fetch modules, so it is bounded well above a warm rebuild but
+# far below the run timeout: a wedged build must degrade to the tree-sitter
+# backbone rather than block indexing (issue #1462). Matches the Java
+# frontend's _BUILD_TIMEOUT, which had this from the start.
+_BUILD_TIMEOUT = 300
 _RUN_TIMEOUT = 900
 # GOTOOLCHAIN=local pins the installed toolchain (never a network upgrade);
 # CGO off keeps the binary portable across the machines a shared cache may span.
@@ -160,14 +165,26 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool:
     for name in _TOOL_SOURCES:
         shutil.copy2(_TOOL_SRC / name, src / name)
     out.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        [go, "build", "-o", str(out / _BINARY_NAME), "."],
-        cwd=src,
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, **_GO_ENV},
-    )
+    try:
+        proc = subprocess.run(
+            [go, "build", "-o", str(out / _BINARY_NAME), "."],
+            cwd=src,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_BUILD_TIMEOUT,
+            env={**os.environ, **_GO_ENV},
+        )
+    except subprocess.TimeoutExpired:
+        # A wedged build degrades exactly like a failed one: the caller falls
+        # back to tree-sitter. Raising here would turn a hung toolchain into a
+        # failed index, which is the opposite of the protocol's invariant.
+        logger.warning(
+            ls.GO_FRONTEND_BUILD_FAILED.format(
+                stderr=f"timed out after {_BUILD_TIMEOUT}s"
+            )
+        )
+        return False
     if proc.returncode != 0:
         logger.warning(ls.GO_FRONTEND_BUILD_FAILED.format(stderr=proc.stderr.strip()))
     return proc.returncode == 0
