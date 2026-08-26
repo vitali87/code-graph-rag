@@ -266,3 +266,52 @@ class QualifiedGeneric extends foo.Service[Int] {
         ("QualifiedGeneric", "Service"),
     ):
         assert expected in pairs, (expected, sorted(pairs))
+
+
+def test_a_qualified_base_does_not_bind_to_a_same_named_local_class(
+    scala_project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`extends foo.Service` must not resolve to a local `Service`.
+
+    Resolving on the terminal identifier alone discards the qualifier, so a
+    class extending an EXTERNAL `foo.Service` binds to whatever same-named
+    class happens to be in scope. That is a WRONG edge rather than a missing
+    one, which is the more damaging failure: the graph gains a relationship
+    the source never expressed, and nothing downstream can tell.
+
+    The fixture deliberately declares a local `Service` so the two candidates
+    are distinguishable -- without it, resolving to `Service` would look
+    correct either way.
+    """
+    (scala_project / "qualifier.scala").write_text(
+        """
+package com.example
+
+class Service {
+  def local(): Int = 0
+}
+
+class Consumer extends foo.Service[Int] {
+  def use(): Int = 1
+}
+"""
+    )
+
+    run_updater(scala_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {
+        str(c.args[0][2]).split(".")[-1]: str(c.args[2][2])
+        for c in get_relationships(mock_ingestor, "INHERITS")
+    }
+
+    consumer_base = targets.get("Consumer", "")
+    service_base = targets.get("Service", None)
+
+    # The local Service lives in this module; the external foo.Service does
+    # not. Binding Consumer to the module-local qn is the defect.
+    assert not consumer_base.endswith("qualifier.Service"), (
+        f"Consumer resolved to the LOCAL Service ({consumer_base}); the "
+        "`foo.` qualifier was discarded, so an external base bound to an "
+        "unrelated same-named class"
+    )
+    assert service_base is None, service_base

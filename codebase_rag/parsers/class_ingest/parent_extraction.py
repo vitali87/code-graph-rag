@@ -224,6 +224,36 @@ def _scala_base_type_identifier(node: Node) -> Node | None:
     return None
 
 
+def _scala_base_written_name(node: Node) -> str | None:
+    """The base as WRITTEN, qualifier included, with type arguments stripped.
+
+    `foo.Service[Int]` yields `foo.Service`, not `Service`. Returning the
+    terminal identifier alone discards the qualifier, so a class extending an
+    external `foo.Service` resolves to whatever same-named class is in scope
+    -- a WRONG edge rather than a missing one, which is the more damaging
+    failure because the graph gains a relationship the source never expressed.
+
+    Matches how C# handles the same shape (`_csharp_base_written_name`): pass
+    the full dotted name to the resolver and let it decide, rather than
+    pre-truncating to a simple name the resolver cannot disambiguate.
+    """
+    if node.type == cs.TS_SCALA_STABLE_TYPE_IDENTIFIER and node.text:
+        return safe_decode_text(node)
+    if node.type == cs.TS_SCALA_GENERIC_TYPE:
+        # `foo.Service[Int]` / `Service[Int]`: the first child is the type,
+        # the type_arguments sibling is what must not be included.
+        for child in node.children:
+            if child.type in (
+                cs.TS_SCALA_STABLE_TYPE_IDENTIFIER,
+                cs.TS_TYPE_IDENTIFIER,
+            ):
+                return safe_decode_text(child) if child.text else None
+        return None
+    if node.type == cs.TS_TYPE_IDENTIFIER and node.text:
+        return safe_decode_text(node)
+    return None
+
+
 def extract_scala_parent_classes(
     class_node: Node,
     module_qn: str,
@@ -260,10 +290,7 @@ def extract_scala_parent_classes(
 
     parents: list[str] = []
     for child in extends_clause.children:
-        base_node = _scala_base_type_identifier(child)
-        if base_node is None or not base_node.text:
-            continue
-        if name := safe_decode_text(base_node):
+        if name := _scala_base_written_name(child):
             parents.append(resolve_to_qn(name, module_qn))
     return parents
 
