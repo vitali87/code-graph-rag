@@ -120,6 +120,10 @@ def _single_resolvable_target(names):
     # (ambiguity, modules, instances) is the ceiling: no fact, never a guess.
     if len(names) != 1:
         return None
+    name = names[0]
+    if name.type not in _RESOLVABLE_TYPES:
+        return None
+    return name
 ```
 
 A site you decline to describe degrades to the heuristic, which is correct. A
@@ -151,8 +155,20 @@ That failure mode deserves emphasis, because it has bitten this repository more
 than once: the offsets agree exactly until a line contains a character outside
 ASCII, and then they diverge by the difference. **An all-ASCII fixture cannot
 distinguish byte offsets from character offsets from UTF-16 code units** — all
-three are "correct" until they are not. Put a non-ASCII character above an
-asserted span in your fixtures, then deliberately break the conversion and
+three are "correct" until they are not.
+
+Byte columns are **line-relative**, so where you put the non-ASCII character
+decides whether the fixture can see anything at all. A character on an earlier
+line does not shift the target token's column, and such a fixture stays green
+under a broken conversion. It has to sit **before the asserted token on the
+same line**:
+
+```python
+x = café_var.method()   # `method` is at char column 13, byte column 14
+x = plain_var.method()  # both are 14 -- this line proves nothing
+```
+
+Put it there, then deliberately break the conversion and
 confirm the test fails. If it stays green, the fixture is not positioned to
 catch anything.
 
@@ -193,5 +209,6 @@ fails the build if you forget, so this is enforced rather than advisory.
    in `graph_updater.py` — registration alone is currently inert (see the
    warning above).
 8. Add a per-language enum and a `parser_fingerprint.py` registration.
-9. Write fixtures that include a non-ASCII identifier, and prove they fail when
+9. Write fixtures with a non-ASCII character **before the asserted token on the
+   same line** (byte columns are line-relative), and prove they fail when
    the offset conversion is broken.
