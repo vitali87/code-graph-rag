@@ -57,21 +57,31 @@ that emits its own definition nodes (the definition pass then skips the files it
 covered), or `AFTER_DEFINITIONS` for one that attaches to spans Tree-sitter
 already produced.
 
-!!! warning "Registration alone does not run an emitting frontend yet"
+Registration is enough to run it. `_run_emitting_frontends` iterates
+`EMITTING_FRONTENDS`, selects the entries whose `phase` matches the pass being
+run, and skips any that are unavailable or do not apply. Declaring `phase`
+correctly is therefore load-bearing rather than advisory: it is what decides
+when — or whether — your frontend is called.
 
-    `EMITTING_FRONTENDS` is not yet dispatched generically. The graph builder
-    looks up **C++ specifically**, and the ordering between the two phases comes
-    from two hardcoded call sites in `graph_updater.py` rather than from the
-    `phase` attribute.
+A frontend that raises from `available()` or `applies()` is skipped with a
+warning rather than failing the run, on the same principle as a join miss: a
+missing toolchain must never make the graph worse than the Tree-sitter
+backbone.
 
-    So registering an emitting frontend for a new language today is silently
-    inert: the registration succeeds, the frontend is never called, and its
-    nodes and edges are simply absent. Nothing errors.
+!!! note "C++ is dispatched separately, and that is deliberate"
 
-    Adding one therefore means adding its dispatch as well, until generic
-    phase-ordered dispatch exists. `phase` is still worth declaring correctly —
-    it is asserted by tests and it is what generic dispatch will read — but it
-    does not yet decide anything on its own.
+    The generic loop explicitly skips C++, which keeps its own call site. Two
+    things force this, both specific to libclang and neither general:
+
+    - It needs `compdb_dir` — the discovered `compile_commands.json`
+      directory — which the generic context cannot supply because it is found
+      by probing for that file.
+    - In HYBRID mode it returns pending macro and expansion calls that must be
+      narrowed to concrete types and stashed for span attribution after Pass 2.
+
+    This is not a gap to close on the way to adding a language. If you are
+    writing a new emitting frontend, use the generic path; C++ is the exception
+    that pre-dates it, not the pattern to copy.
 
 **Choose `LanguageFrontend` unless you are emitting nodes.** The two live in
 separate registries precisely because they are different jobs, and a fact
@@ -215,10 +225,49 @@ fails the build if you forget, so this is enforced rather than advisory.
    `register_frontend(...)` for a `LanguageFrontend`, or
    `register_emitting_frontend(...)` for an `EmittingFrontend`. The two
    registries are separate, so the wrong call registers into the wrong one and
-   nothing reports it. For an emitting frontend, also add its dispatch in
-   `graph_updater.py` — registration alone is currently inert (see the warning
-   above).
+   nothing reports it. Registration is sufficient to run it — declare `phase`
+   correctly, because that is what decides when it is called.
 8. Add a per-language enum and a `parser_fingerprint.py` registration.
 9. Write fixtures with a non-ASCII character **before the asserted token on the
    same line** (byte columns are line-relative), and prove they fail when
    the offset conversion is broken.
+
+## The C++ modes, and what happened to pure LIBCLANG
+
+`CPP_FRONTEND` selects between three modes, and the choice is about what
+libclang is allowed to own rather than about how hard it tries:
+
+| Mode | Who owns definitions | Phase |
+|---|---|---|
+| `treesitter` | Tree-sitter | frontend does not run |
+| `hybrid` (default) | Tree-sitter | `AFTER_DEFINITIONS` |
+| `libclang` | libclang, for the files it covers | `BEFORE_DEFINITIONS` |
+
+**Pure `libclang` migrated onto the protocol; it was not left behind as a
+legacy path.** It is a registered `EmittingFrontend` like any other, and the
+mode is read at phase-access time rather than bound at import, so switching
+modes moves the frontend between passes instead of requiring a different code
+path.
+
+The phase difference is the whole of the distinction, and getting it wrong
+fails silently. HYBRID layers macro `Function` nodes and `#include` IMPORTS
+onto spans Tree-sitter has already produced, so running it early would find no
+spans and attribute nothing. LIBCLANG emits its own definition nodes and
+reports the files it covered so the definition pass can skip them, so running
+it late would let the definition pass process files it was meant to cede.
+Neither raises. `test_cpp_emitting_frontend.py` asserts the mapping per mode
+for that reason.
+
+!!! warning "One genuine piece of migration is still outstanding"
+
+    `cpp_frontend/qn.py` — the frontend-owned qualified-name generator — still
+    exists, and `graph_updater.py` still keeps `_frontend_owned_qns`
+    bookkeeping. That generator has to reproduce the graph builder's file-walk
+    order byte for byte, which is the coupling that
+    [#1025](https://github.com/vitali87/code-graph-rag/issues/1025) is about.
+
+    Retiring it is tracked as the remaining scope on
+    [#1178](https://github.com/vitali87/code-graph-rag/issues/1178). It does not
+    affect anyone adding a *new* frontend — no other language needs a qn
+    generator, because the join key carries position and the builder assigns
+    qualified names — but it is why that issue is not closed.
