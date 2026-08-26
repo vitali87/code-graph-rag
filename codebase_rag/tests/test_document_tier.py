@@ -722,3 +722,98 @@ class TestReferenceStyleLinks:
             },
         )
         assert _link_targets(mock) == {(tmp_path / "api.md").resolve().as_posix()}
+
+    def test_unused_definition_does_not_create_an_edge(self, tmp_path: Path) -> None:
+        """A definition nothing links to is not a link.
+
+        ``[obsolete]: legacy.md`` left behind after the prose stopped referring
+        to it states no relationship between the two documents; emitting an
+        edge for it invents one. The paired ``used`` definition is the control:
+        asserting the target set is empty would pass just as well if reference
+        definitions had stopped resolving altogether.
+        """
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": (
+                    "# Guide\n\nSee [the API][used].\n\n"
+                    "[used]: api.md\n[obsolete]: legacy.md\n"
+                ),
+                "api.md": "# API\n",
+                "legacy.md": "# Legacy\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "api.md").resolve().as_posix()}
+
+    def test_shortcut_and_collapsed_links_use_their_definitions(
+        self, tmp_path: Path
+    ) -> None:
+        """``[label]`` and ``[label][]`` reference a definition by their text.
+
+        These carry no explicit label node, so a fix that only matched
+        ``[text][label]`` would drop them and silently lose real edges.
+        """
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": (
+                    "# Guide\n\nSee [api] and [legacy][].\n\n"
+                    "[api]: api.md\n[legacy]: legacy.md\n"
+                ),
+                "api.md": "# API\n",
+                "legacy.md": "# Legacy\n",
+            },
+        )
+        assert _link_targets(mock) == {
+            (tmp_path / "api.md").resolve().as_posix(),
+            (tmp_path / "legacy.md").resolve().as_posix(),
+        }
+
+    def test_definition_labels_match_case_insensitively(self, tmp_path: Path) -> None:
+        """CommonMark matches reference labels case-insensitively."""
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\nSee [the API][API].\n\n[api]: api.md\n",
+                "api.md": "# API\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "api.md").resolve().as_posix()}
+
+
+class TestPercentEncodedTargets:
+    """Markdown escapes spaces and other characters in link destinations."""
+
+    def test_percent_encoded_space_resolves_to_the_real_file(
+        self, tmp_path: Path
+    ) -> None:
+        """``[guide](My%20Guide.md)`` points at ``My Guide.md``.
+
+        Resolving the raw destination looks for a literal ``My%20Guide.md``,
+        finds nothing, and drops the edge with no error.
+        """
+        mock = _run(
+            tmp_path,
+            {
+                "index.md": "# Index\n\nSee [guide](My%20Guide.md).\n",
+                "My Guide.md": "# Guide\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "My Guide.md").resolve().as_posix()}
+
+    def test_a_literal_percent_in_a_filename_still_resolves(
+        self, tmp_path: Path
+    ) -> None:
+        """Decoding must not break a target that is already a real path.
+
+        A file genuinely named ``100%.md`` is linked as ``100%.md``; ``%.m`` is
+        not a valid escape, so a decoder that is too eager would corrupt it.
+        """
+        mock = _run(
+            tmp_path,
+            {
+                "index.md": "# Index\n\nSee [stats](100%.md).\n",
+                "100%.md": "# Stats\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "100%.md").resolve().as_posix()}

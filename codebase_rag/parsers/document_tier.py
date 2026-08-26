@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import unquote
 
 from loguru import logger
 
@@ -72,6 +73,17 @@ _LINK_DESTINATION = "link_destination"
 # document that links its files that way contributes no edges at all. Unlike
 # inline links these sit in the BLOCK tree, needing no inline re-parse.
 _LINK_REFERENCE_DEFINITION = "link_reference_definition"
+_LINK_LABEL = "link_label"
+_LINK_TEXT = "link_text"
+
+# The three reference-link forms. `[text][label]` names its label explicitly;
+# `[label][]` and `[label]` both use their own text as the label. A definition
+# no link names states no relationship, so all three are collected to decide
+# which definitions are live.
+_FULL_REFERENCE_LINK = "full_reference_link"
+_COLLAPSED_REFERENCE_LINK = "collapsed_reference_link"
+_SHORTCUT_LINK = "shortcut_link"
+_TEXT_LABELLED_LINKS = frozenset({_COLLAPSED_REFERENCE_LINK, _SHORTCUT_LINK})
 
 # A destination that names something other than a file in this repository.
 # Scheme-bearing targets (http:, https:, mailto:, ftp:) are external, and a
@@ -206,21 +218,54 @@ def _collect_inline_spans(root: Node) -> list[Node]:
     return _collect_by_type(root, _INLINE)
 
 
-def _link_destinations_in(inline_root: Node, text: bytes) -> list[tuple[int, str]]:
-    """(offset, destination) for each link in one parsed inline span."""
+def _normalise_label(label: str) -> str:
+    """A reference label reduced to its match key.
+
+    CommonMark compares labels case-insensitively and treats runs of internal
+    whitespace as a single space, so ``[API Guide]`` and ``[api  guide]`` name
+    the same definition.
+    """
+    return " ".join(label.split()).casefold()
+
+
+def _link_destinations_in(
+    inline_root: Node, text: bytes
+) -> tuple[list[tuple[int, str]], set[str]]:
+    """Inline destinations and the reference labels this span actually uses.
+
+    The labels are what makes a reference definition live: a definition whose
+    label no link names describes no relationship between the two documents,
+    and emitting an edge for it would invent one.
+    """
     found: list[tuple[int, str]] = []
+    used_labels: set[str] = set()
     stack = [inline_root]
     while stack:
         node = stack.pop()
-        if node.type == _INLINE_LINK:
+        kind = node.type
+        if kind == _INLINE_LINK:
             for child in node.children:
                 if child.type == _LINK_DESTINATION:
                     found.append((child.start_byte, _decode(child, text)))
                     break
             # A link cannot nest another link; no need to descend.
             continue
+        if kind == _FULL_REFERENCE_LINK:
+            # `[text][label]`: the label node includes its brackets.
+            for child in node.children:
+                if child.type == _LINK_LABEL:
+                    used_labels.add(_normalise_label(_decode(child, text).strip("[]")))
+                    break
+            continue
+        if kind in _TEXT_LABELLED_LINKS:
+            # `[label][]` and `[label]` both use their own text as the label.
+            for child in node.children:
+                if child.type == _LINK_TEXT:
+                    used_labels.add(_normalise_label(_decode(child, text)))
+                    break
+            continue
         stack.extend(reversed(node.children))
-    return found
+    return found, used_labels
 
 
 def _collect_link_destinations(
@@ -235,14 +280,7 @@ def _collect_link_destinations(
     extraction still works on an install where only the block parser loaded.
     """
     found: list[tuple[int, int, str]] = []
-
-    # Reference definitions are block-level, so they are read whether or not
-    # the inline grammar loaded.
-    for node in _collect_by_type(root, _LINK_REFERENCE_DEFINITION):
-        for child in node.children:
-            if child.type == _LINK_DESTINATION:
-                found.append((child.start_byte, 0, _decode(child, source)))
-                break
+    used_labels: set[str] = set()
 
     if inline_parser is not None:
         for span in _collect_inline_spans(root):
@@ -251,8 +289,25 @@ def _collect_link_destinations(
                 inline_root = inline_parser.parse(text).root_node
             except (RuntimeError, ValueError):
                 continue
-            for offset, destination in _link_destinations_in(inline_root, text):
+            destinations, labels = _link_destinations_in(inline_root, text)
+            for offset, destination in destinations:
                 found.append((span.start_byte, offset, destination))
+            used_labels |= labels
+
+    # Reference definitions are block-level, so they parse whether or not the
+    # inline grammar loaded — but only a definition some link names is a link.
+    # Without the inline pass no label is ever seen as used, which is the
+    # correct answer: nothing can be shown to reference them.
+    for node in _collect_by_type(root, _LINK_REFERENCE_DEFINITION):
+        label: str | None = None
+        destination: str | None = None
+        for child in node.children:
+            if child.type == _LINK_LABEL and label is None:
+                label = _normalise_label(_decode(child, source).strip("[]"))
+            elif child.type == _LINK_DESTINATION and destination is None:
+                destination = _decode(child, source)
+        if label is not None and destination is not None and label in used_labels:
+            found.append((node.start_byte, 0, destination))
 
     found.sort()
     return [destination for _, _, destination in found]
@@ -277,6 +332,21 @@ def _is_external(destination: str) -> bool:
     return bool(separator) and len(scheme) > _MIN_SCHEME_LENGTH and scheme.isalpha()
 
 
+def _percent_decode(target: str) -> str:
+    """A link destination with its percent escapes resolved.
+
+    Markdown writers escape spaces and other characters in destinations, so
+    ``My%20Guide.md`` names the file ``My Guide.md``; resolving the raw text
+    looks for a filename nobody has and drops the edge silently.
+
+    ``unquote`` leaves an invalid escape exactly as written, so a file really
+    named ``100%.md`` survives — ``%.m`` is not a valid escape sequence.
+    """
+    if "%" not in target:
+        return target
+    return unquote(target)
+
+
 def _strip_target(destination: str) -> str:
     """The path part of a destination, without any anchor or title.
 
@@ -288,7 +358,7 @@ def _strip_target(destination: str) -> str:
     if target.startswith("<") and target.endswith(">"):
         target = target[1:-1]
     target, _, _ = target.partition(_FRAGMENT_PREFIX)
-    return target.strip()
+    return _percent_decode(target.strip())
 
 
 def _sanitize(name: str) -> str:
