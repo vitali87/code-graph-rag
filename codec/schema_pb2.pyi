@@ -17,7 +17,7 @@ class GraphCodeIndex(_message.Message):
     def __init__(self, nodes: _Optional[_Iterable[_Union[Node, _Mapping]]] = ..., relationships: _Optional[_Iterable[_Union[Relationship, _Mapping]]] = ...) -> None: ...
 
 class Node(_message.Message):
-    __slots__ = ("project", "package", "folder", "module", "class_node", "function", "method", "file", "external_package", "module_implementation", "module_interface", "interface_node", "enum_node", "type_node", "union_node", "external_module", "resource", "section")
+    __slots__ = ("project", "package", "folder", "module", "class_node", "function", "method", "file", "external_package", "module_implementation", "module_interface", "interface_node", "enum_node", "type_node", "union_node", "external_module", "resource", "section", "pattern", "code_smell", "security_issue")
     PROJECT_FIELD_NUMBER: _ClassVar[int]
     PACKAGE_FIELD_NUMBER: _ClassVar[int]
     FOLDER_FIELD_NUMBER: _ClassVar[int]
@@ -36,6 +36,9 @@ class Node(_message.Message):
     EXTERNAL_MODULE_FIELD_NUMBER: _ClassVar[int]
     RESOURCE_FIELD_NUMBER: _ClassVar[int]
     SECTION_FIELD_NUMBER: _ClassVar[int]
+    PATTERN_FIELD_NUMBER: _ClassVar[int]
+    CODE_SMELL_FIELD_NUMBER: _ClassVar[int]
+    SECURITY_ISSUE_FIELD_NUMBER: _ClassVar[int]
     project: Project
     package: Package
     folder: Folder
@@ -54,7 +57,10 @@ class Node(_message.Message):
     external_module: ExternalModule
     resource: Resource
     section: Section
-    def __init__(self, project: _Optional[_Union[Project, _Mapping]] = ..., package: _Optional[_Union[Package, _Mapping]] = ..., folder: _Optional[_Union[Folder, _Mapping]] = ..., module: _Optional[_Union[Module, _Mapping]] = ..., class_node: _Optional[_Union[Class, _Mapping]] = ..., function: _Optional[_Union[Function, _Mapping]] = ..., method: _Optional[_Union[Method, _Mapping]] = ..., file: _Optional[_Union[File, _Mapping]] = ..., external_package: _Optional[_Union[ExternalPackage, _Mapping]] = ..., module_implementation: _Optional[_Union[ModuleImplementation, _Mapping]] = ..., module_interface: _Optional[_Union[ModuleInterface, _Mapping]] = ..., interface_node: _Optional[_Union[Interface, _Mapping]] = ..., enum_node: _Optional[_Union[Enum, _Mapping]] = ..., type_node: _Optional[_Union[Type, _Mapping]] = ..., union_node: _Optional[_Union[Union, _Mapping]] = ..., external_module: _Optional[_Union[ExternalModule, _Mapping]] = ..., resource: _Optional[_Union[Resource, _Mapping]] = ..., section: _Optional[_Union[Section, _Mapping]] = ...) -> None: ...
+    pattern: Pattern
+    code_smell: CodeSmell
+    security_issue: SecurityIssue
+    def __init__(self, project: _Optional[_Union[Project, _Mapping]] = ..., package: _Optional[_Union[Package, _Mapping]] = ..., folder: _Optional[_Union[Folder, _Mapping]] = ..., module: _Optional[_Union[Module, _Mapping]] = ..., class_node: _Optional[_Union[Class, _Mapping]] = ..., function: _Optional[_Union[Function, _Mapping]] = ..., method: _Optional[_Union[Method, _Mapping]] = ..., file: _Optional[_Union[File, _Mapping]] = ..., external_package: _Optional[_Union[ExternalPackage, _Mapping]] = ..., module_implementation: _Optional[_Union[ModuleImplementation, _Mapping]] = ..., module_interface: _Optional[_Union[ModuleInterface, _Mapping]] = ..., interface_node: _Optional[_Union[Interface, _Mapping]] = ..., enum_node: _Optional[_Union[Enum, _Mapping]] = ..., type_node: _Optional[_Union[Type, _Mapping]] = ..., union_node: _Optional[_Union[Union, _Mapping]] = ..., external_module: _Optional[_Union[ExternalModule, _Mapping]] = ..., resource: _Optional[_Union[Resource, _Mapping]] = ..., section: _Optional[_Union[Section, _Mapping]] = ..., pattern: _Optional[_Union[Pattern, _Mapping]] = ..., code_smell: _Optional[_Union[CodeSmell, _Mapping]] = ..., security_issue: _Optional[_Union[SecurityIssue, _Mapping]] = ...) -> None: ...
 
 class Relationship(_message.Message):
     __slots__ = ("type", "source_id", "target_id", "properties", "source_label", "target_label")
@@ -223,6 +229,60 @@ class ExternalPackage(_message.Message):
     NAME_FIELD_NUMBER: _ClassVar[int]
     name: str
     def __init__(self, name: _Optional[str] = ...) -> None: ...
+
+class Pattern(_message.Message):
+    __slots__ = ("qualified_name", "name", "message", "start_line", "end_line", "path", "snippet")
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    START_LINE_FIELD_NUMBER: _ClassVar[int]
+    END_LINE_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    SNIPPET_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    message: str
+    start_line: int
+    end_line: int
+    path: str
+    snippet: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., message: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., path: _Optional[str] = ..., snippet: _Optional[str] = ...) -> None: ...
+
+class CodeSmell(_message.Message):
+    __slots__ = ("qualified_name", "name", "message", "start_line", "end_line", "path", "snippet")
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    START_LINE_FIELD_NUMBER: _ClassVar[int]
+    END_LINE_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    SNIPPET_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    message: str
+    start_line: int
+    end_line: int
+    path: str
+    snippet: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., message: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., path: _Optional[str] = ..., snippet: _Optional[str] = ...) -> None: ...
+
+class SecurityIssue(_message.Message):
+    __slots__ = ("qualified_name", "name", "message", "start_line", "end_line", "path", "snippet")
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    START_LINE_FIELD_NUMBER: _ClassVar[int]
+    END_LINE_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    SNIPPET_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    message: str
+    start_line: int
+    end_line: int
+    path: str
+    snippet: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., message: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., path: _Optional[str] = ..., snippet: _Optional[str] = ...) -> None: ...
 
 class Resource(_message.Message):
     __slots__ = ("qualified_name", "name", "kind")
