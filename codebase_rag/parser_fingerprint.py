@@ -5,6 +5,8 @@
 # grammar wheel versions, and the frontend settings, so a sync can detect the
 # graph was built by a different parser or frontend config.
 import hashlib
+import shutil
+import subprocess
 from importlib import metadata
 from pathlib import Path
 
@@ -14,6 +16,32 @@ from . import constants as cs
 from . import logs as ls
 
 _FILE_HASH_CHUNK_SIZE = 1024 * 1024
+
+# External toolchains whose VERSION changes what a frontend extracts, as
+# (fingerprint key, executable, version argument). The resolved frontend mode
+# already recorded in `_frontend_settings` says which frontend ran; this says
+# what it knew. A Go release with better inference, a Roslyn update resolving
+# an overload differently, or a javac that models a new language feature all
+# change the emitted edges while the mode string is identical (issue #1465).
+#
+# `LOMBOK=` in `_frontend_settings` is the same idea applied to one tool, and
+# is left where it is rather than moved here: it is read from a jar rather
+# than probed by running anything.
+_VERSIONED_TOOLS: tuple[tuple[str, str, str], ...] = (
+    ("GO_VERSION", "go", "version"),
+    ("JAVAC_VERSION", "javac", "-version"),
+    ("DOTNET_VERSION", "dotnet", "--version"),
+)
+
+# Bounded because this runs on every index. A tool that cannot be probed
+# within it cannot be doing useful work either, so the timeout and a missing
+# binary reach the same answer.
+_VERSION_PROBE_TIMEOUT = 10.0
+
+# A toolchain that DISAPPEARED changes extraction as much as one that moved,
+# so absence is recorded rather than omitted -- and it must not collide with
+# any real version string.
+_TOOL_ABSENT = "absent"
 
 
 def _digest_file(path: Path) -> str:
@@ -25,6 +53,51 @@ def _digest_file(path: Path) -> str:
         while chunk := stream.read(_FILE_HASH_CHUNK_SIZE):
             hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def _probe_version(executable: str, argument: str) -> str:
+    """One tool's version string, or `absent` when it cannot be determined.
+
+    Never raises: the fingerprint is computed on every index, so a probe that
+    escaped would turn a missing or wedged toolchain into a failed run. Some
+    tools print their version on stderr (javac before 9), so both streams are
+    considered.
+    """
+    binary = shutil.which(executable)
+    if binary is None:
+        return _TOOL_ABSENT
+    try:
+        proc = subprocess.run(
+            [binary, argument],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=_VERSION_PROBE_TIMEOUT,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return _TOOL_ABSENT
+    if proc.returncode != 0:
+        return _TOOL_ABSENT
+    output = (proc.stdout or proc.stderr or "").strip()
+    # First line only: `dotnet --version` is one line, but `go version` and
+    # `javac -version` can carry extra lines on some installs, and a
+    # multi-line value would make the fingerprint sensitive to noise.
+    return output.splitlines()[0].strip() if output else _TOOL_ABSENT
+
+
+def _tool_versions() -> list[str]:
+    """`KEY=version` for each external toolchain, in a stable order.
+
+    Stable order matters as much as the values: the entries are hashed in
+    sequence, so a set or a dict iteration order would make the fingerprint
+    change without the toolchain changing, which invalidates the cache always
+    and costs more than never invalidating it.
+    """
+    return [
+        f"{key}={_probe_version(executable, argument)}"
+        for key, executable, argument in _VERSIONED_TOOLS
+    ]
 
 
 def compute_parser_fingerprint(
@@ -44,6 +117,12 @@ def compute_parser_fingerprint(
     # INHERITS/IMPLEMENTS), so it is part of the parser identity and must
     # trip the staleness warning.
     for entry in _frontend_settings():
+        hasher.update(entry.encode())
+    # The mode above says WHICH frontend ran; these say what it knew. A
+    # compiler upgrade changes the emitted edges with the mode unchanged, so
+    # without this an incremental run reuses a graph the older tool produced
+    # (issue #1465).
+    for entry in _tool_versions():
         hasher.update(entry.encode())
     return hasher.hexdigest()
 
