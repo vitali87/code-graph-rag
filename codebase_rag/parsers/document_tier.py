@@ -228,6 +228,38 @@ def _normalise_label(label: str) -> str:
     return " ".join(label.split()).casefold()
 
 
+def _first_child(node: Node, child_type: str) -> Node | None:
+    """The node's first direct child of a type, or None.
+
+    Every link node carries the part that matters (a destination, a label, the
+    link text) as one direct child, so this is the shared shape.
+    """
+    for child in node.children:
+        if child.type == child_type:
+            return child
+    return None
+
+
+def _label_used_by(node: Node, text: bytes) -> str | None:
+    """The definition label a reference link names, or None for other nodes.
+
+    ``[text][label]`` names its label explicitly, in a node that includes the
+    surrounding brackets. ``[label][]`` and ``[label]`` carry no label node and
+    use their own link text instead.
+    """
+    if node.type == _FULL_REFERENCE_LINK:
+        label = _first_child(node, _LINK_LABEL)
+        return (
+            None
+            if label is None
+            else _normalise_label(_decode(label, text).strip("[]"))
+        )
+    if node.type in _TEXT_LABELLED_LINKS:
+        label = _first_child(node, _LINK_TEXT)
+        return None if label is None else _normalise_label(_decode(label, text))
+    return None
+
+
 def _link_destinations_in(
     inline_root: Node, text: bytes
 ) -> tuple[list[tuple[int, str]], set[str]]:
@@ -242,27 +274,15 @@ def _link_destinations_in(
     stack = [inline_root]
     while stack:
         node = stack.pop()
-        kind = node.type
-        if kind == _INLINE_LINK:
-            for child in node.children:
-                if child.type == _LINK_DESTINATION:
-                    found.append((child.start_byte, _decode(child, text)))
-                    break
+        if node.type == _INLINE_LINK:
+            destination = _first_child(node, _LINK_DESTINATION)
+            if destination is not None:
+                found.append((destination.start_byte, _decode(destination, text)))
             # A link cannot nest another link; no need to descend.
             continue
-        if kind == _FULL_REFERENCE_LINK:
-            # `[text][label]`: the label node includes its brackets.
-            for child in node.children:
-                if child.type == _LINK_LABEL:
-                    used_labels.add(_normalise_label(_decode(child, text).strip("[]")))
-                    break
-            continue
-        if kind in _TEXT_LABELLED_LINKS:
-            # `[label][]` and `[label]` both use their own text as the label.
-            for child in node.children:
-                if child.type == _LINK_TEXT:
-                    used_labels.add(_normalise_label(_decode(child, text)))
-                    break
+        label = _label_used_by(node, text)
+        if label is not None:
+            used_labels.add(label)
             continue
         stack.extend(reversed(node.children))
     return found, used_labels
@@ -279,38 +299,62 @@ def _collect_link_destinations(
     Returns nothing when the inline grammar is unavailable, so heading
     extraction still works on an install where only the block parser loaded.
     """
-    found: list[tuple[int, int, str]] = []
-    used_labels: set[str] = set()
-
-    if inline_parser is not None:
-        for span in _collect_inline_spans(root):
-            text = source[span.start_byte : span.end_byte]
-            try:
-                inline_root = inline_parser.parse(text).root_node
-            except (RuntimeError, ValueError):
-                continue
-            destinations, labels = _link_destinations_in(inline_root, text)
-            for offset, destination in destinations:
-                found.append((span.start_byte, offset, destination))
-            used_labels |= labels
-
-    # Reference definitions are block-level, so they parse whether or not the
-    # inline grammar loaded — but only a definition some link names is a link.
-    # Without the inline pass no label is ever seen as used, which is the
-    # correct answer: nothing can be shown to reference them.
-    for node in _collect_by_type(root, _LINK_REFERENCE_DEFINITION):
-        label: str | None = None
-        destination: str | None = None
-        for child in node.children:
-            if child.type == _LINK_LABEL and label is None:
-                label = _normalise_label(_decode(child, source).strip("[]"))
-            elif child.type == _LINK_DESTINATION and destination is None:
-                destination = _decode(child, source)
-        if label is not None and destination is not None and label in used_labels:
-            found.append((node.start_byte, 0, destination))
-
+    found, used_labels = _scan_inline_spans(root, source, inline_parser)
+    found.extend(_resolve_definitions(root, source, used_labels))
     found.sort()
     return [destination for _, _, destination in found]
+
+
+def _scan_inline_spans(
+    root: Node, source: bytes, inline_parser: Parser | None
+) -> tuple[list[tuple[int, int, str]], set[str]]:
+    """Inline-link destinations across the document, and the labels they use.
+
+    Each `inline` span is re-parsed with the inline grammar, since the block
+    tree leaves inline content opaque. A span that fails to parse is skipped
+    rather than aborting the document.
+    """
+    found: list[tuple[int, int, str]] = []
+    used_labels: set[str] = set()
+    if inline_parser is None:
+        return found, used_labels
+
+    for span in _collect_inline_spans(root):
+        text = source[span.start_byte : span.end_byte]
+        try:
+            inline_root = inline_parser.parse(text).root_node
+        except (RuntimeError, ValueError):
+            continue
+        destinations, labels = _link_destinations_in(inline_root, text)
+        found.extend(
+            (span.start_byte, offset, destination)
+            for offset, destination in destinations
+        )
+        used_labels |= labels
+    return found, used_labels
+
+
+def _resolve_definitions(
+    root: Node, source: bytes, used_labels: set[str]
+) -> list[tuple[int, int, str]]:
+    """Destinations of the reference definitions some link actually names.
+
+    Reference definitions are block-level, so they parse whether or not the
+    inline grammar loaded — but a definition nothing references states no
+    relationship. With no inline pass `used_labels` is empty, which is the
+    correct answer rather than a degraded one: nothing can be shown to
+    reference them.
+    """
+    resolved: list[tuple[int, int, str]] = []
+    for node in _collect_by_type(root, _LINK_REFERENCE_DEFINITION):
+        label_node = _first_child(node, _LINK_LABEL)
+        destination = _first_child(node, _LINK_DESTINATION)
+        if label_node is None or destination is None:
+            continue
+        label = _normalise_label(_decode(label_node, source).strip("[]"))
+        if label in used_labels:
+            resolved.append((node.start_byte, 0, _decode(destination, source)))
+    return resolved
 
 
 def _is_external(destination: str) -> bool:
