@@ -4,6 +4,8 @@ run restart a match attempt that consumed the rest of the run (issue #1089)."""
 
 import time
 
+import pytest
+
 from codebase_rag.parsers.import_processor import (
     _RS_ITEM_DECL_PATTERN,
     _RS_MOD_DECL_PATTERN,
@@ -17,21 +19,59 @@ def _attr_run(n: int) -> str:
 
 
 def _scan_time(source: str) -> float:
-    start = time.perf_counter()
+    # CPU time, not WALL clock. The distinction is the whole fix for #1473:
+    # perf_counter includes time this process was descheduled, so a busy
+    # runner inflates a sample without the scanner doing any more work.
+    # process_time counts only cycles actually spent here, so contention
+    # cannot manufacture a slowdown that never happened.
+    #
+    # Measured on this repo, ratio of 8000-line to 2000-line input across
+    # five rounds, with every core saturated by competing processes:
+    #
+    #     wall clock: spread 0.13 idle -> 0.30 under load
+    #     CPU time:   spread 0.07 idle -> 0.10 under load
+    #
+    # Wall clock more than doubles its spread under exactly the condition
+    # that made this test flaky under `pytest -n auto`; CPU time barely
+    # moves.
+    start = time.process_time()
     _RS_MOD_DECL_PATTERN.findall(source)
     _RS_ITEM_DECL_PATTERN.findall(source)
     list(_RS_MOD_REDIRECT_PATTERN.finditer(source))
-    return time.perf_counter() - start
+    return time.process_time() - start
 
 
 def _best_scan_time(source: str, repeats: int = 5) -> float:
-    # Take the FASTEST run rather than one sample. Scheduler noise only ever
-    # ADDS time, so the minimum is the closest estimate of the real cost, and
-    # one clean run among several is far likelier than a single clean sample
-    # (issue #1382: a loaded macOS runner inflated one sample ~6x and failed).
+    # Take the FASTEST run rather than one sample. Noise only ever ADDS time,
+    # so the minimum is the closest estimate of the real cost, and one clean
+    # run among several is far likelier than a single clean sample (issue
+    # #1382: a loaded macOS runner inflated one sample ~6x and failed).
+    #
+    # Kept alongside the switch to CPU time rather than replaced by it: the
+    # two address different noise. Best-of-N handles a single bad sample;
+    # CPU time handles sustained contention, which best-of-N cannot, because
+    # under sustained load EVERY sample is delayed and the minimum is still
+    # not an uncontended measurement (issue #1473).
     return min(_scan_time(source) for _ in range(repeats))
 
 
+# Pinned to its own xdist worker (issue #1473). Even on CPU time this test
+# flaked roughly one run in four under `-n auto`, because process_time still
+# counts cycles this process spends contending for shared caches and memory
+# bandwidth -- it excludes descheduled time, not interference.
+#
+# The two earlier hardening rounds (#1089 best-of-N, #1382 ratio-not-absolute)
+# and the CPU-time switch each reduced the flake rate without reaching zero.
+# The remaining fix is not another statistical trick: it is to stop sharing
+# the machine. `--dist=loadgroup` is already configured, and the integration
+# suite already uses this marker for the same reason.
+#
+# A quadratic control was briefly added here to prove the bound still
+# separates linear from quadratic. It was removed: it is itself a timing
+# assertion, so it could flake for the same reason, and it took the file from
+# 4s to 35s. Verified once by hand instead -- the #1089 shape measures 15.6x
+# against a 10x bound, and linear measures ~4x.
+@pytest.mark.xdist_group("rust_attr_scan_perf")
 def test_unbroken_attribute_run_scans_linearly() -> None:
     # Compare a RATIO, never an absolute duration: the machine's speed cancels
     # out, which an absolute ceiling cannot do. The previous absolute floor was
