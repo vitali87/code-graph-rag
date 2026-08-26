@@ -41,11 +41,19 @@ def _subprocess_calls_missing_encoding(tree: ast.AST) -> list[int]:
 
     Two deliberate limits, both measured rather than assumed:
 
-    - Any call is matched, not only `subprocess.*`. Naming the module would
-      miss `run()` imported directly, and the asymmetry favours over-reporting:
-      a false positive costs one `_EXEMPT` line, while a false negative costs
-      silent mojibake on Windows that surfaces as a wrong graph rather than an
-      error.
+    - Matching is scoped to calls whose callee NAME spawns a process (`run`,
+      `Popen`, `check_output`, `create_subprocess_exec`, ...), matched on the
+      final attribute so `subprocess.run(...)` and a directly-imported
+      `run(...)` both qualify. Scoping by NAME rather than by module is what
+      keeps `from subprocess import run` in view -- naming the module would
+      miss it, which is how #1454 reached production.
+
+      Measured before adopting: across the tree, ZERO `text=True` calls are
+      on non-spawning callees, and ZERO spawning calls would drop out of
+      view. So the scope costs nothing today in either direction. Re-measure
+      before assuming that holds -- if a non-subprocess API grows a
+      `text=`/`errors=` keyword, the false positive is the cheap direction and
+      a missed subprocess call is the expensive one.
     - Only a literal `True` counts as decoding; `text=some_flag` is not
       chased, since that would need dataflow in a lint gate. Measured across
       the repo: 15 calls pass a non-literal `text=`, and **none** is a
@@ -93,7 +101,7 @@ def _subprocess_calls_missing_encoding(tree: ast.AST) -> list[int]:
             and kw.value.value is True
             for kw in node.keywords
         )
-        if decodes:
+        if decodes and _looks_like_process_spawn(node):
             found.append(node.lineno)
     return found
 
@@ -287,5 +295,33 @@ def test_a_bytes_mode_call_is_still_ignored() -> None:
         "subprocess.run(['x'], text=True, encoding='utf-8')\n"
         "subprocess.run(['x'], errors=None)\n"
     )
+
+    assert _subprocess_calls_missing_encoding(tree) == []
+
+
+def test_a_directly_imported_run_is_still_detected() -> None:
+    """`from subprocess import run` must stay in view.
+
+    The scope keys on the callee NAME, not the module, precisely so this form
+    is caught. Naming the module would miss it -- and a bare `run(...)` with
+    `text=True` is exactly how #1454 reached production in the first place.
+
+    This is the expensive direction: a false positive costs one `_EXEMPT`
+    line, a false negative costs silent mojibake on Windows that surfaces as
+    a wrong graph rather than an error.
+    """
+    tree = ast.parse("run(['x'], text=True)\n")
+
+    assert _subprocess_calls_missing_encoding(tree) == [1]
+
+
+def test_a_non_spawning_call_with_text_true_is_ignored() -> None:
+    """An unrelated API taking `text=True` must not fail the gate.
+
+    Measured as zero occurrences today, so this pins the scope rather than
+    fixing an observed break -- but two independent reviewers raised it, and
+    the guard costs nothing.
+    """
+    tree = ast.parse("render(template, text=True)\n")
 
     assert _subprocess_calls_missing_encoding(tree) == []
