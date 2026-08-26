@@ -303,3 +303,39 @@ def test_non_linux_without_proc_still_uses_ru_maxrss(
     monkeypatch.setattr(module.sys, "platform", "darwin")
 
     assert module._self_peak_rss_bytes() > 0
+
+
+def test_direct_script_execution_resolves_the_module_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`python benchmarks/bench_indexing.py` must not die on `__spec__`.
+
+    Running a file directly sets `__spec__` to None, so reading
+    `__spec__.name` raised AttributeError before the child was ever spawned --
+    the benchmark failed on its most obvious invocation while working fine
+    under `-m`, which is why every local run and every CI run passed.
+    """
+    import benchmarks.bench_indexing as module
+
+    monkeypatch.setitem(module.__dict__, "__spec__", None)
+
+    assert module._module_name() == "benchmarks.bench_indexing"
+
+
+def test_module_execution_uses_the_real_spec_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under `-m` the real spec name wins over the literal fallback.
+
+    Paired with the test above so the fix cannot be implemented by always
+    returning the hardcoded string -- that would work today and break the
+    moment the module moves.
+    """
+    import benchmarks.bench_indexing as module
+
+    class _Spec:
+        name = "some.relocated.module"
+
+    monkeypatch.setitem(module.__dict__, "__spec__", _Spec())
+
+    assert module._module_name() == "some.relocated.module"

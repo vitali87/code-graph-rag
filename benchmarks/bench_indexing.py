@@ -121,6 +121,21 @@ def _self_peak_rss_bytes() -> int:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * _RSS_SCALE
 
 
+def _module_name() -> str:
+    """This module's importable name, for relaunching it with `-m`.
+
+    `__spec__` is None when the file is run directly as a script
+    (`python benchmarks/bench_indexing.py`), so reading `__spec__.name`
+    raises AttributeError before the child is ever spawned -- the benchmark
+    dies on its most obvious invocation. Falling back to the literal keeps
+    both `python -m benchmarks.bench_indexing` and direct execution working.
+    """
+    spec = globals().get("__spec__")
+    if spec is not None and getattr(spec, "name", None):
+        return str(spec.name)
+    return "benchmarks.bench_indexing"
+
+
 def _cgr_version() -> str:
     try:
         from importlib.metadata import version
@@ -157,7 +172,7 @@ def measure_indexing(corpus: Path, project_name: str) -> IndexingMeasurement:
         [
             sys.executable,
             "-m",
-            __spec__.name,
+            _module_name(),
             str(corpus),
             "--project-name",
             project_name,
