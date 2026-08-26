@@ -29,13 +29,23 @@ _LANGUAGE_SUPPORT_DOC = (
 #
 # Three delimiter forms are recognised, because a remedy is equally dangerous
 # however it happens to be punctuated: single-quoted, backticked, and bare
-# (running to sentence punctuation or end of line). The `run` imperative stays
-# mandatory -- it is what separates advice from prose that merely discusses the
-# flag, which `test_prose_about_clean_is_not_flagged` pins.
+# (running to sentence punctuation, a command connector, or end of line). The
+# `run` imperative stays mandatory -- it is what separates advice from prose
+# that merely discusses the flag, which `test_prose_about_clean_is_not_flagged`
+# pins.
+#
+# The bare form must also stop at a connector such as "then" or "followed by".
+# Without that it swallows the *next* invocation too, and a trailing safe
+# command launders a destructive leading one: "Run cgr start --clean then run
+# cgr start --update-graph" captured as a single string, whose
+# `--update-graph` satisfied the check for a command that does not have it.
+_CONNECTOR = r"(?:\s+(?:and\s+)?then\b|\s+followed\s+by\b|\s+before\b|\s+&&)"
+
 _REMEDY = re.compile(
     r"run\s+(?:'([^'\n]*--clean[^'\n]*)'"
     r"|`([^`\n]*--clean[^`\n]*)`"
-    r"|([^'\"`\n]*?--clean[^'\"`\n,.;:!?]*))",
+    r"|((?:(?!" + _CONNECTOR + r")[^'\"`\n])*?--clean"
+    r"(?:(?!" + _CONNECTOR + r")[^'\"`\n,.;:!?])*))",
     re.IGNORECASE,
 )
 
@@ -121,6 +131,33 @@ class TestCleanRemedyStrings:
         commands = _commands(text)
         assert commands
         assert all("--update-graph" not in c for c in commands)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Run cgr start --clean then run cgr start --update-graph",
+            "Run cgr start --clean and then run cgr start --update-graph",
+            "Run cgr start --clean followed by cgr start --update-graph",
+            "Run cgr start --clean && cgr start --update-graph",
+            "Run cgr start --clean before cgr start --update-graph",
+        ],
+    )
+    def test_bare_match_stops_at_a_command_connector(self, text: str) -> None:
+        """A later safe command must not launder an earlier destructive one.
+
+        The bare alternative ran to sentence punctuation, so two commands joined
+        by "then" captured as a single string. `--update-graph` from the *second*
+        command then satisfied the acceptance check for the *first*, and a string
+        opening with a destructive bare `--clean` passed (CodeRabbit, #1444).
+
+        Each invocation must be judged on its own, so the destructive one is
+        still reported however safe its successor is.
+        """
+        commands = _commands(text)
+        assert commands
+        assert any("--update-graph" not in c for c in commands), (
+            f"the destructive first command was laundered by a later one: {commands}"
+        )
 
     @pytest.mark.parametrize(
         "text",
