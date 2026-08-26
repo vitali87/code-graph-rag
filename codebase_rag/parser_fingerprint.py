@@ -43,6 +43,12 @@ _VERSION_PROBE_TIMEOUT = 10.0
 # any real version string.
 _TOOL_ABSENT = "absent"
 
+# Recorded when the tool's frontend is resolved to a mode that cannot use it.
+# Distinct from `absent`: a tool that is installed but unused and one that is
+# missing entirely are different states, and switching a frontend off changes
+# what is extracted just as much as removing its toolchain.
+_TOOL_INACTIVE = "inactive"
+
 
 def _digest_file(path: Path) -> str:
     # compile_commands.json is repository-controlled and can be very large,
@@ -86,16 +92,44 @@ def _probe_version(executable: str, argument: str) -> str:
     return output.splitlines()[0].strip() if output else _TOOL_ABSENT
 
 
+def _active_tools() -> dict[str, bool]:
+    """Whether each tool's frontend is resolved to a mode that USES it.
+
+    A tool no frontend can use contributes nothing to extraction, so hashing
+    its version invalidates the graph for a change that cannot affect it --
+    false staleness, which costs more than the drift the version was added to
+    catch (issue #1465 review). Imported lazily, as `_frontend_settings` does,
+    to keep this module free of the parsers package at import time.
+    """
+    from .parsers.csharp_frontend import resolve_csharp_frontend
+    from .parsers.go_frontend import resolve_go_frontend
+    from .parsers.java_frontend import resolve_java_frontend
+
+    return {
+        "GO_VERSION": resolve_go_frontend() is not cs.GoFrontend.TREESITTER,
+        "JAVAC_VERSION": resolve_java_frontend() is not cs.JavaFrontend.HEURISTIC,
+        "DOTNET_VERSION": (
+            resolve_csharp_frontend() is not cs.CSharpFrontend.TREESITTER
+        ),
+    }
+
+
 def _tool_versions() -> list[str]:
-    """`KEY=version` for each external toolchain, in a stable order.
+    """`KEY=version` for each ACTIVE external toolchain, in a stable order.
 
     Stable order matters as much as the values: the entries are hashed in
     sequence, so a set or a dict iteration order would make the fingerprint
     change without the toolchain changing, which invalidates the cache always
     and costs more than never invalidating it.
+
+    An inactive tool is recorded as `inactive` rather than omitted. Omitting
+    it would make "tool absent" and "frontend disabled" hash identically, and
+    those are different states: turning a frontend off changes what is
+    extracted and must still trip the warning.
     """
+    active = _active_tools()
     return [
-        f"{key}={_probe_version(executable, argument)}"
+        f"{key}={_probe_version(executable, argument) if active.get(key) else _TOOL_INACTIVE}"
         for key, executable, argument in _VERSIONED_TOOLS
     ]
 
