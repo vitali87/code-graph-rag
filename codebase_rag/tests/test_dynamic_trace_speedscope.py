@@ -264,6 +264,10 @@ def test_non_finite_sample_weights_default_to_one():
     assert _sample_weight([2.5], 0) == 2.5
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the fixture is a #!/bin/sh script, which Windows cannot execute",
+)
 def test_dotnet_trace_probe_rejects_a_tool_that_cannot_run(tmp_path, monkeypatch):
     """A present-but-unrunnable dotnet-trace must read as absent (issue #1449).
 
@@ -273,6 +277,13 @@ def test_dotnet_trace_probe_rejects_a_tool_that_cannot_run(tmp_path, monkeypatch
     guard that asks `Path.exists()` answers "is there a file here", which is
     not the question `skipif` needs answered, so the suite fails on an
     environment problem with a message about .NET rather than skipping.
+
+    Unix-only, and the skip is about the FIXTURE rather than the behaviour.
+    Both halves need a file that is executable and exits with a chosen status,
+    which here is a ``#!/bin/sh`` script; Windows cannot run one, so the
+    positive control fails there for a reason unrelated to what is under test.
+    The probe itself is platform-neutral, and the live test it guards is
+    already Unix-only for its own reason (EventPipe is validated on Unix).
     """
     fake_home = tmp_path / "home"
     tools = fake_home / ".dotnet" / "tools"
