@@ -105,8 +105,25 @@ def test_no_subprocess_call_decodes_with_the_locale_encoding() -> None:
 
     Without this gate the next `subprocess.run` written re-introduces the bug,
     which is exactly what happened between the oracles being written and #1454.
+
+    A file that cannot be parsed fails THIS gate, not merely a sibling test.
+    An earlier version skipped unparseable files here and reported them from a
+    separate test, which left the gate itself green on a tree containing a
+    real violation: Greptile demonstrated it with a syntactically invalid file
+    holding `subprocess.run(..., text=True)`. The offending call was concealed
+    by the syntax error, and the check that mattered still passed.
+
+    "Could not check" must fail the check that does the checking. Reporting it
+    elsewhere makes the failure visible to someone reading the whole suite,
+    which is not the same as making it block.
     """
-    offenders, _parsed, _unreadable = _scan()
+    offenders, _parsed, unreadable = _scan()
+
+    assert not unreadable, (
+        f"{len(unreadable)} file(s) could not be parsed, so this gate did not "
+        "inspect them and cannot claim they are clean:\n"
+        + "\n".join(unreadable[:20])
+    )
 
     assert not offenders, (
         f"{len(offenders)} call(s) decode subprocess output with the locale "
