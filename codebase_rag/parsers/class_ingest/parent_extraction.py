@@ -189,7 +189,110 @@ def extract_parent_classes(
             extract_dart_parent_classes(class_node, module_qn, resolve_to_qn)
         )
 
+    if class_node.type in cs.SPEC_SCALA_CLASS_TYPES:
+        parent_classes.extend(
+            extract_scala_parent_classes(class_node, module_qn, resolve_to_qn)
+        )
+
     return parent_classes
+
+
+# Only these wrappers are descended; see the constants module for why
+# `type_arguments` must not be.
+_SCALA_BASE_WRAPPERS = (
+    cs.TS_SCALA_GENERIC_TYPE,
+    cs.TS_SCALA_STABLE_TYPE_IDENTIFIER,
+)
+
+
+def _scala_base_type_identifier(node: Node) -> Node | None:
+    """The `type_identifier` naming a Scala base, at whatever depth it sits.
+
+    Descends the LAST type-bearing child at each level, which is what picks
+    the simple name out of `foo.bar.Baz`: the qualifier segments come first
+    and the type name is last. Bounded to the wrapper kinds the grammar
+    actually produces, so this never walks into a type argument list and
+    returns `Int` from `foo.Service[Int]`.
+    """
+    if node.type == cs.TS_TYPE_IDENTIFIER:
+        return node
+    if node.type not in _SCALA_BASE_WRAPPERS:
+        return None
+    for child in reversed(node.children):
+        if found := _scala_base_type_identifier(child):
+            return found
+    return None
+
+
+def _scala_base_written_name(node: Node) -> str | None:
+    """The base as WRITTEN, qualifier included, with type arguments stripped.
+
+    `foo.Service[Int]` yields `foo.Service`, not `Service`. Returning the
+    terminal identifier alone discards the qualifier, so a class extending an
+    external `foo.Service` resolves to whatever same-named class is in scope
+    -- a WRONG edge rather than a missing one, which is the more damaging
+    failure because the graph gains a relationship the source never expressed.
+
+    Matches how C# handles the same shape (`_csharp_base_written_name`): pass
+    the full dotted name to the resolver and let it decide, rather than
+    pre-truncating to a simple name the resolver cannot disambiguate.
+    """
+    if node.type == cs.TS_SCALA_STABLE_TYPE_IDENTIFIER and node.text:
+        return safe_decode_text(node)
+    if node.type == cs.TS_SCALA_GENERIC_TYPE:
+        # `foo.Service[Int]` / `Service[Int]`: the first child is the type,
+        # the type_arguments sibling is what must not be included.
+        for child in node.children:
+            if child.type in (
+                cs.TS_SCALA_STABLE_TYPE_IDENTIFIER,
+                cs.TS_TYPE_IDENTIFIER,
+            ):
+                return safe_decode_text(child) if child.text else None
+        return None
+    if node.type == cs.TS_TYPE_IDENTIFIER and node.text:
+        return safe_decode_text(node)
+    return None
+
+
+def extract_scala_parent_classes(
+    class_node: Node,
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> list[str]:
+    """Bases from a Scala `extends A with B with C` clause.
+
+    Every base is taken, not just the one after `extends`. Scala composes
+    behaviour by mixing traits in with `with`, so reading the first base only
+    would capture the superclass and silently drop the mixins -- which is most
+    of the structure in idiomatic Scala, and the linearization #1186 asks to
+    record.
+
+    `extends` and `with` are anonymous keyword children of the same
+    `extends_clause`, so the type nodes are collected by kind rather than by
+    position: no keyword marks where the base list stops.
+
+    The grammar nests the four base spellings to different depths, so the
+    `type_identifier` is found by descending rather than at a fixed level:
+
+        Named                -> type_identifier
+        Seq[Int]             -> generic_type > type_identifier
+        foo.Bar              -> stable_type_identifier > type_identifier
+        foo.Seq[Int]         -> generic_type > stable_type_identifier > type_identifier
+
+    A fixed one-level lookup finds the first three and drops the fourth, which
+    is the combination real Scala uses most (`extends akka.actor.Actor[T]`).
+    Dropping a base is invisible in the graph: the class still exists, it just
+    floats free of its parent.
+    """
+    extends_clause = find_child_by_type(class_node, cs.TS_EXTENDS_CLAUSE)
+    if extends_clause is None:
+        return []
+
+    parents: list[str] = []
+    for child in extends_clause.children:
+        if name := _scala_base_written_name(child):
+            parents.append(resolve_to_qn(name, module_qn))
+    return parents
 
 
 def extract_dart_parent_classes(
