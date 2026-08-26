@@ -194,6 +194,10 @@ class RelationshipType(StrEnum):
     IMPLEMENTS_PATTERN = "IMPLEMENTS_PATTERN"
     HAS_SMELL = "HAS_SMELL"
     HAS_VULNERABILITY = "HAS_VULNERABILITY"
+    # A relative link from a document to another file in the repository
+    # (issue #164). The document equivalent of an import: it is how a README
+    # or a guide states which files it is about.
+    LINKS_TO = "LINKS_TO"
 
 
 class CaptureGroup(StrEnum):
@@ -241,6 +245,7 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.EXPORTS,
             RelationshipType.EXPORTS_MODULE,
             RelationshipType.DEPENDS_ON_EXTERNAL,
+            RelationshipType.LINKS_TO,
         }
     ),
     CaptureGroup.IO: frozenset(
