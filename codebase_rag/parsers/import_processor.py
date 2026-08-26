@@ -904,6 +904,8 @@ class ImportProcessor:
                     self._parse_csharp_imports(captures, module_qn)
                 case cs.SupportedLanguage.DART:
                     self._parse_dart_imports(captures, module_qn)
+                case cs.SupportedLanguage.SCALA:
+                    self._parse_scala_imports(captures, module_qn)
                 case _:
                     self._parse_generic_imports(captures, module_qn, lang_config)
 
@@ -3675,6 +3677,90 @@ class ImportProcessor:
             self.rust_block_item_qns.update(resolved.values())
         if scopes:
             self.rust_block_items[module_qn] = scopes
+
+    def _parse_scala_imports(self, captures: dict, module_qn: str) -> None:
+        """Scala imports: plain, selector group, rename and wildcard.
+
+        Scala writes the package path as loose `identifier` and `.` children
+        of the import_declaration rather than as one scoped node, so the
+        prefix is assembled from those children up to the point where a
+        selector group or wildcard begins. A parser that grabs the first
+        identifier gets `scala` for every `scala.*` import.
+
+        The four forms #1186 lists, all on the same node type:
+            import a.b.C            -> C     -> a.b.C
+            import a.b.{C, D}       -> C, D  -> a.b.C, a.b.D
+            import a.b.{C => Alias} -> Alias -> a.b.C   (C stays unbound)
+            import a.b._            -> *a.b  -> a.b
+        """
+        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
+            if import_node.type != cs.TS_SCALA_IMPORT_DECLARATION:
+                continue
+            self._parse_scala_import_declaration(import_node, module_qn)
+
+    def _parse_scala_import_declaration(
+        self, import_node: Node, module_qn: str
+    ) -> None:
+        prefix_parts: list[str] = []
+        selectors: Node | None = None
+        wildcard: Node | None = None
+
+        for child in import_node.children:
+            if child.type == cs.TS_SCALA_NAMESPACE_SELECTORS:
+                selectors = child
+            elif child.type == cs.TS_SCALA_NAMESPACE_WILDCARD:
+                wildcard = child
+            elif child.type == cs.TS_IDENTIFIER:
+                if name := safe_decode_with_fallback(child):
+                    prefix_parts.append(name)
+
+        if not prefix_parts:
+            return
+
+        if wildcard is not None:
+            # `import a.b._` (Scala 2) and `_root_.a.b.*` (Scala 3) both reach
+            # here; the package itself is what comes into scope.
+            package = cs.SEPARATOR_DOT.join(prefix_parts)
+            self.import_mapping[module_qn][f"*{package}"] = package
+            return
+
+        if selectors is not None:
+            package = cs.SEPARATOR_DOT.join(prefix_parts)
+            self._parse_scala_selectors(selectors, package, module_qn)
+            return
+
+        # Plain `import a.b.C`: the last part is the imported name, and
+        # everything is also the full path.
+        full_path = cs.SEPARATOR_DOT.join(prefix_parts)
+        self.import_mapping[module_qn][prefix_parts[-1]] = full_path
+
+    def _parse_scala_selectors(
+        self, selectors: Node, package: str, module_qn: str
+    ) -> None:
+        for child in selectors.children:
+            if child.type == cs.TS_SCALA_ARROW_RENAMED_IDENTIFIER:
+                # `Map => MMap`: bind the ALIAS only. Binding the original too
+                # would make it resolvable under a name this file never
+                # introduced, which is precisely what the rename avoids.
+                names = [
+                    decoded
+                    for grandchild in child.children
+                    if grandchild.type == cs.TS_IDENTIFIER
+                    and (decoded := safe_decode_with_fallback(grandchild))
+                ]
+                if len(names) == 2:
+                    original, alias = names
+                    self.import_mapping[module_qn][alias] = (
+                        f"{package}{cs.SEPARATOR_DOT}{original}"
+                    )
+            elif child.type == cs.TS_SCALA_NAMESPACE_WILDCARD:
+                # `import a.{b, _}` -- a wildcard alongside explicit names.
+                self.import_mapping[module_qn][f"*{package}"] = package
+            elif child.type == cs.TS_IDENTIFIER:
+                if name := safe_decode_with_fallback(child):
+                    self.import_mapping[module_qn][name] = (
+                        f"{package}{cs.SEPARATOR_DOT}{name}"
+                    )
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
