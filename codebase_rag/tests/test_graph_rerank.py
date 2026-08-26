@@ -189,3 +189,27 @@ def test_the_proximity_query_filters_on_the_declared_relationships() -> None:
     assert match is not None, query
 
     assert set(match.group(1).split("|")) == set(_PROXIMITY_RELS), match.group(1)
+
+
+def test_the_query_counts_both_endpoints_explicitly() -> None:
+    """A directed edge must boost BOTH of its endpoints.
+
+    The reranker treats proximity as undirected, and the eval builds a
+    symmetric adjacency to match. The Cypher must agree without depending on
+    whether an undirected `MATCH` enumerates a stored directed edge once or
+    twice -- an engine detail. If it enumerates once, one endpoint of every
+    directed edge goes unboosted and the shipped reranker silently disagrees
+    with the model it was measured against.
+
+    Pinned structurally because there is no Memgraph in this suite: asserting
+    the query unwinds both ids is the strongest available check, and it is the
+    property that makes the engine detail irrelevant.
+    """
+    from codebase_rag.tools.graph_rerank import build_proximity_query
+
+    query = build_proximity_query([1, 2])
+
+    assert "UNWIND [id(a), id(b)]" in query, query
+    # A bare undirected match with a single projected endpoint is the shape
+    # this replaced; it must not come back.
+    assert "RETURN id(a) AS node_id" not in query, query

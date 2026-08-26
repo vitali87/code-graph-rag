@@ -80,13 +80,27 @@ def build_proximity_query(node_ids: list[int]) -> str:
     some unrelated third node says nothing about whether this hit belongs with
     the others, and counting it would simply rank well-connected nodes highly
     for every query -- a popularity score, not a relevance one.
+
+    Both endpoints are counted EXPLICITLY, via `UNWIND [id(a), id(b)]`, rather
+    than relying on an undirected `MATCH` to yield each relationship once per
+    orientation. That reliance is the subtle part: whether `(a)-[r]-(b)`
+    enumerates a stored directed edge twice, so that both endpoints appear as
+    `a` and both get counted, is an engine detail. If it does not, one
+    endpoint of every directed edge silently goes unboosted, and the graph
+    reranker then disagrees with the symmetric adjacency the eval builds --
+    the two would diverge with nothing reporting it.
+
+    Unwinding removes the dependency instead of documenting it. The result is
+    the same where the undirected match does double-count, and correct where
+    it does not.
     """
     placeholders = ", ".join(f"${i}" for i in range(len(node_ids)))
     rel_filter = "|".join(_PROXIMITY_RELS)
     return f"""
-MATCH (a)-[r:{rel_filter}]-(b)
+MATCH (a)-[r:{rel_filter}]->(b)
 WHERE id(a) IN [{placeholders}] AND id(b) IN [{placeholders}]
-RETURN id(a) AS node_id, count(r) AS degree
+UNWIND [id(a), id(b)] AS node_id
+RETURN node_id, count(*) AS degree
 """
 
 
