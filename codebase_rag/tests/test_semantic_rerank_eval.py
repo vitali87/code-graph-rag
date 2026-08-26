@@ -8,13 +8,20 @@
 from __future__ import annotations
 
 from itertools import permutations
+from pathlib import Path
+from unittest import mock
 
+import pytest
+import typer
+
+from evals import constants as ec
 from evals.semantic_search import (
     SemanticCase,
     reranked_semantic_ranking,
     score_semantic,
     score_semantic_mrr,
 )
+from evals.types_defs import LocationStats, ScoreResult, ScoreRow
 
 
 def test_reranking_promotes_a_clustered_hit_above_an_isolated_one() -> None:
@@ -26,7 +33,7 @@ def test_reranking_promotes_a_clustered_hit_above_an_isolated_one() -> None:
     unmeasurable.
     """
     ranking = {"q": ["iso.a", "want.b", "want.c"]}
-    adjacency = {"want.b": {"want.c"}, "want.c": {"want.b"}}
+    adjacency = {"want.b": {"want.c": {"CALLS"}}, "want.c": {"want.b": {"CALLS"}}}
 
     reranked = reranked_semantic_ranking(ranking, adjacency, weight=1.0)
 
@@ -57,7 +64,7 @@ def test_the_comparison_scores_both_conditions_the_same_way() -> None:
     """
     cases = [SemanticCase("q", "want.b")]
     baseline = {"q": ["iso.a", "want.b"]}
-    adjacency = {"want.b": {"want.z"}}
+    adjacency = {"want.b": {"want.z": {"CALLS"}}}
 
     before = score_semantic(cases, baseline)
     after = score_semantic(cases, reranked_semantic_ranking(baseline, adjacency))
@@ -97,7 +104,11 @@ def test_an_edge_outside_the_result_set_does_not_count() -> None:
     # than the weight -- with two hits the gap is 1.0 and no boost can ever
     # overturn it, which would make this pass regardless of the fix.
     ranking = {"q": ["a", "b", "c"]}
-    adjacency = {"a": set(), "b": {"x", "y", "z"}, "c": set()}
+    adjacency: dict[str, dict[str, set[str]]] = {
+        "a": {},
+        "b": {"x": {"CALLS"}, "y": {"CALLS"}, "z": {"CALLS"}},
+        "c": {},
+    }
 
     assert reranked_semantic_ranking(ranking, adjacency, weight=1.0)["q"] == [
         "a",
@@ -175,9 +186,9 @@ def test_reranking_that_demotes_the_answer_scores_worse_end_to_end() -> None:
     baseline = {"q": ["cl.a", "want", "cl.b", "cl.c"]}
     # Every hit except `want` is wired to the others, so all three outrank it.
     adjacency = {
-        "cl.a": {"cl.b", "cl.c"},
-        "cl.b": {"cl.a", "cl.c"},
-        "cl.c": {"cl.a", "cl.b"},
+        "cl.a": {"cl.b": {"CALLS"}, "cl.c": {"CALLS"}},
+        "cl.b": {"cl.a": {"CALLS"}, "cl.c": {"CALLS"}},
+        "cl.c": {"cl.a": {"CALLS"}, "cl.b": {"CALLS"}},
     }
 
     reranked = reranked_semantic_ranking(baseline, adjacency, weight=1.0)
@@ -251,3 +262,151 @@ def test_mrr_averages_across_cases() -> None:
 def test_mrr_over_no_cases_is_zero() -> None:
     """No cases means no evidence, not a perfect score."""
     assert score_semantic_mrr([], {"q": ["a"]}) == 0.0
+
+
+def test_the_eval_reranker_counts_distinct_types_not_neighbours() -> None:
+    """The PRODUCTION eval path must weigh a multi-type pair more (#1477).
+
+    `test_graph_rerank.py` compares two local mirrors of the two proximity
+    models. That catches a divergence between the models but says nothing
+    about `reranked_semantic_ranking` itself, so reverting THIS function to
+    presence-only counting left every test in that module green. The guard has
+    to run the shipped code.
+
+    `mid` and `low` are both adjacent to one in-set neighbour, but `mid`'s edge
+    carries two distinct types (an override that calls up). Counting
+    neighbours scores them equally and stable sort keeps the baseline order;
+    counting distinct types promotes `mid`.
+
+    weight=2.0 rather than 1.0: `mid` sits last, so it starts 0.5 of
+    positional similarity behind `low`, and its proximity advantage after
+    normalisation is also 0.5. At weight 1.0 those cancel exactly and stable
+    sort keeps `low` ahead -- the test would then pass for BOTH counting
+    models, which is the defect this whole issue is about.
+    """
+    ranking = {"q": ["top", "low", "mid"]}
+    adjacency: dict[str, dict[str, set[str]]] = {
+        "mid": {"top": {"CALLS", "OVERRIDES"}},
+        "top": {"mid": {"CALLS", "OVERRIDES"}},
+        "low": {"top": {"CALLS"}},
+    }
+
+    reranked = reranked_semantic_ranking(ranking, adjacency, weight=2.0)
+
+    assert reranked["q"].index("mid") < reranked["q"].index("low"), (
+        f"{reranked['q']}: a pair joined by two distinct relationship types "
+        "did not outrank one joined by a single type, so the eval is counting "
+        "neighbours rather than distinct types"
+    )
+
+
+def test_a_negative_cutoff_is_rejected_rather_than_sliced() -> None:
+    """`hits[:-1]` is "all but the last", not a top-k window.
+
+    Left unguarded, a negative k reports a plausible-looking number from a
+    nonsensical window -- the same class of quietly-wrong measurement this
+    metric exists to prevent (CodeRabbit, #1478).
+    """
+    cases = [SemanticCase("q", "want")]
+    ranking = {"q": ["iso.a", "want", "iso.c"]}
+
+    for k in (-1, -3):
+        with pytest.raises(ValueError, match="non-negative"):
+            score_semantic(cases, ranking, k=k)
+        with pytest.raises(ValueError, match="non-negative"):
+            score_semantic_mrr(cases, ranking, k=k)
+
+
+def test_a_zero_cutoff_retrieves_nothing() -> None:
+    """k=0 is a valid empty window, distinct from an invalid negative one."""
+    cases = [SemanticCase("q", "want")]
+    ranking = {"q": ["want"]}
+
+    assert score_semantic(cases, ranking, k=0).rows[0]["recall"] == 0.0
+    assert score_semantic_mrr(cases, ranking, k=0) == 0.0
+
+
+# --- the entry point must actually use the new measurements (#1478) ---------
+#
+# Greptile's P1 on #1478: adding a cutoff-aware scorer and an order-sensitive
+# metric changes nothing if the eval's entry path still calls the default
+# full-ranking recall. A capability nothing invokes is indistinguishable from
+# one that was never added.
+
+
+def test_the_cli_scores_both_conditions_at_the_cutoff() -> None:
+    """`main` must pass its cutoff into scoring and score BOTH conditions.
+
+    Asserted by capturing what the scorers were called with, rather than by
+    reading the printed table: a table showing two rows proves the rows were
+    rendered, not that the reranked condition was scored at the cutoff.
+    """
+    from evals import semantic_search
+
+    seen_recall: list[int | None] = []
+    seen_mrr: list[int | None] = []
+    rankings: list[dict[str, list[str]]] = []
+
+    def fake_ranking(
+        target: object, project: str, queries: list[str], top_k: int
+    ) -> dict[str, list[str]]:
+        # Deeper than the cutoff, or reranking has nothing to demote from.
+        assert top_k > ec.SEMANTIC_TOP_K, top_k
+        return {query: ["a", "b", "c", "d"] for query in queries}
+
+    def fake_score(
+        cases: object, ranking: dict[str, list[str]], k: int | None = None
+    ) -> ScoreResult:
+        seen_recall.append(k)
+        rankings.append(ranking)
+        return ScoreResult(
+            rows=[
+                ScoreRow(
+                    category="retrieval",
+                    label=ec.SEMANTIC_LABEL,
+                    tp=1,
+                    fp=0,
+                    fn=0,
+                    precision=1.0,
+                    recall=1.0,
+                    f1=1.0,
+                )
+            ],
+            location=LocationStats(0, 0, 0, 0.0, 0),
+            diff={},
+        )
+
+    def fake_mrr(
+        cases: object, ranking: dict[str, list[str]], k: int | None = None
+    ) -> float:
+        seen_mrr.append(k)
+        return 1.0
+
+    with mock.patch.multiple(
+        semantic_search,
+        cgr_semantic_ranking=fake_ranking,
+        proximity_edges=lambda *_a, **_kw: {},
+        score_semantic=fake_score,
+        score_semantic_mrr=fake_mrr,
+    ):
+        semantic_search.main(target=Path("codebase_rag"), top_k=ec.SEMANTIC_TOP_K)
+
+    # Both conditions, both metrics, all at the cutoff -- not the default None.
+    assert seen_recall == [ec.SEMANTIC_TOP_K, ec.SEMANTIC_TOP_K], seen_recall
+    assert seen_mrr == [ec.SEMANTIC_TOP_K, ec.SEMANTIC_TOP_K], seen_mrr
+    assert len(rankings) == 2, "only one condition was scored"
+
+
+def test_the_cli_rejects_a_retain_that_leaves_nothing_to_demote() -> None:
+    """retain=1 truncates at the cutoff, reintroducing #1474 at the call site.
+
+    With no candidates below k, no reranking can move a hit across the cutoff
+    and the comparison reports no difference whatever the reranker does.
+    """
+    from evals import semantic_search
+
+    with pytest.raises(typer.BadParameter, match="demote from"):
+        semantic_search.main(target=Path("codebase_rag"), retain=1)
+
+    with pytest.raises(typer.BadParameter, match="at least 1"):
+        semantic_search.main(target=Path("codebase_rag"), top_k=0)

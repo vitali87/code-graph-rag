@@ -209,7 +209,11 @@ def test_the_query_counts_both_endpoints_explicitly() -> None:
 
     query = build_proximity_query([1, 2])
 
-    assert "UNWIND [id(a), id(b)]" in query, query
+    # Both endpoints reach the UNWIND, via the normalised (low, high) pair the
+    # distinct-type counting in #1477 introduced. What matters is that neither
+    # endpoint is dropped, not which expression names them.
+    assert "UNWIND [low, high]" in query, query
+    assert "AS low" in query and "AS high" in query, query
     # A bare undirected match with a single projected endpoint is the shape
     # this replaced; it must not come back.
     assert "RETURN id(a) AS node_id" not in query, query
@@ -235,7 +239,7 @@ def test_self_loops_are_excluded_from_proximity() -> None:
     assert "id(a) <> id(b)" in query, query
 
 
-# --- the shipped query and the eval's adjacency must agree (issue #1474) ----
+# --- the shipped query and the eval's adjacency must agree (issue #1477) ----
 #
 # The three bugs fixed in review on #1467 -- one endpoint of a directed edge
 # going uncounted, self-loops being double-counted, and the CONTAINS_*
@@ -260,11 +264,14 @@ def _degrees_via_shipped_semantics(
     Mirrors `build_proximity_query` clause for clause over tuples:
     `MATCH (a)-[r:REL]->(b)` filtered to `_PROXIMITY_RELS`, both endpoints in
     the node-id list, `id(a) <> id(b)`, then `UNWIND [id(a), id(b)]` counting
-    each endpoint once per surviving edge.
+    each endpoint once per DISTINCT relationship TYPE joining the pair
+    (issue #1477).
     """
     from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
 
-    degrees: dict[str, int] = {}
+    # (unordered pair) -> the distinct counted types joining it, matching the
+    # query's `count(DISTINCT type(r))` per pair.
+    kinds: dict[tuple[str, str], set[str]] = {}
     for source, rel_type, target in rels:
         if rel_type not in _PROXIMITY_RELS:
             continue
@@ -272,8 +279,12 @@ def _degrees_via_shipped_semantics(
             continue
         if source == target:  # id(a) <> id(b)
             continue
-        for endpoint in (source, target):  # UNWIND [id(a), id(b)]
-            degrees[endpoint] = degrees.get(endpoint, 0) + 1
+        kinds.setdefault(tuple(sorted((source, target))), set()).add(rel_type)
+
+    degrees: dict[str, int] = {}
+    for (left, right), types in kinds.items():
+        for endpoint in (left, right):  # UNWIND [id(a), id(b)]
+            degrees[endpoint] = degrees.get(endpoint, 0) + len(types)
     return degrees
 
 
@@ -282,24 +293,32 @@ def _degrees_via_eval_adjacency(
 ) -> dict[str, int]:
     """In-set degree the way `evals.semantic_search.proximity_edges` does.
 
-    That helper builds an undirected adjacency SET keyed by qualified name;
-    `reranked_semantic_ranking` then counts `adjacency[qn] & in_set`.
+    That helper builds an undirected adjacency keyed by qualified name whose
+    values are the distinct counted relationship TYPES joining the pair;
+    `reranked_semantic_ranking` then sums those over in-set neighbours
+    (issue #1477).
     """
     from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
 
-    adjacency: dict[str, set[str]] = {}
+    adjacency: dict[str, dict[str, set[str]]] = {}
     for source, rel_type, target in rels:
         if rel_type not in _PROXIMITY_RELS:
             continue
         if source == target:
             continue
-        adjacency.setdefault(source, set()).add(target)
-        adjacency.setdefault(target, set()).add(source)
-    return {
-        qn: len(adjacency.get(qn, set()) & in_set)
-        for qn in in_set
-        if adjacency.get(qn, set()) & in_set
-    }
+        adjacency.setdefault(source, {}).setdefault(target, set()).add(rel_type)
+        adjacency.setdefault(target, {}).setdefault(source, set()).add(rel_type)
+
+    degrees: dict[str, int] = {}
+    for qn in in_set:
+        total = sum(
+            len(types)
+            for neighbour, types in adjacency.get(qn, {}).items()
+            if neighbour in in_set
+        )
+        if total:
+            degrees[qn] = total
+    return degrees
 
 
 def test_directed_edges_boost_both_endpoints_in_both_implementations() -> None:
@@ -382,30 +401,13 @@ def test_the_two_implementations_agree_over_a_mixed_graph() -> None:
     assert set(shipped) == in_set, shipped
 
 
-def test_a_multi_edge_pair_is_a_known_divergence() -> None:
-    """Two nodes joined by SEVERAL counted edges are scored differently.
+def test_distinct_relationship_types_between_one_pair_each_count() -> None:
+    """Two DIFFERENT relationship types joining a pair count as two (#1477).
 
-    Found by the comparison above rather than by inspection, which is the
-    point of comparing implementations at all. The shipped Cypher counts
-    EDGES -- `UNWIND` yields both endpoints once per matching relationship --
-    while `proximity_edges` builds a SET of neighbours, so every extra edge
-    between the same pair collapses to one.
-
-    A pair joined by both CALLS and OVERRIDES therefore contributes twice the
-    proximity in shipped code and once in the model that measures it.
-    Normalisation hides this while one pair dominates; it surfaces as soon as
-    a multi-edge pair competes with a single-edge one. Measured over
-    a-b (two edges) and b-c (one edge):
-
-        shipped: a=0.67  b=1.0  c=0.33
-        eval:    a=0.5   b=1.0  c=0.5
-
-    Pinned rather than fixed: which count is CORRECT is a question about the
-    proximity model (is a pair that both calls and overrides "closer" than one
-    that only calls?), not about this metric change, and answering it inside
-    an eval-scoring fix would ship a silent behaviour change to the reranker.
-    Tracked in issue #1477; this test fails the moment either side changes, so
-    the divergence cannot widen unnoticed.
+    An override that calls up -- `Child.handle` calling `super().handle()` --
+    carries both CALLS and OVERRIDES between the same pair. Those are two
+    genuinely different relationships, not one observed twice, so the pair is
+    more strongly associated than one joined by either alone.
     """
     rels = [("a", "CALLS", "b"), ("a", "OVERRIDES", "b")]
     in_set = {"a", "b"}
@@ -413,10 +415,44 @@ def test_a_multi_edge_pair_is_a_known_divergence() -> None:
     shipped = _degrees_via_shipped_semantics(rels, in_set)
     evaluated = _degrees_via_eval_adjacency(rels, in_set)
 
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
     assert shipped == {"a": 2, "b": 2}, shipped
-    assert evaluated == {"a": 1, "b": 1}, evaluated
-    assert shipped != evaluated, (
-        "the multi-edge divergence is gone; if it was fixed deliberately, "
-        "fold this pair back into test_the_two_implementations_agree_over_a_"
-        "mixed_graph and delete this test"
-    )
+
+
+def test_the_same_relationship_type_repeated_counts_once() -> None:
+    """One relationship observed twice is not a stronger association (#1477).
+
+    A caller invoking a callee on two lines emits two CALLS edges. Counting
+    both would make proximity depend on how many times a function happens to
+    call another, so a callee invoked in a loop body and once after it would
+    outrank one invoked once from otherwise identical structure.
+
+    Measured on this repo, this is the DOMINANT multi-edge shape: 285 of 1115
+    adjacent pairs across three subtrees, and all 51 multi-CALLS pairs in
+    `codebase_rag/tools` were same-direction repeats with zero mutual.
+    """
+    rels = [("a", "CALLS", "b"), ("a", "CALLS", "b"), ("a", "CALLS", "b")]
+    in_set = {"a", "b"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    assert shipped == {"a": 1, "b": 1}, shipped
+
+
+def test_repeated_and_distinct_types_are_told_apart() -> None:
+    """The two multi-edge families must not collapse into each other.
+
+    Without this, counting distinct types could be replaced by "count 1 per
+    pair" and both tests above would still pass -- an implementation that
+    discards the OVERRIDES signal entirely.
+    """
+    repeated = [("a", "CALLS", "b"), ("a", "CALLS", "b")]
+    distinct = [("a", "CALLS", "b"), ("a", "OVERRIDES", "b")]
+    in_set = {"a", "b"}
+
+    assert _degrees_via_shipped_semantics(repeated, in_set) == {"a": 1, "b": 1}
+    assert _degrees_via_shipped_semantics(distinct, in_set) == {"a": 2, "b": 2}
+    assert _degrees_via_eval_adjacency(repeated, in_set) == {"a": 1, "b": 1}
+    assert _degrees_via_eval_adjacency(distinct, in_set) == {"a": 2, "b": 2}

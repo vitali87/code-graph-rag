@@ -6,7 +6,12 @@
 # graph, so it tests cgr's embedding + ranking pipeline; the Qdrant ANN layer
 # only approximates this same ranking.
 from pathlib import Path
-from typing import NamedTuple
+from typing import Annotated, NamedTuple
+
+import typer
+from loguru import logger
+from rich.console import Console
+from rich.table import Table
 
 from codebase_rag import constants as cs
 
@@ -14,6 +19,8 @@ from . import constants as ec
 from .cgr_graph import _capture
 from .score import _prf
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
+
+console = Console()
 
 _FUNCTION = cs.NodeLabel.FUNCTION.value
 _METHOD = cs.NodeLabel.METHOD.value
@@ -86,7 +93,14 @@ def _rank_of(expected_qn: str, hits: list[str], k: int | None) -> int | None:
     Truncating HERE rather than upstream is what makes the score respond to
     order: a reranker returns a permutation, and membership in the full list
     is invariant under permutation (issue #1474).
+
+    A negative `k` is rejected rather than passed to the slice. `hits[:-1]`
+    means "all but the last", so a negative cutoff would silently score a
+    ranking against a nonsensical window and report a plausible-looking number
+    -- the failure this metric exists to stop (CodeRabbit, #1478).
     """
+    if k is not None and k < 0:
+        raise ValueError(f"k must be non-negative, got {k}")
     considered = hits if k is None else hits[:k]
     try:
         return considered.index(expected_qn) + 1
@@ -156,33 +170,39 @@ def score_semantic_mrr(
     return total / len(cases)
 
 
-def proximity_edges(target: Path, project: str) -> dict[str, set[str]]:
+def proximity_edges(target: Path, project: str) -> dict[str, dict[str, set[str]]]:
     """Undirected adjacency between first-party definitions, keyed by qn.
 
     Built from the captured relationship tuples rather than a live graph, so
     the comparison runs in the same harness as the baseline and needs no
     Memgraph. Only the relationship types that mean "these two definitions are
     about the same thing" count -- see `tools/graph_rerank._PROXIMITY_RELS`.
+
+    Each neighbour maps to the DISTINCT relationship types joining the pair,
+    not merely to its presence (issue #1477). The shipped query counts one per
+    distinct type, so recording only "is adjacent" would under-count the
+    override-that-calls-up shape (CALLS + OVERRIDES) and make the eval measure
+    a different quantity from the reranker it grades.
     """
     from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
 
     ingestor = _capture(target, project)
     wanted = set(_PROXIMITY_RELS)
-    adjacency: dict[str, set[str]] = {}
+    adjacency: dict[str, dict[str, set[str]]] = {}
     for _from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
         if rel_type not in wanted:
             continue
         a, b = str(from_val), str(to_val)
         if a == b:
             continue
-        adjacency.setdefault(a, set()).add(b)
-        adjacency.setdefault(b, set()).add(a)
+        adjacency.setdefault(a, {}).setdefault(b, set()).add(rel_type)
+        adjacency.setdefault(b, {}).setdefault(a, set()).add(rel_type)
     return adjacency
 
 
 def reranked_semantic_ranking(
     ranking: dict[str, list[str]],
-    adjacency: dict[str, set[str]],
+    adjacency: dict[str, dict[str, set[str]]],
     weight: float | None = None,
 ) -> dict[str, list[str]]:
     """The same rankings, reordered by in-set graph proximity (issue #385).
@@ -212,9 +232,17 @@ def reranked_semantic_ranking(
         in_set = set(qns)
         # Degree counted only against OTHER HITS for this query, matching the
         # reranker: an edge to some unrelated definition says nothing about
-        # whether this hit belongs with the rest of the result set.
+        # whether this hit belongs with the rest of the result set. Summed over
+        # DISTINCT relationship types per neighbour, which is what the shipped
+        # query's `count(DISTINCT kind)` produces (issue #1477).
         degrees = {
-            position: float(len(adjacency.get(qn, set()) & in_set))
+            position: float(
+                sum(
+                    len(kinds)
+                    for neighbour, kinds in adjacency.get(qn, {}).items()
+                    if neighbour in in_set
+                )
+            )
             for position, qn in index.items()
         }
         highest = max(degrees.values(), default=0.0)
@@ -251,3 +279,75 @@ class _AdjacencyIngestor:
 
     def execute_write(self, query: str, params: dict | None = None) -> None:
         return None
+
+
+def main(
+    target: Annotated[
+        Path, typer.Option(help="cgr source to evaluate semantic retrieval for.")
+    ] = Path(ec.DEFAULT_TARGET),
+    project_name: Annotated[str, typer.Option(help="cgr project name.")] = "",
+    top_k: Annotated[int, typer.Option(help="Cutoff for recall@k and MRR.")] = (
+        ec.SEMANTIC_TOP_K
+    ),
+    retain: Annotated[
+        int,
+        typer.Option(
+            help="Candidates kept before reranking, as a multiple of top_k. "
+            "Must exceed 1 or reranking has nothing to demote from."
+        ),
+    ] = 3,
+) -> None:
+    """Score semantic retrieval with and without graph-proximity reranking.
+
+    Reports recall@k and MRR for both conditions. The reranked condition is
+    scored through the SAME scorer at the SAME cutoff, so the two differ by one
+    variable and any gap is attributable to reranking alone (issue #385).
+
+    Candidates are retained DEEPER than `top_k` and truncated at scoring time.
+    Truncating before reranking would leave it nothing to demote from, and the
+    comparison would report no difference regardless of what reranking did --
+    which is the defect in issue #1474, reintroduced at the call site.
+    """
+    if top_k < 1:
+        raise typer.BadParameter(f"top_k must be at least 1, got {top_k}")
+    if retain < 2:
+        raise typer.BadParameter(
+            f"retain must be at least 2 or reranking has no candidates to "
+            f"demote from, got {retain}"
+        )
+
+    target = target.resolve()
+    project = project_name or target.name
+    cases = [SemanticCase(query, expected) for query, expected in ec.SEMANTIC_CASES]
+    queries = [case.query for case in cases]
+    logger.info("Ranking {} queries against {}", len(queries), target)
+    baseline = cgr_semantic_ranking(target, project, queries, top_k * retain)
+    adjacency = proximity_edges(target, project)
+    reranked = reranked_semantic_ranking(baseline, adjacency)
+
+    table = Table(title=ec.SEMANTIC_TITLE)
+    table.add_column("condition")
+    table.add_column(f"recall@{top_k}", justify="right")
+    table.add_column("MRR", justify="right")
+    for label, ranking in (("baseline", baseline), ("reranked", reranked)):
+        rows = score_semantic(cases, ranking, k=top_k).rows
+        recall = rows[0][ec.SEMANTIC_RECALL_COLUMN] if rows else 0.0
+        table.add_row(
+            label,
+            f"{recall:.4f}",
+            f"{score_semantic_mrr(cases, ranking, k=top_k):.4f}",
+        )
+    console.print(table)
+
+    # A comparison where nothing moved measures nothing; say so rather than
+    # letting an unchanged number read as "reranking made no difference".
+    changed = sum(1 for query in baseline if baseline[query] != reranked.get(query))
+    if not changed:
+        console.print(
+            "[yellow]Reranking changed no ordering, so the two rows above are "
+            "the same measurement twice rather than a comparison.[/yellow]"
+        )
+
+
+if __name__ == "__main__":
+    typer.run(main)
