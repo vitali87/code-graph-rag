@@ -195,22 +195,29 @@ def _build_tool(go: str) -> Path | None:
     return binary if _binary_fresh(binary) else None
 
 
-def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts:
+def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:
+    """Facts from one tool run, or None when the OUTPUT was unusable.
+
+    None rather than empty facts for every failure path below: empty facts is
+    the correct answer for a module the tool analysed and found nothing in, so
+    reusing it for a contract violation makes the two indistinguishable and the
+    degradation invisible (issue #1462).
+    """
     lines = [line for line in stdout.splitlines() if line.strip()]
     if not lines:
         # No output at all: the tool crashed before printing its JSON line.
         logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
-        return _empty_facts()
+        return None
     try:
         payload = json.loads(lines[-1])
     except json.JSONDecodeError:
         logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
-        return _empty_facts()
+        return None
     if not isinstance(payload, dict):
         # Well-formed JSON of the wrong shape (a list or scalar): treat as a
         # tool contract violation and fall back rather than crash indexing.
         logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
-        return _empty_facts()
+        return None
     try:
         facts = GoSemanticFacts(
             call_sites={
@@ -244,7 +251,7 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts:
         # A malformed fact entry (missing key, non-int position, non-object
         # row) must degrade to tree-sitter, never abort the whole index run.
         logger.error(ls.GO_FRONTEND_PARSE_FAILED.format(stdout=stdout, stderr=stderr))
-        return _empty_facts()
+        return None
     if (
         not facts.call_sites
         and not facts.external_sites
@@ -321,6 +328,14 @@ def _run_tool_once(binary: Path, module_root: Path) -> GoSemanticFacts | None:
         )
     except (subprocess.SubprocessError, OSError) as error:
         logger.warning(ls.GO_FRONTEND_RUN_FAILED.format(error=error))
+        return None
+    if proc.returncode != 0:
+        # The tool's own exit code was never consulted, so a crashed run whose
+        # stdout happened to parse -- or was simply empty -- looked exactly
+        # like a module with nothing to report (issue #1462).
+        logger.warning(
+            ls.GO_FRONTEND_RUN_FAILED.format(error=f"exit {proc.returncode}")
+        )
         return None
     return _parse_payload(proc.stdout, proc.stderr)
 

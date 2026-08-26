@@ -129,3 +129,62 @@ def test_a_module_with_no_facts_is_not_recorded_as_degraded(
     facts = run_go_frontend(repo)
 
     assert not facts.degraded_modules, facts.degraded_modules
+
+
+def test_a_crashed_tool_is_recorded_as_degraded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-zero exit is a failure, not an empty result.
+
+    The tool's own exit code was never checked, so a crashed run whose stdout
+    happened to parse -- or was simply empty -- looked exactly like a module
+    with nothing to report.
+    """
+    repo = _two_module_repo(tmp_path)
+    _patch_toolchain(monkeypatch)
+
+    def _run(cmd, **_kwargs):
+        if Path(cmd[1]) == repo:
+            return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="boom")
+        return subprocess.CompletedProcess(cmd, 0, stdout=_PAYLOAD, stderr="")
+
+    monkeypatch.setattr(fe.subprocess, "run", _run)
+
+    facts = run_go_frontend(repo)
+
+    assert facts.degraded_modules, "a crashed tool left no record"
+    assert facts.call_sites, "the surviving module's facts were discarded"
+
+
+@pytest.mark.parametrize(
+    ("stdout", "why"),
+    [
+        ("", "no output at all"),
+        ("not json at all", "unparseable JSON"),
+        ("[1, 2, 3]", "well-formed JSON of the wrong shape"),
+        ('{"calls": [{"file": "s.go"}]}', "a malformed fact entry"),
+    ],
+)
+def test_every_parse_failure_is_recorded_as_degraded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout: str, why: str
+) -> None:
+    """Each parse-failure path must degrade visibly, not silently.
+
+    All four returned empty facts, which is the answer for a module that was
+    analysed and had nothing -- so a tool contract violation was indingishable
+    from a quiet success. Parametrised because they are separate returns and
+    fixing one would otherwise leave the rest silent.
+    """
+    repo = _two_module_repo(tmp_path)
+    _patch_toolchain(monkeypatch)
+
+    def _run(cmd, **_kwargs):
+        if Path(cmd[1]) == repo:
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=_PAYLOAD, stderr="")
+
+    monkeypatch.setattr(fe.subprocess, "run", _run)
+
+    facts = run_go_frontend(repo)
+
+    assert facts.degraded_modules, f"{why} left no record"

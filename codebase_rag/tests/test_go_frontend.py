@@ -109,11 +109,13 @@ def test_parse_payload_without_sections_yields_empty_facts() -> None:
     assert facts.implements == []
 
 
-def test_parse_payload_non_json_yields_empty_facts() -> None:
-    facts = _parse_payload("panic: boom\n")
-    assert facts.call_sites == {}
-    assert facts.external_sites == set()
-    assert facts.implements == []
+def test_parse_payload_non_json_signals_failure() -> None:
+    # None, not empty facts: empty is the answer for a module the tool
+    # analysed and found nothing in, so reusing it for a contract violation
+    # made the two indistinguishable and the degradation invisible (#1462).
+    # The behaviour this originally guarded -- degrade rather than crash --
+    # is unchanged; only the signal is now distinguishable.
+    assert _parse_payload("panic: boom\n") is None
 
 
 def test_go_frontend_is_registered() -> None:
