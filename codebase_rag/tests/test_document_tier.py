@@ -626,6 +626,25 @@ class TestLinksThatAreNotFileReferences:
         )
         self._assert_only_control(mock, tmp_path)
 
+    def test_scheme_relative_url_is_not_a_file_link(self, tmp_path: Path) -> None:
+        """``//host/path`` is a network-path URL, not a repository path.
+
+        It inherits the page's scheme rather than naming a local file, but it
+        starts with a slash, so root-relative resolution would happily map it
+        onto a real repository file and invent an edge to it. The fixture
+        creates exactly that collision: a file at ``example.com/x.md`` that the
+        naive reading would resolve to.
+        """
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": "# Guide\n\n[cdn](//example.com/x.md) [api](api.md)\n",
+                "example.com/x.md": "# Decoy\n",
+                "api.md": "# API\n",
+            },
+        )
+        self._assert_only_control(mock, tmp_path)
+
     def test_mailto_is_not_a_file_link(self, tmp_path: Path) -> None:
         mock = _run(
             tmp_path,
@@ -768,6 +787,27 @@ class TestReferenceStyleLinks:
             (tmp_path / "api.md").resolve().as_posix(),
             (tmp_path / "legacy.md").resolve().as_posix(),
         }
+
+    def test_only_the_first_definition_of_a_label_wins(self, tmp_path: Path) -> None:
+        """CommonMark resolves a duplicated label to its FIRST definition.
+
+        A document that redefines ``[api]`` links to one file, not to both, so
+        emitting an edge per matching definition invents a relationship the
+        document does not state. The second target exists on disk, which is
+        what makes the wrong answer reachable rather than merely unresolved.
+        """
+        mock = _run(
+            tmp_path,
+            {
+                "guide.md": (
+                    "# Guide\n\nSee [the API][api].\n\n"
+                    "[api]: api.md\n[api]: legacy.md\n"
+                ),
+                "api.md": "# API\n",
+                "legacy.md": "# Legacy\n",
+            },
+        )
+        assert _link_targets(mock) == {(tmp_path / "api.md").resolve().as_posix()}
 
     def test_definition_labels_match_case_insensitively(self, tmp_path: Path) -> None:
         """CommonMark matches reference labels case-insensitively."""

@@ -91,6 +91,8 @@ _TEXT_LABELLED_LINKS = frozenset({_COLLAPSED_REFERENCE_LINK, _SHORTCUT_LINK})
 _URI_SCHEME_SEPARATOR = "://"
 _MAILTO_PREFIX = "mailto:"
 _FRAGMENT_PREFIX = "#"
+# A network-path reference ("//host/path"): scheme-relative, so external.
+_NETWORK_PATH_PREFIX = "//"
 # Windows drive letters ("C:/x") would otherwise read as a scheme.
 _MIN_SCHEME_LENGTH = 2
 
@@ -346,12 +348,20 @@ def _resolve_definitions(
     reference them.
     """
     resolved: list[tuple[int, int, str]] = []
+    # CommonMark resolves a duplicated label to its FIRST definition, so a
+    # document that redefines `[api]` links to one file rather than to both.
+    # `_collect_by_type` returns definitions in source order, which is what
+    # makes "first seen wins" the same as "first in the document".
+    seen: set[str] = set()
     for node in _collect_by_type(root, _LINK_REFERENCE_DEFINITION):
         label_node = _first_child(node, _LINK_LABEL)
         destination = _first_child(node, _LINK_DESTINATION)
         if label_node is None or destination is None:
             continue
         label = _normalise_label(_decode(label_node, source).strip("[]"))
+        if label in seen:
+            continue
+        seen.add(label)
         if label in used_labels:
             resolved.append((node.start_byte, 0, _decode(destination, source)))
     return resolved
@@ -365,6 +375,12 @@ def _is_external(destination: str) -> bool:
     edges to files that do not exist.
     """
     if not destination or destination.startswith(_FRAGMENT_PREFIX):
+        return True
+    # "//host/path" inherits the page's scheme; it names a host, not a file.
+    # It begins with a slash, so root-relative resolution would otherwise map
+    # it onto a repository path and invent an edge whenever one happens to
+    # exist there.
+    if destination.startswith(_NETWORK_PATH_PREFIX):
         return True
     if _URI_SCHEME_SEPARATOR in destination:
         return True
