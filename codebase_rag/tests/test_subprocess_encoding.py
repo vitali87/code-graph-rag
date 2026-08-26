@@ -57,9 +57,36 @@ def _subprocess_calls_missing_encoding(tree: ast.AST) -> list[int]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        keywords = {kw.arg for kw in node.keywords if kw.arg}
-        if "encoding" in keywords:
+        values = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+
+        # An `encoding` whose VALUE is None decodes by locale exactly as
+        # omitting it does, so this tests the value rather than the presence
+        # of the keyword. Keying on presence let `encoding=None` silence the
+        # gate while changing no behaviour -- presence-vs-meaning, sitting
+        # inside the guard against it.
+        encoding = values.get("encoding")
+        if encoding is not None and not _is_literal_none(encoding):
             continue
+
+        # `errors=` puts a CHILD PROCESS in text mode on its own, with no
+        # `text=` anywhere. Keying only on text/universal_newlines misses that
+        # spelling.
+        #
+        # Unlike the checks below, this one is restricted to calls that
+        # plausibly spawn a process. `bytes.decode(enc, errors="replace")` is
+        # extremely common here and passes its encoding POSITIONALLY, so an
+        # unrestricted `errors=` rule reported 7 offenders, every one a false
+        # positive on a decode call that was already explicit. Over-reporting
+        # is cheap for the text= rule because `text=True` on a non-subprocess
+        # call is rare; it is not cheap here.
+        if (
+            _looks_like_process_spawn(node)
+            and "errors" in values
+            and not _is_literal_none(values["errors"])
+        ):
+            found.append(node.lineno)
+            continue
+
         decodes = any(
             kw.arg in {"text", "universal_newlines"}
             and isinstance(kw.value, ast.Constant)
@@ -69,6 +96,42 @@ def _subprocess_calls_missing_encoding(tree: ast.AST) -> list[int]:
         if decodes:
             found.append(node.lineno)
     return found
+
+
+def _is_literal_none(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+# Names that spawn a child process. Used ONLY to scope the `errors=` rule,
+# where the text= rule's over-report-is-cheap reasoning does not hold.
+_SPAWNING_NAMES = frozenset(
+    {
+        "run",
+        "Popen",
+        "check_output",
+        "check_call",
+        "call",
+        "create_subprocess_exec",
+        "create_subprocess_shell",
+        "getoutput",
+        "getstatusoutput",
+    }
+)
+
+
+def _looks_like_process_spawn(node: ast.Call) -> bool:
+    """Whether this call plausibly starts a child process.
+
+    Matches on the final attribute or bare name, so `subprocess.run(...)`,
+    `run(...)` imported directly, and `asyncio.create_subprocess_exec(...)`
+    all qualify while `raw.decode(...)` does not.
+    """
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr in _SPAWNING_NAMES
+    if isinstance(func, ast.Name):
+        return func.id in _SPAWNING_NAMES
+    return False
 
 
 def _scan() -> tuple[list[str], list[str], list[str]]:
@@ -121,8 +184,7 @@ def test_no_subprocess_call_decodes_with_the_locale_encoding() -> None:
 
     assert not unreadable, (
         f"{len(unreadable)} file(s) could not be parsed, so this gate did not "
-        "inspect them and cannot claim they are clean:\n"
-        + "\n".join(unreadable[:20])
+        "inspect them and cannot claim they are clean:\n" + "\n".join(unreadable[:20])
     )
 
     assert not offenders, (
@@ -186,3 +248,44 @@ def test_the_detector_recognises_a_bad_call() -> None:
 
     bytes_mode = ast.parse("subprocess.run(['x'], capture_output=True)")
     assert _subprocess_calls_missing_encoding(bytes_mode) == []
+
+
+def test_explicit_encoding_none_is_not_treated_as_safe() -> None:
+    """`encoding=None` decodes by locale exactly as omitting it does.
+
+    The detector skipped on the PRESENCE of an `encoding` keyword rather than
+    its value, so writing `encoding=None` silenced the gate while changing
+    nothing about the behaviour -- the presence-vs-meaning defect this repo
+    keeps hitting, sitting inside the guard against it.
+    """
+    tree = ast.parse("subprocess.run(['x'], text=True, encoding=None)\n")
+
+    assert _subprocess_calls_missing_encoding(tree) == [1]
+
+
+def test_errors_kwarg_enables_text_mode_and_is_detected() -> None:
+    """`errors=` puts the child in text mode without any `text=True`.
+
+    A call with `errors="replace"` and no encoding decodes by locale, so the
+    gate must see it. Keying only on `text`/`universal_newlines` misses an
+    entire spelling of the same defect.
+    """
+    tree = ast.parse("subprocess.run(['x'], errors='replace')\n")
+
+    assert _subprocess_calls_missing_encoding(tree) == [1]
+
+
+def test_a_bytes_mode_call_is_still_ignored() -> None:
+    """No text mode means no decoding, so nothing to get wrong.
+
+    Paired with the two above so the widened detector cannot be implemented by
+    flagging every call -- that would pass both new tests while burying the
+    gate in false positives.
+    """
+    tree = ast.parse(
+        "subprocess.run(['x'], capture_output=True)\n"
+        "subprocess.run(['x'], text=True, encoding='utf-8')\n"
+        "subprocess.run(['x'], errors=None)\n"
+    )
+
+    assert _subprocess_calls_missing_encoding(tree) == []
