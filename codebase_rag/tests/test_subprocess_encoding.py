@@ -71,13 +71,18 @@ def _subprocess_calls_missing_encoding(tree: ast.AST) -> list[int]:
     return found
 
 
-def test_no_subprocess_call_decodes_with_the_locale_encoding() -> None:
-    """An explicit encoding at every decoding call site.
+def _scan() -> tuple[list[str], list[str], list[str]]:
+    """Offenders, files successfully parsed, and files that could not be.
 
-    Without this gate the next `subprocess.run` written re-introduces the bug,
-    which is exactly what happened between the oracles being written and #1454.
+    Parsed and unreadable are returned separately because they answer
+    different questions: a clean run means "these N files were inspected and
+    none offend", which is only meaningful if N is large AND the unreadable
+    list is empty. Collapsing them lets a tree that fails to parse read as a
+    tree with no offenders.
     """
     offenders: list[str] = []
+    parsed: list[str] = []
+    unreadable: list[str] = []
     for package in _SCANNED:
         for path in sorted((_REPO_ROOT / package).rglob("*.py")):
             rel = path.relative_to(_REPO_ROOT).as_posix()
@@ -86,10 +91,22 @@ def test_no_subprocess_call_decodes_with_the_locale_encoding() -> None:
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except (OSError, SyntaxError):
+                unreadable.append(rel)
                 continue
+            parsed.append(rel)
             offenders.extend(
                 f"{rel}:{line}" for line in _subprocess_calls_missing_encoding(tree)
             )
+    return offenders, parsed, unreadable
+
+
+def test_no_subprocess_call_decodes_with_the_locale_encoding() -> None:
+    """An explicit encoding at every decoding call site.
+
+    Without this gate the next `subprocess.run` written re-introduces the bug,
+    which is exactly what happened between the oracles being written and #1454.
+    """
+    offenders, _parsed, _unreadable = _scan()
 
     assert not offenders, (
         f"{len(offenders)} call(s) decode subprocess output with the locale "
@@ -101,12 +118,38 @@ def test_no_subprocess_call_decodes_with_the_locale_encoding() -> None:
 def test_the_scan_actually_reaches_the_source_tree() -> None:
     """A control: the gate above passes vacuously if it parses nothing.
 
-    An empty file list and a clean tree are indistinguishable in the assertion
-    above, which is the failure this repo has been bitten by repeatedly.
-    """
-    scanned = [p for pkg in _SCANNED for p in (_REPO_ROOT / pkg).rglob("*.py")]
+    An empty file list and a clean tree are indistinguishable in the gate's
+    assertion, which is the failure this repo has been bitten by repeatedly.
 
-    assert len(scanned) > 100, f"only {len(scanned)} files scanned; wrong root?"
+    Counts files the gate actually PARSED, not paths `rglob` discovered. An
+    earlier version counted discovery, which could not tell a scanned tree
+    from one where every single file raised on `ast.parse` and was skipped --
+    the control would still have seen a thousand paths and passed while the
+    gate inspected nothing. Discovery is not inspection.
+    """
+    _offenders, parsed, _unreadable = _scan()
+
+    assert len(parsed) > 100, f"only {len(parsed)} files parsed; wrong root?"
+
+
+def test_every_discovered_file_parses() -> None:
+    """No file may be silently skipped.
+
+    The gate swallows OSError and SyntaxError so one unparseable file cannot
+    fail the build for an unrelated reason. That is the right behaviour for
+    the gate and the wrong behaviour to leave unmeasured: a file it cannot
+    read is a file it cannot check, and the gate's silence would look
+    identical to a clean result.
+
+    Asserting emptiness here keeps the skip non-silent -- if a file ever
+    becomes unreadable, this names it rather than the gate quietly shrinking.
+    """
+    _offenders, _parsed, unreadable = _scan()
+
+    assert not unreadable, (
+        f"{len(unreadable)} file(s) could not be parsed and were therefore "
+        "never checked for locale decoding:\n" + "\n".join(unreadable[:20])
+    )
 
 
 def test_the_detector_recognises_a_bad_call() -> None:
