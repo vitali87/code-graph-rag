@@ -13,15 +13,42 @@ flag rather than for the flag alone.
 """
 
 import re
+from pathlib import Path
 
 import pytest
 
 from codebase_rag import logs
 
+_LANGUAGE_SUPPORT_DOC = (
+    Path(__file__).resolve().parents[2] / "docs/architecture/language-support.md"
+)
+
 # "Run 'cgr start --clean'" and friends: an imperative followed by a command
-# containing --clean, up to the closing quote. `--update-graph` appearing
-# anywhere inside that command is what makes the advice correct.
-_REMEDY = re.compile(r"run\s+'([^']*--clean[^']*)'", re.IGNORECASE)
+# containing --clean. `--update-graph` appearing anywhere inside that command is
+# what makes the advice correct.
+#
+# Three delimiter forms are recognised, because a remedy is equally dangerous
+# however it happens to be punctuated: single-quoted, backticked, and bare
+# (running to sentence punctuation or end of line). The `run` imperative stays
+# mandatory -- it is what separates advice from prose that merely discusses the
+# flag, which `test_prose_about_clean_is_not_flagged` pins.
+_REMEDY = re.compile(
+    r"run\s+(?:'([^'\n]*--clean[^'\n]*)'"
+    r"|`([^`\n]*--clean[^`\n]*)`"
+    r"|([^'\"`\n]*?--clean[^'\"`\n,.;:!?]*))",
+    re.IGNORECASE,
+)
+
+
+def _commands(text: str) -> list[str]:
+    """Every remedy command in `text`, whichever delimiter form it used.
+
+    `_REMEDY` has one capture group per delimiter form, so each match yields a
+    tuple with exactly one non-empty element.
+    """
+    return [
+        group.strip() for match in _REMEDY.findall(text) for group in match if group
+    ]
 
 
 def _string_constants() -> dict[str, str]:
@@ -35,7 +62,7 @@ def _string_constants() -> dict[str, str]:
 def _remedies() -> list[tuple[str, str]]:
     found = []
     for name, value in _string_constants().items():
-        for command in _REMEDY.findall(value):
+        for command in _commands(value):
             found.append((name, command))
     return found
 
@@ -77,6 +104,40 @@ class TestCleanRemedyStrings:
     @pytest.mark.parametrize(
         "text",
         [
+            "Run `cgr start --clean` to rebuild it from scratch.",
+            "run `cgr start --clean --yes` to fix this",
+            "Run cgr start --clean to rebuild it from scratch.",
+            "run cgr start --clean --yes, then re-index",
+        ],
+    )
+    def test_detector_catches_unquoted_and_backticked_remedies(self, text: str) -> None:
+        """A remedy is dangerous however it is punctuated (CodeRabbit, #1444).
+
+        The original matcher only inspected single-quoted commands, so a string
+        saying "Run `cgr start --clean`" recommended destructive cleanup while
+        `test_no_remedy_recommends_bare_clean` stayed green -- a hole in the very
+        guard that exists to have none.
+        """
+        commands = _commands(text)
+        assert commands
+        assert all("--update-graph" not in c for c in commands)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Run `cgr start --clean --update-graph` to rebuild it.",
+            "Run cgr start --clean --update-graph to rebuild it.",
+        ],
+    )
+    def test_detector_accepts_corrected_unquoted_forms(self, text: str) -> None:
+        """The corrected wording must pass in every delimiter form too."""
+        commands = _commands(text)
+        assert commands
+        assert all("--update-graph" in c for c in commands)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
             "Run 'cgr start --clean' to rebuild it from scratch.",
             "run 'cgr start --clean --yes' to fix this",
         ],
@@ -88,14 +149,14 @@ class TestCleanRemedyStrings:
         matching is broken. Planting the exact phrasing the rule exists to
         forbid proves it is the former.
         """
-        commands = _REMEDY.findall(text)
+        commands = _commands(text)
         assert commands
         assert all("--update-graph" not in c for c in commands)
 
     def test_detector_accepts_the_corrected_form(self) -> None:
         """The fixed wording must pass, or the rule would forbid the remedy too."""
         text = "Run 'cgr start --clean --update-graph' to rebuild it."
-        commands = _REMEDY.findall(text)
+        commands = _commands(text)
         assert commands
         assert all("--update-graph" in c for c in commands)
 
@@ -106,7 +167,23 @@ class TestCleanRemedyStrings:
         this keeps a future tightening of the rule from flagging it.
         """
         assert "--clean" in logs.MG_LIST_PROJECTS_FAILED
-        assert not _REMEDY.findall(logs.MG_LIST_PROJECTS_FAILED)
+        assert not _commands(logs.MG_LIST_PROJECTS_FAILED)
+
+    def test_docs_name_the_mtime_mechanism(self) -> None:
+        """The skip rule is an mtime comparison, not content hashing (#1444).
+
+        `graph_updater.py` skips a file when `filepath.stat().st_mtime <=
+        cache_mtime`. Saying only "files not modified since the last sync"
+        reads as content-based detection, which would make the parser-migration
+        warning sound avoidable: touching a file forces a re-parse even when its
+        content is identical, and that is precisely the distinction a user
+        forcing a migration needs.
+        """
+        doc = _LANGUAGE_SUPPORT_DOC.read_text(encoding="utf-8")
+        assert "mtime" in doc, (
+            "language-support.md must name the mtime comparison explicitly "
+            "rather than implying content-based change detection"
+        )
 
     @pytest.mark.parametrize(
         "text",
@@ -127,4 +204,4 @@ class TestCleanRemedyStrings:
         bare form. These phrasings recur whenever someone documents the flag
         properly, so they are pinned rather than left to chance.
         """
-        assert not _REMEDY.findall(text)
+        assert not _commands(text)
