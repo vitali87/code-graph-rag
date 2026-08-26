@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import resource
+import os
+import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -34,6 +35,21 @@ from codebase_rag import constants as cs
 # silent factor-of-1024 error in a published table, so it is converted rather
 # than reported raw.
 _RSS_SCALE = 1 if sys.platform == "darwin" else 1024
+
+# `resource` is Unix-only and this repo runs Windows CI, so an unconditional
+# top-level import makes the module unimportable there -- collection fails
+# before any measurement can run. Absent it, memory is reported as unavailable
+# rather than guessed.
+try:  # pragma: no cover - platform-dependent
+    import resource
+except ModuleNotFoundError:  # pragma: no cover - Windows
+    resource = None  # type: ignore[assignment]
+
+# Sentinel for "this platform cannot report peak memory". Distinct from 0,
+# which would read as "the run used no memory".
+RSS_UNAVAILABLE = -1
+
+_CHILD_ENV_FLAG = "CGR_BENCH_INDEXING_CHILD"
 
 
 @dataclass(frozen=True)
@@ -55,7 +71,15 @@ class IndexingMeasurement:
     peak_rss_bytes: int
 
 
-def _peak_rss_bytes() -> int:
+def _self_peak_rss_bytes() -> int:
+    """This process's peak RSS, or `RSS_UNAVAILABLE` where unsupported.
+
+    Only meaningful in the freshly-spawned child, whose high-water mark starts
+    clean. Read in the parent it is the cumulative peak of everything that
+    process has ever done.
+    """
+    if resource is None:
+        return RSS_UNAVAILABLE
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * _RSS_SCALE
 
 
@@ -71,19 +95,57 @@ def _cgr_version() -> str:
 
 
 def measure_indexing(corpus: Path, project_name: str) -> IndexingMeasurement:
-    """Index `corpus` once and report what it cost.
+    """Index `corpus` once in a fresh subprocess and report what it cost.
+
+    The subprocess is what makes the memory figure meaningful. `ru_maxrss` is
+    a process high-water mark, so measuring in-process attributes any earlier
+    allocation to the indexing run: a released 128 MiB buffer makes a one-file
+    index report 128 MiB. Subtracting two readings does not rescue it either,
+    because once the prior high-water exceeds the run's own peak the
+    difference is zero or negative. Only a new process starts clean.
 
     Raises on a corpus with no indexable files rather than reporting zeroes:
     "0 files in 0.01s" reads like a very fast index rather than like a
     benchmark that measured nothing, and it is the published-number version of
     the silent-smaller-than-truth failure.
     """
+    corpus = corpus.resolve()
+    if os.environ.get(_CHILD_ENV_FLAG):
+        # Already the child: measure directly, and let the peak be this
+        # process's, which is exactly the run's.
+        return _measure_in_this_process(corpus, project_name)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            __spec__.name,
+            str(corpus),
+            "--project-name",
+            project_name,
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        # Handled below: the child's stderr is surfaced in the raised message,
+        # which says more than CalledProcessError's return code alone.
+        check=False,
+        env={**os.environ, _CHILD_ENV_FLAG: "1"},
+        cwd=Path(__file__).resolve().parent.parent,
+    )
+    if completed.returncode != 0:
+        raise ValueError(
+            f"benchmark subprocess failed ({completed.returncode}): "
+            f"{completed.stderr.strip()[-2000:]}"
+        )
+    return IndexingMeasurement(**json.loads(completed.stdout))
+
+
+def _measure_in_this_process(corpus: Path, project_name: str) -> IndexingMeasurement:
     # Imported here rather than at module scope so that `--help` and the
     # dataclass stay usable without paying the parser-loading cost.
     from evals.cgr_graph import _capture
-
-    corpus = corpus.resolve()
-    rss_before = _peak_rss_bytes()
 
     start = time.perf_counter()
     ingestor = _capture(corpus, project_name)
@@ -109,19 +171,25 @@ def measure_indexing(corpus: Path, project_name: str) -> IndexingMeasurement:
         node_count=len(ingestor.nodes),
         edge_count=len(ingestor.rels),
         duration_seconds=duration,
-        # The delta would be negative whenever the peak was already set by
-        # earlier work in this process, so report the peak itself.
-        peak_rss_bytes=max(_peak_rss_bytes(), rss_before),
+        # This process was spawned for this one measurement, so its own peak
+        # IS the run's peak -- no baseline to subtract and nothing earlier to
+        # attribute.
+        peak_rss_bytes=_self_peak_rss_bytes(),
     )
 
 
 def format_markdown_row(result: IndexingMeasurement) -> str:
     """One README table row, carrying its own provenance."""
-    mib = result.peak_rss_bytes / (1024 * 1024)
+    if result.peak_rss_bytes == RSS_UNAVAILABLE:
+        # "n/a" rather than 0 MiB: a platform that cannot report memory must
+        # not publish a figure that reads as a measurement.
+        memory = "n/a"
+    else:
+        memory = f"{result.peak_rss_bytes / (1024 * 1024):.0f} MiB"
     return (
         f"| Indexing time — {result.corpus_name}, {result.file_count} files "
         f"(cgr {result.cgr_version}) | {result.duration_seconds:.1f}s | "
-        f"{result.node_count} nodes / {result.edge_count} edges | {mib:.0f} MiB |"
+        f"{result.node_count} nodes / {result.edge_count} edges | {memory} |"
     )
 
 

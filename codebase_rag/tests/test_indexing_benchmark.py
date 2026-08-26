@@ -9,6 +9,7 @@ could not actually take.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -96,3 +97,71 @@ def test_the_markdown_row_carries_what_was_measured(tmp_path: Path) -> None:
     assert str(result.file_count) in row
     # A pipe-delimited row, so it can be pasted into the README table.
     assert row.startswith("|") and row.endswith("|")
+
+
+def test_peak_memory_is_local_to_the_run_not_the_process(tmp_path: Path) -> None:
+    """A prior allocation in this process must not inflate the reported peak.
+
+    `ru_maxrss` is a process high-water mark, so a benchmark reading it
+    directly attributes any earlier allocation to the indexing run. Greptile
+    reproduced exactly that: after a released 128 MiB buffer, a one-file index
+    reported the stale 128 MiB peak.
+
+    The property is INVARIANCE to a prior parent allocation, not an absolute
+    ceiling. An earlier draft asserted `peak < ballast_size` and failed on a
+    correct implementation, because a child that imports the parsers
+    legitimately peaks well above any ballast this test would allocate. That
+    threshold measured "is the run small" when the question is "does the
+    parent's history leak in".
+
+    Allocating and releasing the buffer BETWEEN the two measurements is what
+    gives the test its teeth: in-process `ru_maxrss` would raise the second
+    reading to at least the ballast, while a subprocess measurement is
+    unmoved.
+    """
+    corpus = _write_corpus(tmp_path / "repo", files=1)
+
+    before = measure_indexing(corpus, project_name="bench_fixture")
+
+    ballast = bytearray(192 * 1024 * 1024)
+    ballast_size = len(ballast)
+    del ballast
+
+    after = measure_indexing(corpus, project_name="bench_fixture")
+
+    # Same corpus, same work: the ballast must not show up in the second
+    # reading. Allow generous jitter for allocator noise between two real
+    # indexing runs, but far less than the ballast a leak would contribute.
+    drift = abs(after.peak_rss_bytes - before.peak_rss_bytes)
+    assert drift < ballast_size // 2, (
+        f"peak moved by {drift} bytes across a released {ballast_size}-byte "
+        "parent allocation; the reported peak is tracking the parent process "
+        "rather than the indexing run"
+    )
+
+
+def test_the_benchmark_imports_where_resource_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows has no `resource` module, and this repo runs Windows CI.
+
+    An unconditional top-level `import resource` makes the module unimportable
+    there -- collection fails before any argument handling or measurement.
+    """
+    import builtins
+    import importlib
+
+    real_import = builtins.__import__
+
+    def _no_resource(name, *args, **kwargs):
+        if name == "resource":
+            raise ModuleNotFoundError("No module named 'resource'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_resource)
+    monkeypatch.delitem(sys.modules, "benchmarks.bench_indexing", raising=False)
+    monkeypatch.delitem(sys.modules, "resource", raising=False)
+
+    module = importlib.import_module("benchmarks.bench_indexing")
+
+    assert module.measure_indexing is not None
