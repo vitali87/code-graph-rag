@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -264,6 +265,48 @@ def test_non_finite_sample_weights_default_to_one():
     assert _sample_weight([2.5], 0) == 2.5
 
 
+def test_dotnet_trace_probe_rejects_a_tool_that_cannot_run(tmp_path, monkeypatch):
+    """A present-but-unrunnable dotnet-trace must read as absent (issue #1449).
+
+    A global tool installed against a runtime that is not present is a real
+    file, with the executable bit set, that exits non-zero the moment it is
+    invoked ("You must install .NET to run this application", exit 131). A
+    guard that asks `Path.exists()` answers "is there a file here", which is
+    not the question `skipif` needs answered, so the suite fails on an
+    environment problem with a message about .NET rather than skipping.
+
+    The candidate on disk is real, so discovery is genuinely exercised, but
+    the PROBE's exit status is mocked. Writing an executable that exits with a
+    chosen status means a ``#!/bin/sh`` script, which Windows cannot run, so a
+    real fixture would fail the positive control on a third of the CI matrix
+    for a reason unrelated to what is under test. Mocking the one call keeps
+    the test meaningful everywhere.
+    """
+    fake_home = tmp_path / "home"
+    tools = fake_home / ".dotnet" / "tools"
+    tools.mkdir(parents=True)
+    candidate = tools / "dotnet-trace"
+    candidate.touch()
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    # Nothing on PATH, so the global-tools directory is the only candidate.
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+
+    def _probe(returncode: int):
+        return subprocess.CompletedProcess(args=[], returncode=returncode, stdout="")
+
+    # An apphost whose runtime is missing exits 131 however it is invoked.
+    with patch("subprocess.run", return_value=_probe(131)):
+        assert _runnable_dotnet_trace() is None
+
+    # Positive control: the same probe must still ACCEPT a working tool, or
+    # this test would pass just as well against a guard that returns None
+    # unconditionally. Same file, same discovery route -- only the exit status
+    # differs, which is the single dimension under test.
+    with patch("subprocess.run", return_value=_probe(0)):
+        assert _runnable_dotnet_trace() == str(candidate)
+
+
 def _dotnet_with_sdk() -> str | None:
     """The dotnet path only when an SDK is installed (not a runtime-only setup).
 
@@ -287,17 +330,44 @@ def _dotnet_with_sdk() -> str | None:
     return dotnet if probe.returncode == 0 and probe.stdout.strip() else None
 
 
-def _dotnet_trace() -> str | None:
-    """dotnet-trace on PATH, or in the default global-tools directory."""
+def _runnable_dotnet_trace() -> str | None:
+    """dotnet-trace, only when it can actually run (issue #1449).
+
+    Discovery is PATH first, then the default global-tools directory. Presence
+    is not the question `skipif` needs answered, though: a global tool
+    installed against a runtime that is not present is a real file with the
+    executable bit set that exits 131 the moment it is invoked ("You must
+    install .NET to run this application"). Asking `Path.exists()` reports that
+    tool as available and the live test then fails on an environment problem,
+    with a message about .NET rather than about the behaviour under test.
+
+    So the tool is probed by invoking it, the same way `_dotnet_with_sdk`
+    probes for an SDK. That covers every reason it cannot launch rather than
+    the one error string currently observed, and it keeps the skip behaviour
+    symmetric: the build step already skips for an unreachable NuGet or a
+    too-old SDK, and this was the one dependency checked by presence alone.
+    """
     found = shutil.which("dotnet-trace")
-    if found:
-        return found
-    candidate = Path.home() / ".dotnet" / "tools" / "dotnet-trace"
-    return str(candidate) if candidate.exists() else None
+    if found is None:
+        candidate = Path.home() / ".dotnet" / "tools" / "dotnet-trace"
+        if not candidate.exists():
+            return None
+        found = str(candidate)
+    try:
+        probe = subprocess.run(
+            [found, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return found if probe.returncode == 0 else None
 
 
 _dotnet = _dotnet_with_sdk()
-_dotnet_trace = _dotnet_trace()
+_dotnet_trace = _runnable_dotnet_trace()
 _NET_NETWORK_ERRORS = (
     "unable to load the service index",
     "no such host",
