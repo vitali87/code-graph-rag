@@ -85,6 +85,11 @@ GO_FRONTEND_PARSE_FAILED = (
     "stdout: {stdout}\nstderr: {stderr}"
 )
 GO_FRONTEND_RUN_FAILED = "Go frontend tool did not finish ({error}); using tree-sitter"
+GO_FRONTEND_ANCHOR_DEGRADED = (
+    "Go frontend tool failed for module anchor {anchor}; that module falls back "
+    "to tree-sitter while the others keep their compiler facts. Recorded in "
+    "degraded_modules so the mixture is not silent."
+)
 GO_FRONTEND_NO_FACTS = (
     "Go frontend produced no facts; every join falls back to tree-sitter. "
     "Tool diagnostics:\n{stderr}"
