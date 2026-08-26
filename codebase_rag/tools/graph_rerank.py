@@ -33,10 +33,21 @@ from ..services import QueryProtocol
 # tuning it before there is a corpus to tune against would be fitting noise.
 DEFAULT_PROXIMITY_WEIGHT = 0.25
 
-# Edges that mean "these two definitions are about the same thing". CONTAINS_*
-# and DEFINES are structural containment, CALLS and IMPORTS are use, INHERITS
-# and OVERRIDES are type relationships. All are undirected for this purpose:
-# a caller and its callee are equally in the same neighbourhood.
+# Edges that mean "these two definitions are about the same thing". DEFINES and
+# DEFINES_METHOD are structural containment, CALLS and IMPORTS are use, INHERITS
+# and OVERRIDES are type relationships. All are undirected for this purpose: a
+# caller and its callee are equally in the same neighbourhood.
+#
+# CONTAINS_* is deliberately EXCLUDED, and the reason is that it could not
+# contribute rather than that it is unwanted. Those five edges join
+# Project/Folder/File/Module/Section nodes, never two Function or Method nodes
+# — and proximity counts only edges whose BOTH endpoints are in the result set,
+# which for semantic search is Function/Method. Adding them would change no
+# score while implying a relationship the data cannot express.
+#
+# If the result set ever widens to include container nodes, revisit this: the
+# exclusion is a consequence of what search returns, not a judgement about
+# containment.
 _PROXIMITY_RELS = (
     cs.RelationshipType.CALLS.value,
     cs.RelationshipType.DEFINES.value,

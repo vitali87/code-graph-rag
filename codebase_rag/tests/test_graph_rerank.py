@@ -134,3 +134,46 @@ def test_the_weight_bounds_how_far_proximity_can_move_a_result() -> None:
 
     boosted = next(hit for hit in ranked if hit.node_id == 1)
     assert boosted.score == 0.5 + DEFAULT_PROXIMITY_WEIGHT
+
+
+def test_containment_edges_are_excluded_deliberately() -> None:
+    """CONTAINS_* cannot contribute, so its absence is a fact not an oversight.
+
+    Those five edges join Project/Folder/File/Module/Section nodes, never two
+    Function or Method nodes. Proximity counts only edges whose BOTH endpoints
+    are in the result set, and semantic search returns Function/Method, so
+    including them would change no score while implying a relationship the
+    data cannot express.
+
+    Pinned rather than commented: a reader seeing five declared CONTAINS_*
+    values absent from the filter cannot otherwise tell "deliberately omitted"
+    from "forgotten", and the safe-looking change is to add them.
+    """
+    from codebase_rag import constants as cs
+    from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
+
+    containment = {
+        member.value
+        for member in cs.RelationshipType
+        if member.value.startswith("CONTAINS_")
+    }
+
+    assert containment, "no CONTAINS_* values found; the guard has nothing to check"
+    assert not containment & set(_PROXIMITY_RELS), sorted(
+        containment & set(_PROXIMITY_RELS)
+    )
+
+
+def test_the_proximity_query_filters_on_the_declared_relationships() -> None:
+    """The query must use exactly `_PROXIMITY_RELS`, not a drifted subset.
+
+    The tuple and the generated Cypher are two representations of one
+    decision; if they diverge, the constant documents something the query does
+    not do.
+    """
+    from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS, build_proximity_query
+
+    query = build_proximity_query([1, 2])
+
+    for rel in _PROXIMITY_RELS:
+        assert rel in query, rel
