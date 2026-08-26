@@ -14,6 +14,10 @@ PASS_2_FILES = (
 PASS_3_CALLS = "--- Pass 3: Processing Function Calls from AST Cache ---"
 PASS_4_EMBEDDINGS = "--- Pass 4: Generating semantic embeddings ---"
 CPP_FRONTEND_RUNNING = "--- C/C++ libclang frontend: {path} ---"
+EMITTING_FRONTEND_PROBE_FAILED = (
+    "Emitting frontend for {lang} raised while probing availability; skipping "
+    "it and falling back to tree-sitter for that language."
+)
 CPP_FRONTEND_UNAVAILABLE = (
     "C/C++ libclang frontend enabled but libclang is unavailable; using "
     "tree-sitter only (no macro Function nodes or #include IMPORTS). "
