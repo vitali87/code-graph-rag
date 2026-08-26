@@ -100,6 +100,10 @@ _BUILD_LOCK = ".build-lock"
 _LOCK_TRIES = 600
 _LOCK_POLL_SECONDS = 0.5
 _RESTORE_TIMEOUT = 600
+# `dotnet build` may restore packages, so it is bounded above a warm rebuild
+# but below the run timeout: a wedged build must degrade to the tree-sitter
+# backbone rather than block indexing (issue #1462).
+_BUILD_TIMEOUT = 600
 _RUN_TIMEOUT = 900
 _DOTNET_ENV = {"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1"}
 _IGNORE_DIRS = frozenset({"bin", "obj", ".git", "node_modules", "vendor", "packages"})
@@ -215,23 +219,31 @@ def _compile_tool(dotnet: str, src: Path, out: Path) -> bool:
     src.mkdir(parents=True, exist_ok=True)
     for name in _TOOL_SOURCES:
         shutil.copy2(_TOOL_SRC / name, src / name)
-    proc = subprocess.run(
-        [
-            dotnet,
-            "build",
-            str(src),
-            "-c",
-            "Release",
-            "-o",
-            str(out),
-            "--verbosity",
-            "quiet",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, **_DOTNET_ENV},
-    )
+    try:
+        proc = subprocess.run(
+            [
+                dotnet,
+                "build",
+                str(src),
+                "-c",
+                "Release",
+                "-o",
+                str(out),
+                "--verbosity",
+                "quiet",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_BUILD_TIMEOUT,
+            env={**os.environ, **_DOTNET_ENV},
+        )
+    except subprocess.TimeoutExpired:
+        # A wedged build degrades exactly like a failed one; the caller falls
+        # back to tree-sitter (issue #1462). Raising would turn a hung
+        # toolchain into a failed index.
+        logger.warning(ls.CSHARP_FRONTEND_BUILD_FAILED)
+        return False
     return proc.returncode == 0
 
 
