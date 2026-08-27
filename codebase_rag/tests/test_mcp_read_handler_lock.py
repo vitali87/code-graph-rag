@@ -16,6 +16,15 @@ behavioural test per handler. Three reasons, and the third is the point:
   here rather than shipping. #1443 fixed two handlers with no test, and four
   more were still unlocked -- which is exactly what a per-instance fix leaves
   behind.
+
+The rule is enforced DEFAULT-DENY: every async handler must hold the lock or
+be named in `_NON_GRAPH_HANDLERS`. The first version of this file made the
+claim above while checking only an explicit `_GRAPH_READERS` inventory, so a
+reader missing from that set was never examined -- the suite went green by not
+looking. Greptile demonstrated it by adding an unlocked reader that the tests
+did not notice. The docstring was accurate about the intent and wrong about
+the mechanism, which is the more dangerous way for a test to be wrong: it
+reads as covering a rule it does not enforce.
 """
 
 from __future__ import annotations
@@ -26,9 +35,9 @@ from pathlib import Path
 _TOOLS = Path(__file__).resolve().parents[1] / "mcp" / "tools.py"
 
 # Handlers that read the graph and must therefore serialise against the
-# rebuild. Named explicitly rather than inferred: a heuristic over "reaches
-# self.ingestor" would silently stop covering a handler whose call shape
-# changed, and the failure would look like a pass.
+# rebuild. Kept as a named inventory so the failure message can say which
+# handler tore, but it is NOT what makes the guard total -- see
+# `_NON_GRAPH_HANDLERS` and the default-deny test below.
 _GRAPH_READERS = frozenset(
     {
         "flow_verdict",
@@ -43,6 +52,37 @@ _GRAPH_READERS = frozenset(
         # apply. It needs the lock for the whole run because its answer is
         # composed across several tool calls.
         "ask_agent",
+    }
+)
+
+# Handlers that touch NO graph state and therefore need no lock. This list is
+# the load-bearing one, because the guard is default-deny: every async handler
+# in tools.py must either hold the lock or be named here.
+#
+# That inversion is the whole point. An earlier version checked only
+# `_GRAPH_READERS`, so a graph reader added tomorrow and forgotten from that
+# set was never examined at all -- the test passed by not looking, which is
+# indistinguishable from passing because the handler was locked. Greptile
+# found this by mutation: it added an unlocked reader and the suite stayed
+# green.
+#
+# Inferring readers instead was the obvious alternative and it does not work
+# here. `semantic_search`, `query_code_graph`, `get_code_snippet` and
+# `ask_agent` reach the graph through captured `_tool` objects and never
+# mention `self.ingestor`, so a "reaches self.ingestor" heuristic misses four
+# handlers that genuinely need the lock. Enumerating the SAFE ones is
+# checkable by reading each body once; enumerating the dangerous ones is not.
+#
+# All six below delegate to file-system or AST tools. Adding a handler here
+# is a deliberate claim that it touches no graph state.
+_NON_GRAPH_HANDLERS = frozenset(
+    {
+        "structural_search",
+        "structural_replace",
+        "surgical_replace_code",
+        "read_file",
+        "write_file",
+        "list_directory",
     }
 )
 
@@ -89,11 +129,24 @@ def _holds_ingestor_lock(node: ast.AsyncFunctionDef) -> bool:
 
 
 def _handlers() -> dict[str, ast.AsyncFunctionDef]:
+    """Every async METHOD defined directly on a class in tools.py.
+
+    Scoped to class bodies rather than `ast.walk` over the module, because the
+    default-deny check treats an unrecognised async function as a failure: a
+    module-level async helper is not an MCP handler and would be a false
+    positive that trains readers to add exemptions to silence the guard.
+
+    Direct children only, so a nested closure inside a handler is not mistaken
+    for a handler of its own.
+    """
     tree = ast.parse(_TOOLS.read_text(encoding="utf-8"))
     found: dict[str, ast.AsyncFunctionDef] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef):
-            found[node.name] = node
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for item in node.body:
+            if isinstance(item, ast.AsyncFunctionDef):
+                found[item.name] = item
     return found
 
 
@@ -116,6 +169,68 @@ def test_every_graph_reader_holds_the_ingestor_lock() -> None:
         "an index/update rebuild can tear their read (issue #1471):\n"
         + "\n".join(missing)
     )
+
+
+def test_every_handler_is_either_locked_or_declared_graph_free() -> None:
+    """Default-deny: the guard that actually makes this total.
+
+    Every async handler must hold `_ingestor_lock` or be named in
+    `_NON_GRAPH_HANDLERS`. A new graph reader added without the lock and
+    without a declaration fails HERE, which is the property the module
+    docstring claims and the `_GRAPH_READERS` check alone did not deliver.
+
+    The distinction matters because the omission is silent. A reader missing
+    from an explicit inventory is not reported as unguarded -- it is simply
+    never examined, and the suite goes green for a handler that can return a
+    torn graph read. Requiring an affirmative declaration turns forgetting
+    into a failure instead of a pass.
+    """
+    handlers = _handlers()
+
+    undeclared = sorted(
+        name
+        for name, node in handlers.items()
+        if name not in _NON_GRAPH_HANDLERS and not _holds_ingestor_lock(node)
+    )
+
+    assert not undeclared, (
+        f"{len(undeclared)} MCP handler(s) neither hold _ingestor_lock nor are "
+        "declared graph-free in _NON_GRAPH_HANDLERS. If a handler reads or "
+        "writes the graph, wrap its body in `async with self._ingestor_lock`; "
+        "if it touches no graph state, add it to _NON_GRAPH_HANDLERS with a "
+        "reason (issue #1471):\n" + "\n".join(undeclared)
+    )
+
+
+def test_the_graph_free_declarations_are_not_stale() -> None:
+    """A control on the exemption list, which is the one place to hide a bug.
+
+    `_NON_GRAPH_HANDLERS` suppresses the default-deny check, so a name that no
+    longer exists means the exemption is dead -- and a stale exemption is how a
+    renamed handler would slip back through unguarded.
+    """
+    handlers = _handlers()
+
+    unknown = sorted(_NON_GRAPH_HANDLERS - handlers.keys())
+
+    assert not unknown, (
+        f"{len(unknown)} name(s) in _NON_GRAPH_HANDLERS are not handlers in "
+        "tools.py; the exemption is stale and should be removed:\n"
+        + "\n".join(unknown)
+    )
+
+
+def test_the_two_inventories_are_disjoint() -> None:
+    """Nothing may be declared both a graph reader and graph-free.
+
+    An overlap would be a contradiction that reads as safe: the name is
+    exempted from default-deny while also claiming to need the lock.
+    """
+    overlap = sorted(_GRAPH_READERS & _NON_GRAPH_HANDLERS)
+    assert not overlap, overlap
+
+    both = sorted(_GRAPH_WRITERS & _NON_GRAPH_HANDLERS)
+    assert not both, both
 
 
 def test_every_named_handler_actually_exists() -> None:
