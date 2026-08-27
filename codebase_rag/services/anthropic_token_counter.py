@@ -122,6 +122,24 @@ class TokenCountError(Exception):
     pass
 
 
+class TokenCountAuthError(TokenCountError):
+    """The provider rejected the credential (401/403).
+
+    Distinguished from the base error because the two need opposite
+    responses. A rejected key will NEVER succeed, so retrying is pointless
+    and the user has to change something; a 429 or 5xx is transient and the
+    next refresh probably works.
+
+    Collapsing them left an invalid API key reported as an internal
+    token-count failure, with the provider's raw JSON as the only clue
+    (issue #1493).
+
+    Subclasses `TokenCountError` deliberately: an existing
+    `except TokenCountError` caller keeps working rather than having this
+    escape as an unhandled exception in a background task.
+    """
+
+
 async def count_anthropic_context(
     api_key: str,
     model_id: str,
@@ -149,6 +167,14 @@ async def count_anthropic_context(
         resp = await client.post(
             cs.ANTHROPIC_COUNT_TOKENS_URL, json=payload, headers=headers
         )
+        if resp.status_code in cs.HTTP_AUTH_FAILURE_STATUSES:
+            # The actionable part leads. The status is kept for diagnosis,
+            # but a reader should not have to parse a provider JSON blob to
+            # learn their key is wrong.
+            raise TokenCountAuthError(
+                f"the Anthropic API key was rejected ({resp.status_code}); "
+                "check the key configured for this provider"
+            )
         if resp.status_code >= 400:
             raise TokenCountError(f"{resp.status_code}: {resp.text}")
         return int(resp.json().get("input_tokens", 0))

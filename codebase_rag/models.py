@@ -21,6 +21,11 @@ class SessionState:
     cancelled: bool = False
     permission_mode: PermissionMode = PermissionMode.NORMAL
     context_tokens: int = 0
+    # Whether a rejected-API-key warning has already been emitted this
+    # session. The token counter refreshes on every turn, so without this the
+    # same unactionable-until-restart message repeats and buries the log
+    # (issue #1493).
+    token_auth_warned: bool = False
     target_repo: Path | None = None
     # Cumulative token consumption and USD cost across the session (issue #80).
     total_input_tokens: int = 0

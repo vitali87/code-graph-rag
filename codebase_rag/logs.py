@@ -147,6 +147,11 @@ EMBEDDING_SNIPPET_FAILED = (
 )
 EMBEDDING_BATCH_COMPUTE_FAILED = "Failed to embed batch of {count}: {error}"
 CONTEXT_TOKEN_COUNT_FAILED = "Context token count failed: {error}"
+# A rejected credential, distinct from a transient failure: the user must
+# change something, so it is warned rather than logged at debug (issue #1493).
+CONTEXT_TOKEN_COUNT_AUTH_FAILED = (
+    "Context token counting disabled for this session: {error}"
+)
 NO_SOURCE_FOR = "No source code found for {name}"
 EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
