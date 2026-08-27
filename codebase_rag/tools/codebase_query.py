@@ -43,6 +43,11 @@ _PROJECTED_QUALIFIED_NAME_RE = re.compile(
 # A project name appearing as a LITERAL in the query text, uppercased by the
 # caller. Used to check an aggregate's restriction names the requested
 # project rather than some other one.
+# A Cypher property read, `<entity>.<property>`. Grouping a projection by
+# the entity half says which entities a row exposes, so an entity that
+# contributes properties without its qualified name can be spotted.
+_PROPERTY_READ_RE = re.compile(r"\b([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)")
+
 _PROJECT_LITERAL_RE = re.compile(
     rf"[A-Z0-9_-]+{cs.PROJECT_NAME_DIGEST_MARKER}[0-9A-F]{{{cs.PROJECT_NAME_DIGEST_LEN}}}\.?"
 )
@@ -113,8 +118,14 @@ def requires_project_evidence(
     # A PROJECTED PROPERTY (`x.qualified_name`), not the bare token: an
     # ALIAS containing it -- `RETURN n.name AS qualified_name_of_thing` --
     # returns no qualified name at all, yet satisfied a substring match.
+    #
+    # And EVERY entity whose properties are returned must carry its own,
+    # not just one of them: `RETURN a.qualified_name, b.name, b.path`
+    # yields a row that is partly in-project, where `b`'s name and path
+    # belong to an entity nothing attributes. One entity's qualified name
+    # does not vouch for another's properties.
     if _PROJECTED_QUALIFIED_NAME_RE.search(projection):
-        return True
+        return _every_projected_entity_is_attributable(projection)
     # An aggregate exposes no NAMES but does expose a MAGNITUDE: a scoped
     # caller receiving `count(n)` over every indexed project learns the
     # size of projects they did not ask about. So it counts as evidence
@@ -127,6 +138,25 @@ def requires_project_evidence(
     if not all_aggregates:
         return False
     return _restricts_to_project(cypher_query, project_name)
+
+
+def _every_projected_entity_is_attributable(projection: str) -> bool:
+    """Whether every entity read in `projection` also projects its own qn.
+
+    Cypher property reads are `<entity>.<property>`, so grouping the
+    projection by entity identifier says which entities the row exposes.
+    An entity contributing properties WITHOUT its qualified name cannot be
+    attributed to a project, and the row filter -- which judges a row as a
+    whole -- will keep the row on the strength of some other entity's
+    qualified name.
+
+    Entities reading only their qualified name are fine, as are aggregates
+    and literals, which name no entity at all.
+    """
+    reads: dict[str, set[str]] = {}
+    for entity, prop in _PROPERTY_READ_RE.findall(projection):
+        reads.setdefault(entity, set()).add(prop)
+    return all(cs.CYPHER_QUALIFIED_NAME_TOKEN in props for props in reads.values())
 
 
 def _restricts_to_project(cypher_query: str, project_name: str | None) -> bool:

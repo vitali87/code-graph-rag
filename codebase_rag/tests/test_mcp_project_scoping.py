@@ -425,6 +425,64 @@ class TestAnAggregateLeaksMagnitude:
         )
 
 
+class TestEveryProjectedEntityMustCarryItsQualifiedName:
+    """One entity's qualified name does not vouch for another's properties.
+
+    `MATCH (a)-[x]->(b) RETURN a.qualified_name, b.name, b.path` returns a
+    row that is PARTLY in-project: `a` proves membership, while `b.name`
+    and `b.path` belong to an entity whose qualified name was never
+    projected. The row filter keeps the row -- one value proves membership
+    -- and beta's function name and file path reach an alpha-scoped
+    caller.
+
+    The row filter cannot fix this. Dropping the row loses legitimate data
+    and keeping it leaks, so the query is refused instead, exactly as for
+    a row with no evidence at all.
+    """
+
+    def test_a_second_entity_without_its_qualified_name_is_refused(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (a)-[x]->(b) RETURN a.qualified_name AS qualified_name, "
+            "b.name AS name, b.path AS path"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_both_entities_projecting_a_qualified_name_is_accepted(self) -> None:
+        """The control: the legitimate relationship query must survive.
+
+        Every entity whose properties are returned carries its own
+        qualified name, so every row is attributable and the row filter
+        can judge it.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (a)-[x]->(b) RETURN a.qualified_name AS from_qn, "
+            "b.qualified_name AS to_qn, b.name AS name"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+    def test_one_entity_projecting_several_properties_is_accepted(self) -> None:
+        """The other control: this must not forbid ordinary single-entity queries.
+
+        `n.qualified_name, n.name, n.path` is one entity with three
+        properties, not two entities. Requiring a qualified name per
+        ALIAS rather than per ENTITY would refuse it.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (n:Function) RETURN n.qualified_name AS qualified_name, "
+            "n.name AS name, n.path AS path"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+
 class TestAnAggregateMustBeBoundToTheRequestedProject:
     """Restricting by *a* qualified name is not restricting to *yours*.
 
