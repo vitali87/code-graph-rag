@@ -215,8 +215,7 @@ def test_the_graph_free_declarations_are_not_stale() -> None:
 
     assert not unknown, (
         f"{len(unknown)} name(s) in _NON_GRAPH_HANDLERS are not handlers in "
-        "tools.py; the exemption is stale and should be removed:\n"
-        + "\n".join(unknown)
+        "tools.py; the exemption is stale and should be removed:\n" + "\n".join(unknown)
     )
 
 
@@ -239,19 +238,13 @@ def test_the_lock_detector_rejects_an_unrelated_context_manager() -> None:
     not currently contain.
     """
     locked = ast.parse(
-        "async def h(self):\n"
-        "    async with self._ingestor_lock:\n"
-        "        return 1\n"
+        "async def h(self):\n    async with self._ingestor_lock:\n        return 1\n"
     ).body[0]
     wrong_lock = ast.parse(
-        "async def h(self):\n"
-        "    async with self._unrelated_lock:\n"
-        "        return 1\n"
+        "async def h(self):\n    async with self._unrelated_lock:\n        return 1\n"
     ).body[0]
     not_self = ast.parse(
-        "async def h(self):\n"
-        "    async with other._ingestor_lock:\n"
-        "        return 1\n"
+        "async def h(self):\n    async with other._ingestor_lock:\n        return 1\n"
     ).body[0]
     no_lock = ast.parse("async def h(self):\n    return 1\n").body[0]
 
