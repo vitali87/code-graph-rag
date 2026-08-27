@@ -24,6 +24,7 @@ from ..constants import (
     QUERY_SUMMARY_UNSCOPEABLE,
 )
 from ..schemas import QueryGraphData
+from ..types_defs import ResultRow
 from ..services import QueryProtocol
 from ..services.llm import CypherGenerator
 from ..utils.token_utils import truncate_results_by_tokens
@@ -45,8 +46,8 @@ _PROJECT_NAME_RE = re.compile(
 
 
 def scope_rows_to_project(
-    rows: list[dict[str, object]], project_name: str | None
-) -> list[dict[str, object]]:
+    rows: list[ResultRow], project_name: str | None
+) -> list[ResultRow]:
     """`rows` restricted to one project, or unchanged when none is given.
 
     Enforced HERE rather than in the generated Cypher, because the model
@@ -62,7 +63,7 @@ def scope_rows_to_project(
     if not project_name:
         return rows
     prefix = f"{project_name}{cs.SEPARATOR_DOT}"
-    kept: list[dict[str, object]] = []
+    kept: list[ResultRow] = []
     for row in rows:
         if _row_is_outside(row, prefix):
             continue
@@ -157,7 +158,7 @@ def _looks_like_a_qualified_name(value: str) -> bool:
     return _PROJECT_NAME_RE.fullmatch(head) is not None
 
 
-def _row_is_outside(row: dict[str, object], prefix: str) -> bool:
+def _row_is_outside(row: ResultRow, prefix: str) -> bool:
     """Whether `row` names any project other than the one `prefix` selects.
 
     Every string VALUE is inspected, not a fixed list of key names. The
