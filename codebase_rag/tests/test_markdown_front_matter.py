@@ -217,6 +217,22 @@ class TestParsing:
             "title": "Draft [v2]"
         }
 
+    def test_a_value_that_is_empty_once_unquoted_is_refused(self) -> None:
+        """`k: ""` is non-empty as written and empty once unquoted.
+
+        The emptiness check runs BEFORE quote-stripping, so the quoted form
+        slipped past it and stored an empty string -- asserting the author
+        declared the key empty, which is the claim that guard exists to avoid
+        making (reported on #1488).
+
+        The control keeps the fix from over-reaching: a quoted value with real
+        content must survive, or every quoted string would be dropped.
+        """
+        assert parse_front_matter('---\nk: ""\n---\n') == {}
+        assert parse_front_matter("---\nk: ''\n---\n") == {}
+
+        assert parse_front_matter('---\nk: "x"\n---\n') == {"k": "x"}
+
     def test_an_empty_key_is_refused(self) -> None:
         """`: value` names nothing and must not become a property.
 

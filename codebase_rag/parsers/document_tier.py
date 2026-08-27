@@ -166,7 +166,14 @@ def parse_front_matter(text: str) -> dict[str, str]:
         name = key.strip()
         if not name or name in _RESERVED_FRONT_MATTER_KEYS:
             continue
-        found[name] = value.strip().strip("\"'")
+        # Quote-stripping can empty a value that passed the check above:
+        # `k: ""` is non-empty as written and empty once unquoted. An empty
+        # string asserts the author declared the key empty, which is the claim
+        # the earlier guard exists to avoid making (reported on #1488).
+        unquoted = cleaned.strip("\"'")
+        if not unquoted:
+            continue
+        found[name] = unquoted
     return found
 
 
