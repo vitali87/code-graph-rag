@@ -55,6 +55,78 @@ _MAX_HEADING_LEVEL = 6
 
 DOCUMENT_EXTENSIONS: frozenset[str] = frozenset({".md", ".markdown"})
 
+# YAML front-matter delimiter. The grammar exposes the whole block as a
+# `minus_metadata` node, but its contents are opaque -- tree-sitter-markdown
+# does not parse YAML -- so the pairs are read here.
+_FRONT_MATTER_FENCE = "---"
+
+# Property names a document may NOT declare, because the ingestion layer owns
+# them. A front-matter `path:` would otherwise overwrite the node's real path
+# and break every consumer that resolves a Module back to a file.
+_RESERVED_FRONT_MATTER_KEYS: frozenset[str] = frozenset(
+    {
+        cs.KEY_QUALIFIED_NAME,
+        cs.KEY_NAME,
+        cs.KEY_PATH,
+        cs.KEY_ABSOLUTE_PATH,
+        cs.KEY_START_LINE,
+        cs.KEY_END_LINE,
+        cs.KEY_HEADING_LEVEL,
+    }
+)
+
+
+def parse_front_matter(text: str) -> dict[str, str]:
+    """Read declared YAML front-matter into flat string properties.
+
+    Deliberately NOT a YAML parser. Only top-level `key: value` scalars are
+    read; nested structures, lists and multi-line values are skipped rather
+    than flattened, because a graph node property is a scalar and inventing a
+    representation for a list would be a schema decision this issue does not
+    have (#1448).
+
+    Declared metadata, not inferred: #1448 lists five other bullets that need
+    design decisions about inference and unprompted edits, and this one is
+    separable precisely because it reads what the author wrote.
+
+    Refuses rather than guesses in three cases, each of which would otherwise
+    put non-metadata into node properties:
+
+    - no opening fence on the FIRST line (a `---` elsewhere is a horizontal
+      rule or a setext underline, not front-matter)
+    - no closing fence (an unterminated block would swallow the document)
+    - a reserved key that the ingestion layer owns
+
+    A single malformed line is skipped rather than discarding the block:
+    front-matter is hand-written, so a stray line is likelier than a wholly
+    invalid block, and the valid pairs around it still carry meaning.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != _FRONT_MATTER_FENCE:
+        return {}
+    closing = next(
+        (
+            i
+            for i in range(1, len(lines))
+            if lines[i].strip() == _FRONT_MATTER_FENCE
+        ),
+        None,
+    )
+    if closing is None:
+        return {}
+    found: dict[str, str] = {}
+    for line in lines[1:closing]:
+        key, separator, value = line.partition(":")
+        if not separator:
+            continue
+        # `partition` splits at the FIRST colon only, so a value containing
+        # further colons (`url: https://x/y`) survives intact.
+        name = key.strip()
+        if not name or name in _RESERVED_FRONT_MATTER_KEYS:
+            continue
+        found[name] = value.strip().strip("\"'")
+    return found
+
 # Link grammar nodes. `inline_link` is ``[text](target)``; the destination sits
 # in a `link_destination` child. Reference-style links (``[text][label]``) name
 # a definition elsewhere and carry no destination of their own, so they are not
@@ -476,7 +548,22 @@ class DocumentTier:
             logger.warning("markdown parse failed for {}: {}", file_path, exc)
             return
 
-        module_qn = self._emit_module(file_path, structural_elements)
+        # Declared front-matter becomes Module properties (issue #1448).
+        # Decoded leniently: a document with an invalid byte should still be
+        # indexed, and its metadata is a bonus rather than a precondition.
+        declared = parse_front_matter(source.decode("utf-8", errors="replace"))
+        # Emitted as ONE declared `front_matter` property holding "key=value"
+        # entries, not as a property per key. The graph's node schema is a
+        # fixed property list audited on every ingest, so arbitrary keys would
+        # be undocumented properties -- the audit catches exactly that, and it
+        # is right to: a document could otherwise define any node property it
+        # liked, including ones a future schema wants for something else.
+        front_matter = (
+            {cs.KEY_FRONT_MATTER: [f"{k}={v}" for k, v in sorted(declared.items())]}
+            if declared
+            else None
+        )
+        module_qn = self._emit_module(file_path, structural_elements, front_matter)
         relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
         absolute_path = cached_resolve_posix(file_path)
 
@@ -585,7 +672,10 @@ class DocumentTier:
         return resolved.as_posix()
 
     def _emit_module(
-        self, file_path: Path, structural_elements: dict[Path, str | None]
+        self,
+        file_path: Path,
+        structural_elements: dict[Path, str | None],
+        front_matter: dict[str, str] | None = None,
     ) -> str:
         return emit_flat_module(
             self._ingestor,
@@ -597,6 +687,7 @@ class DocumentTier:
             # would merge "guide.md" and "guide.markdown" onto one Module
             # node and merge their same-named sections with it.
             distinguish_suffix=True,
+            extra_properties=front_matter,
         )
 
     def _emit_section(
