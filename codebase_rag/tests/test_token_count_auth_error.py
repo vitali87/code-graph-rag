@@ -16,11 +16,9 @@ from __future__ import annotations
 
 import httpx
 import pytest
-
-from codebase_rag import constants as cs
-
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
+from codebase_rag import constants as cs
 from codebase_rag.services.anthropic_token_counter import (
     TokenCountAuthError,
     TokenCountError,
@@ -177,9 +175,7 @@ class TestCallerBehaviour:
         monkeypatch.setattr(
             main_mod.logger, "warning", lambda msg, *a, **k: warnings.append(str(msg))
         )
-        monkeypatch.setattr(
-            main_mod.logger, "debug", lambda msg, *a, **k: None
-        )
+        monkeypatch.setattr(main_mod.logger, "debug", lambda msg, *a, **k: None)
 
         async def boom(*_args: object, **_kw: object) -> int:
             raise TokenCountAuthError("the Anthropic API key was rejected (401)")
@@ -205,8 +201,7 @@ class TestCallerBehaviour:
         await main_mod._refresh_context_tokens(_messages())
 
         assert len(warnings) == 1, (
-            f"expected exactly one warning per session, got {len(warnings)}: "
-            f"{warnings}"
+            f"expected exactly one warning per session, got {len(warnings)}: {warnings}"
         )
         assert "API key" in warnings[0] or "rejected" in warnings[0], warnings[0]
 
@@ -250,6 +245,4 @@ class TestCallerBehaviour:
 
         await main_mod._refresh_context_tokens(_messages())
 
-        assert warnings == [], (
-            f"a transient failure warned the user: {warnings}"
-        )
+        assert warnings == [], f"a transient failure warned the user: {warnings}"
