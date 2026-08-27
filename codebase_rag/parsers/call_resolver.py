@@ -1368,15 +1368,29 @@ class CallResolver:
             # is the registry's own scoped query -- iterating the whole
             # registry is not part of the trie protocol at all, and would be
             # a full scan per import even where it happened to work.
-            prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+            #
+            # NO trailing separator. The trie splits the prefix on dots and
+            # walks a node per part, so `"proj.text."` yields a final EMPTY
+            # part that is never a key and the lookup always returns []. An
+            # earlier version passed the dot and the whole case-insensitive
+            # fallback was silently dead (caught in review on #1484). The
+            # boundary is re-established below by requiring the remainder to
+            # start with the separator.
+            prefix = module_qn
             wanted_symbol = _php_fold(symbol)
             found.extend(
                 qn
                 for qn, _ in self.function_registry.find_with_prefix(prefix)
+                # `find_with_prefix` walks whole dot-separated parts, so the
+                # remainder always starts with the separator for a real
+                # descendant. Requiring it re-establishes the boundary the
+                # trailing dot used to provide, and rejects a sibling module
+                # whose name merely starts with this one (`proj.textutil`).
+                if (remainder := qn[len(prefix) :]).startswith(cs.SEPARATOR_DOT)
                 # Direct children only: a nested `module.Class.method` is not
                 # the free function this import names.
-                if cs.SEPARATOR_DOT not in qn[len(prefix) :]
-                and _php_fold(qn[len(prefix) :]) == wanted_symbol
+                and cs.SEPARATOR_DOT not in remainder[1:]
+                and _php_fold(remainder[1:]) == wanted_symbol
             )
         if len(found) != 1:
             return None
