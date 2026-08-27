@@ -56,6 +56,18 @@ PROVIDER_DEFAULT_ENDPOINTS: dict[str, str] = {
     Provider.MINIMAX: MINIMAX_DEFAULT_ENDPOINT,
 }
 
+# Catalogue prefixes to consult per provider, where pydantic-ai splits one
+# vendor across several. `openai-chat` carries five ids absent from
+# `openai` (the search-preview variants and gpt-3.5-turbo-16k), so
+# consulting only `openai:` would reject real models.
+PROVIDER_CATALOGUE_PREFIXES: dict[str, tuple[str, ...]] = {
+    Provider.OPENAI: ("openai", "openai-chat"),
+    Provider.GOOGLE: ("google", "google-cloud"),
+}
+
+# How many model ids to list when nothing resembles what the user typed.
+MODEL_ID_SUGGESTION_LIMIT = 20
+
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"

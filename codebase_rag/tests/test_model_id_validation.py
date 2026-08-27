@@ -180,6 +180,64 @@ class TestCustomEndpoints:
             validate_model_id(config)
 
 
+class TestProviderNameCase:
+    """A capitalised provider name must not switch validation off.
+
+    `_known_model_ids` keys on the provider string, and an unmatched
+    prefix yields an empty set -- which the caller reads as "this provider
+    has no catalogue" and skips the check. So case does not mis-key the
+    lookup, it silently disables the fix. The env path lowercases, but a
+    `ModelConfig` built directly does not.
+    """
+
+    @pytest.mark.parametrize("provider", ["anthropic", "Anthropic", "ANTHROPIC"])
+    def test_the_typo_is_rejected_whatever_the_provider_case(
+        self, provider: str
+    ) -> None:
+        from codebase_rag.providers.base import validate_model_id
+
+        with pytest.raises(ValueError):
+            validate_model_id(_config(provider, "opus-5"))
+
+    @pytest.mark.parametrize("provider", ["anthropic", "Anthropic", "ANTHROPIC"])
+    def test_a_real_id_still_passes_whatever_the_provider_case(
+        self, provider: str
+    ) -> None:
+        """The control: folding case must not reject valid configurations."""
+        from codebase_rag.providers.base import validate_model_id
+
+        validate_model_id(_config(provider, "claude-opus-5"))
+
+
+class TestSplitCatalogues:
+    """One vendor can span several pydantic-ai prefixes.
+
+    `openai-chat` carries five ids that `openai` does not, so consulting a
+    single prefix rejects real models. Enumerated rather than assumed --
+    the set difference was measured, not guessed.
+    """
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "gpt-4o-search-preview",
+            "gpt-4o-mini-search-preview",
+            "gpt-3.5-turbo-16k",
+        ],
+    )
+    def test_an_openai_chat_only_id_is_accepted(self, model_id: str) -> None:
+        from codebase_rag.providers.base import validate_model_id
+
+        validate_model_id(_config(cs.Provider.OPENAI, model_id))
+
+    def test_the_split_catalogue_still_rejects_a_typo(self) -> None:
+        """The control: widening the accepted set must not accept everything."""
+        from codebase_rag.providers.base import validate_model_id
+
+        with pytest.raises(ValueError):
+            validate_model_id(_config(cs.Provider.OPENAI, "gpt4o"))
+
+
 class TestStartupWiring:
     """The check must actually run at startup, not merely exist."""
 

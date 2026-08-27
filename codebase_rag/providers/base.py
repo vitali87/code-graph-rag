@@ -351,7 +351,7 @@ def _serves_own_catalogue(config: ModelConfig) -> bool:
     endpoint = config.endpoint
     if not endpoint:
         return True
-    default = cs.PROVIDER_DEFAULT_ENDPOINTS.get(config.provider)
+    default = cs.PROVIDER_DEFAULT_ENDPOINTS.get(config.provider.lower())
     return default is None or endpoint.rstrip(cs.SEPARATOR_SLASH) == default.rstrip(
         cs.SEPARATOR_SLASH
     )
@@ -365,10 +365,23 @@ def _known_model_ids(provider: str) -> frozenset[str]:
     """
     from pydantic_ai.models import known_model_names
 
-    prefix = f"{provider}{cs.MODEL_STRING_SEPARATOR}"
-    return frozenset(
-        name[len(prefix) :] for name in known_model_names() if name.startswith(prefix)
+    # Lowercased because a `ModelConfig` built directly (rather than through
+    # the env path, which lowercases at config.py) can carry "Anthropic",
+    # and an unmatched prefix yields an empty set -- which this function's
+    # caller reads as "no catalogue" and skips validation entirely. Case
+    # would silently disable the check rather than merely mis-key it.
+    catalogue = cs.PROVIDER_CATALOGUE_PREFIXES.get(
+        provider.lower(), (provider.lower(),)
     )
+    ids: set[str] = set()
+    for entry in catalogue:
+        prefix = f"{entry}{cs.MODEL_STRING_SEPARATOR}"
+        ids.update(
+            name[len(prefix) :]
+            for name in known_model_names()
+            if name.startswith(prefix)
+        )
+    return frozenset(ids)
 
 
 def validate_model_id(config: ModelConfig) -> None:
@@ -402,11 +415,18 @@ def validate_model_id(config: ModelConfig) -> None:
                 suggestions=", ".join(repr(s) for s in suggestions),
             )
         )
+    # Truncated: openai alone lists 78 ids, which renders as several
+    # thousand characters and buries the error it is attached to.
+    listed = sorted(known)
+    shown = listed[: cs.MODEL_ID_SUGGESTION_LIMIT]
+    known_text = ", ".join(shown)
+    if len(listed) > len(shown):
+        known_text += f", ... ({len(listed) - len(shown)} more)"
     raise ValueError(
         ex.MODEL_ID_UNKNOWN_NO_MATCH.format(
             provider=config.provider,
             model_id=config.model_id,
-            known=", ".join(sorted(known)),
+            known=known_text,
         )
     )
 
