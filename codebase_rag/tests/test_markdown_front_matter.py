@@ -258,15 +258,20 @@ class TestIngestion:
             props
         )
 
-    def test_a_document_without_front_matter_gains_no_properties(
+    def test_a_document_without_front_matter_emits_an_empty_list(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        """The control: absence must stay absent.
+        """Absence is emitted as a VALUE, not by omitting the key.
 
-        Emitting empty-string properties for every ordinary document would
-        make "has no declared purpose" indistinguishable from "declares an
-        empty purpose", and would write a property onto every Markdown node
-        in every repository.
+        The ingestor upserts with `SET n += row.props`, which merges: a key
+        omitted on re-ingest keeps its previous value. So omission cannot
+        express "this document has no front-matter" -- it can only fail to
+        contradict whatever was there before.
+
+        An earlier version of this test asserted the opposite, that the
+        property should be absent entirely. That encoded the wrong contract:
+        it read correctly against a single ingest and left the re-ingest path
+        broken, which is where the defect lives (reported on #1488).
         """
         from codebase_rag.tests.conftest import run_updater
         from codebase_rag.types_defs import NodeType
@@ -285,5 +290,51 @@ class TestIngestion:
         ]
 
         assert modules, "no Module node emitted for notes.md"
-        props = modules[0]
-        assert "front_matter" not in props, props
+        assert modules[0].get("front_matter") == [], modules[0]
+
+    def test_removing_front_matter_clears_the_stored_value(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """Re-ingesting a document that DROPPED its front-matter must clear it.
+
+        The case the merge semantics make dangerous: index a file with
+        `purpose: planning`, delete the block, re-index. If the second pass
+        omits the key, `SET n += props` leaves the old value bound and the
+        graph asserts a declaration the file no longer makes.
+
+        Asserts the SECOND emission carries an empty list rather than merely
+        differing from the first -- "changed" would also be satisfied by
+        writing some other wrong value.
+        """
+        from codebase_rag.tests.conftest import run_updater
+        from codebase_rag.types_defs import NodeType
+
+        def module_props(ingestor: MagicMock) -> list[dict]:
+            return [
+                call.args[1]
+                for call in ingestor.ensure_node_batch.call_args_list
+                if call.args[0] == NodeType.MODULE
+                and str(call.args[1].get("qualified_name", "")).endswith("doc_md")
+            ]
+
+        project = temp_repo / "md_reindex"
+        project.mkdir()
+        target = project / "doc.md"
+
+        target.write_text(
+            "---\npurpose: planning\n---\n\n# Doc\n", encoding="utf-8"
+        )
+        run_updater(project, mock_ingestor)
+        first = module_props(mock_ingestor)
+        assert first and first[0].get("front_matter") == ["purpose=planning"], first
+
+        mock_ingestor.reset_mock()
+        target.write_text("# Doc\n\nBody.\n", encoding="utf-8")
+        run_updater(project, mock_ingestor)
+        second = module_props(mock_ingestor)
+
+        assert second, "no Module node emitted on re-index"
+        assert second[0].get("front_matter") == [], (
+            "re-indexing a document that dropped its front-matter did not "
+            f"clear the stored value: {second[0]}"
+        )

@@ -593,11 +593,19 @@ class DocumentTier:
         # be undocumented properties -- the audit catches exactly that, and it
         # is right to: a document could otherwise define any node property it
         # liked, including ones a future schema wants for something else.
-        front_matter = (
-            {cs.KEY_FRONT_MATTER: [f"{k}={v}" for k, v in sorted(declared.items())]}
-            if declared
-            else None
-        )
+        # ALWAYS emitted, empty list included. The ingestor upserts with
+        # `SET n += row.props` (cypher_queries.py:317), which MERGES: a key
+        # omitted on re-ingest keeps its previous value. So a document that
+        # drops its front-matter would keep the old metadata bound to its node
+        # forever, and the graph would assert a declaration the file no longer
+        # makes (reported on #1488).
+        #
+        # An empty list overwrites; omission cannot. That makes "no
+        # front-matter" a value the re-ingest can actually store, rather than
+        # the absence of one.
+        front_matter = {
+            cs.KEY_FRONT_MATTER: [f"{k}={v}" for k, v in sorted(declared.items())]
+        }
         module_qn = self._emit_module(file_path, structural_elements, front_matter)
         relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
         absolute_path = cached_resolve_posix(file_path)
