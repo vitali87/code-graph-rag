@@ -81,10 +81,15 @@ def scope_rows_to_project(
     made the reported cross-project bleed intermittent (issue #1494). A
     code-level filter is always-or-never.
 
-    Every string VALUE in the row is inspected, at any depth -- not a fixed
-    list of key names. The repo's own queries return `from_qn`/`to_qn`, and
-    a generated query may label a column anything, so keying on known names
-    failed open for exactly the shapes that leak.
+    Every string in the row is inspected -- values, list and tuple and set
+    members, and dict KEYS as well as dict values, at any depth. Not a
+    fixed list of column names: the repo's own queries return
+    `from_qn`/`to_qn`, and a generated query may label a column anything,
+    so keying on known names failed open for exactly the shapes that leak.
+
+    Enumerated rather than asserted. An earlier version of this sentence
+    said "every string VALUE", written while describing the recursion, and
+    dict keys were genuinely unreachable by it.
 
     A row naming no project at all is kept: `RETURN count(n)` identifies
     nobody, and discarding it would turn scoping into silent data loss.
@@ -341,7 +346,13 @@ def _names_another_project(value: object, prefix: str) -> bool:
     if isinstance(value, str):
         return _looks_like_a_qualified_name(value) and not value.startswith(prefix)
     if isinstance(value, dict):
-        return any(_names_another_project(item, prefix) for item in value.values())
+        # KEYS as well as values: a map projection keyed BY qualified name
+        # carries foreign names in a position `.values()` never reaches.
+        return any(
+            _names_another_project(item, prefix)
+            for pair in value.items()
+            for item in pair
+        )
     if isinstance(value, list | tuple | set | frozenset):
         return any(_names_another_project(item, prefix) for item in value)
     return False

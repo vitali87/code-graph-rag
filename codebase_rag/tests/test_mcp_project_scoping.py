@@ -286,6 +286,32 @@ class TestNestedValuesAreScoped:
 
         assert scope_rows_to_project(rows, ALPHA) == []
 
+    def test_a_foreign_name_in_a_dict_KEY_disqualifies_the_row(self) -> None:
+        """A map keyed BY qualified name leaks through its keys.
+
+        `_names_another_project` recursed into `dict.values()` and never
+        `dict.keys()`, so a map projection keyed by qualified name carried
+        foreign names in a position nothing inspected.
+
+        Found by auditing my own docstring: it claimed "every string VALUE
+        in the row is inspected, at any depth", and I wrote that describing
+        the recursion rather than enumerating what Cypher can return. Keys
+        are values too.
+        """
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [{"qualified_name": f"{ALPHA}.ok", "by_qn": {f"{BETA}.secret": 3}}]
+
+        assert scope_rows_to_project(rows, ALPHA) == []
+
+    def test_an_own_project_key_is_kept(self) -> None:
+        """The control: keys naming the caller's own project must survive."""
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [{"qualified_name": f"{ALPHA}.ok", "by_qn": {f"{ALPHA}.mine": 3}}]
+
+        assert scope_rows_to_project(rows, ALPHA) == rows
+
     def test_an_own_project_name_nested_is_kept(self) -> None:
         """The control: nesting must not become a blanket rejection."""
         from codebase_rag.tools.codebase_query import scope_rows_to_project
