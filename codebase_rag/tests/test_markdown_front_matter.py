@@ -225,6 +225,17 @@ class TestParsing:
         assert parse_front_matter("---\nk: a#b\n---\n") == {"k": "a#b"}
         assert parse_front_matter("---\nk: tag #1\n---\n") == {"k": "tag #1"}
 
+        # `|#x` is the case that separates a whitespace-gated strip from an
+        # any-hash one. YAML needs whitespace before `#` to start a comment,
+        # so this is a plain scalar -- but an unconditional strip reduces it
+        # to `|`, which then matches the header pattern and the value is
+        # DROPPED rather than merely truncated.
+        #
+        # Found by mutation: an any-hash strip left every other test here
+        # passing, because no other fixture is a value that BECOMES a header
+        # once stripped.
+        assert parse_front_matter("---\nk: |#x\n---\n") == {"k": "|#x"}
+
     def test_a_value_merely_starting_with_a_block_character_is_kept(self) -> None:
         """Only a COMPLETE header is a header; `>>= operator` is prose.
 
