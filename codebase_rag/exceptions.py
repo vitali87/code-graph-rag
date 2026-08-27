@@ -63,9 +63,7 @@ MODEL_FORMAT_INVALID = (
 )
 BATCH_SIZE_POSITIVE = "batch_size must be a positive integer"
 CONFIG = "{role} configuration error: {error}"
-MODEL_ID_UNKNOWN = (
-    "Unknown {provider} model {model_id!r}. Did you mean {suggestions}?"
-)
+MODEL_ID_UNKNOWN = "Unknown {provider} model {model_id!r}. Did you mean {suggestions}?"
 MODEL_ID_UNKNOWN_NO_MATCH = (
     "Unknown {provider} model {model_id!r}. Known {provider} models: {known}"
 )
