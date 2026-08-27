@@ -348,6 +348,8 @@ SCHEMA_OPTIONAL_SUFFIX = "?"
 NODE_PROJECT = NodeLabel.PROJECT
 
 KEY_PARAMETERS = "parameters"
+# Declared Markdown front-matter, as sorted "key=value" entries (issue #1448).
+KEY_FRONT_MATTER = "front_matter"
 KEY_DECORATORS = "decorators"
 # Target-module qn candidates of `#[cfg(test)] mod NAME;` declarations in a
 # Rust file, stored on the DECLARING module's node (issue #1010). The
