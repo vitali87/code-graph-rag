@@ -21,7 +21,11 @@ from codebase_rag.tools.code_retrieval import (
     CodeRetriever,
     create_code_retrieval_tool,
 )
-from codebase_rag.tools.codebase_query import create_query_tool, scope_rows_to_project
+from codebase_rag.tools.codebase_query import (
+    create_query_tool,
+    requires_project_evidence,
+    scope_rows_to_project,
+)
 from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
@@ -781,6 +785,23 @@ class MCPToolsRegistry:
             async with self._ingestor_lock:
                 graph_data = await self._query_tool.function(natural_language_query)
             result_dict: QueryResultDict = graph_data.model_dump()
+            # A query returning no qualified name yields rows the filter
+            # cannot judge, so it keeps them -- it cannot prove them
+            # foreign. Answering a SCOPED request with those would ignore
+            # the scope silently, which is the original bug in new clothes.
+            # Refused instead, so the caller learns the scope did not hold.
+            if project is not None and not requires_project_evidence(
+                result_dict.get(cs.DICT_KEY_QUERY_USED, "")
+            ):
+                message = cs.MCP_UNSCOPEABLE_QUERY.format(project=project)
+                return QueryResultDict(
+                    error=message,
+                    query_used=result_dict.get(
+                        cs.DICT_KEY_QUERY_USED, cs.QUERY_NOT_AVAILABLE
+                    ),
+                    results=[],
+                    summary=message,
+                )
             result_dict[cs.DICT_KEY_RESULTS] = scope_rows_to_project(
                 result_dict.get(cs.DICT_KEY_RESULTS, []), project
             )

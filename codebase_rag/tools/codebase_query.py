@@ -48,12 +48,64 @@ def scope_rows_to_project(
     prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     kept: list[dict[str, object]] = []
     for row in rows:
-        qualified_name = row.get(cs.IMPORT_QUALIFIED_NAME)
-        if not isinstance(qualified_name, str):
-            kept.append(row)
-        elif qualified_name.startswith(prefix):
-            kept.append(row)
+        if _row_is_outside(row, prefix):
+            continue
+        kept.append(row)
     return kept
+
+
+def requires_project_evidence(cypher_query: str) -> bool:
+    """Whether `cypher_query` returns something a project filter can judge.
+
+    `scope_rows_to_project` decides per row, from the values it is given. A
+    query like `RETURN n.name, n.path` hands it rows with no project
+    evidence at all, so it cannot tell one project's rows from another's --
+    and it keeps them, since it cannot prove them foreign either.
+
+    That gap is closed here rather than there: a SCOPED request whose query
+    projects no qualified name is refused, so the caller learns the scope
+    could not be honoured instead of silently receiving every project.
+
+    An aggregate is accepted: `RETURN count(n)` exposes no names, so there
+    is nothing to leak, and refusing it would make scoping useless for the
+    counting queries a caller most often wants.
+    """
+    upper = cypher_query.upper()
+    if cs.CYPHER_QUALIFIED_NAME_TOKEN in upper:
+        return True
+    return any(agg in upper for agg in cs.CYPHER_AGGREGATE_TOKENS)
+
+
+def _looks_like_a_qualified_name(value: str) -> bool:
+    """Whether `value` is a project-qualified name rather than free text.
+
+    Every project name `derive_project_name` produces ends in `__<digest>`,
+    so that marker is what separates a qualified name from a docstring or a
+    path that merely contains dots. Matching on dots alone would discard
+    legitimate rows -- the too-aggressive direction, which fails just as
+    badly as leaking.
+    """
+    head = value.split(cs.SEPARATOR_DOT, 1)[0]
+    return cs.PROJECT_NAME_DIGEST_MARKER in head
+
+
+def _row_is_outside(row: dict[str, object], prefix: str) -> bool:
+    """Whether `row` names any project other than the one `prefix` selects.
+
+    Every string VALUE is inspected, not a fixed list of key names. The
+    repo's own queries return `from_qn`/`to_qn`/`caller_qualified_name`,
+    and a generated query may label a column anything at all, so keying on
+    known names would fail open for precisely the shapes that leak.
+
+    A row naming no project at all -- `RETURN count(n)` -- is kept, since
+    it identifies nothing belonging to anyone else.
+    """
+    return any(
+        isinstance(value, str)
+        and _looks_like_a_qualified_name(value)
+        and not value.startswith(prefix)
+        for value in row.values()
+    )
 
 
 def create_query_tool(

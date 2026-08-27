@@ -73,6 +73,138 @@ class TestTheFilter:
 
         assert [r["qualified_name"] for r in kept] == [f"{ALPHA}.real.Thing"]
 
+    def test_a_row_keyed_on_something_other_than_qualified_name_is_scoped(
+        self,
+    ) -> None:
+        """`RETURN a.qualified_name AS from_qn` must not evade the filter.
+
+        The repo's own relationship queries return `from_qn`/`to_qn`, and a
+        model may name a column anything. Keying on the literal
+        `qualified_name` key made the filter FAIL OPEN for exactly those
+        shapes: the row looked like an aggregate and was kept.
+        """
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [
+            {"from_qn": f"{ALPHA}.a.f", "to_qn": f"{ALPHA}.b.g"},
+            {"from_qn": f"{BETA}.a.f", "to_qn": f"{BETA}.b.g"},
+        ]
+
+        kept = scope_rows_to_project(rows, ALPHA)
+
+        assert [r["from_qn"] for r in kept] == [f"{ALPHA}.a.f"]
+
+    def test_a_row_naming_another_project_anywhere_is_dropped(self) -> None:
+        """Any value identifying a foreign project disqualifies the row.
+
+        An edge spanning two projects is not a row a scoped caller asked
+        for, and keeping it would leak the other project's names.
+        """
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [{"from_qn": f"{ALPHA}.a.f", "to_qn": f"{BETA}.b.g"}]
+
+        assert scope_rows_to_project(rows, ALPHA) == []
+
+    def test_a_genuine_aggregate_still_survives(self) -> None:
+        """The control that keeps the default-deny rule honest.
+
+        Tightening this filter must not start discarding `RETURN count(n)`.
+        A row carrying no project-identifying value at all is kept.
+        """
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [{"total": 42, "label": "Function"}]
+
+        assert scope_rows_to_project(rows, ALPHA) == rows
+
+    def test_free_text_containing_a_dot_is_not_mistaken_for_a_qn(self) -> None:
+        """A docstring or path must not be read as a qualified name.
+
+        Over-eager matching would drop legitimate rows whose text happens
+        to contain dots -- the too-aggressive failure direction.
+        """
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [
+            {
+                "qualified_name": f"{ALPHA}.mod.f",
+                "docstring": "Reads config.yaml and writes out.json",
+                "path": "src/alpha/mod.py",
+            }
+        ]
+
+        assert scope_rows_to_project(rows, ALPHA) == rows
+
+    def test_a_row_carrying_no_project_evidence_cannot_be_scoped(self) -> None:
+        """The limit of a result-level filter, asserted rather than assumed.
+
+        `RETURN n.name, n.path` produces rows with nothing identifying the
+        project, so this filter CANNOT tell them apart -- and it keeps them,
+        because it cannot prove they are foreign either.
+
+        Documenting it as a test because the gap is invisible otherwise: the
+        filter looks like it scopes everything. The guarantee is completed
+        by `requires_project_evidence` below, which refuses such a query up
+        front rather than answering it with unscoped rows.
+        """
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [
+            {"name": "handler", "path": "alpha/service.py"},
+            {"name": "handler", "path": "beta/service.py"},
+        ]
+
+        assert scope_rows_to_project(rows, ALPHA) == rows
+
+
+class TestScopedQueriesMustProjectAQualifiedName:
+    """Close the gap the result filter cannot.
+
+    A scoped request whose query returns no qualified name is refused, so
+    the caller learns the scope could not be honoured instead of silently
+    receiving every project's rows.
+    """
+
+    def test_a_query_without_a_qualified_name_is_refused(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert not requires_project_evidence(
+            "MATCH (n:Function) RETURN n.name AS name, n.path AS path"
+        )
+
+    @pytest.mark.parametrize(
+        "cypher",
+        [
+            "MATCH (n:Function) RETURN n.qualified_name AS qualified_name",
+            "MATCH (a)-[r]->(b) RETURN a.qualified_name AS from_qn",
+            "MATCH (n) RETURN n.qualified_name",
+        ],
+    )
+    def test_a_query_projecting_a_qualified_name_is_accepted(self, cypher: str) -> None:
+        """Any projection of a qualified name suffices, whatever it is aliased to.
+
+        The alias is the model's choice, so requiring a specific column name
+        would refuse valid queries.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert requires_project_evidence(cypher)
+
+    def test_an_aggregate_is_accepted(self) -> None:
+        """`RETURN count(n)` leaks no names, so it needs no evidence.
+
+        Refusing it would make scoping useless for the counting queries a
+        caller most often wants across a whole project.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert requires_project_evidence("MATCH (n:Function) RETURN count(n) AS total")
+
+
+class TestUnscopedIsUnchanged:
+    """Every existing caller passes no project."""
+
     def test_no_scope_returns_everything(self) -> None:
         """Omitting the scope must preserve current behaviour.
 
@@ -158,6 +290,47 @@ class TestPerRequestScope:
         assert "no-such" in str(result["error"])
 
 
+class TestTheHandlerRefusesAnUnjudgeableScopedQuery:
+    """The gap the result filter cannot close, closed at the handler.
+
+    `RETURN n.name, n.path` yields rows carrying no project evidence, so
+    the filter keeps them -- it cannot prove them foreign. Answering a
+    SCOPED request with those rows would silently ignore the scope, which
+    is the original bug wearing a different hat.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_scoped_query_returning_no_qualified_name_is_refused(
+        self,
+    ) -> None:
+        handler = _handler_returning(
+            [{"name": "handler", "path": "a.py"}],
+            query_used="MATCH (n:Function) RETURN n.name AS name, n.path AS path",
+        )
+
+        result = await handler.query_code_graph("names only", project=ALPHA)
+
+        assert result.get("error"), result
+        assert result["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_the_same_query_is_fine_unscoped(self) -> None:
+        """The control: the refusal is a consequence of scoping, not a ban.
+
+        Without this, refusing that query outright would pass the test
+        above while breaking every existing unscoped caller.
+        """
+        handler = _handler_returning(
+            [{"name": "handler", "path": "a.py"}],
+            query_used="MATCH (n:Function) RETURN n.name AS name, n.path AS path",
+        )
+
+        result = await handler.query_code_graph("names only")
+
+        assert not result.get("error")
+        assert len(result["results"]) == 1
+
+
 class TestSemanticSearchScope:
     """The other retrieval handler named in the issue.
 
@@ -214,8 +387,16 @@ def _prefixes(result: dict) -> set[str]:
     return {row["qualified_name"].split(".")[0] for row in result["results"]}
 
 
-def _handler_returning(rows: list[dict]):
-    """An MCPTools bound to a stub graph, with the real handler logic."""
+def _handler_returning(
+    rows: list[dict],
+    query_used: str = "MATCH (n) RETURN n.qualified_name AS qualified_name",
+):
+    """An MCPToolsRegistry bound to a stub graph, with the real handler logic.
+
+    The default `query_used` PROJECTS a qualified name, because that is what
+    a scoped request needs in order to be judgeable. Tests that want the
+    unjudgeable case pass their own.
+    """
     from unittest.mock import AsyncMock, MagicMock
 
     from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -226,7 +407,7 @@ def _handler_returning(rows: list[dict]):
     handler._query_tool = MagicMock()
     handler._query_tool.function = AsyncMock(
         return_value=QueryGraphData(
-            query_used="MATCH (n) RETURN n",
+            query_used=query_used,
             results=list(rows),
             summary="ok",
         )
