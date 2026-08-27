@@ -25,7 +25,6 @@ heading is a child of whatever heading is currently open above it.
 from __future__ import annotations
 
 import re
-
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import unquote
