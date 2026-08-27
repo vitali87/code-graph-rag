@@ -602,8 +602,8 @@ def test_every_resolve_failure_path_records_an_unresolved_reason() -> None:
 
     assert checked, "found no bare `return None` in any resolve(); parser drifted"
     assert not unrecorded, (
-        f"{unrecorded} return None without an immediately preceding "
-        "`.record(...)` call, so `unresolved_reason is None` no longer implies "
+        f"{unrecorded} return None with no preceding `stats.record(...)` call "
+        "in the same branch, so `unresolved_reason is None` no longer implies "
         "the frame resolved -- see the predicate comment in "
         "crash_correlation.explain_traceback"
     )
