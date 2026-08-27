@@ -285,6 +285,15 @@ def explain_traceback(
         flow_gaps=graph.flow_gaps,
         resolution=FrameResolutionRate(
             total=len(contexts),
+            # Keyed on `qualified_name`, NOT on `unresolved_reason is None`.
+            # Today the two agree, because every failure path in
+            # `FrameResolver.resolve` records a reason before returning None.
+            # But `_resolve_stack` derives the reason with
+            # `next(iter(stats.unresolved), None)`, so a future failure path
+            # that forgets to record one would yield reason=None with no
+            # qualified name -- and the other predicate would then count an
+            # unresolvable frame as resolved. The qualified name is what the
+            # rate is ABOUT; the reason is diagnostic text alongside it.
             resolved=sum(1 for frame in contexts if frame.qualified_name is not None),
         ),
     )

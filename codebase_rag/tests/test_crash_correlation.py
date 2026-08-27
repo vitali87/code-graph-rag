@@ -186,6 +186,62 @@ def test_resolution_rate_counts_only_the_frames_that_resolved(tmp_path):
     assert report.resolution.rate == 0.5
 
 
+def test_resolution_counts_the_qualified_name_not_the_absence_of_a_reason(
+    tmp_path, monkeypatch
+):
+    """A frame with neither a qn nor a reason counts as UNRESOLVED.
+
+    Keying `resolved` on `unresolved_reason is None` instead passes every
+    other test in this file -- measured. The two predicates agree today
+    because every failure path in `FrameResolver.resolve` records a reason
+    before returning None, so this condition is not reachable through the
+    shipped resolver.
+
+    Pinned anyway, and as BEHAVIOUR rather than as an early return, because
+    "unreachable" describes the current resolver and not a promise:
+    `_resolve_stack` derives the reason with `next(iter(stats.unresolved),
+    None)`, so one future failure path that forgets to record makes it real.
+    The resolver is patched to BE that future path, so the assertion runs
+    through `explain_traceback` and covers the line that picks the predicate
+    -- asserting over a hand-built `FrameResolutionRate` would pin arithmetic
+    production never executes.
+    """
+    from codebase_rag.crash_correlation import FrameResolver as _FR
+
+    real_resolve = _FR.resolve
+
+    def resolve_without_recording(self, frame, stats):
+        match = real_resolve(self, frame, stats)
+        if match is None:
+            # The future failure path: returns None, records nothing.
+            stats.unresolved.clear()
+        return match
+
+    monkeypatch.setattr(_FR, "resolve", resolve_without_recording)
+
+    text = (
+        "Traceback (most recent call last):\n"
+        '  File "/usr/lib/python3.12/site-packages/lib.py", line 5, in call\n'
+        "    fn()\n"
+        f'  File "{(tmp_path / "app" / "service.py").as_posix()}", line 10, in handle\n'
+        "    return cfg.timeout\n"
+        "AttributeError: 'NoneType' object has no attribute 'timeout'\n"
+    )
+    report = explain_traceback(_fetch_all_for(flow_edges=[]), _P, tmp_path, text)
+
+    outside = report.frames[0]
+    assert outside.qualified_name is None
+    assert outside.unresolved_reason is None, "fixture did not reach the case"
+
+    assert report.resolution.resolved == 1, (
+        "a frame with no qualified name was counted as resolved because it "
+        "carried no unresolved_reason; the rate must count what the graph "
+        "actually anchored"
+    )
+    assert report.resolution.total == 2
+    assert report.resolution.rate == 0.5
+
+
 def test_resolution_rate_of_a_frameless_traceback_is_zero_not_one(tmp_path):
     """total == 0 must score 0.0, exercising the empty branch itself.
 
