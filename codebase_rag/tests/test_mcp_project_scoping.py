@@ -761,6 +761,60 @@ class TestAnAggregatedEntityMustAlsoBeAttributable:
         assert requires_project_evidence(cypher, ALPHA)
 
 
+class TestTheRestrictionMustConstrainTheAggregatedAlias:
+    """Restricting alias `a` says nothing about a count over alias `b`.
+
+    `MATCH (a),(b) WHERE a.qualified_name STARTS WITH "alpha." RETURN
+    count(b)` was accepted: a literal naming the requested project is
+    present, so the restriction check passed -- while the count ranged
+    over `b`, which nothing constrained.
+
+    The check asked "is there a restriction to my project", not "is the
+    thing being COUNTED restricted". Those differ whenever the query
+    matches more than one entity.
+    """
+
+    def test_restricting_one_alias_does_not_authorise_counting_another(
+        self,
+    ) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            f'MATCH (a),(b) WHERE a.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(b) AS total"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_restricting_the_counted_alias_is_accepted(self) -> None:
+        """The control: constrain what you count and the count is sound."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            f'MATCH (b) WHERE b.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(b) AS total"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+    def test_restricting_both_aliases_is_accepted(self) -> None:
+        """The other control: a relationship count with both ends bound.
+
+        This is the legitimate form of the leaking query, and it must stay
+        available -- refusing every multi-alias aggregate would pass the
+        leak test while breaking scoped relationship counting.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            f'MATCH (a)-[:CALLS]->(b) WHERE a.qualified_name STARTS WITH "{ALPHA}." '
+            f'AND b.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(b) AS total"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+
 class TestAnAggregateMustBeBoundToTheRequestedProject:
     """Restricting by *a* qualified name is not restricting to *yours*.
 

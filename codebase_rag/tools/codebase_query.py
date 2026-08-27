@@ -178,7 +178,11 @@ def requires_project_evidence(
     )
     if not all_aggregates:
         return False
-    return _restricts_to_project(cypher_query, project_name)
+    # The restriction must constrain the alias being COUNTED, not merely
+    # exist. `MATCH (a),(b) WHERE a.qualified_name STARTS WITH "alpha."
+    # RETURN count(b)` restricts `a` and counts `b`, which nothing bounds.
+    counted = set(_AGGREGATED_ENTITY_RE.findall(projection))
+    return _restricts_to_project(cypher_query, project_name, counted)
 
 
 def _without_inert_text(cypher_query: str) -> str:
@@ -256,8 +260,10 @@ def _every_projected_entity_is_attributable(projection: str) -> bool:
     return all(cs.CYPHER_QUALIFIED_NAME_TOKEN in props for props in reads.values())
 
 
-def _restricts_to_project(cypher_query: str, project_name: str | None) -> bool:
-    """Whether the query narrows its rows to `project_name` before RETURN.
+def _restricts_to_project(
+    cypher_query: str, project_name: str | None, counted: set[str] | None = None
+) -> bool:
+    """Whether the query narrows `counted`'s rows to `project_name`.
 
     Restricting by *a* qualified name is not restricting to *yours*: a query
     filtering on another project's prefix would otherwise pass and return
@@ -296,9 +302,23 @@ def _restricts_to_project(cypher_query: str, project_name: str | None) -> bool:
     literals = _PROJECT_LITERAL_RE.findall(body)
     if not literals:
         return False
-    return all(
+    if not all(
         literal.rstrip(cs.SEPARATOR_DOT) == project_name.upper() for literal in literals
+    ):
+        return False
+    # Every COUNTED alias must itself be restricted. A restriction on `a`
+    # says nothing about `count(b)`, and the two differ whenever the query
+    # matches more than one entity.
+    return all(_alias_is_restricted(body, alias) for alias in counted or ())
+
+
+def _alias_is_restricted(body: str, alias: str) -> bool:
+    """Whether `body` constrains `alias`'s qualified name to a prefix."""
+    pattern = re.compile(
+        rf"\b{re.escape(alias)}\.{cs.CYPHER_QUALIFIED_NAME_TOKEN}\s*"
+        rf"(?:{'|'.join(re.escape(op.strip()) for op in cs.CYPHER_PREFIX_PREDICATES)})"
     )
+    return pattern.search(body) is not None
 
 
 def _return_clause(cypher_query: str) -> str:
