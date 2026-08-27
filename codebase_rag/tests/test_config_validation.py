@@ -28,6 +28,7 @@ def test_import_does_not_walk_parent_directories_for_dotenv(tmp_path) -> None:
         check=False,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
     )
 
     assert result.returncode == 0, result.stderr

@@ -298,6 +298,7 @@ def test_live_cargo_pprof_captures_dyn_and_generic(tmp_path):
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         timeout=600,
         check=False,
     )

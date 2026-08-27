@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import unquote
 
 from loguru import logger
 
@@ -53,6 +54,47 @@ _SETEXT_H2_UNDERLINE = "setext_h2_underline"
 _MAX_HEADING_LEVEL = 6
 
 DOCUMENT_EXTENSIONS: frozenset[str] = frozenset({".md", ".markdown"})
+
+# Link grammar nodes. `inline_link` is ``[text](target)``; the destination sits
+# in a `link_destination` child. Reference-style links (``[text][label]``) name
+# a definition elsewhere and carry no destination of their own, so they are not
+# resolvable to a file here.
+#
+# These come from the INLINE grammar, not the block one. tree-sitter-markdown
+# ships a split grammar: the block parser leaves every span of inline content
+# as one opaque `inline` node whose children are bare punctuation tokens, so a
+# link is simply not present in the block tree. Each `inline` node's text has
+# to be re-parsed with `inline_language()` for links to appear at all.
+_INLINE_LINK = "inline_link"
+_LINK_DESTINATION = "link_destination"
+
+# ``[label]: path`` — the target of a reference-style link (``[text][label]``).
+# The use site carries no destination, so without reading definitions a
+# document that links its files that way contributes no edges at all. Unlike
+# inline links these sit in the BLOCK tree, needing no inline re-parse.
+_LINK_REFERENCE_DEFINITION = "link_reference_definition"
+_LINK_LABEL = "link_label"
+_LINK_TEXT = "link_text"
+
+# The three reference-link forms. `[text][label]` names its label explicitly;
+# `[label][]` and `[label]` both use their own text as the label. A definition
+# no link names states no relationship, so all three are collected to decide
+# which definitions are live.
+_FULL_REFERENCE_LINK = "full_reference_link"
+_COLLAPSED_REFERENCE_LINK = "collapsed_reference_link"
+_SHORTCUT_LINK = "shortcut_link"
+_TEXT_LABELLED_LINKS = frozenset({_COLLAPSED_REFERENCE_LINK, _SHORTCUT_LINK})
+
+# A destination that names something other than a file in this repository.
+# Scheme-bearing targets (http:, https:, mailto:, ftp:) are external, and a
+# bare fragment ("#section") points inside the current document.
+_URI_SCHEME_SEPARATOR = "://"
+_MAILTO_PREFIX = "mailto:"
+_FRAGMENT_PREFIX = "#"
+# A network-path reference ("//host/path"): scheme-relative, so external.
+_NETWORK_PATH_PREFIX = "//"
+# Windows drive letters ("C:/x") would otherwise read as a scheme.
+_MIN_SCHEME_LENGTH = 2
 
 # A heading with no text (`##` alone) has nothing to name a node after.
 _UNTITLED = "(untitled)"
@@ -155,6 +197,230 @@ def _section_end_line(
     return max(last_line, heading_end)
 
 
+def _collect_by_type(root: Node, node_type: str) -> list[Node]:
+    """Every node of one type in the tree, in source order.
+
+    Does not descend into a match: neither an `inline` span nor a link
+    reference definition nests another of its own kind.
+    """
+    found: list[Node] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == node_type:
+            found.append(node)
+            continue
+        stack.extend(reversed(node.children))
+    found.sort(key=lambda n: n.start_byte)
+    return found
+
+
+def _collect_inline_spans(root: Node) -> list[Node]:
+    """Every `inline` node in the block tree, in source order."""
+    return _collect_by_type(root, _INLINE)
+
+
+def _normalise_label(label: str) -> str:
+    """A reference label reduced to its match key.
+
+    CommonMark compares labels case-insensitively and treats runs of internal
+    whitespace as a single space, so ``[API Guide]`` and ``[api  guide]`` name
+    the same definition.
+    """
+    return " ".join(label.split()).casefold()
+
+
+def _first_child(node: Node, child_type: str) -> Node | None:
+    """The node's first direct child of a type, or None.
+
+    Every link node carries the part that matters (a destination, a label, the
+    link text) as one direct child, so this is the shared shape.
+    """
+    for child in node.children:
+        if child.type == child_type:
+            return child
+    return None
+
+
+def _label_used_by(node: Node, text: bytes) -> str | None:
+    """The definition label a reference link names, or None for other nodes.
+
+    ``[text][label]`` names its label explicitly, in a node that includes the
+    surrounding brackets. ``[label][]`` and ``[label]`` carry no label node and
+    use their own link text instead.
+    """
+    if node.type == _FULL_REFERENCE_LINK:
+        label = _first_child(node, _LINK_LABEL)
+        return (
+            None
+            if label is None
+            else _normalise_label(_decode(label, text).strip("[]"))
+        )
+    if node.type in _TEXT_LABELLED_LINKS:
+        label = _first_child(node, _LINK_TEXT)
+        return None if label is None else _normalise_label(_decode(label, text))
+    return None
+
+
+def _link_destinations_in(
+    inline_root: Node, text: bytes
+) -> tuple[list[tuple[int, str]], set[str]]:
+    """Inline destinations and the reference labels this span actually uses.
+
+    The labels are what makes a reference definition live: a definition whose
+    label no link names describes no relationship between the two documents,
+    and emitting an edge for it would invent one.
+    """
+    found: list[tuple[int, str]] = []
+    used_labels: set[str] = set()
+    stack = [inline_root]
+    while stack:
+        node = stack.pop()
+        if node.type == _INLINE_LINK:
+            destination = _first_child(node, _LINK_DESTINATION)
+            if destination is not None:
+                found.append((destination.start_byte, _decode(destination, text)))
+            # A link cannot nest another link; no need to descend.
+            continue
+        label = _label_used_by(node, text)
+        if label is not None:
+            used_labels.add(label)
+            continue
+        stack.extend(reversed(node.children))
+    return found, used_labels
+
+
+def _collect_link_destinations(
+    root: Node, source: bytes, inline_parser: Parser | None
+) -> list[str]:
+    """Every inline-link destination in the document, in source order.
+
+    Duplicates are kept: the same target linked twice is two link sites, and
+    de-duplication is the caller's business once targets are resolved.
+
+    Returns nothing when the inline grammar is unavailable, so heading
+    extraction still works on an install where only the block parser loaded.
+    """
+    found, used_labels = _scan_inline_spans(root, source, inline_parser)
+    found.extend(_resolve_definitions(root, source, used_labels))
+    found.sort()
+    return [destination for _, _, destination in found]
+
+
+def _scan_inline_spans(
+    root: Node, source: bytes, inline_parser: Parser | None
+) -> tuple[list[tuple[int, int, str]], set[str]]:
+    """Inline-link destinations across the document, and the labels they use.
+
+    Each `inline` span is re-parsed with the inline grammar, since the block
+    tree leaves inline content opaque. A span that fails to parse is skipped
+    rather than aborting the document.
+    """
+    found: list[tuple[int, int, str]] = []
+    used_labels: set[str] = set()
+    if inline_parser is None:
+        return found, used_labels
+
+    for span in _collect_inline_spans(root):
+        text = source[span.start_byte : span.end_byte]
+        try:
+            inline_root = inline_parser.parse(text).root_node
+        except (RuntimeError, ValueError):
+            continue
+        destinations, labels = _link_destinations_in(inline_root, text)
+        found.extend(
+            (span.start_byte, offset, destination)
+            for offset, destination in destinations
+        )
+        used_labels |= labels
+    return found, used_labels
+
+
+def _resolve_definitions(
+    root: Node, source: bytes, used_labels: set[str]
+) -> list[tuple[int, int, str]]:
+    """Destinations of the reference definitions some link actually names.
+
+    Reference definitions are block-level, so they parse whether or not the
+    inline grammar loaded — but a definition nothing references states no
+    relationship. With no inline pass `used_labels` is empty, which is the
+    correct answer rather than a degraded one: nothing can be shown to
+    reference them.
+    """
+    resolved: list[tuple[int, int, str]] = []
+    # CommonMark resolves a duplicated label to its FIRST definition, so a
+    # document that redefines `[api]` links to one file rather than to both.
+    # `_collect_by_type` returns definitions in source order, which is what
+    # makes "first seen wins" the same as "first in the document".
+    seen: set[str] = set()
+    for node in _collect_by_type(root, _LINK_REFERENCE_DEFINITION):
+        label_node = _first_child(node, _LINK_LABEL)
+        destination = _first_child(node, _LINK_DESTINATION)
+        if label_node is None or destination is None:
+            continue
+        label = _normalise_label(_decode(label_node, source).strip("[]"))
+        if label in seen:
+            continue
+        seen.add(label)
+        if label in used_labels:
+            resolved.append((node.start_byte, 0, _decode(destination, source)))
+    return resolved
+
+
+def _is_external(destination: str) -> bool:
+    """True when the destination does not name a file in this repository.
+
+    Absolute URLs, mail links, and bare fragments all resolve somewhere other
+    than a repo-relative path, so treating them as file links would invent
+    edges to files that do not exist.
+    """
+    if not destination or destination.startswith(_FRAGMENT_PREFIX):
+        return True
+    # "//host/path" inherits the page's scheme; it names a host, not a file.
+    # It begins with a slash, so root-relative resolution would otherwise map
+    # it onto a repository path and invent an edge whenever one happens to
+    # exist there.
+    if destination.startswith(_NETWORK_PATH_PREFIX):
+        return True
+    if _URI_SCHEME_SEPARATOR in destination:
+        return True
+    lowered = destination.lower()
+    if lowered.startswith(_MAILTO_PREFIX):
+        return True
+    # "scheme:rest" with a plausible scheme, excluding "C:/path".
+    scheme, separator, _ = destination.partition(":")
+    return bool(separator) and len(scheme) > _MIN_SCHEME_LENGTH and scheme.isalpha()
+
+
+def _percent_decode(target: str) -> str:
+    """A link destination with its percent escapes resolved.
+
+    Markdown writers escape spaces and other characters in destinations, so
+    ``My%20Guide.md`` names the file ``My Guide.md``; resolving the raw text
+    looks for a filename nobody has and drops the edge silently.
+
+    ``unquote`` leaves an invalid escape exactly as written, so a file really
+    named ``100%.md`` survives — ``%.m`` is not a valid escape sequence.
+    """
+    if "%" not in target:
+        return target
+    return unquote(target)
+
+
+def _strip_target(destination: str) -> str:
+    """The path part of a destination, without any anchor or title.
+
+    ``guide.md#install`` points at a section of ``guide.md``; the file is the
+    part before the fragment. Angle-bracket forms (``<a b.md>``) wrap targets
+    containing spaces.
+    """
+    target = destination.strip()
+    if target.startswith("<") and target.endswith(">"):
+        target = target[1:-1]
+    target, _, _ = target.partition(_FRAGMENT_PREFIX)
+    return _percent_decode(target.strip())
+
+
 def _sanitize(name: str) -> str:
     """A heading rendered safe for a dot-separated qualified name.
 
@@ -169,7 +435,13 @@ def _sanitize(name: str) -> str:
 class DocumentTier:
     """Extracts a nested Section graph from heading-structured documents."""
 
-    __slots__ = ("_ingestor", "_repo_path", "_project_name", "_parser")
+    __slots__ = (
+        "_ingestor",
+        "_repo_path",
+        "_project_name",
+        "_parser",
+        "_inline_parser",
+    )
 
     def __init__(
         self, ingestor: IngestorProtocol, repo_path: Path, project_name: str
@@ -178,6 +450,7 @@ class DocumentTier:
         self._repo_path = repo_path
         self._project_name = project_name
         self._parser = _load_parser()
+        self._inline_parser = _load_inline_parser()
 
     def handles(self, suffix: str) -> bool:
         """True when this tier can parse the extension.
@@ -256,6 +529,61 @@ class DocumentTier:
             )
             open_headings.append((level, qualified_name))
 
+        self._emit_links(root, source, file_path, module_qn)
+
+    def _emit_links(
+        self, root: Node, source: bytes, file_path: Path, module_qn: str
+    ) -> None:
+        """A LINKS_TO edge per relative link that resolves to a repo file.
+
+        Only links whose target exists on disk become edges. An unresolvable
+        target — a typo, a file deleted since the link was written, a path
+        outside the repository — would otherwise create an edge to a node
+        nobody emits, which reads in the graph as a file that does not exist.
+        Dropping them keeps a broken link out of the graph rather than
+        inventing a phantom.
+        """
+        emitted: set[str] = set()
+        for destination in _collect_link_destinations(
+            root, source, self._inline_parser
+        ):
+            if _is_external(destination):
+                continue
+            target = _strip_target(destination)
+            if not target:
+                continue
+            resolved = self._resolve_link(file_path, target)
+            if resolved is None or resolved in emitted:
+                continue
+            emitted.add(resolved)
+            self._ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                cs.RelationshipType.LINKS_TO,
+                (cs.NodeLabel.FILE, cs.KEY_ABSOLUTE_PATH, resolved),
+            )
+
+    def _resolve_link(self, file_path: Path, target: str) -> str | None:
+        """The absolute path a link target names, or None when it is not a file.
+
+        Targets are relative to the linking document's directory, except a
+        leading "/" which the common convention treats as repo-root-relative
+        rather than filesystem-absolute. Anything landing outside the
+        repository is rejected, so a "../../.." traversal cannot attach an
+        edge to a file the project does not contain.
+        """
+        try:
+            if target.startswith("/"):
+                candidate = self._repo_path / target.lstrip("/")
+            else:
+                candidate = file_path.parent / target
+            resolved = candidate.resolve()
+            if not resolved.is_file():
+                return None
+            resolved.relative_to(self._repo_path.resolve())
+        except (OSError, ValueError):
+            return None
+        return resolved.as_posix()
+
     def _emit_module(
         self, file_path: Path, structural_elements: dict[Path, str | None]
     ) -> str:
@@ -319,4 +647,24 @@ def _load_parser() -> Parser | None:
         return Parser(Language(tree_sitter_markdown.language()))
     except Exception as exc:  # noqa: BLE001
         logger.warning("markdown grammar unavailable, document tier disabled: {}", exc)
+        return None
+
+
+def _load_inline_parser() -> Parser | None:
+    """A markdown *inline* Parser, or None when it is unavailable.
+
+    Separate from `_load_parser` because tree-sitter-markdown splits block and
+    inline grammars: links live only in the inline tree. Its absence disables
+    link edges alone — heading extraction runs off the block parser and must
+    keep working, so this never disables the tier.
+    """
+    try:
+        import tree_sitter_markdown
+        from tree_sitter import Language, Parser
+    except ImportError:
+        return None
+    try:
+        return Parser(Language(tree_sitter_markdown.inline_language()))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("markdown inline grammar unavailable, no link edges: {}", exc)
         return None

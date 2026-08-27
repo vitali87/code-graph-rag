@@ -34,6 +34,7 @@ def _run_scala_oracle_payload(target: Path) -> OraclePayload:
         cwd=str(_ORACLE_DIR),
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=True,
     )
     # capture_output hides scala-cli's stderr; if stdout is not the expected JSON

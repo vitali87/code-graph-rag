@@ -18,6 +18,7 @@ never worse.
 from __future__ import annotations
 
 # Import for side effect: each frontend module self-registers into the registry.
+from . import cpp as _cpp  # noqa: E402,F401  (registers CppLibclangFrontend)
 from . import csharp as _csharp  # noqa: E402,F401  (registers CSharpFrontend)
 from . import go as _go  # noqa: E402,F401  (registers GoFrontend)
 from . import java as _java  # noqa: E402,F401  (registers JavaJavacFrontend)

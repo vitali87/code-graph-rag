@@ -7,6 +7,7 @@ import sys
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import cast
 
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -32,8 +33,6 @@ from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.cpp_frontend import (
     cpp_frontend_available,
     find_compile_commands,
-    run_cpp_frontend,
-    run_cpp_frontend_hybrid,
 )
 from .parsers.csharp_frontend import find_csharp_project
 from .parsers.document_tier import DocumentTier
@@ -58,7 +57,13 @@ from .parsers.endpoints import (
     parse_route_decorator,
 )
 from .parsers.factory import ProcessorFactory
-from .parsers.frontends import FRONTENDS, SemanticFacts
+from .parsers.frontends import (
+    EMITTING_FRONTENDS,
+    FRONTENDS,
+    FrontendEmitContext,
+    FrontendPhase,
+    SemanticFacts,
+)
 from .parsers.frontends.protocol import QueryCall
 from .parsers.go_frontend import find_go_module
 from .parsers.java_generated import (
@@ -382,6 +387,49 @@ class GraphUpdater:
             self._sink, self.repo_path, self.capture
         )
 
+    def _run_emitting_frontends(self, phase: FrontendPhase) -> None:
+        """Run every registered emitting frontend declaring this phase.
+
+        C++ is dispatched by `_run_cpp_frontend`, which owns the mode gating
+        and the compile-database discovery its two modes need, so it is skipped
+        here to avoid running it twice (issue #1460).
+
+        A frontend that is unavailable or does not apply is skipped rather than
+        failing the run: a missing toolchain must degrade to the tree-sitter
+        backbone, which covers every file anyway.
+        """
+        for language, frontend in EMITTING_FRONTENDS.items():
+            if language == cs.SupportedLanguage.CPP:
+                continue
+            if frontend.phase != phase:
+                continue
+            try:
+                if not frontend.available() or not frontend.applies(self.repo_path):
+                    continue
+            except Exception:
+                logger.warning(ls.EMITTING_FRONTEND_PROBE_FAILED.format(lang=language))
+                continue
+            result = frontend.emit(
+                FrontendEmitContext(
+                    ingestor=self._sink,
+                    repo_path=self.repo_path,
+                    project_name=self.project_name,
+                    compdb_dir=self.repo_path,
+                    function_registry=self.function_registry,
+                    simple_name_lookup=self.simple_name_lookup,
+                    structural_elements=(
+                        self.factory.structure_processor.structural_elements
+                    ),
+                    exclude_paths=self.exclude_paths,
+                    unignore_paths=self.unignore_paths,
+                    owned_qns=self._frontend_owned_qns,
+                )
+            )
+            # Covered files union across frontends: each one reports the files
+            # it fully owns, and the definition pass must skip all of them.
+            if result.covered_files:
+                self._cpp_frontend_covered |= result.covered_files
+
     def _run_cpp_frontend(self) -> None:
         # Optional libclang C++ pre-pass when a compile_commands.json is
         # discoverable. LIBCLANG: emit macro-accurate C/C++ nodes/edges
@@ -391,8 +439,13 @@ class GraphUpdater:
         # #include IMPORTS, whose qns are scheme-identical, and hands back
         # macro uses for span attribution after Pass 2. Missing either
         # condition falls back to tree-sitter.
+        # Both pending lists, not just the macro one: an early return below
+        # (mode off, libclang absent, no compile_commands.json) would otherwise
+        # leave a previous run's expansion calls in place, and the Pass-3
+        # consumer would emit CALLS edges for expansions that no longer apply.
         self._cpp_frontend_covered = frozenset()
         self._pending_cpp_macro_calls = []
+        self._pending_cpp_expansion_calls = []
         if settings.CPP_FRONTEND not in (
             cs.CppFrontend.LIBCLANG,
             cs.CppFrontend.HYBRID,
@@ -411,23 +464,38 @@ class GraphUpdater:
             logger.warning(ls.CPP_FRONTEND_NO_COMPDB)
             return
         logger.info(ls.CPP_FRONTEND_RUNNING.format(path=compdb_dir))
-        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
-            (
-                self._pending_cpp_macro_calls,
-                self._pending_cpp_expansion_calls,
-            ) = run_cpp_frontend_hybrid(
-                self._sink,
-                self.repo_path,
-                self.project_name,
-                compdb_dir,
+        # Dispatched through the EmittingFrontend registry rather than called
+        # directly (issue #1178). The mode-to-phase mapping now lives on the
+        # frontend, so the two call sites above stay the single place that
+        # decides WHEN each phase runs.
+        frontend = EMITTING_FRONTENDS.get(cs.SupportedLanguage.CPP)
+        if frontend is None:
+            return
+        result = frontend.emit(
+            FrontendEmitContext(
+                ingestor=self._sink,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+                compdb_dir=compdb_dir,
                 function_registry=self.function_registry,
                 simple_name_lookup=self.simple_name_lookup,
                 structural_elements=(
                     self.factory.structure_processor.structural_elements
                 ),
-                owned_qns=self._frontend_owned_qns,
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
+                owned_qns=self._frontend_owned_qns,
+            )
+        )
+        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
+            # FrontendEmitResult keeps these as list[object] so the protocol
+            # need not import cpp_frontend internals; narrowing here is the
+            # "the C++ frontend adapter narrows them" its docstring describes.
+            self._pending_cpp_macro_calls = cast(
+                "list[PendingMacroCall]", result.pending_macro_calls
+            )
+            self._pending_cpp_expansion_calls = cast(
+                "list[PendingExpansionCall]", result.pending_expansion_calls
             )
             logger.info(
                 ls.CPP_FRONTEND_HYBRID_PENDING.format(
@@ -436,18 +504,7 @@ class GraphUpdater:
                 )
             )
             return
-        self._cpp_frontend_covered = run_cpp_frontend(
-            self._sink,
-            self.repo_path,
-            self.project_name,
-            compdb_dir,
-            function_registry=self.function_registry,
-            simple_name_lookup=self.simple_name_lookup,
-            structural_elements=self.factory.structure_processor.structural_elements,
-            exclude_paths=self.exclude_paths,
-            unignore_paths=self.unignore_paths,
-            owned_qns=self._frontend_owned_qns,
-        )
+        self._cpp_frontend_covered = result.covered_files
         logger.info(
             ls.CPP_FRONTEND_COVERED.format(count=len(self._cpp_frontend_covered))
         )
@@ -877,10 +934,20 @@ class GraphUpdater:
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
 
+        # Cleared here, not only in _run_cpp_frontend: in HYBRID that method
+        # runs AFTER Pass 2, so its reset is too late for a REUSED updater
+        # whose previous run was LIBCLANG. _process_files consumes this set to
+        # skip files, and a stale entry makes it skip a file whose Module
+        # subtree was just deleted -- leaving only a generic File node that the
+        # later hybrid pass cannot repair, because it never produced the
+        # tree-sitter definitions to restore.
+        self._cpp_frontend_covered = frozenset()
+
         # LIBCLANG must run before Pass 2: _process_files consumes the
         # covered-file set to skip those files.
         if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID:
             self._run_cpp_frontend()
+        self._run_emitting_frontends(FrontendPhase.BEFORE_DEFINITIONS)
 
         # The C# Roslyn frontend must run before Pass 2: it produces a
         # base-classification oracle that split_csharp_bases consults while
@@ -930,6 +997,7 @@ class GraphUpdater:
         # it and vanish until a forced rebuild.
         if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
             self._run_cpp_frontend()
+        self._run_emitting_frontends(FrontendPhase.AFTER_DEFINITIONS)
 
         corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
         if corrected:

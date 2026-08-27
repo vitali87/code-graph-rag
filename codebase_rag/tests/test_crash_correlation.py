@@ -143,6 +143,166 @@ def test_explain_resolves_frames_and_attaches_neighbourhood(tmp_path):
     assert report.flow_gaps == ()
 
 
+def test_explain_reports_a_measured_resolution_rate(tmp_path):
+    """Criterion 1 of #227: the rate must be measured, not left to the caller.
+
+    Per-frame `unresolved_reason` already says WHICH frames failed; the
+    aggregate says HOW MANY, which is the number the criterion asks for and
+    the one an agent needs to judge whether a report is worth acting on. A
+    report where one frame in three resolved is a different artefact from one
+    where all three did, and nothing distinguished them.
+    """
+    fetch_all = _fetch_all_for(flow_edges=[])
+    report = explain_traceback(fetch_all, _P, tmp_path, _crash_text(tmp_path))
+
+    assert report.resolution.total == 3
+    assert report.resolution.resolved == 3
+    assert report.resolution.rate == 1.0
+
+
+def test_resolution_rate_counts_only_the_frames_that_resolved(tmp_path):
+    """A partially-resolved stack must not report a perfect rate.
+
+    Pinned as exact counts AND the ratio. Asserting only `rate < 1.0` would
+    pass for any wrong denominator -- counting resolved frames over resolved
+    frames, or skipping unresolved ones entirely, both of which are the
+    plausible mistakes here and both of which return 1.0 or a rate over a
+    denominator that hides the gap.
+
+    The ratio is 2/5, chosen because it collides with NOTHING. The obvious
+    fixture is one library frame and one repo frame, giving 0.5 -- and at
+    `total=2, resolved=1` six formulas all produce 0.5: the correct one,
+    `1 - resolved/total` (the INVERTED rate, which reports failure while
+    looking like success), `unresolved/total`, `1/total`,
+    `resolved/(resolved+1)` and a hardcoded `resolved/2`. The assertion would
+    hold for five wrong implementations.
+
+    2/5 is also not 1/3, which still collides with `1/total`. Other tests here
+    do catch these collectively, via the fully-resolved and nothing-resolved
+    cases -- but a guard that discriminates only with help from its siblings
+    loses its coverage the moment one is weakened, and nothing records which
+    test was load-bearing.
+    """
+    src = (tmp_path / "app" / "service.py").as_posix()
+    text = (
+        "Traceback (most recent call last):\n"
+        '  File "/usr/lib/python3.12/site-packages/lib.py", line 5, in call\n'
+        "    fn()\n"
+        '  File "/usr/lib/python3.12/json/decoder.py", line 9, in decode\n'
+        "    raise err\n"
+        '  File "/usr/lib/python3.12/json/__init__.py", line 3, in loads\n'
+        "    return _default_decoder.decode(s)\n"
+        f'  File "{src}", line 16, in dispatch\n'
+        "    return handle(cfg)\n"
+        f'  File "{src}", line 10, in handle\n'
+        "    return cfg.timeout\n"
+        "AttributeError: 'NoneType' object has no attribute 'timeout'\n"
+    )
+    fetch_all = _fetch_all_for(flow_edges=[])
+
+    report = explain_traceback(fetch_all, _P, tmp_path, text)
+
+    assert report.resolution.total == 5
+    assert report.resolution.resolved == 2
+    assert report.resolution.rate == 0.4
+
+
+def test_resolution_counts_the_qualified_name_not_the_absence_of_a_reason(
+    tmp_path, monkeypatch
+):
+    """A frame with neither a qn nor a reason counts as UNRESOLVED.
+
+    Keying `resolved` on `unresolved_reason is None` instead passes every
+    other test in this file -- measured. The two predicates agree today
+    because every failure path in `FrameResolver.resolve` records a reason
+    before returning None, so this condition is not reachable through the
+    shipped resolver.
+
+    Pinned anyway, and as BEHAVIOUR rather than as an early return, because
+    "unreachable" describes the current resolver and not a promise:
+    `_resolve_stack` derives the reason with `next(iter(stats.unresolved),
+    None)`, so one future failure path that forgets to record makes it real.
+    The resolver is patched to BE that future path, so the assertion runs
+    through `explain_traceback` and covers the line that picks the predicate
+    -- asserting over a hand-built `FrameResolutionRate` would pin arithmetic
+    production never executes.
+    """
+    from codebase_rag.crash_correlation import FrameResolver as _FR
+
+    real_resolve = _FR.resolve
+
+    def resolve_without_recording(self, frame, stats):
+        match = real_resolve(self, frame, stats)
+        if match is None:
+            # The future failure path: returns None, records nothing.
+            stats.unresolved.clear()
+        return match
+
+    monkeypatch.setattr(_FR, "resolve", resolve_without_recording)
+
+    text = (
+        "Traceback (most recent call last):\n"
+        '  File "/usr/lib/python3.12/site-packages/lib.py", line 5, in call\n'
+        "    fn()\n"
+        f'  File "{(tmp_path / "app" / "service.py").as_posix()}", line 10, in handle\n'
+        "    return cfg.timeout\n"
+        "AttributeError: 'NoneType' object has no attribute 'timeout'\n"
+    )
+    report = explain_traceback(_fetch_all_for(flow_edges=[]), _P, tmp_path, text)
+
+    outside = report.frames[0]
+    assert outside.qualified_name is None
+    assert outside.unresolved_reason is None, "fixture did not reach the case"
+
+    assert report.resolution.resolved == 1, (
+        "a frame with no qualified name was counted as resolved because it "
+        "carried no unresolved_reason; the rate must count what the graph "
+        "actually anchored"
+    )
+    assert report.resolution.total == 2
+    assert report.resolution.rate == 0.5
+
+
+def test_resolution_rate_of_a_frameless_traceback_is_zero_not_one(tmp_path):
+    """total == 0 must score 0.0, exercising the empty branch itself.
+
+    The test below covers "frames exist, none resolved". It does NOT cover
+    "no frames at all", because its fixture has total == 1 so the `if
+    self.total` guard is always taken -- measured: mutating the empty case to
+    return 1.0 left that test green. A frameless traceback is the only input
+    that runs the branch, and an exception raised with no stack produces one.
+    """
+    text = "Traceback (most recent call last):\nRuntimeError: boom\n"
+    fetch_all = _fetch_all_for(flow_edges=[])
+
+    report = explain_traceback(fetch_all, _P, tmp_path, text)
+
+    assert report.resolution.total == 0
+    assert report.resolution.resolved == 0
+    assert report.resolution.rate == 0.0
+
+
+def test_resolution_rate_of_an_unresolvable_stack_is_zero_not_one(tmp_path):
+    """Frames present, none resolved: 0.0 over a real denominator.
+
+    Distinct from the frameless case above -- here `total` is non-zero, so
+    this exercises the division rather than the empty guard.
+    """
+    text = (
+        "Traceback (most recent call last):\n"
+        '  File "/usr/lib/python3.12/site-packages/lib.py", line 5, in call\n'
+        "    fn()\n"
+        "RuntimeError: boom\n"
+    )
+    fetch_all = _fetch_all_for(flow_edges=[])
+
+    report = explain_traceback(fetch_all, _P, tmp_path, text)
+
+    assert report.resolution.total == 1
+    assert report.resolution.resolved == 0
+    assert report.resolution.rate == 0.0
+
+
 def test_explain_marks_out_of_repo_frames_with_a_reason(tmp_path):
     text = (
         "Traceback (most recent call last):\n"

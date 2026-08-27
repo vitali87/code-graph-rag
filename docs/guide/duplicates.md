@@ -372,11 +372,35 @@ Index the repository first, so the graph exists in Memgraph:
 
 ```bash
 cgr daemon up
-cgr start --repo-path /path/to/your/repo --update-graph --clean
+cgr start --repo-path /path/to/your/repo --update-graph
 ```
 
-Graphs indexed before duplicate detection existed carry no fingerprints;
-re-index once with `--clean` to backfill them.
+Graphs indexed before duplicate detection existed carry no fingerprints, and
+fingerprints are stamped while a file is parsed, so backfilling them means
+re-parsing. The command above is enough in most cases; only one situation
+needs `--clean`:
+
+- **No hash cache for the repo** (never synced from this machine, or the
+  cache was cleared): `--update-graph` re-parses everything, because a file
+  is skipped only when the cache already holds its key. This backfills
+  fingerprints without touching any other project.
+- **A cache left over from a wiped graph**: `--update-graph` discards it by
+  itself. Before syncing, cgr counts this project's modules in the graph, and
+  finding none it deletes the cache and rebuilds fully — so a database wiped
+  while indexing another repo recovers without `--clean`.
+- **A populated cache matching a graph that still holds this project**: this
+  is the case that needs `--clean --update-graph`. An unchanged file is
+  skipped, so nothing gets re-parsed and no fingerprints are backfilled.
+  Passing both flags drops the cache and re-indexes in one pass.
+
+Reach for `--clean` only in that third case. It deletes **every** project in
+the shared graph, not just this one — it prompts before destroying others, so
+confirm only when that graph holds this repository alone, and note that
+`--yes` skips the prompt. If the graph holds other projects you need, index
+this repository into a separate graph instead.
+
+`--clean` on its own wipes without re-indexing and leaves an empty graph;
+always pair it with `--update-graph`.
 
 ## Basic Usage
 

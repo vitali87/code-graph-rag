@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
+
 _SLN = """Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Main", "Main\\Main.csproj", "{11111111-1111-1111-1111-111111111111}"
@@ -155,6 +157,7 @@ def test_first_party_assembly_reference_is_not_marked_external(
         ["dotnet", "build", str(temp_repo / "Main" / "Main.csproj")],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
         timeout=300,
     )

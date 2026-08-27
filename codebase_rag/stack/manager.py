@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 from loguru import logger
 
+from .. import constants as root_cs
 from ..config import settings
 from . import constants as cs
 from .health import wait_for_memgraph, wait_for_qdrant
@@ -170,6 +171,7 @@ class StackManager:
             [cs.DOCKER_BIN, "info"],
             capture_output=True,
             text=True,
+            encoding=root_cs.ENCODING_UTF8,
             timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
             check=False,
         )
@@ -179,6 +181,7 @@ class StackManager:
             [cs.DOCKER_BIN, cs.DOCKER_COMPOSE_SUBCOMMAND, "version"],
             capture_output=True,
             text=True,
+            encoding=root_cs.ENCODING_UTF8,
             timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
             check=False,
         )
@@ -204,6 +207,7 @@ class StackManager:
             self._compose_cmd("up", "-d"),
             capture_output=True,
             text=True,
+            encoding=root_cs.ENCODING_UTF8,
             timeout=timeout,
             check=False,
         )
@@ -224,6 +228,7 @@ class StackManager:
             self._compose_cmd("down"),
             capture_output=True,
             text=True,
+            encoding=root_cs.ENCODING_UTF8,
             timeout=timeout,
             check=False,
         )

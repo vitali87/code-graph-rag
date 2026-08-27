@@ -262,6 +262,23 @@ SEMANTIC_DIFF_PREFIX = "semantic:"
 SEMANTIC_LABEL = "recall-at-k"
 SEMANTIC_CASE_REPR = "{query} => {expected}"
 SEMANTIC_TITLE = "cgr semantic-search eval: query->function recall@k"
+SEMANTIC_RECALL_COLUMN = "recall"
+
+# Query -> expected qualified name, over DEFAULT_TARGET (`codebase_rag`).
+# Each query must map UNAMBIGUOUSLY to one function, or the case grades the
+# fixture rather than the retriever. Kept here rather than in a test module so
+# the CLI entry point and the tests score the same corpus; a benchmark whose
+# cases live only in its test cannot be run.
+SEMANTIC_CASES: tuple[tuple[str, str], ...] = (
+    (
+        "count edges between nodes in the result set for reranking",
+        "codebase_rag.tools.graph_rerank.build_proximity_query",
+    ),
+    (
+        "blend vector similarity with graph proximity to reorder hits",
+        "codebase_rag.tools.graph_rerank.rerank_by_graph_proximity",
+    ),
+)
 
 # Static CALLS eval: function-level call recall. The oracle resolves only
 # unambiguous direct calls (a bare-name call to a function reachable via a
@@ -472,6 +489,31 @@ LUA_ORACLE_DIRNAME = "lua_oracle"
 LUA_ORACLE_SCRIPT = "lua_ast.js"
 LUA_SCORES_FILENAME = "lua_scores.csv"
 LUA_DIFF_FILENAME = "lua_diff.json"
+
+# Ruby structure eval (issue #1190): cgr nodes graded against Prism, Ruby's
+# official parser. Ruby reaches the graph through the ast-grep structural tier.
+#
+# Ruby MODULES are excluded from the graded set rather than mapped onto Class.
+# cgr has no Module label, so grading them would report a recall miss no
+# implementation could fix; calling a module a Class instead would make ground
+# truth assert something false (modules cannot be instantiated and join the
+# ancestor chain by inclusion, not inheritance) and would score a future Module
+# label as a regression. The exclusion keeps that gap visible and honest.
+# Definitions nested inside a module are still graded — they are real nodes cgr
+# emits.
+RUBY_SUFFIX = ".rb"
+RUBY_SCORED_NODE_KINDS: tuple[cs.NodeLabel, ...] = (
+    cs.NodeLabel.FUNCTION,
+    cs.NodeLabel.METHOD,
+    cs.NodeLabel.CLASS,
+)
+RUBY_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
+    k.value for k in RUBY_SCORED_NODE_KINDS
+)
+RUBY_ORACLE_DIRNAME = "ruby_oracle"
+RUBY_ORACLE_SCRIPT = "ruby_ast.js"
+RUBY_SCORES_FILENAME = "ruby_scores.csv"
+RUBY_DIFF_FILENAME = "ruby_diff.json"
 
 # PHP structure eval: cgr nodes graded against a php-parser oracle.
 PHP_SUFFIX = ".php"

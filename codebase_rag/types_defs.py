@@ -361,6 +361,10 @@ class ToolNames(NamedTuple):
     create_file: str
     edit_file: str
     shell_command: str
+    # Whether semantic_search is actually registered. The MCP path omits it when
+    # the vector backend is unavailable, and the prompt must not tell the model
+    # to start with a tool that is absent from its schema (issue #1201).
+    has_semantic_search: bool = True
 
 
 class ConfirmationToolNames(NamedTuple):

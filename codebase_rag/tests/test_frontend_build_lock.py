@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.parsers.build_lock import acquire_build_lock, release_build_lock
 
 _HOLDER_SCRIPT = textwrap.dedent(
@@ -33,6 +34,7 @@ def _spawn_holder(lock: Path) -> subprocess.Popen:
         [sys.executable, "-c", _HOLDER_SCRIPT, str(lock)],
         stdout=subprocess.PIPE,
         text=True,
+        encoding=cs.ENCODING_UTF8,
     )
     assert proc.stdout is not None
     assert proc.stdout.readline().strip() == "locked"
@@ -99,6 +101,7 @@ def test_dead_legacy_holder_directory_is_cleared(tmp_path: Path) -> None:
             [sys.executable, "-c", "import os; print(os.getpid())"],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=True,
         )
         (lock / "pid").write_text(proc.stdout.strip())

@@ -476,6 +476,7 @@ class ImportProcessor:
         "commonjs_direct_exports",
         "conditional_imports",
         "php_function_imports",
+        "php_module_namespaces",
         "js_ts_bare_imports",
         "js_path_aliases",
         "stdlib_extractor",
@@ -689,6 +690,17 @@ class ImportProcessor:
         # Collections/functions.php), so these must resolve by simple name via the
         # trie rather than being judged external-import and suppressed.
         self.php_function_imports: dict[str, set[str]] = {}
+        # The `namespace Vendor\Pkg` a PHP module declares, keyed by module qn,
+        # stored dotted (`Vendor.Pkg`) to match how import targets are recorded.
+        #
+        # PHP namespaces and directory layout are INDEPENDENT: PSR-4 maps a
+        # namespace prefix to a directory root, so `Vendor\Pkg\helper` may live
+        # at any depth beneath it. Without this map a `use function
+        # App\Text\format` import cannot be matched to the file that declares
+        # `namespace App\Text`, so the call falls through to the simple-name
+        # trie and binds to whichever same-named function it reaches first --
+        # a WRONG edge rather than a missing one (issue #1185).
+        self.php_module_namespaces: dict[str, str] = {}
         # Local names brought in by a JS/TS import with a NON-STANDARD scheme
         # (`ext:deno_node/y`; see _has_aliased_scheme), keyed by module. Such a
         # specifier aliases first-party code but does not resolve to a file-path
@@ -870,6 +882,9 @@ class ImportProcessor:
         # Reset per-module PHP use-function state too, so a re-index that drops a
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
+        # A re-index that removes or edits the `namespace` declaration must not
+        # leave the old namespace bound to this module.
+        self.php_module_namespaces.pop(module_qn, None)
         self.js_ts_bare_imports.pop(module_qn, None)
 
         try:
@@ -899,11 +914,13 @@ class ImportProcessor:
                 case cs.SupportedLanguage.LUA:
                     self._parse_lua_imports(captures, module_qn)
                 case cs.SupportedLanguage.PHP:
-                    self._parse_php_imports(captures, module_qn)
+                    self._parse_php_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.CSHARP:
                     self._parse_csharp_imports(captures, module_qn)
                 case cs.SupportedLanguage.DART:
                     self._parse_dart_imports(captures, module_qn)
+                case cs.SupportedLanguage.SCALA:
+                    self._parse_scala_imports(captures, module_qn)
                 case _:
                     self._parse_generic_imports(captures, module_qn, lang_config)
 
@@ -3676,6 +3693,135 @@ class ImportProcessor:
         if scopes:
             self.rust_block_items[module_qn] = scopes
 
+    def _parse_scala_imports(self, captures: dict, module_qn: str) -> None:
+        """Scala imports: plain, selector group, rename and wildcard.
+
+        Scala writes the package path as loose `identifier` and `.` children
+        of the import_declaration rather than as one scoped node, so the
+        prefix is assembled from those children up to the point where a
+        selector group or wildcard begins. A parser that grabs the first
+        identifier gets `scala` for every `scala.*` import.
+
+        The four forms #1186 lists, all on the same node type:
+            import a.b.C            -> C     -> a.b.C
+            import a.b.{C, D}       -> C, D  -> a.b.C, a.b.D
+            import a.b.{C => Alias} -> Alias -> a.b.C   (C stays unbound)
+            import a.b._            -> *a.b  -> a.b
+        """
+        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
+            if import_node.type != cs.TS_SCALA_IMPORT_DECLARATION:
+                continue
+            self._parse_scala_import_declaration(import_node, module_qn)
+
+    def _parse_scala_import_declaration(
+        self, import_node: Node, module_qn: str
+    ) -> None:
+        """One declaration, which may hold SEVERAL comma-separated imports.
+
+        `import a.b.C, d.e.F` is a single import_declaration whose children
+        run straight through the comma. Collecting identifiers across the
+        whole node merges the two into one prefix, yielding the nonsense path
+        `a.b.C.d.e.F` for `F` and losing `C` entirely -- so the children are
+        split on `,` and each group parsed independently.
+        """
+        group: list[Node] = []
+        for child in import_node.children:
+            if child.type == cs.CHAR_COMMA:
+                self._parse_scala_import_group(group, module_qn)
+                group = []
+            elif child.type != cs.TS_SCALA_IMPORT_KEYWORD:
+                group.append(child)
+        self._parse_scala_import_group(group, module_qn)
+
+    def _parse_scala_import_group(self, children: list[Node], module_qn: str) -> None:
+        prefix_parts: list[str] = []
+        selectors: Node | None = None
+        wildcard: Node | None = None
+        renamed: Node | None = None
+
+        for child in children:
+            if child.type == cs.TS_SCALA_NAMESPACE_SELECTORS:
+                selectors = child
+            elif child.type == cs.TS_SCALA_NAMESPACE_WILDCARD:
+                wildcard = child
+            elif child.type == cs.TS_SCALA_AS_RENAMED_IDENTIFIER:
+                # Scala 3 `import a.b as Alias`: the renamed node sits directly
+                # under the declaration rather than inside a selector group, so
+                # this path is distinct from the braced `{C as Alias}` form.
+                renamed = child
+            elif child.type == cs.TS_IDENTIFIER:
+                if name := safe_decode_with_fallback(child):
+                    prefix_parts.append(name)
+
+        if renamed is not None:
+            self._bind_scala_rename(
+                renamed, cs.SEPARATOR_DOT.join(prefix_parts), module_qn
+            )
+            return
+
+        if not prefix_parts:
+            return
+
+        if wildcard is not None:
+            # `import a.b._` (Scala 2) and `_root_.a.b.*` (Scala 3) both reach
+            # here; the package itself is what comes into scope.
+            package = cs.SEPARATOR_DOT.join(prefix_parts)
+            self.import_mapping[module_qn][f"*{package}"] = package
+            return
+
+        if selectors is not None:
+            package = cs.SEPARATOR_DOT.join(prefix_parts)
+            self._parse_scala_selectors(selectors, package, module_qn)
+            return
+
+        # Plain `import a.b.C`: the last part is the imported name, and
+        # everything is also the full path.
+        full_path = cs.SEPARATOR_DOT.join(prefix_parts)
+        self.import_mapping[module_qn][prefix_parts[-1]] = full_path
+
+    def _bind_scala_rename(self, node: Node, package: str, module_qn: str) -> None:
+        """Bind `original as/=> alias` to the ALIAS only.
+
+        Binding the original as well would make it resolvable under a name
+        this file never introduced, which is precisely what a rename avoids --
+        and a presence-only test would not notice.
+
+        `package` is the prefix the rename hangs off: the selector group's
+        package for `a.b.{C as X}`, and the leading segments for the top-level
+        `a.b as X`, where the renamed node itself carries the last segment.
+        """
+        names = [
+            decoded
+            for child in node.children
+            if child.type == cs.TS_IDENTIFIER
+            and (decoded := safe_decode_with_fallback(child))
+        ]
+        if len(names) != 2:
+            return
+        original, alias = names
+        full = f"{package}{cs.SEPARATOR_DOT}{original}" if package else original
+        self.import_mapping[module_qn][alias] = full
+
+    def _parse_scala_selectors(
+        self, selectors: Node, package: str, module_qn: str
+    ) -> None:
+        for child in selectors.children:
+            if child.type in (
+                cs.TS_SCALA_ARROW_RENAMED_IDENTIFIER,
+                cs.TS_SCALA_AS_RENAMED_IDENTIFIER,
+            ):
+                # `{Map => MMap}` (Scala 2) and `{Map as MMap}` (Scala 3) are
+                # different node types spelling the same thing.
+                self._bind_scala_rename(child, package, module_qn)
+            elif child.type == cs.TS_SCALA_NAMESPACE_WILDCARD:
+                # `import a.{b, _}` -- a wildcard alongside explicit names.
+                self.import_mapping[module_qn][f"*{package}"] = package
+            elif child.type == cs.TS_IDENTIFIER:
+                if name := safe_decode_with_fallback(child):
+                    self.import_mapping[module_qn][name] = (
+                        f"{package}{cs.SEPARATOR_DOT}{name}"
+                    )
+
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_GO_IMPORT_DECLARATION:
@@ -3919,7 +4065,53 @@ class ImportProcessor:
         }
     )
 
-    def _parse_php_imports(self, captures: dict, module_qn: str) -> None:
+    def _record_php_namespace(self, root_node: Node, module_qn: str) -> None:
+        """Bind this module to the `namespace` it declares, if any.
+
+        Walked from the root rather than read from the imports query, because
+        that query captures `namespace_use_declaration` only -- the `use`
+        statements -- and never `namespace_definition`. Widening the query
+        would change its capture contract for every consumer; this reads the
+        one node it needs.
+
+        A file with SEVERAL top-level namespace blocks records NOTHING. PHP
+        permits `namespace A { } namespace B { }` in one file, and this map
+        answers "which namespace is this module", which such a file has no
+        single answer to. An earlier version recorded the first block and
+        called that deliberate; review reproduced the consequence (#1484): with
+        `App\\First` recorded and both blocks' functions living in the same
+        module qn, an import of `App\\First\\helper` resolved to the `helper`
+        defined in `App\\Second` -- a confident wrong binding, which is the
+        exact failure this whole change exists to remove.
+
+        Recording nothing sends those files to the trie fallback, which is
+        where they were before this feature existed. Strictly no worse than
+        the status quo, and unlike a first-block guess it never asserts an
+        answer it does not have.
+        """
+        declarations = [
+            child
+            for child in root_node.children
+            if child.type == cs.TS_PHP_NAMESPACE_DEFINITION
+        ]
+        if len(declarations) != 1:
+            return
+        name_node = declarations[0].child_by_field_name(cs.TS_FIELD_NAME)
+        if name_node is None or not name_node.text:
+            # `namespace { ... }` -- the explicit GLOBAL namespace. It has no
+            # name, and binding it to "" would make every unqualified lookup
+            # match it.
+            return
+        declared = safe_decode_with_fallback(name_node)
+        if not declared:
+            return
+        self.php_module_namespaces[module_qn] = declared.replace("\\", cs.SEPARATOR_DOT)
+
+    def _parse_php_imports(
+        self, captures: dict, module_qn: str, root_node: Node | None = None
+    ) -> None:
+        if root_node is not None:
+            self._record_php_namespace(root_node, module_qn)
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
             cs.CAPTURE_IMPORT_FROM, []
         )

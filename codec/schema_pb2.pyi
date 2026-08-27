@@ -17,7 +17,7 @@ class GraphCodeIndex(_message.Message):
     def __init__(self, nodes: _Optional[_Iterable[_Union[Node, _Mapping]]] = ..., relationships: _Optional[_Iterable[_Union[Relationship, _Mapping]]] = ...) -> None: ...
 
 class Node(_message.Message):
-    __slots__ = ("project", "package", "folder", "module", "class_node", "function", "method", "file", "external_package", "module_implementation", "module_interface", "interface_node", "enum_node", "type_node", "union_node", "external_module", "resource", "section")
+    __slots__ = ("project", "package", "folder", "module", "class_node", "function", "method", "file", "external_package", "module_implementation", "module_interface", "interface_node", "enum_node", "type_node", "union_node", "external_module", "resource", "section", "pattern", "code_smell", "security_issue")
     PROJECT_FIELD_NUMBER: _ClassVar[int]
     PACKAGE_FIELD_NUMBER: _ClassVar[int]
     FOLDER_FIELD_NUMBER: _ClassVar[int]
@@ -36,6 +36,9 @@ class Node(_message.Message):
     EXTERNAL_MODULE_FIELD_NUMBER: _ClassVar[int]
     RESOURCE_FIELD_NUMBER: _ClassVar[int]
     SECTION_FIELD_NUMBER: _ClassVar[int]
+    PATTERN_FIELD_NUMBER: _ClassVar[int]
+    CODE_SMELL_FIELD_NUMBER: _ClassVar[int]
+    SECURITY_ISSUE_FIELD_NUMBER: _ClassVar[int]
     project: Project
     package: Package
     folder: Folder
@@ -54,7 +57,10 @@ class Node(_message.Message):
     external_module: ExternalModule
     resource: Resource
     section: Section
-    def __init__(self, project: _Optional[_Union[Project, _Mapping]] = ..., package: _Optional[_Union[Package, _Mapping]] = ..., folder: _Optional[_Union[Folder, _Mapping]] = ..., module: _Optional[_Union[Module, _Mapping]] = ..., class_node: _Optional[_Union[Class, _Mapping]] = ..., function: _Optional[_Union[Function, _Mapping]] = ..., method: _Optional[_Union[Method, _Mapping]] = ..., file: _Optional[_Union[File, _Mapping]] = ..., external_package: _Optional[_Union[ExternalPackage, _Mapping]] = ..., module_implementation: _Optional[_Union[ModuleImplementation, _Mapping]] = ..., module_interface: _Optional[_Union[ModuleInterface, _Mapping]] = ..., interface_node: _Optional[_Union[Interface, _Mapping]] = ..., enum_node: _Optional[_Union[Enum, _Mapping]] = ..., type_node: _Optional[_Union[Type, _Mapping]] = ..., union_node: _Optional[_Union[Union, _Mapping]] = ..., external_module: _Optional[_Union[ExternalModule, _Mapping]] = ..., resource: _Optional[_Union[Resource, _Mapping]] = ..., section: _Optional[_Union[Section, _Mapping]] = ...) -> None: ...
+    pattern: Pattern
+    code_smell: CodeSmell
+    security_issue: SecurityIssue
+    def __init__(self, project: _Optional[_Union[Project, _Mapping]] = ..., package: _Optional[_Union[Package, _Mapping]] = ..., folder: _Optional[_Union[Folder, _Mapping]] = ..., module: _Optional[_Union[Module, _Mapping]] = ..., class_node: _Optional[_Union[Class, _Mapping]] = ..., function: _Optional[_Union[Function, _Mapping]] = ..., method: _Optional[_Union[Method, _Mapping]] = ..., file: _Optional[_Union[File, _Mapping]] = ..., external_package: _Optional[_Union[ExternalPackage, _Mapping]] = ..., module_implementation: _Optional[_Union[ModuleImplementation, _Mapping]] = ..., module_interface: _Optional[_Union[ModuleInterface, _Mapping]] = ..., interface_node: _Optional[_Union[Interface, _Mapping]] = ..., enum_node: _Optional[_Union[Enum, _Mapping]] = ..., type_node: _Optional[_Union[Type, _Mapping]] = ..., union_node: _Optional[_Union[Union, _Mapping]] = ..., external_module: _Optional[_Union[ExternalModule, _Mapping]] = ..., resource: _Optional[_Union[Resource, _Mapping]] = ..., section: _Optional[_Union[Section, _Mapping]] = ..., pattern: _Optional[_Union[Pattern, _Mapping]] = ..., code_smell: _Optional[_Union[CodeSmell, _Mapping]] = ..., security_issue: _Optional[_Union[SecurityIssue, _Mapping]] = ...) -> None: ...
 
 class Relationship(_message.Message):
     __slots__ = ("type", "source_id", "target_id", "properties", "source_label", "target_label")
@@ -79,6 +85,15 @@ class Relationship(_message.Message):
         READS_FROM: _ClassVar[Relationship.RelationshipType]
         WRITES_TO: _ClassVar[Relationship.RelationshipType]
         CONTAINS_SECTION: _ClassVar[Relationship.RelationshipType]
+        EXPOSES: _ClassVar[Relationship.RelationshipType]
+        FLOWS_TO: _ClassVar[Relationship.RelationshipType]
+        HAS_SMELL: _ClassVar[Relationship.RelationshipType]
+        HAS_VULNERABILITY: _ClassVar[Relationship.RelationshipType]
+        IMPLEMENTS_PATTERN: _ClassVar[Relationship.RelationshipType]
+        INSTANTIATES: _ClassVar[Relationship.RelationshipType]
+        LINKS_TO: _ClassVar[Relationship.RelationshipType]
+        REFERENCES: _ClassVar[Relationship.RelationshipType]
+        RESOLVES_TO: _ClassVar[Relationship.RelationshipType]
     RELATIONSHIP_TYPE_UNSPECIFIED: Relationship.RelationshipType
     CONTAINS_PACKAGE: Relationship.RelationshipType
     CONTAINS_FOLDER: Relationship.RelationshipType
@@ -98,6 +113,15 @@ class Relationship(_message.Message):
     READS_FROM: Relationship.RelationshipType
     WRITES_TO: Relationship.RelationshipType
     CONTAINS_SECTION: Relationship.RelationshipType
+    EXPOSES: Relationship.RelationshipType
+    FLOWS_TO: Relationship.RelationshipType
+    HAS_SMELL: Relationship.RelationshipType
+    HAS_VULNERABILITY: Relationship.RelationshipType
+    IMPLEMENTS_PATTERN: Relationship.RelationshipType
+    INSTANTIATES: Relationship.RelationshipType
+    LINKS_TO: Relationship.RelationshipType
+    REFERENCES: Relationship.RelationshipType
+    RESOLVES_TO: Relationship.RelationshipType
     TYPE_FIELD_NUMBER: _ClassVar[int]
     SOURCE_ID_FIELD_NUMBER: _ClassVar[int]
     TARGET_ID_FIELD_NUMBER: _ClassVar[int]
@@ -166,7 +190,7 @@ class Module(_message.Message):
     flow_covered: bool
     generated: bool
     generator: str
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., decorators: _Optional[_Iterable[str]] = ..., rust_cfg_test_mods: _Optional[_Iterable[str]] = ..., rust_ungated_mods: _Optional[_Iterable[str]] = ..., flow_covered: _Optional[bool] = ..., generated: _Optional[bool] = ..., generator: _Optional[str] = ...) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., decorators: _Optional[_Iterable[str]] = ..., rust_cfg_test_mods: _Optional[_Iterable[str]] = ..., rust_ungated_mods: _Optional[_Iterable[str]] = ..., flow_covered: bool = ..., generated: bool = ..., generator: _Optional[str] = ...) -> None: ...
 
 class ExternalModule(_message.Message):
     __slots__ = ("qualified_name", "name", "path")
@@ -205,6 +229,60 @@ class ExternalPackage(_message.Message):
     NAME_FIELD_NUMBER: _ClassVar[int]
     name: str
     def __init__(self, name: _Optional[str] = ...) -> None: ...
+
+class Pattern(_message.Message):
+    __slots__ = ("qualified_name", "name", "message", "start_line", "end_line", "path", "snippet")
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    START_LINE_FIELD_NUMBER: _ClassVar[int]
+    END_LINE_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    SNIPPET_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    message: str
+    start_line: int
+    end_line: int
+    path: str
+    snippet: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., message: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., path: _Optional[str] = ..., snippet: _Optional[str] = ...) -> None: ...
+
+class CodeSmell(_message.Message):
+    __slots__ = ("qualified_name", "name", "message", "start_line", "end_line", "path", "snippet")
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    START_LINE_FIELD_NUMBER: _ClassVar[int]
+    END_LINE_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    SNIPPET_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    message: str
+    start_line: int
+    end_line: int
+    path: str
+    snippet: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., message: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., path: _Optional[str] = ..., snippet: _Optional[str] = ...) -> None: ...
+
+class SecurityIssue(_message.Message):
+    __slots__ = ("qualified_name", "name", "message", "start_line", "end_line", "path", "snippet")
+    QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    START_LINE_FIELD_NUMBER: _ClassVar[int]
+    END_LINE_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    SNIPPET_FIELD_NUMBER: _ClassVar[int]
+    qualified_name: str
+    name: str
+    message: str
+    start_line: int
+    end_line: int
+    path: str
+    snippet: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., message: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., path: _Optional[str] = ..., snippet: _Optional[str] = ...) -> None: ...
 
 class Resource(_message.Message):
     __slots__ = ("qualified_name", "name", "kind")
@@ -256,7 +334,7 @@ class Function(_message.Message):
     ast_fingerprint: str
     ast_fingerprint_nodes: int
     ast_branch_fingerprints: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: _Optional[bool] = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class Method(_message.Message):
     __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "ast_fingerprint", "ast_fingerprint_nodes", "ast_branch_fingerprints")
@@ -296,7 +374,7 @@ class Class(_message.Message):
     end_line: int
     decorators: _containers.RepeatedScalarFieldContainer[str]
     is_exported: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: _Optional[bool] = ...) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ...) -> None: ...
 
 class Interface(_message.Message):
     __slots__ = ("qualified_name", "name", "path", "absolute_path")

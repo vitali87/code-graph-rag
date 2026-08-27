@@ -130,11 +130,14 @@ def _warn_commit_mismatch(commit: str | None, repo_path: Path) -> None:
         return
     import subprocess
 
+    from .. import constants as cs
+
     try:
         result = subprocess.run(
             ["git", "-C", str(repo_path), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
         )
     except OSError:

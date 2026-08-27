@@ -94,6 +94,12 @@ ONEOF_TYPE = "type_node"
 ONEOF_UNION = "union_node"
 ONEOF_RESOURCE = "resource"
 ONEOF_SECTION = "section"
+# ast-grep findings (issue #413). Without these mappings the three finding
+# labels have no protobuf payload, and ensure_node_batch drops the node
+# entirely rather than storing it untyped (issue #1452).
+ONEOF_PATTERN = "pattern"
+ONEOF_CODE_SMELL = "code_smell"
+ONEOF_SECURITY_ISSUE = "security_issue"
 
 
 class UniqueKeyType(StrEnum):
@@ -194,6 +200,10 @@ class RelationshipType(StrEnum):
     IMPLEMENTS_PATTERN = "IMPLEMENTS_PATTERN"
     HAS_SMELL = "HAS_SMELL"
     HAS_VULNERABILITY = "HAS_VULNERABILITY"
+    # A relative link from a document to another file in the repository
+    # (issue #164). The document equivalent of an import: it is how a README
+    # or a guide states which files it is about.
+    LINKS_TO = "LINKS_TO"
 
 
 class CaptureGroup(StrEnum):
@@ -241,6 +251,7 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.EXPORTS,
             RelationshipType.EXPORTS_MODULE,
             RelationshipType.DEPENDS_ON_EXTERNAL,
+            RelationshipType.LINKS_TO,
         }
     ),
     CaptureGroup.IO: frozenset(

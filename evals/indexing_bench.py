@@ -104,6 +104,7 @@ def _ensure_corpus(spec: CorpusSpec, corpus_dir: Path) -> Path:
             ["git", "-C", str(checkout), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
         ).stdout.strip()
         if head == spec.commit:
@@ -114,6 +115,7 @@ def _ensure_corpus(spec: CorpusSpec, corpus_dir: Path) -> Path:
                 ["git", "-C", str(checkout), "status", "--porcelain", "--ignored"],
                 capture_output=True,
                 text=True,
+                encoding=cs.ENCODING_UTF8,
                 check=False,
             ).stdout.strip()
             if dirty:
@@ -187,6 +189,7 @@ def _measure_in_child_process(target: Path, project_name: str) -> IndexingStats:
         ],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     if proc.returncode != 0:

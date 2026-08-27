@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.constants import VectorStoreBackend
 from codebase_rag.utils.dependencies import has_pymilvus, has_qdrant_client
 
@@ -512,6 +513,7 @@ def test_process_exit_closes_local_client_cleanly(temp_qdrant_path: Path) -> Non
         check=False,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         env={
             **os.environ,
             # A QDRANT_URL would open a remote client and skip the local-path

@@ -14,6 +14,10 @@ PASS_2_FILES = (
 PASS_3_CALLS = "--- Pass 3: Processing Function Calls from AST Cache ---"
 PASS_4_EMBEDDINGS = "--- Pass 4: Generating semantic embeddings ---"
 CPP_FRONTEND_RUNNING = "--- C/C++ libclang frontend: {path} ---"
+EMITTING_FRONTEND_PROBE_FAILED = (
+    "Emitting frontend for {lang} raised while probing availability; skipping "
+    "it and falling back to tree-sitter for that language."
+)
 CPP_FRONTEND_UNAVAILABLE = (
     "C/C++ libclang frontend enabled but libclang is unavailable; using "
     "tree-sitter only (no macro Function nodes or #include IMPORTS). "
@@ -85,6 +89,11 @@ GO_FRONTEND_PARSE_FAILED = (
     "stdout: {stdout}\nstderr: {stderr}"
 )
 GO_FRONTEND_RUN_FAILED = "Go frontend tool did not finish ({error}); using tree-sitter"
+GO_FRONTEND_ANCHOR_DEGRADED = (
+    "Go frontend tool failed for module anchor {anchor}; that module falls back "
+    "to tree-sitter while the others keep their compiler facts. Recorded in "
+    "degraded_modules so the mixture is not silent."
+)
 GO_FRONTEND_NO_FACTS = (
     "Go frontend produced no facts; every join falls back to tree-sitter. "
     "Tool diagnostics:\n{stderr}"
@@ -845,8 +854,10 @@ HASH_CACHE_ORPHANED = (
 PARSER_FINGERPRINT_SAVE_FAILED = "Failed to save parser fingerprint to {path}: {error}"
 PARSER_FINGERPRINT_MISMATCH = (
     "Parser code changed since this graph was built. Incremental sync keeps "
-    "results from the old parser for unchanged files, so the graph may be "
-    "stale. Run 'cgr start --clean' to rebuild it from scratch."
+    "results from the old parser for files not touched since the last sync, so "
+    "the graph may be stale. Run 'cgr start --clean --update-graph' to rebuild "
+    "it from scratch. '--clean' on its own deletes the graph without rebuilding "
+    "it, and deletes every project in a shared database, not just this one."
 )
 
 REHYDRATE_QUERY_FAILED = (

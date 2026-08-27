@@ -32,6 +32,7 @@ def _php_with_xdebug() -> str | None:
             [php, "-r", 'echo extension_loaded("xdebug") ? "yes" : "no";'],
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=15,
         )
@@ -337,6 +338,7 @@ def test_live_phpunit_run_captures_variable_call_closure_and_trait(tmp_path):
         check=True,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         cwd=tmp_path,
         timeout=300,
     )

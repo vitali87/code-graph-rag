@@ -25,6 +25,7 @@ def _run_go_oracle_payload(target: Path) -> OraclePayload:
         [ec.GO_BIN, ec.GO_RUN, str(_ORACLE_GO), str(target)],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=True,
         env={**os.environ, ec.GO_MODULE_ENV: ec.GO_MODULE_OFF},
     )

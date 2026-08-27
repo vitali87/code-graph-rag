@@ -1,5 +1,17 @@
 syntax = "proto3";
 
+// Regenerating the bindings after editing this file:
+//
+//   uv run --with "grpcio-tools==1.76.0" python -m grpc_tools.protoc \
+//     -I. --python_out=. --pyi_out=. codec/schema.proto
+//
+// The grpcio-tools version is not incidental. Generated code carries a gencode
+// version stamp that `ValidateProtobufRuntimeVersion` checks at import, and a
+// runtime OLDER than the gencode raises rather than degrading — so generating
+// with a newer protoc than the pinned `protobuf` runtime makes `codec`
+// unimportable for everyone. 1.76.0 bundles a protoc matching the runtime
+// floor in pyproject.toml. Bump both together, runtime first.
+
 package graphcode.v1;
 
 import "google/protobuf/struct.proto";
@@ -109,6 +121,11 @@ message GraphCodeIndex {
       ExternalModule external_module = 16;
       Resource resource = 17;
       Section section = 18;
+      // ast-grep findings (issue #413). Field numbering is append-only for
+      // the same reason as RelationshipType: a number is wire format.
+      Pattern pattern = 19;
+      CodeSmell code_smell = 20;
+      SecurityIssue security_issue = 21;
     }
   }
 
@@ -135,6 +152,17 @@ message GraphCodeIndex {
       READS_FROM = 16;
       WRITES_TO = 17;
       CONTAINS_SECTION = 18;
+      // Numbering is append-only: a field number is part of the wire format,
+      // so reusing or reordering one silently reinterprets existing indexes.
+      EXPOSES = 19;
+      FLOWS_TO = 20;
+      HAS_SMELL = 21;
+      HAS_VULNERABILITY = 22;
+      IMPLEMENTS_PATTERN = 23;
+      INSTANTIATES = 24;
+      LINKS_TO = 25;
+      REFERENCES = 26;
+      RESOLVES_TO = 27;
     }
 
     RelationshipType type = 1;
@@ -232,6 +260,47 @@ message GraphCodeIndex {
   message ExternalPackage {
     // Primary Key
     string name = 1;
+  }
+
+  // ast-grep findings (issue #413), attached to a Module and opt-in via
+  // CaptureGroup.FINDINGS. The three share a shape: Pattern is a matched
+  // structural pattern, CodeSmell a quality signal, SecurityIssue a security
+  // one. They are separate labels rather than one with a `kind`, so the graph
+  // can be queried per severity without a property filter.
+  message Pattern {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string message = 3;
+    int32 start_line = 4;
+    int32 end_line = 5;
+    string path = 6;
+    string snippet = 7;
+  }
+
+  message CodeSmell {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string message = 3;
+    int32 start_line = 4;
+    int32 end_line = 5;
+    string path = 6;
+    string snippet = 7;
+  }
+
+  message SecurityIssue {
+    // Primary Key
+    string qualified_name = 1;
+
+    string name = 2;
+    string message = 3;
+    int32 start_line = 4;
+    int32 end_line = 5;
+    string path = 6;
+    string snippet = 7;
   }
 
   // An external I/O resource a callable reads from or writes to

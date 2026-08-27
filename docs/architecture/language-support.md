@@ -49,11 +49,15 @@ merge `Main.kt` and `Main.kts` onto one node.
 
 Graphs indexed before this keep the unsuffixed names, and a saved query
 written against the old shape stops matching once they move. An incremental
-sync will not move them: it skips files whose content is unchanged, and this
-change alters how a name is emitted rather than the file itself, so cgr warns
-that the parser changed but keeps the old results. Rebuilding with
-`cgr start --clean` is what re-emits them. Note that it clears **every**
-project in a shared graph, so re-index the others afterwards.
+sync will not move them: it compares each file's mtime against the hash cache
+rather than hashing its content, so it skips every file whose mtime has not
+advanced since the last sync. This change alters how a name is emitted rather
+than the file itself, so cgr warns that the parser changed but keeps the old
+results. Rebuilding with
+`cgr start --clean --update-graph` is what re-emits them. Both flags are
+required: `--clean` on its own deletes the graph and returns without
+rebuilding. Note that it clears **every** project in a shared graph, so
+re-index the others afterwards.
 
 | Language | Extensions | Functions | Classes/Types | Imports |
 |---|---|---|---|---|
@@ -97,6 +101,25 @@ Documents have no functions, classes, or calls, so they get neither of the
 code tiers above and are absent from call-graph analyses such as dead-code
 detection. Markdown files still receive the `File` node every indexed file
 gets, so a base install without the grammar simply indexes them as files.
+
+A document's qualified name keeps its extension, so `docs/guide.md` becomes
+`<project>.docs.guide_md`. The suffix is part of the name because both `.md`
+and `.markdown` are handled here, and dropping it would merge `guide.md` and
+`guide.markdown` onto one `Module` node along with any identically-named
+sections. A graph indexed before document support existed holds no `Section`
+nodes at all, and any document `Module` it holds carries an unsuffixed name,
+so a saved query written against the old names stops matching once the graph
+is rebuilt. An incremental sync will not move it: `.md` files were already
+hashed before this tier existed, so `--update-graph` sees them unchanged and
+skips them, leaving the graph exactly as it was. Rebuilding needs
+`cgr start --clean --update-graph`: `--clean` on its own wipes the database,
+clears the embeddings, drops the hash cache and returns without indexing
+anything, so it would leave you with an empty graph rather than renamed
+document modules. Both flags together wipe and then re-index in one pass —
+and because the wipe drops the hash cache, the re-index treats every file as
+new, which is what re-emits the documents under their suffixed names. Note
+that the wipe clears **every** project in the shared graph, so run it only
+when that graph holds just this repository.
 Requires the `treesitter-full` extra.
 
 ## Language-Agnostic Design
