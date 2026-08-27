@@ -1409,9 +1409,19 @@ class CallResolver:
         """
         if module_qn is None:
             return False
-        return call_name in self.import_processor.php_function_imports.get(
+        imported = self.import_processor.php_function_imports.get(
             module_qn, frozenset()
         )
+        if call_name in imported:
+            return True
+        # PHP function names are case-insensitive at the CALL SITE too, so
+        # `use function App\Text\format` followed by `FORMAT()` is valid and
+        # runs. Verified by executing it under PHP 8.5. An exact-case lookup
+        # here recognised the import but not the call, so the resolver
+        # returned None and the call fell to the trie -- the same wrong-edge
+        # path, reached through the alias rather than the target.
+        folded = _php_fold(call_name)
+        return any(_php_fold(name) == folded for name in imported)
 
     def _try_resolve_direct_import(
         self,

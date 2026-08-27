@@ -287,6 +287,64 @@ def test_a_class_use_does_not_resolve_to_a_php_function(tmp_path: Path) -> None:
     ) == (NodeType.FUNCTION, "proj.text.format")
 
 
+def test_a_call_through_a_use_function_alias_is_case_insensitive(
+    tmp_path: Path,
+) -> None:
+    """`use function App\\Text\\format` then calling `FORMAT()` must resolve.
+
+    PHP function names are case-insensitive at the CALL SITE, not only in the
+    import path. Verified by executing it under PHP 8.5:
+
+        namespace App\\Text; function format(...)
+        use function App\\Text\\format;
+        echo FORMAT("x");        // prints F:x
+
+    An exact-case membership test recognised the IMPORT but not the CALL, so
+    the resolver declined and the call fell through to the simple-name trie --
+    the same wrong-edge path, reached through the alias instead of the target.
+
+    Distinct from the mixed-case import test: that one varies the spelling of
+    the imported PATH, this one varies the spelling of the CALL. Two axes of
+    the same case-insensitivity, and covering one said nothing about the other.
+    """
+    from codebase_rag.parsers.call_resolver import CallResolver
+
+    resolver = object.__new__(CallResolver)
+    resolver.import_processor = SimpleNamespace(
+        php_module_namespaces={"proj.text": "App.Text"},
+        commonjs_direct_exports={},
+        php_function_imports={"proj.caller": {"format"}},
+    )
+    resolver.function_registry = _registry({"proj.text.format": "Function"})
+    # Both spellings are in the import map, because the call-name capture
+    # records the call AS WRITTEN. What varies here is whether the resolver
+    # recognises the alias when the CASE differs from the `use function`
+    # spelling -- a spelling absent from the map fails at an earlier layer
+    # and would test something else.
+    import_map = {"format": "App.Text.format", "FORMAT": "App.Text.format"}
+
+    for spelling in ("format", "FORMAT"):
+        assert resolver._try_resolve_direct_import(
+            spelling, import_map, cs.SupportedLanguage.PHP, "proj.caller"
+        ) == (NodeType.FUNCTION, "proj.text.format"), (
+            f"calling the alias as {spelling!r} did not resolve; PHP function "
+            "names are case-insensitive at the call site, so this call is "
+            "valid and runs"
+        )
+
+    # The control: a name that was never imported must still decline, so the
+    # fold is case-insensitivity rather than accepting anything.
+    assert (
+        resolver._try_resolve_direct_import(
+            "unrelated",
+            {"unrelated": "App.Text.format"},
+            cs.SupportedLanguage.PHP,
+            "proj.caller",
+        )
+        is None
+    )
+
+
 def test_an_unknown_caller_module_does_not_resolve(tmp_path: Path) -> None:
     """No `module_qn` means the binding kind cannot be shown, so decline.
 
