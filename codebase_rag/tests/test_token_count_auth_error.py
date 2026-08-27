@@ -80,8 +80,13 @@ class TestErrorClassification:
         )
         _patch_client(monkeypatch, transport)
 
+        # Built OUTSIDE the raises block: a failure inside `_messages()`
+        # would otherwise satisfy `pytest.raises` and the test would pass
+        # for the wrong reason (Sonar S5778).
+        messages = _messages()
+
         with pytest.raises(TokenCountAuthError):
-            await count_anthropic_context("bad-key", "claude-x", _messages())
+            await count_anthropic_context("bad-key", "claude-x", messages)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", [429, 500, 503])
@@ -97,8 +102,10 @@ class TestErrorClassification:
         transport = _transport(status, '{"type":"error","error":{"message":"oops"}}')
         _patch_client(monkeypatch, transport)
 
+        messages = _messages()
+
         with pytest.raises(TokenCountError) as caught:
-            await count_anthropic_context("good-key", "claude-x", _messages())
+            await count_anthropic_context("good-key", "claude-x", messages)
 
         assert not isinstance(caught.value, TokenCountAuthError), (
             f"status {status} was classified as an authentication failure; "
@@ -118,8 +125,10 @@ class TestErrorClassification:
         transport = _transport(401, "denied")
         _patch_client(monkeypatch, transport)
 
+        messages = _messages()
+
         with pytest.raises(TokenCountError):
-            await count_anthropic_context("bad-key", "claude-x", _messages())
+            await count_anthropic_context("bad-key", "claude-x", messages)
 
 
 class TestMessage:
@@ -143,8 +152,10 @@ class TestMessage:
         )
         _patch_client(monkeypatch, transport)
 
+        messages = _messages()
+
         with pytest.raises(TokenCountAuthError) as caught:
-            await count_anthropic_context("bad-key", "claude-x", _messages())
+            await count_anthropic_context("bad-key", "claude-x", messages)
 
         message = str(caught.value)
         assert "API key" in message, message
