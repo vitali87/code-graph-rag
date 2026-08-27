@@ -32,6 +32,13 @@ from . import tool_descriptions as td
 # `derive_project_name` builds "<base>__<8 hex digits>". Requiring the whole
 # shape, not just the "__" marker, is what stops `__init__` being read as a
 # project-qualified name.
+# A PROJECTED PROPERTY: `n.qualified_name`, with nothing appended. The
+# trailing boundary is what rejects `AS qualified_name_of_thing`, and the
+# required `<identifier>.` prefix is what rejects a bare string literal.
+_PROJECTED_QUALIFIED_NAME_RE = re.compile(
+    rf"[A-Z_][A-Z0-9_]*\.{cs.CYPHER_QUALIFIED_NAME_TOKEN}(?![A-Z0-9_])"
+)
+
 _PROJECT_NAME_RE = re.compile(
     rf".+{cs.PROJECT_NAME_DIGEST_MARKER}[0-9a-f]{{{cs.PROJECT_NAME_DIGEST_LEN}}}"
 )
@@ -82,16 +89,36 @@ def requires_project_evidence(cypher_query: str) -> bool:
     projection = _return_clause(cypher_query)
     if not projection:
         return False
-    if cs.CYPHER_QUALIFIED_NAME_TOKEN in projection:
+    # A PROJECTED PROPERTY (`x.qualified_name`), not the bare token: an
+    # ALIAS containing it -- `RETURN n.name AS qualified_name_of_thing` --
+    # returns no qualified name at all, yet satisfied a substring match.
+    if _PROJECTED_QUALIFIED_NAME_RE.search(projection):
         return True
-    # A PURE aggregate names nobody, so there is nothing to attribute.
-    # `RETURN n.name, count(n)` is not that: the exemption was meant for
-    # `RETURN count(n)` alone, and mixing in a bare field leaks exactly
-    # what the exemption assumed could not leak.
+    # An aggregate exposes no NAMES but does expose a MAGNITUDE: a scoped
+    # caller receiving `count(n)` over every indexed project learns the
+    # size of projects they did not ask about. So it counts as evidence
+    # only when the QUERY ITSELF restricts by qualified name -- then the
+    # number is attributable and counting stays usable when scoped.
     terms = [term.strip() for term in projection.split(cs.CHAR_COMMA)]
-    return bool(terms) and all(
+    all_aggregates = bool(terms) and all(
         any(agg in term for agg in cs.CYPHER_AGGREGATE_TOKENS) for term in terms
     )
+    if not all_aggregates:
+        return False
+    return _restricts_by_qualified_name(cypher_query)
+
+
+def _restricts_by_qualified_name(cypher_query: str) -> bool:
+    """Whether the part of the query BEFORE its RETURN filters on a qn.
+
+    An aggregate is attributable only if the rows it counts were already
+    narrowed, so this looks at the MATCH/WHERE portion rather than the
+    projection.
+    """
+    upper = cypher_query.upper()
+    marker = upper.rfind(cs.CYPHER_RETURN_KEYWORD)
+    body = upper if marker < 0 else upper[:marker]
+    return _PROJECTED_QUALIFIED_NAME_RE.search(body) is not None
 
 
 def _return_clause(cypher_query: str) -> str:

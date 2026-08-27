@@ -334,11 +334,95 @@ class TestEvidenceMustBeInTheReturnClause:
             "MATCH (n:Function) RETURN n.name AS name, count(n) AS total"
         )
 
-    def test_a_pure_aggregate_is_still_evidence(self) -> None:
-        """The control that keeps counting queries usable when scoped."""
+    def test_an_aggregate_must_itself_be_restricted(self) -> None:
+        """A pure aggregate is evidence ONLY if the query narrows the rows.
+
+        This assertion previously read the other way -- that
+        `RETURN count(n)` alone was evidence, on the reasoning that an
+        aggregate names nobody. It encoded a real leak: the count spans
+        every indexed project, so a scoped caller learns the SIZE of
+        projects they never asked about. Names were not the only thing
+        that leaks.
+
+        Counting stays usable when scoped, via the restricted form below.
+        """
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
-        assert requires_project_evidence("MATCH (n:Function) RETURN count(n) AS total")
+        assert not requires_project_evidence(
+            "MATCH (n:Function) RETURN count(n) AS total"
+        )
+        assert requires_project_evidence(
+            "MATCH (n:Function) WHERE n.qualified_name STARTS WITH $p "
+            "RETURN count(n) AS total"
+        )
+
+
+class TestEvidenceIsAProjectedPropertyNotASubstring:
+    """An ALIAS containing "qualified_name" is not evidence.
+
+    The check matched the token anywhere in the RETURN clause, so
+    `RETURN n.name AS qualified_name_of_thing` satisfied it while
+    returning no qualified name at all -- unattributable rows, kept.
+    """
+
+    @pytest.mark.parametrize(
+        "cypher",
+        [
+            "MATCH (n) RETURN n.name AS qualified_name_of_thing",
+            'MATCH (n) RETURN "qualified_name" AS lit',
+            "MATCH (n) RETURN n.path AS my_qualified_name_col",
+            # A DIFFERENT property whose name merely starts with the token.
+            # This is the case the trailing boundary exists for: the three
+            # above are already rejected by the required `<ident>.` prefix,
+            # so without this one a mutation dropping the boundary survives.
+            "MATCH (n) RETURN n.qualified_name_extra AS x",
+        ],
+    )
+    def test_a_mere_mention_is_not_evidence(self, cypher: str) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert not requires_project_evidence(cypher)
+
+    @pytest.mark.parametrize(
+        "cypher",
+        [
+            "MATCH (n) RETURN n.qualified_name",
+            "MATCH (n) RETURN n.qualified_name AS anything",
+            "MATCH (a)-[r]->(b) RETURN a.qualified_name AS from_qn, b.qualified_name",
+        ],
+    )
+    def test_a_projected_property_is_evidence(self, cypher: str) -> None:
+        """The control: reading the PROPERTY must still count."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert requires_project_evidence(cypher)
+
+
+class TestAnAggregateLeaksMagnitude:
+    """`RETURN count(n)` exposes no NAMES but still exposes a NUMBER.
+
+    The exemption reasoned about name leakage and missed that a scoped
+    caller receiving a count over every indexed project learns the size
+    of projects they did not ask about. An unfiltered aggregate is not
+    safe merely because it is anonymous.
+    """
+
+    def test_an_unfiltered_aggregate_is_refused_when_scoped(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert not requires_project_evidence("MATCH (n:Function) RETURN count(n)")
+
+    def test_an_aggregate_over_a_scoped_match_is_accepted(self) -> None:
+        """A count the query itself restricts is attributable and fine.
+
+        This is what keeps counting usable when scoped: the caller asks
+        for a project-filtered count and gets one.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert requires_project_evidence(
+            'MATCH (n:Function) WHERE n.qualified_name STARTS WITH $p RETURN count(n)'
+        )
 
 
 class TestScopedQueriesMustProjectAQualifiedName:
@@ -374,15 +458,20 @@ class TestScopedQueriesMustProjectAQualifiedName:
 
         assert requires_project_evidence(cypher)
 
-    def test_an_aggregate_is_accepted(self) -> None:
-        """`RETURN count(n)` leaks no names, so it needs no evidence.
+    def test_a_restricted_aggregate_is_accepted(self) -> None:
+        """Counting stays usable when scoped, provided the query narrows.
 
-        Refusing it would make scoping useless for the counting queries a
-        caller most often wants across a whole project.
+        This previously asserted that a BARE `RETURN count(n)` was
+        accepted, reasoning that it leaks no names. It leaks a magnitude
+        instead -- see TestAnAggregateLeaksMagnitude. The restricted form
+        preserves the useful case without the leak.
         """
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
-        assert requires_project_evidence("MATCH (n:Function) RETURN count(n) AS total")
+        assert requires_project_evidence(
+            "MATCH (n:Function) WHERE n.qualified_name STARTS WITH $p "
+            "RETURN count(n) AS total"
+        )
 
 
 class TestUnscopedIsUnchanged:
