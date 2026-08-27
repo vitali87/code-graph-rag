@@ -131,6 +131,14 @@ def _front_matter_pair(line: str) -> tuple[str, str] | None:
     # rather than declaring a scalar. Recording it as an empty string would
     # assert the author declared it empty -- a different claim from declaring
     # a structure this parser does not represent.
+    #
+    # REDUNDANT with the unquoted check below, verified by mutation: removing
+    # this leaves all 23 tests passing, because a value empty here is empty
+    # there too. Kept because the two guards answer different questions and
+    # only coincide today -- this one is about a key that declares a
+    # STRUCTURE, that one about quote-stripping emptying a scalar. If either
+    # rule changes they diverge, and a reader tracing "why is `tags:` skipped"
+    # should land here rather than on a quote-stripping detail.
     cleaned = value.strip()
     if not cleaned:
         return None
