@@ -47,6 +47,11 @@ _GRAPH_READERS = frozenset(
         "semantic_search",
         "query_code_graph",
         "get_code_snippet",
+        # Duplicate detection spans several graph reads (fingerprints, then
+        # skipped-symbol coverage) and a node id is only meaningful within one
+        # generation, so both must serialise against the rebuild.
+        "find_duplicate_code",
+        "get_function_source",
         # The agent reads the graph through the RAW tool objects rather than
         # the handlers above, so its bypass is total: none of the wrappers
         # apply. It needs the lock for the whole run because its answer is
