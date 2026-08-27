@@ -98,12 +98,27 @@ async def test_explain_traceback_exposes_the_resolution_rate_over_mcp(tmp_path):
     measurement the MCP surface does not return is indistinguishable from one
     that was never computed -- the defect Greptile caught on #1478, where a
     cutoff-aware scorer existed and nothing invoked it.
+
+    A PARTIALLY resolved stack, deliberately. The obvious fixture is the
+    fully-resolved one used by the tests above, and with `total == resolved`
+    a mapping that swaps the two keys is invisible -- measured: the swap
+    passed all four tests before this fixture gained the library frame. The
+    illustrative case and the discriminating case are different cases.
     """
     registry = _registry(tmp_path)
+    src = (tmp_path / "app" / "service.py").as_posix()
+    text = (
+        "Traceback (most recent call last):\n"
+        '  File "/usr/lib/python3.12/site-packages/lib.py", line 5, in call\n'
+        "    fn()\n"
+        f'  File "{src}", line 10, in handle\n'
+        "    return cfg.timeout\n"
+        "AttributeError: 'NoneType' object has no attribute 'timeout'\n"
+    )
 
-    result = await registry.explain_traceback(traceback_text=_crash_text(tmp_path))
+    result = await registry.explain_traceback(traceback_text=text)
 
-    assert result["resolution"] == {"total": 2, "resolved": 2, "rate": 1.0}
+    assert result["resolution"] == {"total": 2, "resolved": 1, "rate": 0.5}
 
 
 async def test_rank_root_causes_returns_ranked_candidates(tmp_path):
