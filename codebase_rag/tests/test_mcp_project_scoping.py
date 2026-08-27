@@ -425,6 +425,65 @@ class TestAnAggregateLeaksMagnitude:
         )
 
 
+class TestAnAggregateMustBeBoundToTheRequestedProject:
+    """Restricting by *a* qualified name is not restricting to *yours*.
+
+    The aggregate exemption checked only that the query filtered on some
+    qualified name, so a query narrowing to a DIFFERENT project passed and
+    returned that project's count to the scoped caller. The same magnitude
+    leak the exemption was tightened to prevent, one level deeper.
+    """
+
+    def test_a_restriction_naming_another_project_is_refused(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            f'MATCH (n) WHERE n.qualified_name STARTS WITH "{BETA}." '
+            "RETURN count(n) AS total"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_restriction_naming_the_requested_project_is_accepted(self) -> None:
+        """The control: the useful case must survive the tightening."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            f'MATCH (n) WHERE n.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(n) AS total"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+    def test_a_parameterised_restriction_is_accepted(self) -> None:
+        """`$project` carries no literal to compare, and is how the tool asks.
+
+        Refusing it would make the parameterised form -- the safe one --
+        unusable, pushing callers towards string interpolation.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (n) WHERE n.qualified_name STARTS WITH $project "
+            "RETURN count(n) AS total"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+    def test_a_projected_qualified_name_needs_no_binding(self) -> None:
+        """The control that keeps the non-aggregate path unchanged.
+
+        A query RETURNING qualified names is attributable row by row, so
+        `scope_rows_to_project` filters it and the binding check does not
+        apply. Requiring binding there would refuse valid queries.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert requires_project_evidence(
+            "MATCH (n) RETURN n.qualified_name AS qualified_name", ALPHA
+        )
+
+
 class TestScopedQueriesMustProjectAQualifiedName:
     """Close the gap the result filter cannot.
 

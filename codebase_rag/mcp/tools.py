@@ -791,7 +791,7 @@ class MCPToolsRegistry:
             # the scope silently, which is the original bug in new clothes.
             # Refused instead, so the caller learns the scope did not hold.
             if project is not None and not requires_project_evidence(
-                result_dict.get(cs.DICT_KEY_QUERY_USED, "")
+                result_dict.get(cs.DICT_KEY_QUERY_USED, ""), project
             ):
                 message = cs.MCP_UNSCOPEABLE_QUERY.format(project=project)
                 return QueryResultDict(

@@ -40,6 +40,13 @@ _PROJECTED_QUALIFIED_NAME_RE = re.compile(
 # `derive_project_name` builds "<base>__<8 hex digits>". Requiring the whole
 # shape, not just the "__" marker, is what stops `__init__` being read as a
 # project-qualified name.
+# A project name appearing as a LITERAL in the query text, uppercased by the
+# caller. Used to check an aggregate's restriction names the requested
+# project rather than some other one.
+_PROJECT_LITERAL_RE = re.compile(
+    rf"[A-Z0-9_-]+{cs.PROJECT_NAME_DIGEST_MARKER}[0-9A-F]{{{cs.PROJECT_NAME_DIGEST_LEN}}}\.?"
+)
+
 _PROJECT_NAME_RE = re.compile(
     rf".+{cs.PROJECT_NAME_DIGEST_MARKER}[0-9a-f]{{{cs.PROJECT_NAME_DIGEST_LEN}}}"
 )
@@ -76,7 +83,9 @@ def scope_rows_to_project(
     return kept
 
 
-def requires_project_evidence(cypher_query: str) -> bool:
+def requires_project_evidence(
+    cypher_query: str, project_name: str | None = None
+) -> bool:
     """Whether `cypher_query` returns something a project filter can judge.
 
     `scope_rows_to_project` decides per row, from the values it is given. A
@@ -117,20 +126,37 @@ def requires_project_evidence(cypher_query: str) -> bool:
     )
     if not all_aggregates:
         return False
-    return _restricts_by_qualified_name(cypher_query)
+    return _restricts_to_project(cypher_query, project_name)
 
 
-def _restricts_by_qualified_name(cypher_query: str) -> bool:
-    """Whether the part of the query BEFORE its RETURN filters on a qn.
+def _restricts_to_project(cypher_query: str, project_name: str | None) -> bool:
+    """Whether the query narrows its rows to `project_name` before RETURN.
 
-    An aggregate is attributable only if the rows it counts were already
-    narrowed, so this looks at the MATCH/WHERE portion rather than the
-    projection.
+    Restricting by *a* qualified name is not restricting to *yours*: a query
+    filtering on another project's prefix would otherwise pass and return
+    that project's count to a scoped caller -- the magnitude leak again, one
+    level deeper.
+
+    So a literal prefix must name the requested project. A PARAMETERISED
+    restriction (`STARTS WITH $project`) carries no literal to compare and
+    is accepted: it is the safe form, and refusing it would push callers
+    towards string interpolation.
     """
     upper = cypher_query.upper()
     marker = upper.rfind(cs.CYPHER_RETURN_KEYWORD)
     body = upper if marker < 0 else upper[:marker]
-    return _PROJECTED_QUALIFIED_NAME_RE.search(body) is not None
+    if _PROJECTED_QUALIFIED_NAME_RE.search(body) is None:
+        return False
+    literals = _PROJECT_LITERAL_RE.findall(body)
+    if not literals:
+        # No literal project name anywhere: a bound parameter, which the
+        # caller supplies and this function cannot see.
+        return True
+    if not project_name:
+        return False
+    return all(
+        literal.rstrip(cs.SEPARATOR_DOT) == project_name.upper() for literal in literals
+    )
 
 
 def _return_clause(cypher_query: str) -> str:
@@ -226,7 +252,9 @@ def create_query_tool(
             # request with those would ignore the scope silently, so the
             # guard belongs here as well as in the MCP handler -- the CLI
             # is scoped too when exactly one project is active.
-            if project_name is not None and not requires_project_evidence(cypher_query):
+            if project_name is not None and not requires_project_evidence(
+                cypher_query, project_name
+            ):
                 return QueryGraphData(
                     query_used=cypher_query,
                     results=[],
