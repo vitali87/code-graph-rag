@@ -87,6 +87,10 @@ FIELD_ENDPOINT = "endpoint"
 ANTHROPIC_COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens"
 ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_HEADER_API_KEY = "x-api-key"
+
+# HTTP statuses meaning the credential was REJECTED. Retrying cannot help,
+# so these are reported differently from transient failures (issue #1493).
+HTTP_AUTH_FAILURE_STATUSES: frozenset[int] = frozenset({401, 403})
 ANTHROPIC_HEADER_VERSION = "anthropic-version"
 HEADER_CONTENT_TYPE = "content-type"
 CONTENT_TYPE_JSON = "application/json"
