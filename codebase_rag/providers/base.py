@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import os
 from abc import ABC, abstractmethod
 from urllib.parse import urljoin, urlsplit
@@ -336,6 +337,57 @@ def get_provider_from_config(config: ModelConfig) -> ModelProvider:
         provider_type=config.provider_type,
         thinking_budget=config.thinking_budget,
         service_account_file=config.service_account_file,
+    )
+
+
+def _known_model_ids(provider: str) -> frozenset[str]:
+    """Model ids pydantic-ai enumerates for `provider`, without its prefix.
+
+    Empty for any provider whose catalogue pydantic-ai does not ship, which
+    is how `validate_model_id` decides to stay silent.
+    """
+    from pydantic_ai.models import known_model_names
+
+    prefix = f"{provider}{cs.MODEL_STRING_SEPARATOR}"
+    return frozenset(
+        name[len(prefix) :] for name in known_model_names() if name.startswith(prefix)
+    )
+
+
+def validate_model_id(config: ModelConfig) -> None:
+    """Reject a model id the provider does not serve (issue #1492).
+
+    Only providers with an enumerable catalogue are checked. Ollama --
+    this project's default -- exposes whatever the user has pulled locally,
+    and Azure deployment names, LiteLLM routes and MiniMax ids are equally
+    user-defined; pydantic-ai ships zero entries for any of them. Gating
+    those would reject working configurations, which is a far more
+    expensive error than missing a typo.
+
+    The enforced set is therefore derived from the catalogue itself rather
+    than from a hand-maintained list: a provider nobody enumerates is not
+    checked, and a provider added later is not gated until pydantic-ai
+    knows its models.
+    """
+    known = _known_model_ids(config.provider)
+    if not known or config.model_id in known:
+        return
+
+    suggestions = difflib.get_close_matches(config.model_id, sorted(known), n=3)
+    if suggestions:
+        raise ValueError(
+            ex.MODEL_ID_UNKNOWN.format(
+                provider=config.provider,
+                model_id=config.model_id,
+                suggestions=", ".join(repr(s) for s in suggestions),
+            )
+        )
+    raise ValueError(
+        ex.MODEL_ID_UNKNOWN_NO_MATCH.format(
+            provider=config.provider,
+            model_id=config.model_id,
+            known=", ".join(sorted(known)),
+        )
     )
 
 
