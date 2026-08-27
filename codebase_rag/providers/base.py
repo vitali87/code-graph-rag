@@ -402,6 +402,19 @@ def validate_model_id(config: ModelConfig) -> None:
     if not _serves_own_catalogue(config):
         return
 
+    # Vertex Model Garden serves third-party models as
+    # "{publisher}/{model_id}" (meta/llama-3.3-70b-instruct-maas and the
+    # like). They are valid selections that will never appear in the Google
+    # catalogue, so a Vertex config has an open model space. Scoped to
+    # Vertex deliberately: GLA serves Google's own published models, and
+    # exempting the provider wholesale would disable the common case to
+    # serve the rare one.
+    if (
+        config.provider.lower() == cs.Provider.GOOGLE
+        and config.provider_type == cs.GoogleProviderType.VERTEX
+    ):
+        return
+
     known = _known_model_ids(config.provider)
     if not known or config.model_id in known:
         return

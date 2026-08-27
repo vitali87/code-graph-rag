@@ -238,6 +238,58 @@ class TestSplitCatalogues:
             validate_model_id(_config(cs.Provider.OPENAI, "gpt4o"))
 
 
+class TestVertexModelGarden:
+    """Vertex serves models pydantic-ai's Google catalogue does not list.
+
+    Model Garden exposes third-party models as `{publisher}/{model_id}` --
+    `meta/llama-3.3-70b-instruct-maas` and the like. They are valid Vertex
+    selections and will never appear under `google:`, so validating a
+    Vertex config against that catalogue rejects a working setup. Same
+    open-model-space argument as a custom endpoint, reached through a
+    different door.
+    """
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "meta/llama-3.3-70b-instruct-maas",
+            "publishers/anthropic/models/claude-sonnet-4-5",
+        ],
+    )
+    def test_a_model_garden_id_is_not_gated(self, model_id: str) -> None:
+        from codebase_rag.providers.base import validate_model_id
+
+        config = ModelConfig(
+            provider=cs.Provider.GOOGLE,
+            model_id=model_id,
+            api_key="k",
+            project_id="p",
+            provider_type=cs.GoogleProviderType.VERTEX,
+        )
+
+        validate_model_id(config)
+
+    def test_the_gla_path_is_still_gated(self) -> None:
+        """The control, and the reason this is scoped to Vertex.
+
+        GLA serves Google's own published models, so its catalogue IS
+        authoritative. Exempting Google wholesale would switch validation
+        off for the common case in order to serve the rare one.
+        """
+        from codebase_rag.providers.base import validate_model_id
+
+        config = ModelConfig(
+            provider=cs.Provider.GOOGLE,
+            model_id="gemini-not-a-real-model",
+            api_key="k",
+            project_id="p",
+            provider_type=cs.GoogleProviderType.GLA,
+        )
+
+        with pytest.raises(ValueError):
+            validate_model_id(config)
+
+
 class TestStartupWiring:
     """The check must actually run at startup, not merely exist."""
 
