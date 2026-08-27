@@ -107,6 +107,40 @@ class TestParsingRealMessages:
         assert parse_arity_error(message) is None
 
 
+    def test_a_message_with_trailing_text_does_not_parse(self) -> None:
+        """The `$` is the load-bearing anchor, so trailing text must reject.
+
+        Established by mutation rather than assumed, and the first version of
+        this test was WRONG. It used a message with a LEADING prefix, which
+        rejects for a different reason: `re.match` already anchors at the
+        start, so both `^` and `.search` versions passed it and the test
+        discriminated nothing.
+
+        Removing `$` is what actually changes behaviour, and only a TRAILING
+        suffix reveals it. Without the terminal anchor a message like this
+        parses and yields a confident diagnosis whose counts come from a
+        substring of a longer message.
+        """
+        trailing = (
+            "helper() takes 2 positional arguments but 3 were given "
+            "(during import)"
+        )
+
+        assert parse_arity_error(trailing) is None, (
+            "a message with trailing text parsed; the terminal anchor is what "
+            "keeps a substring from being read as the whole message"
+        )
+
+        # The control: the same message without the suffix DOES parse, so the
+        # rejection above is the anchor rather than the pattern being inert.
+        assert (
+            parse_arity_error(
+                "helper() takes 2 positional arguments but 3 were given"
+            )
+            is not None
+        )
+
+
 class TestDiagnosis:
     """Comparing the parsed message against declared parameters."""
 
