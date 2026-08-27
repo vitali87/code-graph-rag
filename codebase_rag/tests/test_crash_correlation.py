@@ -522,13 +522,26 @@ def test_every_resolve_failure_path_records_an_unresolved_reason() -> None:
     import ast
 
     def _records_reason(statement: ast.stmt) -> bool:
-        """Whether the statement is a `<something>.record(...)` call."""
-        return (
+        """Whether the statement is a `stats.record(...)` call.
+
+        The RECEIVER is checked, not just the method name. An earlier version
+        accepted any `<object>.record(...)`, so a branch calling
+        `logger.record(...)` before `return None` passed while recording
+        nothing on `stats` -- verified by mutation (CodeRabbit, #1487).
+
+        `stats` is the parameter name every `resolve` implementation uses for
+        its `ResolutionStats`; a rename would fail here, which is the intended
+        outcome since the premise this pins is stated in terms of that object.
+        """
+        if not (
             isinstance(statement, ast.Expr)
             and isinstance(statement.value, ast.Call)
             and isinstance(statement.value.func, ast.Attribute)
             and statement.value.func.attr == "record"
-        )
+        ):
+            return False
+        receiver = statement.value.func.value
+        return isinstance(receiver, ast.Name) and receiver.id == "stats"
 
     def _own_body_returns(node: ast.AST) -> list[tuple[list[ast.stmt], int]]:
         """Every bare `return None` in this scope, with its sibling list.
