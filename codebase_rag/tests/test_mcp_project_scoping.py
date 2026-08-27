@@ -627,7 +627,7 @@ class TestOnlyTheSimpleShapeIsScopeable:
             # A transformed qualified name does not attribute its entity.
             "MATCH (a),(b) RETURN a.qualified_name AS q, "
             "left(b.qualified_name, 3) AS t, b.name AS n",
-            # Subqueries and WITH pipelines are equally unanalysed.
+            # A CALL SUBQUERY assembles its projection elsewhere.
             "CALL { MATCH (n) RETURN n.name AS name } RETURN name",
             "MATCH (n) WITH n.name AS name RETURN name",
         ],
@@ -647,6 +647,11 @@ class TestOnlyTheSimpleShapeIsScopeable:
             "n.name AS name, n.path AS path LIMIT 50",
             "MATCH (a)-[r]->(b) RETURN a.qualified_name AS from_qn, "
             "b.qualified_name AS to_qn",
+            # prompts.py line 64 RECOMMENDS `ENDS WITH` for matching a
+            # class or function by its short name, so refusing it would
+            # break the form the prompt teaches.
+            'MATCH (c) WHERE c.qualified_name ENDS WITH ".VatManager" '
+            "RETURN c.qualified_name AS qualified_name",
         ],
     )
     def test_the_shape_the_prompt_asks_for_is_accepted(self, cypher: str) -> None:

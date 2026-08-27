@@ -22,10 +22,11 @@ CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
 # should be emitting, and it closes the bypass class instead of
 # enumerating members of it.
 #
-# Matched as whole words, and WITH only when not preceded by STARTS: a
-# bare " WITH " substring occurs inside "STARTS WITH", which is the very
-# predicate scoping requires.
-CYPHER_UNANALYSABLE_PATTERN = r"\bUNION\b|\bCALL\b|(?<!STARTS )\bWITH\b"
+# WITH is matched only as a standalone clause. A bare "WITH" also occurs
+# inside "STARTS WITH" -- the predicate scoping requires -- and inside
+# "ENDS WITH", which prompts.py line 64 recommends for matching a symbol
+# by its short name. Both must survive.
+CYPHER_UNANALYSABLE_PATTERN = r"\bUNION\b|\bCALL\b|(?<!STARTS )(?<!ENDS )\bWITH\b"
 # Separates a projection term from its alias.
 CYPHER_ALIAS_KEYWORD = " AS "
 CYPHER_POST_RETURN_KEYWORDS = (" ORDER BY", " SKIP ", " LIMIT ", " UNION")
