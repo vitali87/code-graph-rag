@@ -180,7 +180,9 @@ class TestOneSubmissionMakesOneHistoryEntry:
         with (
             patch.object(m, "print_formatted_text"),
             patch.object(
-                m, "_input_session", lambda: _StubSession(history, "  question  ")
+                m,
+                "_input_session",
+                return_value=_StubSession(history, "  question  "),
             ),
         ):
             returned = m.get_multiline_input("ask")
@@ -204,7 +206,9 @@ class TestOneSubmissionMakesOneHistoryEntry:
         with (
             patch.object(m, "print_formatted_text"),
             patch.object(
-                m, "_input_session", lambda: _StubSession(history, "\n  spaced  \n")
+                m,
+                "_input_session",
+                return_value=_StubSession(history, "\n  spaced  \n"),
             ),
         ):
             m.get_multiline_input("ask")
