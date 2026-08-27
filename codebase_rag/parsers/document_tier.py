@@ -150,6 +150,26 @@ def _front_matter_pair(line: str) -> tuple[str, str] | None:
     # whitespace, so `title: C# notes` is untouched.
     if _BLOCK_SCALAR_HEADER.match(_without_trailing_comment(cleaned)):
         return None
+    # An unquoted TRAILING COMMENT is not part of the value: `status: planned
+    # # later` declares "planned". Only for an unquoted value -- quoting is
+    # how an author says the `#` is content, and `note: "a # b"` would
+    # otherwise be truncated. `_without_trailing_comment` requires whitespace
+    # before the `#`, so `C#` and `a#b` are untouched either way.
+    #
+    # This runs BEFORE the emptiness checks below on purpose: `status: #
+    # planned` is a null value carrying a comment, and stripping it makes
+    # that the same case as a bare `status:`, which already declares nothing.
+    if cleaned[:1] not in {'"', "'"}:
+        # A value that BEGINS with `#` is entirely a comment (`status: #
+        # planned` is a null value plus a comment).
+        # `_without_trailing_comment` cannot see this one: it requires
+        # whitespace before the `#`, and here the `#` is at index 0 of the
+        # stripped value.
+        if cleaned.startswith("#"):
+            return None
+        cleaned = _without_trailing_comment(cleaned)
+        if not cleaned:
+            return None
     # A FLOW COLLECTION (`[a, b]` / `{k: v}`) is a structure on one line.
     # Storing its source text makes a list indistinguishable from a string
     # that happens to look like one.

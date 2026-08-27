@@ -210,20 +210,31 @@ class TestParsing:
     def test_a_hash_inside_an_ordinary_value_is_preserved(self) -> None:
         """The control: comment-stripping must not corrupt real values.
 
-        A bare `#`-split would truncate `C# notes` to `C` and drop `tag #1`
-        entirely -- silently mangling metadata, which is worse than the defect
-        it fixes. The comment is recognised only when preceded by whitespace,
-        and the stripped form is used ONLY to test for a header: the stored
-        value is always the full text.
+        A bare `#`-split would truncate `C# notes` to `C`, silently mangling
+        metadata. A comment starts only at a WHITESPACE-PRECEDED `#`, so a
+        `#` bound to the preceding character is content.
 
-        `tag #1` is the discriminating case. It contains a whitespace-preceded
-        `#`, so a fix that stripped comments unconditionally would store
-        `tag` -- and the value would look plausible, which is what makes that
-        failure hard to notice.
+        This test previously also asserted `k: tag #1` stored `tag #1`, and
+        that assertion was wrong -- I wrote it, and it encoded the very
+        defect Greptile later found. By YAML rules that `#` IS a comment
+        because whitespace precedes it, so the declared value is `tag`. The
+        two assertions below were correct and are unchanged; only the third
+        moved, and it moved because the behaviour it described was a bug.
+        Recording this because "changed a test to make it pass" and "the
+        test encoded the defect" look identical in a diff.
         """
         assert parse_front_matter("---\nk: C# notes\n---\n") == {"k": "C# notes"}
         assert parse_front_matter("---\nk: a#b\n---\n") == {"k": "a#b"}
-        assert parse_front_matter("---\nk: tag #1\n---\n") == {"k": "tag #1"}
+        assert parse_front_matter("---\nk: tag #1\n---\n") == {"k": "tag"}
+
+    def test_a_quoted_value_keeps_a_whitespace_preceded_hash(self) -> None:
+        """Quoting is the author's way of saying the `#` is content.
+
+        This is what makes the rule above safe: anyone who genuinely wants
+        `tag #1` has a way to express it, so stripping the unquoted form
+        does not make the value unrepresentable.
+        """
+        assert parse_front_matter('---\nk: "tag #1"\n---\n') == {"k": "tag #1"}
 
         # `|#x` is the case that separates a whitespace-gated strip from an
         # any-hash one. YAML needs whitespace before `#` to start a comment,
@@ -284,6 +295,47 @@ class TestParsing:
         assert parse_front_matter("---\n: orphan\npurpose: p\n---\n") == {
             "purpose": "p"
         }
+
+    def test_a_trailing_comment_is_not_part_of_the_value(self) -> None:
+        """`status: planned # later` declares "planned", not the comment.
+
+        `_without_trailing_comment` existed but was applied only when
+        testing for a block-scalar header, so ordinary scalars kept the
+        comment text as content.
+        """
+        assert parse_front_matter("---\nstatus: planned # later\n---\n") == {
+            "status": "planned"
+        }
+
+    def test_a_null_value_with_a_comment_declares_nothing(self) -> None:
+        """`status: # planned` is a NULL value followed by a comment.
+
+        Storing `# planned` invents metadata the document did not declare --
+        the author wrote no value at all. Once the comment is stripped this
+        is the same case as a bare `status:`, which is already skipped.
+        """
+        assert parse_front_matter("---\ntitle: T\nstatus: # planned\n---\n") == {
+            "title": "T"
+        }
+
+    def test_a_hash_without_leading_space_stays_in_the_value(self) -> None:
+        """The boundary, and the reason this is not a bare `#` split.
+
+        YAML starts a comment only at a whitespace-preceded `#`, so `a#b`
+        and `C#` are ordinary values. Splitting on every `#` would trade
+        this bug for silent value corruption across far more documents.
+        """
+        assert parse_front_matter("---\nlang: C#\ntag: a#b\n---\n") == {
+            "lang": "C#",
+            "tag": "a#b",
+        }
+
+    def test_a_hash_inside_quotes_is_not_a_comment(self) -> None:
+        """Quoting is how an author says the `#` is content.
+
+        Stripping it would silently truncate a deliberately quoted value.
+        """
+        assert parse_front_matter('---\nnote: "a # b"\n---\n') == {"note": "a # b"}
 
 
 class TestIngestion:
