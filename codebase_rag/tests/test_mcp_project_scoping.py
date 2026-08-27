@@ -331,6 +331,33 @@ class TestTheHandlerRefusesAnUnjudgeableScopedQuery:
         assert len(result["results"]) == 1
 
 
+class TestTheCliScopeIsChosenNotAssumed:
+    """The CLI shares the weakness, but only when one project is active.
+
+    A session with several projects activated has asked for all of them, so
+    scoping to one would silently narrow deliberate multi-project work. The
+    rule is therefore "exactly one active project", not "the first one".
+    """
+
+    def test_one_active_project_is_the_scope(self) -> None:
+        from codebase_rag.main import _cli_query_scope
+
+        assert _cli_query_scope([ALPHA]) == ALPHA
+
+    def test_several_active_projects_means_no_scope(self) -> None:
+        """The control that stops this narrowing deliberate multi-project use."""
+        from codebase_rag.main import _cli_query_scope
+
+        assert _cli_query_scope([ALPHA, BETA]) is None
+
+    def test_no_active_projects_means_no_scope(self) -> None:
+        """The default path: nothing activated, so nothing is excluded."""
+        from codebase_rag.main import _cli_query_scope
+
+        assert _cli_query_scope(None) is None
+        assert _cli_query_scope([]) is None
+
+
 class TestSemanticSearchScope:
     """The other retrieval handler named in the issue.
 
