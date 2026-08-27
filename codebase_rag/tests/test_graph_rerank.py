@@ -200,12 +200,8 @@ def test_a_less_connected_hit_is_boosted_strictly_less() -> None:
 
     ranked = rerank_by_graph_proximity(ingestor, [(2, 0.5), (3, 0.5), (1, 0.5)])
 
-    assert ranked[0].node_id == 1, [
-        (h.node_id, h.proximity, h.score) for h in ranked
-    ]
-    assert ranked[0].score > ranked[1].score, [
-        (h.node_id, h.score) for h in ranked
-    ]
+    assert ranked[0].node_id == 1, [(h.node_id, h.proximity, h.score) for h in ranked]
+    assert ranked[0].score > ranked[1].score, [(h.node_id, h.score) for h in ranked]
 
 
 def test_containment_edges_are_excluded_deliberately() -> None:
