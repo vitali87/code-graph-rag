@@ -95,6 +95,9 @@ MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )
 MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
+# Refused rather than answered with zero rows: an empty result for a
+# misspelled project name is indistinguishable from a genuine empty result.
+MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
 MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
 MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
 MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."

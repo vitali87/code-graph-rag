@@ -162,7 +162,11 @@ MCP_QUERY_CODE_GRAPH = (
     "Query the codebase knowledge graph using natural language. "
     "Use semantic_search unless you know the exact names of classes/functions you are searching for. "
     "Ask questions like 'What functions call UserService.create_user?' or "
-    "'Show me all classes that implement the Repository interface'."
+    "'Show me all classes that implement the Repository interface'. "
+    "Pass `project` to restrict results to one indexed project; use "
+    "list_projects for the available names. Omit it to search them all. "
+    "The scope is enforced on the results, so it holds regardless of the "
+    "query generated."
 )
 
 MCP_GET_CODE_SNIPPET = (
@@ -186,7 +190,9 @@ MCP_LIST_DIRECTORY = "List contents of a directory in the project."
 MCP_SEMANTIC_SEARCH = (
     "Performs a semantic search for functions based on a natural language query "
     "describing their purpose, returning a list of potential matches with similarity scores. "
-    "Requires the 'semantic' extra to be installed."
+    "Requires the 'semantic' extra to be installed. "
+    "Pass `project` to restrict results to one indexed project; use "
+    "list_projects for the available names. Omit it to search them all."
 )
 
 MCP_PARAM_PROJECT_NAME = "Name of the project to delete (e.g., 'my-project')"

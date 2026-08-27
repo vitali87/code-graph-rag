@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..config import settings
@@ -27,10 +28,39 @@ from ..utils.token_utils import truncate_results_by_tokens
 from . import tool_descriptions as td
 
 
+def scope_rows_to_project(
+    rows: list[dict[str, object]], project_name: str | None
+) -> list[dict[str, object]]:
+    """`rows` restricted to one project, or unchanged when none is given.
+
+    Enforced HERE rather than in the generated Cypher, because the model
+    writes that query and may omit the filter -- which is precisely what
+    made the reported cross-project bleed intermittent (issue #1494). A
+    code-level filter is always-or-never.
+
+    Keyed on `qualified_name`, which every indexed node carries and which
+    begins with the project name. A row WITHOUT that key is kept: an
+    aggregate (`RETURN count(n)`) has no qualified name, and discarding it
+    would turn scoping into silent data loss for every aggregate query.
+    """
+    if not project_name:
+        return rows
+    prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+    kept: list[dict[str, object]] = []
+    for row in rows:
+        qualified_name = row.get(cs.IMPORT_QUALIFIED_NAME)
+        if not isinstance(qualified_name, str):
+            kept.append(row)
+        elif qualified_name.startswith(prefix):
+            kept.append(row)
+    return kept
+
+
 def create_query_tool(
     ingestor: QueryProtocol,
     cypher_gen: CypherGenerator,
     console: Console | None = None,
+    project_name: str | None = None,
 ) -> Tool:
     if console is None:
         console = Console(width=None, stderr=True, force_terminal=True)
@@ -47,6 +77,11 @@ def create_query_tool(
                 asyncio.to_thread(ingestor.fetch_all, cypher_query),
                 timeout=settings.QUERY_TIMEOUT_S,
             )
+
+            # Before the row cap and the token truncation, so a scoped query
+            # spends its budget on rows the caller can actually use rather
+            # than on another project's rows that are about to be dropped.
+            results = scope_rows_to_project(results, project_name)
 
             total_count = len(results)
             if total_count > settings.QUERY_RESULT_ROW_CAP:
