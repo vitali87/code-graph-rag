@@ -511,8 +511,53 @@ def test_every_resolve_failure_path_records_an_unresolved_reason() -> None:
     through the resolver would need fixtures for each, and the property is
     about the code's shape rather than its output. Same discipline as
     `test_mcp_read_handler_lock.py`, which parses the shipped file.
+
+    Checks the PRECEDING SIBLING STATEMENT rather than a window of source
+    text. The first version matched `"record" in context` over four lines,
+    which a comment satisfies: deleting the real `stats.record(...)` call and
+    leaving `return None  # record` passed it. That is "does this symbol
+    appear" standing in for "is this call made" -- a guard certifying an
+    invariant it could not check (CodeRabbit, #1487).
     """
     import ast
+
+    def _records_reason(statement: ast.stmt) -> bool:
+        """Whether the statement is a `<something>.record(...)` call."""
+        return (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Attribute)
+            and statement.value.func.attr == "record"
+        )
+
+    def _own_body_returns(node: ast.AST) -> list[tuple[list[ast.stmt], int]]:
+        """Every bare `return None` in this scope, with its sibling list.
+
+        Nested functions are pruned: a `return None` inside a closure belongs
+        to that closure's contract, not the resolver's, and its siblings are
+        not the resolver's branch.
+        """
+        found: list[tuple[list[ast.stmt], int]] = []
+        stack: list[ast.AST] = [node]
+        while stack:
+            current = stack.pop()
+            for field, value in ast.iter_fields(current):
+                if not isinstance(value, list):
+                    continue
+                body = [item for item in value if isinstance(item, ast.stmt)]
+                for index, item in enumerate(body):
+                    if isinstance(
+                        item, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+                    ):
+                        continue
+                    if (
+                        isinstance(item, ast.Return)
+                        and isinstance(item.value, ast.Constant)
+                        and item.value.value is None
+                    ):
+                        found.append((body, index))
+                    stack.append(item)
+        return found
 
     source = (
         Path(__file__).resolve().parents[1] / "trace" / "resolution.py"
@@ -524,26 +569,16 @@ def test_every_resolve_failure_path_records_an_unresolved_reason() -> None:
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef) or node.name != "resolve":
             continue
-        for statement in ast.walk(node):
-            is_bare_none = (
-                isinstance(statement, ast.Return)
-                and isinstance(statement.value, ast.Constant)
-                and statement.value.value is None
-            )
-            if not is_bare_none:
-                continue
+        for body, index in _own_body_returns(node):
             checked += 1
-            # The recording call sits in the same branch, immediately before
-            # the return; four lines of context covers every current shape.
-            context = "\n".join(
-                source.split("\n")[max(0, statement.lineno - 5) : statement.lineno]
-            )
-            if "record" not in context:
-                unrecorded.append(f"resolution.py:{statement.lineno}")
+            preceding = body[index - 1] if index else None
+            if preceding is None or not _records_reason(preceding):
+                unrecorded.append(f"resolution.py:{body[index].lineno}")
 
     assert checked, "found no bare `return None` in any resolve(); parser drifted"
     assert not unrecorded, (
-        f"{unrecorded} return None without recording an unresolved reason, so "
-        "`unresolved_reason is None` no longer implies the frame resolved -- "
-        "see the predicate comment in crash_correlation.explain_traceback"
+        f"{unrecorded} return None without an immediately preceding "
+        "`.record(...)` call, so `unresolved_reason is None` no longer implies "
+        "the frame resolved -- see the predicate comment in "
+        "crash_correlation.explain_traceback"
     )
