@@ -70,18 +70,19 @@ class TestParsing:
     def test_a_fenced_block_below_the_first_line_is_not_front_matter(self) -> None:
         """Front-matter must open on line 1; a later fenced pair is prose.
 
-        Found by mutation: removing the `lines[0]` check left all 10 tests
-        passing, because the existing delimiter test uses a document with no
-        CLOSING fence -- so the unterminated-block guard caught it and the
-        position guard was never exercised.
+        Found by mutation, in two rounds. Removing the `lines[0]` check left
+        all tests passing; my first replacement fixture ALSO left it passing,
+        because its pairs sat after the first fence found, so a position-blind
+        scan read a blank line and returned nothing either way. The fixture
+        was written to describe the defect rather than to separate the two
+        implementations.
 
-        This document has a well-formed fenced pair further down, which a
-        position-blind parser reads as metadata. It is a horizontal rule
-        around a quote, and its contents are body text.
+        The discriminating shape needs a `key: value` on line 2 and a fence on
+        line 3. This is a setext heading -- `Title` underlined with `---` --
+        which is exactly the realistic case: a position-blind parser reads the
+        line between as metadata and swallows body text into node properties.
         """
-        assert parse_front_matter(
-            "# Title\n\n---\npurpose: not-metadata\n---\n\nBody.\n"
-        ) == {}
+        assert parse_front_matter("Title\nkey: swallowed\n---\n\nBody.\n") == {}
 
     def test_a_reserved_key_cannot_overwrite_an_identity_property(self) -> None:
         """A document may not declare `path:` or `qualified_name:`.
