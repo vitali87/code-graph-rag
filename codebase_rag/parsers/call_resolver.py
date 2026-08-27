@@ -1192,12 +1192,20 @@ class CallResolver:
         # `namespace Illuminate\Support` from Collections/functions.php). Treating
         # it as external would suppress the simple-name trie fallback that a bare
         # PHP call already relies on, dropping the call; leave it to the trie.
-        # LIMITATION: cgr qualifies PHP functions by file path and does not track
-        # the `namespace` declaration, so a genuinely external
-        # `use function Vendor\pkg\helper` cannot be told apart from a
-        # path-mismatched first-party one; both defer to the trie, as a bare
-        # `helper()` call already does. Precise disambiguation would need
-        # systemic PHP namespace tracking.
+        # NARROWED (#1185 stage 1): the `namespace` declaration IS now tracked,
+        # in `import_processor.php_module_namespaces`, and
+        # `_php_target_for_namespace_import` uses it to bind a `use function`
+        # import to the module declaring that namespace. So a first-party
+        # target whose namespace is declared somewhere in the repo resolves
+        # rather than deferring.
+        #
+        # What remains: a target whose namespace NO indexed module declares is
+        # still indistinguishable here from a first-party one the resolver
+        # could not place, and both defer to the trie exactly as a bare
+        # `helper()` call does. That is a smaller gap than the original
+        # comment described, and deferring stays the right behaviour for it --
+        # treating it as external would suppress the trie fallback and drop
+        # the call.
         php_imports = self.import_processor.php_function_imports.get(module_qn)
         if php_imports and call_name in php_imports:
             return False
