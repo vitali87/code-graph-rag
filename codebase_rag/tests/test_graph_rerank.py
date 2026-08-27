@@ -209,7 +209,14 @@ def test_the_query_counts_both_endpoints_explicitly() -> None:
 
     query = build_proximity_query([1, 2])
 
-    assert "UNWIND [id(a), id(b)]" in query, query
+    # Both endpoints reach the UNWIND, via the normalised (low, high) pair the
+    # distinct-type counting in #1477 introduced. What matters is that neither
+    # endpoint is dropped, not which expression names them.
+    assert "UNWIND [low, high]" in query, query
+    # Asserted separately so a failure names WHICH endpoint alias went
+    # missing; a composite assertion reports only that one of them did.
+    assert "AS low" in query, query
+    assert "AS high" in query, query
     # A bare undirected match with a single projected endpoint is the shape
     # this replaced; it must not come back.
     assert "RETURN id(a) AS node_id" not in query, query
@@ -233,3 +240,231 @@ def test_self_loops_are_excluded_from_proximity() -> None:
     query = build_proximity_query([1, 2])
 
     assert "id(a) <> id(b)" in query, query
+
+
+# --- the shipped query and the eval's adjacency must agree (issue #1477) ----
+#
+# The three bugs fixed in review on #1467 -- one endpoint of a directed edge
+# going uncounted, self-loops being double-counted, and the CONTAINS_*
+# exclusion being unpinned -- were all DIVERGENCES between the shipped Cypher
+# and the adjacency model the eval scores it against, rather than freestanding
+# errors. Nothing caught them because nothing compared the two implementations,
+# only each one against its own expectations.
+#
+# `build_proximity_query` is pinned structurally above because this suite has
+# no Memgraph. These execute the query's SEMANTICS over the same relationship
+# tuples `evals.semantic_search.proximity_edges` consumes, and assert both
+# arrive at the same in-set degrees. A divergence in either direction fails
+# here rather than silently making the measurement describe different code
+# from the code that ships.
+
+
+def _degrees_via_shipped_semantics(
+    rels: list[tuple[str, str, str]], in_set: set[str]
+) -> dict[str, int]:
+    """In-set degree the way the shipped Cypher computes it.
+
+    Mirrors `build_proximity_query` clause for clause over tuples:
+    `MATCH (a)-[r:REL]->(b)` filtered to `_PROXIMITY_RELS`, both endpoints in
+    the node-id list, `id(a) <> id(b)`, then `UNWIND [id(a), id(b)]` counting
+    each endpoint once per DISTINCT relationship TYPE joining the pair
+    (issue #1477).
+    """
+    from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
+
+    # (unordered pair) -> the distinct counted types joining it, matching the
+    # query's `count(DISTINCT type(r))` per pair.
+    kinds: dict[tuple[str, str], set[str]] = {}
+    for source, rel_type, target in rels:
+        if rel_type not in _PROXIMITY_RELS:
+            continue
+        if source not in in_set or target not in in_set:
+            continue
+        if source == target:  # id(a) <> id(b)
+            continue
+        kinds.setdefault(tuple(sorted((source, target))), set()).add(rel_type)
+
+    degrees: dict[str, int] = {}
+    for (left, right), types in kinds.items():
+        for endpoint in (left, right):  # UNWIND [id(a), id(b)]
+            degrees[endpoint] = degrees.get(endpoint, 0) + len(types)
+    return degrees
+
+
+def _degrees_via_eval_adjacency(
+    rels: list[tuple[str, str, str]], in_set: set[str]
+) -> dict[str, int]:
+    """In-set degree the way `evals.semantic_search.proximity_edges` does.
+
+    That helper builds an undirected adjacency keyed by qualified name whose
+    values are the distinct counted relationship TYPES joining the pair;
+    `reranked_semantic_ranking` then sums those over in-set neighbours
+    (issue #1477).
+    """
+    from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
+
+    adjacency: dict[str, dict[str, set[str]]] = {}
+    for source, rel_type, target in rels:
+        if rel_type not in _PROXIMITY_RELS:
+            continue
+        if source == target:
+            continue
+        adjacency.setdefault(source, {}).setdefault(target, set()).add(rel_type)
+        adjacency.setdefault(target, {}).setdefault(source, set()).add(rel_type)
+
+    degrees: dict[str, int] = {}
+    for qn in in_set:
+        total = sum(
+            len(types)
+            for neighbour, types in adjacency.get(qn, {}).items()
+            if neighbour in in_set
+        )
+        if total:
+            degrees[qn] = total
+    return degrees
+
+
+def test_directed_edges_boost_both_endpoints_in_both_implementations() -> None:
+    """The directed-endpoint bug, caught by comparison rather than by inspection.
+
+    `a` CALLS `b` and nothing else. Both must gain degree 1. Projecting only
+    `id(a)` -- the shape this replaced -- would leave `b` at 0 in the shipped
+    path while the eval's symmetric adjacency still reports 1.
+    """
+    rels = [("a", "CALLS", "b")]
+    in_set = {"a", "b"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    assert shipped == {"a": 1, "b": 1}
+
+
+def test_a_self_loop_contributes_nothing_in_both_implementations() -> None:
+    """A recursive function scores zero proximity, not maximum, in both paths."""
+    rels = [("rec", "CALLS", "rec"), ("a", "CALLS", "b")]
+    in_set = {"rec", "a", "b"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    # Pinned absolutely, not only as "rec is absent". Agreement between the two
+    # mirrors is satisfied by a SHARED error -- multiplying both by a constant
+    # keeps them equal and keeps `rec` absent, so both halves of the weaker
+    # assertion hold while every degree is wrong. Verified: scaling both
+    # mirrors by 7 left this test green before the absolute pin was added.
+    assert shipped == {"a": 1, "b": 1}, shipped
+
+
+def test_containment_edges_change_no_degree_in_either_implementation() -> None:
+    """CONTAINS_* is excluded from the shipped query; the eval must match.
+
+    Pinned by comparison AND absolutely. Comparison alone catches a change to
+    one path only; the absolute value is what catches a change to BOTH, which
+    agreement cannot see -- two mirrors sharing an error agree perfectly.
+    """
+    rels = [
+        ("mod", "CONTAINS_FILE", "a"),
+        ("mod", "CONTAINS_FILE", "b"),
+        ("a", "CALLS", "b"),
+    ]
+    in_set = {"mod", "a", "b"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    assert shipped == {"a": 1, "b": 1}, shipped
+
+
+def test_the_two_implementations_agree_over_a_mixed_graph() -> None:
+    """One fixture exercising every divergence at once.
+
+    Directed edges in both orientations, a self-loop, an out-of-set edge, a
+    containment edge, and an unrelated relationship type. Any single-path
+    change to the proximity model breaks the equality.
+
+    At most ONE counted edge joins any pair here, so every in-set node has
+    degree exactly 2 -- one per other in-set node. See
+    `test_distinct_relationship_types_between_one_pair_each_count` for the
+    multi-type case that restriction excludes.
+    """
+    rels = [
+        ("a", "CALLS", "b"),
+        ("b", "CALLS", "c"),
+        ("c", "CALLS", "a"),
+        ("a", "CALLS", "a"),
+        ("a", "CALLS", "outside"),
+        ("mod", "CONTAINS_FILE", "a"),
+    ]
+    in_set = {"a", "b", "c"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    # Pinned to VALUES, not membership. `set(shipped) == in_set` rules out the
+    # empty result but survives any error that scales every degree, because
+    # scaling changes no key -- and a shared scaling error also survives the
+    # equality above. Only absolute values distinguish the two mirrors being
+    # right from the two mirrors being wrong together.
+    assert shipped == {"a": 2, "b": 2, "c": 2}, shipped
+
+
+def test_distinct_relationship_types_between_one_pair_each_count() -> None:
+    """Two DIFFERENT relationship types joining a pair count as two (#1477).
+
+    An override that calls up -- `Child.handle` calling `super().handle()` --
+    carries both CALLS and OVERRIDES between the same pair. Those are two
+    genuinely different relationships, not one observed twice, so the pair is
+    more strongly associated than one joined by either alone.
+    """
+    rels = [("a", "CALLS", "b"), ("a", "OVERRIDES", "b")]
+    in_set = {"a", "b"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    assert shipped == {"a": 2, "b": 2}, shipped
+
+
+def test_the_same_relationship_type_repeated_counts_once() -> None:
+    """One relationship observed twice is not a stronger association (#1477).
+
+    A caller invoking a callee on two lines emits two CALLS edges. Counting
+    both would make proximity depend on how many times a function happens to
+    call another, so a callee invoked in a loop body and once after it would
+    outrank one invoked once from otherwise identical structure.
+
+    Measured on this repo, this is the DOMINANT multi-edge shape: 285 of 1115
+    adjacent pairs across three subtrees, and all 51 multi-CALLS pairs in
+    `codebase_rag/tools` were same-direction repeats with zero mutual.
+    """
+    rels = [("a", "CALLS", "b"), ("a", "CALLS", "b"), ("a", "CALLS", "b")]
+    in_set = {"a", "b"}
+
+    shipped = _degrees_via_shipped_semantics(rels, in_set)
+    evaluated = _degrees_via_eval_adjacency(rels, in_set)
+
+    assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
+    assert shipped == {"a": 1, "b": 1}, shipped
+
+
+def test_repeated_and_distinct_types_are_told_apart() -> None:
+    """The two multi-edge families must not collapse into each other.
+
+    Without this, counting distinct types could be replaced by "count 1 per
+    pair" and both tests above would still pass -- an implementation that
+    discards the OVERRIDES signal entirely.
+    """
+    repeated = [("a", "CALLS", "b"), ("a", "CALLS", "b")]
+    distinct = [("a", "CALLS", "b"), ("a", "OVERRIDES", "b")]
+    in_set = {"a", "b"}
+
+    assert _degrees_via_shipped_semantics(repeated, in_set) == {"a": 1, "b": 1}
+    assert _degrees_via_shipped_semantics(distinct, in_set) == {"a": 2, "b": 2}
+    assert _degrees_via_eval_adjacency(repeated, in_set) == {"a": 1, "b": 1}
+    assert _degrees_via_eval_adjacency(distinct, in_set) == {"a": 2, "b": 2}
