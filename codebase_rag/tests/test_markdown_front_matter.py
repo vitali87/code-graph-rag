@@ -173,10 +173,38 @@ class TestParsing:
         `-` and `+`, since a parser matching only the bare forms leaves four
         spellings storing punctuation.
         """
-        for marker in ("|", ">", "|-", ">-", "|+", ">+"):
+        for marker in (
+            # bare
+            "|",
+            ">",
+            # chomping indicator
+            "|-",
+            ">-",
+            "|+",
+            ">+",
+            # explicit indentation digit, and both orders alongside chomping
+            "|2",
+            ">2",
+            "|2-",
+            "|-2",
+            ">+2",
+            "|1",
+        ):
             assert parse_front_matter(f"---\nnote: {marker}\n  text\n---\n") == {}, (
                 marker
             )
+
+    def test_a_value_merely_starting_with_a_block_character_is_kept(self) -> None:
+        """Only a COMPLETE header is a header; `>>= operator` is prose.
+
+        The control for matching by pattern rather than an enumerated set. A
+        looser rule -- "starts with | or >" -- would silently drop ordinary
+        metadata, which is worse than the defect it fixes.
+        """
+        assert parse_front_matter("---\nk: >>= operator\n---\n") == {
+            "k": ">>= operator"
+        }
+        assert parse_front_matter("---\nk: a|b\n---\n") == {"k": "a|b"}
 
     def test_a_value_that_merely_contains_a_bracket_is_kept(self) -> None:
         """The control: only a LEADING bracket opens a collection.

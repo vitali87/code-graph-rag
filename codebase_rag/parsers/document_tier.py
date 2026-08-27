@@ -24,6 +24,8 @@ heading is a child of whatever heading is currently open above it.
 
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import unquote
@@ -63,7 +65,14 @@ _FRONT_MATTER_FENCE = "---"
 
 # `key: |` and `key: >` introduce a block scalar whose value is the indented
 # text beneath, which this parser skips. The marker is not the value.
-_BLOCK_SCALAR_MARKERS: frozenset[str] = frozenset({"|", ">", "|-", ">-", "|+", ">+"})
+#
+# Matched by PATTERN rather than an enumerated set. YAML allows an optional
+# chomping indicator (`-`/`+`) and an optional explicit indentation digit, in
+# either order: `|`, `|-`, `|2`, `|2-`, `|-2`, `>+2` are all valid headers. An
+# earlier version listed six spellings and missed every form carrying a digit,
+# which stored the header text as the value (reported on #1488) -- the same
+# defect the set was added to fix, in the spellings the set did not name.
+_BLOCK_SCALAR_HEADER = re.compile(r"^[|>](?:[-+]?\d*|\d*[-+]?)$")
 
 # `[a, b]` and `{k: v}` are YAML flow collections: structures on one line.
 _FLOW_COLLECTION_OPENERS: frozenset[str] = frozenset({"[", "{"})
@@ -145,7 +154,7 @@ def parse_front_matter(text: str) -> dict[str, str]:
         # indented text below, which this parser skips as nested. Storing the
         # marker records "|" as the value -- punctuation mistaken for content,
         # with the real text silently dropped.
-        if cleaned in _BLOCK_SCALAR_MARKERS:
+        if _BLOCK_SCALAR_HEADER.match(cleaned):
             continue
         # A FLOW COLLECTION (`[a, b]` / `{k: v}`) is a structure written on one
         # line. Storing its source text makes a list indistinguishable from a
