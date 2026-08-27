@@ -876,11 +876,26 @@ async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
     if config.provider != cs.Provider.ANTHROPIC or not config.api_key:
         return
     try:
-        from .services.anthropic_token_counter import count_anthropic_context
+        from .services.anthropic_token_counter import (
+            TokenCountAuthError,
+            count_anthropic_context,
+        )
 
         count = await count_anthropic_context(config.api_key, config.model_id, messages)
         app_context.session.context_tokens = count
+    except TokenCountAuthError as e:
+        # A rejected key recurs on EVERY refresh and silently disables the
+        # token counter for the whole session, so debug is the wrong level:
+        # the user has to change something and would otherwise never know
+        # (issue #1493). Warned once per session rather than per refresh --
+        # the counter runs in the background on each turn, and repeating an
+        # unactionable-until-restart message would bury the rest of the log.
+        if not app_context.session.token_auth_warned:
+            app_context.session.token_auth_warned = True
+            logger.warning(ls.CONTEXT_TOKEN_COUNT_AUTH_FAILED.format(error=e))
     except Exception as e:
+        # Transient failures stay at debug. The next refresh probably works,
+        # and a background retry is not something the user must act on.
         logger.debug(ls.CONTEXT_TOKEN_COUNT_FAILED.format(error=e))
 
 
