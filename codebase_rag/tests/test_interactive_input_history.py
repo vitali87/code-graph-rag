@@ -126,6 +126,62 @@ class TestHistoryPersists:
         assert list(history.get_strings()) == ["same"]
 
 
+class TestOneSubmissionMakesOneHistoryEntry:
+    """Padded input must not be recorded twice.
+
+    prompt_toolkit's `Buffer.append_to_history` runs when a buffer is
+    ACCEPTED. This prompt never accepts one: Enter inserts a newline and
+    Ctrl+J calls `app.exit(result=...)`, so the session does not append and
+    `_remember_input` is the only writer.
+
+    That is a property of the key bindings, not of prompt_toolkit, so it
+    would quietly stop holding if submission ever moved to a normal accept
+    -- and the result would be two entries per input, needing two Up
+    presses to get past one question. Pinned here rather than assumed.
+    """
+
+    def test_padded_input_is_recorded_once(self) -> None:
+        from unittest.mock import patch
+
+        from codebase_rag import main as m
+
+        history = m._input_history()
+
+        with (
+            patch.object(m, "print_formatted_text"),
+            patch.object(
+                type(m._input_session()), "prompt", return_value="  question  "
+            ),
+        ):
+            returned = m.get_multiline_input("ask")
+
+        assert returned == "question"
+        assert list(history.get_strings()) == ["question"]
+
+    def test_the_stripped_form_is_what_is_stored(self) -> None:
+        """Recall should reproduce the question, not its whitespace.
+
+        The control for the test above: storing the RAW text once would
+        also give a single entry, so counting alone cannot tell the two
+        apart.
+        """
+        from unittest.mock import patch
+
+        from codebase_rag import main as m
+
+        history = m._input_history()
+
+        with (
+            patch.object(m, "print_formatted_text"),
+            patch.object(
+                type(m._input_session()), "prompt", return_value="\n  spaced  \n"
+            ),
+        ):
+            m.get_multiline_input("ask")
+
+        assert list(history.get_strings()) == ["spaced"]
+
+
 class TestUpArrowIsBound:
     """Cause 2: in a multiline buffer the arrow keys move the cursor."""
 
