@@ -256,7 +256,7 @@ class TestDiagnosis:
         )
 
     def test_unknown_parameter_kinds_decline_rather_than_accuse(self) -> None:
-        """"Cannot corroborate" and "disagrees" are different claims.
+        """ "Cannot corroborate" and "disagrees" are different claims.
 
         The graph stores no parameter data today, so every in-repo caller is
         in this position. Returning `confirmed=False` with a real
@@ -274,9 +274,7 @@ class TestDiagnosis:
         )
         assert parsed is not None
 
-        verdict = diagnose_arity(
-            parsed, declared=_ARITY_KINDS_UNKNOWN, is_method=False
-        )
+        verdict = diagnose_arity(parsed, declared=_ARITY_KINDS_UNKNOWN, is_method=False)
 
         assert verdict is not None
         assert verdict.declared_count == -1
