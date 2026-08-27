@@ -17,6 +17,7 @@
 # implementation and the current path-based one disagree. A fixture with one
 # `format()` would pass under both.
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -214,6 +215,109 @@ def test_a_reindex_replaces_the_recorded_namespace(tmp_path: Path) -> None:
     assert "proj.svc" not in processor.php_module_namespaces, (
         "removing the `namespace` declaration left "
         f"{processor.php_module_namespaces.get('proj.svc')!r} bound"
+    )
+
+
+def test_a_non_php_caller_never_resolves_through_php_namespaces(
+    tmp_path: Path,
+) -> None:
+    """The namespace fallback is gated on the CALLER being PHP.
+
+    The map holds only PHP modules, but the import targets matched against it
+    are dotted strings any language can produce. A JS `import { format }`
+    recorded as `App.Text.format` would resolve straight into a PHP function
+    -- an edge ACROSS languages that no source expressed, and a new class of
+    wrong edge introduced by the fix itself.
+
+    Reproduced in review on #1484: a JavaScript caller bound to a PHP target.
+
+    Asserts a non-PHP language resolves to nothing AND that PHP still does, so
+    the guard is a language gate rather than the path being switched off.
+    """
+    from codebase_rag.parsers.call_resolver import CallResolver
+
+    resolver = object.__new__(CallResolver)
+    resolver.import_processor = SimpleNamespace(
+        php_module_namespaces={"proj.text": "App.Text"},
+        # The non-PHP path falls through to the commonjs lookup, so the double
+        # must carry it or the test fails on the fixture rather than the guard.
+        commonjs_direct_exports={},
+    )
+    resolver.function_registry = {"proj.text.format": "Function"}
+    import_map = {"format": "App.Text.format"}
+
+    for language in (
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.PYTHON,
+        None,
+    ):
+        assert (
+            resolver._try_resolve_direct_import("format", import_map, language) is None
+        ), (
+            f"a {language} caller resolved through the PHP namespace map to a "
+            "PHP function; the fallback must be gated on the caller's language"
+        )
+
+    assert resolver._try_resolve_direct_import(
+        "format", import_map, cs.SupportedLanguage.PHP
+    ) == ("Function", "proj.text.format"), (
+        "the PHP caller stopped resolving too, so the guard disabled the "
+        "feature rather than scoping it"
+    )
+
+
+def test_a_file_with_several_namespace_blocks_records_nothing(
+    tmp_path: Path,
+) -> None:
+    """Two top-level blocks have no single answer, so none is recorded.
+
+    PHP allows `namespace A { } namespace B { }` in one file. Both blocks'
+    functions land in the SAME module qn, so recording the first makes an
+    import of `A\\helper` resolve to the `helper` defined in B.
+
+    Reproduced in review on #1484 -- `App.First` recorded, resolution returned
+    the `App.Second` function.
+
+    Recording nothing sends such files to the trie fallback, exactly where
+    they were before this feature existed: no worse than the status quo, and
+    unlike a first-block guess it never asserts an answer it does not have.
+    """
+    from tree_sitter import QueryCursor
+
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.import_processor import ImportProcessor
+
+    parsers, queries = load_parsers()
+    language = cs.SupportedLanguage.PHP
+    if language not in parsers:
+        pytest.skip("php grammar not installed")
+
+    source = b"""<?php
+namespace App\\First {
+    function helper(): int { return 1; }
+}
+namespace App\\Second {
+    function helper(): int { return 2; }
+}
+"""
+    tree = parsers[language].parse(source)
+    processor = ImportProcessor(repo_path=tmp_path, project_name="proj")
+    cursor = QueryCursor(queries[language]["imports"])
+
+    processor.parse_imports(
+        root_node=tree.root_node,
+        module_qn="proj.multi",
+        language=language,
+        queries=queries,
+        pre_captures=cursor.captures(tree.root_node),
+    )
+
+    recorded = processor.php_module_namespaces.get("proj.multi")
+    assert recorded is None, (
+        f"a file with two top-level namespace blocks recorded {recorded!r}; "
+        "both blocks' functions share one module qn, so an import naming that "
+        "namespace can bind to a function defined in the OTHER block"
     )
 
 

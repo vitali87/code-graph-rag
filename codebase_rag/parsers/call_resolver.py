@@ -1288,7 +1288,7 @@ class CallResolver:
                 return None
             import_map = {}
 
-        if result := self._try_resolve_direct_import(call_name, import_map):
+        if result := self._try_resolve_direct_import(call_name, import_map, language):
             return result
 
         if result := self._try_resolve_qualified_call(
@@ -1335,13 +1335,25 @@ class CallResolver:
         return found[0]
 
     def _try_resolve_direct_import(
-        self, call_name: str, import_map: dict[str, str]
+        self,
+        call_name: str,
+        import_map: dict[str, str],
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         if call_name not in import_map:
             return None
         imported_qn = import_map[call_name]
-        if imported_qn not in self.function_registry and (
-            php_qn := self._php_target_for_namespace_import(imported_qn)
+        # Gated on the CALLER's language. The namespace map is keyed by module
+        # qn and holds only PHP modules, but the import targets it is matched
+        # against are dotted strings that any language can produce -- a JS
+        # `import { format } from ...` recorded as `App.Text.format` would
+        # resolve straight into a PHP function. Reproduced in review on #1484:
+        # a JavaScript caller bound to a PHP target, an edge across languages
+        # that no source expressed.
+        if (
+            language == cs.SupportedLanguage.PHP
+            and imported_qn not in self.function_registry
+            and (php_qn := self._php_target_for_namespace_import(imported_qn))
         ):
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=php_qn)
             return self.function_registry[php_qn], php_qn

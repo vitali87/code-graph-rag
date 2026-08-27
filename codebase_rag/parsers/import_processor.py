@@ -4074,31 +4074,40 @@ class ImportProcessor:
         would change its capture contract for every consumer; this reads the
         one node it needs.
 
-        Only TOP-LEVEL declarations count. PHP permits braced namespace blocks
-        and even several per file, but a nested or repeated declaration does
-        not identify "the namespace of this module", which is the only
-        question this map answers. Recording the first top-level one and
-        stopping is therefore deliberate rather than a simplification: a file
-        with two namespace blocks has no single answer, and guessing one would
-        produce exactly the confident-wrong binding this whole change exists
-        to remove.
+        A file with SEVERAL top-level namespace blocks records NOTHING. PHP
+        permits `namespace A { } namespace B { }` in one file, and this map
+        answers "which namespace is this module", which such a file has no
+        single answer to. An earlier version recorded the first block and
+        called that deliberate; review reproduced the consequence (#1484): with
+        `App\\First` recorded and both blocks' functions living in the same
+        module qn, an import of `App\\First\\helper` resolved to the `helper`
+        defined in `App\\Second` -- a confident wrong binding, which is the
+        exact failure this whole change exists to remove.
+
+        Recording nothing sends those files to the trie fallback, which is
+        where they were before this feature existed. Strictly no worse than
+        the status quo, and unlike a first-block guess it never asserts an
+        answer it does not have.
         """
-        for child in root_node.children:
-            if child.type != cs.TS_PHP_NAMESPACE_DEFINITION:
-                continue
-            name_node = child.child_by_field_name(cs.TS_FIELD_NAME)
-            if name_node is None or not name_node.text:
-                # `namespace { ... }` -- the explicit GLOBAL namespace. It has
-                # no name, and binding it to "" would make every unqualified
-                # lookup match it.
-                return
-            declared = safe_decode_with_fallback(name_node)
-            if not declared:
-                return
-            self.php_module_namespaces[module_qn] = declared.replace(
-                "\\", cs.SEPARATOR_DOT
-            )
+        declarations = [
+            child
+            for child in root_node.children
+            if child.type == cs.TS_PHP_NAMESPACE_DEFINITION
+        ]
+        if len(declarations) != 1:
             return
+        name_node = declarations[0].child_by_field_name(cs.TS_FIELD_NAME)
+        if name_node is None or not name_node.text:
+            # `namespace { ... }` -- the explicit GLOBAL namespace. It has no
+            # name, and binding it to "" would make every unqualified lookup
+            # match it.
+            return
+        declared = safe_decode_with_fallback(name_node)
+        if not declared:
+            return
+        self.php_module_namespaces[module_qn] = declared.replace(
+            "\\", cs.SEPARATOR_DOT
+        )
 
     def _parse_php_imports(
         self, captures: dict, module_qn: str, root_node: Node | None = None
