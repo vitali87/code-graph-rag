@@ -1236,6 +1236,19 @@ def _input_keybindings() -> KeyBindings:
 
 
 @lru_cache(maxsize=1)
+def _input_history() -> History:
+    """The chat history, owned separately from the prompt that reads it.
+
+    Kept apart from `_input_session` deliberately. Persistence across turns
+    is the property that matters (issue #1495), and holding it here lets it
+    be exercised without constructing a `PromptSession` -- which attaches to
+    the console and, on a headless CI runner, can block until the job times
+    out.
+    """
+    return InMemoryHistory()
+
+
+@lru_cache(maxsize=1)
 def _input_session() -> PromptSession[str]:
     """The chat prompt, built once so its history survives the turn.
 
@@ -1244,7 +1257,7 @@ def _input_session() -> PromptSession[str]:
     passes `history=None`. Every turn therefore started with an empty
     history and the up arrow had nothing to recall (issue #1495).
     """
-    return PromptSession(history=InMemoryHistory())
+    return PromptSession(history=_input_history())
 
 
 def _remember_input(history: History, text: str) -> None:

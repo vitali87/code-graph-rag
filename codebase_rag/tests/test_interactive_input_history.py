@@ -28,46 +28,62 @@ def _fresh_session() -> object:
     Without this a history entry written by one test leaks into the next,
     and the suite passes or fails depending on execution order.
     """
-    from codebase_rag.main import _input_session
+    from codebase_rag.main import _input_history, _input_session
 
     _input_session.cache_clear()
+    _input_history.cache_clear()
     yield
     _input_session.cache_clear()
+    _input_history.cache_clear()
 
 
 class TestHistoryPersists:
     """Cause 1: the session, and therefore the history, must outlive a turn."""
 
-    def test_the_session_is_reused_across_calls(self) -> None:
-        """A new PromptSession per turn cannot remember the previous turn.
+    def test_the_history_is_reused_across_calls(self) -> None:
+        """A fresh history per turn cannot remember the previous turn.
 
-        Asserts the SAME object comes back, not merely that some session
-        exists: constructing a fresh one each call would satisfy a
-        weaker "is not None" check while preserving the bug exactly.
+        Asserts the SAME object comes back, not merely that one exists:
+        constructing a new history each call would satisfy a weaker
+        "is not None" check while preserving the bug exactly.
+
+        Exercised through `_input_history` rather than `_input_session`
+        because building a real `PromptSession` attaches to the console,
+        which hangs a headless Windows runner until the job times out.
+        Persistence is the property under test; the prompt is not.
         """
-        from codebase_rag.main import _input_session
+        from codebase_rag.main import _input_history
 
-        assert _input_session() is _input_session()
+        assert _input_history() is _input_history()
 
     def test_an_earlier_entry_is_still_there_on_a_later_turn(self) -> None:
         """What the user actually experiences: recall across turns.
 
-        Deliberately NOT asserting `session.history is not None` --
+        Deliberately NOT asserting `history is not None` --
         prompt_toolkit supplies an `InMemoryHistory` by default, so that
-        assertion is true of a correct session AND of one built with no
-        history argument. It reads like a check and tests nothing.
+        assertion is true of a correct wiring AND of one that passes no
+        history at all. It reads like a check and tests nothing.
 
-        Appending through the live session and reading it back on a second
-        lookup is what actually distinguishes a persistent history from a
-        per-turn one.
+        Writing on one lookup and reading on a second is what actually
+        distinguishes a persistent history from a per-turn one.
         """
-        from codebase_rag.main import _input_session, _remember_input
+        from codebase_rag.main import _input_history, _remember_input
 
-        _remember_input(_input_session().history, "asked on an earlier turn")
+        _remember_input(_input_history(), "asked on an earlier turn")
 
-        assert "asked on an earlier turn" in list(
-            _input_session().history.get_strings()
-        )
+        assert "asked on an earlier turn" in list(_input_history().get_strings())
+
+    def test_the_session_is_wired_to_that_history(self) -> None:
+        """The seam must not drift from the prompt that reads it.
+
+        Splitting history out removes the console dependency from the two
+        tests above, but it also creates a way for them to pass while the
+        SESSION reads some other history -- so this asserts the wiring,
+        and is the one test here that builds a real prompt.
+        """
+        from codebase_rag.main import _input_history, _input_session
+
+        assert _input_session().history is _input_history()
 
     def test_submitted_text_is_appended_to_history(self) -> None:
         """The history must actually be fed, not merely exist.
