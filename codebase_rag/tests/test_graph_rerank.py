@@ -259,6 +259,37 @@ def test_the_proximity_query_filters_on_the_declared_relationships() -> None:
     assert set(match.group(1).split("|")) == set(_PROXIMITY_RELS), match.group(1)
 
 
+def test_the_declared_relationships_are_the_intended_six() -> None:
+    """An ABSOLUTE list, because the sibling test compares two things that move together.
+
+    `build_proximity_query` generates the `r:` filter FROM `_PROXIMITY_RELS`,
+    so the sibling equality is A against B where B is derived from A. Dropping
+    a relationship from the tuple changes the query identically and the
+    equality still holds -- verified by mutation: removing `CALLS` leaves all
+    15 tests passing, silently narrowing what "graph proximity" means.
+
+    Agreement between two representations of one decision cannot detect a
+    change to the decision. The absolute set is the third reference, and it is
+    the only assertion here not downstream of the tuple itself.
+
+    Naming the six explicitly is the point rather than a duplication of the
+    source: CALLS and IMPORTS are use, DEFINES and DEFINES_METHOD are
+    structural containment, INHERITS and OVERRIDES are type relationships.
+    Changing this set is a decision about what "about the same thing" means,
+    so it should require editing a test that says so.
+    """
+    from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
+
+    assert set(_PROXIMITY_RELS) == {
+        "CALLS",
+        "DEFINES",
+        "DEFINES_METHOD",
+        "IMPORTS",
+        "INHERITS",
+        "OVERRIDES",
+    }, sorted(_PROXIMITY_RELS)
+
+
 def test_the_query_counts_both_endpoints_explicitly() -> None:
     """A directed edge must boost BOTH of its endpoints.
 
