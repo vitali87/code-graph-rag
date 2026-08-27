@@ -336,6 +336,15 @@ class AppConfig(BaseSettings):
     CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
     QUERY_RESULT_MAX_TOKENS: int = Field(default=16000, gt=0)
+    # The model's OUTPUT budget per request. Without it pydantic-ai falls back
+    # to the provider default, which on Anthropic is far below what current
+    # models support -- a long answer then fails with "Model token limit
+    # (provider default) exceeded before any response was generated" and the
+    # model never replies at all (issue #1498).
+    #
+    # Distinct from QUERY_RESULT_MAX_TOKENS above, which trims what goes IN.
+    # This bounds what comes back.
+    MODEL_MAX_TOKENS: int = Field(default=16000, gt=0)
     QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
     QUERY_MEMORY_LIMIT_MB: int = Field(default=4096, gt=0)
     QUERY_TIMEOUT_S: float = Field(default=60.0, gt=0)

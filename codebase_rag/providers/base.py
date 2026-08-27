@@ -114,11 +114,15 @@ class GoogleProvider(ModelProvider):
             assert self.api_key is not None
             provider = PydanticGoogleProvider(api_key=self.api_key)
 
-        if self.thinking_budget is None:
-            return GoogleModel(model_id, provider=provider)
-        model_settings = GoogleModelSettings(
-            google_thinking_config={"thinking_budget": int(self.thinking_budget)}
-        )
+        # Built unconditionally. An earlier version returned early when no
+        # thinking budget was configured, so the DEFAULT path carried no
+        # settings at all and the output budget never applied -- the same
+        # defect as the Anthropic one, on the more common branch (issue #1498).
+        model_settings = GoogleModelSettings(max_tokens=settings.MODEL_MAX_TOKENS)
+        if self.thinking_budget is not None:
+            model_settings["google_thinking_config"] = {
+                "thinking_budget": int(self.thinking_budget)
+            }
         return GoogleModel(model_id, provider=provider, settings=model_settings)
 
 
@@ -212,6 +216,9 @@ class AnthropicProvider(ModelProvider):
             anthropic_cache_instructions=True,
             anthropic_cache_tool_definitions=True,
             anthropic_cache_messages=True,
+            # Explicit, because the provider default is small enough that a
+            # long answer fails before the model emits anything (issue #1498).
+            max_tokens=settings.MODEL_MAX_TOKENS,
         )
         return AnthropicModel(model_id, provider=provider, settings=model_settings)
 
