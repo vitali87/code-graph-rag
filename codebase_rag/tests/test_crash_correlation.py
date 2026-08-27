@@ -532,6 +532,13 @@ def test_every_resolve_failure_path_records_an_unresolved_reason() -> None:
         `stats` is the parameter name every `resolve` implementation uses for
         its `ResolutionStats`; a rename would fail here, which is the intended
         outcome since the premise this pins is stated in terms of that object.
+
+        Requiring a bare `ast.Expr` is deliberate and not over-strict.
+        `ResolutionStats.record` returns `None`, so `_ = stats.record(...)` or
+        any use of its value is code nobody writes; all current call sites are
+        bare expression statements. Relaxing the check to accept a wrapped
+        call would widen it for a shape production cannot meaningfully
+        produce, which is coverage of nothing.
         """
         if not (
             isinstance(statement, ast.Expr)
@@ -584,8 +591,13 @@ def test_every_resolve_failure_path_records_an_unresolved_reason() -> None:
             continue
         for body, index in _own_body_returns(node):
             checked += 1
-            preceding = body[index - 1] if index else None
-            if preceding is None or not _records_reason(preceding):
+            # Any PRECEDING SIBLING in the same branch, not only the
+            # immediately preceding one. Requiring adjacency rejected a branch
+            # that records the reason and then does one more thing before
+            # returning -- a legitimate shape, so adjacency was strictness
+            # without coverage. Siblings only: a call in an enclosing branch
+            # does not run on this path.
+            if not any(_records_reason(stmt) for stmt in body[:index]):
                 unrecorded.append(f"resolution.py:{body[index].lineno}")
 
     assert checked, "found no bare `return None` in any resolve(); parser drifted"
