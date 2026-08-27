@@ -149,8 +149,14 @@ class TestSemanticSearchRegistration:
 
             result = await registry.semantic_search("find auth functions", top_k=3)
 
+            # `project=None` is part of the contract now (issue #1494): the
+            # handler forwards the scope, and NONE is what an unscoped call
+            # must send. Asserting the value rather than dropping the kwarg
+            # from the check -- a handler forwarding some other project
+            # would still satisfy a looser assertion while silently
+            # narrowing every unscoped caller's results.
             mock_tool.function.assert_called_once_with(
-                query="find auth functions", top_k=3
+                query="find auth functions", top_k=3, project=None
             )
             assert "result1" in result
 
