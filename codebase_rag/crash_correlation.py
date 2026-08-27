@@ -114,6 +114,121 @@ class TracebackReport(NamedTuple):
     resolution: FrameResolutionRate
 
 
+class ArityError(NamedTuple):
+    """An arity `TypeError` decomposed into the parts the graph can check.
+
+    Unlike most of this module, an arity error needs no ranking: the message
+    names the callee and the counts, and the graph knows the declared
+    parameters, so the mismatch is mechanically decidable (issue #227,
+    Phase 1).
+
+    `expected`/`actual` are set by the "takes N but M were given" form and
+    `missing` by the "missing N required positional argument" form. Exactly
+    one form matches any given message, so the unused fields stay empty
+    rather than carrying a sentinel that reads as a real count.
+    """
+
+    callee: str
+    expected: int | None = None
+    actual: int | None = None
+    missing: tuple[str, ...] = ()
+
+
+class ArityVerdict(NamedTuple):
+    """What the graph's stored signature says about a parsed arity error.
+
+    `confirmed` false is a FINDING, not a failure to diagnose: it means the
+    resolved function's signature disagrees with the message, so the function
+    the graph matched is not the one that raised -- a stale index, or a
+    same-named function elsewhere. Reporting that beats silently confirming
+    against the wrong target.
+    """
+
+    declared_count: int
+    confirmed: bool
+
+
+# CPython emits "1 was given" for a single argument and "2 were given" for
+# several, so the verb is part of the pattern rather than a fixed literal.
+# Written from messages captured by RUNNING the failing calls, not from
+# recollection -- the singular form is exactly what a regex built from a
+# plural example silently misses.
+#
+# Both patterns are ANCHORED. Without `^` a message that merely CONTAINS the
+# arity shape would parse, and the callee captured would be whatever token
+# happened to precede it.
+_ARITY_TOO_MANY = re.compile(
+    r"^(?:\w+\.)*(?P<callee>\w+)\(\) takes (?P<expected>\d+) positional "
+    r"arguments? but (?P<actual>\d+) (?:was|were) given$"
+)
+_ARITY_MISSING = re.compile(
+    r"^(?:\w+\.)*(?P<callee>\w+)\(\) missing \d+ required positional "
+    r"arguments?: (?P<names>.+)$"
+)
+
+
+def parse_arity_error(message: str) -> ArityError | None:
+    """Decompose an arity `TypeError` message, or None if it is not one.
+
+    Most `TypeError`s are not arity errors ("unsupported operand type(s)",
+    "'NoneType' object is not subscriptable"), so returning None is the
+    common case and must stay cheap and certain.
+
+    The callee is reduced to its FINAL component: CPython writes `C.m()` for
+    a method, while the graph stores it under a qualified name that already
+    carries its own class prefix, so a `C.m` needle would fail to match
+    `project.mod.C.m`.
+    """
+    if match := _ARITY_TOO_MANY.match(message):
+        return ArityError(
+            callee=match["callee"],
+            expected=int(match["expected"]),
+            actual=int(match["actual"]),
+        )
+    if match := _ARITY_MISSING.match(message):
+        names = tuple(
+            part.strip().strip("'")
+            for part in match["names"].replace(" and ", ", ").split(",")
+            if part.strip()
+        )
+        return ArityError(callee=match["callee"], missing=names)
+    return None
+
+
+def diagnose_arity(
+    error: ArityError, declared: tuple[str, ...], is_method: bool
+) -> ArityVerdict | None:
+    """Check a parsed arity error against a function's declared parameters.
+
+    `self` is the subtlety this exists to get right. CPython counts the bound
+    receiver, so `C.m(self, a)` reports "takes 2" for one caller-supplied
+    parameter. Comparing the message's 2 against a stored `("a",)` would
+    report a mismatch on CORRECT code -- turning a diagnostic aid into a
+    source of false accusations, which is worse than no diagnosis.
+
+    The graph stores `self` as a declared parameter, so the counts already
+    agree; `is_method` is threaded through so that a caller storing
+    parameters WITHOUT the receiver is handled explicitly rather than by
+    coincidence.
+    """
+    declared_count = len(declared)
+    if is_method and (not declared or declared[0] not in {"self", "cls"}):
+        # A method whose stored parameters omit the receiver: add it back so
+        # the comparison is against what CPython counts.
+        declared_count += 1
+    if error.expected is None:
+        # The "missing" form names parameters rather than counts; the graph
+        # confirms it when every named parameter is actually declared.
+        return ArityVerdict(
+            declared_count=declared_count,
+            confirmed=all(name in declared for name in error.missing),
+        )
+    return ArityVerdict(
+        declared_count=declared_count,
+        confirmed=declared_count == error.expected,
+    )
+
+
 class RootCause(NamedTuple):
     qualified_name: str
     path: str | None
