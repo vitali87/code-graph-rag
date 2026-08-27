@@ -344,7 +344,18 @@ class AppConfig(BaseSettings):
     #
     # Distinct from QUERY_RESULT_MAX_TOKENS above, which trims what goes IN.
     # This bounds what comes back.
-    MODEL_MAX_TOKENS: int = Field(default=16000, gt=0)
+    # 8192 rather than something larger: pydantic-ai forwards this value
+    # unchanged and exposes no per-model output cap to clamp against, so the
+    # default must fit the SMALLEST catalogued model or it breaks working
+    # configurations. `gemini-2.0-flash` caps output at 8192 and is
+    # selectable today; 16000 was rejected outright by it. This still fixes
+    # the reported crash, whose remedy is any value meaningfully above
+    # Anthropic's 4096 provider default.
+    #
+    # Raise it per-deployment when the chosen model allows more. A clamping
+    # table keyed on model id was considered and rejected: it would need
+    # hand-maintaining and would silently go stale on every new release.
+    MODEL_MAX_TOKENS: int = Field(default=8192, gt=0)
     QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
     QUERY_MEMORY_LIMIT_MB: int = Field(default=4096, gt=0)
     QUERY_TIMEOUT_S: float = Field(default=60.0, gt=0)

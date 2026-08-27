@@ -42,6 +42,20 @@ class TestSetting:
         """
         assert AppConfig().MODEL_MAX_TOKENS > 4096
 
+    def test_the_default_fits_the_smallest_catalogued_model(self) -> None:
+        """The other bound, and the one a bigger-is-better edit would break.
+
+        pydantic-ai forwards `max_tokens` unchanged and offers no per-model
+        output cap to clamp against, so a default above the smallest
+        selectable model's limit turns a fix into a new failure for that
+        model. `gemini-2.0-flash` is in the catalogue today and caps output
+        at 8192; an earlier 16000 default was rejected by it outright.
+
+        Paired with the test above, these two pin the default into the only
+        band that serves both: above Anthropic's 4096, at or below 8192.
+        """
+        assert AppConfig().MODEL_MAX_TOKENS <= 8192
+
     @pytest.mark.parametrize("value", [0, -1])
     def test_a_non_positive_value_is_rejected(self, value: int) -> None:
         """Zero or negative is not a smaller budget, it is a broken request.
