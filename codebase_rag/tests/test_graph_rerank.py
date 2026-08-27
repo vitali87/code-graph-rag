@@ -136,6 +136,74 @@ def test_the_weight_bounds_how_far_proximity_can_move_a_result() -> None:
     assert boosted.score == 0.5 + DEFAULT_PROXIMITY_WEIGHT
 
 
+# A REACHABLE hub fixture: three hits, where node 1 is joined to both 2 and 3
+# and 2-3 are not joined to each other. `build_proximity_query` unwinds both
+# endpoints of every in-set edge, so the two edges 1-2 and 1-3 give:
+#
+#     degree: {1: 2, 2: 1, 3: 1}   normalised: {1: 1.0, 2: 0.5, 3: 0.5}
+#
+# Three nodes is the MINIMUM that can produce unequal degrees. With a two-node
+# result set every matched edge runs between those two nodes and UNWIND emits
+# both endpoints, so their degrees are necessarily equal -- an asymmetric
+# two-node fixture like `{1: 1, 2: 4}` describes a graph the production query
+# cannot return, which is what an earlier version of these tests asserted
+# against (caught in review on #1482).
+_HUB_DEGREES = {1: 2, 2: 1, 3: 1}
+
+
+def test_proximity_is_proportional_to_degree_not_mere_connectedness() -> None:
+    """Proximity must scale with degree, not with the yes/no fact of an edge.
+
+    The module ranks a hit by HOW connected it is to the rest of the result
+    set. An implementation giving every node with any in-set edge the same
+    flat boost ranks by WHETHER it is connected -- a different quantity, and
+    the same membership-vs-degree confusion as #1474.
+
+    Every earlier fixture in this file used one connected node and one
+    isolated node, where the connected node's normalised degree is 1.0 and the
+    flat boost is also 1.0. The two implementations agree on every such case,
+    so the whole suite passed against flat boost (issue #1481).
+
+    Asserts PROXIMITY rather than rank order, because proximity is computed
+    before `weight` is applied and is therefore weight-independent:
+
+        degree-weighted: {1: 1.0, 2: 0.5, 3: 0.5}
+        flat boost:      {1: 1.0, 2: 1.0, 3: 1.0}
+
+    An earlier version asserted the resulting ORDER instead, and claimed in
+    this docstring that doing so kept the test meaningful across a retune of
+    DEFAULT_PROXIMITY_WEIGHT. That was exactly backwards: a blended score
+    depends on the weight, and below w =~ 0.133 the ordering no longer
+    separated the implementations at all. The claim was disproved by
+    execution in review.
+    """
+    ingestor = _ingestor(_HUB_DEGREES)
+
+    ranked = rerank_by_graph_proximity(ingestor, [(1, 0.5), (2, 0.5), (3, 0.5)])
+    proximity = {hit.node_id: hit.proximity for hit in ranked}
+
+    assert proximity == {1: 1.0, 2: 0.5, 3: 0.5}, proximity
+
+
+def test_a_less_connected_hit_is_boosted_strictly_less() -> None:
+    """The consequence of the above, pinned independently of the weight.
+
+    With equal similarities the entire score gap comes from proximity, so the
+    hub must outrank the spokes for ANY positive weight -- whereas flat boost
+    gives all three the same proximity and leaves them tied, preserving the
+    incoming order under a stable sort.
+
+    Pairs with the test above: that one pins the mechanism, this one pins the
+    behaviour a caller actually observes.
+    """
+    ingestor = _ingestor(_HUB_DEGREES)
+
+    ranked = rerank_by_graph_proximity(ingestor, [(2, 0.5), (3, 0.5), (1, 0.5)])
+
+    assert ranked[0].node_id == 1, [(h.node_id, h.proximity, h.score) for h in ranked]
+    assert ranked[0].score > ranked[1].score, [(h.node_id, h.score) for h in ranked]
+
+
 def test_containment_edges_are_excluded_deliberately() -> None:
     """CONTAINS_* cannot contribute, so its absence is a fact not an oversight.
 
@@ -189,6 +257,98 @@ def test_the_proximity_query_filters_on_the_declared_relationships() -> None:
     assert match is not None, query
 
     assert set(match.group(1).split("|")) == set(_PROXIMITY_RELS), match.group(1)
+
+
+def test_node_ids_are_parameterised_not_interpolated() -> None:
+    """Ids reach the engine as parameters, never as query text.
+
+    The fifth axis of this query's contract, and the one nothing else covered:
+    replacing the `$0, $1` placeholders with the ids interpolated directly
+    left all 17 other tests passing.
+
+    Node ids are internal integers rather than user input, so this is not
+    today an injection vector. It is still the property worth pinning, because
+    the alternative is invisible in every other assertion -- the generated
+    Cypher reads correctly, returns the same rows, and the module keeps
+    working. Nothing downstream would report the change.
+
+    Interpolation would also defeat query-plan caching: every distinct result
+    set produces a textually different query, so the engine re-plans each
+    call rather than reusing one plan with new parameters.
+
+    Asserts BOTH halves. That the placeholders are present, and that no id
+    appears literally in the text -- because a query could carry `$0` and
+    still interpolate the rest, and the placeholder check alone would pass.
+    """
+    node_ids = [4321, 8765]
+
+    query = build_proximity_query(node_ids)
+
+    assert "$0" in query, query
+    assert "$1" in query, query
+    for node_id in node_ids:
+        assert str(node_id) not in query, (node_id, query)
+
+
+def test_all_zero_degrees_leave_every_similarity_unchanged() -> None:
+    """The `highest <= 0` guard, which no other test enters.
+
+    Found by replacing the guard's body with a raising assertion: the suite
+    still passed, so nothing exercised it.
+
+    Unlike the other branches this one is NOT reachable through the shipped
+    query -- `count(*)` does not yield 0 for a row that exists, and a graph
+    with no in-set edges returns no rows at all, which `if not degrees`
+    handles first. So it is a defensive guard against a malformed or foreign
+    row source rather than a production path.
+
+    Pinned anyway, because "unreachable" is a property of the CURRENT query
+    rather than a promise. If `build_proximity_query` ever emits an OPTIONAL
+    MATCH or a left join, zero-degree rows become real and this branch starts
+    running -- and without the guard the next line divides by `highest`.
+
+    Asserts behaviour rather than the early return: proximity is 0.0 and every
+    similarity survives untouched. An implementation that raised, or that
+    dropped the hits, would satisfy "does not divide by zero" too.
+    """
+    ingestor = _ingestor({1: 0, 2: 0})
+
+    ranked = rerank_by_graph_proximity(ingestor, [(1, 0.7), (2, 0.5)])
+
+    assert {hit.node_id: hit.proximity for hit in ranked} == {1: 0.0, 2: 0.0}
+    assert {hit.node_id: hit.score for hit in ranked} == {1: 0.7, 2: 0.5}
+    assert [hit.node_id for hit in ranked] == [1, 2]
+
+
+def test_the_declared_relationships_are_the_intended_six() -> None:
+    """An ABSOLUTE list, because the sibling test compares two things that move together.
+
+    `build_proximity_query` generates the `r:` filter FROM `_PROXIMITY_RELS`,
+    so the sibling equality is A against B where B is derived from A. Dropping
+    a relationship from the tuple changes the query identically and the
+    equality still holds -- verified by mutation: removing `CALLS` leaves all
+    15 tests passing, silently narrowing what "graph proximity" means.
+
+    Agreement between two representations of one decision cannot detect a
+    change to the decision. The absolute set is the third reference, and it is
+    the only assertion here not downstream of the tuple itself.
+
+    Naming the six explicitly is the point rather than a duplication of the
+    source: CALLS and IMPORTS are use, DEFINES and DEFINES_METHOD are
+    structural containment, INHERITS and OVERRIDES are type relationships.
+    Changing this set is a decision about what "about the same thing" means,
+    so it should require editing a test that says so.
+    """
+    from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
+
+    assert set(_PROXIMITY_RELS) == {
+        "CALLS",
+        "DEFINES",
+        "DEFINES_METHOD",
+        "IMPORTS",
+        "INHERITS",
+        "OVERRIDES",
+    }, sorted(_PROXIMITY_RELS)
 
 
 def test_the_query_counts_both_endpoints_explicitly() -> None:
