@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from codebase_rag.config import AppConfig
 
@@ -41,17 +42,22 @@ class TestSetting:
         """
         assert AppConfig().MODEL_MAX_TOKENS > 4096
 
-    def test_a_non_positive_value_is_rejected(self) -> None:
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_a_non_positive_value_is_rejected(self, value: int) -> None:
         """Zero or negative is not a smaller budget, it is a broken request.
 
         Validated at construction rather than discovered as a provider error
         at the first query, which is where an unvalidated value would surface.
-        """
-        with pytest.raises(Exception):
-            AppConfig(MODEL_MAX_TOKENS=0)
 
-        with pytest.raises(Exception):
-            AppConfig(MODEL_MAX_TOKENS=-1)
+        `ValidationError` specifically, and the field must be named in it: a
+        bare `Exception` would pass on a typo raising `AttributeError`, or on
+        an unrelated field's constraint firing -- neither of which is this
+        field being validated.
+        """
+        with pytest.raises(ValidationError) as excinfo:
+            AppConfig(MODEL_MAX_TOKENS=value)
+
+        assert "MODEL_MAX_TOKENS" in str(excinfo.value)
 
 
 class TestProviders:
