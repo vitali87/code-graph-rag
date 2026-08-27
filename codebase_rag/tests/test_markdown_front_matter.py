@@ -203,9 +203,9 @@ class TestParsing:
         #1488).
         """
         for header in ("| # explanation", ">- # note", "|2 # why"):
-            assert parse_front_matter(
-                f"---\nnote: {header}\n  text\n---\n"
-            ) == {}, header
+            assert parse_front_matter(f"---\nnote: {header}\n  text\n---\n") == {}, (
+                header
+            )
 
     def test_a_hash_inside_an_ordinary_value_is_preserved(self) -> None:
         """The control: comment-stripping must not corrupt real values.
