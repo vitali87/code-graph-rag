@@ -1431,6 +1431,21 @@ class CallResolver:
         folded = _php_fold(call_name)
         return any(_php_fold(name) == folded for name in imported)
 
+    def _php_import_key(
+        self, call_name: str, import_map: dict[str, str]
+    ) -> str | None:
+        """The import-map key matching `call_name` under PHP case folding.
+
+        Returns None unless EXACTLY ONE key folds to the same name. Two keys
+        differing only in case cannot both be the intended target, and PHP
+        would reject the duplicate `use` at compile time anyway -- so
+        declining is correct rather than cautious, and the trie fallback still
+        applies.
+        """
+        folded = _php_fold(call_name)
+        matches = [key for key in import_map if _php_fold(key) == folded]
+        return matches[0] if len(matches) == 1 else None
+
     def _try_resolve_direct_import(
         self,
         call_name: str,
@@ -1438,9 +1453,22 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         module_qn: str | None = None,
     ) -> tuple[str, str] | None:
-        if call_name not in import_map:
+        if call_name in import_map:
+            imported_qn = import_map[call_name]
+        elif (
+            language == cs.SupportedLanguage.PHP
+            and (folded_key := self._php_import_key(call_name, import_map)) is not None
+        ):
+            # PHP records `import_map` under the DECLARATION spelling, so a
+            # call written `FORMAT()` against `use function App\Text\format`
+            # misses this lookup entirely and never reaches the folded
+            # binding-kind gate below. Reported on #1484 after an earlier fix
+            # addressed only the gate: the exact-case map lookup in FRONT of
+            # it is where the miss actually happens.
+            imported_qn = import_map[folded_key]
+            call_name = folded_key
+        else:
             return None
-        imported_qn = import_map[call_name]
         # Gated on the CALLER's language AND on the import being a
         # `use function` binding.
         #

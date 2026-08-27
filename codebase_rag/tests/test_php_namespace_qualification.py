@@ -316,14 +316,19 @@ def test_a_call_through_a_use_function_alias_is_case_insensitive(
         php_function_imports={"proj.caller": {"format"}},
     )
     resolver.function_registry = _registry({"proj.text.format": "Function"})
-    # Both spellings are in the import map, because the call-name capture
-    # records the call AS WRITTEN. What varies here is whether the resolver
-    # recognises the alias when the CASE differs from the `use function`
-    # spelling -- a spelling absent from the map fails at an earlier layer
-    # and would test something else.
-    import_map = {"format": "App.Text.format", "FORMAT": "App.Text.format"}
+    # PRODUCTION SHAPE: the import map is keyed by the DECLARATION spelling
+    # only. Verified against the import processor -- `use function
+    # App\\Text\\format` records exactly {'format': ...}, whatever casing the
+    # call later uses.
+    #
+    # An earlier version of this test seeded BOTH spellings, which production
+    # never produces. That made the assertion pass against a fixture the
+    # system cannot generate, hiding the fact that the exact-case map lookup
+    # in front of the folded gate is where the miss actually happens
+    # (unreachable-fixture defect, reported on #1484).
+    import_map = {"format": "App.Text.format"}
 
-    for spelling in ("format", "FORMAT"):
+    for spelling in ("format", "FORMAT", "Format"):
         assert resolver._try_resolve_direct_import(
             spelling, import_map, cs.SupportedLanguage.PHP, "proj.caller"
         ) == (NodeType.FUNCTION, "proj.text.format"), (
