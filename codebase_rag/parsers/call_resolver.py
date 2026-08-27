@@ -1364,15 +1364,18 @@ class CallResolver:
                 found.append(exact_qn)
                 continue
             # The symbol's casing may differ from the registration too, so a
-            # direct lookup can miss where PHP would bind. Scan only this
-            # module's own entries rather than the whole registry.
+            # direct lookup can miss where PHP would bind. `find_with_prefix`
+            # is the registry's own scoped query -- iterating the whole
+            # registry is not part of the trie protocol at all, and would be
+            # a full scan per import even where it happened to work.
             prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
             wanted_symbol = _php_fold(symbol)
             found.extend(
                 qn
-                for qn in self.function_registry
-                if qn.startswith(prefix)
-                and cs.SEPARATOR_DOT not in qn[len(prefix) :]
+                for qn, _ in self.function_registry.find_with_prefix(prefix)
+                # Direct children only: a nested `module.Class.method` is not
+                # the free function this import names.
+                if cs.SEPARATOR_DOT not in qn[len(prefix) :]
                 and _php_fold(qn[len(prefix) :]) == wanted_symbol
             )
         if len(found) != 1:

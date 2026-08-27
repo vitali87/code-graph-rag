@@ -28,6 +28,20 @@ from codebase_rag.tests.conftest import get_relationships, run_updater
 SKIP = "php"
 
 
+class _FakeRegistry(dict):
+    """A registry double carrying the trie method the resolver actually calls.
+
+    A plain dict passed as `function_registry` HID a real defect: the earlier
+    implementation iterated the registry directly, which a dict supports and
+    `FunctionRegistryTrieProtocol` does not. The tests went green against an
+    interface production never provides -- the mirror-test failure, where the
+    double is more permissive than the real object.
+    """
+
+    def find_with_prefix(self, prefix: str) -> list[tuple[str, str]]:
+        return [(qn, kind) for qn, kind in self.items() if qn.startswith(prefix)]
+
+
 def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return {
         (str(call.args[0][2]), str(call.args[2][2]))
@@ -140,10 +154,12 @@ def test_an_ambiguous_namespace_target_resolves_to_nothing(tmp_path: Path) -> No
     resolver.import_processor = SimpleNamespace(
         php_module_namespaces={"proj.one": "App.Text", "proj.two": "App.Text"}
     )
-    resolver.function_registry = {
-        "proj.one.format": "Function",
-        "proj.two.format": "Function",
-    }
+    resolver.function_registry = _FakeRegistry(
+        {
+            "proj.one.format": "Function",
+            "proj.two.format": "Function",
+        }
+    )
 
     assert resolver._php_target_for_namespace_import("App.Text.format") is None, (
         "an import naming a namespace declared by TWO modules that both define "
@@ -153,7 +169,7 @@ def test_an_ambiguous_namespace_target_resolves_to_nothing(tmp_path: Path) -> No
 
     # The paired positive: with ONE candidate it resolves, so the None above is
     # the ambiguity guard rather than the helper being inert.
-    resolver.function_registry = {"proj.one.format": "Function"}
+    resolver.function_registry = _FakeRegistry({"proj.one.format": "Function"})
     assert (
         resolver._php_target_for_namespace_import("App.Text.format")
         == "proj.one.format"
@@ -242,7 +258,7 @@ def test_a_mixed_case_import_resolves_like_php_does(tmp_path: Path) -> None:
         php_module_namespaces={"proj.text": "App.Text"},
         commonjs_direct_exports={},
     )
-    resolver.function_registry = {"proj.text.format": "Function"}
+    resolver.function_registry = _FakeRegistry({"proj.text.format": "Function"})
 
     for target in (
         "App.Text.format",  # exact
@@ -251,7 +267,9 @@ def test_a_mixed_case_import_resolves_like_php_does(tmp_path: Path) -> None:
         "App.Text.FORMAT",  # symbol folded
         "app.text.FORMAT",  # both, the reported case
     ):
-        assert resolver._php_target_for_namespace_import(target) == "proj.text.format", (
+        assert (
+            resolver._php_target_for_namespace_import(target) == "proj.text.format"
+        ), (
             f"{target!r} did not resolve; PHP treats namespace and function "
             "names as case-insensitive, so this import is valid and binds"
         )
@@ -305,7 +323,7 @@ def test_a_non_php_caller_never_resolves_through_php_namespaces(
         # must carry it or the test fails on the fixture rather than the guard.
         commonjs_direct_exports={},
     )
-    resolver.function_registry = {"proj.text.format": "Function"}
+    resolver.function_registry = _FakeRegistry({"proj.text.format": "Function"})
     import_map = {"format": "App.Text.format"}
 
     for language in (
