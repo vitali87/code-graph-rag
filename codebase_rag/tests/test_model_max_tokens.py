@@ -122,6 +122,4 @@ class TestProviders:
 
         assert model.settings is not None
         assert model.settings.get("max_tokens") == AppConfig().MODEL_MAX_TOKENS
-        assert model.settings.get("google_thinking_config") == {
-            "thinking_budget": 512
-        }
+        assert model.settings.get("google_thinking_config") == {"thinking_budget": 512}
