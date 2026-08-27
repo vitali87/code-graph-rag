@@ -31,6 +31,7 @@ from urllib.parse import unquote
 from loguru import logger
 
 from .. import constants as cs
+from ..types_defs import PropertyDict
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .flat_module import emit_flat_module
 
@@ -105,11 +106,7 @@ def parse_front_matter(text: str) -> dict[str, str]:
     if not lines or lines[0].strip() != _FRONT_MATTER_FENCE:
         return {}
     closing = next(
-        (
-            i
-            for i in range(1, len(lines))
-            if lines[i].strip() == _FRONT_MATTER_FENCE
-        ),
+        (i for i in range(1, len(lines)) if lines[i].strip() == _FRONT_MATTER_FENCE),
         None,
     )
     if closing is None:
@@ -126,6 +123,7 @@ def parse_front_matter(text: str) -> dict[str, str]:
             continue
         found[name] = value.strip().strip("\"'")
     return found
+
 
 # Link grammar nodes. `inline_link` is ``[text](target)``; the destination sits
 # in a `link_destination` child. Reference-style links (``[text][label]``) name
@@ -675,7 +673,7 @@ class DocumentTier:
         self,
         file_path: Path,
         structural_elements: dict[Path, str | None],
-        front_matter: dict[str, str] | None = None,
+        front_matter: PropertyDict | None = None,
     ) -> str:
         return emit_flat_module(
             self._ingestor,

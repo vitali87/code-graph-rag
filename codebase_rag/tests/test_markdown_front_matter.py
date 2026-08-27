@@ -44,7 +44,7 @@ class TestParsing:
         }
 
     def test_quotes_are_stripped_from_values(self) -> None:
-        assert parse_front_matter('---\ntitle: "My Plan"\nk: \'v\'\n---\n') == {
+        assert parse_front_matter("---\ntitle: \"My Plan\"\nk: 'v'\n---\n") == {
             "title": "My Plan",
             "k": "v",
         }
