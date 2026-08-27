@@ -491,3 +491,59 @@ def test_rank_with_no_resolvable_frame_reports_nothing(tmp_path):
     assert report.failing is None
     assert report.candidates == ()
     assert report.exception_type == "RuntimeError"
+
+
+def test_every_resolve_failure_path_records_an_unresolved_reason() -> None:
+    """The premise `explain_traceback` picks its predicate on (issue #227).
+
+    `crash_correlation.py` keys `resolved` on `qualified_name is not None`
+    rather than on `unresolved_reason is None`, and justifies that in a comment
+    saying the two agree today "because every failure path in
+    `FrameResolver.resolve` records a reason before returning None".
+
+    That claim is about ANOTHER file, which can change without touching this
+    one -- so nothing would report it becoming false. If a future failure path
+    forgets to record, `_resolve_stack` derives `reason = None` via
+    `next(iter(stats.unresolved), None)`, and the rejected predicate would
+    start counting unresolvable frames as resolved.
+
+    Structural rather than behavioural: reaching all fourteen failure paths
+    through the resolver would need fixtures for each, and the property is
+    about the code's shape rather than its output. Same discipline as
+    `test_mcp_read_handler_lock.py`, which parses the shipped file.
+    """
+    import ast
+
+    source = (
+        Path(__file__).resolve().parents[1] / "trace" / "resolution.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    unrecorded: list[str] = []
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name != "resolve":
+            continue
+        for statement in ast.walk(node):
+            is_bare_none = (
+                isinstance(statement, ast.Return)
+                and isinstance(statement.value, ast.Constant)
+                and statement.value.value is None
+            )
+            if not is_bare_none:
+                continue
+            checked += 1
+            # The recording call sits in the same branch, immediately before
+            # the return; four lines of context covers every current shape.
+            context = "\n".join(
+                source.split("\n")[max(0, statement.lineno - 5) : statement.lineno]
+            )
+            if "record" not in context:
+                unrecorded.append(f"resolution.py:{statement.lineno}")
+
+    assert checked, "found no bare `return None` in any resolve(); parser drifted"
+    assert not unrecorded, (
+        f"{unrecorded} return None without recording an unresolved reason, so "
+        "`unresolved_reason is None` no longer implies the frame resolved -- "
+        "see the predicate comment in crash_correlation.explain_traceback"
+    )
