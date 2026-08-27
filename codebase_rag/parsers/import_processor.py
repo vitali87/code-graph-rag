@@ -4105,9 +4105,7 @@ class ImportProcessor:
         declared = safe_decode_with_fallback(name_node)
         if not declared:
             return
-        self.php_module_namespaces[module_qn] = declared.replace(
-            "\\", cs.SEPARATOR_DOT
-        )
+        self.php_module_namespaces[module_qn] = declared.replace("\\", cs.SEPARATOR_DOT)
 
     def _parse_php_imports(
         self, captures: dict, module_qn: str, root_node: Node | None = None
