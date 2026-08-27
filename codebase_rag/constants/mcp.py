@@ -52,6 +52,9 @@ class MCPSchemaField(StrEnum):
 
 class MCPParamName(StrEnum):
     PROJECT_NAME = "project_name"
+    # The per-request retrieval scope (issue #1494). Distinct from
+    # PROJECT_NAME, which names the target of delete_project.
+    PROJECT = "project"
     CONFIRM = "confirm"
     NATURAL_LANGUAGE_QUERY = "natural_language_query"
     QUALIFIED_NAME = "qualified_name"

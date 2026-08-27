@@ -15,7 +15,11 @@
 # survive the filter.
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+
+from codebase_rag import constants as cs
 
 # Two projects whose symbols COLLIDE by name. A fixture with distinct names
 # passes whether or not scoping works, so it would prove nothing.
@@ -483,6 +487,80 @@ class TestEveryProjectedEntityMustCarryItsQualifiedName:
         assert requires_project_evidence(cypher, ALPHA)
 
 
+class TestOnlyARestrictivePredicateAuthorisesAnAggregate:
+    """Mentioning a qualified name is not constraining by one.
+
+    `WHERE n.qualified_name IS NOT NULL` matches every indexed node in
+    every project, so a count over it spans them all -- yet it satisfied a
+    check that only looked for the property appearing before RETURN. The
+    predicate has to actually narrow to a prefix.
+    """
+
+    @pytest.mark.parametrize(
+        "predicate",
+        [
+            "n.qualified_name IS NOT NULL",
+            "n.qualified_name <> ''",
+            "exists(n.qualified_name)",
+        ],
+    )
+    def test_a_nonrestrictive_predicate_is_refused(self, predicate: str) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = f"MATCH (n) WHERE {predicate} RETURN count(n) AS total"
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_prefix_predicate_is_accepted(self) -> None:
+        """The control: the restrictive form must still authorise a count."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            f'MATCH (n) WHERE n.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(n) AS total"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+
+class TestQuotedTextIsNotEvidence:
+    """A qualified name inside a string literal returns no qualified name.
+
+    `RETURN "n.qualified_name" AS lit, n.name AS name` projects a constant
+    and an unattributable property, but textual matching saw the property
+    read inside the quotes.
+    """
+
+    def test_a_quoted_property_read_is_not_evidence(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = 'MATCH (n) RETURN "n.qualified_name" AS lit, n.name AS name'
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_single_quoted_property_read_is_not_evidence(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = "MATCH (n) RETURN 'n.qualified_name' AS lit, n.name AS name"
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_real_read_beside_a_quoted_one_is_still_evidence(self) -> None:
+        """The control: stripping literals must not blind the real check.
+
+        A query can legitimately return a string constant alongside real
+        properties, and that must still be judged on the real ones.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (n) RETURN 'a label' AS kind, "
+            "n.qualified_name AS qualified_name, n.name AS name"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+
 class TestAnAggregateMustBeBoundToTheRequestedProject:
     """Restricting by *a* qualified name is not restricting to *yours*.
 
@@ -790,6 +868,66 @@ class TestTheHandlerBindsTheAggregateToItsOwnProject:
 
         assert not result.get("error"), result
         assert result["results"] == [{"total": 99}]
+
+
+class TestTheDeclaredSchemaMatchesTheHandler:
+    """A parameter absent from the schema is unreachable over the protocol.
+
+    The handlers accept `project`, but an MCP client reads the declared
+    input schema to learn what it may send. Omitting it there makes the
+    whole feature undiscoverable and, for a strict client, unsendable --
+    the code works and nothing can call it.
+
+    This is the same silent-disconnection shape as an unwired parameter:
+    every other test drives the handler DIRECTLY, bypassing the schema, so
+    they all pass regardless.
+    """
+
+    @pytest.mark.parametrize(
+        "tool_name",
+        [cs.MCPToolName.QUERY_CODE_GRAPH, cs.MCPToolName.SEMANTIC_SEARCH],
+    )
+    def test_project_is_declared_for_a_scopeable_tool(
+        self, tool_name: str, tmp_path: Path
+    ) -> None:
+        schema = _declared_schema(tmp_path, tool_name)
+
+        assert cs.MCPParamName.PROJECT in schema["properties"], (
+            f"{tool_name} accepts a project but does not declare it, so no "
+            "client can send one"
+        )
+
+    @pytest.mark.parametrize(
+        "tool_name",
+        [cs.MCPToolName.QUERY_CODE_GRAPH, cs.MCPToolName.SEMANTIC_SEARCH],
+    )
+    def test_project_is_optional(self, tool_name: str, tmp_path: Path) -> None:
+        """The control: declaring it must not make it mandatory.
+
+        Every existing client sends no project and must keep working.
+        """
+        schema = _declared_schema(tmp_path, tool_name)
+
+        assert cs.MCPParamName.PROJECT not in (schema.get("required") or [])
+
+
+def _declared_schema(tmp_path: Path, tool_name: str):
+    """The input schema the registry publishes for `tool_name`.
+
+    Built through the real constructor, since `_tools` is assembled in
+    `__init__` -- reading it off a hand-made object would test a dict this
+    code never publishes.
+    """
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    registry = MCPToolsRegistry(
+        project_root=str(tmp_path),
+        ingestor=MagicMock(),
+        cypher_gen=MagicMock(),
+    )
+    return registry._tools[tool_name].input_schema
 
 
 class TestSemanticSearchScope:

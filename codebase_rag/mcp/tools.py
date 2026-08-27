@@ -210,7 +210,14 @@ class MCPToolsRegistry:
                         cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
                             type=cs.MCPSchemaType.STRING,
                             description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
-                        )
+                        ),
+                        # Declared as well as accepted: a client reads this
+                        # schema to learn what it may send, so omitting it
+                        # made per-request scoping undiscoverable (#1494).
+                        cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_PROJECT,
+                        ),
                     },
                     required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
                 ),
@@ -341,6 +348,10 @@ class MCPToolsRegistry:
                             type=cs.MCPSchemaType.INTEGER,
                             description=td.MCP_PARAM_TOP_K,
                             default=5,
+                        ),
+                        cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_PROJECT,
                         ),
                     },
                     required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],

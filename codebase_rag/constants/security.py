@@ -11,6 +11,10 @@ CYPHER_QUALIFIED_NAME_TOKEN = "QUALIFIED_NAME"
 # Evidence must be in what the query RETURNS: a qualified name mentioned
 # only in WHERE or ORDER BY does not make the returned rows attributable.
 CYPHER_RETURN_KEYWORD = "RETURN "
+# Only a predicate that narrows to a PREFIX restricts an aggregate to one
+# project. `IS NOT NULL` / `<> ''` / `exists(...)` match every indexed node
+# in every project, so a count over them spans them all.
+CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
 CYPHER_POST_RETURN_KEYWORDS = (" ORDER BY", " SKIP ", " LIMIT ", " UNION")
 # An aggregate exposes no names, so a scoped request needs no evidence from
 # it -- and refusing one would make scoping useless for counting queries.

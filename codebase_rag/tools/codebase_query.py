@@ -48,6 +48,11 @@ _PROJECTED_QUALIFIED_NAME_RE = re.compile(
 # contributes properties without its qualified name can be spotted.
 _PROPERTY_READ_RE = re.compile(r"\b([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)")
 
+# A single- or double-quoted Cypher string, including escaped quotes. Blanked
+# before textual analysis so a property read inside quotes is not mistaken
+# for an actual read.
+_STRING_LITERAL_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
+
 _PROJECT_LITERAL_RE = re.compile(
     rf"[A-Z0-9_-]+{cs.PROJECT_NAME_DIGEST_MARKER}[0-9A-F]{{{cs.PROJECT_NAME_DIGEST_LEN}}}\.?"
 )
@@ -112,7 +117,7 @@ def requires_project_evidence(
     of projects they never asked about. Restricting the match keeps
     counting usable without that leak.
     """
-    projection = _return_clause(cypher_query)
+    projection = _return_clause(_without_string_literals(cypher_query))
     if not projection:
         return False
     # A PROJECTED PROPERTY (`x.qualified_name`), not the bare token: an
@@ -138,6 +143,22 @@ def requires_project_evidence(
     if not all_aggregates:
         return False
     return _restricts_to_project(cypher_query, project_name)
+
+
+def _without_string_literals(cypher_query: str) -> str:
+    """`cypher_query` with quoted spans blanked, preserving length.
+
+    A property read inside quotes is a CONSTANT, not a read:
+    `RETURN "n.qualified_name" AS lit, n.name AS name` projects a string
+    and an unattributable property, but textual matching saw the read.
+
+    Blanking rather than deleting keeps offsets stable, so the RETURN
+    marker still falls where it does in the original.
+
+    Note this is deliberately NOT applied when looking for a literal
+    PROJECT NAME, which legitimately lives inside quotes.
+    """
+    return _STRING_LITERAL_RE.sub(lambda m: " " * len(m.group(0)), cypher_query)
 
 
 def _every_projected_entity_is_attributable(projection: str) -> bool:
@@ -175,7 +196,14 @@ def _restricts_to_project(cypher_query: str, project_name: str | None) -> bool:
     upper = cypher_query.upper()
     marker = upper.rfind(cs.CYPHER_RETURN_KEYWORD)
     body = upper if marker < 0 else upper[:marker]
-    if _PROJECTED_QUALIFIED_NAME_RE.search(body) is None:
+    # A RESTRICTIVE predicate, not merely a mention. `WHERE
+    # n.qualified_name IS NOT NULL` matches every indexed node in every
+    # project, so a count over it spans them all -- yet it satisfied a
+    # check that only looked for the property appearing before RETURN.
+    if (
+        not any(op in body for op in cs.CYPHER_PREFIX_PREDICATES)
+        or _PROJECTED_QUALIFIED_NAME_RE.search(body) is None
+    ):
         return False
     literals = _PROJECT_LITERAL_RE.findall(body)
     if not literals:

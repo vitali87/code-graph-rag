@@ -254,6 +254,10 @@ MCP_FLOW_VERDICT = (
     "gaps exist."
 )
 
+MCP_PARAM_PROJECT = (
+    "Optional. Restrict results to one indexed project; use list_projects for "
+    "the available names. Omit to search every project."
+)
 MCP_PARAM_SOURCE_QN = "Qualified name of the flow source (function/method)"
 MCP_PARAM_SINK_QN = "Qualified name of the flow sink (function/method)"
 
