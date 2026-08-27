@@ -24,6 +24,7 @@ heading is a child of whatever heading is currently open above it.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import unquote
@@ -31,6 +32,7 @@ from urllib.parse import unquote
 from loguru import logger
 
 from .. import constants as cs
+from ..types_defs import PropertyDict
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .flat_module import emit_flat_module
 
@@ -54,6 +56,174 @@ _SETEXT_H2_UNDERLINE = "setext_h2_underline"
 _MAX_HEADING_LEVEL = 6
 
 DOCUMENT_EXTENSIONS: frozenset[str] = frozenset({".md", ".markdown"})
+
+# YAML front-matter delimiter. The grammar exposes the whole block as a
+# `minus_metadata` node, but its contents are opaque -- tree-sitter-markdown
+# does not parse YAML -- so the pairs are read here.
+_FRONT_MATTER_FENCE = "---"
+
+# `key: |` and `key: >` introduce a block scalar whose value is the indented
+# text beneath, which this parser skips. The marker is not the value.
+#
+# Matched by PATTERN rather than an enumerated set. YAML allows an optional
+# chomping indicator (`-`/`+`) and an optional explicit indentation digit, in
+# either order: `|`, `|-`, `|2`, `|2-`, `|-2`, `>+2` are all valid headers. An
+# earlier version listed six spellings and missed every form carrying a digit,
+# which stored the header text as the value (reported on #1488) -- the same
+# defect the set was added to fix, in the spellings the set did not name.
+_BLOCK_SCALAR_HEADER = re.compile(r"^[|>](?:[-+]?\d*|\d*[-+]?)$")
+
+# `[a, b]` and `{k: v}` are YAML flow collections: structures on one line.
+_FLOW_COLLECTION_OPENERS: frozenset[str] = frozenset({"[", "{"})
+
+# Property names a document may NOT declare, because the ingestion layer owns
+# them. A front-matter `path:` would otherwise overwrite the node's real path
+# and break every consumer that resolves a Module back to a file.
+_RESERVED_FRONT_MATTER_KEYS: frozenset[str] = frozenset(
+    {
+        cs.KEY_QUALIFIED_NAME,
+        cs.KEY_NAME,
+        cs.KEY_PATH,
+        cs.KEY_ABSOLUTE_PATH,
+        cs.KEY_START_LINE,
+        cs.KEY_END_LINE,
+        cs.KEY_HEADING_LEVEL,
+    }
+)
+
+
+def _without_trailing_comment(value: str) -> str:
+    """`value` with an unquoted trailing YAML comment removed.
+
+    Used only to recognise a block-scalar header that carries one. Requires
+    whitespace before the `#`, so `C#` and `a#b` are left alone -- a bare
+    `#`-split would corrupt ordinary values, which is worse than the defect
+    it fixes.
+    """
+    for index, char in enumerate(value):
+        if char == "#" and index > 0 and value[index - 1].isspace():
+            return value[:index].rstrip()
+    return value
+
+
+def _front_matter_pair(line: str) -> tuple[str, str] | None:
+    """One top-level `key: value` scalar, or None if the line declares none.
+
+    Extracted from `parse_front_matter` to keep each rule separately readable
+    and the caller's complexity down (Sonar S3776). Every `None` below is a
+    distinct reason a line is not a declaration, and the comments say which.
+    """
+    # INDENTED lines belong to a parent key, not the document. Taking them
+    # would hoist `child: v` under `parent:` to top level, inventing a
+    # declaration the author never made at that level.
+    if line[:1] in {" ", "\t"}:
+        return None
+    # A comment declares nothing. `# note: x` would become the key "# note".
+    if line.lstrip().startswith("#"):
+        return None
+    key, separator, value = line.partition(":")
+    if not separator:
+        return None
+    name = key.strip()
+    if not name or name in _RESERVED_FRONT_MATTER_KEYS:
+        return None
+    # An EMPTY value opens a nested block or a list (`parent:` / `tags:`)
+    # rather than declaring a scalar. Recording it as an empty string would
+    # assert the author declared it empty -- a different claim from declaring
+    # a structure this parser does not represent.
+    #
+    # REDUNDANT with the unquoted check below, verified by mutation: removing
+    # this leaves all 23 tests passing, because a value empty here is empty
+    # there too. Kept because the two guards answer different questions and
+    # only coincide today -- this one is about a key that declares a
+    # STRUCTURE, that one about quote-stripping emptying a scalar. If either
+    # rule changes they diverge, and a reader tracing "why is `tags:` skipped"
+    # should land here rather than on a quote-stripping detail.
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    # A BLOCK SCALAR header (`key: |`, `key: >2-`) says the value is the
+    # indented text below, which this parser skips. Storing the header records
+    # punctuation as content with the real text dropped. It may carry a
+    # trailing comment (`note: | # explanation`), which is still a header --
+    # the comment is stripped ONLY for this test, and only when preceded by
+    # whitespace, so `title: C# notes` is untouched.
+    if _BLOCK_SCALAR_HEADER.match(_without_trailing_comment(cleaned)):
+        return None
+    # An unquoted TRAILING COMMENT is not part of the value: `status: planned
+    # # later` declares "planned". Only for an unquoted value -- quoting is
+    # how an author says the `#` is content, and `note: "a # b"` would
+    # otherwise be truncated. `_without_trailing_comment` requires whitespace
+    # before the `#`, so `C#` and `a#b` are untouched either way.
+    #
+    # This runs BEFORE the emptiness checks below on purpose: `status: #
+    # planned` is a null value carrying a comment, and stripping it makes
+    # that the same case as a bare `status:`, which already declares nothing.
+    if cleaned[:1] not in {'"', "'"}:
+        # A value that BEGINS with `#` is entirely a comment (`status: #
+        # planned` is a null value plus a comment).
+        # `_without_trailing_comment` cannot see this one: it requires
+        # whitespace before the `#`, and here the `#` is at index 0 of the
+        # stripped value.
+        if cleaned.startswith("#"):
+            return None
+        cleaned = _without_trailing_comment(cleaned)
+        if not cleaned:
+            return None
+    # A FLOW COLLECTION (`[a, b]` / `{k: v}`) is a structure on one line.
+    # Storing its source text makes a list indistinguishable from a string
+    # that happens to look like one.
+    if cleaned[:1] in _FLOW_COLLECTION_OPENERS:
+        return None
+    # Quote-stripping can empty a value that passed the check above: `k: ""`
+    # is non-empty as written and empty once unquoted.
+    unquoted = cleaned.strip("\"'")
+    if not unquoted:
+        return None
+    return name, unquoted
+
+
+def parse_front_matter(text: str) -> dict[str, str]:
+    """Read declared YAML front-matter into flat string properties.
+
+    Deliberately NOT a YAML parser. Only top-level `key: value` scalars are
+    read; nested structures, lists and multi-line values are skipped rather
+    than flattened, because a graph node property is a scalar and inventing a
+    representation for a list would be a schema decision this issue does not
+    have (#1448).
+
+    Declared metadata, not inferred: #1448 lists five other bullets that need
+    design decisions about inference and unprompted edits, and this one is
+    separable precisely because it reads what the author wrote.
+
+    Refuses rather than guesses in three cases, each of which would otherwise
+    put non-metadata into node properties:
+
+    - no opening fence on the FIRST line (a `---` elsewhere is a horizontal
+      rule or a setext underline, not front-matter)
+    - no closing fence (an unterminated block would swallow the document)
+    - a reserved key that the ingestion layer owns
+
+    A single malformed line is skipped rather than discarding the block:
+    front-matter is hand-written, so a stray line is likelier than a wholly
+    invalid block, and the valid pairs around it still carry meaning.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != _FRONT_MATTER_FENCE:
+        return {}
+    closing = next(
+        (i for i in range(1, len(lines)) if lines[i].strip() == _FRONT_MATTER_FENCE),
+        None,
+    )
+    if closing is None:
+        return {}
+    found: dict[str, str] = {}
+    for line in lines[1:closing]:
+        pair = _front_matter_pair(line)
+        if pair is not None:
+            found[pair[0]] = pair[1]
+    return found
+
 
 # Link grammar nodes. `inline_link` is ``[text](target)``; the destination sits
 # in a `link_destination` child. Reference-style links (``[text][label]``) name
@@ -476,7 +646,30 @@ class DocumentTier:
             logger.warning("markdown parse failed for {}: {}", file_path, exc)
             return
 
-        module_qn = self._emit_module(file_path, structural_elements)
+        # Declared front-matter becomes Module properties (issue #1448).
+        # Decoded leniently: a document with an invalid byte should still be
+        # indexed, and its metadata is a bonus rather than a precondition.
+        declared = parse_front_matter(source.decode("utf-8", errors="replace"))
+        # Emitted as ONE declared `front_matter` property holding "key=value"
+        # entries, not as a property per key. The graph's node schema is a
+        # fixed property list audited on every ingest, so arbitrary keys would
+        # be undocumented properties -- the audit catches exactly that, and it
+        # is right to: a document could otherwise define any node property it
+        # liked, including ones a future schema wants for something else.
+        # ALWAYS emitted, empty list included. The ingestor upserts with
+        # `SET n += row.props` (cypher_queries.py:317), which MERGES: a key
+        # omitted on re-ingest keeps its previous value. So a document that
+        # drops its front-matter would keep the old metadata bound to its node
+        # forever, and the graph would assert a declaration the file no longer
+        # makes (reported on #1488).
+        #
+        # An empty list overwrites; omission cannot. That makes "no
+        # front-matter" a value the re-ingest can actually store, rather than
+        # the absence of one.
+        front_matter = {
+            cs.KEY_FRONT_MATTER: [f"{k}={v}" for k, v in sorted(declared.items())]
+        }
+        module_qn = self._emit_module(file_path, structural_elements, front_matter)
         relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
         absolute_path = cached_resolve_posix(file_path)
 
@@ -585,7 +778,10 @@ class DocumentTier:
         return resolved.as_posix()
 
     def _emit_module(
-        self, file_path: Path, structural_elements: dict[Path, str | None]
+        self,
+        file_path: Path,
+        structural_elements: dict[Path, str | None],
+        front_matter: PropertyDict | None = None,
     ) -> str:
         return emit_flat_module(
             self._ingestor,
@@ -597,6 +793,7 @@ class DocumentTier:
             # would merge "guide.md" and "guide.markdown" onto one Module
             # node and merge their same-named sections with it.
             distinguish_suffix=True,
+            extra_properties=front_matter,
         )
 
     def _emit_section(

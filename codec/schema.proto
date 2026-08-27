@@ -228,6 +228,11 @@ message GraphCodeIndex {
     // from generated output, with the path-derived processor hint.
     bool generated = 8;
     string generator = 9;
+    // Declared Markdown front matter as "key=value" pairs (issue #164).
+    // Always emitted, empty list included, so a re-index clears metadata
+    // the document no longer declares -- SET n += row.props merges, so
+    // omitting the property could not express removal.
+    repeated string front_matter = 10;
   }
 
   message ExternalModule {

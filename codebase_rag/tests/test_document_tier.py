@@ -456,6 +456,54 @@ class TestProtobufExport:
             )
 
 
+def _exported_modules(index) -> dict:
+    return {
+        node.module.path: node.module
+        for node in index.nodes
+        if node.WhichOneof("payload") == "module"
+    }
+
+
+class TestFrontMatterSurvivesProtobufExport:
+    """Front matter must reach the exported artifact, not just the graph.
+
+    `ProtobufFileIngestor.ensure_node_batch` assigns only properties the
+    protobuf payload declares, and skips anything else WITHOUT warning. So
+    a property can be emitted correctly by the parser, be present in
+    Memgraph, and still vanish from `cgr index --output` -- which is what
+    happened here until `Module.front_matter` was added to the schema.
+
+    These read the artifact back rather than inspecting the ingestor's
+    calls: a mock would have agreed the property was passed and still
+    missed the drop.
+    """
+
+    def test_declared_front_matter_reaches_the_artifact(self, tmp_path: Path) -> None:
+        document = "---\npurpose: planning\nscope: service-X\n---\n\n# Doc\n"
+
+        modules = _exported_modules(_export_index(tmp_path, document))
+
+        assert modules, "no Module node was exported"
+        front_matter = set(next(iter(modules.values())).front_matter)
+        assert front_matter == {"purpose=planning", "scope=service-X"}
+
+    def test_a_document_without_front_matter_exports_an_empty_list(
+        self, tmp_path: Path
+    ) -> None:
+        """The other half of the contract, and the reason it is always emitted.
+
+        `SET n += row.props` MERGES, so omitting the property on re-ingest
+        could not express "this document no longer declares metadata" --
+        the stale values would survive. Emitting the empty list is what
+        makes removal expressible, so the empty case is part of the
+        contract rather than an absence worth skipping.
+        """
+        modules = _exported_modules(_export_index(tmp_path, "# Plain\n"))
+
+        assert modules, "no Module node was exported"
+        assert list(next(iter(modules.values())).front_matter) == []
+
+
 class TestDegradedGrammar:
     def test_handles_is_false_without_the_grammar(self, tmp_path: Path) -> None:
         # A base install has no markdown grammar; indexing must fall through
