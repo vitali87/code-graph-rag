@@ -119,6 +119,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "ModuleImplementation": frozenset({"absolute_path", "module_type"}),
 }
 
+
 def _declared_properties(schema_text: str) -> set[str]:
     """Property names, read with the SCHEMA'S OWN parser.
 
