@@ -421,7 +421,7 @@ class TestAnAggregateLeaksMagnitude:
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         assert requires_project_evidence(
-            'MATCH (n:Function) WHERE n.qualified_name STARTS WITH $p RETURN count(n)'
+            "MATCH (n:Function) WHERE n.qualified_name STARTS WITH $p RETURN count(n)"
         )
 
 
