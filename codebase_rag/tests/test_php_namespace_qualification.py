@@ -350,6 +350,47 @@ def test_a_call_through_a_use_function_alias_is_case_insensitive(
     )
 
 
+def test_two_import_keys_differing_only_in_case_resolve_to_nothing(
+    tmp_path: Path,
+) -> None:
+    """Ambiguous folded keys must decline rather than pick one.
+
+    Found by mutation: dropping the `len(matches) == 1` guard from
+    `_php_import_key` left all 14 other tests passing, because no fixture had
+    two keys folding to the same name.
+
+    PHP rejects a duplicate `use` at compile time, so this state should not
+    arise from valid source -- but the map is built by our own parser, and
+    "cannot happen" is exactly what the guard is for. Picking `matches[0]`
+    would resolve to whichever key iteration reached first: an arbitrary
+    binding, which is the defect this whole change removes.
+    """
+    from codebase_rag.parsers.call_resolver import CallResolver
+
+    resolver = object.__new__(CallResolver)
+    resolver.import_processor = SimpleNamespace(
+        php_module_namespaces={"proj.text": "App.Text", "proj.money": "App.Money"},
+        commonjs_direct_exports={},
+        php_function_imports={"proj.caller": {"format", "FORMAT"}},
+    )
+    resolver.function_registry = _registry(
+        {"proj.text.format": "Function", "proj.money.format": "Function"}
+    )
+
+    assert (
+        resolver._try_resolve_direct_import(
+            "Format",
+            {"format": "App.Text.format", "FORMAT": "App.Money.format"},
+            cs.SupportedLanguage.PHP,
+            "proj.caller",
+        )
+        is None
+    ), (
+        "two import keys folding to the same name resolved to one of them; "
+        "neither can be shown to be intended, so the import cannot say which"
+    )
+
+
 def test_a_fully_qualified_import_resolves(tmp_path: Path) -> None:
     """`use function \\App\\Text\\format` (leading backslash) must resolve.
 
