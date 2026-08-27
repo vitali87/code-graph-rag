@@ -48,8 +48,10 @@ class TestTheReportedTypo:
         """
         from codebase_rag.providers.base import validate_model_id
 
+        config = _config(cs.Provider.ANTHROPIC, "opus-5")
+
         with pytest.raises(ValueError) as excinfo:
-            validate_model_id(_config(cs.Provider.ANTHROPIC, "opus-5"))
+            validate_model_id(config)
 
         assert "opus-5" in str(excinfo.value)
 
@@ -67,8 +69,10 @@ class TestTheReportedTypo:
         """
         from codebase_rag.providers.base import validate_model_id
 
+        config = _config(cs.Provider.ANTHROPIC, "opus-5")
+
         with pytest.raises(ValueError) as excinfo:
-            validate_model_id(_config(cs.Provider.ANTHROPIC, "opus-5"))
+            validate_model_id(config)
 
         message = str(excinfo.value)
 
@@ -196,8 +200,10 @@ class TestProviderNameCase:
     ) -> None:
         from codebase_rag.providers.base import validate_model_id
 
+        config = _config(provider, "opus-5")
+
         with pytest.raises(ValueError):
-            validate_model_id(_config(provider, "opus-5"))
+            validate_model_id(config)
 
     @pytest.mark.parametrize("provider", ["anthropic", "Anthropic", "ANTHROPIC"])
     def test_a_real_id_still_passes_whatever_the_provider_case(
@@ -234,8 +240,10 @@ class TestSplitCatalogues:
         """The control: widening the accepted set must not accept everything."""
         from codebase_rag.providers.base import validate_model_id
 
+        config = _config(cs.Provider.OPENAI, "gpt4o")
+
         with pytest.raises(ValueError):
-            validate_model_id(_config(cs.Provider.OPENAI, "gpt4o"))
+            validate_model_id(config)
 
 
 class TestVertexModelGarden:
@@ -302,11 +310,10 @@ class TestStartupWiring:
         """
         from codebase_rag.main import _validate_provider_config
 
+        config = _config(cs.Provider.ANTHROPIC, "opus-5")
+
         with pytest.raises(ValueError) as excinfo:
-            _validate_provider_config(
-                cs.ModelRole.ORCHESTRATOR,
-                _config(cs.Provider.ANTHROPIC, "opus-5"),
-            )
+            _validate_provider_config(cs.ModelRole.ORCHESTRATOR, config)
 
         assert "opus-5" in str(excinfo.value)
 
