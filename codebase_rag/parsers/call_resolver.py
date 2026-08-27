@@ -1431,9 +1431,7 @@ class CallResolver:
         folded = _php_fold(call_name)
         return any(_php_fold(name) == folded for name in imported)
 
-    def _php_import_key(
-        self, call_name: str, import_map: dict[str, str]
-    ) -> str | None:
+    def _php_import_key(self, call_name: str, import_map: dict[str, str]) -> str | None:
         """The import-map key matching `call_name` under PHP case folding.
 
         Returns None unless EXACTLY ONE key folds to the same name. Two keys
