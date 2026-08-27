@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from loguru import logger
 from pydantic_ai import Tool
@@ -20,12 +21,20 @@ from ..constants import (
     QUERY_SUMMARY_TIMEOUT,
     QUERY_SUMMARY_TRANSLATION_FAILED,
     QUERY_SUMMARY_TRUNCATED,
+    QUERY_SUMMARY_UNSCOPEABLE,
 )
 from ..schemas import QueryGraphData
 from ..services import QueryProtocol
 from ..services.llm import CypherGenerator
 from ..utils.token_utils import truncate_results_by_tokens
 from . import tool_descriptions as td
+
+# `derive_project_name` builds "<base>__<8 hex digits>". Requiring the whole
+# shape, not just the "__" marker, is what stops `__init__` being read as a
+# project-qualified name.
+_PROJECT_NAME_RE = re.compile(
+    rf".+{cs.PROJECT_NAME_DIGEST_MARKER}[0-9a-f]{{{cs.PROJECT_NAME_DIGEST_LEN}}}"
+)
 
 
 def scope_rows_to_project(
@@ -70,23 +79,55 @@ def requires_project_evidence(cypher_query: str) -> bool:
     is nothing to leak, and refusing it would make scoping useless for the
     counting queries a caller most often wants.
     """
-    upper = cypher_query.upper()
-    if cs.CYPHER_QUALIFIED_NAME_TOKEN in upper:
+    projection = _return_clause(cypher_query)
+    if not projection:
+        return False
+    if cs.CYPHER_QUALIFIED_NAME_TOKEN in projection:
         return True
-    return any(agg in upper for agg in cs.CYPHER_AGGREGATE_TOKENS)
+    # A PURE aggregate names nobody, so there is nothing to attribute.
+    # `RETURN n.name, count(n)` is not that: the exemption was meant for
+    # `RETURN count(n)` alone, and mixing in a bare field leaks exactly
+    # what the exemption assumed could not leak.
+    terms = [term.strip() for term in projection.split(cs.CHAR_COMMA)]
+    return bool(terms) and all(
+        any(agg in term for agg in cs.CYPHER_AGGREGATE_TOKENS) for term in terms
+    )
+
+
+def _return_clause(cypher_query: str) -> str:
+    """The uppercased RETURN projection, without trailing ORDER BY / LIMIT.
+
+    Evidence has to be in what the query RETURNS. A substring match over
+    the whole query counted `WHERE n.qualified_name STARTS WITH ...` as
+    evidence while the projection returned only `n.name` -- precisely the
+    unattributable rows this guard exists to refuse.
+    """
+    upper = cypher_query.upper()
+    marker = upper.rfind(cs.CYPHER_RETURN_KEYWORD)
+    if marker < 0:
+        return ""
+    projection = upper[marker + len(cs.CYPHER_RETURN_KEYWORD) :]
+    for tail in cs.CYPHER_POST_RETURN_KEYWORDS:
+        cut = projection.find(tail)
+        if cut >= 0:
+            projection = projection[:cut]
+    return projection.strip()
 
 
 def _looks_like_a_qualified_name(value: str) -> bool:
     """Whether `value` is a project-qualified name rather than free text.
 
-    Every project name `derive_project_name` produces ends in `__<digest>`,
-    so that marker is what separates a qualified name from a docstring or a
-    path that merely contains dots. Matching on dots alone would discard
-    legitimate rows -- the too-aggressive direction, which fails just as
-    badly as leaking.
+    `derive_project_name` produces `<base>__<8 hex digits>`, and the FULL
+    shape is required -- not merely the `__` marker. `__init__` contains
+    that marker, so a marker-only test discarded every row carrying
+    Python's most common method name: the too-aggressive direction, which
+    fails as badly as leaking.
+
+    Matching on dots alone would be worse still, since a docstring or a
+    path may contain them.
     """
     head = value.split(cs.SEPARATOR_DOT, 1)[0]
-    return cs.PROJECT_NAME_DIGEST_MARKER in head
+    return _PROJECT_NAME_RE.fullmatch(head) is not None
 
 
 def _row_is_outside(row: dict[str, object], prefix: str) -> bool:
@@ -100,12 +141,23 @@ def _row_is_outside(row: dict[str, object], prefix: str) -> bool:
     A row naming no project at all -- `RETURN count(n)` -- is kept, since
     it identifies nothing belonging to anyone else.
     """
-    return any(
-        isinstance(value, str)
-        and _looks_like_a_qualified_name(value)
-        and not value.startswith(prefix)
-        for value in row.values()
-    )
+    return any(_names_another_project(value, prefix) for value in row.values())
+
+
+def _names_another_project(value: object, prefix: str) -> bool:
+    """Whether `value`, at any depth, carries a foreign qualified name.
+
+    Cypher returns lists and maps -- `collect(m.qualified_name)`, a map
+    projection -- so inspecting only top-level strings let a whole list of
+    another project's names ride through untouched.
+    """
+    if isinstance(value, str):
+        return _looks_like_a_qualified_name(value) and not value.startswith(prefix)
+    if isinstance(value, dict):
+        return any(_names_another_project(item, prefix) for item in value.values())
+    if isinstance(value, list | tuple | set | frozenset):
+        return any(_names_another_project(item, prefix) for item in value)
+    return False
 
 
 def create_query_tool(
@@ -129,6 +181,18 @@ def create_query_tool(
                 asyncio.to_thread(ingestor.fetch_all, cypher_query),
                 timeout=settings.QUERY_TIMEOUT_S,
             )
+
+            # A query returning no qualified name yields rows the filter
+            # cannot attribute, so it keeps them. Answering a SCOPED
+            # request with those would ignore the scope silently, so the
+            # guard belongs here as well as in the MCP handler -- the CLI
+            # is scoped too when exactly one project is active.
+            if project_name is not None and not requires_project_evidence(cypher_query):
+                return QueryGraphData(
+                    query_used=cypher_query,
+                    results=[],
+                    summary=QUERY_SUMMARY_UNSCOPEABLE.format(project=project_name),
+                )
 
             # Before the row cap and the token truncation, so a scoped query
             # spends its budget on rows the caller can actually use rather

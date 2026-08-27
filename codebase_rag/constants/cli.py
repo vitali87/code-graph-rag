@@ -498,6 +498,13 @@ QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
 )
 QUERY_SUMMARY_DB_ERROR = "There was an error querying the database: {error}"
+# Refused rather than answered unscoped: rows with no qualified name cannot
+# be attributed to a project, so the requested scope cannot be honoured.
+QUERY_SUMMARY_UNSCOPEABLE = (
+    "This query cannot be scoped to project {project!r}: it returns no "
+    "qualified name, so results cannot be attributed to a project. Ask for "
+    "the qualified name in the query."
+)
 QUERY_SUMMARY_TIMEOUT = (
     "Query exceeded the {timeout:.1f}s timeout and was cancelled. "
     "Avoid unbounded traversals; add depth bounds or use a graph-algorithm procedure."

@@ -55,23 +55,34 @@ class TestTheFilter:
         assert handlers[0]["qualified_name"].startswith(f"{ALPHA}.")
 
     def test_a_prefix_that_is_not_a_component_boundary_does_not_match(self) -> None:
-        """`alpha__aaaa1111` must not swallow `alpha__aaaa1111_extra`.
+        """One project name must not swallow a sibling that extends it.
 
         A bare `startswith(project)` would match a DIFFERENT project whose
-        name extends this one. `derive_project_name` appends a digest, so
-        such a pair is unlikely -- but "unlikely" is not "impossible", and
-        the separator costs nothing to require.
+        name begins with this one, so the separator is required.
+
+        The fixture uses names `derive_project_name` can actually produce.
+        An earlier version used `alpha__aaaa1111_extra`, which that
+        function CANNOT emit -- it always ends `__<8 hex digits>` -- so the
+        test was asserting behaviour on a string no project could have.
+        A directory named `alpha_extra` really does yield the name below.
         """
+        from pathlib import Path
+
         from codebase_rag.tools.codebase_query import scope_rows_to_project
+        from codebase_rag.utils.path_utils import derive_project_name
+
+        base = derive_project_name(Path("/tmp/alpha"))
+        sibling = derive_project_name(Path("/tmp/alpha_extra"))
+        assert sibling.startswith("alpha_"), sibling
 
         rows = [
-            {"qualified_name": f"{ALPHA}.real.Thing"},
-            {"qualified_name": f"{ALPHA}_extra.other.Thing"},
+            {"qualified_name": f"{base}.real.Thing"},
+            {"qualified_name": f"{sibling}.other.Thing"},
         ]
 
-        kept = scope_rows_to_project(rows, ALPHA)
+        kept = scope_rows_to_project(rows, base)
 
-        assert [r["qualified_name"] for r in kept] == [f"{ALPHA}.real.Thing"]
+        assert [r["qualified_name"] for r in kept] == [f"{base}.real.Thing"]
 
     def test_a_row_keyed_on_something_other_than_qualified_name_is_scoped(
         self,
@@ -156,6 +167,178 @@ class TestTheFilter:
         ]
 
         assert scope_rows_to_project(rows, ALPHA) == rows
+
+
+class TestTheCliPathAppliesTheEvidenceGuardToo:
+    """The guard must not live only in the MCP handler.
+
+    A scoped CLI session whose query returns `n.name` and `n.path` gets
+    rows that cannot be attributed to a project. Filtering keeps them, so
+    without the guard here the CLI silently ignores its own scope -- the
+    same gap I closed for MCP, left open one layer down.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_scoped_tool_refuses_an_unattributable_query(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.tools.codebase_query import create_query_tool
+
+        cypher_gen = MagicMock()
+
+        async def _generate(_query: str) -> str:
+            return "MATCH (n:Function) RETURN n.name AS name, n.path AS path"
+
+        cypher_gen.generate = _generate
+        ingestor = MagicMock()
+        ingestor.fetch_all = MagicMock(
+            return_value=[
+                {"name": "handler", "path": "a.py"},
+                {"name": "handler", "path": "b.py"},
+            ]
+        )
+
+        tool = create_query_tool(ingestor, cypher_gen, project_name=ALPHA)
+        result = await tool.function("names only")
+
+        assert result.results == []
+        assert "scope" in result.summary.lower() or "project" in result.summary.lower()
+
+    @pytest.mark.asyncio
+    async def test_the_same_query_is_fine_unscoped(self) -> None:
+        """The control: the refusal follows from scoping, not from the query."""
+        from unittest.mock import MagicMock
+
+        from codebase_rag.tools.codebase_query import create_query_tool
+
+        cypher_gen = MagicMock()
+
+        async def _generate(_query: str) -> str:
+            return "MATCH (n:Function) RETURN n.name AS name, n.path AS path"
+
+        cypher_gen.generate = _generate
+        ingestor = MagicMock()
+        ingestor.fetch_all = MagicMock(
+            return_value=[
+                {"name": "handler", "path": "a.py"},
+                {"name": "handler", "path": "b.py"},
+            ]
+        )
+
+        tool = create_query_tool(ingestor, cypher_gen)
+        result = await tool.function("names only")
+
+        assert len(result.results) == 2
+
+
+class TestTheMarkerDoesNotCatchOrdinaryNames:
+    """`__init__` is not a project name.
+
+    The digest marker `__` is what separates a qualified name from free
+    text -- but Python's most common method name contains it, and so does
+    every dunder. Treating `__init__` as a foreign qualified name DROPS a
+    valid row, which is the too-aggressive direction.
+    """
+
+    @pytest.mark.parametrize(
+        "value", ["__init__", "__main__", "__repr__", "_private", "__"]
+    )
+    def test_a_dunder_name_does_not_disqualify_a_row(self, value: str) -> None:
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [{"qualified_name": f"{ALPHA}.mod.C", "name": value}]
+
+        assert scope_rows_to_project(rows, ALPHA) == rows
+
+    def test_a_real_foreign_qualified_name_is_still_dropped(self) -> None:
+        """The control: narrowing the marker must not reopen the leak."""
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [{"qualified_name": f"{ALPHA}.ok"}, {"qualified_name": f"{BETA}.leak"}]
+
+        kept = scope_rows_to_project(rows, ALPHA)
+
+        assert [r["qualified_name"] for r in kept] == [f"{ALPHA}.ok"]
+
+
+class TestNestedValuesAreScoped:
+    """A foreign name inside a list or dict must not ride through.
+
+    Only top-level string values were inspected, so `collect(...)` results
+    and map projections carried other projects' qualified names untouched.
+    """
+
+    def test_a_foreign_name_in_a_list_disqualifies_the_row(self) -> None:
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [{"qualified_name": f"{ALPHA}.ok", "callees": [f"{BETA}.secret.fn"]}]
+
+        assert scope_rows_to_project(rows, ALPHA) == []
+
+    def test_a_foreign_name_in_a_dict_disqualifies_the_row(self) -> None:
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [{"qualified_name": f"{ALPHA}.ok", "meta": {"ref": f"{BETA}.other"}}]
+
+        assert scope_rows_to_project(rows, ALPHA) == []
+
+    def test_an_own_project_name_nested_is_kept(self) -> None:
+        """The control: nesting must not become a blanket rejection."""
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [{"qualified_name": f"{ALPHA}.ok", "callees": [f"{ALPHA}.other.fn"]}]
+
+        assert scope_rows_to_project(rows, ALPHA) == rows
+
+
+class TestEvidenceMustBeInTheReturnClause:
+    """`qualified_name` in a WHERE clause is not evidence.
+
+    The check was a substring match over the whole query, so filtering on a
+    qualified name while RETURNING only `n.name` satisfied it -- and those
+    rows are exactly the unattributable ones the guard exists to refuse.
+    """
+
+    def test_a_where_only_mention_is_not_evidence(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert not requires_project_evidence(
+            'MATCH (n) WHERE n.qualified_name STARTS WITH "x" RETURN n.name AS name'
+        )
+
+    def test_an_order_by_only_mention_is_not_evidence(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert not requires_project_evidence(
+            "MATCH (n) RETURN n.name AS name ORDER BY n.qualified_name"
+        )
+
+    def test_a_returned_qualified_name_is_evidence(self) -> None:
+        """The control, including the WHERE-plus-RETURN case that is fine."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert requires_project_evidence(
+            'MATCH (n) WHERE n.name = "x" RETURN n.qualified_name AS qualified_name'
+        )
+
+    def test_an_aggregate_mixed_with_unqualified_fields_is_not_evidence(self) -> None:
+        """`RETURN n.name, count(n)` still exposes names.
+
+        The aggregate exemption was meant for `RETURN count(n)` alone, which
+        names nobody. Mixing it with a bare field leaks exactly what the
+        exemption assumed could not leak.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert not requires_project_evidence(
+            "MATCH (n:Function) RETURN n.name AS name, count(n) AS total"
+        )
+
+    def test_a_pure_aggregate_is_still_evidence(self) -> None:
+        """The control that keeps counting queries usable when scoped."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert requires_project_evidence("MATCH (n:Function) RETURN count(n) AS total")
 
 
 class TestScopedQueriesMustProjectAQualifiedName:
