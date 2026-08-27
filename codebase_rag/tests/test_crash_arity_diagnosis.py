@@ -106,7 +106,6 @@ class TestParsingRealMessages:
         """
         assert parse_arity_error(message) is None
 
-
     def test_a_message_with_trailing_text_does_not_parse(self) -> None:
         """The `$` is the load-bearing anchor, so trailing text must reject.
 
@@ -122,8 +121,7 @@ class TestParsingRealMessages:
         substring of a longer message.
         """
         trailing = (
-            "helper() takes 2 positional arguments but 3 were given "
-            "(during import)"
+            "helper() takes 2 positional arguments but 3 were given (during import)"
         )
 
         assert parse_arity_error(trailing) is None, (
@@ -134,9 +132,7 @@ class TestParsingRealMessages:
         # The control: the same message without the suffix DOES parse, so the
         # rejection above is the anchor rather than the pattern being inert.
         assert (
-            parse_arity_error(
-                "helper() takes 2 positional arguments but 3 were given"
-            )
+            parse_arity_error("helper() takes 2 positional arguments but 3 were given")
             is not None
         )
 
