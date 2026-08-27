@@ -321,9 +321,7 @@ class TestIngestion:
         project.mkdir()
         target = project / "doc.md"
 
-        target.write_text(
-            "---\npurpose: planning\n---\n\n# Doc\n", encoding="utf-8"
-        )
+        target.write_text("---\npurpose: planning\n---\n\n# Doc\n", encoding="utf-8")
         run_updater(project, mock_ingestor)
         first = module_props(mock_ingestor)
         assert first and first[0].get("front_matter") == ["purpose=planning"], first
