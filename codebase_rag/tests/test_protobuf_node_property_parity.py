@@ -38,9 +38,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Package": frozenset({"absolute_path"}),
     "Folder": frozenset({"absolute_path"}),
     "File": frozenset({"absolute_path"}),
-    "Module": frozenset(
-        {"absolute_path", "end_line", "front_matter", "start_line"}
-    ),
+    "Module": frozenset({"absolute_path", "end_line", "front_matter", "start_line"}),
     "Class": frozenset({"absolute_path", "modifiers", "path", "start_col"}),
     "Function": frozenset(
         {
