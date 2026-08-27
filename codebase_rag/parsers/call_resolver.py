@@ -67,6 +67,22 @@ def _split_receiver_chain(expr: str) -> list[str]:
 
 PY_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
+# PHP folds A-Z only when comparing namespace and function names, so
+# `use function app\text\FORMAT` binds to `App\Text\format`.
+#
+# NOT `str.casefold()`, which folds the full Unicode range: PHP treats
+# identifiers differing outside ASCII as DISTINCT, so Unicode folding would
+# match names the language does not, trading a missed binding for a wrong one.
+# `str.lower()` has the same problem (Turkish dotless i, Kelvin sign).
+_PHP_ASCII_FOLD = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
+)
+
+
+def _php_fold(name: str) -> str:
+    """ASCII-lowercase `name` for PHP-style case-insensitive comparison."""
+    return name.translate(_PHP_ASCII_FOLD)
+
 
 class CallResolver:
     __slots__ = (
@@ -1319,17 +1335,46 @@ class CallResolver:
         The trie fallback then applies exactly as before, so this can only
         replace an arbitrary binding with a determined one, never introduce a
         new arbitrary one.
+
+        Matching is ASCII CASE-INSENSITIVE, because namespaces and function
+        names are in PHP: `use function app\\text\\FORMAT` binds to
+        `App\\Text\\format`, verified by executing it under PHP 8.5. Comparing
+        with exact casing sent such imports to the trie, which is the same
+        wrong-edge path this function exists to avoid.
+
+        ASCII-only rather than `str.casefold()`: PHP folds A-Z only, so
+        folding non-ASCII identifiers would match names the language treats as
+        distinct -- trading a missed binding for a wrong one. The registered
+        qualified name is returned unchanged; folding is for COMPARISON, never
+        for the value handed back, which must stay the graph's real key.
         """
         namespace, separator, symbol = imported_path.rpartition(cs.SEPARATOR_DOT)
         if not separator or not namespace or not symbol:
             return None
+        wanted = _php_fold(namespace)
         namespaces = self.import_processor.php_module_namespaces
         matches = [
-            f"{module_qn}{cs.SEPARATOR_DOT}{symbol}"
+            (module_qn, f"{module_qn}{cs.SEPARATOR_DOT}{symbol}")
             for module_qn, declared in namespaces.items()
-            if declared == namespace
+            if _php_fold(declared) == wanted
         ]
-        found = [qn for qn in matches if qn in self.function_registry]
+        found: list[str] = []
+        for module_qn, exact_qn in matches:
+            if exact_qn in self.function_registry:
+                found.append(exact_qn)
+                continue
+            # The symbol's casing may differ from the registration too, so a
+            # direct lookup can miss where PHP would bind. Scan only this
+            # module's own entries rather than the whole registry.
+            prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+            wanted_symbol = _php_fold(symbol)
+            found.extend(
+                qn
+                for qn in self.function_registry
+                if qn.startswith(prefix)
+                and cs.SEPARATOR_DOT not in qn[len(prefix) :]
+                and _php_fold(qn[len(prefix) :]) == wanted_symbol
+            )
         if len(found) != 1:
             return None
         return found[0]

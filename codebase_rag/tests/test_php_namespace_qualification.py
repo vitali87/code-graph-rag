@@ -218,6 +218,68 @@ def test_a_reindex_replaces_the_recorded_namespace(tmp_path: Path) -> None:
     )
 
 
+def test_a_mixed_case_import_resolves_like_php_does(tmp_path: Path) -> None:
+    """`use function app\\text\\FORMAT` binds to `App\\Text\\format`.
+
+    PHP namespaces and function names are case-insensitive. Verified by
+    executing it under PHP 8.5 rather than taken from documentation:
+
+        namespace App\\Text; function format(...)
+        use function app\\text\\FORMAT;  ->  prints "formatted:x"
+
+    Exact-case comparison sent such imports to the simple-name trie, which is
+    the same wrong-edge path this feature exists to avoid -- a valid import
+    silently binding to an unrelated same-named function.
+
+    Covers BOTH halves independently: the namespace differing in case, and the
+    symbol differing in case. An implementation folding only one would satisfy
+    a test that varied both together.
+    """
+    from codebase_rag.parsers.call_resolver import CallResolver
+
+    resolver = object.__new__(CallResolver)
+    resolver.import_processor = SimpleNamespace(
+        php_module_namespaces={"proj.text": "App.Text"},
+        commonjs_direct_exports={},
+    )
+    resolver.function_registry = {"proj.text.format": "Function"}
+
+    for target in (
+        "App.Text.format",  # exact
+        "app.text.format",  # namespace folded
+        "APP.TEXT.format",  # namespace folded, upper
+        "App.Text.FORMAT",  # symbol folded
+        "app.text.FORMAT",  # both, the reported case
+    ):
+        assert resolver._php_target_for_namespace_import(target) == "proj.text.format", (
+            f"{target!r} did not resolve; PHP treats namespace and function "
+            "names as case-insensitive, so this import is valid and binds"
+        )
+
+
+def test_the_case_fold_is_ascii_only(tmp_path: Path) -> None:
+    """Folding must not reach beyond A-Z.
+
+    PHP folds ASCII only, so identifiers differing outside that range are
+    DISTINCT. `str.casefold()` or `str.lower()` would match names the language
+    does not -- trading a missed binding for a WRONG one, which is the
+    direction that matters here.
+
+    The Kelvin sign folds to plain `k` under Unicode rules and must not match.
+    """
+    from codebase_rag.parsers.call_resolver import _php_fold
+
+    assert _php_fold("App.Text") == "app.text"
+    assert _php_fold("FORMAT") == "format"
+
+    kelvin = "\u212a"  # KELVIN SIGN; casefolds to "k" under Unicode
+    assert _php_fold(kelvin) != "k", (
+        "the fold reached beyond ASCII; PHP would treat these identifiers as "
+        "distinct, so matching them creates an edge the language does not"
+    )
+    assert kelvin.casefold() == "k", "control: Unicode folding DOES match here"
+
+
 def test_a_non_php_caller_never_resolves_through_php_namespaces(
     tmp_path: Path,
 ) -> None:
