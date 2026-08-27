@@ -174,9 +174,9 @@ class TestParsing:
         spellings storing punctuation.
         """
         for marker in ("|", ">", "|-", ">-", "|+", ">+"):
-            assert parse_front_matter(
-                f"---\nnote: {marker}\n  text\n---\n"
-            ) == {}, marker
+            assert parse_front_matter(f"---\nnote: {marker}\n  text\n---\n") == {}, (
+                marker
+            )
 
     def test_a_value_that_merely_contains_a_bracket_is_kept(self) -> None:
         """The control: only a LEADING bracket opens a collection.
