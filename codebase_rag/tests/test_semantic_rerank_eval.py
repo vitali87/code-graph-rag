@@ -300,6 +300,43 @@ def test_the_eval_reranker_counts_distinct_types_not_neighbours() -> None:
     )
 
 
+def test_eval_proximity_keeps_separating_above_two_types() -> None:
+    """Degree is PROPORTIONAL to in-set connection, with no ceiling.
+
+    The test above states only that a multi-type pair is weighed "more". That
+    is satisfied by any implementation which distinguishes 1 from 2 and then
+    stops -- capping the degree at 2 passes every other test in this file,
+    because no other fixture contains a node above degree 2.
+
+    An understated property is the default failure: a docstring explains why a
+    test exists, and the minimal reason is usually narrower than the contract
+    the code implements. A well-fixtured test for the narrow property guards
+    less than the code does. Found by checking the stated property against the
+    code's DEFINING behaviour rather than checking the fixture against the
+    stated property.
+
+    `hub` reaches three in-set neighbours; `rival` reaches one by two distinct
+    types. Uncapped they are 3 and 2 and separate; capped at 2 they are equal
+    and stable sort keeps the baseline order.
+    """
+    ranking = {"q": ["rival", "hub", "n1", "n2", "n3"]}
+    adjacency: dict[str, dict[str, set[str]]] = {
+        "hub": {"n1": {"CALLS"}, "n2": {"CALLS"}, "n3": {"CALLS"}},
+        "n1": {"hub": {"CALLS"}, "rival": {"CALLS", "OVERRIDES"}},
+        "n2": {"hub": {"CALLS"}},
+        "n3": {"hub": {"CALLS"}},
+        "rival": {"n1": {"CALLS", "OVERRIDES"}},
+    }
+
+    reranked = reranked_semantic_ranking(ranking, adjacency, weight=2.0)
+
+    assert reranked["q"].index("hub") < reranked["q"].index("rival"), (
+        f"{reranked['q']}: a node with in-set degree 3 did not outrank one "
+        "with degree 2, so proximity stops distinguishing above two types "
+        "rather than scaling with how connected a hit is"
+    )
+
+
 def test_a_negative_cutoff_is_rejected_rather_than_sliced() -> None:
     """`hits[:-1]` is "all but the last", not a top-k window.
 
