@@ -259,6 +259,36 @@ def test_the_proximity_query_filters_on_the_declared_relationships() -> None:
     assert set(match.group(1).split("|")) == set(_PROXIMITY_RELS), match.group(1)
 
 
+def test_all_zero_degrees_leave_every_similarity_unchanged() -> None:
+    """The `highest <= 0` guard, which no other test enters.
+
+    Found by replacing the guard's body with a raising assertion: the suite
+    still passed, so nothing exercised it.
+
+    Unlike the other branches this one is NOT reachable through the shipped
+    query -- `count(*)` does not yield 0 for a row that exists, and a graph
+    with no in-set edges returns no rows at all, which `if not degrees`
+    handles first. So it is a defensive guard against a malformed or foreign
+    row source rather than a production path.
+
+    Pinned anyway, because "unreachable" is a property of the CURRENT query
+    rather than a promise. If `build_proximity_query` ever emits an OPTIONAL
+    MATCH or a left join, zero-degree rows become real and this branch starts
+    running -- and without the guard the next line divides by `highest`.
+
+    Asserts behaviour rather than the early return: proximity is 0.0 and every
+    similarity survives untouched. An implementation that raised, or that
+    dropped the hits, would satisfy "does not divide by zero" too.
+    """
+    ingestor = _ingestor({1: 0, 2: 0})
+
+    ranked = rerank_by_graph_proximity(ingestor, [(1, 0.7), (2, 0.5)])
+
+    assert {hit.node_id: hit.proximity for hit in ranked} == {1: 0.0, 2: 0.0}
+    assert {hit.node_id: hit.score for hit in ranked} == {1: 0.7, 2: 0.5}
+    assert [hit.node_id for hit in ranked] == [1, 2]
+
+
 def test_the_declared_relationships_are_the_intended_six() -> None:
     """An ABSOLUTE list, because the sibling test compares two things that move together.
 
