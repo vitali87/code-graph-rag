@@ -340,6 +340,23 @@ def get_provider_from_config(config: ModelConfig) -> ModelProvider:
     )
 
 
+def _serves_own_catalogue(config: ModelConfig) -> bool:
+    """Whether `config` talks to the provider's own endpoint.
+
+    A custom endpoint reopens the model space: `provider=openai` pointed at
+    vLLM or an OpenAI-compatible proxy (which the docs recommend) serves
+    whatever that server hosts, not what OpenAI publishes. Validating those
+    ids against the vendor catalogue would reject a working setup.
+    """
+    endpoint = config.endpoint
+    if not endpoint:
+        return True
+    default = cs.PROVIDER_DEFAULT_ENDPOINTS.get(config.provider)
+    return default is None or endpoint.rstrip(cs.SEPARATOR_SLASH) == default.rstrip(
+        cs.SEPARATOR_SLASH
+    )
+
+
 def _known_model_ids(provider: str) -> frozenset[str]:
     """Model ids pydantic-ai enumerates for `provider`, without its prefix.
 
@@ -369,6 +386,9 @@ def validate_model_id(config: ModelConfig) -> None:
     checked, and a provider added later is not gated until pydantic-ai
     knows its models.
     """
+    if not _serves_own_catalogue(config):
+        return
+
     known = _known_model_ids(config.provider)
     if not known or config.model_id in known:
         return

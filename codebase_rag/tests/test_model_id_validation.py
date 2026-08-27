@@ -137,6 +137,49 @@ class TestOpenModelSpaces:
         validate_model_id(_config(provider, model_id))
 
 
+class TestCustomEndpoints:
+    """A non-default endpoint reopens the model space.
+
+    The catalogue describes what the PROVIDER'S OWN endpoint serves. Point
+    `provider=openai` at vLLM or an OpenAI-compatible proxy -- which the
+    docs actively recommend -- and the served model names are whatever that
+    server hosts. Validating those against OpenAI's catalogue rejects a
+    working configuration, which is the expensive direction again.
+    """
+
+    def test_a_custom_openai_endpoint_is_not_gated(self) -> None:
+        """The concrete case: a self-hosted model behind the OpenAI protocol."""
+        from codebase_rag.providers.base import validate_model_id
+
+        config = ModelConfig(
+            provider=cs.Provider.OPENAI,
+            model_id="Qwen2.5-Coder-32B-Instruct",
+            api_key="k",
+            endpoint="http://localhost:8000/v1",
+        )
+
+        validate_model_id(config)
+
+    def test_the_default_endpoint_is_still_gated(self) -> None:
+        """The control, and the one that keeps the fix meaningful.
+
+        Without it, `endpoint`-suppression could be written to disable the
+        check for everyone -- the typo from the issue would sail through
+        again and every other test here would still pass.
+        """
+        from codebase_rag.providers.base import validate_model_id
+
+        config = ModelConfig(
+            provider=cs.Provider.OPENAI,
+            model_id="Qwen2.5-Coder-32B-Instruct",
+            api_key="k",
+            endpoint=cs.OPENAI_DEFAULT_ENDPOINT,
+        )
+
+        with pytest.raises(ValueError):
+            validate_model_id(config)
+
+
 class TestStartupWiring:
     """The check must actually run at startup, not merely exist."""
 

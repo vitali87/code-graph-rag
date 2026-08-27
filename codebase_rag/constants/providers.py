@@ -46,6 +46,16 @@ OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
 
+# The endpoint each provider serves its own published catalogue from. A
+# config pointing somewhere else (vLLM, an OpenAI-compatible proxy) serves
+# whatever that host chooses, so model-id validation does not apply to it.
+# Providers absent here have no single canonical endpoint and are never
+# gated on model id.
+PROVIDER_DEFAULT_ENDPOINTS: dict[str, str] = {
+    Provider.OPENAI: OPENAI_DEFAULT_ENDPOINT,
+    Provider.MINIMAX: MINIMAX_DEFAULT_ENDPOINT,
+}
+
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
