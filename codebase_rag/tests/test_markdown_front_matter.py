@@ -122,6 +122,35 @@ class TestParsing:
             "---\npurpose: planning\nnot a pair\nscope: x\n---\n"
         ) == {"purpose": "planning", "scope": "x"}
 
+    def test_a_nested_key_is_not_hoisted_to_the_top_level(self) -> None:
+        """`child:` under `parent:` must not become a top-level declaration.
+
+        The worst of the three: hoisting produced `{"parent": "", "child":
+        "v"}`, so a nested key became indistinguishable from one the author
+        declared at the top level. The docstring said "top-level scalars
+        only" while the code took every line with a colon -- the contract and
+        the implementation disagreed (reported on #1488).
+        """
+        assert parse_front_matter(
+            "---\nparent:\n  child: v\npurpose: p\n---\n"
+        ) == {"purpose": "p"}
+
+    def test_a_comment_line_declares_nothing(self) -> None:
+        """`# note: x` would otherwise become the key `# note`."""
+        assert parse_front_matter("---\n# note: x\npurpose: p\n---\n") == {
+            "purpose": "p"
+        }
+
+    def test_a_key_opening_a_structure_is_skipped(self) -> None:
+        """`tags:` with no value opens a list, and is not an empty scalar.
+
+        Recording `{"tags": ""}` asserts the author declared it empty, which
+        is a different claim from declaring a structure this parser does not
+        represent. The distinction matters because a consumer cannot tell the
+        two apart after the fact.
+        """
+        assert parse_front_matter("---\ntags:\n  - a\n  - b\n---\n") == {}
+
     def test_an_empty_key_is_refused(self) -> None:
         """`: value` names nothing and must not become a property.
 

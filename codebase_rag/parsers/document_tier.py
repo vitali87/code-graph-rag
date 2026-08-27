@@ -113,8 +113,25 @@ def parse_front_matter(text: str) -> dict[str, str]:
         return {}
     found: dict[str, str] = {}
     for line in lines[1:closing]:
+        # INDENTED lines belong to a parent key, not to the document. Taking
+        # them would hoist `child: v` under `parent:` to top level, inventing
+        # a declaration the author never made at that level -- and the value
+        # would be indistinguishable from a real top-level one.
+        if line[:1] in {" ", "\t"}:
+            continue
+        # A comment declares nothing. `# note: x` would otherwise become the
+        # key "# note".
+        if line.lstrip().startswith("#"):
+            continue
         key, separator, value = line.partition(":")
         if not separator:
+            continue
+        # A key with an EMPTY value opens a nested block or a list
+        # (`parent:` / `tags:`) rather than declaring a scalar. Recording it
+        # as an empty string would assert the author declared it empty, which
+        # is a different claim from declaring a structure this parser does
+        # not represent.
+        if not value.strip():
             continue
         # `partition` splits at the FIRST colon only, so a value containing
         # further colons (`url: https://x/y`) survives intact.
