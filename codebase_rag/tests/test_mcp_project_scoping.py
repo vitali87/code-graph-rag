@@ -307,14 +307,16 @@ class TestEvidenceMustBeInTheReturnClause:
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         assert not requires_project_evidence(
-            'MATCH (n) WHERE n.qualified_name STARTS WITH "x" RETURN n.name AS name'
+            'MATCH (n) WHERE n.qualified_name STARTS WITH "x" RETURN n.name AS name',
+            ALPHA,
         )
 
     def test_an_order_by_only_mention_is_not_evidence(self) -> None:
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         assert not requires_project_evidence(
-            "MATCH (n) RETURN n.name AS name ORDER BY n.qualified_name"
+            "MATCH (n) RETURN n.name AS name ORDER BY n.qualified_name",
+            ALPHA,
         )
 
     def test_a_returned_qualified_name_is_evidence(self) -> None:
@@ -322,7 +324,8 @@ class TestEvidenceMustBeInTheReturnClause:
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         assert requires_project_evidence(
-            'MATCH (n) WHERE n.name = "x" RETURN n.qualified_name AS qualified_name'
+            'MATCH (n) WHERE n.name = "x" RETURN n.qualified_name AS qualified_name',
+            ALPHA,
         )
 
     def test_an_aggregate_mixed_with_unqualified_fields_is_not_evidence(self) -> None:
@@ -335,7 +338,8 @@ class TestEvidenceMustBeInTheReturnClause:
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         assert not requires_project_evidence(
-            "MATCH (n:Function) RETURN n.name AS name, count(n) AS total"
+            "MATCH (n:Function) RETURN n.name AS name, count(n) AS total",
+            ALPHA,
         )
 
     def test_an_aggregate_must_itself_be_restricted(self) -> None:
@@ -353,11 +357,13 @@ class TestEvidenceMustBeInTheReturnClause:
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         assert not requires_project_evidence(
-            "MATCH (n:Function) RETURN count(n) AS total"
+            "MATCH (n:Function) RETURN count(n) AS total",
+            ALPHA,
         )
         assert requires_project_evidence(
-            "MATCH (n:Function) WHERE n.qualified_name STARTS WITH $p "
-            "RETURN count(n) AS total"
+            f'MATCH (n:Function) WHERE n.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(n) AS total",
+            ALPHA,
         )
 
 
@@ -385,7 +391,7 @@ class TestEvidenceIsAProjectedPropertyNotASubstring:
     def test_a_mere_mention_is_not_evidence(self, cypher: str) -> None:
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
-        assert not requires_project_evidence(cypher)
+        assert not requires_project_evidence(cypher, ALPHA)
 
     @pytest.mark.parametrize(
         "cypher",
@@ -399,7 +405,7 @@ class TestEvidenceIsAProjectedPropertyNotASubstring:
         """The control: reading the PROPERTY must still count."""
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
-        assert requires_project_evidence(cypher)
+        assert requires_project_evidence(cypher, ALPHA)
 
 
 class TestAnAggregateLeaksMagnitude:
@@ -425,7 +431,9 @@ class TestAnAggregateLeaksMagnitude:
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         assert requires_project_evidence(
-            "MATCH (n:Function) WHERE n.qualified_name STARTS WITH $p RETURN count(n)"
+            f'MATCH (n:Function) WHERE n.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(n)",
+            ALPHA,
         )
 
 
@@ -623,16 +631,45 @@ class TestAnAggregateMustBeBoundToTheRequestedProject:
 
         assert requires_project_evidence(cypher, ALPHA)
 
-    def test_a_parameterised_restriction_is_accepted(self) -> None:
-        """`$project` carries no literal to compare, and is how the tool asks.
+    @pytest.mark.parametrize(
+        "predicate",
+        [
+            # A parameter this code cannot see the value of. Accepting it
+            # means accepting a restriction to ANY project.
+            "n.qualified_name STARTS WITH $anything",
+            "n.qualified_name =~ $re",
+            # Restricts n to m, which says nothing about the caller.
+            "n.qualified_name = m.qualified_name",
+        ],
+    )
+    def test_a_literal_free_restriction_is_refused(self, predicate: str) -> None:
+        """ "No literal" was read as "safely parameterised". It is not.
 
-        Refusing it would make the parameterised form -- the safe one --
-        unusable, pushing callers towards string interpolation.
+        The exemption accepted any literal-free query carrying a prefix
+        operator, on the reasoning that a parameter must be the project.
+        But this code cannot see a parameter's VALUE, so it was accepting
+        a restriction to any project at all -- or, in the last case, to
+        another matched entity.
+
+        The only form it can actually verify is the literal one, and the
+        caller knows their own project name, so that is what is required.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = f"MATCH (n),(m) WHERE {predicate} RETURN count(n) AS total"
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_literal_restriction_to_the_caller_is_accepted(self) -> None:
+        """The control: the verifiable form must stay usable.
+
+        This is the one shape that proves the count belongs to the caller,
+        and the prompt already instructs the model to emit it.
         """
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         cypher = (
-            "MATCH (n) WHERE n.qualified_name STARTS WITH $project "
+            f'MATCH (n) WHERE n.qualified_name STARTS WITH "{ALPHA}." '
             "RETURN count(n) AS total"
         )
 
@@ -664,7 +701,8 @@ class TestScopedQueriesMustProjectAQualifiedName:
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         assert not requires_project_evidence(
-            "MATCH (n:Function) RETURN n.name AS name, n.path AS path"
+            "MATCH (n:Function) RETURN n.name AS name, n.path AS path",
+            ALPHA,
         )
 
     @pytest.mark.parametrize(
@@ -683,7 +721,7 @@ class TestScopedQueriesMustProjectAQualifiedName:
         """
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
-        assert requires_project_evidence(cypher)
+        assert requires_project_evidence(cypher, ALPHA)
 
     def test_a_restricted_aggregate_is_accepted(self) -> None:
         """Counting stays usable when scoped, provided the query narrows.
@@ -696,8 +734,9 @@ class TestScopedQueriesMustProjectAQualifiedName:
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         assert requires_project_evidence(
-            "MATCH (n:Function) WHERE n.qualified_name STARTS WITH $p "
-            "RETURN count(n) AS total"
+            f'MATCH (n:Function) WHERE n.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(n) AS total",
+            ALPHA,
         )
 
 

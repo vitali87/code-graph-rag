@@ -202,10 +202,16 @@ def _restricts_to_project(cypher_query: str, project_name: str | None) -> bool:
     that project's count to a scoped caller -- the magnitude leak again, one
     level deeper.
 
-    So a literal prefix must name the requested project. A PARAMETERISED
-    restriction (`STARTS WITH $project`) carries no literal to compare and
-    is accepted: it is the safe form, and refusing it would push callers
-    towards string interpolation.
+    So the LITERAL project name is required. A parameter's value is
+    invisible here, so treating "no literal" as "safely parameterised"
+    accepted a restriction to ANY project -- and, for
+    `n.qualified_name = m.qualified_name`, to another matched entity.
+
+    Nothing useful is lost: the caller knows their own project name and
+    the prompt already instructs the model to emit it, so the one shape
+    this can verify is also the one it should get. Interpolation is not
+    a concern here because the name is validated against `list_projects`
+    before it reaches the query.
     """
     upper = cypher_query.upper()
     marker = upper.rfind(cs.CYPHER_RETURN_KEYWORD)
@@ -219,12 +225,14 @@ def _restricts_to_project(cypher_query: str, project_name: str | None) -> bool:
         or _PROJECTED_QUALIFIED_NAME_RE.search(body) is None
     ):
         return False
+    if not project_name:
+        return False
+    # The LITERAL project name is required. "No literal" was read as
+    # "safely parameterised", but a parameter's VALUE is invisible here,
+    # so that accepted a restriction to any project at all -- and, for
+    # `n.qualified_name = m.qualified_name`, to another matched entity.
     literals = _PROJECT_LITERAL_RE.findall(body)
     if not literals:
-        # No literal project name anywhere: a bound parameter, which the
-        # caller supplies and this function cannot see.
-        return True
-    if not project_name:
         return False
     return all(
         literal.rstrip(cs.SEPARATOR_DOT) == project_name.upper() for literal in literals
