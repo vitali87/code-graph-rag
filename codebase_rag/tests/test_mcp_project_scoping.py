@@ -545,6 +545,38 @@ class TestQuotedTextIsNotEvidence:
 
         assert not requires_project_evidence(cypher, ALPHA)
 
+    @pytest.mark.parametrize(
+        "cypher",
+        [
+            "MATCH (n) RETURN n.name AS name // n.qualified_name",
+            "MATCH (n) RETURN n.name AS name /* n.qualified_name */",
+            "MATCH (n) // n.qualified_name\n RETURN n.name AS name",
+        ],
+    )
+    def test_a_commented_property_read_is_not_evidence(self, cypher: str) -> None:
+        """A qualified name in a COMMENT returns nothing either.
+
+        I tested only the before-RETURN form first and called the class
+        handled. The after-RETURN forms leaked, because the projection is
+        taken from the text following the last RETURN and a trailing
+        comment sits inside it. Same unenumerated-axis mistake as the
+        dunder case: the right property, the wrong positions.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_real_read_beside_a_comment_is_still_evidence(self) -> None:
+        """The control: stripping comments must not blind the real check."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (n) RETURN n.qualified_name AS qualified_name "
+            "// the project-qualified name"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
     def test_a_real_read_beside_a_quoted_one_is_still_evidence(self) -> None:
         """The control: stripping literals must not blind the real check.
 

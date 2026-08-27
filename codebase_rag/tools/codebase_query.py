@@ -42,10 +42,16 @@ _PROJECTED_QUALIFIED_NAME_RE = re.compile(
 # contributes properties without its qualified name can be spotted.
 _PROPERTY_READ_RE = re.compile(r"\b([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)")
 
-# A single- or double-quoted Cypher string, including escaped quotes. Blanked
-# before textual analysis so a property read inside quotes is not mistaken
-# for an actual read.
-_STRING_LITERAL_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
+# Text that returns nothing: quoted strings (a constant, not a read) and
+# comments (not executed). Blanked before textual analysis so neither is
+# mistaken for a property read.
+_INERT_TEXT_RE = re.compile(
+    r"'(?:[^'\\]|\\.)*'"
+    r'|"(?:[^"\\]|\\.)*"'
+    r"|//[^\n]*"
+    r"|/\*.*?\*/",
+    re.DOTALL,
+)
 
 # A project name appearing as a LITERAL in the query text, uppercased by the
 # caller. Used to check that an aggregate's restriction names the requested
@@ -117,7 +123,7 @@ def requires_project_evidence(
     of projects they never asked about. Restricting the match keeps
     counting usable without that leak.
     """
-    projection = _return_clause(_without_string_literals(cypher_query))
+    projection = _return_clause(_without_inert_text(cypher_query))
     if not projection:
         return False
     # A PROJECTED PROPERTY (`x.qualified_name`), not the bare token: an
@@ -145,20 +151,28 @@ def requires_project_evidence(
     return _restricts_to_project(cypher_query, project_name)
 
 
-def _without_string_literals(cypher_query: str) -> str:
-    """`cypher_query` with quoted spans blanked, preserving length.
+def _without_inert_text(cypher_query: str) -> str:
+    """`cypher_query` with quoted spans and comments blanked, same length.
 
-    A property read inside quotes is a CONSTANT, not a read:
-    `RETURN "n.qualified_name" AS lit, n.name AS name` projects a string
-    and an unattributable property, but textual matching saw the read.
+    Neither returns anything. A property read inside quotes is a CONSTANT
+    (`RETURN "n.qualified_name" AS lit` projects a string), and one inside
+    a comment is not executed at all -- but textual matching saw both as
+    reads. A trailing `// n.qualified_name` was the sharper case, since the
+    projection is taken from the text after the last RETURN and the comment
+    sits inside it.
 
     Blanking rather than deleting keeps offsets stable, so the RETURN
-    marker still falls where it does in the original.
+    marker still falls where it does in the original. Newlines are
+    preserved so a `//` comment does not swallow the line after it.
 
-    Note this is deliberately NOT applied when looking for a literal
-    PROJECT NAME, which legitimately lives inside quotes.
+    Deliberately NOT applied when looking for a literal PROJECT NAME,
+    which legitimately lives inside quotes.
     """
-    return _STRING_LITERAL_RE.sub(lambda m: " " * len(m.group(0)), cypher_query)
+
+    def _blank(match: re.Match[str]) -> str:
+        return "".join("\n" if ch == "\n" else " " for ch in match.group(0))
+
+    return _INERT_TEXT_RE.sub(_blank, cypher_query)
 
 
 def _every_projected_entity_is_attributable(projection: str) -> bool:
