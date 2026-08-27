@@ -194,6 +194,37 @@ class TestParsing:
                 marker
             )
 
+    def test_a_block_scalar_header_with_an_inline_comment_is_rejected(self) -> None:
+        """`note: | # explanation` is still a header.
+
+        The `$`-anchored pattern required the marker to end the line, so a
+        header carrying a trailing comment stored the marker AND the comment
+        as the value while the indented text below was skipped (reported on
+        #1488).
+        """
+        for header in ("| # explanation", ">- # note", "|2 # why"):
+            assert parse_front_matter(
+                f"---\nnote: {header}\n  text\n---\n"
+            ) == {}, header
+
+    def test_a_hash_inside_an_ordinary_value_is_preserved(self) -> None:
+        """The control: comment-stripping must not corrupt real values.
+
+        A bare `#`-split would truncate `C# notes` to `C` and drop `tag #1`
+        entirely -- silently mangling metadata, which is worse than the defect
+        it fixes. The comment is recognised only when preceded by whitespace,
+        and the stripped form is used ONLY to test for a header: the stored
+        value is always the full text.
+
+        `tag #1` is the discriminating case. It contains a whitespace-preceded
+        `#`, so a fix that stripped comments unconditionally would store
+        `tag` -- and the value would look plausible, which is what makes that
+        failure hard to notice.
+        """
+        assert parse_front_matter("---\nk: C# notes\n---\n") == {"k": "C# notes"}
+        assert parse_front_matter("---\nk: a#b\n---\n") == {"k": "a#b"}
+        assert parse_front_matter("---\nk: tag #1\n---\n") == {"k": "tag #1"}
+
     def test_a_value_merely_starting_with_a_block_character_is_kept(self) -> None:
         """Only a COMPLETE header is a header; `>>= operator` is prose.
 

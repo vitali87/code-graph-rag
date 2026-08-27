@@ -92,6 +92,20 @@ _RESERVED_FRONT_MATTER_KEYS: frozenset[str] = frozenset(
 )
 
 
+def _without_trailing_comment(value: str) -> str:
+    """`value` with an unquoted trailing YAML comment removed.
+
+    Used only to recognise a block-scalar header that carries one. Requires
+    whitespace before the `#`, so `C#` and `a#b` are left alone -- a bare
+    `#`-split would corrupt ordinary values, which is worse than the defect
+    it fixes.
+    """
+    for index, char in enumerate(value):
+        if char == "#" and index > 0 and value[index - 1].isspace():
+            return value[:index].rstrip()
+    return value
+
+
 def parse_front_matter(text: str) -> dict[str, str]:
     """Read declared YAML front-matter into flat string properties.
 
@@ -153,7 +167,16 @@ def parse_front_matter(text: str) -> dict[str, str]:
         # indented text below, which this parser skips as nested. Storing the
         # marker records "|" as the value -- punctuation mistaken for content,
         # with the real text silently dropped.
-        if _BLOCK_SCALAR_HEADER.match(cleaned):
+        # A block-scalar header may carry a trailing comment
+        # (`note: | # explanation`), which is still a header: the value is the
+        # indented text below, and this parser skips it. Matching the header
+        # only when it ends the line stored the marker plus the comment as the
+        # value (reported on #1488).
+        #
+        # The comment is stripped ONLY for this test, and only when preceded by
+        # whitespace, so an ordinary value containing `#` (`title: C# notes`)
+        # is untouched -- and `found` below still records the full `cleaned`.
+        if _BLOCK_SCALAR_HEADER.match(_without_trailing_comment(cleaned)):
             continue
         # A FLOW COLLECTION (`[a, b]` / `{k: v}`) is a structure written on one
         # line. Storing its source text makes a list indistinguishable from a
