@@ -18,10 +18,10 @@
 # field or be named in `_NOT_EXPORTED` below, so forgetting fails.
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from typing import Any
 
+from codebase_rag.schema_parse import parse_properties
 from codebase_rag.types_defs import NODE_SCHEMAS
 from codec import schema_pb2 as pb
 
@@ -119,12 +119,20 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "ModuleImplementation": frozenset({"absolute_path", "module_type"}),
 }
 
-# `{name: type, other: type?}` -> {"name", "other"}
-_PROPERTY_NAME = re.compile(r"(\w+):")
-
-
 def _declared_properties(schema_text: str) -> set[str]:
-    return set(_PROPERTY_NAME.findall(schema_text))
+    """Property names, read with the SCHEMA'S OWN parser.
+
+    An earlier version used `re.findall(r"(\\w+):")`, which silently mangles
+    any name containing a non-word character: `my-prop` matched as `prop`, so
+    the guard checked a name that does not exist while the real one went
+    unexamined -- the guard failing OPEN, which is the failure this file
+    exists to prevent (reported on #1497).
+
+    `parse_properties` is the parser `schema_parse` already provides for these
+    declarations. Writing a second, looser grammar for the same strings was
+    the mistake: two parsers for one format disagree exactly where it matters.
+    """
+    return {spec.name for spec in parse_properties(schema_text)}
 
 
 def _proto_fields(label: str) -> set[str] | None:
@@ -218,6 +226,34 @@ def test_a_label_without_a_proto_message_is_reported() -> None:
     assert _unexported_properties([_StandInSchema()]) == [
         "NoSuchNodeLabel (no proto message at all)"
     ], "a label with no proto message must be reported, not skipped"
+
+
+def test_a_property_name_with_a_hyphen_is_read_whole() -> None:
+    """A non-word character must not truncate the name.
+
+    The regex this replaced matched `(\\w+):`, so `my-prop` was read as
+    `prop` -- the guard then checked a name that does not exist while the real
+    property went unexamined. A guard that fails OPEN on a name it cannot
+    parse is the failure this file exists to prevent (reported on #1497).
+
+    Calls the real `_declared_properties` and the real comparison, so a change
+    back to a hand-rolled grammar fails here rather than passing against a
+    second parser that disagrees with the schema's own.
+    """
+    assert _declared_properties("{qualified_name: string, my-prop: string}") == {
+        "qualified_name",
+        "my-prop",
+    }
+
+    class _StandInSchema:
+        class label:  # noqa: N801 - mimics the NodeSchema attribute shape
+            value = "Module"
+
+        properties = "{my-prop: string}"
+
+    # `Module` has a proto message but no `my-prop` field and no exemption, so
+    # the property must be REPORTED rather than silently skipped.
+    assert _unexported_properties([_StandInSchema()]) == ["Module.my-prop"]
 
 
 def test_the_unexported_list_names_only_real_absences() -> None:
