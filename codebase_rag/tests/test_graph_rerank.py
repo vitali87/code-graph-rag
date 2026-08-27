@@ -136,54 +136,76 @@ def test_the_weight_bounds_how_far_proximity_can_move_a_result() -> None:
     assert boosted.score == 0.5 + DEFAULT_PROXIMITY_WEIGHT
 
 
+# A REACHABLE hub fixture: three hits, where node 1 is joined to both 2 and 3
+# and 2-3 are not joined to each other. `build_proximity_query` unwinds both
+# endpoints of every in-set edge, so the two edges 1-2 and 1-3 give:
+#
+#     degree: {1: 2, 2: 1, 3: 1}   normalised: {1: 1.0, 2: 0.5, 3: 0.5}
+#
+# Three nodes is the MINIMUM that can produce unequal degrees. With a two-node
+# result set every matched edge runs between those two nodes and UNWIND emits
+# both endpoints, so their degrees are necessarily equal -- an asymmetric
+# two-node fixture like `{1: 1, 2: 4}` describes a graph the production query
+# cannot return, which is what an earlier version of these tests asserted
+# against (caught in review on #1482).
+_HUB_DEGREES = {1: 2, 2: 1, 3: 1}
+
+
 def test_proximity_is_proportional_to_degree_not_mere_connectedness() -> None:
-    """Degree must decide the order, not the yes/no fact of having an edge.
+    """Proximity must scale with degree, not with the yes/no fact of an edge.
 
     The module ranks a hit by HOW connected it is to the rest of the result
-    set. An implementation that gave every node with any in-set edge the same
-    flat boost would rank by WHETHER it is connected -- a different quantity,
-    and the same membership-vs-degree confusion as #1474.
+    set. An implementation giving every node with any in-set edge the same
+    flat boost ranks by WHETHER it is connected -- a different quantity, and
+    the same membership-vs-degree confusion as #1474.
 
-    Every other test in this file uses a fixture where the two agree: one
-    connected node and one isolated, where the connected node's normalised
-    degree is 1.0 and the flat boost is also 1.0. So the whole suite passed
-    against the flat-boost implementation (issue #1481).
+    Every earlier fixture in this file used one connected node and one
+    isolated node, where the connected node's normalised degree is 1.0 and the
+    flat boost is also 1.0. The two implementations agree on every such case,
+    so the whole suite passed against flat boost (issue #1481).
 
-    The shape that separates them is TWO nodes with DIFFERENT non-zero degrees
-    whose relative order depends on the difference. Similarities are chosen so
-    the two implementations disagree about the ORDER, not merely the scores:
+    Asserts PROXIMITY rather than rank order, because proximity is computed
+    before `weight` is applied and is therefore weight-independent:
 
-        flat boost:      1 -> 0.80 + 0.25   = 1.05    2 -> 0.70 + 0.25 = 0.95
-        degree-weighted: 1 -> 0.80 + 0.0625 = 0.8625  2 -> 0.70 + 0.25 = 0.95
+        degree-weighted: {1: 1.0, 2: 0.5, 3: 0.5}
+        flat boost:      {1: 1.0, 2: 1.0, 3: 1.0}
 
-    so a correct implementation returns [2, 1] and the flat one returns [1, 2].
-    Asserting the order rather than the scores keeps the test meaningful if
-    DEFAULT_PROXIMITY_WEIGHT is ever retuned.
+    An earlier version asserted the resulting ORDER instead, and claimed in
+    this docstring that doing so kept the test meaningful across a retune of
+    DEFAULT_PROXIMITY_WEIGHT. That was exactly backwards: a blended score
+    depends on the weight, and below w =~ 0.133 the ordering no longer
+    separated the implementations at all. The claim was disproved by
+    execution in review.
     """
-    ingestor = _ingestor({1: 1, 2: 4})
+    ingestor = _ingestor(_HUB_DEGREES)
 
-    ranked = rerank_by_graph_proximity(ingestor, [(1, 0.80), (2, 0.70)])
-
-    assert [hit.node_id for hit in ranked] == [2, 1], [
-        (h.node_id, h.similarity, h.proximity, h.score) for h in ranked
-    ]
-
-
-def test_proximity_scales_between_two_connected_nodes() -> None:
-    """The weaker node gets a strictly smaller boost, not an equal one.
-
-    Pairs with the ordering test above: that one pins the consequence, this
-    one pins the mechanism. A flat-boost implementation gives both nodes
-    proximity 1.0, so the strict inequality is what fails.
-    """
-    ingestor = _ingestor({1: 1, 2: 4})
-
-    ranked = rerank_by_graph_proximity(ingestor, [(1, 0.5), (2, 0.5)])
+    ranked = rerank_by_graph_proximity(ingestor, [(1, 0.5), (2, 0.5), (3, 0.5)])
     proximity = {hit.node_id: hit.proximity for hit in ranked}
 
-    assert proximity[2] == 1.0, proximity
-    assert 0.0 < proximity[1] < 1.0, proximity
-    assert proximity[1] == 0.25, proximity
+    assert proximity == {1: 1.0, 2: 0.5, 3: 0.5}, proximity
+
+
+def test_a_less_connected_hit_is_boosted_strictly_less() -> None:
+    """The consequence of the above, pinned independently of the weight.
+
+    With equal similarities the entire score gap comes from proximity, so the
+    hub must outrank the spokes for ANY positive weight -- whereas flat boost
+    gives all three the same proximity and leaves them tied, preserving the
+    incoming order under a stable sort.
+
+    Pairs with the test above: that one pins the mechanism, this one pins the
+    behaviour a caller actually observes.
+    """
+    ingestor = _ingestor(_HUB_DEGREES)
+
+    ranked = rerank_by_graph_proximity(ingestor, [(2, 0.5), (3, 0.5), (1, 0.5)])
+
+    assert ranked[0].node_id == 1, [
+        (h.node_id, h.proximity, h.score) for h in ranked
+    ]
+    assert ranked[0].score > ranked[1].score, [
+        (h.node_id, h.score) for h in ranked
+    ]
 
 
 def test_containment_edges_are_excluded_deliberately() -> None:
