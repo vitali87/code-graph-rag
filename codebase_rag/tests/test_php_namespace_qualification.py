@@ -345,6 +345,53 @@ def test_a_call_through_a_use_function_alias_is_case_insensitive(
     )
 
 
+def test_a_fully_qualified_import_resolves(tmp_path: Path) -> None:
+    """`use function \\App\\Text\\format` (leading backslash) must resolve.
+
+    A fully-qualified import is idiomatic PHP and runs identically to the
+    unqualified spelling -- verified by executing it under PHP 8.5, which
+    prints `B:x`. In PHP a `use` path is ALWAYS resolved from the global
+    namespace, so the backslash is emphasis rather than a different meaning.
+
+    The import processor dots the path, so the backslash becomes a LEADING
+    separator: the recorded target is `.App.Text.format`, which never matches
+    a declared `App.Text`.
+
+    Found by probing this function's contract axes directly rather than
+    waiting for review to surface a fourth one -- the previous three
+    (import-path case, binding kind, call-site case) each arrived that way.
+    """
+    from codebase_rag.parsers.call_resolver import CallResolver
+
+    resolver = object.__new__(CallResolver)
+    resolver.import_processor = SimpleNamespace(
+        php_module_namespaces={"proj.text": "App.Text"},
+        commonjs_direct_exports={},
+        php_function_imports={"proj.caller": {"format"}},
+    )
+    resolver.function_registry = _registry({"proj.text.format": "Function"})
+
+    assert resolver._try_resolve_direct_import(
+        "format",
+        {"format": ".App.Text.format"},
+        cs.SupportedLanguage.PHP,
+        "proj.caller",
+    ) == (NodeType.FUNCTION, "proj.text.format"), (
+        "a fully-qualified `use function \\App\\Text\\format` did not resolve; "
+        "the leading separator from the backslash was compared against a "
+        "namespace declared without one"
+    )
+
+    # The control: the unqualified spelling still resolves, so the strip is a
+    # normalisation rather than something that only works with a backslash.
+    assert resolver._try_resolve_direct_import(
+        "format",
+        {"format": "App.Text.format"},
+        cs.SupportedLanguage.PHP,
+        "proj.caller",
+    ) == (NodeType.FUNCTION, "proj.text.format")
+
+
 def test_an_unknown_caller_module_does_not_resolve(tmp_path: Path) -> None:
     """No `module_qn` means the binding kind cannot be shown, so decline.
 

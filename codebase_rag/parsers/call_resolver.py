@@ -1350,6 +1350,14 @@ class CallResolver:
         qualified name is returned unchanged; folding is for COMPARISON, never
         for the value handed back, which must stay the graph's real key.
         """
+        # A fully-qualified import (`use function \App\Text\format`) is
+        # idiomatic PHP and runs identically to the unqualified spelling,
+        # verified under PHP 8.5. The leading backslash becomes a leading
+        # separator when the path is dotted, which would never match a
+        # declared `App.Text`. Stripping it is a spelling normalisation, not a
+        # semantic change -- in PHP a `use` path is ALWAYS resolved from the
+        # global namespace whether or not the backslash is written.
+        imported_path = imported_path.lstrip(cs.SEPARATOR_DOT)
         namespace, separator, symbol = imported_path.rpartition(cs.SEPARATOR_DOT)
         if not separator or not namespace or not symbol:
             return None
