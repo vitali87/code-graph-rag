@@ -90,6 +90,22 @@ async def test_explain_traceback_returns_resolved_frames(tmp_path):
     assert qns == [f"{project}.app.service.dispatch", f"{project}.app.service.handle"]
 
 
+async def test_explain_traceback_exposes_the_resolution_rate_over_mcp(tmp_path):
+    """The measurement must reach the caller, not just exist in the report.
+
+    `explain_traceback` builds its response field by field, so a stat added to
+    `TracebackReport` is silently dropped here unless it is mapped across. A
+    measurement the MCP surface does not return is indistinguishable from one
+    that was never computed -- the defect Greptile caught on #1478, where a
+    cutoff-aware scorer existed and nothing invoked it.
+    """
+    registry = _registry(tmp_path)
+
+    result = await registry.explain_traceback(traceback_text=_crash_text(tmp_path))
+
+    assert result["resolution"] == {"total": 2, "resolved": 2, "rate": 1.0}
+
+
 async def test_rank_root_causes_returns_ranked_candidates(tmp_path):
     registry = _registry(tmp_path)
     project = derive_project_name(tmp_path)
