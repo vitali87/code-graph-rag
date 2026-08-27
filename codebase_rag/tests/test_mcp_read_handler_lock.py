@@ -111,9 +111,35 @@ _GRAPH_WRITERS = frozenset(
 )
 
 
+def _own_scope_nodes(node: ast.AST) -> list[ast.AST]:
+    """Every node belonging to this function's OWN scope.
+
+    `ast.walk` descends into nested functions and classes, so a handler whose
+    inner helper takes the lock counts as locked while its own body reads the
+    graph unprotected. Reproduced in review on #1475: a handler containing
+    `async def inner()` that holds the lock, plus an unguarded outer read,
+    was reported as locked.
+
+    Nested scopes are pruned rather than inspected: a lock acquired inside a
+    closure is held only while that closure runs, so it cannot protect the
+    outer body's reads whatever it names.
+    """
+    own: list[ast.AST] = []
+    stack: list[ast.AST] = list(ast.iter_child_nodes(node))
+    while stack:
+        current = stack.pop()
+        if isinstance(
+            current, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda
+        ):
+            continue
+        own.append(current)
+        stack.extend(ast.iter_child_nodes(current))
+    return own
+
+
 def _holds_ingestor_lock(node: ast.AsyncFunctionDef) -> bool:
-    """Whether the body contains `async with self._ingestor_lock`."""
-    for inner in ast.walk(node):
+    """Whether the handler's OWN body contains `async with self._ingestor_lock`."""
+    for inner in _own_scope_nodes(node):
         if not isinstance(inner, ast.AsyncWith):
             continue
         for item in inner.items:
@@ -259,6 +285,57 @@ def test_the_lock_detector_rejects_an_unrelated_context_manager() -> None:
 
     assert isinstance(no_lock, ast.AsyncFunctionDef)
     assert not _holds_ingestor_lock(no_lock)
+
+
+def test_the_lock_detector_ignores_locks_in_nested_scopes() -> None:
+    """A lock inside a closure or nested class does not protect the outer body.
+
+    `ast.walk` descends into nested scopes, so before this was fixed a handler
+    whose inner helper took the lock counted as locked while its own body read
+    the graph unprotected -- an unlocked reader reported as safe. Found in
+    review on #1475 and reproduced by execution.
+
+    The distinction is semantic rather than stylistic: a lock acquired inside
+    a closure is held only while that closure runs, so it cannot serialise the
+    outer body's reads against a rebuild no matter what it names.
+
+    The second axis of this detector's contract. The sibling test covers WHAT
+    is locked; this covers WHERE, and the two are independent -- the earlier
+    self-check pinned the attribute name and was blind to scope entirely.
+    """
+    nested_function = ast.parse(
+        "async def h(self):\n"
+        "    async def inner():\n"
+        "        async with self._ingestor_lock:\n"
+        "            return 1\n"
+        "    return await self._graph_query_tool.function()\n"
+    ).body[0]
+    nested_class = ast.parse(
+        "async def h(self):\n"
+        "    class C:\n"
+        "        async def m(self):\n"
+        "            async with self._ingestor_lock:\n"
+        "                return 1\n"
+        "    return await self._graph_query_tool.function()\n"
+    ).body[0]
+    outer_and_nested = ast.parse(
+        "async def h(self):\n"
+        "    async with self._ingestor_lock:\n"
+        "        async def inner():\n"
+        "            return 1\n"
+        "        return await inner()\n"
+    ).body[0]
+
+    assert isinstance(nested_function, ast.AsyncFunctionDef)
+    assert not _holds_ingestor_lock(nested_function)
+
+    assert isinstance(nested_class, ast.AsyncFunctionDef)
+    assert not _holds_ingestor_lock(nested_class)
+
+    # A genuine outer lock still counts even when it contains a nested scope,
+    # so the pruning does not overshoot into false negatives.
+    assert isinstance(outer_and_nested, ast.AsyncFunctionDef)
+    assert _holds_ingestor_lock(outer_and_nested)
 
 
 def test_the_two_inventories_are_disjoint() -> None:
