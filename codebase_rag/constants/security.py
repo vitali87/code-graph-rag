@@ -15,6 +15,19 @@ CYPHER_RETURN_KEYWORD = "RETURN "
 # project. `IS NOT NULL` / `<> ''` / `exists(...)` match every indexed node
 # in every project, so a count over them spans them all.
 CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
+# Constructs a SCOPED query may not use. Each defeats clause-level
+# analysis: UNION means several RETURNs, CALL and WITH mean the projection
+# is assembled elsewhere. The system prompt mandates plain
+# MATCH/WHERE/RETURN/LIMIT, so refusing these costs nothing the model
+# should be emitting, and it closes the bypass class instead of
+# enumerating members of it.
+#
+# Matched as whole words, and WITH only when not preceded by STARTS: a
+# bare " WITH " substring occurs inside "STARTS WITH", which is the very
+# predicate scoping requires.
+CYPHER_UNANALYSABLE_PATTERN = r"\bUNION\b|\bCALL\b|(?<!STARTS )\bWITH\b"
+# Separates a projection term from its alias.
+CYPHER_ALIAS_KEYWORD = " AS "
 CYPHER_POST_RETURN_KEYWORDS = (" ORDER BY", " SKIP ", " LIMIT ", " UNION")
 # An aggregate exposes no names, so a scoped request needs no evidence from
 # it -- and refusing one would make scoping useless for counting queries.

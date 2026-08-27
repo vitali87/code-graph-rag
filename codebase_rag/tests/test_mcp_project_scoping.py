@@ -601,6 +601,85 @@ class TestQuotedTextIsNotEvidence:
         assert requires_project_evidence(cypher, ALPHA)
 
 
+class TestOnlyTheSimpleShapeIsScopeable:
+    """Default-deny on STRUCTURE, not a list of known bypasses.
+
+    Four review rounds found four ways to satisfy a textual evidence check
+    while returning unattributable data: an alias containing the token, a
+    string literal, a comment, and a transformed projection. Two more used
+    UNION so that only the final branch was inspected. Enumerating them is
+    endless -- every Cypher construct not yet considered is a candidate.
+
+    So a SCOPED query must have the shape the prompt already mandates:
+    "MATCH, WHERE, RETURN, LIMIT" with plain aliased property reads. Any
+    other structure is refused rather than analysed. The model is told to
+    emit exactly this, so refusing the rest costs nothing it should be
+    producing, and it converts an open-ended class into a closed one.
+    """
+
+    @pytest.mark.parametrize(
+        "cypher",
+        [
+            # UNION: only the last branch was inspected, so an earlier one
+            # could return anything.
+            "MATCH (n) RETURN n.name AS name "
+            "UNION MATCH (m) RETURN m.qualified_name AS name",
+            # A transformed qualified name does not attribute its entity.
+            "MATCH (a),(b) RETURN a.qualified_name AS q, "
+            "left(b.qualified_name, 3) AS t, b.name AS n",
+            # Subqueries and WITH pipelines are equally unanalysed.
+            "CALL { MATCH (n) RETURN n.name AS name } RETURN name",
+            "MATCH (n) WITH n.name AS name RETURN name",
+        ],
+    )
+    def test_an_unrecognised_structure_is_refused_when_scoped(
+        self, cypher: str
+    ) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    @pytest.mark.parametrize(
+        "cypher",
+        [
+            "MATCH (n:Function) RETURN n.qualified_name AS qualified_name",
+            "MATCH (n:Function) RETURN n.qualified_name AS qualified_name, "
+            "n.name AS name, n.path AS path LIMIT 50",
+            "MATCH (a)-[r]->(b) RETURN a.qualified_name AS from_qn, "
+            "b.qualified_name AS to_qn",
+        ],
+    )
+    def test_the_shape_the_prompt_asks_for_is_accepted(self, cypher: str) -> None:
+        """The control, and the reason this is not simply a ban.
+
+        These are the forms the system prompt instructs the model to emit
+        -- MATCH/WHERE/RETURN/LIMIT with aliased property reads. If the
+        default-deny rule refused them it would break every scoped query,
+        which a leak-only test suite would not notice.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+    @pytest.mark.asyncio
+    async def test_an_unrecognised_structure_is_fine_unscoped(self) -> None:
+        """The other control: this restricts SCOPED requests only.
+
+        An unscoped caller asked for everything, so a UNION or a subquery
+        is none of this guard's business. Asserted through the HANDLER,
+        because that is where the scope decision lives -- asserting on
+        `requires_project_evidence` directly would say nothing, since the
+        handler never calls it when no project is given.
+        """
+        cypher = "MATCH (n) RETURN n.name AS name UNION MATCH (m) RETURN m.name AS name"
+        handler = _handler_returning([{"name": "x"}], query_used=cypher)
+
+        result = await handler.query_code_graph("everything")
+
+        assert not result.get("error"), result
+        assert result["results"] == [{"name": "x"}]
+
+
 class TestAnAggregateMustBeBoundToTheRequestedProject:
     """Restricting by *a* qualified name is not restricting to *yours*.
 

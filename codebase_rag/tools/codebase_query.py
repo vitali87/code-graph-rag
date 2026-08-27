@@ -42,6 +42,9 @@ _PROJECTED_QUALIFIED_NAME_RE = re.compile(
 # contributes properties without its qualified name can be spotted.
 _PROPERTY_READ_RE = re.compile(r"\b([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)")
 
+# Constructs a scoped query may not use, matched as whole words.
+_UNANALYSABLE_RE = re.compile(cs.CYPHER_UNANALYSABLE_PATTERN)
+
 # Text that returns nothing: quoted strings (a constant, not a read) and
 # comments (not executed). Blanked before textual analysis so neither is
 # mistaken for a property read.
@@ -123,8 +126,23 @@ def requires_project_evidence(
     of projects they never asked about. Restricting the match keeps
     counting usable without that leak.
     """
-    projection = _return_clause(_without_inert_text(cypher_query))
+    executable = _without_inert_text(cypher_query)
+    # DEFAULT-DENY ON STRUCTURE. Four review rounds found four ways to
+    # satisfy a textual evidence check while returning unattributable data,
+    # and two more used UNION so only the final branch was inspected.
+    # Enumerating bypasses is endless -- every construct not yet considered
+    # is a candidate -- so a scoped query must have the shape the prompt
+    # already mandates ("MATCH, WHERE, RETURN, LIMIT" with plain aliased
+    # property reads) and anything else is refused rather than analysed.
+    if _UNANALYSABLE_RE.search(executable.upper()):
+        return False
+    projection = _return_clause(executable)
     if not projection:
+        return False
+    # A projection term must be a bare property read or an aggregate over
+    # one. `left(b.qualified_name, 3)` mentions a qualified name without
+    # attributing `b`, so a transformed term cannot count as evidence.
+    if not _every_term_is_plain(projection):
         return False
     # A PROJECTED PROPERTY (`x.qualified_name`), not the bare token: an
     # ALIAS containing it -- `RETURN n.name AS qualified_name_of_thing` --
@@ -173,6 +191,30 @@ def _without_inert_text(cypher_query: str) -> str:
         return "".join("\n" if ch == "\n" else " " for ch in match.group(0))
 
     return _INERT_TEXT_RE.sub(_blank, cypher_query)
+
+
+def _every_term_is_plain(projection: str) -> bool:
+    """Whether every returned term is a bare property read or an aggregate.
+
+    `left(b.qualified_name, 3)` mentions a qualified name without
+    attributing `b` -- the value returned is a fragment, and the row filter
+    would judge the row on a string that is not a qualified name at all.
+
+    Aggregates are allowed because they name nobody; a bare alias with no
+    property read (a literal, a parameter) is allowed for the same reason.
+    """
+    for term in projection.split(cs.CHAR_COMMA):
+        reads = _PROPERTY_READ_RE.findall(term)
+        if not reads:
+            continue
+        if any(agg in term for agg in cs.CYPHER_AGGREGATE_TOKENS):
+            continue
+        entity, prop = reads[0]
+        # The term must be exactly `<entity>.<prop>`, optionally aliased.
+        bare = term.split(cs.CYPHER_ALIAS_KEYWORD, 1)[0].strip()
+        if bare != f"{entity}{cs.SEPARATOR_DOT}{prop}":
+            return False
+    return True
 
 
 def _every_projected_entity_is_attributable(projection: str) -> bool:
