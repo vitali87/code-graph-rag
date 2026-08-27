@@ -1298,12 +1298,53 @@ class CallResolver:
 
         return self._try_resolve_wildcard_imports(call_name, import_map)
 
+    def _php_target_for_namespace_import(self, imported_path: str) -> str | None:
+        """Map a PHP `use function A\\B\\c` target onto the qn that registers it.
+
+        CGR qualifies PHP by file path, so the import target `App.Text.format`
+        never equals the registered `project.text.format`. Previously that miss
+        dropped through to the simple-name trie, which binds to whichever
+        same-named function it reaches first -- so `use function App\\Text\\format`
+        could resolve to `App\\Money\\format` (issue #1185). A wrong edge, not a
+        missing one.
+
+        Splits the target into the namespace it names and the symbol within it,
+        then finds the module that DECLARED that namespace and looks the symbol
+        up there. PSR-4 maps a namespace prefix to a directory root, so the two
+        cannot be derived from one another -- the declaration is the only link.
+
+        Returns None rather than guessing whenever the answer is not unique:
+        no module declares the namespace, or several do (PHP permits one
+        namespace across many files, and two files may both define `format`).
+        The trie fallback then applies exactly as before, so this can only
+        replace an arbitrary binding with a determined one, never introduce a
+        new arbitrary one.
+        """
+        namespace, separator, symbol = imported_path.rpartition(cs.SEPARATOR_DOT)
+        if not separator or not namespace or not symbol:
+            return None
+        namespaces = self.import_processor.php_module_namespaces
+        matches = [
+            f"{module_qn}{cs.SEPARATOR_DOT}{symbol}"
+            for module_qn, declared in namespaces.items()
+            if declared == namespace
+        ]
+        found = [qn for qn in matches if qn in self.function_registry]
+        if len(found) != 1:
+            return None
+        return found[0]
+
     def _try_resolve_direct_import(
         self, call_name: str, import_map: dict[str, str]
     ) -> tuple[str, str] | None:
         if call_name not in import_map:
             return None
         imported_qn = import_map[call_name]
+        if imported_qn not in self.function_registry and (
+            php_qn := self._php_target_for_namespace_import(imported_qn)
+        ):
+            logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=php_qn)
+            return self.function_registry[php_qn], php_qn
         if imported_qn in self.function_registry:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=imported_qn)
             return self.function_registry[imported_qn], imported_qn

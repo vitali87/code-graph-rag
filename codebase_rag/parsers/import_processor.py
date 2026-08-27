@@ -476,6 +476,7 @@ class ImportProcessor:
         "commonjs_direct_exports",
         "conditional_imports",
         "php_function_imports",
+        "php_module_namespaces",
         "js_ts_bare_imports",
         "js_path_aliases",
         "stdlib_extractor",
@@ -689,6 +690,17 @@ class ImportProcessor:
         # Collections/functions.php), so these must resolve by simple name via the
         # trie rather than being judged external-import and suppressed.
         self.php_function_imports: dict[str, set[str]] = {}
+        # The `namespace Vendor\Pkg` a PHP module declares, keyed by module qn,
+        # stored dotted (`Vendor.Pkg`) to match how import targets are recorded.
+        #
+        # PHP namespaces and directory layout are INDEPENDENT: PSR-4 maps a
+        # namespace prefix to a directory root, so `Vendor\Pkg\helper` may live
+        # at any depth beneath it. Without this map a `use function
+        # App\Text\format` import cannot be matched to the file that declares
+        # `namespace App\Text`, so the call falls through to the simple-name
+        # trie and binds to whichever same-named function it reaches first --
+        # a WRONG edge rather than a missing one (issue #1185).
+        self.php_module_namespaces: dict[str, str] = {}
         # Local names brought in by a JS/TS import with a NON-STANDARD scheme
         # (`ext:deno_node/y`; see _has_aliased_scheme), keyed by module. Such a
         # specifier aliases first-party code but does not resolve to a file-path
@@ -870,6 +882,9 @@ class ImportProcessor:
         # Reset per-module PHP use-function state too, so a re-index that drops a
         # `use function` import does not leave a stale exemption behind.
         self.php_function_imports.pop(module_qn, None)
+        # A re-index that removes or edits the `namespace` declaration must not
+        # leave the old namespace bound to this module.
+        self.php_module_namespaces.pop(module_qn, None)
         self.js_ts_bare_imports.pop(module_qn, None)
 
         try:
@@ -899,7 +914,7 @@ class ImportProcessor:
                 case cs.SupportedLanguage.LUA:
                     self._parse_lua_imports(captures, module_qn)
                 case cs.SupportedLanguage.PHP:
-                    self._parse_php_imports(captures, module_qn)
+                    self._parse_php_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.CSHARP:
                     self._parse_csharp_imports(captures, module_qn)
                 case cs.SupportedLanguage.DART:
@@ -4050,7 +4065,46 @@ class ImportProcessor:
         }
     )
 
-    def _parse_php_imports(self, captures: dict, module_qn: str) -> None:
+    def _record_php_namespace(self, root_node: Node, module_qn: str) -> None:
+        """Bind this module to the `namespace` it declares, if any.
+
+        Walked from the root rather than read from the imports query, because
+        that query captures `namespace_use_declaration` only -- the `use`
+        statements -- and never `namespace_definition`. Widening the query
+        would change its capture contract for every consumer; this reads the
+        one node it needs.
+
+        Only TOP-LEVEL declarations count. PHP permits braced namespace blocks
+        and even several per file, but a nested or repeated declaration does
+        not identify "the namespace of this module", which is the only
+        question this map answers. Recording the first top-level one and
+        stopping is therefore deliberate rather than a simplification: a file
+        with two namespace blocks has no single answer, and guessing one would
+        produce exactly the confident-wrong binding this whole change exists
+        to remove.
+        """
+        for child in root_node.children:
+            if child.type != cs.TS_PHP_NAMESPACE_DEFINITION:
+                continue
+            name_node = child.child_by_field_name(cs.TS_FIELD_NAME)
+            if name_node is None or not name_node.text:
+                # `namespace { ... }` -- the explicit GLOBAL namespace. It has
+                # no name, and binding it to "" would make every unqualified
+                # lookup match it.
+                return
+            declared = safe_decode_with_fallback(name_node)
+            if not declared:
+                return
+            self.php_module_namespaces[module_qn] = declared.replace(
+                "\\", cs.SEPARATOR_DOT
+            )
+            return
+
+    def _parse_php_imports(
+        self, captures: dict, module_qn: str, root_node: Node | None = None
+    ) -> None:
+        if root_node is not None:
+            self._record_php_namespace(root_node, module_qn)
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
             cs.CAPTURE_IMPORT_FROM, []
         )
