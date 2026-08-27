@@ -259,6 +259,37 @@ def test_the_proximity_query_filters_on_the_declared_relationships() -> None:
     assert set(match.group(1).split("|")) == set(_PROXIMITY_RELS), match.group(1)
 
 
+def test_node_ids_are_parameterised_not_interpolated() -> None:
+    """Ids reach the engine as parameters, never as query text.
+
+    The fifth axis of this query's contract, and the one nothing else covered:
+    replacing the `$0, $1` placeholders with the ids interpolated directly
+    left all 17 other tests passing.
+
+    Node ids are internal integers rather than user input, so this is not
+    today an injection vector. It is still the property worth pinning, because
+    the alternative is invisible in every other assertion -- the generated
+    Cypher reads correctly, returns the same rows, and the module keeps
+    working. Nothing downstream would report the change.
+
+    Interpolation would also defeat query-plan caching: every distinct result
+    set produces a textually different query, so the engine re-plans each
+    call rather than reusing one plan with new parameters.
+
+    Asserts BOTH halves. That the placeholders are present, and that no id
+    appears literally in the text -- because a query could carry `$0` and
+    still interpolate the rest, and the placeholder check alone would pass.
+    """
+    node_ids = [4321, 8765]
+
+    query = build_proximity_query(node_ids)
+
+    assert "$0" in query, query
+    assert "$1" in query, query
+    for node_id in node_ids:
+        assert str(node_id) not in query, (node_id, query)
+
+
 def test_all_zero_degrees_leave_every_similarity_unchanged() -> None:
     """The `highest <= 0` guard, which no other test enters.
 
