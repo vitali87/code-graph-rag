@@ -18,6 +18,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
+from typing import Any
 
 from codebase_rag.types_defs import NODE_SCHEMAS
 from codec import schema_pb2 as pb
@@ -130,16 +132,16 @@ def _proto_fields(label: str) -> set[str] | None:
     return None if message is None else {field.name for field in message.fields}
 
 
-def test_every_declared_property_is_exported_or_declared_unexported() -> None:
-    """Default-deny: a new property must be exported or explicitly excluded.
+def _unexported_properties(schemas: Iterable[Any]) -> list[str]:
+    """Declared properties with no proto field and no exemption.
 
-    Reading the generated DESCRIPTORS rather than the `.proto` text, because a
-    text search answers "does this name appear in the file" -- which a comment
-    or an unrelated message satisfies -- and the question is "does this message
-    carry this field".
+    Extracted so a test can run the REAL comparison over a stand-in schema.
+    An inline copy inside a test would be a mirror -- mutating this function
+    would leave the copy passing, which is what the first attempt at covering
+    the missing-message branch actually did (#1491).
     """
     undeclared: list[str] = []
-    for schema in NODE_SCHEMAS:
+    for schema in schemas:
         label = schema.label.value
         fields = _proto_fields(label)
         if fields is None:
@@ -157,6 +159,18 @@ def test_every_declared_property_is_exported_or_declared_unexported() -> None:
         for prop in sorted(_declared_properties(schema.properties)):
             if prop not in fields and prop not in allowed:
                 undeclared.append(f"{label}.{prop}")
+    return undeclared
+
+
+def test_every_declared_property_is_exported_or_declared_unexported() -> None:
+    """Default-deny: a new property must be exported or explicitly excluded.
+
+    Reading the generated DESCRIPTORS rather than the `.proto` text, because a
+    text search answers "does this name appear in the file" -- which a comment
+    or an unrelated message satisfies -- and the question is "does this message
+    carry this field".
+    """
+    undeclared = _unexported_properties(NODE_SCHEMAS)
 
     assert not undeclared, (
         f"{len(undeclared)} node propert(ies) are declared in NODE_SCHEMAS but "
@@ -189,6 +203,20 @@ def test_a_label_without_a_proto_message_is_reported() -> None:
     # The paired positive: a real label resolves, so the None above is the
     # absence rather than the helper being inert.
     assert _proto_fields("Module") is not None
+
+    # And the COMPARISON must act on that None rather than skipping. Asserting
+    # on `_proto_fields` alone left the silent-skip revert PASSING, because no
+    # real label lacks a message -- so that assertion cannot reach the branch
+    # it is about. Calls the real function; an inline copy would be a mirror.
+    class _StandInSchema:
+        class label:  # noqa: N801 - mimics the NodeSchema attribute shape
+            value = "NoSuchNodeLabel"
+
+        properties = "{qualified_name: string}"
+
+    assert _unexported_properties([_StandInSchema()]) == [
+        "NoSuchNodeLabel (no proto message at all)"
+    ], "a label with no proto message must be reported, not skipped"
 
 
 def test_the_unexported_list_names_only_real_absences() -> None:
