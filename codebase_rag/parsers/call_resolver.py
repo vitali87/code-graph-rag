@@ -1304,7 +1304,9 @@ class CallResolver:
                 return None
             import_map = {}
 
-        if result := self._try_resolve_direct_import(call_name, import_map, language):
+        if result := self._try_resolve_direct_import(
+            call_name, import_map, language, module_qn
+        ):
             return result
 
         if result := self._try_resolve_qualified_call(
@@ -1396,24 +1398,53 @@ class CallResolver:
             return None
         return found[0]
 
+    def _is_php_function_import(self, call_name: str, module_qn: str | None) -> bool:
+        """Whether `call_name` arrived via `use function`, not a class `use`.
+
+        Returns False when `module_qn` is unknown rather than defaulting to
+        True: an unidentified module cannot demonstrate the import was a
+        function binding, and the fallback's whole purpose is to avoid
+        asserting a target it cannot justify. The trie fallback still applies,
+        so this can only decline to add an edge, never remove a correct one.
+        """
+        if module_qn is None:
+            return False
+        return call_name in self.import_processor.php_function_imports.get(
+            module_qn, frozenset()
+        )
+
     def _try_resolve_direct_import(
         self,
         call_name: str,
         import_map: dict[str, str],
         language: cs.SupportedLanguage | None = None,
+        module_qn: str | None = None,
     ) -> tuple[str, str] | None:
         if call_name not in import_map:
             return None
         imported_qn = import_map[call_name]
-        # Gated on the CALLER's language. The namespace map is keyed by module
-        # qn and holds only PHP modules, but the import targets it is matched
-        # against are dotted strings that any language can produce -- a JS
+        # Gated on the CALLER's language AND on the import being a
+        # `use function` binding.
+        #
+        # The language gate: the namespace map is keyed by module qn and holds
+        # only PHP modules, but the import targets it is matched against are
+        # dotted strings that any language can produce -- a JS
         # `import { format } from ...` recorded as `App.Text.format` would
         # resolve straight into a PHP function. Reproduced in review on #1484:
         # a JavaScript caller bound to a PHP target, an edge across languages
         # that no source expressed.
+        #
+        # The `use function` gate: PHP keeps classes and functions in SEPARATE
+        # symbol tables, so `use App\Text\format` imports a CLASS while
+        # `use function App\Text\format` imports a function. Without this, a
+        # class or constant import whose name happens to match a registered
+        # PHP function resolved to that function -- also reproduced in review,
+        # and it SURVIVED the language gate because the caller is PHP. The two
+        # are independent axes. `php_function_imports` already records which
+        # local names arrived via `use function`, so this needs no new parsing.
         if (
             language == cs.SupportedLanguage.PHP
+            and self._is_php_function_import(call_name, module_qn)
             and imported_qn not in self.function_registry
             and (php_qn := self._php_target_for_namespace_import(imported_qn))
         ):

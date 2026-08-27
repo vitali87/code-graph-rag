@@ -240,6 +240,78 @@ def test_a_reindex_replaces_the_recorded_namespace(tmp_path: Path) -> None:
     )
 
 
+def test_a_class_use_does_not_resolve_to_a_php_function(tmp_path: Path) -> None:
+    """`use App\\Text\\format` is a CLASS import and must not bind a function.
+
+    PHP keeps classes and functions in separate symbol tables: `use X` imports
+    a class, `use function X` imports a function. Without the distinction, a
+    class or constant import whose name happens to match a registered PHP
+    function resolved to that function.
+
+    Reproduced in review on #1484, and it survived the caller-language guard
+    because the caller IS PHP -- the language gate and the binding-kind gate
+    are independent axes, and covering one said nothing about the other.
+
+    `php_function_imports` already records which local names arrived via
+    `use function`, so the distinction needs no new parsing.
+    """
+    from codebase_rag.parsers.call_resolver import CallResolver
+
+    resolver = object.__new__(CallResolver)
+    resolver.import_processor = SimpleNamespace(
+        php_module_namespaces={"proj.text": "App.Text"},
+        commonjs_direct_exports={},
+        # The caller imported the name, but NOT via `use function`.
+        php_function_imports={"proj.caller": set()},
+    )
+    resolver.function_registry = _registry({"proj.text.format": "Function"})
+    import_map = {"format": "App.Text.format"}
+
+    assert (
+        resolver._try_resolve_direct_import(
+            "format", import_map, cs.SupportedLanguage.PHP, "proj.caller"
+        )
+        is None
+    ), (
+        "a class-style `use App\\Text\\format` resolved to the PHP FUNCTION "
+        "`format`; PHP holds classes and functions in separate symbol tables, "
+        "so this is an edge the source never expressed"
+    )
+
+    # The paired positive: recording it as a `use function` binding DOES
+    # resolve, so the None above is the binding-kind gate rather than the
+    # fallback being switched off.
+    resolver.import_processor.php_function_imports = {"proj.caller": {"format"}}
+    assert resolver._try_resolve_direct_import(
+        "format", import_map, cs.SupportedLanguage.PHP, "proj.caller"
+    ) == (NodeType.FUNCTION, "proj.text.format")
+
+
+def test_an_unknown_caller_module_does_not_resolve(tmp_path: Path) -> None:
+    """No `module_qn` means the binding kind cannot be shown, so decline.
+
+    Defaulting to True when the module is unknown would reinstate the class-use
+    defect wherever the caller module is not threaded through. Declining costs
+    only the trie fallback, which is where such calls went before this feature.
+    """
+    from codebase_rag.parsers.call_resolver import CallResolver
+
+    resolver = object.__new__(CallResolver)
+    resolver.import_processor = SimpleNamespace(
+        php_module_namespaces={"proj.text": "App.Text"},
+        commonjs_direct_exports={},
+        php_function_imports={"proj.caller": {"format"}},
+    )
+    resolver.function_registry = _registry({"proj.text.format": "Function"})
+
+    assert (
+        resolver._try_resolve_direct_import(
+            "format", {"format": "App.Text.format"}, cs.SupportedLanguage.PHP, None
+        )
+        is None
+    )
+
+
 def test_a_mixed_case_import_resolves_like_php_does(tmp_path: Path) -> None:
     """`use function app\\text\\FORMAT` binds to `App\\Text\\format`.
 
@@ -328,6 +400,8 @@ def test_a_non_php_caller_never_resolves_through_php_namespaces(
         # The non-PHP path falls through to the commonjs lookup, so the double
         # must carry it or the test fails on the fixture rather than the guard.
         commonjs_direct_exports={},
+        # `use function` bindings, which the PHP path now requires.
+        php_function_imports={"proj.caller": {"format"}},
     )
     resolver.function_registry = _registry({"proj.text.format": "Function"})
     import_map = {"format": "App.Text.format"}
@@ -339,15 +413,18 @@ def test_a_non_php_caller_never_resolves_through_php_namespaces(
         None,
     ):
         assert (
-            resolver._try_resolve_direct_import("format", import_map, language) is None
+            resolver._try_resolve_direct_import(
+                "format", import_map, language, "proj.caller"
+            )
+            is None
         ), (
             f"a {language} caller resolved through the PHP namespace map to a "
             "PHP function; the fallback must be gated on the caller's language"
         )
 
     assert resolver._try_resolve_direct_import(
-        "format", import_map, cs.SupportedLanguage.PHP
-    ) == ("Function", "proj.text.format"), (
+        "format", import_map, cs.SupportedLanguage.PHP, "proj.caller"
+    ) == (NodeType.FUNCTION, "proj.text.format"), (
         "the PHP caller stopped resolving too, so the guard disabled the "
         "feature rather than scoping it"
     )
