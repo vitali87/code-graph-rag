@@ -61,6 +61,13 @@ DOCUMENT_EXTENSIONS: frozenset[str] = frozenset({".md", ".markdown"})
 # does not parse YAML -- so the pairs are read here.
 _FRONT_MATTER_FENCE = "---"
 
+# `key: |` and `key: >` introduce a block scalar whose value is the indented
+# text beneath, which this parser skips. The marker is not the value.
+_BLOCK_SCALAR_MARKERS: frozenset[str] = frozenset({"|", ">", "|-", ">-", "|+", ">+"})
+
+# `[a, b]` and `{k: v}` are YAML flow collections: structures on one line.
+_FLOW_COLLECTION_OPENERS: frozenset[str] = frozenset({"[", "{"})
+
 # Property names a document may NOT declare, because the ingestion layer owns
 # them. A front-matter `path:` would otherwise overwrite the node's real path
 # and break every consumer that resolves a Module back to a file.
@@ -131,7 +138,20 @@ def parse_front_matter(text: str) -> dict[str, str]:
         # as an empty string would assert the author declared it empty, which
         # is a different claim from declaring a structure this parser does
         # not represent.
-        if not value.strip():
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        # A BLOCK SCALAR marker (`key: |` / `key: >`) says the value is the
+        # indented text below, which this parser skips as nested. Storing the
+        # marker records "|" as the value -- punctuation mistaken for content,
+        # with the real text silently dropped.
+        if cleaned in _BLOCK_SCALAR_MARKERS:
+            continue
+        # A FLOW COLLECTION (`[a, b]` / `{k: v}`) is a structure written on one
+        # line. Storing its source text makes a list indistinguishable from a
+        # string that happens to look like one, and no consumer can tell which
+        # it was meant to be.
+        if cleaned[:1] in _FLOW_COLLECTION_OPENERS:
             continue
         # `partition` splits at the FIRST colon only, so a value containing
         # further colons (`url: https://x/y`) survives intact.

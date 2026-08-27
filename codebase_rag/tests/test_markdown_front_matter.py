@@ -151,6 +151,44 @@ class TestParsing:
         """
         assert parse_front_matter("---\ntags:\n  - a\n  - b\n---\n") == {}
 
+    def test_a_flow_collection_is_not_stored_as_a_scalar(self) -> None:
+        """`[a, b]` and `{k: v}` are structures written on one line.
+
+        Storing the source text makes a list indistinguishable from a string
+        that happens to look like one, and no consumer can recover which was
+        meant. Reported on #1488.
+        """
+        assert parse_front_matter("---\ntags: [a, b]\n---\n") == {}
+        assert parse_front_matter("---\nmeta: {k: v}\n---\n") == {}
+
+    def test_a_block_scalar_marker_is_not_the_value(self) -> None:
+        """`key: |` stores the MARKER, not the text beneath it.
+
+        The worst of the collection cases: the value became the literal string
+        `"|"` -- punctuation mistaken for content -- while the actual text was
+        silently dropped, because this parser skips the indented lines that
+        carry it.
+
+        All six markers are covered: `|` and `>` with the chomping variants
+        `-` and `+`, since a parser matching only the bare forms leaves four
+        spellings storing punctuation.
+        """
+        for marker in ("|", ">", "|-", ">-", "|+", ">+"):
+            assert parse_front_matter(
+                f"---\nnote: {marker}\n  text\n---\n"
+            ) == {}, marker
+
+    def test_a_value_that_merely_contains_a_bracket_is_kept(self) -> None:
+        """The control: only a LEADING bracket opens a collection.
+
+        Without this the guard could reject any value containing punctuation,
+        which would silently drop ordinary metadata -- a fix worse than the
+        defect.
+        """
+        assert parse_front_matter("---\ntitle: Draft [v2]\n---\n") == {
+            "title": "Draft [v2]"
+        }
+
     def test_an_empty_key_is_refused(self) -> None:
         """`: value` names nothing and must not become a property.
 
