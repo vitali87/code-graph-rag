@@ -1651,11 +1651,15 @@ def prompt_for_unignored_directories(
 
 def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
     """Fail fast at startup when a model role is misconfigured."""
-    from .providers.base import get_provider_from_config
+    from .providers.base import get_provider_from_config, validate_model_id
 
     try:
         provider = get_provider_from_config(config)
         provider.validate_config()
+        # Credentials only get you as far as a 404: `validate_config` takes
+        # no model id, so a typo used to surface as a raw provider error at
+        # the first query instead of here (issue #1492).
+        validate_model_id(config)
     except Exception as e:
         raise ValueError(ex.CONFIG.format(role=role.value.title(), error=e)) from e
 

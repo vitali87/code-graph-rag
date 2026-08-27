@@ -46,6 +46,28 @@ OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
 
+# The endpoint each provider serves its own published catalogue from. A
+# config pointing somewhere else (vLLM, an OpenAI-compatible proxy) serves
+# whatever that host chooses, so model-id validation does not apply to it.
+# Providers absent here have no single canonical endpoint and are never
+# gated on model id.
+PROVIDER_DEFAULT_ENDPOINTS: dict[str, str] = {
+    Provider.OPENAI: OPENAI_DEFAULT_ENDPOINT,
+    Provider.MINIMAX: MINIMAX_DEFAULT_ENDPOINT,
+}
+
+# Catalogue prefixes to consult per provider, where pydantic-ai splits one
+# vendor across several. `openai-chat` carries five ids absent from
+# `openai` (the search-preview variants and gpt-3.5-turbo-16k), so
+# consulting only `openai:` would reject real models.
+PROVIDER_CATALOGUE_PREFIXES: dict[str, tuple[str, ...]] = {
+    Provider.OPENAI: ("openai", "openai-chat"),
+    Provider.GOOGLE: ("google", "google-cloud"),
+}
+
+# How many model ids to list when nothing resembles what the user typed.
+MODEL_ID_SUGGESTION_LIMIT = 20
+
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"

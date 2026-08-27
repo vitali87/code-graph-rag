@@ -18,6 +18,9 @@ ARG_DRY_RUN = "dry_run"
 
 SEPARATOR_DOT = "."
 SEPARATOR_SLASH = "/"
+# Splits "provider:model" both in user-supplied settings and in the model
+# names pydantic-ai enumerates.
+MODEL_STRING_SEPARATOR = ":"
 # Disambiguates definitions that share one qualified name (if/else import
 # fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
 DUP_QN_MARKER = "@"
