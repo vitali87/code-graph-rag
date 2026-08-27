@@ -75,11 +75,43 @@ class FrameContext(NamedTuple):
     flow_sources: tuple[str, ...]
 
 
+class FrameResolutionRate(NamedTuple):
+    """How much of a traceback the graph could actually anchor (issue #227).
+
+    Named for the frames it counts rather than "resolution stats", because
+    `trace.resolution.ResolutionStats` is already imported here and counts
+    something else entirely -- the resolver's internal attempts for ONE frame.
+    Shadowing it silently broke `_resolve_stack`.
+
+    Per-frame ``unresolved_reason`` says WHICH frames failed to resolve; this
+    says HOW MANY, which is what decides whether a report is worth acting on.
+    A stack where one frame in three resolved and one where all three did are
+    different artefacts, and without the aggregate they read alike.
+    """
+
+    total: int
+    resolved: int
+
+    @property
+    def rate(self) -> float:
+        """Resolved frames over ALL frames, 0.0 when there are none.
+
+        The denominator is every frame in the traceback, including those
+        outside the repository. Dividing by the resolved count instead would
+        report 1.0 for every report ever produced, and skipping unresolved
+        frames would hide exactly the gap this measures. An empty stack
+        resolves nothing, so it scores 0.0 rather than a vacuous 1.0 -- the
+        same trap as an average over no cases.
+        """
+        return self.resolved / self.total if self.total else 0.0
+
+
 class TracebackReport(NamedTuple):
     exception_type: str
     exception_message: str
     frames: tuple[FrameContext, ...]
     flow_gaps: tuple[str, ...]
+    resolution: FrameResolutionRate
 
 
 class RootCause(NamedTuple):
@@ -251,6 +283,19 @@ def explain_traceback(
         exception_message=parsed.exception_message,
         frames=tuple(contexts),
         flow_gaps=graph.flow_gaps,
+        resolution=FrameResolutionRate(
+            total=len(contexts),
+            # Keyed on `qualified_name`, NOT on `unresolved_reason is None`.
+            # Today the two agree, because every failure path in
+            # `FrameResolver.resolve` records a reason before returning None.
+            # But `_resolve_stack` derives the reason with
+            # `next(iter(stats.unresolved), None)`, so a future failure path
+            # that forgets to record one would yield reason=None with no
+            # qualified name -- and the other predicate would then count an
+            # unresolvable frame as resolved. The qualified name is what the
+            # rate is ABOUT; the reason is diagnostic text alongside it.
+            resolved=sum(1 for frame in contexts if frame.qualified_name is not None),
+        ),
     )
 
 

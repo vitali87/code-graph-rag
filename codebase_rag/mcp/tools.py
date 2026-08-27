@@ -531,6 +531,13 @@ class MCPToolsRegistry:
             "exception_message": report.exception_message,
             "frames": [frame._asdict() for frame in report.frames],
             "flow_gaps": list(report.flow_gaps),
+            # `rate` is a property, so `_asdict()` omits it; mapped explicitly
+            # because the ratio is the number the caller acts on (issue #227).
+            "resolution": {
+                "total": report.resolution.total,
+                "resolved": report.resolution.resolved,
+                "rate": report.resolution.rate,
+            },
         }
 
     async def rank_root_causes(self, traceback_text: str) -> dict:
