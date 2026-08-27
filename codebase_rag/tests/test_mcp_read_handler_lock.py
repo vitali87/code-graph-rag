@@ -91,11 +91,12 @@ _NON_GRAPH_HANDLERS = frozenset(
     }
 )
 
-# `find_duplicate_code` and `get_function_source` are deliberately ABSENT.
-# Issue #1471 states they "were brought into line in #1443", but that PR is
-# still OPEN -- the names appear in tools.py without being async handlers, so
-# listing them here would make the control below fail on a premise that has
-# not landed. Add them when #1443 merges; the control is what will say so.
+# `find_duplicate_code` and `get_function_source` were absent from the list
+# above while #1443 was unmerged: the names appeared in tools.py without being
+# async handlers, so naming them would have failed
+# `test_every_named_handler_actually_exists` on a premise that had not landed.
+# This branch IS #1443, so they are async handlers here and are now listed.
+# The control is what said when to add them.
 
 # Handlers that mutate and already hold the lock; included so the test fails
 # if one ever loses it.
