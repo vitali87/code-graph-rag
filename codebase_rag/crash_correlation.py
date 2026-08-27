@@ -134,6 +134,19 @@ class ArityError(NamedTuple):
     missing: tuple[str, ...] = ()
 
 
+# Sentinel for "the caller cannot tell positional parameters from keyword-only
+# ones". Distinct from `()`, which asserts a function genuinely declares NO
+# parameters -- a claim, where this is the absence of one.
+#
+# Needed because the graph stores no parameter data at all today (Function
+# nodes carry path, name, qualified_name, line/col bounds, decorators,
+# docstring, modifiers, is_exported, is_macro -- and nothing else), so every
+# in-repo caller is currently in this position. When ingestion grows the
+# field, callers that can separate the kinds pass the positional names and
+# get a real verdict.
+_ARITY_KINDS_UNKNOWN: tuple[str, ...] = ("\x00unknown",)
+
+
 class ArityVerdict(NamedTuple):
     """What the graph's stored signature says about a parsed arity error.
 
@@ -206,11 +219,20 @@ def diagnose_arity(
     report a mismatch on CORRECT code -- turning a diagnostic aid into a
     source of false accusations, which is worse than no diagnosis.
 
-    The graph stores `self` as a declared parameter, so the counts already
-    agree; `is_method` is threaded through so that a caller storing
-    parameters WITHOUT the receiver is handled explicitly rather than by
-    coincidence.
+    `declared` must contain POSITIONAL parameters only. Names are not enough
+    to tell kinds apart: `def only_kw(*, a)` reports "takes 0 positional
+    arguments" while its declared names are `("a",)`, so counting every name
+    as positional produces `confirmed=False` on correct code -- the same false
+    accusation the `self` handling exists to prevent (reported on #1485).
+
+    A caller that cannot separate the kinds must pass
+    `declared=_ARITY_KINDS_UNKNOWN` rather than guessing. The verdict is then
+    `confirmed=False` with `declared_count=-1`, which reads as "the graph
+    cannot corroborate this" instead of "the graph disagrees". Those are
+    different claims and only one of them is true.
     """
+    if declared == _ARITY_KINDS_UNKNOWN:
+        return ArityVerdict(declared_count=-1, confirmed=False)
     declared_count = len(declared)
     if is_method and (not declared or declared[0] not in {"self", "cls"}):
         # A method whose stored parameters omit the receiver: add it back so

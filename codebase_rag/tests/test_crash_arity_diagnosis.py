@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from codebase_rag.crash_correlation import parse_arity_error
+from codebase_rag.crash_correlation import diagnose_arity, parse_arity_error
 
 
 class TestParsingRealMessages:
@@ -225,6 +225,68 @@ class TestDiagnosis:
         assert verdict is not None
         assert verdict.declared_count == 2
         assert verdict.confirmed is True
+
+    def test_keyword_only_parameters_must_not_be_counted_as_positional(self) -> None:
+        """`def only_kw(*, a)` declares one name and ZERO positional arguments.
+
+        CPython reports "takes 0 positional arguments but 1 was given". Passing
+        the bare names `("a",)` counts 1, so the verdict would be
+        `confirmed=False` -- a false graph mismatch on CORRECT code, which is
+        the same false accusation the `self` handling exists to prevent
+        (reported on #1485).
+
+        Names cannot distinguish the kinds: `(*, a)` and `(a)` both declare the
+        name `a`. So the caller must pass POSITIONAL names only, and this test
+        pins the contract from the correct side -- zero positional names give
+        a confirming verdict.
+        """
+        parsed = parse_arity_error(
+            "only_kw() takes 0 positional arguments but 1 was given"
+        )
+        assert parsed is not None
+
+        verdict = diagnose_arity(parsed, declared=(), is_method=False)
+
+        assert verdict is not None
+        assert verdict.declared_count == 0
+        assert verdict.confirmed is True, (
+            "a keyword-only function whose POSITIONAL parameters are correctly "
+            "empty was reported as disagreeing with a message that says the "
+            "same thing"
+        )
+
+    def test_unknown_parameter_kinds_decline_rather_than_accuse(self) -> None:
+        """"Cannot corroborate" and "disagrees" are different claims.
+
+        The graph stores no parameter data today, so every in-repo caller is
+        in this position. Returning `confirmed=False` with a real
+        `declared_count` would read as the graph CONTRADICTING the traceback,
+        which is a stronger statement than the data supports.
+
+        The sentinel yields `declared_count=-1`, distinguishable from any real
+        count, so a consumer cannot mistake it for a signature comparison that
+        actually happened.
+        """
+        from codebase_rag.crash_correlation import _ARITY_KINDS_UNKNOWN
+
+        parsed = parse_arity_error(
+            "take_two() takes 2 positional arguments but 3 were given"
+        )
+        assert parsed is not None
+
+        verdict = diagnose_arity(
+            parsed, declared=_ARITY_KINDS_UNKNOWN, is_method=False
+        )
+
+        assert verdict is not None
+        assert verdict.declared_count == -1
+        assert verdict.confirmed is False
+
+        # The control: an EMPTY tuple is a real claim (no positional
+        # parameters) and must NOT be treated as unknown.
+        empty = diagnose_arity(parsed, declared=(), is_method=False)
+        assert empty is not None
+        assert empty.declared_count == 0
 
     def test_a_disagreeing_signature_is_reported_unconfirmed(self) -> None:
         """The graph's signature not matching the message is itself a finding.
