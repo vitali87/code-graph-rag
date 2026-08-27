@@ -136,6 +136,56 @@ def test_the_weight_bounds_how_far_proximity_can_move_a_result() -> None:
     assert boosted.score == 0.5 + DEFAULT_PROXIMITY_WEIGHT
 
 
+def test_proximity_is_proportional_to_degree_not_mere_connectedness() -> None:
+    """Degree must decide the order, not the yes/no fact of having an edge.
+
+    The module ranks a hit by HOW connected it is to the rest of the result
+    set. An implementation that gave every node with any in-set edge the same
+    flat boost would rank by WHETHER it is connected -- a different quantity,
+    and the same membership-vs-degree confusion as #1474.
+
+    Every other test in this file uses a fixture where the two agree: one
+    connected node and one isolated, where the connected node's normalised
+    degree is 1.0 and the flat boost is also 1.0. So the whole suite passed
+    against the flat-boost implementation (issue #1481).
+
+    The shape that separates them is TWO nodes with DIFFERENT non-zero degrees
+    whose relative order depends on the difference. Similarities are chosen so
+    the two implementations disagree about the ORDER, not merely the scores:
+
+        flat boost:      1 -> 0.80 + 0.25   = 1.05    2 -> 0.70 + 0.25 = 0.95
+        degree-weighted: 1 -> 0.80 + 0.0625 = 0.8625  2 -> 0.70 + 0.25 = 0.95
+
+    so a correct implementation returns [2, 1] and the flat one returns [1, 2].
+    Asserting the order rather than the scores keeps the test meaningful if
+    DEFAULT_PROXIMITY_WEIGHT is ever retuned.
+    """
+    ingestor = _ingestor({1: 1, 2: 4})
+
+    ranked = rerank_by_graph_proximity(ingestor, [(1, 0.80), (2, 0.70)])
+
+    assert [hit.node_id for hit in ranked] == [2, 1], [
+        (h.node_id, h.similarity, h.proximity, h.score) for h in ranked
+    ]
+
+
+def test_proximity_scales_between_two_connected_nodes() -> None:
+    """The weaker node gets a strictly smaller boost, not an equal one.
+
+    Pairs with the ordering test above: that one pins the consequence, this
+    one pins the mechanism. A flat-boost implementation gives both nodes
+    proximity 1.0, so the strict inequality is what fails.
+    """
+    ingestor = _ingestor({1: 1, 2: 4})
+
+    ranked = rerank_by_graph_proximity(ingestor, [(1, 0.5), (2, 0.5)])
+    proximity = {hit.node_id: hit.proximity for hit in ranked}
+
+    assert proximity[2] == 1.0, proximity
+    assert 0.0 < proximity[1] < 1.0, proximity
+    assert proximity[1] == 0.25, proximity
+
+
 def test_containment_edges_are_excluded_deliberately() -> None:
     """CONTAINS_* cannot contribute, so its absence is a fact not an oversight.
 
