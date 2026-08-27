@@ -131,9 +131,9 @@ class TestParsing:
         only" while the code took every line with a colon -- the contract and
         the implementation disagreed (reported on #1488).
         """
-        assert parse_front_matter(
-            "---\nparent:\n  child: v\npurpose: p\n---\n"
-        ) == {"purpose": "p"}
+        assert parse_front_matter("---\nparent:\n  child: v\npurpose: p\n---\n") == {
+            "purpose": "p"
+        }
 
     def test_a_comment_line_declares_nothing(self) -> None:
         """`# note: x` would otherwise become the key `# note`."""
