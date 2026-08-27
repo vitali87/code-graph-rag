@@ -18,8 +18,11 @@
 # to a `minus_metadata` node, which `document_tier` currently ignores.
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 
 from codebase_rag.parsers.document_tier import parse_front_matter
 
@@ -131,7 +134,22 @@ class TestParsing:
 
 
 class TestIngestion:
-    """The declared metadata must reach the Module node."""
+    """The declared metadata must reach the Module node.
+
+    Guarded on the grammar, unlike `TestParsing` above. These two index a
+    fixture through the real updater, so without `tree_sitter_markdown` no
+    Module node is emitted at all and both fail with "no Module node emitted"
+    -- a missing optional dependency reported as a product defect.
+
+    The parser tests are deliberately NOT guarded: they are pure string
+    handling and must run on the base install, which is where the contract
+    they pin is easiest to break unnoticed.
+    """
+
+    pytestmark = pytest.mark.skipif(
+        importlib.util.find_spec("tree_sitter_markdown") is None,
+        reason="markdown grammar ships in the treesitter-full extra",
+    )
 
     def test_front_matter_becomes_module_properties(
         self, temp_repo: Path, mock_ingestor: MagicMock
