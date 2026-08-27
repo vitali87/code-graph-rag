@@ -67,6 +67,38 @@ class TestParsing:
         """
         assert parse_front_matter("Title\n---\n\nBody.\n") == {}
 
+    def test_a_fenced_block_below_the_first_line_is_not_front_matter(self) -> None:
+        """Front-matter must open on line 1; a later fenced pair is prose.
+
+        Found by mutation: removing the `lines[0]` check left all 10 tests
+        passing, because the existing delimiter test uses a document with no
+        CLOSING fence -- so the unterminated-block guard caught it and the
+        position guard was never exercised.
+
+        This document has a well-formed fenced pair further down, which a
+        position-blind parser reads as metadata. It is a horizontal rule
+        around a quote, and its contents are body text.
+        """
+        assert parse_front_matter(
+            "# Title\n\n---\npurpose: not-metadata\n---\n\nBody.\n"
+        ) == {}
+
+    def test_a_reserved_key_cannot_overwrite_an_identity_property(self) -> None:
+        """A document may not declare `path:` or `qualified_name:`.
+
+        Found by mutation: dropping the reserved-key check changed nothing,
+        because no fixture declared one. Without it a document could rename
+        its own node or point it at another file, and every consumer that
+        resolves a Module back to a file would follow the document's claim
+        rather than the filesystem.
+
+        The surrounding valid pairs still survive, so one hostile or mistaken
+        key does not discard the rest.
+        """
+        assert parse_front_matter(
+            "---\npath: /etc/passwd\nqualified_name: other.module\npurpose: p\n---\n"
+        ) == {"purpose": "p"}
+
     def test_an_unterminated_block_yields_nothing(self) -> None:
         """No closing delimiter means the block never ends.
 
