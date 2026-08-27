@@ -168,12 +168,33 @@ def test_resolution_rate_counts_only_the_frames_that_resolved(tmp_path):
     frames, or skipping unresolved ones entirely, both of which are the
     plausible mistakes here and both of which return 1.0 or a rate over a
     denominator that hides the gap.
+
+    The ratio is 2/5, chosen because it collides with NOTHING. The obvious
+    fixture is one library frame and one repo frame, giving 0.5 -- and at
+    `total=2, resolved=1` six formulas all produce 0.5: the correct one,
+    `1 - resolved/total` (the INVERTED rate, which reports failure while
+    looking like success), `unresolved/total`, `1/total`,
+    `resolved/(resolved+1)` and a hardcoded `resolved/2`. The assertion would
+    hold for five wrong implementations.
+
+    2/5 is also not 1/3, which still collides with `1/total`. Other tests here
+    do catch these collectively, via the fully-resolved and nothing-resolved
+    cases -- but a guard that discriminates only with help from its siblings
+    loses its coverage the moment one is weakened, and nothing records which
+    test was load-bearing.
     """
+    src = (tmp_path / "app" / "service.py").as_posix()
     text = (
         "Traceback (most recent call last):\n"
         '  File "/usr/lib/python3.12/site-packages/lib.py", line 5, in call\n'
         "    fn()\n"
-        f'  File "{(tmp_path / "app" / "service.py").as_posix()}", line 10, in handle\n'
+        '  File "/usr/lib/python3.12/json/decoder.py", line 9, in decode\n'
+        "    raise err\n"
+        '  File "/usr/lib/python3.12/json/__init__.py", line 3, in loads\n'
+        "    return _default_decoder.decode(s)\n"
+        f'  File "{src}", line 16, in dispatch\n'
+        "    return handle(cfg)\n"
+        f'  File "{src}", line 10, in handle\n'
         "    return cfg.timeout\n"
         "AttributeError: 'NoneType' object has no attribute 'timeout'\n"
     )
@@ -181,9 +202,9 @@ def test_resolution_rate_counts_only_the_frames_that_resolved(tmp_path):
 
     report = explain_traceback(fetch_all, _P, tmp_path, text)
 
-    assert report.resolution.total == 2
-    assert report.resolution.resolved == 1
-    assert report.resolution.rate == 0.5
+    assert report.resolution.total == 5
+    assert report.resolution.resolved == 2
+    assert report.resolution.rate == 0.4
 
 
 def test_resolution_counts_the_qualified_name_not_the_absence_of_a_reason(

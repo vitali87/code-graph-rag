@@ -105,11 +105,12 @@ async def test_explain_traceback_exposes_the_resolution_rate_over_mcp(tmp_path):
     passed all four tests before this fixture gained a library frame. The
     illustrative case and the discriminating case are different cases.
 
-    TWO unresolvable frames rather than one, so the ratio is 1/3 rather than
-    1/2. At `total=2, resolved=1` the correct `resolved/total` collides
-    numerically with `1 - resolved/total`, `unresolved/total`,
-    `resolved/(resolved+1)` and `1/total` -- all five yield 0.5, so the
-    assertion would hold for four wrong formulas. 1/3 separates them.
+    The ratio is 2/5, which collides with nothing. At `total=2, resolved=1`
+    six formulas all yield 0.5 -- the correct one, the INVERTED
+    `1 - resolved/total`, `unresolved/total`, `1/total`,
+    `resolved/(resolved+1)` and a hardcoded `resolved/2` -- so the assertion
+    would hold for five wrong implementations. 1/3 is better but still
+    collides with `1/total`.
     """
     registry = _registry(tmp_path)
     src = (tmp_path / "app" / "service.py").as_posix()
@@ -119,6 +120,10 @@ async def test_explain_traceback_exposes_the_resolution_rate_over_mcp(tmp_path):
         "    fn()\n"
         '  File "/usr/lib/python3.12/json/decoder.py", line 9, in decode\n'
         "    raise err\n"
+        '  File "/usr/lib/python3.12/json/__init__.py", line 3, in loads\n'
+        "    return _default_decoder.decode(s)\n"
+        f'  File "{src}", line 16, in dispatch\n'
+        "    return handle(cfg)\n"
         f'  File "{src}", line 10, in handle\n'
         "    return cfg.timeout\n"
         "AttributeError: 'NoneType' object has no attribute 'timeout'\n"
@@ -126,7 +131,7 @@ async def test_explain_traceback_exposes_the_resolution_rate_over_mcp(tmp_path):
 
     result = await registry.explain_traceback(traceback_text=text)
 
-    assert result["resolution"] == {"total": 3, "resolved": 1, "rate": 1 / 3}
+    assert result["resolution"] == {"total": 5, "resolved": 2, "rate": 0.4}
 
 
 async def test_rank_root_causes_returns_ranked_candidates(tmp_path):
