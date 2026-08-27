@@ -350,14 +350,20 @@ def test_a_self_loop_contributes_nothing_in_both_implementations() -> None:
     evaluated = _degrees_via_eval_adjacency(rels, in_set)
 
     assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
-    assert "rec" not in shipped, shipped
+    # Pinned absolutely, not only as "rec is absent". Agreement between the two
+    # mirrors is satisfied by a SHARED error -- multiplying both by a constant
+    # keeps them equal and keeps `rec` absent, so both halves of the weaker
+    # assertion hold while every degree is wrong. Verified: scaling both
+    # mirrors by 7 left this test green before the absolute pin was added.
+    assert shipped == {"a": 1, "b": 1}, shipped
 
 
 def test_containment_edges_change_no_degree_in_either_implementation() -> None:
     """CONTAINS_* is excluded from the shipped query; the eval must match.
 
-    Pinned by comparison rather than by asserting the constant, so that adding
-    a relationship type to one path and not the other fails here.
+    Pinned by comparison AND absolutely. Comparison alone catches a change to
+    one path only; the absolute value is what catches a change to BOTH, which
+    agreement cannot see -- two mirrors sharing an error agree perfectly.
     """
     rels = [
         ("mod", "CONTAINS_FILE", "a"),
@@ -370,7 +376,7 @@ def test_containment_edges_change_no_degree_in_either_implementation() -> None:
     evaluated = _degrees_via_eval_adjacency(rels, in_set)
 
     assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
-    assert "mod" not in shipped, shipped
+    assert shipped == {"a": 1, "b": 1}, shipped
 
 
 def test_the_two_implementations_agree_over_a_mixed_graph() -> None:
@@ -380,9 +386,10 @@ def test_the_two_implementations_agree_over_a_mixed_graph() -> None:
     containment edge, and an unrelated relationship type. Any single-path
     change to the proximity model breaks the equality.
 
-    At most ONE counted edge joins any pair here -- see
-    `test_a_multi_edge_pair_is_a_known_divergence` for why that restriction is
-    load-bearing rather than incidental.
+    At most ONE counted edge joins any pair here, so every in-set node has
+    degree exactly 2 -- one per other in-set node. See
+    `test_distinct_relationship_types_between_one_pair_each_count` for the
+    multi-type case that restriction excludes.
     """
     rels = [
         ("a", "CALLS", "b"),
@@ -398,10 +405,12 @@ def test_the_two_implementations_agree_over_a_mixed_graph() -> None:
     evaluated = _degrees_via_eval_adjacency(rels, in_set)
 
     assert shipped == evaluated, f"shipped={shipped} eval={evaluated}"
-    # Every in-set node is connected to both others by at least one counted
-    # edge, so none may be missing -- an empty result would satisfy the
-    # equality above while measuring nothing.
-    assert set(shipped) == in_set, shipped
+    # Pinned to VALUES, not membership. `set(shipped) == in_set` rules out the
+    # empty result but survives any error that scales every degree, because
+    # scaling changes no key -- and a shared scaling error also survives the
+    # equality above. Only absolute values distinguish the two mirrors being
+    # right from the two mirrors being wrong together.
+    assert shipped == {"a": 2, "b": 2, "c": 2}, shipped
 
 
 def test_distinct_relationship_types_between_one_pair_each_count() -> None:
