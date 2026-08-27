@@ -37,12 +37,6 @@ _PROJECTED_QUALIFIED_NAME_RE = re.compile(
     rf"[A-Z_][A-Z0-9_]*\.{cs.CYPHER_QUALIFIED_NAME_TOKEN}(?![A-Z0-9_])"
 )
 
-# `derive_project_name` builds "<base>__<8 hex digits>". Requiring the whole
-# shape, not just the "__" marker, is what stops `__init__` being read as a
-# project-qualified name.
-# A project name appearing as a LITERAL in the query text, uppercased by the
-# caller. Used to check an aggregate's restriction names the requested
-# project rather than some other one.
 # A Cypher property read, `<entity>.<property>`. Grouping a projection by
 # the entity half says which entities a row exposes, so an entity that
 # contributes properties without its qualified name can be spotted.
@@ -53,10 +47,16 @@ _PROPERTY_READ_RE = re.compile(r"\b([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)")
 # for an actual read.
 _STRING_LITERAL_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
 
+# A project name appearing as a LITERAL in the query text, uppercased by the
+# caller. Used to check that an aggregate's restriction names the requested
+# project rather than some other one.
 _PROJECT_LITERAL_RE = re.compile(
     rf"[A-Z0-9_-]+{cs.PROJECT_NAME_DIGEST_MARKER}[0-9A-F]{{{cs.PROJECT_NAME_DIGEST_LEN}}}\.?"
 )
 
+# `derive_project_name` builds "<base>__<8 hex digits>". Requiring the whole
+# shape, not just the "__" marker, is what stops `__init__` being read as a
+# project-qualified name.
 _PROJECT_NAME_RE = re.compile(
     rf".+{cs.PROJECT_NAME_DIGEST_MARKER}[0-9a-f]{{{cs.PROJECT_NAME_DIGEST_LEN}}}"
 )
