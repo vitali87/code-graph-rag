@@ -42,6 +42,13 @@ _PROJECTED_QUALIFIED_NAME_RE = re.compile(
 # contributes properties without its qualified name can be spotted.
 _PROPERTY_READ_RE = re.compile(r"\b([A-Z_][A-Z0-9_]*)\.([A-Z_][A-Z0-9_]*)")
 
+# A bare entity inside an aggregate, `count(b)`. Such an entity is
+# MEASURED without any property being read, so it needs attributing too.
+# `count(b.name)` is caught by the property-read pattern instead.
+_AGGREGATED_ENTITY_RE = re.compile(
+    r"\b(?:COUNT|SUM|AVG|MIN|MAX|COLLECT)\(\s*(?:DISTINCT\s+)?([A-Z_][A-Z0-9_]*)\s*\)"
+)
+
 # Constructs a scoped query may not use, matched as whole words.
 _UNANALYSABLE_RE = re.compile(cs.CYPHER_UNANALYSABLE_PATTERN)
 
@@ -232,12 +239,20 @@ def _every_projected_entity_is_attributable(projection: str) -> bool:
     whole -- will keep the row on the strength of some other entity's
     qualified name.
 
-    Entities reading only their qualified name are fine, as are aggregates
-    and literals, which name no entity at all.
+    Entities reading only their qualified name are fine, and so are
+    literals, which name no entity at all.
+
+    An AGGREGATED entity counts too. `RETURN a.qualified_name, count(b)`
+    was accepted because `b` appears as a bare identifier inside the
+    aggregate and never as a property read -- so it never entered this
+    map, while the count reported how many `b` exist across every project.
+    An aggregate names nobody but it still MEASURES someone.
     """
     reads: dict[str, set[str]] = {}
     for entity, prop in _PROPERTY_READ_RE.findall(projection):
         reads.setdefault(entity, set()).add(prop)
+    for entity in _AGGREGATED_ENTITY_RE.findall(projection):
+        reads.setdefault(entity, set())
     return all(cs.CYPHER_QUALIFIED_NAME_TOKEN in props for props in reads.values())
 
 

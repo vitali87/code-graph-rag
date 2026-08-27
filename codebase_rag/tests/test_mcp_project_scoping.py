@@ -711,6 +711,56 @@ class TestOnlyTheSimpleShapeIsScopeable:
         assert result["results"] == [{"name": "x"}]
 
 
+class TestAnAggregatedEntityMustAlsoBeAttributable:
+    """`count(b)` exposes b's magnitude even when `a` vouches for the row.
+
+    `MATCH (a)-[:CALLS]->(b) RETURN a.qualified_name, count(b)` was
+    accepted: `a` is attributable, so the row passed, while the count
+    reported how many `b` there are across every project.
+
+    The per-entity check SKIPPED aggregate terms entirely, on the reasoning
+    that an aggregate names nobody. It names nobody but it still measures
+    someone, which is the magnitude leak in a mixed projection.
+    """
+
+    def test_an_aggregate_over_an_unattributed_entity_is_refused(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (a)-[:CALLS]->(b) RETURN a.qualified_name AS q, count(b) AS total"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_an_aggregate_over_the_same_attributed_entity_is_accepted(self) -> None:
+        """The control: counting the entity you already attributed is fine.
+
+        `RETURN a.qualified_name, count(a)` measures only rows the filter
+        can judge, so refusing it would break a legitimate shape.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = "MATCH (a) RETURN a.qualified_name AS q, count(a) AS total"
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+    def test_an_aggregate_over_an_attributed_second_entity_is_accepted(self) -> None:
+        """The other control: attribute b too and the count is fine.
+
+        This is what the caller should write, and it must stay available --
+        a rule that refused every mixed aggregate would pass the leak test
+        while making relationship counting impossible when scoped.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (a)-[:CALLS]->(b) RETURN a.qualified_name AS q, "
+            "b.qualified_name AS bq, count(b) AS total"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+
 class TestAnAggregateMustBeBoundToTheRequestedProject:
     """Restricting by *a* qualified name is not restricting to *yours*.
 
