@@ -76,14 +76,24 @@ class TestHistoryPersists:
     def test_the_session_is_wired_to_that_history(self) -> None:
         """The seam must not drift from the prompt that reads it.
 
-        Splitting history out removes the console dependency from the two
-        tests above, but it also creates a way for them to pass while the
-        SESSION reads some other history -- so this asserts the wiring,
-        and is the one test here that builds a real prompt.
-        """
-        from codebase_rag.main import _input_history, _input_session
+        Splitting history out creates a way for the two tests above to
+        pass while the SESSION reads some other history, so the wiring
+        needs its own assertion.
 
-        assert _input_session().history is _input_history()
+        Read from the SOURCE rather than by constructing a session:
+        building one attaches to the platform console, which hung a
+        headless Windows runner until its 30-minute timeout. Inspecting
+        the call proves the same property -- that `_input_session` passes
+        `_input_history()` and not a fresh history -- with nothing to
+        attach to.
+        """
+        import inspect
+
+        from codebase_rag import main as m
+
+        source = inspect.getsource(m._input_session.__wrapped__)
+
+        assert "history=_input_history()" in source, source
 
     def test_submitted_text_is_appended_to_history(self) -> None:
         """The history must actually be fed, not merely exist.
@@ -126,6 +136,26 @@ class TestHistoryPersists:
         assert list(history.get_strings()) == ["same"]
 
 
+class _StubSession:
+    """Stands in for `PromptSession` without constructing one.
+
+    Building a real one attaches to the platform console. On macOS that is
+    cheap and yields a PlainTextOutput; on a headless Windows runner these
+    tests hung until the job hit its 30-minute timeout, three runs running.
+
+    The stub carries only what `get_multiline_input` uses -- a history and
+    a `prompt` that returns the submitted text -- so the code under test is
+    exercised unchanged while nothing touches a console.
+    """
+
+    def __init__(self, history: object, result: str) -> None:
+        self.history = history
+        self._result = result
+
+    def prompt(self, *_args: object, **_kwargs: object) -> str:
+        return self._result
+
+
 class TestOneSubmissionMakesOneHistoryEntry:
     """Padded input must not be recorded twice.
 
@@ -150,7 +180,7 @@ class TestOneSubmissionMakesOneHistoryEntry:
         with (
             patch.object(m, "print_formatted_text"),
             patch.object(
-                type(m._input_session()), "prompt", return_value="  question  "
+                m, "_input_session", lambda: _StubSession(history, "  question  ")
             ),
         ):
             returned = m.get_multiline_input("ask")
@@ -174,7 +204,7 @@ class TestOneSubmissionMakesOneHistoryEntry:
         with (
             patch.object(m, "print_formatted_text"),
             patch.object(
-                type(m._input_session()), "prompt", return_value="\n  spaced  \n"
+                m, "_input_session", lambda: _StubSession(history, "\n  spaced  \n")
             ),
         ):
             m.get_multiline_input("ask")
