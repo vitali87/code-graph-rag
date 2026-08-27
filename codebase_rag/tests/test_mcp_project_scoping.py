@@ -689,6 +689,51 @@ class TestTheCliScopeIsChosenNotAssumed:
         assert _cli_query_scope([]) is None
 
 
+class TestTheHandlerBindsTheAggregateToItsOwnProject:
+    """The MCP call site must pass the project, not just possess one.
+
+    `requires_project_evidence` takes the project as a DEFAULTED parameter,
+    so a call site that forgets it still type-checks, still runs, and still
+    returns a well-formed answer -- the guard just stops binding. Every
+    other test here observes that function's return value, which is
+    identical whether or not the handler passed anything.
+
+    Verified by mutation: dropping `project` from the handler's call passed
+    all 56 other tests. This is the one that fails.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_cross_project_aggregate_is_refused_through_the_handler(
+        self,
+    ) -> None:
+        cypher = (
+            f'MATCH (n) WHERE n.qualified_name STARTS WITH "{BETA}." '
+            "RETURN count(n) AS total"
+        )
+        handler = _handler_returning([{"total": 99}], query_used=cypher)
+
+        result = await handler.query_code_graph("how many", project=ALPHA)
+
+        assert result.get("error"), result
+        assert result["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_an_own_project_aggregate_is_allowed_through_the_handler(
+        self,
+    ) -> None:
+        """The control: binding must not refuse the caller's own count."""
+        cypher = (
+            f'MATCH (n) WHERE n.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(n) AS total"
+        )
+        handler = _handler_returning([{"total": 99}], query_used=cypher)
+
+        result = await handler.query_code_graph("how many", project=ALPHA)
+
+        assert not result.get("error"), result
+        assert result["results"] == [{"total": 99}]
+
+
 class TestSemanticSearchScope:
     """The other retrieval handler named in the issue.
 
