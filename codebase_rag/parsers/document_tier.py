@@ -106,6 +106,55 @@ def _without_trailing_comment(value: str) -> str:
     return value
 
 
+def _front_matter_pair(line: str) -> tuple[str, str] | None:
+    """One top-level `key: value` scalar, or None if the line declares none.
+
+    Extracted from `parse_front_matter` to keep each rule separately readable
+    and the caller's complexity down (Sonar S3776). Every `None` below is a
+    distinct reason a line is not a declaration, and the comments say which.
+    """
+    # INDENTED lines belong to a parent key, not the document. Taking them
+    # would hoist `child: v` under `parent:` to top level, inventing a
+    # declaration the author never made at that level.
+    if line[:1] in {" ", "\t"}:
+        return None
+    # A comment declares nothing. `# note: x` would become the key "# note".
+    if line.lstrip().startswith("#"):
+        return None
+    key, separator, value = line.partition(":")
+    if not separator:
+        return None
+    name = key.strip()
+    if not name or name in _RESERVED_FRONT_MATTER_KEYS:
+        return None
+    # An EMPTY value opens a nested block or a list (`parent:` / `tags:`)
+    # rather than declaring a scalar. Recording it as an empty string would
+    # assert the author declared it empty -- a different claim from declaring
+    # a structure this parser does not represent.
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    # A BLOCK SCALAR header (`key: |`, `key: >2-`) says the value is the
+    # indented text below, which this parser skips. Storing the header records
+    # punctuation as content with the real text dropped. It may carry a
+    # trailing comment (`note: | # explanation`), which is still a header --
+    # the comment is stripped ONLY for this test, and only when preceded by
+    # whitespace, so `title: C# notes` is untouched.
+    if _BLOCK_SCALAR_HEADER.match(_without_trailing_comment(cleaned)):
+        return None
+    # A FLOW COLLECTION (`[a, b]` / `{k: v}`) is a structure on one line.
+    # Storing its source text makes a list indistinguishable from a string
+    # that happens to look like one.
+    if cleaned[:1] in _FLOW_COLLECTION_OPENERS:
+        return None
+    # Quote-stripping can empty a value that passed the check above: `k: ""`
+    # is non-empty as written and empty once unquoted.
+    unquoted = cleaned.strip("\"'")
+    if not unquoted:
+        return None
+    return name, unquoted
+
+
 def parse_front_matter(text: str) -> dict[str, str]:
     """Read declared YAML front-matter into flat string properties.
 
@@ -142,61 +191,9 @@ def parse_front_matter(text: str) -> dict[str, str]:
         return {}
     found: dict[str, str] = {}
     for line in lines[1:closing]:
-        # INDENTED lines belong to a parent key, not to the document. Taking
-        # them would hoist `child: v` under `parent:` to top level, inventing
-        # a declaration the author never made at that level -- and the value
-        # would be indistinguishable from a real top-level one.
-        if line[:1] in {" ", "\t"}:
-            continue
-        # A comment declares nothing. `# note: x` would otherwise become the
-        # key "# note".
-        if line.lstrip().startswith("#"):
-            continue
-        key, separator, value = line.partition(":")
-        if not separator:
-            continue
-        # A key with an EMPTY value opens a nested block or a list
-        # (`parent:` / `tags:`) rather than declaring a scalar. Recording it
-        # as an empty string would assert the author declared it empty, which
-        # is a different claim from declaring a structure this parser does
-        # not represent.
-        cleaned = value.strip()
-        if not cleaned:
-            continue
-        # A BLOCK SCALAR marker (`key: |` / `key: >`) says the value is the
-        # indented text below, which this parser skips as nested. Storing the
-        # marker records "|" as the value -- punctuation mistaken for content,
-        # with the real text silently dropped.
-        # A block-scalar header may carry a trailing comment
-        # (`note: | # explanation`), which is still a header: the value is the
-        # indented text below, and this parser skips it. Matching the header
-        # only when it ends the line stored the marker plus the comment as the
-        # value (reported on #1488).
-        #
-        # The comment is stripped ONLY for this test, and only when preceded by
-        # whitespace, so an ordinary value containing `#` (`title: C# notes`)
-        # is untouched -- and `found` below still records the full `cleaned`.
-        if _BLOCK_SCALAR_HEADER.match(_without_trailing_comment(cleaned)):
-            continue
-        # A FLOW COLLECTION (`[a, b]` / `{k: v}`) is a structure written on one
-        # line. Storing its source text makes a list indistinguishable from a
-        # string that happens to look like one, and no consumer can tell which
-        # it was meant to be.
-        if cleaned[:1] in _FLOW_COLLECTION_OPENERS:
-            continue
-        # `partition` splits at the FIRST colon only, so a value containing
-        # further colons (`url: https://x/y`) survives intact.
-        name = key.strip()
-        if not name or name in _RESERVED_FRONT_MATTER_KEYS:
-            continue
-        # Quote-stripping can empty a value that passed the check above:
-        # `k: ""` is non-empty as written and empty once unquoted. An empty
-        # string asserts the author declared the key empty, which is the claim
-        # the earlier guard exists to avoid making (reported on #1488).
-        unquoted = cleaned.strip("\"'")
-        if not unquoted:
-            continue
-        found[name] = unquoted
+        pair = _front_matter_pair(line)
+        if pair is not None:
+            found[pair[0]] = pair[1]
     return found
 
 

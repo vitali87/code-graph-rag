@@ -410,7 +410,11 @@ class TestIngestion:
         target.write_text("---\npurpose: planning\n---\n\n# Doc\n", encoding="utf-8")
         run_updater(project, mock_ingestor)
         first = module_props(mock_ingestor)
-        assert first and first[0].get("front_matter") == ["purpose=planning"], first
+        # Split: a compound assertion cannot say WHICH half failed, and the
+        # two mean different things -- "no Module node was emitted" is a
+        # different diagnosis from "the value is wrong" (Sonar S9073).
+        assert first, "no Module node emitted on the first index"
+        assert first[0].get("front_matter") == ["purpose=planning"], first[0]
 
         mock_ingestor.reset_mock()
         target.write_text("# Doc\n\nBody.\n", encoding="utf-8")
