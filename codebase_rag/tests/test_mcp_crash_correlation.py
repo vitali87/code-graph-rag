@@ -102,8 +102,14 @@ async def test_explain_traceback_exposes_the_resolution_rate_over_mcp(tmp_path):
     A PARTIALLY resolved stack, deliberately. The obvious fixture is the
     fully-resolved one used by the tests above, and with `total == resolved`
     a mapping that swaps the two keys is invisible -- measured: the swap
-    passed all four tests before this fixture gained the library frame. The
+    passed all four tests before this fixture gained a library frame. The
     illustrative case and the discriminating case are different cases.
+
+    TWO unresolvable frames rather than one, so the ratio is 1/3 rather than
+    1/2. At `total=2, resolved=1` the correct `resolved/total` collides
+    numerically with `1 - resolved/total`, `unresolved/total`,
+    `resolved/(resolved+1)` and `1/total` -- all five yield 0.5, so the
+    assertion would hold for four wrong formulas. 1/3 separates them.
     """
     registry = _registry(tmp_path)
     src = (tmp_path / "app" / "service.py").as_posix()
@@ -111,6 +117,8 @@ async def test_explain_traceback_exposes_the_resolution_rate_over_mcp(tmp_path):
         "Traceback (most recent call last):\n"
         '  File "/usr/lib/python3.12/site-packages/lib.py", line 5, in call\n'
         "    fn()\n"
+        '  File "/usr/lib/python3.12/json/decoder.py", line 9, in decode\n'
+        "    raise err\n"
         f'  File "{src}", line 10, in handle\n'
         "    return cfg.timeout\n"
         "AttributeError: 'NoneType' object has no attribute 'timeout'\n"
@@ -118,7 +126,7 @@ async def test_explain_traceback_exposes_the_resolution_rate_over_mcp(tmp_path):
 
     result = await registry.explain_traceback(traceback_text=text)
 
-    assert result["resolution"] == {"total": 2, "resolved": 1, "rate": 0.5}
+    assert result["resolution"] == {"total": 3, "resolved": 1, "rate": 1 / 3}
 
 
 async def test_rank_root_causes_returns_ranked_candidates(tmp_path):
