@@ -21,6 +21,19 @@ from pydantic import ValidationError
 from codebase_rag.config import AppConfig
 
 
+def _declared_default() -> int:
+    """The value declared on the field, not the one the environment resolves.
+
+    `AppConfig` is a `BaseSettings` reading `.env`, so `AppConfig().X` is the
+    EFFECTIVE configuration: a `MODEL_MAX_TOKENS` in the environment makes
+    these bounds tests fail against perfectly correct code, and pass against
+    incorrect code. What they mean to pin is the shipped default.
+    """
+    default = AppConfig.model_fields["MODEL_MAX_TOKENS"].default
+    assert isinstance(default, int)
+    return default
+
+
 class TestSetting:
     """The configured value itself."""
 
@@ -30,7 +43,7 @@ class TestSetting:
         The whole defect is that no value was set anywhere, so asserting the
         attribute exists is the minimum this issue asks for.
         """
-        assert AppConfig().MODEL_MAX_TOKENS > 0
+        assert _declared_default() > 0
 
     def test_the_default_exceeds_the_anthropic_fallback(self) -> None:
         """A default at or below 4096 would not fix the reported crash.
@@ -40,7 +53,7 @@ class TestSetting:
         like a fix and change nothing -- the assertion names the number so a
         future edit downward has to argue with this test.
         """
-        assert AppConfig().MODEL_MAX_TOKENS > 4096
+        assert _declared_default() > 4096
 
     def test_the_default_fits_the_smallest_catalogued_model(self) -> None:
         """The other bound, and the one a bigger-is-better edit would break.
@@ -54,7 +67,7 @@ class TestSetting:
         Paired with the test above, these two pin the default into the only
         band that serves both: above Anthropic's 4096, at or below 8192.
         """
-        assert AppConfig().MODEL_MAX_TOKENS <= 8192
+        assert _declared_default() <= 8192
 
     @pytest.mark.parametrize("value", [0, -1])
     def test_a_non_positive_value_is_rejected(self, value: int) -> None:
