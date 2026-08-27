@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
+from ..types_defs import PropertyDict
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 
 if TYPE_CHECKING:
@@ -27,7 +28,7 @@ def emit_flat_module(
     file_path: Path,
     structural_elements: dict[Path, str | None],
     distinguish_suffix: bool = False,
-    extra_properties: dict[str, str] | None = None,
+    extra_properties: PropertyDict | None = None,
 ) -> str:
     """Emit a file's Module node and its containment edge; return its qn.
 
@@ -47,7 +48,7 @@ def emit_flat_module(
         # hierarchy to every consumer that splits a qn on it.
         parts[-1] = f"{parts[-1]}_{relative_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
     module_qn = cs.SEPARATOR_DOT.join([project_name, *parts])
-    module_props: dict[str, object] = {
+    module_props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: module_qn,
         cs.KEY_NAME: file_path.name,
         cs.KEY_PATH: relative_path.as_posix(),
