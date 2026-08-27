@@ -24,15 +24,12 @@ from ..constants import (
     QUERY_SUMMARY_UNSCOPEABLE,
 )
 from ..schemas import QueryGraphData
-from ..types_defs import ResultRow
 from ..services import QueryProtocol
 from ..services.llm import CypherGenerator
+from ..types_defs import ResultRow
 from ..utils.token_utils import truncate_results_by_tokens
 from . import tool_descriptions as td
 
-# `derive_project_name` builds "<base>__<8 hex digits>". Requiring the whole
-# shape, not just the "__" marker, is what stops `__init__` being read as a
-# project-qualified name.
 # A PROJECTED PROPERTY: `n.qualified_name`, with nothing appended. The
 # trailing boundary is what rejects `AS qualified_name_of_thing`, and the
 # required `<identifier>.` prefix is what rejects a bare string literal.
@@ -40,6 +37,9 @@ _PROJECTED_QUALIFIED_NAME_RE = re.compile(
     rf"[A-Z_][A-Z0-9_]*\.{cs.CYPHER_QUALIFIED_NAME_TOKEN}(?![A-Z0-9_])"
 )
 
+# `derive_project_name` builds "<base>__<8 hex digits>". Requiring the whole
+# shape, not just the "__" marker, is what stops `__init__` being read as a
+# project-qualified name.
 _PROJECT_NAME_RE = re.compile(
     rf".+{cs.PROJECT_NAME_DIGEST_MARKER}[0-9a-f]{{{cs.PROJECT_NAME_DIGEST_LEN}}}"
 )
@@ -55,10 +55,15 @@ def scope_rows_to_project(
     made the reported cross-project bleed intermittent (issue #1494). A
     code-level filter is always-or-never.
 
-    Keyed on `qualified_name`, which every indexed node carries and which
-    begins with the project name. A row WITHOUT that key is kept: an
-    aggregate (`RETURN count(n)`) has no qualified name, and discarding it
-    would turn scoping into silent data loss for every aggregate query.
+    Every string VALUE in the row is inspected, at any depth -- not a fixed
+    list of key names. The repo's own queries return `from_qn`/`to_qn`, and
+    a generated query may label a column anything, so keying on known names
+    failed open for exactly the shapes that leak.
+
+    A row naming no project at all is kept: `RETURN count(n)` identifies
+    nobody, and discarding it would turn scoping into silent data loss.
+    Such rows are also unattributable, which is why
+    `requires_project_evidence` refuses a scoped query that produces them.
     """
     if not project_name:
         return rows
@@ -83,9 +88,15 @@ def requires_project_evidence(cypher_query: str) -> bool:
     projects no qualified name is refused, so the caller learns the scope
     could not be honoured instead of silently receiving every project.
 
-    An aggregate is accepted: `RETURN count(n)` exposes no names, so there
-    is nothing to leak, and refusing it would make scoping useless for the
-    counting queries a caller most often wants.
+    Evidence means a projected PROPERTY (`n.qualified_name`), not the token
+    appearing somewhere: an alias like `AS qualified_name_of_thing` returns
+    no qualified name at all.
+
+    An aggregate counts only when the query ITSELF restricts by qualified
+    name. `RETURN count(n)` exposes no names but does expose a MAGNITUDE
+    spanning every indexed project, so a scoped caller would learn the size
+    of projects they never asked about. Restricting the match keeps
+    counting usable without that leak.
     """
     projection = _return_clause(cypher_query)
     if not projection:
