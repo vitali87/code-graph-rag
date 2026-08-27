@@ -220,6 +220,54 @@ def test_the_graph_free_declarations_are_not_stale() -> None:
     )
 
 
+def test_the_lock_detector_rejects_an_unrelated_context_manager() -> None:
+    """A self-check on `_holds_ingestor_lock`, which every other test routes through.
+
+    The detector is the single point of failure here: if it returned True for
+    any `async with`, a handler holding an unrelated context manager -- an HTTP
+    session, a timeout, a DIFFERENT lock -- would count as locked, and an
+    actually-unlocked graph reader would ship with the suite green. Every
+    assertion in this file would keep passing, because they all ask the
+    detector rather than the source.
+
+    Verified by mutation: weakening the attribute comparison to `True` and
+    adding a reader that takes `self._unrelated_lock` leaves all six tests
+    passing. Nothing else in the file notices.
+
+    So the detector is exercised directly, on synthetic sources rather than on
+    tools.py, because the point is what it does with input the real file does
+    not currently contain.
+    """
+    locked = ast.parse(
+        "async def h(self):\n"
+        "    async with self._ingestor_lock:\n"
+        "        return 1\n"
+    ).body[0]
+    wrong_lock = ast.parse(
+        "async def h(self):\n"
+        "    async with self._unrelated_lock:\n"
+        "        return 1\n"
+    ).body[0]
+    not_self = ast.parse(
+        "async def h(self):\n"
+        "    async with other._ingestor_lock:\n"
+        "        return 1\n"
+    ).body[0]
+    no_lock = ast.parse("async def h(self):\n    return 1\n").body[0]
+
+    assert isinstance(locked, ast.AsyncFunctionDef)
+    assert _holds_ingestor_lock(locked)
+
+    assert isinstance(wrong_lock, ast.AsyncFunctionDef)
+    assert not _holds_ingestor_lock(wrong_lock)
+
+    assert isinstance(not_self, ast.AsyncFunctionDef)
+    assert not _holds_ingestor_lock(not_self)
+
+    assert isinstance(no_lock, ast.AsyncFunctionDef)
+    assert not _holds_ingestor_lock(no_lock)
+
+
 def test_the_two_inventories_are_disjoint() -> None:
     """Nothing may be declared both a graph reader and graph-free.
 
