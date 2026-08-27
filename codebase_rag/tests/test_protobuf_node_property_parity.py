@@ -143,6 +143,15 @@ def test_every_declared_property_is_exported_or_declared_unexported() -> None:
         label = schema.label.value
         fields = _proto_fields(label)
         if fields is None:
+            # A node label with NO proto message at all exports nothing, which
+            # is a larger loss than a single missing property. Skipping it here
+            # would let a whole label slip through the check written to catch
+            # exactly this -- the inventory-fails-open shape (#1490).
+            #
+            # Unreachable today: every label has a message. That is a fact
+            # about the current proto, not a promise, so the branch is
+            # reported rather than assumed away.
+            undeclared.append(f"{label} (no proto message at all)")
             continue
         allowed = _NOT_EXPORTED.get(label, frozenset())
         for prop in sorted(_declared_properties(schema.properties)):
@@ -157,6 +166,29 @@ def test_every_declared_property_is_exported_or_declared_unexported() -> None:
         + "\n\nAdd the proto field and regenerate the bindings, or add the "
         "property to _NOT_EXPORTED with a reason (issue #1490)."
     )
+
+
+def test_a_label_without_a_proto_message_is_reported() -> None:
+    """A whole missing message must fail, not be skipped.
+
+    The guard originally did `if fields is None: continue`, so a node label
+    with no proto message at all passed silently -- exporting nothing, which
+    is a larger loss than any single absent property. That is the
+    inventory-fails-open shape the test exists to prevent, reproduced inside
+    the test itself (reported on #1491).
+
+    Exercised through `_proto_fields` on a label the proto does not carry,
+    since every real label currently has a message. Unreachable today is a
+    fact about the current proto, not a promise.
+    """
+    assert _proto_fields("NoSuchNodeLabel") is None, (
+        "a label absent from the proto must report None, so the caller can "
+        "distinguish it from a message that exists with no matching fields"
+    )
+
+    # The paired positive: a real label resolves, so the None above is the
+    # absence rather than the helper being inert.
+    assert _proto_fields("Module") is not None
 
 
 def test_the_unexported_list_names_only_real_absences() -> None:
