@@ -1202,16 +1202,27 @@ def _declared_schema(tmp_path: Path, tool_name: str):
     Built through the real constructor, since `_tools` is assembled in
     `__init__` -- reading it off a hand-made object would test a dict this
     code never publishes.
+
+    `semantic_search` is registered only when the vector backend is
+    installed, so on a BASE install the tool legitimately does not exist and
+    a `KeyError` here is the environment, not a regression. Skipping on the
+    bare absence would fail OPEN -- a tool wrongly dropped on a full install
+    would skip rather than fail -- so the skip is conditioned on
+    `has_semantic_dependencies()`, the same predicate the registry itself
+    gates on. Absent while the dependencies ARE present still fails.
     """
     from unittest.mock import MagicMock
 
     from codebase_rag.mcp.tools import MCPToolsRegistry
+    from codebase_rag.utils.dependencies import has_semantic_dependencies
 
     registry = MCPToolsRegistry(
         project_root=str(tmp_path),
         ingestor=MagicMock(),
         cypher_gen=MagicMock(),
     )
+    if tool_name not in registry._tools and not has_semantic_dependencies():
+        pytest.skip(f"{tool_name} needs the vector backend, absent on a base install")
     return registry._tools[tool_name].input_schema
 
 
@@ -1372,3 +1383,82 @@ class TestEnforcementSurvivesAnUnfilteredQuery:
         prefixes = {row["qualified_name"].split(".")[0] for row in result.results}
 
         assert prefixes == {ALPHA, BETA}
+
+
+class TestPropertyAggregatesAreAttributed:
+    """An aggregate over a PROPERTY measures its entity, exactly as a bare one does.
+
+    `_every_projected_entity_is_attributable` registers an aggregated entity
+    only when it appears as a BARE identifier -- `count(b)`. The property form
+    `count(b.qualified_name)` reaches the same function as an ordinary property
+    read, satisfies "this entity projects its own qualified name", and returns
+    early, so the restriction check below is never reached for it.
+
+    The two checks answer different questions, and only one of them is the
+    right question for an aggregate. Attributability asks "does this row say
+    who it is about"; restriction asks "is this entity confined to my
+    project". For a projection of NAMES those coincide. An aggregate returns
+    no names at all, so attributability is satisfied trivially while the
+    MAGNITUDE still spans every indexed project.
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_a_property_aggregate_over_an_unrestricted_alias_is_refused(self) -> None:
+        assert self._refused(
+            f'MATCH (a),(b) WHERE a.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(b.qualified_name) AS total"
+        )
+
+    def test_a_distinct_property_aggregate_is_refused_too(self) -> None:
+        """DISTINCT sits INSIDE the aggregate, so it must not change the answer."""
+        assert self._refused(
+            f'MATCH (a),(b) WHERE a.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(DISTINCT b.qualified_name) AS total"
+        )
+
+    def test_a_collect_over_a_property_is_refused(self) -> None:
+        """`collect` returns the VALUES, not merely a magnitude.
+
+        The worst of the three: it hands back other projects' qualified names
+        outright rather than a count of them.
+        """
+        assert self._refused(
+            f'MATCH (a),(b) WHERE a.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN collect(b.qualified_name) AS names"
+        )
+
+    def test_a_mixed_projection_is_refused_when_any_alias_is_unrestricted(self) -> None:
+        """The too-LITTLE twin of the control below.
+
+        A fix that inspects only the first projection term, or that stops at
+        the first restricted alias it finds, refuses all three leaks above and
+        still permits this one. Nothing else here would notice.
+        """
+        assert self._refused(
+            f'MATCH (a),(b) WHERE a.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(a.qualified_name), count(b.qualified_name)"
+        )
+
+    def test_a_property_aggregate_over_the_restricted_alias_is_allowed(self) -> None:
+        """THE CONTROL, and the too-MUCH guard.
+
+        Identical in shape to the refusals above except that the counted alias
+        IS the one the WHERE restricts. A fix that simply refuses every
+        property aggregate passes all four leak tests while breaking
+        legitimate scoped counting, and would look correct.
+        """
+        assert not self._refused(
+            f'MATCH (a) WHERE a.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(a.qualified_name) AS total"
+        )
+
+    def test_the_bare_aggregate_case_still_behaves(self) -> None:
+        """Regression pin: the original bare-`count(b)` finding stays fixed."""
+        assert self._refused(
+            f'MATCH (a),(b) WHERE a.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(b) AS total"
+        )

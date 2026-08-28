@@ -49,6 +49,15 @@ _AGGREGATED_ENTITY_RE = re.compile(
     r"\b(?:COUNT|SUM|AVG|MIN|MAX|COLLECT)\(\s*(?:DISTINCT\s+)?([A-Z_][A-Z0-9_]*)\s*\)"
 )
 
+# Any entity MEASURED by an aggregate, in either spelling: `count(b)` and
+# `count(b.qualified_name)` both report on `b`. The property suffix is an
+# optional tail on one pattern rather than a second alternative, so the two
+# forms cannot drift apart and the captured group is the entity either way.
+_AGGREGATED_READ_RE = re.compile(
+    r"\b(?:COUNT|SUM|AVG|MIN|MAX|COLLECT)\(\s*(?:DISTINCT\s+)?"
+    r"([A-Z_][A-Z0-9_]*)(?:\.[A-Z_][A-Z0-9_]*)?\s*\)"
+)
+
 # Constructs a scoped query may not use, matched as whole words.
 _UNANALYSABLE_RE = re.compile(cs.CYPHER_UNANALYSABLE_PATTERN)
 
@@ -156,6 +165,23 @@ def requires_project_evidence(
     # attributing `b`, so a transformed term cannot count as evidence.
     if not _every_term_is_plain(projection):
         return False
+    # EVERY AGGREGATED ENTITY MUST BE RESTRICTED, checked BEFORE the
+    # attributability branch below, which returns early and would make this
+    # unreachable for exactly the queries that need it.
+    #
+    # Attributability and restriction answer different questions, and only the
+    # second is the right one for an aggregate. Attributability asks "does this
+    # row say who it is about"; restriction asks "is this entity confined to my
+    # project". For a projection of NAMES those coincide. An aggregate returns
+    # no names, so `count(b.qualified_name)` satisfies attributability
+    # trivially -- `b` does project its own qualified name -- while the
+    # MAGNITUDE still counts every `b` in every indexed project. `collect` is
+    # worse again: it returns the other projects' names themselves.
+    aggregated_only = _entities_only_ever_aggregated(projection)
+    if aggregated_only and not _restricts_to_project(
+        cypher_query, project_name, aggregated_only
+    ):
+        return False
     # A PROJECTED PROPERTY (`x.qualified_name`), not the bare token: an
     # ALIAS containing it -- `RETURN n.name AS qualified_name_of_thing` --
     # returns no qualified name at all, yet satisfied a substring match.
@@ -231,6 +257,31 @@ def _every_term_is_plain(projection: str) -> bool:
         if bare != f"{entity}{cs.SEPARATOR_DOT}{prop}":
             return False
     return True
+
+
+def _entities_only_ever_aggregated(projection: str) -> set[str]:
+    """Entities the projection MEASURES but never returns a plain value for.
+
+    The distinction decides whether the row filter can do its job. An entity
+    also projected as a plain property (`RETURN a.qualified_name, count(a)`)
+    groups the aggregate by a value the filter judges per row, so a foreign
+    group is dropped whole. An entity appearing ONLY inside aggregates
+    contributes no such column, so its magnitude is computed across every
+    indexed project and arrives as a number nothing can attribute.
+
+    Both aggregate spellings count as measuring: `count(b)` and
+    `count(b.qualified_name)` report on `b` alike. That the second one also
+    mentions a qualified name is what made it look attributable -- the value
+    is consumed by the aggregate, not returned.
+    """
+    plain: set[str] = set()
+    aggregated: set[str] = set()
+    for term in projection.split(cs.CHAR_COMMA):
+        if any(agg in term for agg in cs.CYPHER_AGGREGATE_TOKENS):
+            aggregated.update(_AGGREGATED_READ_RE.findall(term))
+        else:
+            plain.update(entity for entity, _ in _PROPERTY_READ_RE.findall(term))
+    return aggregated - plain
 
 
 def _every_projected_entity_is_attributable(projection: str) -> bool:
