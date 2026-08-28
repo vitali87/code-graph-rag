@@ -41,6 +41,7 @@ from .utils import (
     get_function_captures,
     ingest_method,
     is_method_node,
+    python_positional_parameter_names,
     record_cpp_definition_span,
     safe_decode_text,
 )
@@ -1287,7 +1288,7 @@ class FunctionIngestMixin:
             resolution = resolution._replace(qualified_name=unique_qn)
 
         func_props = self._build_function_props(
-            func_node, resolution, module_qn, lang_queries
+            func_node, resolution, module_qn, lang_queries, language
         )
         is_macro = func_node.type == cs.TS_RS_MACRO_DEFINITION
         if is_macro:
@@ -1413,6 +1414,7 @@ class FunctionIngestMixin:
         resolution: FunctionResolution,
         module_qn: str,
         lang_queries: LanguageQueries,
+        language: cs.SupportedLanguage | None = None,
     ) -> PropertyDict:
         file_path = self.module_qn_to_file_path.get(module_qn)
         modifiers, decorators = extract_modifiers_and_decorators(
@@ -1439,6 +1441,13 @@ class FunctionIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        # Python only: the other frontends have no positional/keyword-only
+        # distinction extracted, and an absent property reads as "kinds
+        # unknown" downstream rather than as "zero positional parameters".
+        if language == cs.SupportedLanguage.PYTHON:
+            props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
+                func_node
+            )
         props.update(fingerprint_props(func_node))
         return props
 
