@@ -481,3 +481,82 @@ def test_pruning_preserves_message_count_and_call_return_pairing() -> None:
     assert sorted(calls_after) == sorted(returns_after), (
         "call/return pairing broken by pruning"
     )
+
+
+def test_pruning_is_idempotent_so_a_stale_high_reading_costs_nothing() -> None:
+    """A repeated prune on already-pruned history must be a no-op.
+
+    The trigger this is designed for reads `session.context_tokens`, which
+    has exactly one writer: a BACKGROUND coroutine spawned with a snapshot
+    copy (`main.py`, `_spawn_background(_refresh_context_tokens(list(...)))`).
+    Two consequences make repeat calls inevitable rather than exceptional:
+
+    - the measurement is asynchronous, so the value describes an earlier turn
+    - on a rejected key the refresh raises before its assignment, leaving the
+      previous value in place, so the count can FREEZE at a high reading and
+      never come down (`TokenCountAuthError` is caught and only warned about)
+
+    Either way the trigger can fire on every subsequent turn. That must cost
+    nothing, so the pruner has to be idempotent: the second call finds only
+    placeholders outside the protected window, has nothing left to recover,
+    and returns the same history object rather than rebuilding it.
+
+    Identity, not just equality: rebuilding an unchanged history would
+    invalidate the prompt-cache prefix on every turn for no gain, which is
+    the cost the recovery floor exists to avoid.
+    """
+    history = _turn("first", "OLD " * 500) + _turn("second", "NEW " * 500)
+
+    once = prune_old_tool_results(
+        history, protect_recent_tokens=10, minimum_recovered_tokens=1
+    )
+    assert _tool_contents(once) != _tool_contents(history), (
+        "fixture must actually prune on the first pass or this is vacuous"
+    )
+
+    for repeat in range(3):
+        again = prune_old_tool_results(
+            once, protect_recent_tokens=10, minimum_recovered_tokens=1
+        )
+        assert again is once, (
+            f"prune {repeat + 2} rebuilt the history with nothing to recover; "
+            "a frozen or stale token count fires the trigger every turn, so a "
+            "repeat prune must be free rather than re-invalidating the cache"
+        )
+
+
+def test_a_prune_shrinks_what_a_later_token_count_would_measure() -> None:
+    """The pruned history must be smaller by the tokens the trigger reads.
+
+    States the ordering contract the call site has to honour. The refresh
+    coroutine is handed `list(message_history)` AT SPAWN TIME, so a prune
+    that runs after the spawn hands it the pre-prune snapshot: the count
+    written back describes history that no longer exists, and the next turn
+    re-triggers on a number the prune already invalidated.
+
+    Asserted here on the pruner's own contract -- pruning genuinely reduces
+    the measurable size -- so a call site placed after the spawn contradicts
+    a stated property rather than merely underperforming silently.
+    """
+    history = _turn("first", "OLD " * 500) + _turn("second", "NEW " * 500)
+
+    def _measurable(messages: list[ModelRequest | ModelResponse]) -> int:
+        return sum(
+            count_tokens(str(p.content))
+            for m in messages
+            for p in m.parts
+            if isinstance(p, ToolReturnPart)
+        )
+
+    before = _measurable(history)
+    after = _measurable(
+        prune_old_tool_results(
+            history, protect_recent_tokens=10, minimum_recovered_tokens=1
+        )
+    )
+
+    assert after < before, (
+        f"pruning must reduce what a later token count measures ({before} -> "
+        f"{after}); if it does not, the trigger reading that count can never "
+        "clear and will fire on every turn"
+    )
