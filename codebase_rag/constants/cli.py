@@ -18,6 +18,8 @@ class KeyBinding(StrEnum):
     ENTER = "enter"
     CTRL_C = "c-c"
     SHIFT_TAB = "s-tab"
+    UP = "up"
+    DOWN = "down"
 
 
 class PermissionMode(StrEnum):

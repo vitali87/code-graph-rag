@@ -432,13 +432,16 @@ class FunctionNodeProps(TypedDict, total=False):
     docstring: str | None
 
 
-MCPToolArguments = dict[str, str | int | None]
+# float admits find_duplicate_code's 0-1 similarity threshold (issue #1342).
+# bool is listed for documentation only, being already a subtype of int, and
+# structural_replace's dry_run default has relied on that since it was added.
+MCPToolArguments = dict[str, str | int | float | bool | None]
 
 
 class MCPInputSchemaProperty(TypedDict, total=False):
     type: str
     description: str
-    default: str | int
+    default: str | int | float | bool
 
 
 MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]
@@ -843,7 +846,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,

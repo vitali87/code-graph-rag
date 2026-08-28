@@ -90,6 +90,11 @@ AST_FP_DIGEST_SIZE = 8
 # Analysis defaults (CLI/tool overridable).
 DUPLICATES_DEFAULT_THRESHOLD = 0.8
 DUPLICATES_DEFAULT_MIN_NODES = 15
+# Reported groups, largest first. Named rather than inlined because the CLI
+# tool and the MCP tool must default alike: parity means the same call gives
+# the same answer on both surfaces (issue #1342), which two literals agreeing
+# today would not guarantee tomorrow.
+DUPLICATES_DEFAULT_GROUP_LIMIT = 20
 # Candidate generation is exact prefix filtering (AllPairs/PPJoin): each
 # function is indexed only under its rarest prefix branches, sized so any
 # pair clearing the Jaccard threshold is guaranteed to co-occur in a posting

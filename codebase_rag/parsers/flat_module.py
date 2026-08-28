@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
+from ..types_defs import PropertyDict
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 
 if TYPE_CHECKING:
@@ -27,6 +28,7 @@ def emit_flat_module(
     file_path: Path,
     structural_elements: dict[Path, str | None],
     distinguish_suffix: bool = False,
+    extra_properties: PropertyDict | None = None,
 ) -> str:
     """Emit a file's Module node and its containment edge; return its qn.
 
@@ -46,15 +48,18 @@ def emit_flat_module(
         # hierarchy to every consumer that splits a qn on it.
         parts[-1] = f"{parts[-1]}_{relative_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
     module_qn = cs.SEPARATOR_DOT.join([project_name, *parts])
-    ingestor.ensure_node_batch(
-        cs.NodeLabel.MODULE,
-        {
-            cs.KEY_QUALIFIED_NAME: module_qn,
-            cs.KEY_NAME: file_path.name,
-            cs.KEY_PATH: relative_path.as_posix(),
-            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
-        },
-    )
+    module_props: PropertyDict = {
+        cs.KEY_QUALIFIED_NAME: module_qn,
+        cs.KEY_NAME: file_path.name,
+        cs.KEY_PATH: relative_path.as_posix(),
+        cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(file_path),
+    }
+    if extra_properties:
+        # Caller-declared properties, currently Markdown front-matter
+        # (issue #1448). Applied AFTER the identity fields and filtered by the
+        # caller, so a declared `path:` cannot overwrite the node's real path.
+        module_props.update(extra_properties)
+    ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
     ingestor.ensure_relationship_batch(
         _parent_ref(repo_path, project_name, relative_path.parent, structural_elements),
         cs.RelationshipType.CONTAINS_MODULE,
