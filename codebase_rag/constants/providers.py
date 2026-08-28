@@ -111,6 +111,26 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-haiku-4-0": 200_000,
 }
 
+# Output ceilings for superseded model snapshots, used to lower an output
+# budget that those models would reject outright (issue #1498).
+#
+# Deliberately NOT a general per-model table: a general one would have to
+# list every current release and would go stale on each launch, silently
+# capping a new model below what it supports. These ids are retired dated
+# snapshots, so their published maxima can no longer change, and anything
+# absent keeps the configured budget -- the direction that stays safe as new
+# models appear. Every current release accepts the 8192 default, so none of
+# them needs an entry.
+DEFAULT_MAX_OUTPUT_TOKENS = 4_096
+LEGACY_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "claude-3-haiku-20240307": DEFAULT_MAX_OUTPUT_TOKENS,
+    "claude-3-sonnet-20240229": DEFAULT_MAX_OUTPUT_TOKENS,
+    "claude-3-opus-20240229": DEFAULT_MAX_OUTPUT_TOKENS,
+    "claude-2.1": DEFAULT_MAX_OUTPUT_TOKENS,
+    "claude-2.0": DEFAULT_MAX_OUTPUT_TOKENS,
+    "claude-instant-1.2": DEFAULT_MAX_OUTPUT_TOKENS,
+}
+
 MODULE_TORCH = "torch"
 MODULE_TRANSFORMERS = "transformers"
 MODULE_QDRANT_CLIENT = "qdrant_client"

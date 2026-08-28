@@ -352,9 +352,13 @@ class AppConfig(BaseSettings):
     # the reported crash, whose remedy is any value meaningfully above
     # Anthropic's 4096 provider default.
     #
-    # Raise it per-deployment when the chosen model allows more. A clamping
-    # table keyed on model id was considered and rejected: it would need
-    # hand-maintaining and would silently go stale on every new release.
+    # Raise it per-deployment when the chosen model allows more. A general
+    # clamping table over every model was rejected: it would need
+    # hand-maintaining and would silently go stale on every new release,
+    # capping a launch below what it supports. Retired snapshots are the
+    # exception -- their maxima are frozen -- so `LEGACY_MAX_OUTPUT_TOKENS`
+    # lowers this budget for those ids alone, leaving everything else at the
+    # configured value.
     MODEL_MAX_TOKENS: int = Field(default=8192, gt=0)
     QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
     QUERY_MEMORY_LIMIT_MB: int = Field(default=4096, gt=0)

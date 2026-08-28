@@ -156,3 +156,72 @@ class TestProviders:
         assert model.settings is not None
         assert model.settings.get("max_tokens") == AppConfig().MODEL_MAX_TOKENS
         assert model.settings.get("google_thinking_config") == {"thinking_budget": 512}
+
+
+class TestRetiredModelsGetALoweredBudget:
+    """A budget a model cannot accept fails the request outright.
+
+    pydantic-ai forwards `max_tokens` unchanged and offers no per-model cap,
+    so the 8192 default reaches models whose maximum is 4096 and the Messages
+    API rejects the call before the model answers -- the same class of
+    "no reply at all" failure this issue is about, reintroduced from the
+    other side.
+
+    Only retired snapshots are lowered. Their published maxima are frozen,
+    so unlike a general table this cannot go stale into capping a new release
+    below what it supports.
+    """
+
+    def test_a_retired_snapshot_is_capped_at_its_own_maximum(self) -> None:
+        """The reported case: 8192 sent to a 4096-token model is refused."""
+        from codebase_rag import constants as cs
+        from codebase_rag.providers.base import AnthropicProvider
+
+        model = AnthropicProvider(api_key="k").create_model("claude-3-haiku-20240307")
+
+        assert model.settings is not None
+        assert model.settings.get("max_tokens") == cs.DEFAULT_MAX_OUTPUT_TOKENS
+
+    def test_a_current_model_keeps_the_configured_budget(self) -> None:
+        """The control: the cap must not quietly apply to everything.
+
+        Lowering every model to the legacy maximum would "fix" the rejection
+        by reintroducing the truncation this issue exists to remove.
+        """
+        from codebase_rag.providers.base import AnthropicProvider
+
+        model = AnthropicProvider(api_key="k").create_model("claude-sonnet-5")
+
+        assert model.settings is not None
+        assert model.settings.get("max_tokens") == AppConfig().MODEL_MAX_TOKENS
+
+    def test_a_provider_prefixed_id_is_still_recognised(self) -> None:
+        """Model ids may carry a `provider:model` prefix.
+
+        Matching the raw string would miss the prefixed spelling and send the
+        rejected budget anyway.
+        """
+        from codebase_rag import constants as cs
+        from codebase_rag.providers.base import AnthropicProvider
+
+        model = AnthropicProvider(api_key="k").create_model(
+            "anthropic:claude-3-haiku-20240307"
+        )
+
+        assert model.settings is not None
+        assert model.settings.get("max_tokens") == cs.DEFAULT_MAX_OUTPUT_TOKENS
+
+    def test_a_budget_below_the_cap_is_not_raised_to_it(self) -> None:
+        """The clamp lowers only.
+
+        A deployment that deliberately sets a small budget must keep it; the
+        cap is a ceiling, not a target.
+        """
+        from codebase_rag.providers.base import _output_budget
+
+        with pytest.MonkeyPatch.context() as mp:
+            from codebase_rag.config import settings
+
+            mp.setattr(settings, "MODEL_MAX_TOKENS", 1024, raising=False)
+
+            assert _output_budget("claude-3-haiku-20240307") == 1024

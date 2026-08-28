@@ -51,6 +51,25 @@ def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
     return os.environ.get(env_var)
 
 
+def _output_budget(model_id: str) -> int:
+    """`MODEL_MAX_TOKENS`, lowered for models that would reject it outright.
+
+    pydantic-ai forwards `max_tokens` unchanged and offers no per-model
+    output cap, so a budget above the selected model's maximum is not
+    trimmed: the request is refused and the model never answers. The 8192
+    default fits every current release, but the retired snapshots in
+    `LEGACY_MAX_OUTPUT_TOKENS` cap output at 4096 and fail on it.
+
+    Only ever lowers, and only for ids listed there, so an unrecognised or
+    newer model keeps the configured budget unchanged.
+    """
+    bare = model_id.split(":", 1)[-1]
+    ceiling = cs.LEGACY_MAX_OUTPUT_TOKENS.get(bare)
+    if ceiling is None:
+        return settings.MODEL_MAX_TOKENS
+    return min(settings.MODEL_MAX_TOKENS, ceiling)
+
+
 class GoogleProvider(ModelProvider):
     __slots__ = (
         "api_key",
@@ -118,7 +137,7 @@ class GoogleProvider(ModelProvider):
         # thinking budget was configured, so the DEFAULT path carried no
         # settings at all and the output budget never applied -- the same
         # defect as the Anthropic one, on the more common branch (issue #1498).
-        model_settings = GoogleModelSettings(max_tokens=settings.MODEL_MAX_TOKENS)
+        model_settings = GoogleModelSettings(max_tokens=_output_budget(model_id))
         if self.thinking_budget is not None:
             model_settings["google_thinking_config"] = {
                 "thinking_budget": int(self.thinking_budget)
@@ -218,7 +237,7 @@ class AnthropicProvider(ModelProvider):
             anthropic_cache_messages=True,
             # Explicit, because the provider default is small enough that a
             # long answer fails before the model emits anything (issue #1498).
-            max_tokens=settings.MODEL_MAX_TOKENS,
+            max_tokens=_output_budget(model_id),
         )
         return AnthropicModel(model_id, provider=provider, settings=model_settings)
 
