@@ -5,6 +5,7 @@ functions; they live here once. WARMUP_RUNS/BENCH_RUNS stay per-script,
 because how many runs a suite needs is a property of that suite.
 """
 
+import math
 import statistics
 from collections.abc import Callable
 
@@ -32,7 +33,13 @@ def run_benchmark(
         "stddev_ms": statistics.stdev(times) * 1000 if len(times) > 1 else 0,
         "min_ms": min(times) * 1000,
         "max_ms": max(times) * 1000,
-        "p95_ms": sorted(times)[int(len(times) * 0.95)] * 1000,
+        # Nearest-rank: the 95th percentile of n samples is rank
+        # ceil(0.95n), which is index ceil(0.95n) - 1. Truncating
+        # instead lands on the LAST index whenever 0.95n is a whole
+        # number (n = 20, 40, 60...), so p95 silently reported the
+        # maximum and stopped distinguishing a tail from an outlier.
+        # Unchanged at the default 50 runs, where both give index 47.
+        "p95_ms": sorted(times)[math.ceil(len(times) * 0.95) - 1] * 1000,
     }
 
 

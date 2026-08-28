@@ -15,6 +15,8 @@ from pathlib import Path
 import typer
 from loguru import logger
 
+from codebase_rag import constants as cs
+
 from . import constants as ec
 from .score import score_structure
 from .structure_report import render, write_outputs
@@ -31,7 +33,14 @@ def run_l1_eval(
     extract_cgr: Callable[[Path, str], GraphData],
     run_oracle: Callable[[Path], GraphData],
     oracle_binary: str,
-    scored_node_kinds: frozenset[str] | tuple[str, ...],
+    # `tuple[NodeLabel, ...]` because that is what every caller passes
+    # (GO_/RS_/TS_/JS_/JAVA_/CSHARP_/LUA_/PHP_SCORED_NODE_KINDS are all
+    # declared so) AND what `score_structure` requires. The wider
+    # `frozenset[str] | tuple[str, ...]` admitted neither caller nor
+    # callee faithfully: no caller passes a frozenset, and a `str`
+    # element is rejected downstream, so the annotation described a
+    # contract this function never had.
+    scored_node_kinds: tuple[cs.NodeLabel, ...],
     extracting_cgr: str,
     cgr_done: str,
     extracting_oracle: str,

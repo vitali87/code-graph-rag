@@ -203,6 +203,13 @@ def toolchain_runs(binary: str, timeout: float, probe_arg: str = "-version") -> 
             capture_output=True,
             text=True,
             encoding=ENCODING_UTF8,
+            # A version banner is not required to be UTF-8: a vendor JDK or a
+            # non-UTF-8 locale can emit a stray byte. Strict decoding would
+            # raise UnicodeDecodeError, which is a ValueError and so escapes
+            # the handler below -- turning an availability CHECK into a crash
+            # and denying callers the fallback that answering False gives them.
+            # The output is never parsed, only the exit status is read.
+            errors="replace",
             check=False,
             timeout=timeout,
         )
