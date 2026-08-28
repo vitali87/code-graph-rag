@@ -5,12 +5,16 @@
 
 from __future__ import annotations
 
+import pytest
 from pydantic_ai.messages import (
+    LoadCapabilityReturnPart,
     ModelRequest,
     ModelResponse,
+    NativeToolSearchReturnPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchReturnPart,
     UserPromptPart,
 )
 
@@ -18,6 +22,7 @@ from codebase_rag.context_pruning import (
     PRUNED_PLACEHOLDER,
     prune_old_tool_results,
 )
+from codebase_rag.utils.token_utils import count_tokens
 
 
 def _turn(question: str, tool_output: str) -> list[ModelRequest | ModelResponse]:
@@ -196,3 +201,156 @@ def test_history_without_tool_results_is_returned_unchanged() -> None:
 
     assert _user_prompts(pruned) == ["hello"]
     assert len(pruned) == len(history)
+
+
+@pytest.mark.parametrize(
+    ("part_factory", "accessor"),
+    [
+        (
+            lambda: ToolSearchReturnPart(
+                tool_name="search",
+                content={"discovered_tools": [], "message": "ok"},
+                tool_call_id="c-search",
+            ),
+            "discovered_tools",
+        ),
+        (
+            lambda: NativeToolSearchReturnPart(
+                tool_name="search",
+                content={"discovered_tools": [], "message": "ok"},
+                tool_call_id="c-native-search",
+            ),
+            "discovered_tools",
+        ),
+        (
+            lambda: LoadCapabilityReturnPart(
+                tool_name="load",
+                content={"instructions": "do the thing"},
+                tool_call_id="c-load",
+            ),
+            "instructions",
+        ),
+    ],
+)
+def test_parts_with_structured_content_are_left_alone(part_factory, accessor) -> None:
+    """Only free-text tool results may be replaced with a string placeholder.
+
+    `BaseToolReturnPart` is the right base for FINDING tool results, which is
+    why the traversal matches on it. It is the wrong base for OVERWRITING
+    them: three subclasses carry structured content behind typed accessors,
+    and a string breaks them. Measured, not assumed:
+
+        ToolSearchReturnPart.discovered_tools -> TypeError:
+            string indices must be integers, not 'str'
+        LoadCapabilityReturnPart.instructions -> AttributeError:
+            'str' object has no attribute 'get'
+
+    A pruner that corrupts the history it is compacting is worse than one
+    that recovers less, so these are skipped rather than given per-subtype
+    placeholders. They are framework bookkeeping and small; the free-text
+    results this targets are the bulk (CodeRabbit, #1506).
+    """
+    part = part_factory()
+    history = [
+        ModelRequest(parts=[UserPromptPart(content="q")]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name="t", args={}, tool_call_id="c-big")]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name="t", content="BIG " * 5000, tool_call_id="c-big"
+                ),
+                part,
+            ]
+        ),
+    ]
+
+    pruned = prune_old_tool_results(
+        history, protect_recent_tokens=0, minimum_recovered_tokens=1
+    )
+
+    survivor = next(
+        p for message in pruned for p in message.parts if type(p) is type(part)
+    )
+    assert survivor.content == part.content, (
+        f"{type(part).__name__} carries structured content; replacing it with a "
+        "string corrupts the history"
+    )
+    getattr(survivor, accessor)
+
+
+def test_free_text_results_are_still_pruned_alongside_structured_ones() -> None:
+    """Skipping structured parts must not disable pruning for the rest.
+
+    Without this, the fix above is satisfied by a pruner that gave up
+    entirely -- the parametrized test cannot tell "structured parts skipped"
+    from "nothing pruned at all".
+    """
+    history = [
+        ModelRequest(parts=[UserPromptPart(content="q")]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name="t", args={}, tool_call_id="c-big")]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name="t", content="BIG " * 5000, tool_call_id="c-big"
+                ),
+                LoadCapabilityReturnPart(
+                    tool_name="load",
+                    content={"instructions": "do the thing"},
+                    tool_call_id="c-load",
+                ),
+            ]
+        ),
+    ]
+
+    pruned = prune_old_tool_results(
+        history, protect_recent_tokens=0, minimum_recovered_tokens=1
+    )
+
+    plain = next(
+        p for message in pruned for p in message.parts if type(p) is ToolReturnPart
+    )
+    assert plain.content == PRUNED_PLACEHOLDER, (
+        "free-text results must still be pruned when a structured part is present"
+    )
+
+
+def test_the_floor_measures_net_recovery_not_gross_content() -> None:
+    """The placeholder is kept, so its tokens are not recovered.
+
+    Counting gross content against the floor lets a rewrite through that
+    frees less than the floor demands, which is precisely the thrash the
+    floor exists to prevent: the prefix is rebuilt, the prompt cache for it
+    is invalidated, and the recovery does not cover the cost.
+
+    Concrete boundary, measured rather than assumed: the placeholder is 17
+    tokens and this result is 41, so gross recovery is 41 and net is 24. At a
+    floor of exactly 41, gross accounting prunes and net accounting declines
+    (CodeRabbit, #1506).
+    """
+    history = [
+        ModelRequest(parts=[UserPromptPart(content="q")]),
+        ModelResponse(parts=[ToolCallPart(tool_name="t", args={}, tool_call_id="c-1")]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name="t", content="OLD " * 40, tool_call_id="c-1")
+            ]
+        ),
+    ]
+    gross = count_tokens("OLD " * 40)
+    assert gross > count_tokens(PRUNED_PLACEHOLDER), (
+        "fixture must be bigger than the placeholder or the case is vacuous"
+    )
+
+    pruned = prune_old_tool_results(
+        history, protect_recent_tokens=0, minimum_recovered_tokens=gross
+    )
+
+    assert _tool_contents(pruned) == ["OLD " * 40], (
+        f"net recovery is {gross - count_tokens(PRUNED_PLACEHOLDER)} against a "
+        f"floor of {gross}, so this must not prune; counting gross content "
+        "would rewrite the cache prefix for less than the floor demands"
+    )

@@ -48,17 +48,28 @@ DEFAULT_PROTECT_RECENT_TOKENS = 40_000
 DEFAULT_MINIMUM_RECOVERED_TOKENS = 20_000
 
 
-def _is_tool_return(part: object) -> bool:
-    """Any tool-return part, matched by base class rather than by name.
+def _is_prunable_tool_return(part: object) -> bool:
+    """A tool return whose content is free text and may be replaced.
 
-    pydantic-ai ships five subclasses of `BaseToolReturnPart` (plain, native,
-    tool-search, native-tool-search, load-capability). Enumerating them here
-    would silently stop covering a shape the library adds later, which is the
-    same blind spot an `isinstance` list against a moving target always has.
+    Matching `BaseToolReturnPart` is right for FINDING tool results and wrong
+    for OVERWRITING them, and the two are not the same question. Three of its
+    five subclasses carry structured content behind typed accessors, so a
+    string placeholder corrupts them. Measured, not assumed:
+
+        ToolSearchReturnPart.discovered_tools -> TypeError:
+            string indices must be integers, not 'str'
+        LoadCapabilityReturnPart.instructions -> AttributeError:
+            'str' object has no attribute 'get'
+
+    So this names the two subclasses typed `ToolReturnContent`, which admits a
+    string, and an unknown future subclass is skipped rather than corrupted.
+    That is the safe direction for a mechanism whose entire value is that the
+    history it compacts still works: recovering less is a cost, corrupting the
+    conversation is a defect (CodeRabbit, #1506).
     """
-    from pydantic_ai.messages import BaseToolReturnPart
+    from pydantic_ai.messages import NativeToolReturnPart, ToolReturnPart
 
-    return isinstance(part, BaseToolReturnPart)
+    return type(part) in (ToolReturnPart, NativeToolReturnPart)
 
 
 def _content_tokens(part: object) -> int:
@@ -86,6 +97,10 @@ def prune_old_tool_results(
     candidates: list[tuple[int, int]] = []  # (message index, part index)
     protected_tokens = 0
     recoverable_tokens = 0
+    # The placeholder is kept, so it is not recovered. Counting gross tokens
+    # would clear the floor on a rewrite that frees less than the floor asks
+    # for, which is the exact thrash the floor exists to prevent.
+    placeholder_tokens = count_tokens(PRUNED_PLACEHOLDER)
 
     for message_index in range(len(messages) - 1, -1, -1):
         parts = getattr(messages[message_index], "parts", None)
@@ -93,7 +108,7 @@ def prune_old_tool_results(
             continue
         for part_index in range(len(parts) - 1, -1, -1):
             part = parts[part_index]
-            if not _is_tool_return(part):
+            if not _is_prunable_tool_return(part):
                 continue
             if getattr(part, "content", None) == PRUNED_PLACEHOLDER:
                 continue
@@ -102,7 +117,7 @@ def prune_old_tool_results(
                 protected_tokens += part_tokens
                 continue
             candidates.append((message_index, part_index))
-            recoverable_tokens += part_tokens
+            recoverable_tokens += max(0, part_tokens - placeholder_tokens)
 
     if recoverable_tokens < minimum_recovered_tokens:
         return messages
