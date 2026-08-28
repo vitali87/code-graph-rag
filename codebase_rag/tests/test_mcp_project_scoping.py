@@ -444,9 +444,18 @@ class TestAnAggregateLeaksMagnitude:
     """
 
     def test_an_unfiltered_aggregate_is_refused_when_scoped(self) -> None:
+        """`ALPHA` is passed so the refusal comes from the aggregate rule.
+
+        Without a project name, `_restricts_to_project` returns False at its
+        `if not project_name` guard, so the assertion held whatever the
+        aggregate logic did -- a test named for the SCOPED path that never
+        reached it (reported on #1494).
+        """
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
-        assert not requires_project_evidence("MATCH (n:Function) RETURN count(n)")
+        assert not requires_project_evidence(
+            "MATCH (n:Function) RETURN count(n)", ALPHA
+        )
 
     def test_an_aggregate_over_a_scoped_match_is_accepted(self) -> None:
         """A count the query itself restricts is attributable and fine.
