@@ -382,6 +382,35 @@ def test_the_query_counts_both_endpoints_explicitly() -> None:
     assert "RETURN id(a) AS node_id" not in query, query
 
 
+def test_the_docstring_names_the_expression_the_query_emits() -> None:
+    """Prose that names a Cypher expression must name one the query contains.
+
+    `build_proximity_query`'s docstring cited `UNWIND [id(a), id(b)]` for
+    months after #1477 replaced it with `UNWIND [low, high]` over a normalised
+    pair. The description survived the change that falsified it because it
+    lives in the function whose BODY changed, and nothing compares the two.
+
+    A comment in an untouched path is worse -- it outlives the change with no
+    diff to prompt a reader -- but this shows the same rot inside the edited
+    function. Pinned by extracting the quoted expressions and requiring the
+    emitted query to contain each.
+    """
+    import re
+
+    from codebase_rag.tools.graph_rerank import build_proximity_query
+
+    doc = build_proximity_query.__doc__ or ""
+    query = build_proximity_query([1, 2])
+
+    cited = re.findall(r"`(UNWIND [^`]+)`", doc)
+    assert cited, "the docstring no longer cites an UNWIND expression"
+    for expression in cited:
+        assert expression in query, (
+            f"docstring cites {expression!r} but the query emits none such; "
+            f"query was:\n{query}"
+        )
+
+
 def test_self_loops_are_excluded_from_proximity() -> None:
     """A function calling itself is not "close to" anything.
 

@@ -5,8 +5,11 @@
 
 from __future__ import annotations
 
+import ast
 import traceback
 from pathlib import Path
+
+import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.crash_correlation import (
@@ -491,3 +494,247 @@ def test_rank_with_no_resolvable_frame_reports_nothing(tmp_path):
     assert report.failing is None
     assert report.candidates == ()
     assert report.exception_type == "RuntimeError"
+
+
+def _returns_none(statement: ast.stmt) -> bool:
+    """A statement that hands None back to the caller.
+
+    `return` and `return None` are the same return: omitting the value is
+    not a different outcome, only a different spelling, and a failure path
+    that takes the barer one still needs its reason recorded.
+    """
+    if not isinstance(statement, ast.Return):
+        return False
+    if statement.value is None:
+        return True
+    return isinstance(statement.value, ast.Constant) and statement.value.value is None
+
+
+def _own_body_returns(node: ast.AST) -> list[tuple[list[ast.stmt], int]]:
+    """Every return of None in this scope, with its sibling list.
+
+    Covers both spellings (`return` and `return None`, see `_returns_none`)
+    and every branch container, including `except` handlers and `match`
+    cases, which are not statements and need an explicit descent.
+
+    Nested functions are pruned: a return inside a closure belongs to that
+    closure's contract, not the resolver's, and its siblings are not the
+    resolver's branch.
+    """
+    found: list[tuple[list[ast.stmt], int]] = []
+    stack: list[ast.AST] = [node]
+    while stack:
+        current = stack.pop()
+        for _field, value in ast.iter_fields(current):
+            if not isinstance(value, list):
+                continue
+            # Sibling checks need the STATEMENT list: `body[:index]` is the
+            # set of statements that ran before this return on this branch.
+            body = [item for item in value if isinstance(item, ast.stmt)]
+            for index, item in enumerate(body):
+                if isinstance(
+                    item, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+                ):
+                    continue
+                if _returns_none(item):
+                    found.append((body, index))
+                stack.append(item)
+            # `except` handlers and `match` cases are NOT statements: they are
+            # their own node types carrying a `body`, so filtering the list to
+            # `ast.stmt` above drops them entirely and nothing beneath one is
+            # ever reached. Descend into them separately, which keeps the
+            # sibling list above intact while making the walk see every branch.
+            stack.extend(
+                item
+                for item in value
+                if isinstance(item, ast.AST) and not isinstance(item, ast.stmt)
+            )
+    return found
+
+
+def test_every_resolve_failure_path_records_an_unresolved_reason() -> None:
+    """The premise `explain_traceback` picks its predicate on (issue #227).
+
+    `crash_correlation.py` keys `resolved` on `qualified_name is not None`
+    rather than on `unresolved_reason is None`, and justifies that in a comment
+    saying the two agree today "because every failure path in
+    `FrameResolver.resolve` records a reason before returning None".
+
+    That claim is about ANOTHER file, which can change without touching this
+    one -- so nothing would report it becoming false. If a future failure path
+    forgets to record, `_resolve_stack` derives `reason = None` via
+    `next(iter(stats.unresolved), None)`, and the rejected predicate would
+    start counting unresolvable frames as resolved.
+
+    Structural rather than behavioural: reaching all fourteen failure paths
+    through the resolver would need fixtures for each, and the property is
+    about the code's shape rather than its output. Same discipline as
+    `test_mcp_read_handler_lock.py`, which parses the shipped file.
+
+    Checks the PRECEDING SIBLING STATEMENT rather than a window of source
+    text. The first version matched `"record" in context` over four lines,
+    which a comment satisfies: deleting the real `stats.record(...)` call and
+    leaving `return None  # record` passed it. That is "does this symbol
+    appear" standing in for "is this call made" -- a guard certifying an
+    invariant it could not check (CodeRabbit, #1487).
+    """
+
+    def _records_reason(statement: ast.stmt) -> bool:
+        """Whether the statement is a `stats.record(...)` call.
+
+        The RECEIVER is checked, not just the method name. An earlier version
+        accepted any `<object>.record(...)`, so a branch calling
+        `logger.record(...)` before `return None` passed while recording
+        nothing on `stats` -- verified by mutation (CodeRabbit, #1487).
+
+        `stats` is the parameter name every `resolve` implementation uses for
+        its `ResolutionStats`; a rename would fail here, which is the intended
+        outcome since the premise this pins is stated in terms of that object.
+
+        Requiring a bare `ast.Expr` is deliberate and not over-strict.
+        `ResolutionStats.record` returns `None`, so `_ = stats.record(...)` or
+        any use of its value is code nobody writes; all current call sites are
+        bare expression statements. Relaxing the check to accept a wrapped
+        call would widen it for a shape production cannot meaningfully
+        produce, which is coverage of nothing.
+        """
+        if not (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Attribute)
+            and statement.value.func.attr == "record"
+        ):
+            return False
+        receiver = statement.value.func.value
+        return isinstance(receiver, ast.Name) and receiver.id == "stats"
+
+    source = (
+        Path(__file__).resolve().parents[1] / "trace" / "resolution.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    unrecorded: list[str] = []
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name != "resolve":
+            continue
+        for body, index in _own_body_returns(node):
+            checked += 1
+            # Any PRECEDING SIBLING in the same branch, not only the
+            # immediately preceding one. Requiring adjacency rejected a branch
+            # that records the reason and then does one more thing before
+            # returning -- a legitimate shape, so adjacency was strictness
+            # without coverage. Siblings only: a call in an enclosing branch
+            # does not run on this path.
+            if not any(_records_reason(stmt) for stmt in body[:index]):
+                unrecorded.append(f"resolution.py:{body[index].lineno}")
+
+    assert checked, "found no bare `return None` in any resolve(); parser drifted"
+    assert not unrecorded, (
+        f"{unrecorded} return None with no preceding `stats.record(...)` call "
+        "in the same branch, so `unresolved_reason is None` no longer implies "
+        "the frame resolved -- see the predicate comment in "
+        "crash_correlation.explain_traceback"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "source"),
+    [
+        (
+            "return None inside an except handler",
+            """
+def resolve(self, stats):
+    try:
+        return lookup()
+    except KeyError:
+        return None
+""",
+        ),
+        (
+            "return None inside a match case",
+            """
+def resolve(self, stats):
+    match kind:
+        case "absent":
+            return None
+""",
+        ),
+        (
+            "bare return inside an except handler",
+            """
+def resolve(self, stats):
+    try:
+        return lookup()
+    except KeyError:
+        return
+""",
+        ),
+        (
+            "bare return in a plain branch",
+            """
+def resolve(self, stats):
+    if missing:
+        return
+""",
+        ),
+    ],
+)
+def test_own_body_returns_sees_every_shape_that_returns_none(
+    label: str, source: str
+) -> None:
+    """The failure-path guard must not be blind to whole syntactic families.
+
+    `test_every_resolve_failure_path_records_an_unresolved_reason` is only as
+    strong as the set of returns it can see. Two gaps made it silently
+    narrower than it reads (CodeRabbit, #1487):
+
+    `ast.iter_fields` yields statement lists, and the traversal pushed only
+    the `ast.stmt` items it had already filtered. `ast.ExceptHandler` and
+    `ast.match_case` are NOT statements -- they are their own node types
+    holding a `body` -- so nothing under an `except` or a `case` was ever
+    reached. A resolver that returns None from an exception handler would
+    have been certified by a guard that never looked at it.
+
+    And `return` alone returns None just as `return None` does, but the
+    check required `ast.Constant`, so the barest failure path of all read as
+    "not a None return" and was skipped.
+
+    Both are latent rather than live: no `resolve` in `resolution.py` uses
+    either shape today, which is exactly why this test uses synthetic sources.
+    A guard whose blind spots are invisible until production grows into them
+    is one that reports success it has not earned -- so the shapes are
+    asserted here, against sources written to have them.
+    """
+    function = ast.parse(source).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert _own_body_returns(function), (
+        f"a {label} returns None but the traversal did not find it, so a "
+        "resolver failing on that path would pass the record-a-reason guard "
+        "without recording anything"
+    )
+
+
+def test_own_body_returns_still_prunes_nested_scopes() -> None:
+    """The widening must not swallow returns that belong to a closure.
+
+    Descending into non-statement containers is a strictly wider traversal,
+    and the pruning it must not undo is the one that keeps a nested
+    function's contract out of the resolver's. Without this, the parametrized
+    test above is satisfied by a traversal that simply returns everything.
+    """
+    function = ast.parse(
+        """
+def resolve(self, stats):
+    def helper():
+        return None
+
+    return found()
+"""
+    ).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert not _own_body_returns(function), (
+        "the `return None` belongs to the nested helper, not to resolve(), "
+        "so counting it would demand a recorded reason on a path the "
+        "resolver does not take"
+    )

@@ -17,13 +17,15 @@ from collections.abc import Callable, Coroutine
 from contextlib import contextmanager
 from dataclasses import replace
 from decimal import Decimal
+from functools import lru_cache
 from html import escape as html_escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from prompt_toolkit import PromptSession, prompt
+from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
 from pydantic_ai import (
@@ -51,6 +53,7 @@ from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
 from .config import ModelConfig, load_ignore_patterns, settings
+from .context_pruning import prune_old_tool_results
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
@@ -700,6 +703,30 @@ async def _run_agent_response_loop(
             )
             continue
 
+        # Bound the context BEFORE the counter snapshots it. The refresh below
+        # is handed `list(message_history)` at spawn time, so pruning after it
+        # would count the pre-prune history and write that total back: the next
+        # turn would re-trigger on a number this prune already invalidated.
+        #
+        # The threshold is `TOKEN_THRESHOLD_CRITICAL`, the level this project
+        # already calls critical for this exact quantity (it drives the status
+        # line). Inheriting it means the shipped default is a decision the
+        # repository made rather than one chosen to satisfy a review.
+        #
+        # DELIBERATELY TIMID, and issue #1500 owns the policy. Two ways this
+        # declines to act: `_token_usage` reports 0 for every provider whose
+        # counter never runs (`_refresh_context_tokens` returns early unless
+        # Anthropic with a key), and `prune_old_tool_results` refuses below its
+        # own recovery floor. A mechanism that discards data should be inert
+        # where it cannot measure, so both silences are the wanted direction.
+        _, _, context_pct = _token_usage()
+        if context_pct >= cs.TOKEN_THRESHOLD_CRITICAL:
+            # Assign THROUGH the slice: callers hold this same list and the
+            # loop mutates it in place, so rebinding would prune a copy and
+            # leave the conversation untouched -- a call site that satisfies a
+            # reachability check while doing nothing.
+            message_history[:] = prune_old_tool_results(message_history)
+
         _spawn_background(_refresh_context_tokens(list(message_history)))
 
         output_text = response.output
@@ -1186,7 +1213,7 @@ def _thinking_with_status_bar(message: str):
             refresh_task.cancel()
 
 
-def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
+def _input_keybindings() -> KeyBindings:
     bindings = KeyBindings()
 
     @bindings.add(cs.KeyBinding.CTRL_J)
@@ -1210,6 +1237,80 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
         app_context.session.cycle_permission_mode()
         event.app.invalidate()
 
+    # This prompt is multiline, so the arrow keys belong to the buffer while
+    # there is somewhere to move. Only on the first (or last) row do they
+    # fall through to history -- binding them unconditionally would make a
+    # half-written multiline question uneditable (issue #1495).
+    @bindings.add(cs.KeyBinding.UP)
+    def history_previous(event: KeyPressEvent) -> None:
+        buffer = event.current_buffer
+        if buffer.document.cursor_position_row == 0:
+            buffer.history_backward(count=event.arg)
+        else:
+            buffer.cursor_up(count=event.arg)
+
+    @bindings.add(cs.KeyBinding.DOWN)
+    def history_next(event: KeyPressEvent) -> None:
+        buffer = event.current_buffer
+        if buffer.document.cursor_position_row == buffer.document.line_count - 1:
+            buffer.history_forward(count=event.arg)
+        else:
+            buffer.cursor_down(count=event.arg)
+
+    return bindings
+
+
+@lru_cache(maxsize=1)
+def _input_history() -> History:
+    """The chat history, owned separately from the prompt that reads it.
+
+    Kept apart from `_input_session` deliberately. Persistence across turns
+    is the property that matters (issue #1495), and holding it here lets it
+    be exercised without constructing a `PromptSession` -- which attaches to
+    the console and, on a headless CI runner, can block until the job times
+    out.
+    """
+    return InMemoryHistory()
+
+
+def _input_session() -> PromptSession[str]:
+    """The chat prompt, built fresh each turn over the persistent history.
+
+    `get_multiline_input` previously called the bare `prompt()` function,
+    whose own docstring says it "will create a new PromptSession" and which
+    passes `history=None`. Every turn therefore started with an empty
+    history and the up arrow had nothing to recall (issue #1495). Passing
+    `_input_history()` is what fixes that; the session itself is deliberately
+    NOT cached.
+
+    `PromptSession` binds its `Application` to the ambient app session's
+    input and output at construction, so a cached one keeps reading the
+    console it was born under. Across two app sessions that means the
+    second prompt reads the first one's input; when that input is a closed
+    pipe, POSIX returns EOF but a Win32 pipe blocks, which timed out the
+    Windows CI job at thirty minutes. Rebuilding per turn is what the bare
+    `prompt()` did all along and costs nothing at human typing speed.
+    """
+    return PromptSession(history=_input_history())
+
+
+def _remember_input(history: History, text: str) -> None:
+    """Append `text` to `history`, skipping blanks and immediate repeats.
+
+    Blank entries would push the real previous message out of reach for
+    anyone holding Ctrl+J on an empty buffer, and a repeated question
+    should not cost two up-arrows to recall.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return
+    if stripped in list(history.get_strings())[-1:]:
+        return
+    history.append_string(stripped)
+
+
+def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
+    session = _input_session()
     clean_prompt = Text.from_markup(prompt_text).plain
 
     print_formatted_text(
@@ -1220,10 +1321,10 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
         )
     )
 
-    result = prompt(
+    result = session.prompt(
         "",
         multiline=True,
-        key_bindings=bindings,
+        key_bindings=_input_keybindings(),
         wrap_lines=True,
         style=ORANGE_STYLE,
         bottom_toolbar=_status_bar_label,
@@ -1232,6 +1333,7 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     if result is None:
         raise EOFError
     stripped: str = result.strip()
+    _remember_input(session.history, stripped)
     return stripped
 
 

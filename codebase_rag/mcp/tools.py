@@ -30,9 +30,11 @@ from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
 )
+from codebase_rag.tools.duplicate_detection import create_find_duplicates_tool
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
+from codebase_rag.tools.semantic_search import create_get_function_source_tool
 from codebase_rag.tools.shell_command import ShellCommander, create_shell_command_tool
 from codebase_rag.tools.structural_editor import create_structural_editor_tool
 from codebase_rag.tools.structural_search import create_structural_search_tool
@@ -119,6 +121,16 @@ class MCPToolsRegistry:
             service=self.ast_grep_service
         )
         self._structural_available = has_ast_grep()
+
+        # Both read-only, and both were CLI-only until issue #1342.
+        # `find_duplicate_code` was absent from MCP entirely;
+        # `get_function_source` existed here only inside the `ask_agent`
+        # toolset, so a client could not call it directly, only ask an LLM to
+        # decide to call it. Neither takes a ReadContentRecord: that gate
+        # exists to keep repository content out of `web_search`, and MCP
+        # exposes no web-reaching tool for it to guard.
+        self._find_duplicates_tool = create_find_duplicates_tool(self.ingestor)
+        self._function_source_tool = create_get_function_source_tool(self.ingestor)
 
         self._rag_agent: Agent | None = None
 
@@ -411,6 +423,58 @@ class MCPToolsRegistry:
                 returns_json=False,
             )
 
+        # Unconditional: both read the graph only. get_function_source lives in
+        # semantic_search.py but touches none of the embedding machinery, so
+        # gating it on the semantic extra would hide a graph-only tool behind
+        # a dependency it never uses.
+        self._tools[cs.MCPToolName.FIND_DUPLICATE_CODE] = ToolMetadata(
+            name=cs.MCPToolName.FIND_DUPLICATE_CODE,
+            description=td.MCP_TOOLS[cs.MCPToolName.FIND_DUPLICATE_CODE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_PROJECT,
+                    ),
+                    cs.MCPParamName.THRESHOLD: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.NUMBER,
+                        description=td.MCP_PARAM_THRESHOLD,
+                        default=cs.DUPLICATES_DEFAULT_THRESHOLD,
+                    ),
+                    cs.MCPParamName.MIN_SIZE: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.INTEGER,
+                        description=td.MCP_PARAM_MIN_SIZE,
+                        default=cs.DUPLICATES_DEFAULT_MIN_NODES,
+                    ),
+                    cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.INTEGER,
+                        description=td.MCP_PARAM_DUPLICATES_LIMIT,
+                        default=cs.DUPLICATES_DEFAULT_GROUP_LIMIT,
+                    ),
+                },
+                required=[],
+            ),
+            handler=self.find_duplicate_code,
+            returns_json=False,
+        )
+        self._tools[cs.MCPToolName.GET_FUNCTION_SOURCE] = ToolMetadata(
+            name=cs.MCPToolName.GET_FUNCTION_SOURCE,
+            description=td.MCP_TOOLS[cs.MCPToolName.GET_FUNCTION_SOURCE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.NODE_ID: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.INTEGER,
+                        description=td.MCP_PARAM_NODE_ID,
+                    )
+                },
+                required=[cs.MCPParamName.NODE_ID],
+            ),
+            handler=self.get_function_source,
+            returns_json=False,
+        )
+
         self._tools[cs.MCPToolName.ASK_AGENT] = ToolMetadata(
             name=cs.MCPToolName.ASK_AGENT,
             description=td.MCP_TOOLS[cs.MCPToolName.ASK_AGENT],
@@ -477,10 +541,6 @@ class MCPToolsRegistry:
     @property
     def rag_agent(self) -> Agent:
         if self._rag_agent is None:
-            from codebase_rag.tools.semantic_search import (
-                create_get_function_source_tool,
-            )
-
             tools = [
                 self._query_tool,
                 self._code_tool,
@@ -489,7 +549,11 @@ class MCPToolsRegistry:
                 self._file_editor_tool,
                 self._shell_command_tool,
                 self._directory_lister_tool,
-                create_get_function_source_tool(self.ingestor),
+                # The same instances the direct MCP tools use: a second copy
+                # would give the orchestrator its own roots cache and let the
+                # two routes disagree about a project indexed mid-session.
+                self._function_source_tool,
+                self._find_duplicates_tool,
             ]
             if self._semantic_search_tool is not None:
                 tools.append(self._semantic_search_tool)
@@ -725,6 +789,37 @@ class MCPToolsRegistry:
             result = await self._semantic_search_tool.function(
                 query=natural_language_query, top_k=top_k, project=project
             )
+        return str(result)
+
+    async def find_duplicate_code(
+        self,
+        project: str | None = None,
+        threshold: float = cs.DUPLICATES_DEFAULT_THRESHOLD,
+        min_size: int = cs.DUPLICATES_DEFAULT_MIN_NODES,
+        limit: int = cs.DUPLICATES_DEFAULT_GROUP_LIMIT,
+    ) -> str:
+        """Report structurally duplicated functions (issue #1342).
+
+        Duplicate detection spans several graph reads -- fingerprints, then
+        skipped-symbol coverage -- so it takes the lock for the same reason
+        `flow_verdict` does: index/update delete and rebuild while holding it,
+        and an interleaved read would report groups from one generation with
+        coverage from another.
+        """
+        async with self._ingestor_lock:
+            result = await self._find_duplicates_tool.function(
+                project=project, threshold=threshold, min_size=min_size, limit=limit
+            )
+        return str(result)
+
+    async def get_function_source(self, node_id: int) -> str:
+        """Fetch a function's source by graph node id (issue #1342).
+
+        A node id is only meaningful within one generation of the graph, so
+        the lookup must not straddle a rebuild that could reassign it.
+        """
+        async with self._ingestor_lock:
+            result = await self._function_source_tool.function(node_id=node_id)
         return str(result)
 
     async def structural_search(self, pattern: str, language: str | None = None) -> str:

@@ -122,7 +122,7 @@ def create_find_duplicates_tool(ingestor: QueryProtocol) -> Tool:
         project: str | None = None,
         threshold: float = cs.DUPLICATES_DEFAULT_THRESHOLD,
         min_size: int = cs.DUPLICATES_DEFAULT_MIN_NODES,
-        limit: int = 20,
+        limit: int = cs.DUPLICATES_DEFAULT_GROUP_LIMIT,
     ) -> str:
         return await _find_duplicates(ingestor, project, threshold, min_size, limit)
 

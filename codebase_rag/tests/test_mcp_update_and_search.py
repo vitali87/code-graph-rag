@@ -246,6 +246,13 @@ class TestRagAgentProperty:
     def test_rag_agent_includes_function_source_tool(
         self, temp_project_root: Path
     ) -> None:
+        """The orchestrator gets the same instance the direct MCP tool uses.
+
+        Since issue #1342 the tool is built once in the constructor rather than
+        lazily inside this property, so the assertion is identity against
+        `registry._function_source_tool`; patching the factory would no longer
+        intercept a call that has already happened.
+        """
         mock_ingestor = MagicMock()
         mock_cypher_gen = MagicMock()
 
@@ -259,20 +266,13 @@ class TestRagAgentProperty:
                 cypher_gen=mock_cypher_gen,
             )
 
-        with (
-            patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create,
-            patch(
-                "codebase_rag.tools.semantic_search.create_get_function_source_tool"
-            ) as mock_fst,
-        ):
-            mock_tool = MagicMock()
-            mock_fst.return_value = mock_tool
+        with patch("codebase_rag.mcp.tools.create_rag_orchestrator") as mock_create:
             mock_create.return_value = (MagicMock(), "system prompt")
 
             registry.rag_agent
 
             tools_arg = mock_create.call_args[1]["tools"]
-            assert mock_tool in tools_arg
+            assert registry._function_source_tool in tools_arg
 
     def test_rag_agent_includes_semantic_search_when_available(
         self, temp_project_root: Path
