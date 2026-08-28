@@ -1394,6 +1394,39 @@ class TestEnforcementSurvivesAnUnfilteredQuery:
         assert prefixes == {ALPHA, BETA}
 
 
+class TestATranslationFailureIsNotReportedAsUnscopeable:
+    """A query that was never generated cannot be judged unscopeable.
+
+    `QUERY_NOT_AVAILABLE` has no RETURN clause, so it fails the evidence
+    check like any other unjudgeable query -- and the handler replaced the
+    real translation error with "this query cannot be scoped". The caller
+    then sees a scoping complaint about a query that does not exist, and the
+    actual failure is discarded. Only reachable on a SCOPED request, which is
+    why the unscoped path never showed it (reported on #1494).
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_underlying_error_survives(self) -> None:
+        handler = _handler_returning([], query_used=cs.QUERY_NOT_AVAILABLE)
+
+        result = await handler.query_code_graph("something unparseable", project=ALPHA)
+
+        assert cs.MCP_UNSCOPEABLE_QUERY.format(project=ALPHA) not in (
+            result.get("summary") or ""
+        )
+        assert result.get("query_used") == cs.QUERY_NOT_AVAILABLE
+
+    @pytest.mark.asyncio
+    async def test_an_empty_query_is_also_not_a_scoping_complaint(self) -> None:
+        handler = _handler_returning([], query_used="")
+
+        result = await handler.query_code_graph("something unparseable", project=ALPHA)
+
+        assert cs.MCP_UNSCOPEABLE_QUERY.format(project=ALPHA) not in (
+            result.get("summary") or ""
+        )
+
+
 class TestPropertyAggregatesAreAttributed:
     """An aggregate over a PROPERTY measures its entity, exactly as a bare one does.
 

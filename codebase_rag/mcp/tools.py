@@ -896,8 +896,18 @@ class MCPToolsRegistry:
             # foreign. Answering a SCOPED request with those would ignore
             # the scope silently, which is the original bug in new clothes.
             # Refused instead, so the caller learns the scope did not hold.
-            if project is not None and not requires_project_evidence(
-                result_dict.get(cs.DICT_KEY_QUERY_USED, ""), project
+            #
+            # Only when a query was actually GENERATED. Translation failure
+            # yields `QUERY_NOT_AVAILABLE` (or nothing), which has no RETURN
+            # clause and so fails the evidence check -- reporting "cannot be
+            # scoped" for a query that was never written, and discarding the
+            # real translation error the caller needs (issue #1494).
+            query_used = result_dict.get(cs.DICT_KEY_QUERY_USED, "")
+            generated = bool(query_used) and query_used != cs.QUERY_NOT_AVAILABLE
+            if (
+                project is not None
+                and generated
+                and not requires_project_evidence(query_used, project)
             ):
                 message = cs.MCP_UNSCOPEABLE_QUERY.format(project=project)
                 return QueryResultDict(
