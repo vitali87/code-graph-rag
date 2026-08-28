@@ -217,7 +217,6 @@ MCP_PARAM_NODE_ID = (
     "Internal graph node id of the function or method, as returned by "
     "semantic_search results"
 )
-MCP_PARAM_PROJECT = "Project to scan (optional; required only when several are indexed)"
 MCP_PARAM_THRESHOLD = (
     "Similarity threshold between 0 and 1 for 'similar' groups (default: 0.8)"
 )
