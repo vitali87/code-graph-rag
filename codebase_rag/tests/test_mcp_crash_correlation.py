@@ -9,7 +9,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.crash_correlation import CYPHER_CRASH_CALLS
+from codebase_rag.crash_correlation import (
+    CYPHER_CRASH_CALLS,
+    CYPHER_CRASH_POSITIONAL_PARAMS,
+)
 from codebase_rag.cypher_queries import CYPHER_TRACE_CALLABLES
 from codebase_rag.flow_verdict import CYPHER_FLOW_COVERAGE_GAPS, CYPHER_FLOW_EDGES
 from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -47,7 +50,11 @@ def _registry(tmp_path: Path) -> MCPToolsRegistry:
             ]
         if query == CYPHER_CRASH_CALLS:
             return [{"from_qn": f"{module}.dispatch", "to_qn": f"{module}.handle"}]
-        if query in (CYPHER_FLOW_EDGES, CYPHER_FLOW_COVERAGE_GAPS):
+        if query in (
+            CYPHER_FLOW_EDGES,
+            CYPHER_FLOW_COVERAGE_GAPS,
+            CYPHER_CRASH_POSITIONAL_PARAMS,
+        ):
             return []
         raise AssertionError(f"unexpected query: {query}")
 

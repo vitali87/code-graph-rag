@@ -2,8 +2,13 @@
 #
 # `rank_root_causes` ranks candidates by graph proximity. For an arity
 # TypeError it does not need to rank at all: the message names the callee and
-# both counts, and the graph already knows every function's declared
-# parameters, so the mismatch is mechanically decidable.
+# both counts, and Python ingestion records each function's declared
+# POSITIONAL parameters, so the mismatch is mechanically decidable.
+#
+# That last clause was false when this file was written -- it claimed the
+# graph already knew every function's parameters, when no frontend stored any.
+# The `positional_params` property was added to make it true. Other languages
+# still store nothing and are answered with "cannot corroborate".
 #
 # The parser is tested against messages CPython actually emits, captured by
 # running the failing calls rather than transcribed from memory:

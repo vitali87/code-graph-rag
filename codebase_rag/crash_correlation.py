@@ -28,6 +28,17 @@ WHERE a.qualified_name STARTS WITH $prefix
 RETURN a.qualified_name AS from_qn, b.qualified_name AS to_qn
 """
 
+# Declared positional parameters, for the arity check. Only Python ingestion
+# writes this property, so a node without it yields NULL and the diagnosis
+# declines rather than comparing against a phantom empty signature.
+CYPHER_CRASH_POSITIONAL_PARAMS = f"""MATCH (n)
+WHERE n.qualified_name STARTS WITH $prefix
+  AND n.{cs.KEY_POSITIONAL_PARAMS} IS NOT NULL
+RETURN n.qualified_name AS qn, n.{cs.KEY_POSITIONAL_PARAMS} AS positional_params
+"""
+
+_TYPE_ERROR = "TypeError"
+
 # ``  File "/app/service.py", line 14, in handle_request``
 _TB_FRAME = re.compile(
     r'^\s*File "(?P<path>[^"]+)", line (?P<line>\d+), in (?P<name>.+)$'
@@ -112,6 +123,8 @@ class TracebackReport(NamedTuple):
     frames: tuple[FrameContext, ...]
     flow_gaps: tuple[str, ...]
     resolution: FrameResolutionRate
+    # None when the crash is not an arity TypeError, which is most crashes.
+    arity: ArityFinding | None = None
 
 
 class ArityError(NamedTuple):
@@ -138,12 +151,11 @@ class ArityError(NamedTuple):
 # ones". Distinct from `()`, which asserts a function genuinely declares NO
 # parameters -- a claim, where this is the absence of one.
 #
-# Needed because the graph stores no parameter data at all today (Function
-# nodes carry path, name, qualified_name, line/col bounds, decorators,
-# docstring, modifiers, is_exported, is_macro -- and nothing else), so every
-# in-repo caller is currently in this position. When ingestion grows the
-# field, callers that can separate the kinds pass the positional names and
-# get a real verdict.
+# Python ingestion writes `positional_params`, so a Python callee yields real
+# names. Every other frontend leaves the property absent, and those callees
+# land here: the kinds were never extracted, so nothing is known about them.
+# Absent is deliberately not stored as `[]` -- that would assert "declares no
+# positional parameters" and produce a false mismatch on correct code.
 _ARITY_KINDS_UNKNOWN: tuple[str, ...] = ("\x00unknown",)
 
 
@@ -159,6 +171,21 @@ class ArityVerdict(NamedTuple):
 
     declared_count: int
     confirmed: bool
+
+
+class ArityFinding(NamedTuple):
+    """An arity `TypeError` from a report's own traceback, graph-checked.
+
+    `callee_qualified_name` is None when the message names a callee the graph
+    cannot pin to exactly one node -- unknown to the graph, or ambiguous
+    across modules. `verdict` is then None as well: an unidentified callee has
+    no stored signature to compare against, which is a different outcome from
+    a stored signature that disagrees.
+    """
+
+    error: ArityError
+    callee_qualified_name: str | None
+    verdict: ArityVerdict | None
 
 
 # CPython emits "1 was given" for a single argument and "2 were given" for
@@ -358,6 +385,13 @@ class _CrashGraph:
             if isinstance(from_qn, str) and isinstance(to_qn, str):
                 self.callers.setdefault(to_qn, []).append(from_qn)
                 self.callees.setdefault(from_qn, []).append(to_qn)
+        self.positional_params: dict[str, tuple[str, ...]] = {}
+        for row in fetch_all(CYPHER_CRASH_POSITIONAL_PARAMS, {cs.KEY_PREFIX: prefix}):
+            qn, declared = row.get("qn"), row.get("positional_params")
+            if isinstance(qn, str) and isinstance(declared, list):
+                self.positional_params[qn] = tuple(
+                    name for name in declared if isinstance(name, str)
+                )
         self.flow_sources: dict[str, list[str]] = {}
         for row in fetch_all(CYPHER_FLOW_EDGES, params):
             source, target = row.get("source"), row.get("target")
@@ -390,6 +424,60 @@ def _resolve_stack(
             reason = next(iter(stats.unresolved), None)
             resolved.append((frame, None, None, reason))
     return resolved
+
+
+def _resolve_callee(
+    callee: str, graph: _CrashGraph, resolved_qns: tuple[str, ...]
+) -> str | None:
+    """The one graph node the arity message's callee names, or None.
+
+    An arity `TypeError` is raised at the CALL SITE -- the callee never runs,
+    so it is absent from the traceback and cannot be read off the stack. The
+    message gives a bare name, which may occur in many modules, so candidates
+    are narrowed by the graph: a callee of a frame actually on the stack wins
+    over an unrelated same-named function elsewhere.
+
+    Ambiguity returns None rather than picking one. Confirming an arity
+    mismatch against the wrong function of the same name is precisely the
+    false accusation this module declines to make.
+    """
+    suffix = f"{cs.SEPARATOR_DOT}{callee}"
+    candidates = [qn for qn in graph.by_qn if qn.endswith(suffix) or qn == callee]
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        return None
+    reachable = {
+        callee_qn
+        for frame_qn in resolved_qns
+        for callee_qn in graph.callees.get(frame_qn, ())
+    }
+    narrowed = [qn for qn in candidates if qn in reachable]
+    return narrowed[0] if len(narrowed) == 1 else None
+
+
+def _arity_finding(
+    parsed: ParsedTraceback, graph: _CrashGraph, resolved_qns: tuple[str, ...]
+) -> ArityFinding | None:
+    if parsed.exception_type != _TYPE_ERROR:
+        return None
+    error = parse_arity_error(parsed.exception_message)
+    if error is None:
+        return None
+    callee_qn = _resolve_callee(error.callee, graph, resolved_qns)
+    if callee_qn is None:
+        return ArityFinding(error=error, callee_qualified_name=None, verdict=None)
+    declared = graph.positional_params.get(callee_qn, _ARITY_KINDS_UNKNOWN)
+    # `is_method=False` even for methods, deliberately. That flag adds the
+    # receiver back for callers whose stored parameters omit it; this store
+    # keeps the receiver, so adding it again would over-count by one. It would
+    # also mis-handle a staticmethod, which is a Method node that CPython
+    # counts with no receiver at all.
+    return ArityFinding(
+        error=error,
+        callee_qualified_name=callee_qn,
+        verdict=diagnose_arity(error, declared, is_method=False),
+    )
 
 
 def explain_traceback(
@@ -432,6 +520,15 @@ def explain_traceback(
             # unresolvable frame as resolved. The qualified name is what the
             # rate is ABOUT; the reason is diagnostic text alongside it.
             resolved=sum(1 for frame in contexts if frame.qualified_name is not None),
+        ),
+        arity=_arity_finding(
+            parsed,
+            graph,
+            tuple(
+                frame.qualified_name
+                for frame in contexts
+                if frame.qualified_name is not None
+            ),
         ),
     )
 
