@@ -1394,6 +1394,57 @@ class TestEnforcementSurvivesAnUnfilteredQuery:
         assert prefixes == {ALPHA, BETA}
 
 
+class TestACommentedPredicateDoesNotRestrictAnything:
+    """A project predicate inside a comment is not executed by the database.
+
+    The projection is analysed with comments and quoted strings blanked, but
+    the RESTRICTION check received the original Cypher, so text the database
+    never runs satisfied the scope guard. The aggregate then executed with no
+    project predicate at all and returned a cross-project total (reported on
+    #1494, reproduced by execution).
+
+    Quoted strings must survive this stripping: the project literal
+    legitimately lives inside quotes, so blanking them would refuse every
+    correctly-scoped query instead.
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_a_block_comment_predicate_is_refused(self) -> None:
+        assert self._refused(
+            f'MATCH (b) /* b.qualified_name STARTS WITH "{ALPHA}." */ '
+            "RETURN count(b) AS total"
+        )
+
+    def test_a_line_comment_predicate_is_refused(self) -> None:
+        assert self._refused(
+            f'MATCH (b) // b.qualified_name STARTS WITH "{ALPHA}."\n'
+            "RETURN count(b) AS total"
+        )
+
+    def test_a_genuine_predicate_is_still_allowed(self) -> None:
+        """THE CONTROL. Stripping must not refuse a real restriction."""
+        assert not self._refused(
+            f'MATCH (b) WHERE b.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(b) AS total"
+        )
+
+    def test_a_double_slash_inside_a_string_is_not_a_comment(self) -> None:
+        """`"http://..."` must not be mistaken for a line comment.
+
+        Blanking from the `//` would swallow the rest of the line including
+        the genuine predicate, refusing a correct query.
+        """
+        assert not self._refused(
+            f'MATCH (b) WHERE b.path STARTS WITH "http://x" '
+            f'AND b.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(b) AS total"
+        )
+
+
 class TestATranslationFailureIsNotReportedAsUnscopeable:
     """A query that was never generated cannot be judged unscopeable.
 

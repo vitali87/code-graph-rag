@@ -58,6 +58,18 @@ _AGGREGATED_READ_RE = re.compile(
     r"([A-Z_][A-Z0-9_]*)(?:\.[A-Z_][A-Z0-9_]*)?\s*\)"
 )
 
+# Comments only, with quoted strings matched FIRST so they are preserved.
+# The restriction check cannot use `_INERT_TEXT_RE`: that blanks quoted
+# strings too, and the project literal legitimately lives inside quotes --
+# blanking it would refuse every correctly-scoped query. But it cannot use
+# the raw text either, because a predicate inside a comment is never executed
+# (issue #1494). Ordering the string alternative first also stops `"http://x"`
+# from being read as a line comment, which would swallow the rest of the line.
+_COMMENT_RE = re.compile(
+    r"('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")|(//[^\n]*|/\*.*?\*/)",
+    re.DOTALL,
+)
+
 # Constructs a scoped query may not use, matched as whole words.
 _UNANALYSABLE_RE = re.compile(cs.CYPHER_UNANALYSABLE_PATTERN)
 
@@ -148,6 +160,10 @@ def requires_project_evidence(
     counting usable without that leak.
     """
     executable = _without_inert_text(cypher_query)
+    # The restriction check needs comments gone but quoted strings kept: a
+    # predicate inside a comment restricts nothing, while the project literal
+    # it looks for lives inside quotes (issue #1494).
+    restrictable = _without_comments(cypher_query)
     # DEFAULT-DENY ON STRUCTURE. Four review rounds found four ways to
     # satisfy a textual evidence check while returning unattributable data,
     # and two more used UNION so only the final branch was inspected.
@@ -179,7 +195,7 @@ def requires_project_evidence(
     # worse again: it returns the other projects' names themselves.
     aggregated_only = _entities_only_ever_aggregated(projection)
     if aggregated_only and not _restricts_to_project(
-        cypher_query, project_name, aggregated_only
+        restrictable, project_name, aggregated_only
     ):
         return False
     # A PROJECTED PROPERTY (`x.qualified_name`), not the bare token: an
@@ -208,7 +224,24 @@ def requires_project_evidence(
     # exist. `MATCH (a),(b) WHERE a.qualified_name STARTS WITH "alpha."
     # RETURN count(b)` restricts `a` and counts `b`, which nothing bounds.
     counted = set(_AGGREGATED_ENTITY_RE.findall(projection))
-    return _restricts_to_project(cypher_query, project_name, counted)
+    return _restricts_to_project(restrictable, project_name, counted)
+
+
+def _without_comments(cypher_query: str) -> str:
+    """`cypher_query` with COMMENTS blanked and quoted strings kept.
+
+    What the restriction check needs, and distinct from
+    `_without_inert_text`. A comment is not executed, so a project predicate
+    written inside one restricts nothing -- but a quoted string IS the
+    project literal the check looks for, so it has to survive.
+    """
+
+    def _blank(match: re.Match[str]) -> str:
+        if match.group(1) is not None:
+            return match.group(1)
+        return "".join("\n" if ch == "\n" else " " for ch in match.group(2))
+
+    return _COMMENT_RE.sub(_blank, cypher_query)
 
 
 def _without_inert_text(cypher_query: str) -> str:
