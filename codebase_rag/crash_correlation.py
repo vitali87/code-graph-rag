@@ -197,12 +197,20 @@ class ArityFinding(NamedTuple):
 # Both patterns are ANCHORED. Without `^` a message that merely CONTAINS the
 # arity shape would parse, and the callee captured would be whatever token
 # happened to precede it.
+# A qualifier component is a word run OR the literal `<locals>`: CPython
+# names a nested function `outer.<locals>.inner`, and `<`/`>` are not `\w`,
+# so a word-only qualifier rejects the entire message and the diagnosis is
+# silently dropped for every nested function (found on #1485). Spelled as an
+# exact alternative rather than a permissive character class -- the set of
+# qualifier shapes CPython emits is finite, and a loose one would let the
+# anchors admit callee text they exist to exclude.
+_QUALIFIER = r"(?:(?:\w+|<locals>)\.)*"
 _ARITY_TOO_MANY = re.compile(
-    r"^(?:\w+\.)*(?P<callee>\w+)\(\) takes (?P<expected>\d+) positional "
+    rf"^{_QUALIFIER}(?P<callee>\w+)\(\) takes (?P<expected>\d+) positional "
     r"arguments? but (?P<actual>\d+) (?:was|were) given$"
 )
 _ARITY_MISSING = re.compile(
-    r"^(?:\w+\.)*(?P<callee>\w+)\(\) missing \d+ required positional "
+    rf"^{_QUALIFIER}(?P<callee>\w+)\(\) missing \d+ required positional "
     r"arguments?: (?P<names>.+)$"
 )
 

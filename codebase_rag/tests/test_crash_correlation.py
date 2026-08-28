@@ -871,6 +871,33 @@ class TestArityDiagnosisReachesThePublicFlow:
         assert report.arity.callee_qualified_name is None
         assert report.arity.verdict is None
 
+    def test_a_nested_callee_reaches_the_report(self, tmp_path):
+        """`outer.<locals>.inner` must resolve to the same node as `inner`.
+
+        The parser reduces the callee to its final component, so the graph
+        lookup is unaffected by the qualifier -- but only if the message
+        parses at all, and a word-only qualifier pattern rejects `<locals>`
+        outright and drops the finding silently.
+        """
+        fetch_all = _fetch_all_for(
+            flow_edges=[],
+            positional_params={f"{_P}.app.service.handle": ["cfg"]},
+        )
+        report = explain_traceback(
+            fetch_all,
+            _P,
+            tmp_path,
+            _arity_crash_text(
+                tmp_path,
+                "dispatch.<locals>.handle() takes 1 positional argument "
+                "but 2 were given",
+            ),
+        )
+        assert report.arity is not None
+        assert report.arity.callee_qualified_name == f"{_P}.app.service.handle"
+        assert report.arity.verdict is not None
+        assert report.arity.verdict.confirmed is True
+
     def test_a_non_arity_type_error_produces_no_finding(self, tmp_path):
         fetch_all = _fetch_all_for(flow_edges=[])
         report = explain_traceback(

@@ -58,6 +58,48 @@ class TestParsingRealMessages:
         assert parsed.expected == 0
         assert parsed.actual == 1
 
+    def test_a_nested_function_carries_a_locals_qualifier(self) -> None:
+        """CPython names a nested function `outer.<locals>.inner`.
+
+        `<locals>` is not a `\\w` run, so a qualifier pattern built only from
+        word characters rejects the whole message and the diagnosis is
+        silently omitted for every nested function. Both strings below were
+        captured by RUNNING the failing calls, not transcribed.
+        """
+        parsed = parse_arity_error(
+            "outer.<locals>.inner() takes 1 positional argument but 2 were given"
+        )
+        assert parsed is not None
+        assert parsed.callee == "inner"
+        assert parsed.expected == 1
+        assert parsed.actual == 2
+
+    def test_a_nested_function_also_parses_the_missing_form(self) -> None:
+        parsed = parse_arity_error(
+            "outer.<locals>.inner() missing 1 required positional argument: 'a'"
+        )
+        assert parsed is not None
+        assert parsed.callee == "inner"
+        assert parsed.missing == ("a",)
+
+    def test_leading_prose_before_a_dotted_callee_does_not_parse(self) -> None:
+        """The qualifier must be word components, not "anything before a dot".
+
+        Widening it to admit `<locals>` invites a permissive `(?:.*\\.)*`,
+        which still passes every other test here while accepting a message
+        that merely CONTAINS the arity shape -- the callee captured is then
+        whatever word happened to follow the last full stop. Found by
+        mutating the qualifier after the `<locals>` fix; nothing else in this
+        file distinguished the two.
+        """
+        assert (
+            parse_arity_error(
+                "failed while calling into mod.foo() takes 1 positional "
+                "argument but 2 were given"
+            )
+            is None
+        )
+
     def test_a_qualified_method_name_keeps_only_the_final_component(self) -> None:
         """`C.m()` names the method; the graph stores it under its own qn.
 
