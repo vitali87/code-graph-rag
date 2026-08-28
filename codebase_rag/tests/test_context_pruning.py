@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
@@ -559,4 +562,91 @@ def test_a_prune_shrinks_what_a_later_token_count_would_measure() -> None:
         f"pruning must reduce what a later token count measures ({before} -> "
         f"{after}); if it does not, the trigger reading that count can never "
         "clear and will fire on every turn"
+    )
+
+
+def test_the_call_site_prunes_the_callers_list_and_precedes_the_counter() -> None:
+    """The wiring in `main.py`, checked structurally against the shipped file.
+
+    Two ways a reachable call site does nothing, both of which pass a
+    reachability check:
+
+    - REBINDING instead of assigning through the slice. `message_history` is
+      a parameter the callers also hold and the loop mutates in place, so
+      `message_history = prune(...)` prunes a copy and the conversation is
+      untouched.
+    - RUNNING AFTER the token counter. `_refresh_context_tokens` is spawned
+      with `list(message_history)`, a snapshot taken at spawn time, so a
+      prune placed after it writes the pre-prune total back and the trigger
+      re-fires next turn on a number this prune already invalidated.
+
+    Structural rather than behavioural because reaching this loop needs a
+    live agent and a provider; the property is about the shape of the code.
+    Same discipline as `test_mcp_read_handler_lock.py`, which parses the
+    shipped file (raised by peer review on #1506).
+    """
+    source = (Path(__file__).resolve().parents[1] / "main.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+
+    prune_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "prune_old_tool_results"
+    ]
+    assert prune_calls, (
+        "main.py never calls prune_old_tool_results; the pruner is unreachable "
+        "and bounds nothing"
+    )
+
+    slice_assignments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(t, ast.Subscript)
+            and isinstance(t.value, ast.Name)
+            and t.value.id == "message_history"
+            and isinstance(t.slice, ast.Slice)
+            for t in node.targets
+        )
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "prune_old_tool_results"
+    ]
+    assert slice_assignments, (
+        "the prune result is not assigned through `message_history[:]`; "
+        "rebinding the name prunes a copy and leaves the caller's list intact"
+    )
+
+    spawn_lines = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_spawn_background"
+        and any(
+            isinstance(a, ast.Call)
+            and isinstance(a.func, ast.Name)
+            and a.func.id == "_refresh_context_tokens"
+            and any(
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id == "list"
+                for inner in ast.walk(a)
+            )
+            for a in node.args
+        )
+    ]
+    assert spawn_lines, (
+        "found no _spawn_background(_refresh_context_tokens(list(...))); the "
+        "counter's snapshot call changed shape and this guard has drifted"
+    )
+    assert min(assign.lineno for assign in slice_assignments) < max(spawn_lines), (
+        "the prune runs after the token counter snapshots the history, so the "
+        "count written back describes the unpruned list and the trigger "
+        "re-fires next turn on a number the prune already invalidated"
     )

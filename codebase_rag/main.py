@@ -53,6 +53,7 @@ from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
 from .config import ModelConfig, load_ignore_patterns, settings
+from .context_pruning import prune_old_tool_results
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
@@ -701,6 +702,30 @@ async def _run_agent_response_loop(
                 tool_names,
             )
             continue
+
+        # Bound the context BEFORE the counter snapshots it. The refresh below
+        # is handed `list(message_history)` at spawn time, so pruning after it
+        # would count the pre-prune history and write that total back: the next
+        # turn would re-trigger on a number this prune already invalidated.
+        #
+        # The threshold is `TOKEN_THRESHOLD_CRITICAL`, the level this project
+        # already calls critical for this exact quantity (it drives the status
+        # line). Inheriting it means the shipped default is a decision the
+        # repository made rather than one chosen to satisfy a review.
+        #
+        # DELIBERATELY TIMID, and issue #1500 owns the policy. Two ways this
+        # declines to act: `_token_usage` reports 0 for every provider whose
+        # counter never runs (`_refresh_context_tokens` returns early unless
+        # Anthropic with a key), and `prune_old_tool_results` refuses below its
+        # own recovery floor. A mechanism that discards data should be inert
+        # where it cannot measure, so both silences are the wanted direction.
+        _, _, context_pct = _token_usage()
+        if context_pct >= cs.TOKEN_THRESHOLD_CRITICAL:
+            # Assign THROUGH the slice: callers hold this same list and the
+            # loop mutates it in place, so rebinding would prune a copy and
+            # leave the conversation untouched -- a call site that satisfies a
+            # reachability check while doing nothing.
+            message_history[:] = prune_old_tool_results(message_history)
 
         _spawn_background(_refresh_context_tokens(list(message_history)))
 
