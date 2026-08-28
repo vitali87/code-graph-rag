@@ -88,22 +88,22 @@ def _content_tokens(part: object) -> int:
     return count_tokens(content if isinstance(content, str) else str(content))
 
 
-def prune_old_tool_results(
-    messages: list[ModelMessage],
-    protect_recent_tokens: int = DEFAULT_PROTECT_RECENT_TOKENS,
-    minimum_recovered_tokens: int = DEFAULT_MINIMUM_RECOVERED_TOKENS,
-) -> list[ModelMessage]:
-    """Empty tool results outside the protected window, oldest first.
+def _prunable_candidates(
+    messages: list[ModelMessage], protect_recent_tokens: int
+) -> tuple[list[tuple[int, int]], int]:
+    """Locate prunable parts outside the protected window, newest-first.
 
-    Walks backwards accumulating tool-output tokens, so the newest results fill
-    the protected window and everything older becomes a candidate. Returns the
-    history unchanged when the candidates are not worth the cache invalidation.
+    Returns `(message index, part index)` pairs and the tokens pruning them
+    would actually recover. Walking backwards is what makes the protected
+    window mean "the most recent N tokens of tool output" rather than a count
+    of messages: the newest results fill it and everything older is a
+    candidate.
 
-    Already-pruned parts are not counted as recoverable: the placeholder cannot
-    be freed twice, and counting it would let a long session clear the floor
-    every turn on tokens it cannot actually reclaim.
+    Split out of `prune_old_tool_results` so selection and rebuilding are
+    separately readable -- the two do genuinely different work, and combining
+    them put four conditions inside two nested loops (SonarCloud S3776).
     """
-    candidates: list[tuple[int, int]] = []  # (message index, part index)
+    candidates: list[tuple[int, int]] = []
     protected_tokens = 0
     recoverable_tokens = 0
     # The placeholder is kept, so it is not recovered. Counting gross tokens
@@ -127,7 +127,27 @@ def prune_old_tool_results(
                 continue
             candidates.append((message_index, part_index))
             recoverable_tokens += max(0, part_tokens - placeholder_tokens)
+    return candidates, recoverable_tokens
 
+
+def prune_old_tool_results(
+    messages: list[ModelMessage],
+    protect_recent_tokens: int = DEFAULT_PROTECT_RECENT_TOKENS,
+    minimum_recovered_tokens: int = DEFAULT_MINIMUM_RECOVERED_TOKENS,
+) -> list[ModelMessage]:
+    """Empty tool results outside the protected window, oldest first.
+
+    Walks backwards accumulating tool-output tokens, so the newest results fill
+    the protected window and everything older becomes a candidate. Returns the
+    history unchanged when the candidates are not worth the cache invalidation.
+
+    Already-pruned parts are not counted as recoverable: the placeholder cannot
+    be freed twice, and counting it would let a long session clear the floor
+    every turn on tokens it cannot actually reclaim.
+    """
+    candidates, recoverable_tokens = _prunable_candidates(
+        messages, protect_recent_tokens
+    )
     if recoverable_tokens < minimum_recovered_tokens:
         return messages
 
