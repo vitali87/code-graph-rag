@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import os
 from abc import ABC, abstractmethod
 from typing import ClassVar
@@ -72,6 +73,25 @@ def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
     return os.environ.get(env_var)
 
 
+def _output_budget(model_id: str) -> int:
+    """`MODEL_MAX_TOKENS`, lowered for models that would reject it outright.
+
+    pydantic-ai forwards `max_tokens` unchanged and offers no per-model
+    output cap, so a budget above the selected model's maximum is not
+    trimmed: the request is refused and the model never answers. The 8192
+    default fits every current release, but the retired snapshots in
+    `LEGACY_MAX_OUTPUT_TOKENS` cap output at 4096 and fail on it.
+
+    Only ever lowers, and only for ids listed there, so an unrecognised or
+    newer model keeps the configured budget unchanged.
+    """
+    bare = model_id.split(":", 1)[-1]
+    ceiling = cs.LEGACY_MAX_OUTPUT_TOKENS.get(bare)
+    if ceiling is None:
+        return settings.MODEL_MAX_TOKENS
+    return min(settings.MODEL_MAX_TOKENS, ceiling)
+
+
 class GoogleProvider(ModelProvider):
     __slots__ = (
         "api_key",
@@ -135,11 +155,15 @@ class GoogleProvider(ModelProvider):
             assert self.api_key is not None
             provider = PydanticGoogleProvider(api_key=self.api_key)
 
-        if self.thinking_budget is None:
-            return GoogleModel(model_id, provider=provider)
-        model_settings = GoogleModelSettings(
-            google_thinking_config={"thinking_budget": int(self.thinking_budget)}
-        )
+        # Built unconditionally. An earlier version returned early when no
+        # thinking budget was configured, so the DEFAULT path carried no
+        # settings at all and the output budget never applied -- the same
+        # defect as the Anthropic one, on the more common branch (issue #1498).
+        model_settings = GoogleModelSettings(max_tokens=_output_budget(model_id))
+        if self.thinking_budget is not None:
+            model_settings["google_thinking_config"] = {
+                "thinking_budget": int(self.thinking_budget)
+            }
         return GoogleModel(model_id, provider=provider, settings=model_settings)
 
 
@@ -227,6 +251,9 @@ class AnthropicProvider(ApiKeyProvider):
             anthropic_cache_instructions=True,
             anthropic_cache_tool_definitions=True,
             anthropic_cache_messages=True,
+            # Explicit, because the provider default is small enough that a
+            # long answer fails before the model emits anything (issue #1498).
+            max_tokens=_output_budget(model_id),
         )
         return AnthropicModel(model_id, provider=provider, settings=model_settings)
 
@@ -348,6 +375,110 @@ def get_provider_from_config(config: ModelConfig) -> ModelProvider:
         provider_type=config.provider_type,
         thinking_budget=config.thinking_budget,
         service_account_file=config.service_account_file,
+    )
+
+
+def _serves_own_catalogue(config: ModelConfig) -> bool:
+    """Whether `config` talks to the provider's own endpoint.
+
+    A custom endpoint reopens the model space: `provider=openai` pointed at
+    vLLM or an OpenAI-compatible proxy (which the docs recommend) serves
+    whatever that server hosts, not what OpenAI publishes. Validating those
+    ids against the vendor catalogue would reject a working setup.
+    """
+    endpoint = config.endpoint
+    if not endpoint:
+        return True
+    default = cs.PROVIDER_DEFAULT_ENDPOINTS.get(config.provider.lower())
+    return default is None or endpoint.rstrip(cs.SEPARATOR_SLASH) == default.rstrip(
+        cs.SEPARATOR_SLASH
+    )
+
+
+def _known_model_ids(provider: str) -> frozenset[str]:
+    """Model ids pydantic-ai enumerates for `provider`, without its prefix.
+
+    Empty for any provider whose catalogue pydantic-ai does not ship, which
+    is how `validate_model_id` decides to stay silent.
+    """
+    from pydantic_ai.models import known_model_names
+
+    # Lowercased because a `ModelConfig` built directly (rather than through
+    # the env path, which lowercases at config.py) can carry "Anthropic",
+    # and an unmatched prefix yields an empty set -- which this function's
+    # caller reads as "no catalogue" and skips validation entirely. Case
+    # would silently disable the check rather than merely mis-key it.
+    catalogue = cs.PROVIDER_CATALOGUE_PREFIXES.get(
+        provider.lower(), (provider.lower(),)
+    )
+    ids: set[str] = set()
+    for entry in catalogue:
+        prefix = f"{entry}{cs.MODEL_STRING_SEPARATOR}"
+        ids.update(
+            name[len(prefix) :]
+            for name in known_model_names()
+            if name.startswith(prefix)
+        )
+    return frozenset(ids)
+
+
+def validate_model_id(config: ModelConfig) -> None:
+    """Reject a model id the provider does not serve (issue #1492).
+
+    Only providers with an enumerable catalogue are checked. Ollama --
+    this project's default -- exposes whatever the user has pulled locally,
+    and Azure deployment names, LiteLLM routes and MiniMax ids are equally
+    user-defined; pydantic-ai ships zero entries for any of them. Gating
+    those would reject working configurations, which is a far more
+    expensive error than missing a typo.
+
+    The enforced set is therefore derived from the catalogue itself rather
+    than from a hand-maintained list: a provider nobody enumerates is not
+    checked, and a provider added later is not gated until pydantic-ai
+    knows its models.
+    """
+    if not _serves_own_catalogue(config):
+        return
+
+    # Vertex Model Garden serves third-party models as
+    # "{publisher}/{model_id}" (meta/llama-3.3-70b-instruct-maas and the
+    # like). They are valid selections that will never appear in the Google
+    # catalogue, so a Vertex config has an open model space. Scoped to
+    # Vertex deliberately: GLA serves Google's own published models, and
+    # exempting the provider wholesale would disable the common case to
+    # serve the rare one.
+    if (
+        config.provider.lower() == cs.Provider.GOOGLE
+        and config.provider_type == cs.GoogleProviderType.VERTEX
+    ):
+        return
+
+    known = _known_model_ids(config.provider)
+    if not known or config.model_id in known:
+        return
+
+    suggestions = difflib.get_close_matches(config.model_id, sorted(known), n=3)
+    if suggestions:
+        raise ValueError(
+            ex.MODEL_ID_UNKNOWN.format(
+                provider=config.provider,
+                model_id=config.model_id,
+                suggestions=", ".join(repr(s) for s in suggestions),
+            )
+        )
+    # Truncated: openai alone lists 78 ids, which renders as several
+    # thousand characters and buries the error it is attached to.
+    listed = sorted(known)
+    shown = listed[: cs.MODEL_ID_SUGGESTION_LIMIT]
+    known_text = ", ".join(shown)
+    if len(listed) > len(shown):
+        known_text += f", ... ({len(listed) - len(shown)} more)"
+    raise ValueError(
+        ex.MODEL_ID_UNKNOWN_NO_MATCH.format(
+            provider=config.provider,
+            model_id=config.model_id,
+            known=known_text,
+        )
     )
 
 

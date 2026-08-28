@@ -46,6 +46,28 @@ OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
 
+# The endpoint each provider serves its own published catalogue from. A
+# config pointing somewhere else (vLLM, an OpenAI-compatible proxy) serves
+# whatever that host chooses, so model-id validation does not apply to it.
+# Providers absent here have no single canonical endpoint and are never
+# gated on model id.
+PROVIDER_DEFAULT_ENDPOINTS: dict[str, str] = {
+    Provider.OPENAI: OPENAI_DEFAULT_ENDPOINT,
+    Provider.MINIMAX: MINIMAX_DEFAULT_ENDPOINT,
+}
+
+# Catalogue prefixes to consult per provider, where pydantic-ai splits one
+# vendor across several. `openai-chat` carries five ids absent from
+# `openai` (the search-preview variants and gpt-3.5-turbo-16k), so
+# consulting only `openai:` would reject real models.
+PROVIDER_CATALOGUE_PREFIXES: dict[str, tuple[str, ...]] = {
+    Provider.OPENAI: ("openai", "openai-chat"),
+    Provider.GOOGLE: ("google", "google-cloud"),
+}
+
+# How many model ids to list when nothing resembles what the user typed.
+MODEL_ID_SUGGESTION_LIMIT = 20
+
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
@@ -87,6 +109,10 @@ FIELD_ENDPOINT = "endpoint"
 ANTHROPIC_COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens"
 ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_HEADER_API_KEY = "x-api-key"
+
+# HTTP statuses meaning the credential was REJECTED. Retrying cannot help,
+# so these are reported differently from transient failures (issue #1493).
+HTTP_AUTH_FAILURE_STATUSES: frozenset[int] = frozenset({401, 403})
 ANTHROPIC_HEADER_VERSION = "anthropic-version"
 HEADER_CONTENT_TYPE = "content-type"
 CONTENT_TYPE_JSON = "application/json"
@@ -109,6 +135,26 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-sonnet-4-0": 200_000,
     "claude-haiku-4-5": 200_000,
     "claude-haiku-4-0": 200_000,
+}
+
+# Output ceilings for model snapshots that reject the configured budget
+# outright (issue #1498).
+#
+# Deliberately NOT a general per-model table: a general one would have to
+# list every current release and would go stale on each launch, silently
+# capping a new model below what it supports. An id absent from here keeps
+# the configured budget, which is the direction that stays safe as new
+# models appear, and every current release accepts the 8192 default.
+#
+# An entry is added only where the rejection has been DEMONSTRATED against
+# that id, never from recollection of a published limit. Anthropic's catalog
+# stops publishing max-output once a model retires, so for exactly the old
+# snapshots this table describes there is no longer an authoritative source
+# to check a remembered number against -- and a wrong entry here truncates
+# answers silently, which is the failure this issue exists to remove.
+DEFAULT_MAX_OUTPUT_TOKENS = 4_096
+LEGACY_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "claude-3-haiku-20240307": DEFAULT_MAX_OUTPUT_TOKENS,
 }
 
 MODULE_TORCH = "torch"

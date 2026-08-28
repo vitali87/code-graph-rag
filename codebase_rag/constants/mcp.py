@@ -18,6 +18,8 @@ class MCPToolName(StrEnum):
     SEMANTIC_SEARCH = "semantic_search"
     STRUCTURAL_SEARCH = "structural_search"
     STRUCTURAL_REPLACE = "structural_replace"
+    FIND_DUPLICATE_CODE = "find_duplicate_code"
+    GET_FUNCTION_SOURCE = "get_function_source"
     ASK_AGENT = "ask_agent"
     FLOW_VERDICT = "flow_verdict"
     EXPLAIN_TRACEBACK = "explain_traceback"
@@ -39,6 +41,9 @@ class MCPSchemaType(StrEnum):
     OBJECT = "object"
     STRING = "string"
     INTEGER = "integer"
+    # JSON Schema spells a float 'number'; 'integer' would reject a 0.8
+    # similarity threshold at the client before the call is even made.
+    NUMBER = "number"
     BOOLEAN = "boolean"
 
 
@@ -71,6 +76,10 @@ class MCPParamName(StrEnum):
     SINK_QN = "sink_qualified_name"
     DRY_RUN = "dry_run"
     TRACEBACK_TEXT = "traceback_text"
+    NODE_ID = "node_id"
+    PROJECT = "project"
+    THRESHOLD = "threshold"
+    MIN_SIZE = "min_size"
 
 
 # MCP server constants

@@ -90,6 +90,50 @@ async def test_explain_traceback_returns_resolved_frames(tmp_path):
     assert qns == [f"{project}.app.service.dispatch", f"{project}.app.service.handle"]
 
 
+async def test_explain_traceback_exposes_the_resolution_rate_over_mcp(tmp_path):
+    """The measurement must reach the caller, not just exist in the report.
+
+    `explain_traceback` builds its response field by field, so a stat added to
+    `TracebackReport` is silently dropped here unless it is mapped across. A
+    measurement the MCP surface does not return is indistinguishable from one
+    that was never computed -- the defect Greptile caught on #1478, where a
+    cutoff-aware scorer existed and nothing invoked it.
+
+    A PARTIALLY resolved stack, deliberately. The obvious fixture is the
+    fully-resolved one used by the tests above, and with `total == resolved`
+    a mapping that swaps the two keys is invisible -- measured: the swap
+    passed all four tests before this fixture gained a library frame. The
+    illustrative case and the discriminating case are different cases.
+
+    The ratio is 2/5, which collides with nothing. At `total=2, resolved=1`
+    six formulas all yield 0.5 -- the correct one, the INVERTED
+    `1 - resolved/total`, `unresolved/total`, `1/total`,
+    `resolved/(resolved+1)` and a hardcoded `resolved/2` -- so the assertion
+    would hold for five wrong implementations. 1/3 is better but still
+    collides with `1/total`.
+    """
+    registry = _registry(tmp_path)
+    src = (tmp_path / "app" / "service.py").as_posix()
+    text = (
+        "Traceback (most recent call last):\n"
+        '  File "/usr/lib/python3.12/site-packages/lib.py", line 5, in call\n'
+        "    fn()\n"
+        '  File "/usr/lib/python3.12/json/decoder.py", line 9, in decode\n'
+        "    raise err\n"
+        '  File "/usr/lib/python3.12/json/__init__.py", line 3, in loads\n'
+        "    return _default_decoder.decode(s)\n"
+        f'  File "{src}", line 16, in dispatch\n'
+        "    return handle(cfg)\n"
+        f'  File "{src}", line 10, in handle\n'
+        "    return cfg.timeout\n"
+        "AttributeError: 'NoneType' object has no attribute 'timeout'\n"
+    )
+
+    result = await registry.explain_traceback(traceback_text=text)
+
+    assert result["resolution"] == {"total": 5, "resolved": 2, "rate": 0.4}
+
+
 async def test_rank_root_causes_returns_ranked_candidates(tmp_path):
     registry = _registry(tmp_path)
     project = derive_project_name(tmp_path)

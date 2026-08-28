@@ -8,6 +8,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
+from codebase_rag.config import settings
 from codebase_rag.constants import (
     ENV_MINIMAX_API_KEY,
     MODEL_CONTEXT_WINDOWS,
@@ -459,7 +460,16 @@ class TestModelCreation:
 
         mock_google_model.assert_called_once()
         call_kwargs = mock_google_model.call_args[1]
-        assert "settings" not in call_kwargs
+        # Settings are now built UNCONDITIONALLY. This previously asserted
+        # their absence, which pinned the defect in #1498: the default path
+        # carried no settings, so the model's output budget was never set and
+        # a long answer failed with "Model token limit (provider default)
+        # exceeded before any response was generated".
+        assert "settings" in call_kwargs
+        assert call_kwargs["settings"]["max_tokens"] == settings.MODEL_MAX_TOKENS
+        # And no thinking config, since none was requested -- the budget must
+        # not smuggle in an unrelated setting.
+        assert "google_thinking_config" not in call_kwargs["settings"]
 
     @patch("codebase_rag.providers.base.PydanticGoogleProvider")
     @patch("codebase_rag.providers.base.GoogleModel")
@@ -483,8 +493,14 @@ class TestModelCreation:
 
         provider.create_model("gemini-2.0-flash-thinking-exp")
 
+        # Constructed with the output budget, then the thinking config is
+        # assigned. Previously the thinking config was the only argument,
+        # which is what left the default path with no settings at all (#1498).
         mock_model_settings.assert_called_once_with(
-            google_thinking_config={"thinking_budget": 5000}
+            max_tokens=settings.MODEL_MAX_TOKENS
+        )
+        mock_settings.__setitem__.assert_called_once_with(
+            "google_thinking_config", {"thinking_budget": 5000}
         )
 
         mock_google_model.assert_called_once()
@@ -513,8 +529,13 @@ class TestModelCreation:
             location="us-central1",
             credentials=None,
         )
+        # Vertex carries the output budget too. The settings argument is new:
+        # previously this path built none, so the budget was never applied and
+        # the crash in #1498 was reachable here as well.
         mock_google_model.assert_called_once_with(
-            "gemini-2.5-pro", provider=mock_cloud_provider.return_value
+            "gemini-2.5-pro",
+            provider=mock_cloud_provider.return_value,
+            settings={"max_tokens": settings.MODEL_MAX_TOKENS},
         )
 
     @patch("codebase_rag.providers.base.PydanticOpenAIProvider")

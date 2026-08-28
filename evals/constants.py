@@ -262,6 +262,23 @@ SEMANTIC_DIFF_PREFIX = "semantic:"
 SEMANTIC_LABEL = "recall-at-k"
 SEMANTIC_CASE_REPR = "{query} => {expected}"
 SEMANTIC_TITLE = "cgr semantic-search eval: query->function recall@k"
+SEMANTIC_RECALL_COLUMN = "recall"
+
+# Query -> expected qualified name, over DEFAULT_TARGET (`codebase_rag`).
+# Each query must map UNAMBIGUOUSLY to one function, or the case grades the
+# fixture rather than the retriever. Kept here rather than in a test module so
+# the CLI entry point and the tests score the same corpus; a benchmark whose
+# cases live only in its test cannot be run.
+SEMANTIC_CASES: tuple[tuple[str, str], ...] = (
+    (
+        "count edges between nodes in the result set for reranking",
+        "codebase_rag.tools.graph_rerank.build_proximity_query",
+    ),
+    (
+        "blend vector similarity with graph proximity to reorder hits",
+        "codebase_rag.tools.graph_rerank.rerank_by_graph_proximity",
+    ),
+)
 
 # Static CALLS eval: function-level call recall. The oracle resolves only
 # unambiguous direct calls (a bare-name call to a function reachable via a

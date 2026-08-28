@@ -67,6 +67,22 @@ def _split_receiver_chain(expr: str) -> list[str]:
 
 PY_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
+# PHP folds A-Z only when comparing namespace and function names, so
+# `use function app\text\FORMAT` binds to `App\Text\format`.
+#
+# NOT `str.casefold()`, which folds the full Unicode range: PHP treats
+# identifiers differing outside ASCII as DISTINCT, so Unicode folding would
+# match names the language does not, trading a missed binding for a wrong one.
+# `str.lower()` has the same problem (Turkish dotless i, Kelvin sign).
+_PHP_ASCII_FOLD = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
+)
+
+
+def _php_fold(name: str) -> str:
+    """ASCII-lowercase `name` for PHP-style case-insensitive comparison."""
+    return name.translate(_PHP_ASCII_FOLD)
+
 
 class CallResolver:
     __slots__ = (
@@ -1176,12 +1192,20 @@ class CallResolver:
         # `namespace Illuminate\Support` from Collections/functions.php). Treating
         # it as external would suppress the simple-name trie fallback that a bare
         # PHP call already relies on, dropping the call; leave it to the trie.
-        # LIMITATION: cgr qualifies PHP functions by file path and does not track
-        # the `namespace` declaration, so a genuinely external
-        # `use function Vendor\pkg\helper` cannot be told apart from a
-        # path-mismatched first-party one; both defer to the trie, as a bare
-        # `helper()` call already does. Precise disambiguation would need
-        # systemic PHP namespace tracking.
+        # NARROWED (#1185 stage 1): the `namespace` declaration IS now tracked,
+        # in `import_processor.php_module_namespaces`, and
+        # `_php_target_for_namespace_import` uses it to bind a `use function`
+        # import to the module declaring that namespace. So a first-party
+        # target whose namespace is declared somewhere in the repo resolves
+        # rather than deferring.
+        #
+        # What remains: a target whose namespace NO indexed module declares is
+        # still indistinguishable here from a first-party one the resolver
+        # could not place, and both defer to the trie exactly as a bare
+        # `helper()` call does. That is a smaller gap than the original
+        # comment described, and deferring stays the right behaviour for it --
+        # treating it as external would suppress the trie fallback and drop
+        # the call.
         php_imports = self.import_processor.php_function_imports.get(module_qn)
         if php_imports and call_name in php_imports:
             return False
@@ -1288,7 +1312,9 @@ class CallResolver:
                 return None
             import_map = {}
 
-        if result := self._try_resolve_direct_import(call_name, import_map):
+        if result := self._try_resolve_direct_import(
+            call_name, import_map, language, module_qn
+        ):
             return result
 
         if result := self._try_resolve_qualified_call(
@@ -1298,12 +1324,184 @@ class CallResolver:
 
         return self._try_resolve_wildcard_imports(call_name, import_map)
 
-    def _try_resolve_direct_import(
-        self, call_name: str, import_map: dict[str, str]
-    ) -> tuple[str, str] | None:
-        if call_name not in import_map:
+    def _php_target_for_namespace_import(self, imported_path: str) -> str | None:
+        """Map a PHP `use function A\\B\\c` target onto the qn that registers it.
+
+        CGR qualifies PHP by file path, so the import target `App.Text.format`
+        never equals the registered `project.text.format`. Previously that miss
+        dropped through to the simple-name trie, which binds to whichever
+        same-named function it reaches first -- so `use function App\\Text\\format`
+        could resolve to `App\\Money\\format` (issue #1185). A wrong edge, not a
+        missing one.
+
+        Splits the target into the namespace it names and the symbol within it,
+        then finds the module that DECLARED that namespace and looks the symbol
+        up there. PSR-4 maps a namespace prefix to a directory root, so the two
+        cannot be derived from one another -- the declaration is the only link.
+
+        Returns None rather than guessing whenever the answer is not unique:
+        no module declares the namespace, or several do (PHP permits one
+        namespace across many files, and two files may both define `format`).
+        The trie fallback then applies exactly as before, so this can only
+        replace an arbitrary binding with a determined one, never introduce a
+        new arbitrary one.
+
+        Matching is ASCII CASE-INSENSITIVE, because namespaces and function
+        names are in PHP: `use function app\\text\\FORMAT` binds to
+        `App\\Text\\format`, verified by executing it under PHP 8.5. Comparing
+        with exact casing sent such imports to the trie, which is the same
+        wrong-edge path this function exists to avoid.
+
+        ASCII-only rather than `str.casefold()`: PHP folds A-Z only, so
+        folding non-ASCII identifiers would match names the language treats as
+        distinct -- trading a missed binding for a wrong one. The registered
+        qualified name is returned unchanged; folding is for COMPARISON, never
+        for the value handed back, which must stay the graph's real key.
+        """
+        # A fully-qualified import (`use function \App\Text\format`) is
+        # idiomatic PHP and runs identically to the unqualified spelling,
+        # verified under PHP 8.5. The leading backslash becomes a leading
+        # separator when the path is dotted, which would never match a
+        # declared `App.Text`. Stripping it is a spelling normalisation, not a
+        # semantic change -- in PHP a `use` path is ALWAYS resolved from the
+        # global namespace whether or not the backslash is written.
+        imported_path = imported_path.lstrip(cs.SEPARATOR_DOT)
+        namespace, separator, symbol = imported_path.rpartition(cs.SEPARATOR_DOT)
+        if not separator or not namespace or not symbol:
             return None
-        imported_qn = import_map[call_name]
+        wanted = _php_fold(namespace)
+        namespaces = self.import_processor.php_module_namespaces
+        matches = [
+            (module_qn, f"{module_qn}{cs.SEPARATOR_DOT}{symbol}")
+            for module_qn, declared in namespaces.items()
+            if _php_fold(declared) == wanted
+        ]
+        found: list[str] = []
+        for module_qn, exact_qn in matches:
+            if exact_qn in self.function_registry:
+                found.append(exact_qn)
+                continue
+            # The symbol's casing may differ from the registration too, so a
+            # direct lookup can miss where PHP would bind. `find_with_prefix`
+            # is the registry's own scoped query -- iterating the whole
+            # registry is not part of the trie protocol at all, and would be
+            # a full scan per import even where it happened to work.
+            #
+            # NO trailing separator. The trie splits the prefix on dots and
+            # walks a node per part, so `"proj.text."` yields a final EMPTY
+            # part that is never a key and the lookup always returns []. An
+            # earlier version passed the dot and the whole case-insensitive
+            # fallback was silently dead (caught in review on #1484). The
+            # boundary is re-established below by requiring the remainder to
+            # start with the separator.
+            prefix = module_qn
+            wanted_symbol = _php_fold(symbol)
+            found.extend(
+                qn
+                for qn, _ in self.function_registry.find_with_prefix(prefix)
+                # `find_with_prefix` walks whole dot-separated parts, so the
+                # remainder always starts with the separator for a real
+                # descendant. Requiring it re-establishes the boundary the
+                # trailing dot used to provide, and rejects a sibling module
+                # whose name merely starts with this one (`proj.textutil`).
+                if (remainder := qn[len(prefix) :]).startswith(cs.SEPARATOR_DOT)
+                # Direct children only: a nested `module.Class.method` is not
+                # the free function this import names.
+                and cs.SEPARATOR_DOT not in remainder[1:]
+                and _php_fold(remainder[1:]) == wanted_symbol
+            )
+        if len(found) != 1:
+            return None
+        return found[0]
+
+    def _is_php_function_import(self, call_name: str, module_qn: str | None) -> bool:
+        """Whether `call_name` arrived via `use function`, not a class `use`.
+
+        Returns False when `module_qn` is unknown rather than defaulting to
+        True: an unidentified module cannot demonstrate the import was a
+        function binding, and the fallback's whole purpose is to avoid
+        asserting a target it cannot justify. The trie fallback still applies,
+        so this can only decline to add an edge, never remove a correct one.
+        """
+        if module_qn is None:
+            return False
+        imported = self.import_processor.php_function_imports.get(
+            module_qn, frozenset()
+        )
+        if call_name in imported:
+            return True
+        # PHP function names are case-insensitive at the CALL SITE too, so
+        # `use function App\Text\format` followed by `FORMAT()` is valid and
+        # runs. Verified by executing it under PHP 8.5. An exact-case lookup
+        # here recognised the import but not the call, so the resolver
+        # returned None and the call fell to the trie -- the same wrong-edge
+        # path, reached through the alias rather than the target.
+        folded = _php_fold(call_name)
+        return any(_php_fold(name) == folded for name in imported)
+
+    def _php_import_key(self, call_name: str, import_map: dict[str, str]) -> str | None:
+        """The import-map key matching `call_name` under PHP case folding.
+
+        Returns None unless EXACTLY ONE key folds to the same name. Two keys
+        differing only in case cannot both be the intended target, and PHP
+        would reject the duplicate `use` at compile time anyway -- so
+        declining is correct rather than cautious, and the trie fallback still
+        applies.
+        """
+        folded = _php_fold(call_name)
+        matches = [key for key in import_map if _php_fold(key) == folded]
+        return matches[0] if len(matches) == 1 else None
+
+    def _try_resolve_direct_import(
+        self,
+        call_name: str,
+        import_map: dict[str, str],
+        language: cs.SupportedLanguage | None = None,
+        module_qn: str | None = None,
+    ) -> tuple[str, str] | None:
+        if call_name in import_map:
+            imported_qn = import_map[call_name]
+        elif (
+            language == cs.SupportedLanguage.PHP
+            and (folded_key := self._php_import_key(call_name, import_map)) is not None
+        ):
+            # PHP records `import_map` under the DECLARATION spelling, so a
+            # call written `FORMAT()` against `use function App\Text\format`
+            # misses this lookup entirely and never reaches the folded
+            # binding-kind gate below. Reported on #1484 after an earlier fix
+            # addressed only the gate: the exact-case map lookup in FRONT of
+            # it is where the miss actually happens.
+            imported_qn = import_map[folded_key]
+            call_name = folded_key
+        else:
+            return None
+        # Gated on the CALLER's language AND on the import being a
+        # `use function` binding.
+        #
+        # The language gate: the namespace map is keyed by module qn and holds
+        # only PHP modules, but the import targets it is matched against are
+        # dotted strings that any language can produce -- a JS
+        # `import { format } from ...` recorded as `App.Text.format` would
+        # resolve straight into a PHP function. Reproduced in review on #1484:
+        # a JavaScript caller bound to a PHP target, an edge across languages
+        # that no source expressed.
+        #
+        # The `use function` gate: PHP keeps classes and functions in SEPARATE
+        # symbol tables, so `use App\Text\format` imports a CLASS while
+        # `use function App\Text\format` imports a function. Without this, a
+        # class or constant import whose name happens to match a registered
+        # PHP function resolved to that function -- also reproduced in review,
+        # and it SURVIVED the language gate because the caller is PHP. The two
+        # are independent axes. `php_function_imports` already records which
+        # local names arrived via `use function`, so this needs no new parsing.
+        if (
+            language == cs.SupportedLanguage.PHP
+            and self._is_php_function_import(call_name, module_qn)
+            and imported_qn not in self.function_registry
+            and (php_qn := self._php_target_for_namespace_import(imported_qn))
+        ):
+            logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=php_qn)
+            return self.function_registry[php_qn], php_qn
         if imported_qn in self.function_registry:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=imported_qn)
             return self.function_registry[imported_qn], imported_qn
