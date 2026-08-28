@@ -1394,6 +1394,47 @@ class TestEnforcementSurvivesAnUnfilteredQuery:
         assert prefixes == {ALPHA, BETA}
 
 
+class TestAnOpaqueValueCannotSmuggleAForeignProject:
+    """A value the inspector cannot read must not be assumed harmless.
+
+    `_names_another_project` understands strings and built-in containers.
+    A graph driver's Node, Relationship or Path is none of those, so it fell
+    through to `return False` and the row was KEPT -- then rendered with
+    `str()`, printing another project's properties under an active scope
+    (reported on #1494).
+
+    Fails closed instead: unreadable means unattributable, which is the same
+    rule the rest of this module already applies to queries. Plain scalars
+    stay readable, so a genuine aggregate row is unaffected.
+    """
+
+    def test_an_opaque_object_carrying_a_foreign_name_is_dropped(self) -> None:
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        class _DriverNode:
+            """Stands in for a driver entity: not a str, not a container."""
+
+            def __init__(self, qn: str) -> None:
+                self._properties = {"qualified_name": qn}
+
+            def __str__(self) -> str:
+                return str(self._properties)
+
+        rows = [
+            {"qualified_name": f"{ALPHA}.a.f", "node": _DriverNode(f"{BETA}.x.y")},
+        ]
+
+        assert scope_rows_to_project(rows, ALPHA) == []
+
+    def test_a_genuine_aggregate_row_still_survives(self) -> None:
+        """THE CONTROL. Scalars are readable and must not be failed closed."""
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+
+        rows = [{"total": 42, "ratio": 0.5, "ok": True, "missing": None}]
+
+        assert scope_rows_to_project(rows, ALPHA) == rows
+
+
 class TestACommentedPredicateDoesNotRestrictAnything:
     """A project predicate inside a comment is not executed by the database.
 

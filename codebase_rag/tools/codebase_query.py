@@ -474,7 +474,18 @@ def _names_another_project(value: object, prefix: str) -> bool:
         )
     if isinstance(value, list | tuple | set | frozenset):
         return any(_names_another_project(item, prefix) for item in value)
-    return False
+    # Scalars carry no name and are safe to keep -- `RETURN count(n)` must
+    # survive scoping, and a number identifies nobody.
+    if value is None or isinstance(value, bool | int | float):
+        return False
+    # ANYTHING ELSE FAILS CLOSED. A graph driver's Node, Relationship or Path
+    # is neither a string nor a built-in container, so it fell through to a
+    # permissive `return False` and rode through the filter -- then rendered
+    # with `str()`, printing another project's properties under an active
+    # scope. Unreadable means unattributable, which is the same rule this
+    # module applies to unanalysable QUERIES; applying it to values too keeps
+    # the two halves consistent (issue #1494).
+    return True
 
 
 def create_query_tool(
