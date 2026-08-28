@@ -354,3 +354,66 @@ def test_the_floor_measures_net_recovery_not_gross_content() -> None:
         f"floor of {gross}, so this must not prune; counting gross content "
         "would rewrite the cache prefix for less than the floor demands"
     )
+
+
+@pytest.mark.parametrize(
+    ("label", "content"),
+    [
+        ("a mapping", {"rows": [1, 2, 3], "total": 3}),
+        ("a sequence", [{"path": "a.py"}, {"path": "b.py"}]),
+    ],
+)
+def test_non_string_content_is_left_alone(label: str, content: object) -> None:
+    """Narrowing to the right CLASS is not narrowing to the right TYPE.
+
+    The previous fix restricted pruning to the two subclasses annotated
+    `ToolReturnContent`, on the reasoning that this type admits a string. It
+    does admit one, but not only one: a `ToolReturnPart` accepts a dict or a
+    list without complaint, so the class check passes a part whose content is
+    structured data and the placeholder destroys it.
+
+    That is the same defect as the subclass bug one level down, and it
+    survived the fix for it. A tool result that returned rows is not made
+    smaller by being replaced with a sentence, it is made wrong, and a caller
+    indexing it gets a string instead (CodeRabbit, #1506).
+    """
+    history = [
+        ModelRequest(parts=[UserPromptPart(content="q")]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name="t", args={}, tool_call_id="c-big")]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name="t", content="BIG " * 5000, tool_call_id="c-big"
+                ),
+                ToolReturnPart(
+                    tool_name="structured", content=content, tool_call_id="c-struct"
+                ),
+            ]
+        ),
+    ]
+
+    pruned = prune_old_tool_results(
+        history, protect_recent_tokens=0, minimum_recovered_tokens=1
+    )
+
+    survivor = next(
+        p
+        for message in pruned
+        for p in message.parts
+        if isinstance(p, ToolReturnPart) and p.tool_call_id == "c-struct"
+    )
+    assert survivor.content == content, (
+        f"content that is {label} is not free text; replacing it with a "
+        "placeholder string destroys the value rather than shrinking it"
+    )
+    plain = next(
+        p
+        for message in pruned
+        for p in message.parts
+        if isinstance(p, ToolReturnPart) and p.tool_call_id == "c-big"
+    )
+    assert plain.content == PRUNED_PLACEHOLDER, (
+        "free-text results must still be pruned when a structured one is present"
+    )

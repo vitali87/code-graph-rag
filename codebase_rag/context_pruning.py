@@ -61,15 +61,24 @@ def _is_prunable_tool_return(part: object) -> bool:
         LoadCapabilityReturnPart.instructions -> AttributeError:
             'str' object has no attribute 'get'
 
-    So this names the two subclasses typed `ToolReturnContent`, which admits a
-    string, and an unknown future subclass is skipped rather than corrupted.
-    That is the safe direction for a mechanism whose entire value is that the
-    history it compacts still works: recovering less is a cost, corrupting the
-    conversation is a defect (CodeRabbit, #1506).
+    So this names the two subclasses typed `ToolReturnContent`, and an unknown
+    future subclass is skipped rather than corrupted.
+
+    The class is necessary and not sufficient. `ToolReturnContent` admits a
+    string but not only a string: a `ToolReturnPart` accepts a dict or a list
+    without complaint, and the placeholder would destroy that value rather
+    than shrink it. Narrowing to the right class is not narrowing to the right
+    type, and the second check is what the first one missed.
+
+    Both directions are the safe one for a mechanism whose entire value is
+    that the history it compacts still works: recovering less is a cost,
+    corrupting the conversation is a defect (CodeRabbit, #1506).
     """
     from pydantic_ai.messages import NativeToolReturnPart, ToolReturnPart
 
-    return type(part) in (ToolReturnPart, NativeToolReturnPart)
+    if type(part) not in (ToolReturnPart, NativeToolReturnPart):
+        return False
+    return isinstance(getattr(part, "content", None), str)
 
 
 def _content_tokens(part: object) -> int:
