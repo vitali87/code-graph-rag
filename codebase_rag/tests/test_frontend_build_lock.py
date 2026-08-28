@@ -202,3 +202,35 @@ def test_a_probe_emitting_non_utf8_reports_unavailable_rather_than_raising(
         "the probe exits 0, so the toolchain IS available; a non-UTF-8 byte in "
         "its banner must not turn that into an exception or a False"
     )
+
+
+def test_a_programming_error_in_the_probe_is_not_swallowed_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The handler must catch environment failures, not every failure.
+
+    `toolchain_runs` answers "can I use this toolchain?", and its callers
+    read False as "fall back to another frontend". That makes the exception
+    list an UPPER bound as well as a lower one: `OSError` and
+    `SubprocessError` are the environment saying no, and returning False for
+    them is right. A `TypeError` from a mis-called API or an
+    `AttributeError` after a refactor is this code being wrong, and
+    reporting that as "toolchain unavailable" hides a bug behind a plausible
+    answer -- callers would silently degrade forever with nothing to find.
+
+    Guards the WIDENING rather than the fix. The preceding test pins that a
+    non-UTF-8 banner is tolerated; without this one, broadening the handler
+    to a bare `except Exception` passes the whole file. Measured: it does.
+    A fix that loosens what is accepted needs a test for what must still be
+    refused, or it has no upper bound (raised by peer review on #1485).
+    """
+    from codebase_rag.parsers import build_lock
+
+    def _exploding_run(*args: object, **kwargs: object) -> object:
+        raise TypeError("subprocess.run() got an unexpected keyword argument")
+
+    monkeypatch.setattr(build_lock.shutil, "which", lambda _binary: "/usr/bin/true")
+    monkeypatch.setattr(build_lock.subprocess, "run", _exploding_run)
+
+    with pytest.raises(TypeError):
+        build_lock.toolchain_runs("anything", timeout=1.0)
