@@ -137,6 +137,26 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-haiku-4-0": 200_000,
 }
 
+# Output ceilings for model snapshots that reject the configured budget
+# outright (issue #1498).
+#
+# Deliberately NOT a general per-model table: a general one would have to
+# list every current release and would go stale on each launch, silently
+# capping a new model below what it supports. An id absent from here keeps
+# the configured budget, which is the direction that stays safe as new
+# models appear, and every current release accepts the 8192 default.
+#
+# An entry is added only where the rejection has been DEMONSTRATED against
+# that id, never from recollection of a published limit. Anthropic's catalog
+# stops publishing max-output once a model retires, so for exactly the old
+# snapshots this table describes there is no longer an authoritative source
+# to check a remembered number against -- and a wrong entry here truncates
+# answers silently, which is the failure this issue exists to remove.
+DEFAULT_MAX_OUTPUT_TOKENS = 4_096
+LEGACY_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "claude-3-haiku-20240307": DEFAULT_MAX_OUTPUT_TOKENS,
+}
+
 MODULE_TORCH = "torch"
 MODULE_TRANSFORMERS = "transformers"
 MODULE_QDRANT_CLIENT = "qdrant_client"

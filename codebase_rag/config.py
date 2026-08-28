@@ -336,6 +336,30 @@ class AppConfig(BaseSettings):
     CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
     QUERY_RESULT_MAX_TOKENS: int = Field(default=16000, gt=0)
+    # The model's OUTPUT budget per request. Without it pydantic-ai falls back
+    # to the provider default, which on Anthropic is far below what current
+    # models support -- a long answer then fails with "Model token limit
+    # (provider default) exceeded before any response was generated" and the
+    # model never replies at all (issue #1498).
+    #
+    # Distinct from QUERY_RESULT_MAX_TOKENS above, which trims what goes IN.
+    # This bounds what comes back.
+    # 8192 rather than something larger: pydantic-ai forwards this value
+    # unchanged and exposes no per-model output cap to clamp against, so the
+    # default must fit the SMALLEST catalogued model or it breaks working
+    # configurations. `gemini-2.0-flash` caps output at 8192 and is
+    # selectable today; 16000 was rejected outright by it. This still fixes
+    # the reported crash, whose remedy is any value meaningfully above
+    # Anthropic's 4096 provider default.
+    #
+    # Raise it per-deployment when the chosen model allows more. A general
+    # clamping table over every model was rejected: it would need
+    # hand-maintaining and would silently go stale on every new release,
+    # capping a launch below what it supports. Retired snapshots are the
+    # exception -- their maxima are frozen -- so `LEGACY_MAX_OUTPUT_TOKENS`
+    # lowers this budget for those ids alone, leaving everything else at the
+    # configured value.
+    MODEL_MAX_TOKENS: int = Field(default=8192, gt=0)
     QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
     QUERY_MEMORY_LIMIT_MB: int = Field(default=4096, gt=0)
     QUERY_TIMEOUT_S: float = Field(default=60.0, gt=0)
