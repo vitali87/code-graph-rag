@@ -417,3 +417,67 @@ def test_non_string_content_is_left_alone(label: str, content: object) -> None:
     assert plain.content == PRUNED_PLACEHOLDER, (
         "free-text results must still be pruned when a structured one is present"
     )
+
+
+def test_pruning_preserves_message_count_and_call_return_pairing() -> None:
+    """Pruning must never orphan a tool call, on any history it acts on.
+
+    pydantic-ai requires every tool-call part to have a matching tool-return
+    part; `main._cancel_orphaned_tool_calls` exists to repair that shape when
+    a run is cancelled mid-flight. A pruner that DROPPED result messages
+    rather than emptying them would manufacture the same breakage on every
+    prune, and the next `rag_agent.run` would raise.
+
+    Distinct from `test_a_pruned_result_keeps_its_tool_call_id`, which
+    compares return-part ids to themselves. This pins the two structural
+    facts that test cannot see: the message count is unchanged, and every
+    call id still has a return id to match it. Both are asserted on a history
+    that is actually pruned, so a pruner that quietly dropped a message would
+    fail here rather than pass by not acting.
+
+    Catastrophic rather than degraded, which is why it is guarded explicitly:
+    losing content costs context, losing a message breaks the next request.
+    """
+    history = _turn("first", "OLD " * 500) + _turn("second", "NEW " * 500)
+
+    def _ids(messages: list[ModelRequest | ModelResponse]) -> tuple[list, list]:
+        calls = [
+            p.tool_call_id
+            for m in messages
+            for p in m.parts
+            if isinstance(p, ToolCallPart)
+        ]
+        returns = [
+            p.tool_call_id
+            for m in messages
+            for p in m.parts
+            if isinstance(p, ToolReturnPart)
+        ]
+        return calls, returns
+
+    calls_before, returns_before = _ids(history)
+    pruned = prune_old_tool_results(
+        history, protect_recent_tokens=10, minimum_recovered_tokens=1
+    )
+    calls_after, returns_after = _ids(pruned)
+
+    assert [
+        str(p.content) for m in pruned for p in m.parts if isinstance(p, ToolReturnPart)
+    ] != [
+        str(p.content)
+        for m in history
+        for p in m.parts
+        if isinstance(p, ToolReturnPart)
+    ], "fixture must actually be pruned or the invariant is asserted vacuously"
+
+    assert len(pruned) == len(history), (
+        "pruning emptied a message instead of its content; a dropped message "
+        "orphans its tool call and the next agent run raises"
+    )
+    assert calls_after == calls_before, "tool-call parts must be untouched"
+    assert returns_after == returns_before, (
+        "every tool return must survive with its id so its call stays paired"
+    )
+    assert sorted(calls_after) == sorted(returns_after), (
+        "call/return pairing broken by pruning"
+    )
