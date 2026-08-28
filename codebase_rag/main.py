@@ -1248,14 +1248,23 @@ def _input_history() -> History:
     return InMemoryHistory()
 
 
-@lru_cache(maxsize=1)
 def _input_session() -> PromptSession[str]:
-    """The chat prompt, built once so its history survives the turn.
+    """The chat prompt, built fresh each turn over the persistent history.
 
     `get_multiline_input` previously called the bare `prompt()` function,
     whose own docstring says it "will create a new PromptSession" and which
     passes `history=None`. Every turn therefore started with an empty
-    history and the up arrow had nothing to recall (issue #1495).
+    history and the up arrow had nothing to recall (issue #1495). Passing
+    `_input_history()` is what fixes that; the session itself is deliberately
+    NOT cached.
+
+    `PromptSession` binds its `Application` to the ambient app session's
+    input and output at construction, so a cached one keeps reading the
+    console it was born under. Across two app sessions that means the
+    second prompt reads the first one's input; when that input is a closed
+    pipe, POSIX returns EOF but a Win32 pipe blocks, which timed out the
+    Windows CI job at thirty minutes. Rebuilding per turn is what the bare
+    `prompt()` did all along and costs nothing at human typing speed.
     """
     return PromptSession(history=_input_history())
 

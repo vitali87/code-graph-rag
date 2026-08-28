@@ -28,12 +28,10 @@ def _fresh_session() -> object:
     Without this a history entry written by one test leaks into the next,
     and the suite passes or fails depending on execution order.
     """
-    from codebase_rag.main import _input_history, _input_session
+    from codebase_rag.main import _input_history
 
-    _input_session.cache_clear()
     _input_history.cache_clear()
     yield
-    _input_session.cache_clear()
     _input_history.cache_clear()
 
 
@@ -91,7 +89,7 @@ class TestHistoryPersists:
 
         from codebase_rag import main as m
 
-        source = inspect.getsource(m._input_session.__wrapped__)
+        source = inspect.getsource(m._input_session)
 
         assert "history=_input_history()" in source, source
 
@@ -134,6 +132,58 @@ class TestHistoryPersists:
         _remember_input(history, "same")
 
         assert list(history.get_strings()) == ["same"]
+
+
+class TestThePromptFollowsTheCurrentConsole:
+    """A prompt must read the console it is shown on, not an earlier one.
+
+    `PromptSession` binds its `Application` to the ambient app session's
+    input and output when it is CONSTRUCTED. Caching one therefore pins the
+    prompt to whichever console existed on the first turn. In this suite
+    that console is a pipe that closes at the end of the test, and the next
+    test's prompt went on reading it: POSIX reports EOF, but a Win32 pipe
+    blocks, which hung the Windows job until its thirty-minute timeout.
+
+    The history is what has to persist across turns, not the session.
+    """
+
+    def test_each_prompt_binds_to_the_current_app_session(self) -> None:
+        """The second prompt must not still be attached to the first pipe."""
+        from prompt_toolkit.application import create_app_session
+        from prompt_toolkit.input import create_pipe_input
+        from prompt_toolkit.output import DummyOutput
+
+        from codebase_rag.main import _input_session
+
+        bound_to_current = []
+        for _ in range(2):
+            with create_pipe_input() as pipe:
+                with create_app_session(input=pipe, output=DummyOutput()):
+                    bound_to_current.append(_input_session().app.input is pipe)
+
+        assert bound_to_current == [True, True]
+
+    def test_history_still_survives_a_rebuilt_session(self) -> None:
+        """The control: dropping the cache must not drop recall.
+
+        Rebuilding the session per turn is only safe because the history is
+        owned separately, so this pins the property the rebuild could break.
+        """
+        from prompt_toolkit.application import create_app_session
+        from prompt_toolkit.input import create_pipe_input
+        from prompt_toolkit.output import DummyOutput
+
+        from codebase_rag.main import _input_session, _remember_input
+
+        with create_pipe_input() as pipe:
+            with create_app_session(input=pipe, output=DummyOutput()):
+                _remember_input(_input_session().history, "asked earlier")
+
+        with create_pipe_input() as pipe:
+            with create_app_session(input=pipe, output=DummyOutput()):
+                recalled = list(_input_session().history.get_strings())
+
+        assert "asked earlier" in recalled
 
 
 class _StubSession:
