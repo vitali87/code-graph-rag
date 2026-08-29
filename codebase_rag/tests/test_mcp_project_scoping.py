@@ -1526,6 +1526,53 @@ class TestAForeignProjectLiteralAnywhereIsRefused:
         )
 
 
+class TestAnAggregateDoesNotExcuseTheRestOfItsTerm:
+    """`count(a.qn) + left(b.qn, 3)` returned a foreign fragment.
+
+    `_every_term_is_plain` skipped any term CONTAINING an aggregate, on the
+    reasoning that an aggregate names nobody. True of the aggregate; not
+    true of whatever else shares the term. A transformed read of a second
+    alias rides along, and `scope_rows_to_project` cannot recognise a
+    truncated qualified name, so the fragment survives the filter (#1494).
+
+    The reported example -- with no WHERE -- does NOT reproduce: it is
+    refused because the aggregated alias is unrestricted, by a different
+    check. These are the cases where that path does not fire, found by
+    sweeping the class rather than testing the example.
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_a_transform_beside_a_restricted_aggregate_is_refused(self) -> None:
+        assert self._refused(
+            f"MATCH (a),(b) WHERE a.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(a.qualified_name) + left(b.qualified_name, 3) AS leak"
+        )
+
+    def test_a_transform_beside_an_aggregate_in_a_mixed_projection_is_refused(
+        self,
+    ) -> None:
+        assert self._refused(
+            "MATCH (a),(b) RETURN a.qualified_name AS q, "
+            "count(a) + left(b.qualified_name, 3) AS leak"
+        )
+
+    def test_a_bare_aggregate_term_is_still_allowed(self) -> None:
+        """THE CONTROL. An aggregate alone, aliased, keeps working."""
+        assert not self._refused(
+            f"MATCH (n) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(n) AS total"
+        )
+
+    def test_an_aggregate_beside_a_plain_qualified_name_is_still_allowed(self) -> None:
+        assert not self._refused(
+            "MATCH (n) RETURN n.qualified_name AS q, count(n.name) AS total"
+        )
+
+
 class TestARegexRestrictionCannotBeShownPrefixLimited:
     """`=~ "alpha__aaaa1111|.*"` starts with the project name and matches all.
 

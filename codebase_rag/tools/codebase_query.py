@@ -71,6 +71,10 @@ _AGGREGATED_READ_RE = re.compile(
 # `[A-Z_][A-Z0-9_]*`, which cannot match whitespace, so nothing overlaps.
 _AGGREGATE_OPERAND_RE = re.compile(r"\b(?:COUNT|SUM|AVG|MIN|MAX|COLLECT)\(([^)]*)\)")
 
+# A term that is NOTHING BUT one aggregate call, alias already stripped. Used
+# to reject an aggregate sharing its term with anything else.
+_SOLE_AGGREGATE_RE = re.compile(r"\s*(?:COUNT|SUM|AVG|MIN|MAX|COLLECT)\([^)]*\)\s*")
+
 # What an operand must BE for its contributors to be checkable: an alias this
 # analysis can bind, optionally with one property. Cypher's boolean and null
 # literals uppercase into that same shape, so they are excluded by name --
@@ -332,11 +336,18 @@ def _every_term_is_plain(projection: str) -> bool:
         reads = _PROPERTY_READ_RE.findall(term)
         if not reads:
             continue
+        bare = term.split(cs.CYPHER_ALIAS_KEYWORD, 1)[0].strip()
         if any(agg in term for agg in cs.CYPHER_AGGREGATE_TOKENS):
+            # An aggregate excuses ITSELF, not whatever shares its term. This
+            # skipped the whole term, so `count(a.qualified_name) +
+            # left(b.qualified_name, 3)` rode along and returned a truncated
+            # foreign name the row filter cannot recognise as a qualified
+            # name at all. The term must BE the aggregate (issue #1494).
+            if not _SOLE_AGGREGATE_RE.fullmatch(bare):
+                return False
             continue
         entity, prop = reads[0]
         # The term must be exactly `<entity>.<prop>`, optionally aliased.
-        bare = term.split(cs.CYPHER_ALIAS_KEYWORD, 1)[0].strip()
         if bare != f"{entity}{cs.SEPARATOR_DOT}{prop}":
             return False
     return True
