@@ -50,6 +50,19 @@ def main(
     logger.info(ls.CPP_EXTRACTING_ORACLE.format(target=target))
     oracle = run_cpp_oracle(target)
     logger.success(ls.CPP_ORACLE_DONE.format(count=len(oracle.nodes)))
+    # An oracle that read the database but produced nothing cannot grade
+    # anything: `restrict_to_files` below scopes cgr to the files the oracle
+    # names, so an empty oracle scopes cgr to NOTHING and the run scores 0
+    # against 0 -- a clean pass for a target nothing analysed. Availability was
+    # checked above; this is the separate question of whether the database
+    # yielded any source, and it must fail as loudly (PR #1513's class).
+    if not oracle.nodes:
+        logger.error(
+            ls.CPP_ORACLE_GRADED_NOTHING.format(
+                compdb=ec.CPP_COMPDB_FILENAME, target=target
+            )
+        )
+        raise typer.Exit(code=1)
 
     # The compile_commands.json defines the gradeable universe: the oracle only
     # sees files its compiled TUs reach, so scope cgr to those files before
