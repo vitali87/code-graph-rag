@@ -650,16 +650,15 @@ def create_query_tool(
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
 
-            results = await asyncio.wait_for(
-                asyncio.to_thread(ingestor.fetch_all, cypher_query),
-                timeout=settings.QUERY_TIMEOUT_S,
-            )
-
-            # A query returning no qualified name yields rows the filter
-            # cannot attribute, so it keeps them. Answering a SCOPED
-            # request with those would ignore the scope silently, so the
-            # guard belongs here as well as in the MCP handler -- the CLI
-            # is scoped too when exactly one project is active.
+            # BEFORE execution. A query returning no qualified name yields
+            # rows the filter cannot attribute, so it keeps them, and
+            # answering a SCOPED request with those would ignore the scope
+            # silently. The guard reads only the generated Cypher, so
+            # nothing required it to wait for results -- and running first
+            # meant an unscopable request still performed a cross-project
+            # read against the shared graph. The rows never reached the
+            # caller, but the database served them, which is the part a
+            # caller can neither see nor undo.
             if project_name is not None and not requires_project_evidence(
                 cypher_query, project_name
             ):
@@ -668,6 +667,11 @@ def create_query_tool(
                     results=[],
                     summary=QUERY_SUMMARY_UNSCOPEABLE.format(project=project_name),
                 )
+
+            results = await asyncio.wait_for(
+                asyncio.to_thread(ingestor.fetch_all, cypher_query),
+                timeout=settings.QUERY_TIMEOUT_S,
+            )
 
             # Before the row cap and the token truncation, so a scoped query
             # spends its budget on rows the caller can actually use rather

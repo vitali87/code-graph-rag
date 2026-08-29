@@ -2126,3 +2126,67 @@ class TestPropertyAggregatesAreAttributed:
             f'MATCH (a),(b) WHERE a.qualified_name STARTS WITH "{ALPHA}." '
             "RETURN count(b) AS total"
         )
+
+
+class TestAnUnscopeableQueryNeverReachesTheGraph:
+    """Refusing after execution still ran the query against every project.
+
+    The guard inspects only the generated Cypher, so nothing required it to
+    wait for results -- yet it sat after `fetch_all`. A scoped request with
+    an unscopable query therefore executed a cross-project read, and only
+    then returned an error. The rows never reached the caller, but the
+    database served them, which is the part a caller cannot see and cannot
+    undo.
+
+    Asserted on the CALL, not the result: an empty result is what the old
+    order produced too, so `results == []` cannot tell the two apart.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_ingestor_is_never_called(self) -> None:
+        from unittest.mock import MagicMock
+
+        from codebase_rag.tools.codebase_query import create_query_tool
+
+        cypher_gen = MagicMock()
+
+        async def _generate(_q: str) -> str:
+            return "MATCH (n:Function) RETURN n.name AS name, n.path AS path"
+
+        cypher_gen.generate = _generate
+        ingestor = MagicMock()
+        ingestor.fetch_all = MagicMock(return_value=[{"name": "x", "path": "p"}])
+
+        tool = create_query_tool(ingestor, cypher_gen, project_name=ALPHA)
+        result = await tool.function("names only")
+
+        assert result.results == []
+        ingestor.fetch_all.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_scopeable_query_still_reaches_the_graph(self) -> None:
+        """The control: refusing early must not refuse everything.
+
+        Without this, moving the guard before execution could short-circuit
+        every scoped query and the leak test above would still pass.
+        """
+        from unittest.mock import MagicMock
+
+        from codebase_rag.tools.codebase_query import create_query_tool
+
+        cypher_gen = MagicMock()
+
+        async def _generate(_q: str) -> str:
+            return "MATCH (n:Function) RETURN n.qualified_name AS qualified_name"
+
+        cypher_gen.generate = _generate
+        ingestor = MagicMock()
+        ingestor.fetch_all = MagicMock(
+            return_value=[{"qualified_name": f"{ALPHA}.mod.f"}]
+        )
+
+        tool = create_query_tool(ingestor, cypher_gen, project_name=ALPHA)
+        result = await tool.function("functions")
+
+        ingestor.fetch_all.assert_called_once()
+        assert result.results == [{"qualified_name": f"{ALPHA}.mod.f"}]
