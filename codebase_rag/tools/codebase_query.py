@@ -71,9 +71,11 @@ _POST_RETURN_RE = re.compile(
     ).join((r"\s(?:", r")")),
 )
 
-# OR / NOT / XOR anywhere in the restriction body, on word boundaries so
-# tabs and newlines count as separators and `n.coordinator` does not.
-_UNSAFE_BOOLEAN_RE = re.compile(cs.CYPHER_UNSAFE_BOOLEAN_PATTERN)
+# One allowed conjunct, and the AND that joins them. Word-boundary split so
+# tabs and newlines separate as Cypher treats them, and so an identifier
+# containing "and" is not mistaken for the operator.
+_CONJUNCT_RE = re.compile(cs.CYPHER_CONJUNCT_PATTERN)
+_CONJUNCTION_SEPARATOR_RE = re.compile(cs.CYPHER_CONJUNCTION_SEPARATOR)
 
 # Constructs a scoped query may not use, matched as whole words.
 _UNANALYSABLE_RE = re.compile(cs.CYPHER_UNANALYSABLE_PATTERN)
@@ -372,6 +374,29 @@ def _every_projected_entity_is_attributable(projection: str) -> bool:
     return all(cs.CYPHER_QUALIFIED_NAME_TOKEN in props for props in reads.values())
 
 
+def _where_is_a_plain_conjunction(body: str) -> bool:
+    """Whether `body`'s WHERE clause is only ANDed plain comparisons.
+
+    A WHITELIST, because the alternative cannot work. Blacklisting the
+    operators known to widen or invert a predicate answers "does this
+    contain a known-bad spelling", while the contract is "does the
+    restriction bind" -- and Cypher can break the binding without any of
+    those spellings, via `CASE`, `coalesce`, or any function returning a
+    boolean.
+
+    Everything the system prompt actually mandates is a conjunction of
+    `<entity>.<property> <op> <value>`, so refusing anything else costs
+    nothing the model should be emitting and closes the class rather than
+    enumerating members of it.
+    """
+    marker = body.find(cs.CYPHER_WHERE_KEYWORD)
+    if marker < 0:
+        return False
+    clause = body[marker + len(cs.CYPHER_WHERE_KEYWORD) :]
+    conjuncts = _CONJUNCTION_SEPARATOR_RE.split(clause)
+    return all(_CONJUNCT_RE.match(conjunct) for conjunct in conjuncts)
+
+
 def _restricts_to_project(
     cypher_query: str, project_name: str | None, counted: set[str] | None = None
 ) -> bool:
@@ -407,18 +432,13 @@ def _restricts_to_project(
         return False
     if not project_name:
         return False
-    # OR / NOT / XOR break the link between finding the predicate and the
-    # query enforcing it. `... STARTS WITH 'alpha.' OR TRUE` contains the
-    # predicate without requiring it; `NOT (... STARTS WITH 'alpha.')`
-    # contains it with the opposite meaning, selecting every project EXCEPT
-    # this one. Every check here SEARCHES for the predicate rather than
-    # proving it mandatory and positive (issue #1494).
-    #
-    # Refused rather than analysed: deciding whether a predicate holds, in
-    # the right sense, on every Boolean path is a satisfiability question,
-    # and this module's rule for shapes it cannot analyse is to reject them.
-    # `AND` is unaffected, so the ordinary scoped count keeps working.
-    if _UNSAFE_BOOLEAN_RE.search(body):
+    # The WHERE clause must BE a conjunction of plain comparisons, not
+    # merely lack known-bad operators. Every other check here SEARCHES the
+    # text for a predicate, which cannot tell "the restriction binds" from
+    # "the restriction appears": `OR TRUE` makes it optional, `NOT (...)`
+    # inverts it, and `CASE WHEN <pred> THEN true ELSE true END` contains
+    # neither token while evaluating true for every row (issue #1494).
+    if not _where_is_a_plain_conjunction(body):
         return False
     # The LITERAL project name is required. "No literal" was read as
     # "safely parameterised", but a parameter's VALUE is invisible here,

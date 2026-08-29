@@ -1491,6 +1491,69 @@ class TestTrailingClausesAreCutOnAnyWhitespace:
         assert not self._refused("MATCH (n) RETURN n.reunion, n.qualified_name")
 
 
+class TestTheRestrictionMustBeAPlainConjunction:
+    """A token blacklist tests spellings; the contract is a PROPERTY.
+
+    Refusing `OR`/`NOT`/`XOR` enumerated the operators known to widen or
+    invert a predicate. Cypher's boolean surface is larger than three
+    keywords, and the Cypher here is LLM-GENERATED rather than emitted by a
+    constrained builder, so the input language is not small enough for a
+    blacklist to be sound. `CASE WHEN <pred> THEN true ELSE true END` and
+    `coalesce(<pred>, true)` both contain none of the three tokens, both
+    evaluate true for every row, and both were accepted (#1494).
+
+    So the WHERE clause must now BE a conjunction of plain comparisons,
+    rather than merely not contain known-bad ones. Anything else is refused
+    unanalysed -- the same default-deny this module already applies to query
+    structure, applied to the predicate.
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_a_case_expression_returning_true_is_refused(self) -> None:
+        assert self._refused(
+            "MATCH (n) WHERE CASE WHEN n.qualified_name STARTS WITH "
+            f"'{ALPHA}.' THEN true ELSE true END RETURN count(n) AS total"
+        )
+
+    def test_a_coalesce_defaulting_to_true_is_refused(self) -> None:
+        assert self._refused(
+            "MATCH (n) WHERE coalesce(n.qualified_name STARTS WITH "
+            f"'{ALPHA}.', true) RETURN count(n) AS total"
+        )
+
+    def test_every_conjunct_must_be_plain_not_just_one(self) -> None:
+        """Precedence makes `A OR B AND C` mean `A OR (B AND C)`.
+
+        Splitting on AND yields `TRUE OR n.name = 'x'` and a real-looking
+        restriction, so accepting the clause because SOME conjunct is plain
+        admits a query that evaluates true for every row. Found by mutating
+        `all` to `any` and seeing the whole suite stay green -- nothing else
+        here distinguished the two.
+        """
+        assert self._refused(
+            "MATCH (n) WHERE TRUE OR n.name = 'x' "
+            f"AND n.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(n) AS total"
+        )
+
+    def test_a_plain_conjunction_is_still_allowed(self) -> None:
+        """THE CONTROL. The shape the prompt actually mandates."""
+        assert not self._refused(
+            f"MATCH (n) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "AND n.name = 'handler' RETURN count(n) AS total"
+        )
+
+    def test_a_single_predicate_is_still_allowed(self) -> None:
+        assert not self._refused(
+            f"MATCH (n) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(n) AS total"
+        )
+
+
 class TestAnAggregateWithNoBindableEntityIsRefused:
     """`count(*)` measures rows, and no alias means nothing to restrict.
 

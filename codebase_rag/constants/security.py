@@ -15,20 +15,29 @@ CYPHER_RETURN_KEYWORD = "RETURN "
 # project. `IS NOT NULL` / `<> ''` / `exists(...)` match every indexed node
 # in every project, so a count over them spans them all.
 CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
-# Boolean operators that break the link between "the restriction appears in
-# the query" and "the query enforces the restriction". OR and XOR make the
-# predicate beside them OPTIONAL; NOT inverts its SENSE, so the guard's own
-# textual match finds a predicate selecting everything EXCEPT this project.
+# The WHERE clause a scoped aggregate is allowed to have: a conjunction of
+# plain `<entity>.<property> <op> <value>` comparisons, joined by AND.
 #
-# Enumerated as a class rather than added one at a time: OR was fixed first
-# and NOT and XOR were still open, which is the shape-versus-instance error
-# this file has already paid for twice.
+# A WHITELIST, after a blacklist of `OR|NOT|XOR` proved to be the wrong
+# shape. Those three widen or invert a predicate, but Cypher's boolean
+# surface is larger -- `CASE WHEN <pred> THEN true ELSE true END` and
+# `coalesce(<pred>, true)` contain none of them, evaluate true for every
+# row, and were accepted. A blacklist tests for known-bad SPELLINGS; the
+# contract is that the restriction BINDS, which is a property.
 #
-# A WORD-BOUNDARY pattern, not a spaced literal. Cypher treats tabs and
-# newlines as whitespace, so `'alpha.'\nOR TRUE` slipped past a `" OR "`
-# check while meaning exactly the same thing. The boundaries are what keep
-# it from matching inside an identifier such as `n.coordinator`.
-CYPHER_UNSAFE_BOOLEAN_PATTERN = r"\b(?:OR|NOT|XOR)\b"
+# Sound only because the input language is small: the Cypher is generated
+# against a system prompt mandating plain MATCH/WHERE/RETURN/LIMIT, and
+# anything outside that shape is refused rather than analysed -- the same
+# default-deny `CYPHER_UNANALYSABLE_PATTERN` applies to query structure.
+# If this ever accepts user-authored Cypher, this rule is what must be
+# revisited first (issue #1494).
+CYPHER_CONJUNCT_PATTERN = (
+    r"^\s*[A-Z_][A-Z0-9_]*\.[A-Z_][A-Z0-9_]*\s*"
+    r"(?:STARTS WITH|ENDS WITH|CONTAINS|=~|<>|=|<|>|<=|>=)\s*"
+    r"(?:'[^']*'|\"[^\"]*\"|[A-Z0-9_.$]+)\s*$"
+)
+CYPHER_CONJUNCTION_SEPARATOR = r"\bAND\b"
+CYPHER_WHERE_KEYWORD = "WHERE"
 # Constructs a SCOPED query may not use. Each defeats clause-level
 # analysis: UNION means several RETURNs, CALL and WITH mean the projection
 # is assembled elsewhere. The system prompt mandates plain
