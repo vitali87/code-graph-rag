@@ -45,6 +45,7 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' ||
       (
+        (github.event_name == 'issues' || github.event_name == 'issue_comment') &&
         github.event.issue.pull_request == null &&
         github.event.issue.author_association != 'OWNER' &&
         !(github.event_name == 'issue_comment' && github.event.comment.author_association == 'OWNER') &&
