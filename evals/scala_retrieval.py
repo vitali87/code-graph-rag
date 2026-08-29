@@ -11,22 +11,18 @@ from typing import Annotated
 import typer
 from loguru import logger
 
-from codebase_rag import constants as cs
-
 from . import constants as ec
 from . import logs as ls
-from .cgr_graph import _capture
 from .oracles import run_scala_call_oracle, scala_available
-from .score import _prf
+from .retrieval_eval import (
+    CallEdge,
+    cgr_call_edges,
+    score_retrieval,
+)
 from .structure_report import render, write_outputs
-from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
+from .types_defs import ScoreResult
 
 console_target = Path(ec.SCALA_DEFAULT_TARGET)
-
-_CALLS = cs.RelationshipType.CALLS.value
-_EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
-
-CallEdge = tuple[str, str]
 
 
 def oracle_scala_call_edges(
@@ -38,44 +34,26 @@ def oracle_scala_call_edges(
 def cgr_scala_call_edges(
     target: Path, project: str, declared: frozenset[str], covered: frozenset[str]
 ) -> set[CallEdge]:
-    ingestor = _capture(target, project)
-    caller_path: dict[tuple[str, str], str] = {
-        (str(label), str(uid)): str(props[cs.KEY_PATH])
-        for (label, uid), props in ingestor.nodes.items()
-        if props.get(cs.KEY_PATH)
-        and str(props[cs.KEY_PATH]).endswith(ec.SCALA_SUFFIXES)
-    }
-    edges: set[CallEdge] = set()
-    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
-        if rel_type != _CALLS:
-            continue
-        path = caller_path.get((str(from_label), str(from_val)))
-        # Grade only files the oracle parsed cleanly (its authoritative set).
-        if path is None or path not in covered:
-            continue
+    return cgr_call_edges(
+        target,
+        project,
+        declared,
+        suffixes=ec.SCALA_SUFFIXES,
         # Reduce a callee qn to its trailing simple name to match the oracle,
         # dropping dotted scope and (defensively) a parameter signature.
-        name = str(to_val).split(cs.SEPARATOR_DOT)[-1].split(cs.CHAR_PAREN_OPEN)[0]
-        if name in declared:
-            edges.add((path, name))
-    return edges
-
-
-def _edge_repr(edge: CallEdge) -> str:
-    return ec.SCALA_CALL_EDGE_REPR.format(file=edge[0], name=edge[1])
+        strip_signature=True,
+        covered=covered,
+    )
 
 
 def score_scala_retrieval(cgr: set[CallEdge], oracle: set[CallEdge]) -> ScoreResult:
-    rows: list[ScoreRow] = []
-    diff: dict[str, DiffBucket] = {}
-    row = _prf(ec.Category.RETRIEVAL.value, ec.SCALA_RETRIEVAL_LABEL, cgr, oracle)
-    if row is not None:
-        rows.append(row)
-        diff[ec.SCALA_RETRIEVAL_DIFF_PREFIX + ec.SCALA_RETRIEVAL_LABEL] = DiffBucket(
-            missing=[_edge_repr(e) for e in sorted(oracle - cgr)],
-            extra=[_edge_repr(e) for e in sorted(cgr - oracle)],
-        )
-    return ScoreResult(rows=rows, location=_EMPTY_LOCATION, diff=diff)
+    return score_retrieval(
+        cgr,
+        oracle,
+        label=ec.SCALA_RETRIEVAL_LABEL,
+        diff_prefix=ec.SCALA_RETRIEVAL_DIFF_PREFIX,
+        edge_repr=ec.SCALA_CALL_EDGE_REPR,
+    )
 
 
 def main(

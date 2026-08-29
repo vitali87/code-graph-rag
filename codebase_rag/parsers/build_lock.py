@@ -10,10 +10,14 @@ nothing ever needs reclaiming.
 """
 
 import os
+import shutil
+import subprocess
 import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+
+from ..constants import ENCODING_UTF8
 
 if sys.platform == "win32":
     import msvcrt
@@ -150,3 +154,65 @@ def release_build_lock(handle: BuildLock | None) -> None:
         pass
     finally:
         os.close(handle.fd)
+
+
+def build_cached_artifact(
+    cache: Path,
+    artifact: Path,
+    artifact_fresh: Callable[[], bool],
+    compile_tool: Callable[[], bool],
+    lock_name: str,
+    tries: int,
+    poll_seconds: float,
+) -> Path | None:
+    """Produce `artifact` under `cache`, at most once across parallel workers.
+
+    Shared by every semantic frontend: they differ only in what the artifact
+    is (a binary, a dll, a class output dir) and how it compiles. Returns the
+    artifact when it is fresh afterwards, else None so the caller can fall
+    back to tree-sitter.
+    """
+    if artifact_fresh():
+        return artifact
+    cache.mkdir(parents=True, exist_ok=True)
+    handle = acquire_build_lock(cache / lock_name, artifact_fresh, tries, poll_seconds)
+    if handle is None:
+        return artifact if artifact_fresh() else None
+    try:
+        if not artifact_fresh() and not compile_tool():
+            return None
+    finally:
+        release_build_lock(handle)
+    return artifact if artifact_fresh() else None
+
+
+def toolchain_runs(binary: str, timeout: float, probe_arg: str = "-version") -> bool:
+    """True when `binary` is on PATH and exits 0 for a version probe.
+
+    `shutil.which` only proves the file exists. macOS ships /usr/bin/java and
+    /usr/bin/javac as stub shims that exist with no JDK installed and exit
+    non-zero ("Unable to locate a Java Runtime") the moment they run, so a
+    which-only check reports a toolchain that is not there.
+    """
+    path = shutil.which(binary)
+    if path is None:
+        return False
+    try:
+        proc = subprocess.run(
+            [path, probe_arg],
+            capture_output=True,
+            text=True,
+            encoding=ENCODING_UTF8,
+            # A version banner is not required to be UTF-8: a vendor JDK or a
+            # non-UTF-8 locale can emit a stray byte. Strict decoding would
+            # raise UnicodeDecodeError, which is a ValueError and so escapes
+            # the handler below -- turning an availability CHECK into a crash
+            # and denying callers the fallback that answering False gives them.
+            # The output is never parsed, only the exit status is read.
+            errors="replace",
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0

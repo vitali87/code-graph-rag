@@ -24,7 +24,8 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
-from ..build_lock import acquire_build_lock, release_build_lock
+from ..build_lock import build_cached_artifact
+from ..frontend_mode import resolve_frontend_mode
 
 # Base-classification join key: (rel_file, type_start_line) -> {base_simple_name: kind}.
 BaseKindMap = dict[tuple[str, int], dict[str, str]]
@@ -117,17 +118,14 @@ def resolve_csharp_frontend() -> cs.CSharpFrontend:
     # The single source of truth for the EFFECTIVE frontend: without a
     # dotnet toolchain every Roslyn-backed mode (AUTO, and an explicit
     # HYBRID/ROSLYN, which the graph build degrades to tree-sitter with a
-    # warning) resolves to TREESITTER; with one, AUTO means HYBRID. The
-    # parser fingerprint resolves through here so a graph's recorded
-    # identity always matches the frontend that actually ran.
-    mode = settings.CSHARP_FRONTEND
-    if mode == cs.CSharpFrontend.TREESITTER:
-        return mode
-    if not csharp_frontend_available():
-        return cs.CSharpFrontend.TREESITTER
-    if mode == cs.CSharpFrontend.AUTO:
-        return cs.CSharpFrontend.HYBRID
-    return mode
+    # warning) resolves to TREESITTER; with one, AUTO means HYBRID.
+    return resolve_frontend_mode(
+        settings.CSHARP_FRONTEND,
+        cs.CSharpFrontend.TREESITTER,
+        csharp_frontend_available,
+        auto=cs.CSharpFrontend.AUTO,
+        auto_resolves_to=cs.CSharpFrontend.HYBRID,
+    )
 
 
 def _project_candidates(repo_path: Path) -> list[Path]:
@@ -255,21 +253,15 @@ def _build_tool(dotnet: str) -> Path | None:
     src = cache / "src"
     out = cache / "out"
     dll = out / _DLL_NAME
-    if _dll_fresh(dll):
-        return dll
-    cache.mkdir(parents=True, exist_ok=True)
-    lock = cache / _BUILD_LOCK
-    handle = acquire_build_lock(
-        lock, lambda: _dll_fresh(dll), _LOCK_TRIES, _LOCK_POLL_SECONDS
+    return build_cached_artifact(
+        cache,
+        dll,
+        lambda: _dll_fresh(dll),
+        lambda: _compile_tool(dotnet, src, out),
+        _BUILD_LOCK,
+        _LOCK_TRIES,
+        _LOCK_POLL_SECONDS,
     )
-    if handle is None:
-        return dll if _dll_fresh(dll) else None
-    try:
-        if not _dll_fresh(dll) and not _compile_tool(dotnet, src, out):
-            return None
-    finally:
-        release_build_lock(handle)
-    return dll if _dll_fresh(dll) else None
 
 
 def _restore(dotnet: str, project: Path) -> None:

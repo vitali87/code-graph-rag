@@ -28,7 +28,8 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
-from ..build_lock import acquire_build_lock, release_build_lock
+from ..build_lock import build_cached_artifact, toolchain_runs
+from ..frontend_mode import resolve_frontend_mode
 from ..frontends.protocol import CallSiteKey
 
 _TOOL_SRC = Path(__file__).parent / "javac"
@@ -67,24 +68,7 @@ def _empty_facts() -> JavaSemanticFacts:
 
 
 def _toolchain_runs(binary: str) -> bool:
-    # `which` only proves the binary exists. macOS ships stub shims that exit
-    # non-zero the moment they run, so a which-only check reports a JDK that
-    # is not there; require a clean `-version`.
-    path = shutil.which(binary)
-    if path is None:
-        return False
-    try:
-        proc = subprocess.run(
-            [path, "-version"],
-            capture_output=True,
-            text=True,
-            encoding=cs.ENCODING_UTF8,
-            check=False,
-            timeout=_PROBE_TIMEOUT,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return proc.returncode == 0
+    return toolchain_runs(binary, _PROBE_TIMEOUT)
 
 
 def java_frontend_available() -> bool:
@@ -92,15 +76,14 @@ def java_frontend_available() -> bool:
 
 
 def resolve_java_frontend() -> cs.JavaFrontend:
-    # The single source of truth for the EFFECTIVE frontend; the parser
-    # fingerprint records the RESOLVED mode so a javac-backed graph and a
-    # heuristic one never share an identity.
-    mode = settings.JAVA_FRONTEND
-    if mode == cs.JavaFrontend.HEURISTIC:
-        return mode
-    if not java_frontend_available():
-        return cs.JavaFrontend.HEURISTIC
-    return cs.JavaFrontend.JAVAC
+    # Only two modes: anything not explicitly HEURISTIC means JAVAC when the
+    # toolchain runs, so the non-fallback branch always lands on JAVAC.
+    return resolve_frontend_mode(
+        settings.JAVA_FRONTEND,
+        cs.JavaFrontend.HEURISTIC,
+        java_frontend_available,
+        auto_resolves_to=cs.JavaFrontend.JAVAC,
+    )
 
 
 def _cache_dir() -> Path:
@@ -117,23 +100,15 @@ def _class_fresh(out_dir: Path) -> bool:
 def _build_tool(javac: str) -> Path | None:
     cache = _cache_dir()
     out_dir = cache / "out"
-    if _class_fresh(out_dir):
-        return out_dir
-    cache.mkdir(parents=True, exist_ok=True)
-    handle = acquire_build_lock(
-        cache / _BUILD_LOCK,
+    return build_cached_artifact(
+        cache,
+        out_dir,
         lambda: _class_fresh(out_dir),
+        lambda: _compile_tool(javac, cache, out_dir),
+        _BUILD_LOCK,
         _LOCK_TRIES,
         _LOCK_POLL_SECONDS,
     )
-    if handle is None:
-        return out_dir if _class_fresh(out_dir) else None
-    try:
-        if not _class_fresh(out_dir) and not _compile_tool(javac, cache, out_dir):
-            return None
-    finally:
-        release_build_lock(handle)
-    return out_dir if _class_fresh(out_dir) else None
 
 
 def _compile_tool(javac: str, cache: Path, out_dir: Path) -> bool:

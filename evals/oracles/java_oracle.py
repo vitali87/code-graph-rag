@@ -8,6 +8,7 @@ from pathlib import Path
 from filelock import FileLock
 
 from codebase_rag import constants as cs
+from codebase_rag.parsers.build_lock import toolchain_runs
 
 from .. import constants as ec
 from ..types_defs import GraphData, OraclePayload
@@ -24,27 +25,10 @@ _PROBE_TIMEOUT_SECONDS = 10.0
 
 
 def _toolchain_runs(bin_name: str) -> bool:
-    # `shutil.which` only proves the binary is on PATH. On macOS, /usr/bin/javac
-    # and /usr/bin/java are stub shims that exist even with no JDK installed and
-    # exit non-zero ("Unable to locate a Java Runtime") the moment they run. A
-    # which-only check therefore reports Java available, the oracle tests fail
-    # to skip, and `_ensure_compiled()` blows up with CalledProcessError. Probe
-    # `-version` and require a clean exit so a broken shim reads as unavailable.
-    path = shutil.which(bin_name)
-    if path is None:
-        return False
-    try:
-        result = subprocess.run(
-            [path, "-version"],
-            capture_output=True,
-            text=True,
-            encoding=cs.ENCODING_UTF8,
-            check=False,
-            timeout=_PROBE_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
+    # The frontend owns the probe (a which-only check reports the macOS no-JDK
+    # shims as a working toolchain); the oracle reuses it so both skip on the
+    # same evidence.
+    return toolchain_runs(bin_name, _PROBE_TIMEOUT_SECONDS)
 
 
 def java_available() -> bool:

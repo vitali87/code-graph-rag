@@ -143,8 +143,8 @@ def _own_scope_nodes(node: ast.AST) -> list[ast.AST]:
     return own
 
 
-def _holds_ingestor_lock(node: ast.AsyncFunctionDef) -> bool:
-    """Whether the handler's OWN body contains `async with self._ingestor_lock`."""
+def _locks_in_own_body(node: ast.AsyncFunctionDef) -> bool:
+    """Whether this function's OWN body contains `async with self._ingestor_lock`."""
     for inner in _own_scope_nodes(node):
         if not isinstance(inner, ast.AsyncWith):
             continue
@@ -158,6 +158,134 @@ def _holds_ingestor_lock(node: ast.AsyncFunctionDef) -> bool:
             ):
                 return True
     return False
+
+
+def _every_return_is_locked(node: ast.AsyncFunctionDef) -> bool:
+    """Whether EVERY value-returning path of this function runs under the lock.
+
+    This is the per-path property, and the reason the containment check
+    `_locks_in_own_body` is not enough to clear a delegate. Containment asks
+    *can this function lock*; a `_run_ingest` that grows
+
+        if self._fast_path:
+            return await asyncio.to_thread(sync_fn)
+        async with self._ingestor_lock:
+            return await asyncio.to_thread(sync_fn)
+
+    still contains the `async with` and still reaches the ingestor unlocked on
+    one branch. Measured: propagating containment to the delegate passed that
+    mutation, which is #1443's finding one frame deeper.
+
+    A `return` inside the `async with` is locked. A bare `return` or `return
+    None` outside it is not a graph result and does not need the lock; anything
+    else outside it is a value produced without the lock and fails the check.
+    The handler delegating here is a pure `return await`, so the delegate's
+    returned value IS the handler's graph result.
+    """
+    locked_returns: set[int] = set()
+    for inner in _own_scope_nodes(node):
+        if not isinstance(inner, ast.AsyncWith):
+            continue
+        if not any(
+            isinstance(item.context_expr, ast.Attribute)
+            and item.context_expr.attr == "_ingestor_lock"
+            and isinstance(item.context_expr.value, ast.Name)
+            and item.context_expr.value.id == "self"
+            for item in inner.items
+        ):
+            continue
+        for descendant in ast.walk(inner):
+            if isinstance(descendant, ast.Return):
+                locked_returns.add(id(descendant))
+
+    handler_returns: set[int] = set()
+    for inner in _own_scope_nodes(node):
+        if not isinstance(inner, ast.Try):
+            continue
+        for clause in inner.handlers:
+            for descendant in ast.walk(clause):
+                if isinstance(descendant, ast.Return):
+                    handler_returns.add(id(descendant))
+
+    saw_locked_return = False
+    for inner in _own_scope_nodes(node):
+        if not isinstance(inner, ast.Return):
+            continue
+        if id(inner) in locked_returns:
+            saw_locked_return = True
+            continue
+        # A bare `return` / `return None` yields no graph data, so it is not an
+        # unlocked read. Nor is a return from an `except` handler: control only
+        # reaches it because the locked body raised, so nothing was ingested and
+        # the value is an error message rather than graph state. `_run_ingest`
+        # returns `cs.MCP_INDEX_ERROR.format(...)` there, which is why treating
+        # every unlocked return as a violation rejected correct code. Any OTHER
+        # unlocked return is a value produced without the lock.
+        if id(inner) in handler_returns:
+            continue
+        if inner.value is not None and not (
+            isinstance(inner.value, ast.Constant) and inner.value.value is None
+        ):
+            return False
+    return saw_locked_return
+
+
+def _sole_delegate(node: ast.AsyncFunctionDef) -> str | None:
+    """The name of the same-class method this handler is a pure delegation to.
+
+    Only `return await self.<helper>(...)` as the WHOLE body qualifies. The
+    narrowness is the point, and it is what keeps #1475 rejected: that shape was
+    a handler holding the lock in a nested `async def` while its own body did an
+    unguarded read. A body that is nothing but the delegated call has no other
+    statement left to leave unprotected, so the delegate's lock is the handler's
+    lock. Anything else -- a call among other statements, a call on something
+    other than `self` -- returns None and the handler is judged on its own body.
+    """
+    if len(node.body) != 1:
+        return None
+    statement = node.body[0]
+    if not isinstance(statement, ast.Return) or not isinstance(
+        statement.value, ast.Await
+    ):
+        return None
+    call = statement.value.value
+    if not isinstance(call, ast.Call):
+        return None
+    func = call.func
+    if (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "self"
+    ):
+        return func.attr
+    return None
+
+
+def _holds_ingestor_lock(
+    node: ast.AsyncFunctionDef, methods: dict[str, ast.AsyncFunctionDef]
+) -> bool:
+    """Whether every path through this handler that reaches the graph is locked.
+
+    A handler locks in its own body, or it is a PURE delegation to a same-class
+    async method that does. Delegation is followed exactly one frame, and the
+    delegate is checked with the SAME per-path property, not a containment one:
+    "the delegate mentions the lock somewhere" would answer *can this delegate
+    lock*, when the question is *does every ingesting path lock*. A delegate that
+    later grows a fast path around its `async with` would satisfy containment
+    while leaving a path unlocked, which is issue #1443's finding one frame
+    deeper.
+
+    One frame, because the delegate must itself be a lock-holding body under the
+    same rule; a chain of pure delegations that never locks is still unlocked and
+    still fails.
+    """
+    if _locks_in_own_body(node):
+        return True
+    delegate = _sole_delegate(node)
+    if delegate is None:
+        return False
+    target = methods.get(delegate)
+    return target is not None and _every_return_is_locked(target)
 
 
 def _handlers() -> dict[str, ast.AsyncFunctionDef]:
@@ -193,7 +321,7 @@ def test_every_graph_reader_holds_the_ingestor_lock() -> None:
     missing = sorted(
         name
         for name in _GRAPH_READERS
-        if name in handlers and not _holds_ingestor_lock(handlers[name])
+        if name in handlers and not _holds_ingestor_lock(handlers[name], handlers)
     )
 
     assert not missing, (
@@ -222,7 +350,7 @@ def test_every_handler_is_either_locked_or_declared_graph_free() -> None:
     undeclared = sorted(
         name
         for name, node in handlers.items()
-        if name not in _NON_GRAPH_HANDLERS and not _holds_ingestor_lock(node)
+        if name not in _NON_GRAPH_HANDLERS and not _holds_ingestor_lock(node, handlers)
     )
 
     assert not undeclared, (
@@ -281,16 +409,16 @@ def test_the_lock_detector_rejects_an_unrelated_context_manager() -> None:
     no_lock = ast.parse("async def h(self):\n    return 1\n").body[0]
 
     assert isinstance(locked, ast.AsyncFunctionDef)
-    assert _holds_ingestor_lock(locked)
+    assert _holds_ingestor_lock(locked, {})
 
     assert isinstance(wrong_lock, ast.AsyncFunctionDef)
-    assert not _holds_ingestor_lock(wrong_lock)
+    assert not _holds_ingestor_lock(wrong_lock, {})
 
     assert isinstance(not_self, ast.AsyncFunctionDef)
-    assert not _holds_ingestor_lock(not_self)
+    assert not _holds_ingestor_lock(not_self, {})
 
     assert isinstance(no_lock, ast.AsyncFunctionDef)
-    assert not _holds_ingestor_lock(no_lock)
+    assert not _holds_ingestor_lock(no_lock, {})
 
 
 def test_the_lock_detector_ignores_locks_in_nested_scopes() -> None:
@@ -333,15 +461,79 @@ def test_the_lock_detector_ignores_locks_in_nested_scopes() -> None:
     ).body[0]
 
     assert isinstance(nested_function, ast.AsyncFunctionDef)
-    assert not _holds_ingestor_lock(nested_function)
+    assert not _holds_ingestor_lock(nested_function, {})
 
     assert isinstance(nested_class, ast.AsyncFunctionDef)
-    assert not _holds_ingestor_lock(nested_class)
+    assert not _holds_ingestor_lock(nested_class, {})
 
     # A genuine outer lock still counts even when it contains a nested scope,
     # so the pruning does not overshoot into false negatives.
     assert isinstance(outer_and_nested, ast.AsyncFunctionDef)
-    assert _holds_ingestor_lock(outer_and_nested)
+    assert _holds_ingestor_lock(outer_and_nested, {})
+
+
+def test_the_lock_detector_follows_only_pure_delegation() -> None:
+    """A handler whose whole body is `return await self.<helper>(...)`.
+
+    #1480 refactored `index_repository` and `update_repository` into one
+    `_run_ingest`, which holds the lock. Both handlers genuinely lock through
+    that call, and an own-body-only detector reported both as unlocked: a false
+    positive that would have blocked a correct refactor.
+
+    Three properties, and each is the reason a weaker rule was rejected:
+
+    - The delegate is checked with the SAME per-path property, not containment.
+      A `_run_ingest` that grew a fast path around its `async with` would still
+      "contain" the lock while leaving an ingesting path open.
+    - Delegation must be the WHOLE body. #1475's shape -- a lock in a nested
+      scope beside an unguarded outer read -- must keep failing, and it does
+      because a body with a read left in it is not a pure delegation.
+    - The call must be on `self`. Following an arbitrary call would resolve any
+      same-named function in the file, which is not the method being invoked.
+    """
+    methods = {
+        name: ast.parse(source).body[0]
+        for name, source in {
+            "_run_ingest": (
+                "async def _run_ingest(self, fn):\n"
+                "    async with self._ingestor_lock:\n"
+                "        return await asyncio.to_thread(fn)\n"
+            ),
+            "_unlocked_helper": ("async def _unlocked_helper(self):\n    return 1\n"),
+        }.items()
+    }
+
+    delegating = ast.parse(
+        "async def h(self):\n    return await self._run_ingest(self._sync)\n"
+    ).body[0]
+    delegating_to_unlocked = ast.parse(
+        "async def h(self):\n    return await self._unlocked_helper()\n"
+    ).body[0]
+    delegating_plus_read = ast.parse(
+        "async def h(self):\n"
+        "    await self._graph_query_tool.function()\n"
+        "    return await self._run_ingest(self._sync)\n"
+    ).body[0]
+    not_on_self = ast.parse(
+        "async def h(self):\n    return await other._run_ingest(self._sync)\n"
+    ).body[0]
+
+    assert isinstance(delegating, ast.AsyncFunctionDef)
+    assert _holds_ingestor_lock(delegating, methods)
+
+    # The delegate's lock is what makes the handler locked, so a delegate
+    # without one leaves the handler unlocked however pure the delegation is.
+    assert isinstance(delegating_to_unlocked, ast.AsyncFunctionDef)
+    assert not _holds_ingestor_lock(delegating_to_unlocked, methods)
+
+    # #1475 stays rejected: an unguarded statement beside the delegated call
+    # runs outside the delegate's lock, so this is not a pure delegation.
+    assert isinstance(delegating_plus_read, ast.AsyncFunctionDef)
+    assert not _holds_ingestor_lock(delegating_plus_read, methods)
+
+    # `other._run_ingest` is not this class's method, whatever it is named.
+    assert isinstance(not_on_self, ast.AsyncFunctionDef)
+    assert not _holds_ingestor_lock(not_on_self, methods)
 
 
 def test_the_two_inventories_are_disjoint() -> None:
@@ -390,7 +582,9 @@ def test_the_mutating_handlers_still_hold_the_lock() -> None:
     )
 
     missing = sorted(
-        name for name in _GRAPH_WRITERS if not _holds_ingestor_lock(handlers[name])
+        name
+        for name in _GRAPH_WRITERS
+        if not _holds_ingestor_lock(handlers[name], handlers)
     )
 
     assert not missing, (

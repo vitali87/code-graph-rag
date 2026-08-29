@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 import os
 from abc import ABC, abstractmethod
+from typing import ClassVar
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -44,6 +45,26 @@ class ModelProvider(ABC):
     @abstractmethod
     def provider_name(self) -> cs.Provider:
         pass
+
+
+class ApiKeyProvider(ModelProvider):
+    """A provider whose configuration is valid once an api_key is present.
+
+    Most providers validate exactly that and differ only in which error they
+    raise, so they name it here instead of restating the same check. Azure
+    extends this with its own endpoint check; providers that validate
+    something else entirely (Google's per-type rules, Ollama's liveness ping)
+    subclass ModelProvider directly.
+    """
+
+    __slots__ = ()
+
+    api_key: str | None
+    _missing_key_error: ClassVar[str]
+
+    def validate_config(self) -> None:
+        if not self.api_key:
+            raise ValueError(self._missing_key_error)
 
 
 def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
@@ -146,8 +167,9 @@ class GoogleProvider(ModelProvider):
         return GoogleModel(model_id, provider=provider, settings=model_settings)
 
 
-class OpenAIProvider(ModelProvider):
+class OpenAIProvider(ApiKeyProvider):
     __slots__ = ("api_key", "endpoint")
+    _missing_key_error: ClassVar[str] = ex.OPENAI_NO_KEY
 
     def __init__(
         self,
@@ -162,10 +184,6 @@ class OpenAIProvider(ModelProvider):
     @property
     def provider_name(self) -> cs.Provider:
         return cs.Provider.OPENAI
-
-    def validate_config(self) -> None:
-        if not self.api_key:
-            raise ValueError(ex.OPENAI_NO_KEY)
 
     def create_model(
         self, model_id: str, **kwargs: str | int | None
@@ -208,8 +226,9 @@ class OllamaProvider(ModelProvider):
         return OpenAIChatModel(model_id, provider=provider)
 
 
-class AnthropicProvider(ModelProvider):
+class AnthropicProvider(ApiKeyProvider):
     __slots__ = ("api_key",)
+    _missing_key_error: ClassVar[str] = ex.ANTHROPIC_NO_KEY
 
     def __init__(
         self,
@@ -222,10 +241,6 @@ class AnthropicProvider(ModelProvider):
     @property
     def provider_name(self) -> cs.Provider:
         return cs.Provider.ANTHROPIC
-
-    def validate_config(self) -> None:
-        if not self.api_key:
-            raise ValueError(ex.ANTHROPIC_NO_KEY)
 
     def create_model(self, model_id: str, **kwargs: str | int | None) -> AnthropicModel:
         self.validate_config()
@@ -243,8 +258,9 @@ class AnthropicProvider(ModelProvider):
         return AnthropicModel(model_id, provider=provider, settings=model_settings)
 
 
-class AzureOpenAIProvider(ModelProvider):
+class AzureOpenAIProvider(ApiKeyProvider):
     __slots__ = ("api_key", "endpoint", "api_version")
+    _missing_key_error: ClassVar[str] = ex.AZURE_NO_KEY
 
     def __init__(
         self,
@@ -263,8 +279,7 @@ class AzureOpenAIProvider(ModelProvider):
         return cs.Provider.AZURE
 
     def validate_config(self) -> None:
-        if not self.api_key:
-            raise ValueError(ex.AZURE_NO_KEY)
+        super().validate_config()
         if not self.endpoint:
             raise ValueError(ex.AZURE_NO_ENDPOINT)
 
@@ -283,8 +298,9 @@ class AzureOpenAIProvider(ModelProvider):
         return OpenAIChatModel(model_id, provider=provider)
 
 
-class MiniMaxProvider(ModelProvider):
+class MiniMaxProvider(ApiKeyProvider):
     __slots__ = ("api_key", "endpoint")
+    _missing_key_error: ClassVar[str] = ex.MINIMAX_NO_KEY
 
     def __init__(
         self,
@@ -299,10 +315,6 @@ class MiniMaxProvider(ModelProvider):
     @property
     def provider_name(self) -> cs.Provider:
         return cs.Provider.MINIMAX
-
-    def validate_config(self) -> None:
-        if not self.api_key:
-            raise ValueError(ex.MINIMAX_NO_KEY)
 
     def create_model(
         self, model_id: str, **kwargs: str | int | None

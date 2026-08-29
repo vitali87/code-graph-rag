@@ -2,14 +2,12 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from loguru import logger
 
 from . import constants as ec
 from . import logs as ls
 from .cgr_graph import extract_cgr_ts_graph
+from .l1_eval import run_l1_eval
 from .oracles import run_typescript_oracle, typescript_available
-from .score import score_structure
-from .structure_report import render, write_outputs
 
 _TITLE = "cgr L1 structure eval (TypeScript vs tsc)"
 
@@ -25,26 +23,24 @@ def main(
         Path, typer.Option(help="Directory for ts_scores.csv and ts_diff.json.")
     ] = Path(ec.DEFAULT_OUT_DIR),
 ) -> None:
-    if not typescript_available():
-        logger.error(ls.TS_ORACLE_MISSING)
-        raise typer.Exit(code=1)
-
-    target = target.resolve()
-    project = project_name or target.name
-
-    logger.info(ls.TS_EXTRACTING_CGR.format(target=target, project=project))
-    cgr = extract_cgr_ts_graph(target, project)
-    logger.success(ls.TS_CGR_DONE.format(count=len(cgr.nodes)))
-
-    logger.info(ls.TS_EXTRACTING_ORACLE.format(binary=ec.NODE_BIN, target=target))
-    oracle = run_typescript_oracle(target)
-    logger.success(ls.TS_ORACLE_DONE.format(count=len(oracle.nodes)))
-
-    result = score_structure(
-        cgr, oracle, ec.TS_SCORED_NODE_KINDS, ec.SCORED_EDGE_TYPES, grade_spans=True
+    run_l1_eval(
+        target,
+        project_name,
+        out_dir,
+        available=typescript_available,
+        oracle_missing=ls.TS_ORACLE_MISSING,
+        extract_cgr=extract_cgr_ts_graph,
+        run_oracle=run_typescript_oracle,
+        oracle_binary=ec.NODE_BIN,
+        scored_node_kinds=ec.TS_SCORED_NODE_KINDS,
+        extracting_cgr=ls.TS_EXTRACTING_CGR,
+        cgr_done=ls.TS_CGR_DONE,
+        extracting_oracle=ls.TS_EXTRACTING_ORACLE,
+        oracle_done=ls.TS_ORACLE_DONE,
+        scores_filename=ec.TS_SCORES_FILENAME,
+        diff_filename=ec.TS_DIFF_FILENAME,
+        title=_TITLE,
     )
-    write_outputs(result, out_dir, ec.TS_SCORES_FILENAME, ec.TS_DIFF_FILENAME)
-    render(result, _TITLE)
 
 
 if __name__ == "__main__":

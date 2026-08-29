@@ -383,34 +383,17 @@ _RUST_REF_PATTERNS = frozenset(
 )
 
 
-def _python_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
+def _invoked_parameter_names(
+    body_node: Node,
+    candidates: set[str],
+    scan: _CallableScanConfig,
+    scope_bound_names: Callable[[Node], set[str]],
+) -> set[str]:
+    # Every language differs only in its scan config and its scope-binding
+    # rule; the scan itself is shared.
     invoked: set[str] = set()
     _scan_invoked_parameters(
-        body_node, set(candidates), invoked, _PY_SCAN, _python_scope_bound_names
-    )
-    return invoked
-
-
-def _go_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
-    invoked: set[str] = set()
-    _scan_invoked_parameters(
-        body_node, set(candidates), invoked, _GO_SCAN, _go_scope_bound_names
-    )
-    return invoked
-
-
-def _js_ts_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
-    invoked: set[str] = set()
-    _scan_invoked_parameters(
-        body_node, set(candidates), invoked, _JS_SCAN, _js_ts_scope_bound_names
-    )
-    return invoked
-
-
-def _cpp_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
-    invoked: set[str] = set()
-    _scan_invoked_parameters(
-        body_node, set(candidates), invoked, _CPP_SCAN, _cpp_scope_bound_names
+        body_node, set(candidates), invoked, scan, scope_bound_names
     )
     return invoked
 
@@ -763,22 +746,22 @@ def callable_parameter_indices(
     # index lines up with how bound methods are invoked).
     if language == cs.SupportedLanguage.PYTHON:
         names = python_parameter_names(func_node)
-        invoke = _python_invoked_parameter_names
+        scan, scope_bound = _PY_SCAN, _python_scope_bound_names
     elif language == cs.SupportedLanguage.GO:
         names = go_parameter_names(func_node)
-        invoke = _go_invoked_parameter_names
+        scan, scope_bound = _GO_SCAN, _go_scope_bound_names
     elif language in cs.JS_TS_LANGUAGES:
         names = js_ts_parameter_names(func_node)
-        invoke = _js_ts_invoked_parameter_names
+        scan, scope_bound = _JS_SCAN, _js_ts_scope_bound_names
     elif language == cs.SupportedLanguage.CPP:
         names = cpp_parameter_names(func_node)
-        invoke = _cpp_invoked_parameter_names
+        scan, scope_bound = _CPP_SCAN, _cpp_scope_bound_names
     else:
         return {}
     body_node = func_node.child_by_field_name(cs.FIELD_BODY)
     if body_node is None or not names:
         return {}
-    invoked = invoke(body_node, set(names))
+    invoked = _invoked_parameter_names(body_node, set(names), scan, scope_bound)
     if not invoked:
         return {}
     return {name: index for index, name in enumerate(names) if name in invoked}
