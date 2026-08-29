@@ -15,14 +15,20 @@ CYPHER_RETURN_KEYWORD = "RETURN "
 # project. `IS NOT NULL` / `<> ''` / `exists(...)` match every indexed node
 # in every project, so a count over them spans them all.
 CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
-# A disjunction makes any predicate beside it OPTIONAL, so a restriction
-# that appears in the query is not necessarily one the query enforces.
+# Boolean operators that break the link between "the restriction appears in
+# the query" and "the query enforces the restriction". OR and XOR make the
+# predicate beside them OPTIONAL; NOT inverts its SENSE, so the guard's own
+# textual match finds a predicate selecting everything EXCEPT this project.
+#
+# Enumerated as a class rather than added one at a time: OR was fixed first
+# and NOT and XOR were still open, which is the shape-versus-instance error
+# this file has already paid for twice.
 #
 # A WORD-BOUNDARY pattern, not a spaced literal. Cypher treats tabs and
 # newlines as whitespace, so `'alpha.'\nOR TRUE` slipped past a `" OR "`
 # check while meaning exactly the same thing. The boundaries are what keep
 # it from matching inside an identifier such as `n.coordinator`.
-CYPHER_DISJUNCTION_PATTERN = r"\bOR\b"
+CYPHER_UNSAFE_BOOLEAN_PATTERN = r"\b(?:OR|NOT|XOR)\b"
 # Constructs a SCOPED query may not use. Each defeats clause-level
 # analysis: UNION means several RETURNs, CALL and WITH mean the projection
 # is assembled elsewhere. The system prompt mandates plain

@@ -1491,6 +1491,51 @@ class TestTrailingClausesAreCutOnAnyWhitespace:
         assert not self._refused("MATCH (n) RETURN n.reunion, n.qualified_name")
 
 
+class TestAnAggregateWithNoBindableEntityIsRefused:
+    """`count(*)` measures rows, and no alias means nothing to restrict.
+
+    The restriction check ran `all(...)` over the set of counted aliases.
+    `count(*)` captures no alias, so that set was EMPTY and `all()` over it
+    is vacuously true -- the query passed while counting every node in every
+    indexed project (reported on #1494).
+
+    `RETURN n.qualified_name, count(*)` is a different shape and stays
+    allowed: the count is grouped by a column the row filter can judge, so a
+    foreign group is dropped whole.
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_count_star_is_refused(self) -> None:
+        assert self._refused(
+            f"MATCH (n) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(*) AS total"
+        )
+
+    def test_count_distinct_star_is_refused(self) -> None:
+        """Found by sweeping the shape, not named in the report."""
+        assert self._refused(
+            f"MATCH (n) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(DISTINCT *) AS total"
+        )
+
+    def test_a_bound_aggregate_is_still_allowed(self) -> None:
+        """THE CONTROL. `count(n)` names an alias that IS restricted."""
+        assert not self._refused(
+            f"MATCH (n) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(n) AS total"
+        )
+
+    def test_a_grouped_count_star_is_still_allowed(self) -> None:
+        """THE OTHER CONTROL. A grouping key the row filter can judge."""
+        assert not self._refused(
+            "MATCH (n) RETURN n.qualified_name AS q, count(*) AS total"
+        )
+
+
 class TestADisjunctionCannotMakeTheRestrictionOptional:
     """`... STARTS WITH 'alpha.' OR TRUE` restricts nothing.
 
@@ -1554,6 +1599,31 @@ class TestADisjunctionCannotMakeTheRestrictionOptional:
         assert not self._refused(
             f"MATCH (n:Function) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
             "RETURN count(n) AS total"
+        )
+
+    def test_a_negated_predicate_is_refused(self) -> None:
+        """`NOT (... STARTS WITH 'alpha.')` selects everything EXCEPT alpha.
+
+        The predicate matches the textual check while its SENSE is inverted,
+        so the restriction the guard found was the opposite of a restriction
+        (reported on #1494).
+        """
+        assert self._refused(
+            f"MATCH (n) WHERE NOT (n.qualified_name STARTS WITH '{ALPHA}.') "
+            "RETURN count(n) AS total"
+        )
+
+    def test_a_negated_predicate_without_parentheses_is_refused(self) -> None:
+        assert self._refused(
+            f"MATCH (n) WHERE NOT n.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(n) AS total"
+        )
+
+    def test_an_xor_is_refused(self) -> None:
+        """Found by sweeping the shape: XOR makes the predicate optional too."""
+        assert self._refused(
+            f"MATCH (n) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "XOR TRUE RETURN count(n) AS total"
         )
 
     def test_an_identifier_containing_or_is_not_a_disjunction(self) -> None:

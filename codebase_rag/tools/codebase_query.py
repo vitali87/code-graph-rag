@@ -71,9 +71,9 @@ _POST_RETURN_RE = re.compile(
     ).join((r"\s(?:", r")")),
 )
 
-# A disjunction anywhere in the restriction body, on word boundaries so
+# OR / NOT / XOR anywhere in the restriction body, on word boundaries so
 # tabs and newlines count as separators and `n.coordinator` does not.
-_DISJUNCTION_RE = re.compile(cs.CYPHER_DISJUNCTION_PATTERN)
+_UNSAFE_BOOLEAN_RE = re.compile(cs.CYPHER_UNSAFE_BOOLEAN_PATTERN)
 
 # Constructs a scoped query may not use, matched as whole words.
 _UNANALYSABLE_RE = re.compile(cs.CYPHER_UNANALYSABLE_PATTERN)
@@ -229,6 +229,15 @@ def requires_project_evidence(
     # exist. `MATCH (a),(b) WHERE a.qualified_name STARTS WITH "alpha."
     # RETURN count(b)` restricts `a` and counts `b`, which nothing bounds.
     counted = set(_AGGREGATED_ENTITY_RE.findall(projection))
+    # `count(*)` binds no alias, so `counted` is EMPTY and the per-alias
+    # check below is vacuously true -- an all-aggregate projection then
+    # passed while measuring every node in every project. An aggregate this
+    # analysis cannot bind to an entity cannot be shown restricted, so it is
+    # refused (issue #1494). `RETURN n.qualified_name, count(*)` is a
+    # different shape and is unaffected: it is not all-aggregates, and its
+    # count is grouped by a column the row filter can judge.
+    if not counted:
+        return False
     return _restricts_to_project(restrictable, project_name, counted)
 
 
@@ -398,17 +407,18 @@ def _restricts_to_project(
         return False
     if not project_name:
         return False
-    # A DISJUNCTION makes the restriction optional. `... STARTS WITH
-    # 'alpha.' OR TRUE` contains the predicate but does not require it, and
-    # every check here searches for the predicate rather than proving it
-    # mandatory -- so the aggregate ran across every project while the
-    # substring match was satisfied (issue #1494).
+    # OR / NOT / XOR break the link between finding the predicate and the
+    # query enforcing it. `... STARTS WITH 'alpha.' OR TRUE` contains the
+    # predicate without requiring it; `NOT (... STARTS WITH 'alpha.')`
+    # contains it with the opposite meaning, selecting every project EXCEPT
+    # this one. Every check here SEARCHES for the predicate rather than
+    # proving it mandatory and positive (issue #1494).
     #
-    # Refused rather than analysed: deciding whether a predicate holds on
-    # every Boolean path is a satisfiability question, and this module's
-    # rule for shapes it cannot analyse is to reject them. `AND` is
-    # unaffected, so the ordinary scoped count keeps working.
-    if _DISJUNCTION_RE.search(body):
+    # Refused rather than analysed: deciding whether a predicate holds, in
+    # the right sense, on every Boolean path is a satisfiability question,
+    # and this module's rule for shapes it cannot analyse is to reject them.
+    # `AND` is unaffected, so the ordinary scoped count keeps working.
+    if _UNSAFE_BOOLEAN_RE.search(body):
         return False
     # The LITERAL project name is required. "No literal" was read as
     # "safely parameterised", but a parameter's VALUE is invisible here,
