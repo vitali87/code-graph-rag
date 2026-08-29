@@ -144,7 +144,6 @@ GO_RETRIEVAL_LABEL = "graph"
 GO_RETRIEVAL_TITLE = "cgr multi-language retrieval: Go CALLS vs go/ast oracle"
 GO_CALL_EDGE_REPR = "{file} -> {name}"
 
-RS_SUFFIX = ".rs"
 RUST_DEFAULT_TARGET = "."
 RUST_RETRIEVAL_SCORES_FILENAME = "rust_retrieval_scores.csv"
 RUST_RETRIEVAL_DIFF_FILENAME = "rust_retrieval_diff.json"
@@ -161,7 +160,6 @@ JAVA_RETRIEVAL_LABEL = "graph"
 JAVA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Java CALLS vs javac oracle"
 JAVA_CALL_EDGE_REPR = "{file} -> {name}"
 
-CSHARP_DEFAULT_TARGET = "."
 CSHARP_RETRIEVAL_SCORES_FILENAME = "csharp_retrieval_scores.csv"
 CSHARP_RETRIEVAL_DIFF_FILENAME = "csharp_retrieval_diff.json"
 CSHARP_RETRIEVAL_DIFF_PREFIX = "csharp-retrieval:"
@@ -230,7 +228,6 @@ C_CALL_EDGE_REPR = "{file} -> {name}"
 
 CPP_SOURCE_GLOBS: tuple[str, ...] = ("*.cc", "*.cpp", "*.cxx")
 CPP_HEADER_GLOBS: tuple[str, ...] = ("*.h", "*.hpp", "*.hh", "*.hxx")
-CPP_SUFFIXES: tuple[str, ...] = (".cc", ".cpp", ".cxx", ".h", ".hpp", ".hh", ".hxx")
 CLANG_CPP_STD = "-std=c++17"
 CLANG_CPP_LANG_FLAG = "-x"
 CLANG_CPP_LANG = "c++"
@@ -710,15 +707,20 @@ INSTANTIATION_TITLE = "cgr instantiation eval: file-level INSTANTIATES vs ast or
 # name, so the row is labelled to say what it measures rather than borrowing the
 # Python row's label.
 JAVA_SUPERTYPES_LABEL = "supertypes(simple-name)"
+CPP_BASES_LABEL = "bases(simple-name)"
+CSHARP_SUPERTYPES_LABEL = "supertypes(simple-name)"
 
 
 class InheritanceLanguage(StrEnum):
     PYTHON = "python"
     JAVA = "java"
+    CPP = "cpp"
+    CSHARP = "csharp"
 
 
 INHERITANCE_LANGUAGE_HELP = (
-    "Language to grade: python (ast oracle) or java (javac oracle)."
+    "Language to grade: python (ast oracle), java (javac oracle), "
+    "cpp (libclang oracle) or csharp (Roslyn oracle)."
 )
 
 INDEXING_DEFAULT_CORPUS = "django"

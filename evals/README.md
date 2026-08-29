@@ -253,6 +253,11 @@ internal/external misclassification (the shape of
 uv run python -m evals.import_resolution --target codebase_rag
 ```
 
+**Language scope: Python only** (issue #1190). The oracle walks `.py` files via
+`_iter_py_files` and parses with the stdlib `ast`; there is no `--language` flag.
+No other language has resolved `IMPORTS` graded against ground truth, so the
+score here says nothing about import classification in any other language.
+
 The comparison unit is `(importing_file, top_level_package, is_external)`. Both
 sides reduce an import to its top-level package name the same way (`import
 numpy.linalg` and `from numpy import x` both reduce to `numpy`), and both decide
@@ -299,8 +304,33 @@ first-party class qualified name (`INHERITS` target), and that method overrides
 are attributed to the right base class (`OVERRIDES`).
 
 ```bash
-uv run python -m evals.inheritance --target codebase_rag
+uv run python -m evals.inheritance --target codebase_rag              # Python
+uv run python -m evals.inheritance --target repo --language java      # javac
+uv run python -m evals.inheritance --target repo --language cpp       # libclang
+uv run python -m evals.inheritance --target repo --language csharp    # Roslyn
 ```
+
+**Language scope, and why the numbers are not comparable across it** (issue
+ #1190). Each arm grades a different unit, so each writes its own row label and a
+1.0 in one is not a 1.0 in another:
+
+| `--language` | oracle | row label | unit graded | OVERRIDES |
+|---|---|---|---|---|
+| `python` (default) | stdlib `ast` | `inherits-resolved` | base resolved to a first-party **qualified name** | graded |
+| `java` | javac | `supertypes(simple-name)` | `extends` + `implements`, base by **simple name** | not adjudicated |
+| `cpp` | libclang | `bases(simple-name)` | base specifiers, base by **simple name** | not adjudicated |
+| `csharp` | Roslyn | `supertypes(simple-name)` | base class + interfaces, by **simple name** | not adjudicated |
+
+Only the Python arm grades a *resolved qualified name*, which is the strictest
+unit; the compiler-backed arms compare simple names, so they cannot catch a base
+resolved to the wrong same-named class in another module. The three non-Python
+arms adjudicate no `OVERRIDES` at all, and `_prf` omits the row rather than
+scoring a category the oracle cannot decide — so an absent OVERRIDES row means
+"not measured", never "nothing found".
+
+Each arm **refuses to run** without its oracle rather than grading nothing: no
+`javac`, no libclang, no `dotnet`, or (for C++) no usable `compile_commands.json`
+exits non-zero. An ungraded target must not report as a clean empty result.
 
 The oracle resolves a base only when it is unambiguous: defined in the same module
 or imported via `from <first-party> import <Base>`. Attribute bases (`pkg.Base`),
