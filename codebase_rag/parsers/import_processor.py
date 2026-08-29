@@ -494,6 +494,7 @@ class ImportProcessor:
         "_cpp_qn_to_rel",
         "_deferred_import_edges",
         "_import_sites",
+        "_import_site_owners",
         "_inferred_module_imports",
         "_csharp_module_namespaces",
         "_csharp_module_identifiers",
@@ -559,6 +560,9 @@ class ImportProcessor:
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
+        # Sub-scope site entries a file wrote under OTHER scope keys (Rust
+        # fn/inline-mod uses), so its re-parse can retract them (#1522).
+        self._import_site_owners: dict[str, set[tuple[str, str]]] = {}
         self._inferred_module_imports: dict[str, set[str]] = {}
         self._csharp_module_namespaces: dict[str, dict[str, set[str]]] = {}
         self._csharp_module_identifiers: dict[str, frozenset[str]] = {}
@@ -872,6 +876,12 @@ class ImportProcessor:
         lang_config = queries[language]["config"]
 
         self.import_mapping[module_qn] = {}
+        for scope_qn, name in self._import_site_owners.pop(module_qn, ()):
+            scope_sites = self._import_sites.get(scope_qn)
+            if scope_sites is not None:
+                scope_sites.pop(name, None)
+                if not scope_sites:
+                    del self._import_sites[scope_qn]
         self._import_sites[module_qn] = {}
         # A watch-mode re-parse must not carry references the edited file no
         # longer makes (issue #1347).
@@ -968,15 +978,22 @@ class ImportProcessor:
         local_name: str,
         node: Node | None,
         imported_name: str | None = None,
+        owner_qn: str | None = None,
     ) -> PropertyDict | None:
         """Remember where an import binding was written (issue #1522).
 
         `node` is the import statement (for a grouped Go block, the spec line)
         whose span the IMPORTS edge will carry. Sentinel keys (`*pkg`
         wildcards, Go `.pkg` dot-imports) bind no name and record no alias.
+        `owner_qn` names the FILE module when `scope_qn` is one of its
+        sub-scopes, so the file's re-parse retracts the entry.
         """
         if node is None:
             return None
+        if owner_qn is not None and owner_qn != scope_qn:
+            self._import_site_owners.setdefault(owner_qn, set()).add(
+                (scope_qn, local_name)
+            )
         site = node_site_properties(node)
         if not local_name.startswith((cs.IMPORTED_NAME_WILDCARD, cs.SEPARATOR_DOT)):
             site[cs.KEY_ALIAS] = local_name
@@ -3363,6 +3380,12 @@ class ImportProcessor:
             else:
                 local_name = imported_path.split(cs.SEPARATOR_DOT)[-1]
             self.import_mapping[module_qn][local_name] = imported_path
+            self._record_import_site(
+                module_qn,
+                local_name,
+                import_node,
+                imported_path.split(cs.SEPARATOR_DOT)[-1],
+            )
             logger.debug(ls.IMP_CSHARP, name=local_name, path=imported_path)
 
     def reset_java_path_caches(self) -> None:
@@ -3574,6 +3597,7 @@ class ImportProcessor:
                 imported_name,
                 use_node,
                 full_path.split(cs.SEPARATOR_DOUBLE_COLON)[-1],
+                owner_qn=module_qn,
             )
             if sub_scope:
                 # The generic deferral loop only reads the file-level map;
@@ -3810,13 +3834,15 @@ class ImportProcessor:
         group: list[Node] = []
         for child in import_node.children:
             if child.type == cs.CHAR_COMMA:
-                self._parse_scala_import_group(group, module_qn)
+                self._parse_scala_import_group(group, module_qn, import_node)
                 group = []
             elif child.type != cs.TS_SCALA_IMPORT_KEYWORD:
                 group.append(child)
-        self._parse_scala_import_group(group, module_qn)
+        self._parse_scala_import_group(group, module_qn, import_node)
 
-    def _parse_scala_import_group(self, children: list[Node], module_qn: str) -> None:
+    def _parse_scala_import_group(
+        self, children: list[Node], module_qn: str, import_node: Node
+    ) -> None:
         prefix_parts: list[str] = []
         selectors: Node | None = None
         wildcard: Node | None = None
@@ -3838,7 +3864,7 @@ class ImportProcessor:
 
         if renamed is not None:
             self._bind_scala_rename(
-                renamed, cs.SEPARATOR_DOT.join(prefix_parts), module_qn
+                renamed, cs.SEPARATOR_DOT.join(prefix_parts), module_qn, import_node
             )
             return
 
@@ -3850,19 +3876,25 @@ class ImportProcessor:
             # here; the package itself is what comes into scope.
             package = cs.SEPARATOR_DOT.join(prefix_parts)
             self.import_mapping[module_qn][f"*{package}"] = package
+            self._record_import_site(module_qn, f"*{package}", import_node)
             return
 
         if selectors is not None:
             package = cs.SEPARATOR_DOT.join(prefix_parts)
-            self._parse_scala_selectors(selectors, package, module_qn)
+            self._parse_scala_selectors(selectors, package, module_qn, import_node)
             return
 
         # Plain `import a.b.C`: the last part is the imported name, and
         # everything is also the full path.
         full_path = cs.SEPARATOR_DOT.join(prefix_parts)
         self.import_mapping[module_qn][prefix_parts[-1]] = full_path
+        self._record_import_site(
+            module_qn, prefix_parts[-1], import_node, prefix_parts[-1]
+        )
 
-    def _bind_scala_rename(self, node: Node, package: str, module_qn: str) -> None:
+    def _bind_scala_rename(
+        self, node: Node, package: str, module_qn: str, import_node: Node
+    ) -> None:
         """Bind `original as/=> alias` to the ALIAS only.
 
         Binding the original as well would make it resolvable under a name
@@ -3884,9 +3916,10 @@ class ImportProcessor:
         original, alias = names
         full = f"{package}{cs.SEPARATOR_DOT}{original}" if package else original
         self.import_mapping[module_qn][alias] = full
+        self._record_import_site(module_qn, alias, import_node, original)
 
     def _parse_scala_selectors(
-        self, selectors: Node, package: str, module_qn: str
+        self, selectors: Node, package: str, module_qn: str, import_node: Node
     ) -> None:
         for child in selectors.children:
             if child.type in (
@@ -3895,15 +3928,17 @@ class ImportProcessor:
             ):
                 # `{Map => MMap}` (Scala 2) and `{Map as MMap}` (Scala 3) are
                 # different node types spelling the same thing.
-                self._bind_scala_rename(child, package, module_qn)
+                self._bind_scala_rename(child, package, module_qn, import_node)
             elif child.type == cs.TS_SCALA_NAMESPACE_WILDCARD:
                 # `import a.{b, _}` -- a wildcard alongside explicit names.
                 self.import_mapping[module_qn][f"*{package}"] = package
+                self._record_import_site(module_qn, f"*{package}", import_node)
             elif child.type == cs.TS_IDENTIFIER:
                 if name := safe_decode_with_fallback(child):
                     self.import_mapping[module_qn][name] = (
                         f"{package}{cs.SEPARATOR_DOT}{name}"
                     )
+                    self._record_import_site(module_qn, name, import_node, name)
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
@@ -4054,6 +4089,7 @@ class ImportProcessor:
                 full_name = f"{cs.IMPORT_STD_PREFIX}{include_path}"
 
             self.import_mapping[module_qn][local_name] = full_name
+            self._record_import_site(module_qn, local_name, include_node, include_path)
             logger.debug(
                 ls.IMP_CPP_INCLUDE,
                 local=local_name,
@@ -4091,6 +4127,9 @@ class ImportProcessor:
                 full_name = f"{cs.IMPORT_STD_PREFIX}{module_name}"
 
                 self.import_mapping[module_qn][local_name] = full_name
+                self._record_import_site(
+                    module_qn, local_name, import_node, module_name
+                )
                 logger.debug(ls.IMP_CPP_MODULE, local=local_name, full=full_name)
 
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
@@ -4229,6 +4268,12 @@ class ImportProcessor:
                 parts = imported_path.split(cs.SEPARATOR_DOT)
                 local_name = parts[-1] if parts else imported_path
             self.import_mapping[module_qn][local_name] = imported_path
+            self._record_import_site(
+                module_qn,
+                local_name,
+                use_node,
+                imported_path.split(cs.SEPARATOR_DOT)[-1],
+            )
             if decl_is_function or any(
                 c.type == cs.TS_PHP_FUNCTION for c in child.children
             ):
@@ -4249,6 +4294,7 @@ class ImportProcessor:
                 parts = path_str.split(cs.SEPARATOR_DOT)
                 local_name = parts[-1] if parts else path_str
                 self.import_mapping[module_qn][local_name] = path_str
+                self._record_import_site(module_qn, local_name, node, path_str)
                 return
 
     def _parse_generic_imports(
@@ -4272,7 +4318,9 @@ class ImportProcessor:
             if not uri:
                 continue
             if full_name := dart_resolve_import(uri, module_qn, self.project_name):
-                self.import_mapping[module_qn][dart_local_name(uri)] = full_name
+                local_name = dart_local_name(uri)
+                self.import_mapping[module_qn][local_name] = full_name
+                self._record_import_site(module_qn, local_name, import_node, uri)
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):
@@ -4284,6 +4332,9 @@ class ImportProcessor:
                     )
                     resolved = self._resolve_lua_module_path(module_path, module_qn)
                     self.import_mapping[module_qn][local_name] = resolved
+                    self._record_import_site(
+                        module_qn, local_name, call_node, module_path
+                    )
             elif self._lua_is_pcall_require(call_node):
                 if module_path := self._lua_extract_pcall_require_arg(call_node):
                     local_name = (
@@ -4292,10 +4343,16 @@ class ImportProcessor:
                     )
                     resolved = self._resolve_lua_module_path(module_path, module_qn)
                     self.import_mapping[module_qn][local_name] = resolved
+                    self._record_import_site(
+                        module_qn, local_name, call_node, module_path
+                    )
 
             elif self._lua_is_stdlib_call(call_node):
                 if stdlib_module := self._lua_extract_stdlib_module(call_node):
                     self.import_mapping[module_qn][stdlib_module] = stdlib_module
+                    self._record_import_site(
+                        module_qn, stdlib_module, call_node, stdlib_module
+                    )
 
     def _lua_is_require_call(self, call_node: Node) -> bool:
         first_child = call_node.children[0] if call_node.children else None

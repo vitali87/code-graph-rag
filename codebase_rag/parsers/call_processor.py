@@ -1049,7 +1049,9 @@ class CallProcessor:
         # `_site_scoped` restores it on exit. The cache keeps the variant
         # fan-out of one site from re-deriving the same property dict.
         self._site_node: Node | None = None
-        self._site_cache: tuple[int, PropertyDict] | None = None
+        # Keyed by the node OBJECT, not Node.id: tree-sitter recycles ids
+        # across trees, and holding the node keeps its id from being reused.
+        self._site_cache: tuple[Node, PropertyDict] | None = None
         self.repo_path = repo_path
         self.project_name = project_name
         # Dispatchers that name their callee in a string argument, declared in
@@ -1148,8 +1150,8 @@ class CallProcessor:
         site = self._site_node
         if site is not None:
             cached = self._site_cache
-            if cached is None or cached[0] != site.id:
-                cached = (site.id, call_site_properties(site))
+            if cached is None or cached[0] is not site:
+                cached = (site, call_site_properties(site))
                 self._site_cache = cached
             properties = {**cached[1], **properties} if properties else dict(cached[1])
         if properties:

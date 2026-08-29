@@ -407,3 +407,235 @@ def test_reference_site_without_arguments_carries_span_only(
     # `return` statement or dict literal.
     assert _site(props) == _span(src, "helper", occurrence=1)
     assert cs.KEY_ARG_COUNT not in props
+
+
+# --- Review findings on PR #1537 ------------------------------------------------
+
+
+def _import_props(mock: MagicMock, module_suffix: str) -> dict[str, PropertyDict]:
+    """alias -> site props for every sited IMPORTS edge out of one module."""
+    return {
+        str(props[cs.KEY_ALIAS]): props
+        for _dst, props in _imports_from(mock, module_suffix)
+        if cs.KEY_ALIAS in props
+    }
+
+
+CSHARP_SRC = "using System.Text;\nusing IO = System.IO;\n\nclass A { }\n"
+CPP_SRC = '#include <vector>\n#include "util.h"\n\nint main() { return 0; }\n'
+PHP_SRC = "<?php\nuse App\\Models\\User as U;\nuse App\\Helpers\\Fmt;\n\nclass A {}\n"
+DART_SRC = (
+    "import 'package:flutter/material.dart';\nimport 'util.dart';\n\nclass A {}\n"
+)
+LUA_SRC = "local Person = require('person')\nlocal json = require('json')\n"
+SCALA_SRC = (
+    "package com.example\n"
+    "import scala.collection.mutable.{Map => MMap}\n"
+    "import scala.util.Try\n"
+    "import scala.io._\n\n"
+    "object Solo { def run(): Int = 1 }\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("grammar", "filename", "src", "extra_files", "expected"),
+    [
+        (
+            "c_sharp",
+            "A.cs",
+            CSHARP_SRC,
+            {},
+            {
+                "Text": ("using System.Text;", "Text"),
+                "IO": ("using IO = System.IO;", "IO"),
+            },
+        ),
+        (
+            "cpp",
+            "main.cpp",
+            CPP_SRC,
+            {"util.h": "int util();\n"},
+            {
+                # tree-sitter's preproc_include spans through its newline.
+                "vector": ("#include <vector>\n", "vector"),
+                "util": ('#include "util.h"\n', "util.h"),
+            },
+        ),
+        (
+            "php",
+            "a.php",
+            PHP_SRC,
+            {},
+            {
+                "U": ("use App\\Models\\User as U;", "User"),
+                "Fmt": ("use App\\Helpers\\Fmt;", "Fmt"),
+            },
+        ),
+        (
+            "dart",
+            "a.dart",
+            DART_SRC,
+            {"util.dart": "int util() => 1;\n"},
+            {
+                "material": (
+                    "import 'package:flutter/material.dart';",
+                    "package:flutter/material.dart",
+                ),
+                "util": ("import 'util.dart';", "util.dart"),
+            },
+        ),
+        (
+            "lua",
+            "main.lua",
+            LUA_SRC,
+            {"person.lua": "local Person = {}\nreturn Person\n"},
+            {
+                "Person": ("require('person')", "person"),
+                "json": ("require('json')", "json"),
+            },
+        ),
+        (
+            "scala",
+            "a.scala",
+            SCALA_SRC,
+            {},
+            {
+                "MMap": ("import scala.collection.mutable.{Map => MMap}", "Map"),
+                "Try": ("import scala.util.Try", "Try"),
+            },
+        ),
+    ],
+)
+def test_every_import_handler_records_the_site(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    grammar: str,
+    filename: str,
+    src: str,
+    extra_files: dict[str, str],
+    expected: dict[str, tuple[str, str]],
+) -> None:
+    """C#, C++, PHP, Dart, Lua and Scala imports carry a span, alias and name.
+
+    The first cut of #1522 wired only the five languages the acceptance list
+    named; the rest still emitted property-less IMPORTS edges, so two
+    bindings of one provider collapsed onto a single edge (Greptile P1).
+    """
+    for name, body in extra_files.items():
+        (temp_repo / name).write_text(body, encoding="utf-8")
+    (temp_repo / filename).write_text(src, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=grammar)
+
+    sited = _import_props(mock_ingestor, Path(filename).stem)
+    for alias, (needle, imported_name) in expected.items():
+        assert alias in sited, (alias, sorted(sited))
+        assert _site(sited[alias]) == _span(src, needle), alias
+        assert sited[alias][cs.KEY_IMPORTED_NAME] == imported_name, alias
+
+
+def test_scala_wildcard_import_records_span_without_alias(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "a.scala").write_text(SCALA_SRC, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="scala")
+    wildcard = [
+        props
+        for dst, props in _imports_from(mock_ingestor, ".a")
+        if dst.endswith("scala.io")
+    ]
+    (props,) = wildcard
+    assert _site(props) == _span(SCALA_SRC, "import scala.io._")
+    assert cs.KEY_ALIAS not in props
+
+
+def test_rust_reparse_retracts_sub_scope_import_sites(temp_repo: Path) -> None:
+    """A re-parsed Rust file drops the sub-scope site entries it wrote before.
+
+    Sub-scope uses record their site under the fn / inline-mod scope qn, not
+    the file's, so the per-module reset alone left the removed binding's span
+    standing beside its replacement (Greptile P1 on #1537).
+    """
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.import_processor import ImportProcessor
+
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.RUST not in parsers:
+        pytest.skip("rust parser not available")
+    processor = ImportProcessor(repo_path=temp_repo, project_name="p")
+    module_qn = "p.src.worker"
+
+    def parse(source: str) -> None:
+        tree = parsers[cs.SupportedLanguage.RUST].parse(source.encode())
+        processor.parse_imports(
+            tree.root_node, module_qn, cs.SupportedLanguage.RUST, queries
+        )
+
+    parse("mod nested {\n    use std::fmt::Display as Inline;\n}\n")
+    scope = f"{module_qn}.nested"
+    assert set(processor._import_sites[scope]) == {"Inline"}
+
+    parse("mod nested {\n    use std::fmt::Debug as Replacement;\n}\n")
+    assert set(processor._import_sites[scope]) == {"Replacement"}
+
+    parse("fn main() {}\n")
+    assert scope not in processor._import_sites
+
+
+def test_call_site_cache_is_not_keyed_by_recycled_node_ids() -> None:
+    """A fresh tree whose node id happens to match must not reuse a cached site.
+
+    tree-sitter recycles node ids across trees, so a cache keyed by bare
+    `Node.id` could hand a later call the span and argument shape of an
+    earlier, unrelated one (Greptile P1 on #1537). Keying by the node object
+    (and holding it) makes a hit impossible for any node but that one.
+    """
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.call_processor import CallProcessor
+
+    parsers, _queries = load_parsers()
+    if cs.SupportedLanguage.PYTHON not in parsers:
+        pytest.skip("python parser not available")
+    parser = parsers[cs.SupportedLanguage.PYTHON]
+
+    def first_call(source: str) -> Any:
+        tree = parser.parse(source.encode())
+        stack = [tree.root_node]
+        while stack:
+            node = stack.pop()
+            if node.type == "call":
+                return node
+            stack.extend(node.children)
+        raise AssertionError("no call node")
+
+    ingestor = MagicMock()
+    cp = CallProcessor.__new__(CallProcessor)
+    cp.ingestor = ingestor
+    cp._site_node = None
+    cp._site_cache = None
+
+    src_a = "f(1)\n"
+    src_b = "g(1, 2, k=3)\n"
+    call_a = first_call(src_a)
+    call_b = first_call(src_b)
+    cp._site_node = call_a
+    cp._emit_rel(
+        ("Function", "qualified_name", "x"),
+        "CALLS",
+        ("Function", "qualified_name", "f"),
+    )
+    cp._site_node = call_b
+    cp._emit_rel(
+        ("Function", "qualified_name", "x"),
+        "CALLS",
+        ("Function", "qualified_name", "g"),
+    )
+
+    (first, second) = ingestor.ensure_relationship_batch.call_args_list
+    assert first.kwargs["properties"][cs.KEY_ARG_COUNT] == 1
+    assert second.kwargs["properties"][cs.KEY_ARG_COUNT] == 3
+    assert second.kwargs["properties"][cs.KEY_KWARG_NAMES] == ["k"]
+    assert _site(second.kwargs["properties"]) == _span(src_b, "g(1, 2, k=3)")
+    # An id collision cannot be forced from a test, so the behavioural check
+    # above passes on the old code too; the key must be the node itself.
+    assert cp._site_cache is not None
+    assert cp._site_cache[0] is call_b
