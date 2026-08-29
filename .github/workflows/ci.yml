@@ -494,6 +494,18 @@ jobs:
           # Failing closed is safe here. Nothing merges without a 5/5 review of
           # head; a fast fail only moves the wait out of a job that is blocking
           # everyone else's logs.
+          # `timeout` bounds the API calls below. If it were ever missing, each
+          # call would fail, `|| true` would swallow it, and the gate would
+          # report "no review yet" forever -- a false statement that blocks
+          # every merge. Fail loudly here instead: a missing tool is a broken
+          # gate, not an unreviewed pull request.
+          command -v timeout >/dev/null || {
+            echo "❌ 'timeout' (GNU coreutils) is not available on this runner."
+            echo "The gate bounds its API calls with it; without it a stalled"
+            echo "request cannot be distinguished from a missing review."
+            exit 1
+          }
+
           deadline=$(( $(date +%s) + 1200 ))
           while :; do
             # --jq would run per page; slurp the pages so every scored comment
@@ -502,11 +514,22 @@ jobs:
             # the globally latest comment instead would let a late update to
             # an old-commit review mask a valid 5/5 review of head. Bodies are
             # multiline, so ship them through base64.
-            candidates=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            # `timeout` bounds the request itself. The deadline below is only
+            # consulted AFTER this call returns, so an unbounded `gh api` that
+            # stalls runs past the deadline and into the job timeout, which
+            # kills the job WITHOUT printing the remedy underneath -- the whole
+            # point of failing fast. Capping the poll at 20 minutes made that
+            # more reachable, not less: the job timeout is now 25 minutes.
+            # A stalled or failed request is treated as a poll that found no
+            # review, so the loop proceeds to the deadline check and either
+            # retries or fails with guidance. `|| true` keeps a non-zero exit
+            # (124 on timeout) from aborting the loop.
+            candidates=$(timeout 120 gh api "repos/$REPO/issues/$PR/comments" --paginate 2>/dev/null \
               | jq -rs 'add
                         | [.[] | select(.user.login == "greptile-apps[bot]")
                                | select(.body | contains("Confidence Score:"))]
-                        | sort_by(.updated_at) | reverse | .[].body | @base64')
+                        | sort_by(.updated_at) | reverse | .[].body | @base64' \
+              2>/dev/null || true)
             score=""
             for encoded in $candidates; do
               body=$(printf '%s' "$encoded" | base64 -d)
@@ -519,7 +542,7 @@ jobs:
                 # Resolve to the full SHA so the comparison below is exact
                 # equality, never a prefix guess; an unresolvable reference
                 # just skips this candidate.
-                reviewed=$(gh api "repos/$REPO/commits/$reviewed" \
+                reviewed=$(timeout 60 gh api "repos/$REPO/commits/$reviewed" \
                   --jq .sha 2>/dev/null || true)
               fi
               [ "$reviewed" = "$HEAD_SHA" ] || continue
