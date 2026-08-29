@@ -12,6 +12,7 @@ measure something the cgr side does not distinguish.
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -24,8 +25,31 @@ from evals.inheritance import (
 )
 from evals.oracles.csharp_oracle import csharp_oracle_available, run_csharp_oracle
 
+
+def _csharp_oracle_builds() -> bool:
+    """Whether the Roslyn oracle can actually be BUILT, not merely whether
+    `dotnet` is on PATH.
+
+    `csharp_oracle_available()` checks only for the binary. On a runner where
+    `dotnet` exists but `dotnet build` fails (a restore that cannot reach the
+    network, an SDK too new for the project), `_ensure_built` raises
+    `CalledProcessError` rather than returning False, so the oracle's own
+    empty-payload fallback never runs and these tests die instead of skipping.
+
+    Presence is not capability: the only sufficient check is to run the thing
+    and see what comes back.
+    """
+    if not csharp_oracle_available():
+        return False
+    try:
+        run_csharp_oracle(Path(tempfile.mkdtemp()))
+    except Exception:
+        return False
+    return True
+
+
 _NEEDS_DOTNET = pytest.mark.skipif(
-    not csharp_oracle_available(), reason="dotnet not available"
+    not _csharp_oracle_builds(), reason="dotnet oracle cannot be built here"
 )
 
 
