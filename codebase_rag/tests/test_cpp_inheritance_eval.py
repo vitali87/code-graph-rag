@@ -264,6 +264,23 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
 
         assert _cpp_compile_db_units(tmp_path) == 0
 
+    def test_a_valid_but_empty_translation_unit_still_counts(
+        self, tmp_path: Path
+    ) -> None:
+        """Emptiness is a fact about the CODE, not a failure to read it.
+
+        The guard first counted units whose AST had children, which rejected a
+        comment-only or empty source file -- a project libclang parsed
+        perfectly, refused as ungradable. That turns a legitimate
+        zero-inheritance grade into an error (Greptile, PR #1513).
+
+        The distinction the guard must draw is "could the oracle read this",
+        not "did it find anything", and those come apart exactly here.
+        """
+        project = _cpp_project(tmp_path, "// only a comment, no declarations\n")
+
+        assert _cpp_compile_db_units(project) > 0
+
     def test_a_usable_database_yields_units(self, tmp_path: Path) -> None:
         # The control: without this the three assertions above are satisfied by
         # a helper that returns 0 unconditionally.

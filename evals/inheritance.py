@@ -287,15 +287,25 @@ def _cpp_compile_db_units(target: Path) -> int:
     # Count units that actually PARSE, not entries that merely exist: a stale
     # database naming files that have since been deleted has entries and
     # yields no AST, which is the fail-open case this guard is for.
+    #
+    # "Parsed" means the source exists and libclang reported no FATAL
+    # diagnostic -- deliberately NOT "the AST has children". A valid but empty
+    # or comment-only translation unit parses perfectly and has no children,
+    # and rejecting it would refuse a legitimate zero-inheritance grade
+    # (Greptile, PR #1513). Emptiness is a fact about the code; the guard is
+    # about whether the oracle could read it.
     parsed = 0
     index = ci.Index.create()
     for command in commands:
+        if not Path(command.filename).exists():
+            continue
         try:
             tu = index.parse(None, args=list(command.arguments)[1:])
         except ci.TranslationUnitLoadError:
             continue
-        if any(True for _ in tu.cursor.get_children()):
-            parsed += 1
+        if any(d.severity >= ci.Diagnostic.Fatal for d in tu.diagnostics):
+            continue
+        parsed += 1
     return parsed
 
 
