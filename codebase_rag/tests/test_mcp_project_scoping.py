@@ -1526,6 +1526,51 @@ class TestAForeignProjectLiteralAnywhereIsRefused:
         )
 
 
+class TestARegexRestrictionCannotBeShownPrefixLimited:
+    """`=~ "alpha__aaaa1111|.*"` starts with the project name and matches all.
+
+    `_alias_is_restricted` requires the operand to begin with the active
+    project, which is sound for `STARTS WITH` and `=` on a literal. A REGEX
+    is not a literal: an alternation after the prefix matches every foreign
+    qualified name while satisfying the same textual check, and the scoped
+    aggregate returns a scalar the row filter cannot attribute (#1494).
+
+    Deciding whether an arbitrary pattern is prefix-limited is a language
+    question this module has no business answering, so a regex predicate no
+    longer authorises a scoped aggregate at all.
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_a_regex_with_an_alternation_is_refused(self) -> None:
+        assert self._refused(
+            f'MATCH (n) WHERE n.qualified_name =~ "{ALPHA}|.*" RETURN count(n) AS total'
+        )
+
+    def test_even_a_faithful_regex_is_refused(self) -> None:
+        """Refused as a CLASS, not by inspecting the pattern.
+
+        This one really is limited to the project, and is still refused: the
+        rule is that a regex cannot be shown limited, not that this pattern
+        is bad. Pinned so the refusal reads as deliberate rather than as an
+        accident of the alternation case above.
+        """
+        assert self._refused(
+            f'MATCH (n) WHERE n.qualified_name =~ "^{ALPHA}\\\\." '
+            "RETURN count(n) AS total"
+        )
+
+    def test_starts_with_is_still_allowed(self) -> None:
+        """THE CONTROL. The shape the prompt mandates keeps working."""
+        assert not self._refused(
+            f"MATCH (n) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(n) AS total"
+        )
+
+
 class TestTheRestrictionMustBeAPlainConjunction:
     """A token blacklist tests spellings; the contract is a PROPERTY.
 
@@ -1627,10 +1672,34 @@ class TestAnAggregateWithNoBindableEntityIsRefused:
             "RETURN count(n) AS total"
         )
 
-    def test_a_grouped_count_star_is_still_allowed(self) -> None:
-        """THE OTHER CONTROL. A grouping key the row filter can judge."""
-        assert not self._refused(
+    def test_a_grouped_count_star_is_also_refused(self) -> None:
+        """This was a control asserting the OPPOSITE, and it was wrong.
+
+        I argued a grouped `count(*)` was safe because the row filter can
+        judge the grouping key. It cannot judge the COUNT. Grouping bounds
+        which rows survive; `count(*)` counts MATCHES, and a match can
+        involve an alias nothing restricts:
+
+            MATCH (a)-[:CALLS]->(b) WHERE a.qualified_name STARTS WITH 'alpha.'
+            RETURN a.qualified_name, count(*)
+
+        returns an alpha-labelled row whose total includes beta callees --
+        demonstrated by execution at total 2 against a both-endpoints-
+        restricted control's total 1. The label passes the filter and carries
+        a foreign magnitude past it (#1494).
+
+        `count(*)` binds no alias, so its contributors cannot be enumerated
+        and cannot be shown restricted. Refused wherever it appears in a
+        scoped projection, not only in an all-aggregate one.
+        """
+        assert self._refused(
             "MATCH (n) RETURN n.qualified_name AS q, count(*) AS total"
+        )
+
+    def test_a_grouped_count_over_a_restricted_alias_is_allowed(self) -> None:
+        """THE CONTROL that replaces it: a NAMED alias can be checked."""
+        assert not self._refused(
+            "MATCH (n) RETURN n.qualified_name AS q, count(n) AS total"
         )
 
 

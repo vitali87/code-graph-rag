@@ -15,6 +15,9 @@ CYPHER_RETURN_KEYWORD = "RETURN "
 # project. `IS NOT NULL` / `<> ''` / `exists(...)` match every indexed node
 # in every project, so a count over them spans them all.
 CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
+# Named so the alias-binding check can exclude it: a regex operand cannot be
+# shown limited to one project by inspection, whereas a literal can.
+CYPHER_REGEX_PREDICATE = "=~"
 # The WHERE clause a scoped aggregate is allowed to have: a conjunction of
 # plain `<entity>.<property> <op> <value>` comparisons, joined by AND.
 #

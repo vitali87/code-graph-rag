@@ -58,6 +58,13 @@ _AGGREGATED_READ_RE = re.compile(
     r"([A-Z_][A-Z0-9_]*)(?:\.[A-Z_][A-Z0-9_]*)?\s*\)"
 )
 
+# An aggregate over `*` or a constant: `count(*)`, `count(DISTINCT *)`,
+# `count(1)`. No alias to bind, so nothing about its contributors can be
+# checked -- and its magnitude is not bounded by any grouping key.
+_WILDCARD_AGGREGATE_RE = re.compile(
+    r"\b(?:COUNT|SUM|AVG|MIN|MAX|COLLECT)\(\s*(?:DISTINCT\s+)?(?:\*|\d)"
+)
+
 # The trailing clauses that end a projection, matched on ANY whitespace.
 # Built from the same constants rather than spelled again, so the two cannot
 # drift. Matching them as literal single-spaced strings meant a NEWLINE
@@ -200,6 +207,15 @@ def requires_project_evidence(
     # trivially -- `b` does project its own qualified name -- while the
     # MAGNITUDE still counts every `b` in every indexed project. `collect` is
     # worse again: it returns the other projects' names themselves.
+    # A WILDCARD aggregate binds no alias, so its contributors cannot be
+    # enumerated and none of them can be shown restricted. Grouping does not
+    # rescue it: `MATCH (a)-[:CALLS]->(b) WHERE a…alpha RETURN
+    # a.qualified_name, count(*)` returns an ALPHA-labelled row whose total
+    # counts beta callees, so the label passes the row filter and carries a
+    # foreign magnitude past it. Refused wherever it appears in a scoped
+    # projection, not only in an all-aggregate one (issue #1494).
+    if _WILDCARD_AGGREGATE_RE.search(projection):
+        return False
     aggregated_only = _entities_only_ever_aggregated(projection)
     if aggregated_only and not _restricts_to_project(
         restrictable, project_name, aggregated_only
@@ -470,7 +486,18 @@ def _alias_is_restricted(body: str, alias: str, project_upper: str) -> bool:
     tautology like `'proj' = 'proj'`. Together those two half-checks passed
     a query whose aggregate spanned every project (issue #1494).
     """
-    operators = "|".join(re.escape(op.strip()) for op in cs.CYPHER_PREFIX_PREDICATES)
+    # A REGEX cannot authorise a scoped aggregate. The operand check requires
+    # the value to begin with the project name, which is sound for a literal
+    # but not for a pattern: `=~ "alpha__aaaa1111|.*"` starts with the project
+    # and matches every foreign qualified name, satisfying the same textual
+    # test. Deciding whether an arbitrary pattern is prefix-limited is a
+    # language question this module cannot answer, so the whole operator is
+    # refused here rather than inspected (issue #1494).
+    operators = "|".join(
+        re.escape(op.strip())
+        for op in cs.CYPHER_PREFIX_PREDICATES
+        if op.strip() != cs.CYPHER_REGEX_PREDICATE
+    )
     pattern = re.compile(
         rf"\b{re.escape(alias)}\.{cs.CYPHER_QUALIFIED_NAME_TOKEN}\s*"
         rf"(?:{operators})\s*['\"]{re.escape(project_upper)}"
