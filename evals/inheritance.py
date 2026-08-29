@@ -8,7 +8,7 @@
 import ast
 import os
 from pathlib import Path
-from typing import Annotated, NamedTuple
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 
 import typer
 from loguru import logger
@@ -20,6 +20,9 @@ from . import logs as ls
 from .ast_oracle import _from_base_parts, _iter_py_files, _module_dotted
 from .cgr_graph import _capture
 from .oracles.cpp_oracle import cpp_available, run_cpp_oracle
+
+if TYPE_CHECKING:
+    from clang.cindex import Cursor
 from .oracles.csharp_oracle import (
     csharp_oracle_available,
     run_csharp_oracle,
@@ -274,6 +277,25 @@ def _resolves_inside(path: str, target: Path) -> bool:
     return True
 
 
+def _reaches_inside(cursor: "Cursor", target: Path) -> bool:
+    """Whether any cursor in this unit's tree resolves inside `target`.
+
+    Walks the whole tree rather than the top-level children, because the
+    oracle's own `_walk` does: an in-target declaration can sit inside a
+    namespace, class or extern block whose enclosing cursor is out-of-target,
+    and checking only the immediate children misses it (Greptile, PR #1513).
+    Iterative to avoid recursion limits on deep headers.
+    """
+    stack = list(cursor.get_children())
+    while stack:
+        cur = stack.pop()
+        location = cur.location.file
+        if location is not None and _resolves_inside(location.name, target):
+            return True
+        stack.extend(cur.get_children())
+    return False
+
+
 def _cpp_compile_db_units(target: Path) -> int | None:
     """Translation units the target's compilation database yields, or None.
 
@@ -374,11 +396,7 @@ def _cpp_compile_db_units(target: Path) -> int | None:
             # relative paths the command used, and resolving them after
             # restoring the cwd points them outside the target (the same
             # cwd-dependence fixed in `run_cpp_oracle`'s walk).
-            if not in_target and not any(
-                cur.location.file is not None
-                and _resolves_inside(cur.location.file.name, target)
-                for cur in tu.cursor.get_children()
-            ):
+            if not in_target and not _reaches_inside(tu.cursor, target):
                 continue
         finally:
             os.chdir(cwd)

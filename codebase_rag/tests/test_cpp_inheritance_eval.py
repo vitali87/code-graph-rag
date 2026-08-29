@@ -674,6 +674,51 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
 
         assert _cpp_compile_db_units(target) == -1
 
+    def test_a_nested_in_target_declaration_is_reached(self, tmp_path: Path) -> None:
+        """The scope check must walk the tree, as the oracle's own walk does.
+
+        Checking only `tu.cursor.get_children()` sees the top level, so an
+        in-target declaration inside a namespace, class or extern block whose
+        enclosing cursor is out-of-target is missed and the target refused
+        (Greptile, PR #1513).
+
+        The fixture is degenerate for that: the driver's only top-level child
+        is an OUT-of-target namespace, and the sole in-target declaration sits
+        inside it. A shallower fixture -- an in-target header included
+        directly -- does not reproduce, because the namespace cursor is then
+        itself in-target.
+        """
+        target = tmp_path / "target"
+        target.mkdir()
+        build = tmp_path / "build"
+        build.mkdir()
+        (target / "inner.hpp").write_text(
+            "class IB {};\nclass ID : public IB {};\n", encoding="utf-8"
+        )
+        (build / "outer.hpp").write_text(
+            'namespace wrap {\n#include "inner.hpp"\n}\n', encoding="utf-8"
+        )
+        driver = build / "driver.cpp"
+        driver.write_text('#include "outer.hpp"\n', encoding="utf-8")
+        (target / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(build),
+                        "command": (
+                            f"clang++ -std=c++17 -I{target} -I{build} -c {driver}"
+                        ),
+                        "file": str(driver),
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        # Admitted, and the premise: the oracle really does find the edge.
+        assert _cpp_compile_db_units(target) == 1
+        assert cpp_oracle_inheritance(target).inherits == {("inner.hpp:2", "IB")}
+
     def test_a_usable_database_yields_units(self, tmp_path: Path) -> None:
         # The control: without this the three assertions above are satisfied by
         # a helper that returns 0 unconditionally.
