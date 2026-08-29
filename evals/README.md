@@ -266,6 +266,26 @@ the tests pin). Writes `evals/results/imports_scores.csv` and
 `evals/results/imports_diff.json`; the oracle and the misclassification signal
 are pinned by `codebase_rag/tests/test_import_resolution_eval.py`.
 
+**What the two rows measure, at different granularities.** The reduction reads as
+informative from the external side, where top-level names separate `numpy` from
+`os`, and it does not carry over: an internal import's top level *is* the project
+package, by the same expression that decides externality. So every first-party
+import from one file collapses to a single dep, and `imports/internal` measures
+which files import something internal rather than which module they import. A
+graph resolving `proj.alpha` to the wrong first-party module scores identically.
+That is deliberate, since resolved internal targets are graded by file in the
+structural L1 above and keying them here would fold resolution accuracy back into
+the misclassification signal this eval exists to isolate. It is stated because a
+`1.0` on that row is narrower than the label suggests, and pinned by
+`test_every_internal_import_from_one_file_collapses_to_one_dep`.
+
+The reduction is also **Python-shaped**, which matters before this eval is
+generalised (issue #1190). Python's flat package namespace is what makes a
+top-level name identify a third-party package; Java's does not, where
+`com.fasterxml.jackson` and `com.google.common` both reduce to `com`. Extending
+this eval to another language therefore needs a different external-side unit.
+The external row, not the internal one, is what breaks first.
+
 ## Inheritance — resolved INHERITS and OVERRIDES
 
 The structural L1 grades `INHERITS` by the base's simple *name*. This eval grades
