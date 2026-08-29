@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from dataclasses import dataclass, field
@@ -42,6 +43,9 @@ DATA_START = "<<<UNTRUSTED ISSUE DATA"
 DATA_END = "END UNTRUSTED ISSUE DATA>>>"
 
 CONFIDENCE_MIN = 0.8
+# An upper bound as well as a floor: a value outside 0..1 is not a confidence,
+# and checking only the floor let 42 -- or infinity -- through (issue #1509).
+CONFIDENCE_MAX = 1.0
 MIN_ACCOUNT_AGE_DAYS = 30
 MAX_TEXT_CHARS = 12_000
 MAX_COMMENTS = 20
@@ -253,7 +257,13 @@ def decide(response: dict | None) -> Decision:
         content = response["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
         content = ""
-    verdict = extract_verdict(content or "")
+    # A non-string `content` reached `THINK_BLOCK.sub` and raised, rather
+    # than becoming a verdict this code could judge. The model's answer is
+    # untrusted input like any other, so its TYPE is checked before its
+    # value (issue #1509).
+    if not isinstance(content, str):
+        content = ""
+    verdict = extract_verdict(content)
     if verdict is None or verdict.get("verdict") not in VERDICTS:
         flags = ["unparseable-verdict"]
         return Decision(
@@ -272,9 +282,20 @@ def decide(response: dict | None) -> Decision:
     reasons = _reasons(verdict)
 
     flags: list[str] = []
-    if confidence < CONFIDENCE_MIN:
+    # A FINITE value inside the bounds, not merely one that survives the
+    # comparison. `float("nan")` parses, and every comparison against nan is
+    # False -- including `nan < CONFIDENCE_MIN` -- so a nan confidence raised
+    # no flag and reached `ready`. Infinity and 42 pass the floor for the
+    # opposite reason: they are not confidences at all (issue #1509).
+    if not math.isfinite(confidence) or not (
+        CONFIDENCE_MIN <= confidence <= CONFIDENCE_MAX
+    ):
         flags.append("low-confidence")
-    if verdict.get("injection_suspected") is True:
+    # Anything but an explicit `False` is treated as suspicion. Comparing
+    # with `is True` meant a truthy non-boolean -- "yes", 1 -- raised no
+    # flag, which is the wrong direction for a field whose whole job is to
+    # withhold the label.
+    if verdict.get("injection_suspected") is not False:
         flags.append("injection-suspected")
 
     if verdict["verdict"] == "accept" and not flags:

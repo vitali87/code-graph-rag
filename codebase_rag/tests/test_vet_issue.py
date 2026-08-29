@@ -184,5 +184,70 @@ class Decide(unittest.TestCase):
         )
 
 
+class MalformedModelFieldsMustNotGrantReady(unittest.TestCase):
+    """The gate reads three fields from the model; none was type-checked.
+
+    `ready` is a permission label, so every one of these has to fail CLOSED.
+    They failed OPEN: `float("nan")` succeeds and `nan < CONFIDENCE_MIN` is
+    False, so no low-confidence flag was raised; and `injection_suspected`
+    was compared with `is True`, so any non-boolean truthy value skipped the
+    flag entirely (reported on #1509).
+    """
+
+    def decide(self, payload) -> vet_issue.Decision:
+        return vet_issue.decide(response(payload))
+
+    def test_nan_confidence_does_not_pass(self):
+        """`nan` compares False against EVERY bound, including the floor."""
+        self.assertNotEqual(
+            self.decide(verdict(confidence=float("nan"))).status,
+            vet_issue.STATUS_READY,
+        )
+
+    def test_infinite_confidence_does_not_pass(self):
+        self.assertNotEqual(
+            self.decide(verdict(confidence=float("inf"))).status,
+            vet_issue.STATUS_READY,
+        )
+
+    def test_confidence_above_one_does_not_pass(self):
+        """Outside 0.0..1.0 is not a confidence, however large."""
+        self.assertNotEqual(
+            self.decide(verdict(confidence=42)).status, vet_issue.STATUS_READY
+        )
+
+    def test_non_boolean_injection_suspected_does_not_pass(self):
+        """A truthy non-boolean skipped `is True` and cleared the flag."""
+        self.assertNotEqual(
+            self.decide(verdict(injection_suspected="yes")).status,
+            vet_issue.STATUS_READY,
+        )
+
+    def test_non_string_content_does_not_pass(self):
+        """A dict where a string belongs reached the regex substitution."""
+        self.assertNotEqual(
+            vet_issue.decide(
+                {"choices": [{"message": {"content": {"nested": "object"}}}]}
+            ).status,
+            vet_issue.STATUS_READY,
+        )
+
+    def test_a_well_formed_acceptance_still_passes(self):
+        """THE CONTROL. Tightening must not refuse a valid verdict."""
+        self.assertEqual(self.decide(verdict()).status, vet_issue.STATUS_READY)
+
+    def test_confidence_exactly_at_the_floor_still_passes(self):
+        """The bound is inclusive; 0.8 is acceptable, not borderline-refused."""
+        self.assertEqual(
+            self.decide(verdict(confidence=vet_issue.CONFIDENCE_MIN)).status,
+            vet_issue.STATUS_READY,
+        )
+
+    def test_confidence_of_exactly_one_still_passes(self):
+        self.assertEqual(
+            self.decide(verdict(confidence=1.0)).status, vet_issue.STATUS_READY
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
