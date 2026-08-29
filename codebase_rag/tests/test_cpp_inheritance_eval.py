@@ -356,6 +356,83 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
 
         assert _cpp_compile_db_units(tmp_path) == 1
 
+    def test_a_source_outside_the_target_does_not_count_as_gradeable(
+        self, tmp_path: Path
+    ) -> None:
+        """The preflight must count what the ORACLE will grade, not what parses.
+
+        `_walk` keeps only cursors whose file resolves inside the target
+        (`_rel` returns None otherwise), so a database entry pointing outside
+        it contributes nothing. Counting it admitted a target the oracle then
+        scored empty -- the third instance of this preflight/oracle asymmetry
+        on this PR (Greptile, PR #1513).
+        """
+        target = tmp_path / "target"
+        target.mkdir()
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        src = outside / "ext.cpp"
+        src.write_text(
+            "class Base {};\nclass Derived : public Base {};\n", encoding="utf-8"
+        )
+        (target / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(outside),
+                        "command": f"clang++ -std=c++17 -c {src}",
+                        "file": str(src),
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        # Parses perfectly -- but nothing it declares can reach the grade.
+        assert _cpp_compile_db_units(target) == 0
+        assert cpp_oracle_inheritance(target).inherits == set()
+
+    def test_an_in_target_unit_declaring_only_outside_it_is_a_true_empty(
+        self, tmp_path: Path
+    ) -> None:
+        """Not every empty grade is a fail-open, and this one is legitimate.
+
+        A TU inside the target that declares everything in an out-of-target
+        header is admitted by the preflight and grades empty. That LOOKS like
+        the asymmetry fixed three times on this PR, but it is not: cgr indexes
+        only files inside the repository too, so its side is empty as well and
+        0-vs-0 is a correct grade of a project with no in-target inheritance.
+
+        Pinned so the distinction is explicit. The fail-open cases are the ones
+        where cgr HAS edges the oracle cannot see; here neither side does, and
+        "fixing" this by refusing the target would refuse a gradeable project.
+        """
+        target = tmp_path / "target"
+        target.mkdir()
+        include = tmp_path / "include"
+        include.mkdir()
+        (include / "far.hpp").write_text(
+            "class Base {};\nclass Derived : public Base {};\n", encoding="utf-8"
+        )
+        src = target / "main.cpp"
+        src.write_text('#include "far.hpp"\n', encoding="utf-8")
+        (target / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(target),
+                        "command": f"clang++ -std=c++17 -I{include} -c {src}",
+                        "file": str(src),
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        # Admitted, and legitimately graded empty: both sides see nothing.
+        assert _cpp_compile_db_units(target) == 1
+        assert cpp_oracle_inheritance(target).inherits == set()
+
     def test_a_usable_database_yields_units(self, tmp_path: Path) -> None:
         # The control: without this the three assertions above are satisfied by
         # a helper that returns 0 unconditionally.

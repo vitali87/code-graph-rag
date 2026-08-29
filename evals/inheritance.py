@@ -304,7 +304,17 @@ def _cpp_compile_db_units(target: Path) -> int | None:
         # and parses others from the wrong working directory, so a usable
         # database is reported ungradable (CodeRabbit, PR #1513).
         directory = Path(command.directory)
-        if not (directory / command.filename).exists():
+        source = directory / command.filename
+        if not source.exists():
+            continue
+        # The oracle only walks cursors whose file resolves INSIDE the target
+        # (`_rel` returns None otherwise), so a database entry pointing outside
+        # it contributes nothing to the grade. Counting it here would admit a
+        # target the oracle then scores empty -- the same preflight/oracle
+        # asymmetry twice already fixed in this file (Greptile, PR #1513).
+        try:
+            source.resolve().relative_to(target.resolve())
+        except ValueError:
             continue
         cwd = Path.cwd()
         try:
