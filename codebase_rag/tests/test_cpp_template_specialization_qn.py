@@ -49,11 +49,22 @@ def _write(project: Path) -> None:
     (project / "box.cpp").write_text(_SOURCE, encoding="utf-8")
 
 
+def _put_calls(mock_ingestor: MagicMock) -> list[tuple[str, str]]:
+    """Every CALLS edge whose target is a `put`, as a LIST.
+
+    A list rather than a set: the two receivers call the same target under
+    today's behaviour, so a set collapses them to one element and cannot tell
+    "both calls resolved to the primary" from "only one call exists".
+    """
+    return [
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "CALLS")
+        if c.args[2][2].endswith(".put")
+    ]
+
+
 def _put_targets(mock_ingestor: MagicMock) -> set[str]:
-    calls = {
-        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
-    }
-    return {target for _caller, target in calls if target.endswith(".put")}
+    return {target for _caller, target in _put_calls(mock_ingestor)}
 
 
 def test_a_call_on_a_specialized_receiver_is_attributed_to_the_primary(
@@ -68,7 +79,16 @@ def test_a_call_on_a_specialized_receiver_is_attributed_to_the_primary(
     _write(temp_repo)
     run_updater(temp_repo, mock_ingestor, skip_if_missing="cpp")
 
-    assert _put_targets(mock_ingestor) == {f"{temp_repo.name}.box.Box.put"}
+    calls = _put_calls(mock_ingestor)
+
+    # BOTH receivers must have produced a call edge. Asserting only on the set
+    # of TARGETS is satisfied by a fixture with no `Box<char>` receiver at all,
+    # so deleting that line would leave this test green while it stopped
+    # characterising anything (Greptile, PR #1514).
+    assert len(calls) == 2, calls
+    assert {target for _caller, target in calls} == {f"{temp_repo.name}.box.Box.put"}, (
+        calls
+    )
 
 
 @pytest.mark.xfail(
