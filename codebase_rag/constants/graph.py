@@ -35,6 +35,29 @@ KEY_START_COL = "start_col"
 KEY_NAME_START_LINE = "name_start_line"
 KEY_NAME_START_COL = "name_start_col"
 KEY_END_LINE = "end_line"
+# Edge-site location properties (issue #1522). Every CALLS / REFERENCES /
+# INSTANTIATES edge records the span of the expression that produced it, and
+# every IMPORTS edge the span of its import statement, so a consumer can jump
+# to, verify, or rewrite the exact site. Lines are 1-based and columns 0-based,
+# matching the node `start_line` / `start_col` convention. Sites are stored as
+# ONE EDGE PER SITE: the site props join the MERGE key (see
+# MERGE_KEY_PROPS_BY_REL), so a caller invoking one callee twice carries two
+# parallel edges. Edges emitted without a site (libclang macro uses, Roslyn
+# facts, dynamic-trace write-back, inferred C# namespace imports) carry none of
+# these keys and keep collapsing on their endpoints.
+KEY_LINE = "line"
+KEY_COL = "col"
+KEY_END_COL = "end_col"
+KEY_ARG_COUNT = "arg_count"
+KEY_KWARG_NAMES = "kwarg_names"
+# IMPORTS only: the name the statement binds in the importing scope (the
+# `as` name when renamed, else the imported/module name) and, for
+# symbol-level imports (`from x import y`, `import { y }`, `use a::b::y`),
+# the symbol's own name. A whole-module import has no `imported_name`.
+KEY_ALIAS = "alias"
+KEY_IMPORTED_NAME = "imported_name"
+# `imported_name` of a wildcard import (`from x import *`, `export * from`).
+IMPORTED_NAME_WILDCARD = "*"
 KEY_PATH = "path"
 KEY_ABSOLUTE_PATH = "absolute_path"
 # Whether flow analysis covered a Module: its language is in the source/sink
@@ -593,6 +616,14 @@ REL_TYPE_CALLS = "CALLS"
 # still dedups on endpoints.
 MERGE_KEY_PROPS_BY_REL: dict[str, tuple[str, ...]] = {
     RelationshipType.FLOWS_TO.value: ("via", "kind"),
+    # One edge per call/reference/instantiation site (issue #1522); a row
+    # without a site still merges on its endpoints alone.
+    RelationshipType.CALLS.value: (KEY_LINE, KEY_COL),
+    RelationshipType.REFERENCES.value: (KEY_LINE, KEY_COL),
+    RelationshipType.INSTANTIATES.value: (KEY_LINE, KEY_COL),
+    # One edge per bound name: `from x import a, b` shares a statement span
+    # but binds two names, each its own edge.
+    RelationshipType.IMPORTS.value: (KEY_LINE, KEY_COL, KEY_ALIAS),
 }
 
 NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {

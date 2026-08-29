@@ -3,6 +3,7 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Callable, Mapping
+from functools import wraps
 from pathlib import Path
 from typing import NamedTuple
 
@@ -22,6 +23,7 @@ from ..types_defs import (
     FunctionSpanKey,
     LanguageQueries,
     NodeType,
+    PropertyDict,
 )
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
@@ -52,6 +54,7 @@ from .utils import (
     is_method_node,
     js_ts_parameter_names,
     module_qn_for_entity,
+    node_site_properties,
     python_parameter_names,
     safe_decode_text,
     sorted_captures,
@@ -617,6 +620,68 @@ def _add_py_keyword_argument(child: Node, keyword: dict[str, Node]) -> None:
         keyword[name] = value_node
 
 
+def _split_call_arguments(args_node: Node) -> tuple[list[Node], dict[str, Node]]:
+    positional: list[Node] = []
+    keyword: dict[str, Node] = {}
+    for child in args_node.named_children:
+        # C# wraps every argument expression in an `argument` node (which
+        # may carry a ref/out modifier or a name: colon); Dart wraps
+        # positional values the same way. Unwrap to the expression itself,
+        # its LAST named child, so downstream reference-type checks see
+        # the identifier, not the wrapper.
+        if (
+            child.type in (cs.TS_CSHARP_ARGUMENT, cs.TS_DART_ARGUMENT)
+            and child.named_children
+        ):
+            child = child.named_children[-1]
+        if child.type == cs.TS_DART_NAMED_ARGUMENT:
+            _add_dart_named_argument(child, keyword)
+        elif child.type == cs.TS_PY_KEYWORD_ARGUMENT:
+            _add_py_keyword_argument(child, keyword)
+        else:
+            positional.append(child)
+    return positional, keyword
+
+
+def call_site_properties(node: Node) -> PropertyDict:
+    """Edge-site properties for the expression that produced an edge (#1522).
+
+    Every site carries its span; a node with an argument list (a call, a
+    constructor invocation) also carries `arg_count` and the keyword names
+    it passes, so a consumer can check arity at the site without re-parsing.
+    A reference site (a bare function value, an attribute read) has no
+    argument list and carries the span alone.
+    """
+    props = node_site_properties(node)
+    args_node = _find_call_arguments_node(node)
+    if args_node is not None:
+        positional, keyword = _split_call_arguments(args_node)
+        props[cs.KEY_ARG_COUNT] = len(positional) + len(keyword)
+        props[cs.KEY_KWARG_NAMES] = list(keyword)
+    return props
+
+
+def _site_scoped[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
+    """Restore the processor's current edge-site node when the pass returns.
+
+    A pass sets `_site_node` as it visits nodes so every edge it emits picks
+    up that site; restoring the previous value on exit keeps a nested pass
+    from leaking its last node into the edges its caller emits afterwards.
+    """
+
+    @wraps(fn)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        self = args[0]
+        assert isinstance(self, CallProcessor)
+        prev = self._site_node
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            self._site_node = prev
+
+    return wrapper
+
+
 class _JsFileBindingCollector:
     """Whole-file binding index for the #988 receiver resolution.
 
@@ -927,6 +992,8 @@ class _JsFileBindingCollector:
 class CallProcessor:
     __slots__ = (
         "ingestor",
+        "_site_node",
+        "_site_cache",
         "repo_path",
         "project_name",
         "module_qn_to_file_path",
@@ -977,6 +1044,12 @@ class CallProcessor:
         declared_module_qns: set[str] | None = None,
     ) -> None:
         self.ingestor = ingestor
+        # The tree-sitter node whose span every edge emitted right now records
+        # as its site (issue #1522); each pass sets it per visited node and
+        # `_site_scoped` restores it on exit. The cache keeps the variant
+        # fan-out of one site from re-deriving the same property dict.
+        self._site_node: Node | None = None
+        self._site_cache: tuple[int, PropertyDict] | None = None
         self.repo_path = repo_path
         self.project_name = project_name
         # Dispatchers that name their callee in a string argument, declared in
@@ -1061,6 +1134,30 @@ class CallProcessor:
             selection=selection,
             function_locations=self.function_locations,
         )
+
+    def _emit_rel(
+        self,
+        from_spec: tuple[str, str, str],
+        rel_type: str,
+        to_spec: tuple[str, str, str],
+        properties: PropertyDict | None = None,
+    ) -> None:
+        # Every CALLS/REFERENCES/INSTANTIATES edge this processor emits goes
+        # through here so the current site (line/col/arg shape of the
+        # producing expression) rides along as edge properties (#1522).
+        site = self._site_node
+        if site is not None:
+            cached = self._site_cache
+            if cached is None or cached[0] != site.id:
+                cached = (site.id, call_site_properties(site))
+                self._site_cache = cached
+            properties = {**cached[1], **properties} if properties else dict(cached[1])
+        if properties:
+            self.ingestor.ensure_relationship_batch(
+                from_spec, rel_type, to_spec, properties=properties
+            )
+        else:
+            self.ingestor.ensure_relationship_batch(from_spec, rel_type, to_spec)
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
         name_node = node.child_by_field_name(field)
@@ -1170,6 +1267,7 @@ class CallProcessor:
             ancestor = ancestor.parent
         return True
 
+    @_site_scoped
     def _ingest_decorator_calls(
         self,
         nodes: list[Node],
@@ -1181,7 +1279,7 @@ class CallProcessor:
         # methods, AND classes: the decoration executes at module-load time,
         # so the module is the caller. Only first-party callables get an edge.
         resolver = self._resolver
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         qn_key = cs.KEY_QUALIFIED_NAME
         module_spec = (cs.NodeLabel.MODULE, qn_key, module_qn)
         callable_labels = (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
@@ -1195,6 +1293,7 @@ class CallProcessor:
             for child in parent.children:
                 if child.type != cs.TS_PY_DECORATOR:
                     continue
+                self._site_node = child
                 name = self._bare_decorator_name(child)
                 if not name:
                     continue
@@ -2861,6 +2960,7 @@ class CallProcessor:
             return True
         return False
 
+    @_site_scoped
     def _ingest_function_calls(
         self,
         caller_node: Node,
@@ -3136,7 +3236,7 @@ class CallProcessor:
         resolve_cpp_op = resolver.resolve_cpp_operator_call if is_cpp else None
         get_target = self._get_call_target_name
         class_label = cs.NodeLabel.CLASS
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         calls_rel = cs.RelationshipType.CALLS
         qn_key = cs.KEY_QUALIFIED_NAME
         _id = id
@@ -3170,6 +3270,7 @@ class CallProcessor:
         cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
 
         for call_node in call_nodes:
+            self._site_node = call_node
             node_id = _id(call_node)
             if call_name_cache is not None and node_id in call_name_cache:
                 call_name = call_name_cache[node_id]
@@ -3955,6 +4056,7 @@ class CallProcessor:
                             (cs.NodeLabel.FUNCTION, qn_key, variant),
                         )
 
+    @_site_scoped
     def _ingest_operator_dispatch_calls(
         self,
         caller_node: Node,
@@ -3965,7 +4067,7 @@ class CallProcessor:
         boundary = (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             if node.type in boundary:
                 continue
             match node.type:
@@ -4051,6 +4153,7 @@ class CallProcessor:
                     )
             stack.extend(node.children)
 
+    @_site_scoped
     def _emit_truthiness(
         self,
         operand: Node | None,
@@ -4061,6 +4164,8 @@ class CallProcessor:
         # Truthiness of an object calls __bool__ if defined, else __len__. Only a
         # bare name/attribute operand names an object (a comparison/call is already
         # a bool and is handled elsewhere); try __bool__ first, then __len__.
+        if operand is not None:
+            self._site_node = operand
         if operand is None or operand.type not in (
             cs.TS_PY_IDENTIFIER,
             cs.TS_PY_ATTRIBUTE,
@@ -4072,6 +4177,7 @@ class CallProcessor:
             ):
                 return
 
+    @_site_scoped
     def _emit_operator_dunder(
         self,
         operand: Node | None,
@@ -4086,6 +4192,7 @@ class CallProcessor:
         # Returns whether an edge was emitted.
         if operand is None or not (operand_text := safe_decode_text(operand)):
             return False
+        self._site_node = operand
         if any(ch in operand_text for ch in cs.PY_OPERAND_REJECT_CHARS):
             return False
         targets = self._resolver.operator_dunder_targets(
@@ -4095,7 +4202,7 @@ class CallProcessor:
             return False
         for callee_type, callee_qn in targets:
             for target_qn in self._resolver.function_registry.variants(callee_qn):
-                self.ingestor.ensure_relationship_batch(
+                self._emit_rel(
                     caller_spec,
                     cs.RelationshipType.CALLS,
                     (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
@@ -4114,6 +4221,7 @@ class CallProcessor:
             and safe_decode_text(operator) in cs.JS_SHORT_CIRCUIT_OPERATORS
         )
 
+    @_site_scoped
     def _ingest_assignment_function_references(
         self,
         caller_node: Node,
@@ -4132,10 +4240,10 @@ class CallProcessor:
         # name/attribute RHS counts (calls resolve as calls); the walk stops at
         # nested scope boundaries, which own their own pass.
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             # Continue THROUGH an unowned anonymous arrow (zustand's curried
             # middleware body `(config) => (set, get, api) => { api.setState =
             # ... }`): it gets no caller pass, so its assignments would else be
@@ -4305,6 +4413,7 @@ class CallProcessor:
                             )
             stack.extend(node.children)
 
+    @_site_scoped
     def _emit_assigned_name_ref(
         self,
         assign_node: Node,
@@ -4316,6 +4425,7 @@ class CallProcessor:
         # setState, `listener` -> listener) to a def-pass registration in the
         # enclosing scope. Registry-guarded: emits only when such a node exists,
         # so a plain data assignment adds nothing.
+        self._site_node = assign_node
         if assign_node.type != cs.TS_ASSIGNMENT_EXPRESSION:
             return
         left = assign_node.child_by_field_name(cs.FIELD_LEFT)
@@ -4345,6 +4455,7 @@ class CallProcessor:
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
             )
 
+    @_site_scoped
     def _ingest_jsx_component_references(
         self,
         caller_node: Node,
@@ -4368,11 +4479,11 @@ class CallProcessor:
         # and drops the edge when __init__ is absent, as it always is for a
         # JS/TS class.
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         registry = self._resolver.function_registry
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             # Stop at a nested scope that gets its OWN caller pass (a named
             # function/arrow, a class), but continue THROUGH an anonymous arrow
             # (a `.map()`/`cell`/forwardRef callback): those are skipped as
@@ -4437,6 +4548,7 @@ class CallProcessor:
             return _conditional_result_operands(node, is_dart=False)
         return [node]
 
+    @_site_scoped
     def _ingest_returned_function_references(
         self,
         caller_node: Node,
@@ -4455,7 +4567,7 @@ class CallProcessor:
         # callback is anonymous, so its `return` bubbles here) but stops at named
         # nested functions, which own their returns.
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         # An expression-bodied arrow (`const persistImpl = (config) =>
         # (set, get, api) => {...}`, zustand's curried middleware shape) has NO
         # return_statement; its body IS the implicit return. Reference the inner
@@ -4473,7 +4585,7 @@ class CallProcessor:
         )
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             if node.type in boundary_types:
                 if not self._is_unowned_js_scope(node):
                     continue
@@ -4592,6 +4704,7 @@ class CallProcessor:
             current = current.child_by_field_name(cs.FIELD_OBJECT)
         return None
 
+    @_site_scoped
     def _ingest_collection_function_references(
         self,
         caller_node: Node,
@@ -4614,14 +4727,15 @@ class CallProcessor:
         # getter descriptor) must be scanned here too or the callbacks inside are
         # orphaned and report as dead.
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             if node.type in boundary_types and not self._is_unowned_js_scope(node):
                 continue
             if node.type in _DICT_LIKE_COLLECTION_TYPES:
                 for pair in node.named_children:
+                    self._site_node = pair
                     # An object-literal SHORTHAND METHOD (`return { then(x)
                     # {...}, catch(x) {...} }`, persist's thenable) is a stored
                     # callable like a pair value, but it is a method_definition
@@ -4729,7 +4843,7 @@ class CallProcessor:
         if class_qn is None:
             return
         registry = self._resolver.function_registry
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         for class_variant in registry.variants(class_qn):
             variant_type = registry.get(class_variant)
             if variant_type is not None and variant_type != NodeType.CLASS:
@@ -4859,7 +4973,7 @@ class CallProcessor:
         registry = self._resolver.function_registry
         for target_type, target_qn in sorted(targets):
             for variant in registry.variants(target_qn):
-                self.ingestor.ensure_relationship_batch(
+                self._emit_rel(
                     caller_spec,
                     cs.RelationshipType.CALLS,
                     (target_type, cs.KEY_QUALIFIED_NAME, variant),
@@ -4942,7 +5056,7 @@ class CallProcessor:
             variant_type = registry.get(class_variant)
             if variant_type is not None and variant_type != NodeType.CLASS:
                 continue
-            self.ingestor.ensure_relationship_batch(
+            self._emit_rel(
                 caller_spec,
                 cs.RelationshipType.INSTANTIATES,
                 (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
@@ -4972,7 +5086,7 @@ class CallProcessor:
         ) | self._resolver.cpp_destructor_targets(class_qn)
         for target_type, target_qn in sorted(targets):
             for variant in registry.variants(target_qn):
-                self.ingestor.ensure_relationship_batch(
+                self._emit_rel(
                     caller_spec,
                     cs.RelationshipType.CALLS,
                     (target_type, cs.KEY_QUALIFIED_NAME, variant),
@@ -5004,6 +5118,7 @@ class CallProcessor:
         name = head.text.decode(cs.ENCODING_UTF8).split(cs.CHAR_ANGLE_OPEN, 1)[0]
         return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT) or None
 
+    @_site_scoped
     def _ingest_go_composite_function_references(
         self,
         caller_node: Node,
@@ -5021,14 +5136,15 @@ class CallProcessor:
         # {keyed_element(value=literal_element) | literal_element}, and the element
         # wraps the bare identifier one level down, so unwrap before resolving.
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         stack: list[Node] = list(caller_node.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             if node.type in boundary_types:
                 continue
             if node.type == cs.TS_GO_LITERAL_VALUE:
                 for element in node.named_children:
+                    self._site_node = element
                     value = (
                         element.child_by_field_name(cs.FIELD_VALUE)
                         if element.type == cs.TS_GO_KEYED_ELEMENT
@@ -5050,6 +5166,7 @@ class CallProcessor:
                     )
             stack.extend(node.children)
 
+    @_site_scoped
     def _emit_value_function_ref(
         self,
         node: Node,
@@ -5064,6 +5181,7 @@ class CallProcessor:
         # transparent for reference resolution, and `fn.bind(ctx)` /
         # `fn.call(...)` / `fn.apply(...)` in value position (onError:
         # handleError.bind(toast)) hands off `fn`; peel both to a fixpoint.
+        self._site_node = node
         node = self._peel_bound_callable(node)
         # An inline arrow/function-expression element (`handlers = [() => {}]`,
         # zod's `onattach = [(inst) => {...}]`) is registered anonymously in the
@@ -5152,6 +5270,7 @@ class CallProcessor:
             return None
         return fn.child_by_field_name(cs.FIELD_OBJECT)
 
+    @_site_scoped
     def _emit_inline_value_function_ref(
         self,
         pair: Node,
@@ -5166,6 +5285,7 @@ class CallProcessor:
         # has no property name, so it registers as scope.anonymous_<row>_<col> from
         # the value's position. Reference every candidate actually registered
         # (variants cover same-name duplicates in one scope).
+        self._site_node = value
         registry = self._resolver.function_registry
         scope_qn = caller_spec[2]
         candidates = {
@@ -5227,6 +5347,7 @@ class CallProcessor:
         keys.reverse()
         return cs.SEPARATOR_DOT.join(keys)
 
+    @_site_scoped
     def _emit_shorthand_method_ref(
         self,
         method_node: Node,
@@ -5238,6 +5359,7 @@ class CallProcessor:
         # (persist's thenable `catch` -> `...middleware.persist.catch`), while
         # this scan runs per enclosing caller; try both scopes, plus the
         # position form used when the name is taken.
+        self._site_node = method_node
         name_node = method_node.child_by_field_name(cs.FIELD_NAME)
         registry = self._resolver.function_registry
         scope_qn = caller_spec[2]
@@ -5258,6 +5380,7 @@ class CallProcessor:
                     (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
 
+    @_site_scoped
     def _ingest_default_param_references(
         self,
         caller_node: Node,
@@ -5271,8 +5394,9 @@ class CallProcessor:
         if params is None:
             return
         resolve_func = self._resolver.resolve_function_call
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         for param in params.named_children:
+            self._site_node = param
             # TS carries a param default in required_parameter's `value` field;
             # plain JS wraps the param in an assignment_pattern whose default
             # sits under `right`. Scan both forms.
@@ -5321,6 +5445,7 @@ class CallProcessor:
                     module_qn=module_qn,
                 )
 
+    @_site_scoped
     def _emit_inline_arg_function_ref(
         self,
         arg_node: Node,
@@ -5342,6 +5467,7 @@ class CallProcessor:
         # module-flat name candidate and reference the WRONG top-level node. The
         # candidate fallback is kept for an incremental run where an unchanged
         # file's span was not re-recorded this pass.
+        self._site_node = arg_node
         if (
             module_qn is not None
             and (loc := self._recorded_caller(arg_node, module_qn)) is not None
@@ -5602,30 +5728,12 @@ class CallProcessor:
     def _parse_call_arguments(
         self, call_node: Node
     ) -> tuple[list[Node], dict[str, Node]]:
-        positional: list[Node] = []
-        keyword: dict[str, Node] = {}
         args_node = _find_call_arguments_node(call_node)
         if args_node is None:
-            return positional, keyword
-        for child in args_node.named_children:
-            # C# wraps every argument expression in an `argument` node (which
-            # may carry a ref/out modifier or a name: colon); Dart wraps
-            # positional values the same way. Unwrap to the expression itself,
-            # its LAST named child, so downstream reference-type checks see
-            # the identifier, not the wrapper.
-            if (
-                child.type in (cs.TS_CSHARP_ARGUMENT, cs.TS_DART_ARGUMENT)
-                and child.named_children
-            ):
-                child = child.named_children[-1]
-            if child.type == cs.TS_DART_NAMED_ARGUMENT:
-                _add_dart_named_argument(child, keyword)
-            elif child.type == cs.TS_PY_KEYWORD_ARGUMENT:
-                _add_py_keyword_argument(child, keyword)
-            else:
-                positional.append(child)
-        return positional, keyword
+            return [], {}
+        return _split_call_arguments(args_node)
 
+    @_site_scoped
     def _emit_callback_edge(
         self,
         source_spec: tuple[str, str, str],
@@ -5644,6 +5752,7 @@ class CallProcessor:
         # argument position (addEventListener("click", handler.bind(this)),
         # django admin's inlines.js) hands off `fn` while the call itself
         # resolves to the Function.prototype builtin; peel both to a fixpoint.
+        self._site_node = arg_node
         arg_node = self._peel_bound_callable(arg_node)
         # An arrow/function-expression passed DIRECTLY as a call argument
         # (useCallback(() => {}), setTimeout(() => {}), arr.map(x => ...)) is
@@ -5861,7 +5970,7 @@ class CallProcessor:
             else:
                 edges[slot].add((arg.source_caller, arg.source_param))
 
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         # A nested closure a function returns is reachable whenever that function
         # is reached (created and handed back as the return value). Nested
         # functions are no longer roots, so this producer edge keeps a genuinely
@@ -6158,6 +6267,7 @@ class CallProcessor:
                 return self._resolve_str_const(right, module_qn)
         return None
 
+    @_site_scoped
     def _ingest_property_accesses(
         self,
         caller_node: Node,
@@ -6177,7 +6287,7 @@ class CallProcessor:
         resolver = self._resolver
         resolve_func = resolver.resolve_function_call
         registry = resolver.function_registry
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         calls_rel = cs.RelationshipType.CALLS
         qn_key = cs.KEY_QUALIFIED_NAME
         method_label = cs.NodeLabel.METHOD
@@ -6190,7 +6300,7 @@ class CallProcessor:
 
         stack = list(caller_node.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             node_type = node.type
             if node_type in function_types or node_type in class_types:
                 continue
@@ -6227,6 +6337,7 @@ class CallProcessor:
                                 )
             stack.extend(node.children)
 
+    @_site_scoped
     def _ingest_dart_getter_reads(
         self,
         caller_node: Node,
@@ -6270,7 +6381,7 @@ class CallProcessor:
 
         stack = list(walk_root.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             if node.type in class_types:
                 # Class subtrees (field initializers) are scanned once at
                 # FILE level by _ingest_dart_class_initializer_reads.
@@ -6290,6 +6401,7 @@ class CallProcessor:
                 )
             stack.extend(node.children)
 
+    @_site_scoped
     def _ingest_dart_class_initializer_reads(
         self,
         class_node: Node,
@@ -6338,7 +6450,7 @@ class CallProcessor:
 
         stack = list(class_node.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             if node.type in class_types:
                 self._ingest_dart_class_initializer_reads(
                     node,
@@ -6434,7 +6546,7 @@ class CallProcessor:
         if not registry.is_property(res_qn) or res_qn == caller_qn:
             return
         seen.add(read_name)
-        self.ingestor.ensure_relationship_batch(
+        self._emit_rel(
             caller_spec,
             cs.RelationshipType.REFERENCES,
             (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, res_qn),
@@ -6535,6 +6647,7 @@ class CallProcessor:
             stack.extend(node.children)
         return spans
 
+    @_site_scoped
     def _ingest_csharp_property_reads(
         self,
         caller_node: Node,
@@ -6550,7 +6663,7 @@ class CallProcessor:
         # its enclosing type read in receiver position. Registry-guarded via
         # resolve_property_read, which accepts only marked properties.
         engine = self._resolver.type_inference.csharp_type_inference
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         refs_rel = cs.RelationshipType.REFERENCES
         qn_key = cs.KEY_QUALIFIED_NAME
         method_label = cs.NodeLabel.METHOD
@@ -6579,7 +6692,7 @@ class CallProcessor:
 
         stack = list(caller_node.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             node_type = node.type
             if node_type in function_types or node_type in class_types:
                 continue
@@ -6766,6 +6879,7 @@ class CallProcessor:
             return self._resolver._resolve_class_name(recv_name, module_qn)
         return None
 
+    @_site_scoped
     def _ingest_js_ts_getter_reads(
         self,
         caller_node: Node,
@@ -6787,7 +6901,7 @@ class CallProcessor:
         # emitted only when it is a registered property, so a same-named data
         # field, a same-named regular method, or a same-named getter on an
         # unrelated class never fabricates an edge.
-        ensure_rel = self.ingestor.ensure_relationship_batch
+        ensure_rel = self._emit_rel
         registry = self._resolver.function_registry
         refs_rel = cs.RelationshipType.REFERENCES
         qn_key = cs.KEY_QUALIFIED_NAME
@@ -6796,7 +6910,7 @@ class CallProcessor:
         seen: set[str] = set()
         stack = list(caller_node.children)
         while stack:
-            node = stack.pop()
+            node = self._site_node = stack.pop()
             node_type = node.type
             # A nested class or NON-arrow function owns its own reads (and
             # rebinds `this`), so it is processed as its own caller; do not
