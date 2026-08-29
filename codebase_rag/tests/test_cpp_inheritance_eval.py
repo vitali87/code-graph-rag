@@ -465,7 +465,63 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
             encoding="utf-8",
         )
 
-        assert _cpp_compile_db_units(tmp_path) == 0
+        # Negative rather than zero: the database WAS readable and one
+        # in-target entry was not -- the partially-readable case. Zero is
+        # reserved for "opened and yielded nothing gradeable at all". Both stop
+        # the run; the distinction is what the error message names.
+        assert _cpp_compile_db_units(tmp_path) == -1
+
+    def test_a_partially_readable_database_is_refused_not_partly_graded(
+        self, tmp_path: Path
+    ) -> None:
+        """Half a grade that reports 1.0 is worse than no grade.
+
+        With one usable entry and one whose directory is gone, the preflight
+        used to admit the target because *something* parsed. The oracle skips
+        the same entry, and `score_inheritance` then filters the unread file
+        out of BOTH sides via `top_classes` -- so cgr's 2 edges and the
+        oracle's 1 score **precision 1.0, recall 1.0** on a half-covered
+        project (Greptile, PR #1513).
+
+        Measured before the fix:
+
+            oracle: [('good.cpp:2', 'GoodBase')]
+            cgr   : [('good.cpp:2', 'GoodBase'), ('skipped.cpp:2', 'SkipBase')]
+            scored: tp=1 fp=0 fn=0 precision=1.0 recall=1.0
+        """
+        good = tmp_path / "good.cpp"
+        good.write_text(
+            "class GoodBase {};\nclass GoodDerived : public GoodBase {};\n",
+            encoding="utf-8",
+        )
+        skipped = tmp_path / "skipped.cpp"
+        skipped.write_text(
+            "class SkipBase {};\nclass SkipDerived : public SkipBase {};\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(tmp_path),
+                        "command": f"clang++ -std=c++17 -c {good}",
+                        "file": str(good),
+                    },
+                    {
+                        # Never created: this entry cannot be read.
+                        "directory": str(tmp_path / "gone"),
+                        "command": f"clang++ -std=c++17 -c {skipped}",
+                        "file": str(skipped),
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        # Negative, not 1: one entry parsed, but one in-target entry did not.
+        assert _cpp_compile_db_units(tmp_path) == -1
+        # The premise, so this cannot pass on a fixture where nothing parses.
+        assert cpp_oracle_inheritance(tmp_path).inherits == {("good.cpp:2", "GoodBase")}
 
     def test_a_usable_database_yields_units(self, tmp_path: Path) -> None:
         # The control: without this the three assertions above are satisfied by

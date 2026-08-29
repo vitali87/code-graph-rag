@@ -44,6 +44,11 @@ CPP_ORACLE_NO_COMPILE_DB = (
     "no compile_commands.json under {target}; the C++ oracle cannot grade a "
     "target without a compilation database"
 )
+CPP_ORACLE_PARTIAL_COMPILE_DB = (
+    "{count} in-target entr{suffix} in {target}'s compile_commands.json could "
+    "not be read (stale directory, load error, or fatal diagnostic); grading "
+    "the rest would silently omit those files and still report a clean score"
+)
 CPP_ORACLE_EMPTY_COMPILE_DB = (
     "compile_commands.json under {target} yielded no translation units; "
     "the C++ oracle would grade nothing and report it as a clean empty result"

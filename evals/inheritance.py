@@ -273,6 +273,13 @@ def _cpp_compile_db_units(target: Path) -> int | None:
     naming files that no longer exist). Both stop the run, but the remedies
     differ -- "create one" versus "the one you have is stale" -- and reporting
     the wrong cause sends the reader to the wrong fix (CodeRabbit, PR #1513).
+
+    A negative count means the database is PARTIALLY readable: at least one
+    in-target entry could not be read while others could. That must stop the
+    run too. Grading what remains looks clean -- `score_inheritance` restricts
+    cgr to the oracle's `top_classes`, so the unread file's edges are filtered
+    out on both sides and a half-covered project scores 1.0 (Greptile,
+    PR #1513). The magnitude is the number of unreadable in-target entries.
     """
     try:
         import clang.cindex as ci
@@ -296,6 +303,7 @@ def _cpp_compile_db_units(target: Path) -> int | None:
     # (Greptile, PR #1513). Emptiness is a fact about the code; the guard is
     # about whether the oracle could read it.
     parsed = 0
+    unreadable = 0
     index = ci.Index.create()
     for command in commands:
         # Per the Clang JSON Compilation Database spec, `file` and any relative
@@ -325,17 +333,22 @@ def _cpp_compile_db_units(target: Path) -> int | None:
             # chance (Greptile, PR #1513).
             os.chdir(directory)
         except OSError:
+            unreadable += 1
             continue
         try:
             tu = index.parse(None, args=list(command.arguments)[1:])
         except ci.TranslationUnitLoadError:
+            unreadable += 1
             continue
         finally:
             os.chdir(cwd)
         if any(d.severity >= ci.Diagnostic.Fatal for d in tu.diagnostics):
+            unreadable += 1
             continue
         parsed += 1
-    return parsed
+    # An in-target entry the oracle cannot read is a hole in the grade, not a
+    # file to skip: report it rather than grading the remainder.
+    return -unreadable if unreadable else parsed
 
 
 def cpp_oracle_inheritance(target: Path) -> OracleResult:
@@ -547,6 +560,18 @@ def main(
             raise typer.Exit(code=1)
         if units == 0:
             logger.error(ls.CPP_ORACLE_EMPTY_COMPILE_DB.format(target=target))
+            raise typer.Exit(code=1)
+        if units < 0:
+            # Partially readable: some in-target entries parsed and some did
+            # not. Grading the remainder scores 1.0 on a half-covered project,
+            # because score_inheritance filters the unread files out of BOTH
+            # sides via top_classes (Greptile, PR #1513).
+            count = -units
+            logger.error(
+                ls.CPP_ORACLE_PARTIAL_COMPILE_DB.format(
+                    count=count, suffix="y" if count == 1 else "ies", target=target
+                )
+            )
             raise typer.Exit(code=1)
         # The libclang oracle names bases by SIMPLE name while it pins the
         # subclass to a location, so the row carries its own label: a C++ 1.0
