@@ -452,7 +452,8 @@ jobs:
     name: Greptile 5/5 Gate
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    timeout-minutes: 65
+    # Comfortably over the poll deadline below; the deadline is the real bound.
+    timeout-minutes: 25
     permissions:
       # contents: read backs the commits API call that resolves an
       # abbreviated reviewed-commit reference to a full SHA.
@@ -473,9 +474,27 @@ jobs:
           # a missing review, or any lower score fails this job, which fails
           # "All Checks Pass", which the branch ruleset requires. Greptile
           # posts its review minutes after a push, so poll until its summary
-          # comment covers this exact commit. The deadline leaves headroom
-          # over Greptile's slowest observed review (37 minutes on PR #1404).
-          deadline=$(( $(date +%s) + 3600 ))
+          # comment covers this exact commit.
+          #
+          # The deadline is 20 minutes rather than 60, because a job that polls
+          # holds the WHOLE RUN open, and GitHub refuses the logs of every job
+          # in a run until the run completes (issue #1507). A gate waiting on an
+          # external service was therefore withholding the failure logs of the
+          # unit-test matrix beside it -- on #1480, nine failing jobs were
+          # undiagnosable for over an hour while this job polled.
+          #
+          # 20 minutes costs no legitimate pass. Measured over 48 gate runs:
+          # every success that did not need human intervention finished within
+          # 11 minutes, and 8 of 9 failures within 18. The three successes past
+          # 20 minutes (28, 46 and 54) each had a review REQUESTED mid-poll, so
+          # none of them would have passed unaided anyway -- and the remedy for
+          # those is the same after a fast fail as during a long poll: request
+          # the review, then re-run this job.
+          #
+          # Failing closed is safe here. Nothing merges without a 5/5 review of
+          # head; a fast fail only moves the wait out of a job that is blocking
+          # everyone else's logs.
+          deadline=$(( $(date +%s) + 1200 ))
           while :; do
             # --jq would run per page; slurp the pages so every scored comment
             # is considered across all of them. Walk candidates NEWEST FIRST
@@ -520,8 +539,13 @@ jobs:
             fi
             echo "No Greptile review of $HEAD_SHA yet, waiting ..."
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "❌ No Greptile review of $HEAD_SHA appeared within 60 minutes."
-              echo "Re-trigger the Greptile review, then re-run this job."
+              echo "❌ No Greptile review of $HEAD_SHA appeared within 20 minutes."
+              echo "Greptile does not review a new head automatically here: post"
+              echo "'@greptile-apps review' on the pull request, wait for its"
+              echo "summary comment to name $HEAD_SHA, then re-run this job with"
+              echo "  gh run rerun \$GITHUB_RUN_ID --failed"
+              echo "This job fails fast so the other jobs' logs are readable now;"
+              echo "see issue #1507."
               exit 1
             fi
             sleep 60
