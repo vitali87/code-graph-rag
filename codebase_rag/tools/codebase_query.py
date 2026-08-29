@@ -62,9 +62,14 @@ _AGGREGATED_READ_RE = re.compile(
 # judged rather than pattern-matched against known-bad spellings. Listing the
 # constant forms was the wrong shape: it caught `*` and digits and missed a
 # QUOTED string, which binds no alias just as thoroughly (issue #1494).
-_AGGREGATE_OPERAND_RE = re.compile(
-    r"\b(?:COUNT|SUM|AVG|MIN|MAX|COLLECT)\(\s*(?:DISTINCT\s+)?([^)]*)\)"
-)
+# `DISTINCT` is stripped from the captured text rather than matched here.
+# Writing it as `\(\s*(?:DISTINCT\s+)?([^)]*)\)` put `\s*` beside `[^)]*`,
+# and both consume whitespace -- overlapping quantifiers whose failure path
+# backtracks super-linearly (python:S8786). The capture already contains any
+# DISTINCT, so removing the prefix removes the ambiguity rather than tuning
+# around it. The sibling patterns do not share the defect: their captures are
+# `[A-Z_][A-Z0-9_]*`, which cannot match whitespace, so nothing overlaps.
+_AGGREGATE_OPERAND_RE = re.compile(r"\b(?:COUNT|SUM|AVG|MIN|MAX|COLLECT)\(([^)]*)\)")
 
 # What an operand must BE for its contributors to be checkable: an alias this
 # analysis can bind, optionally with one property. Cypher's boolean and null
@@ -352,6 +357,8 @@ def _every_aggregate_operand_is_bindable(projection: str) -> bool:
     """
     for operand in _AGGREGATE_OPERAND_RE.findall(projection):
         candidate = operand.strip()
+        if candidate.startswith(cs.CYPHER_DISTINCT_KEYWORD):
+            candidate = candidate[len(cs.CYPHER_DISTINCT_KEYWORD) :].strip()
         if not _BINDABLE_OPERAND_RE.match(candidate):
             return False
         if candidate in cs.CYPHER_LITERAL_OPERANDS:

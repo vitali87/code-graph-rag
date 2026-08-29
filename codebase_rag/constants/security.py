@@ -18,6 +18,10 @@ CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
 # Named so the alias-binding check can exclude it: a regex operand cannot be
 # shown limited to one project by inspection, whereas a literal can.
 CYPHER_REGEX_PREDICATE = "=~"
+# Stripped from a captured aggregate operand in code rather than matched in
+# the pattern: matching it there placed two whitespace-consuming quantifiers
+# side by side, which backtracks super-linearly.
+CYPHER_DISTINCT_KEYWORD = "DISTINCT"
 # Cypher literals that uppercase into something indistinguishable from an
 # alias, so an aggregate over one would look bindable. Enumerating is sound
 # here because the LANGUAGE defines exactly these three -- unlike a list of
