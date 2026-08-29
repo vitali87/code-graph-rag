@@ -270,3 +270,54 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
         project = _cpp_project(tmp_path, "class Base {};\nclass D : public Base {};\n")
 
         assert _cpp_compile_db_units(project) > 0
+
+
+@_NEEDS_LIBCLANG
+def test_a_cpp_file_outside_the_compilation_database_is_not_a_false_positive(
+    tmp_path: Path,
+) -> None:
+    """The cgr side filters by SUFFIX; the oracle sees only the database.
+
+    Greptile's other finding on PR #1513 was that "processing captured
+    inheritance relationships can fail while filtering C++ source paths". The
+    asymmetry is real -- `cpp_cgr_inheritance` accepts any `CPP_SUFFIXES` path
+    (including `.c` and `.h`), while the oracle adjudicates only translation
+    units the compilation database names -- but it is already defended:
+    `score_inheritance` restricts cgr to `oracle.top_classes`.
+
+    Measured rather than argued. Removing that restriction scores this fixture
+    at precision 0.5 on one false positive; with it, 1.0. Nothing pinned that
+    interaction before, so a future change to either side could reintroduce it
+    silently.
+    """
+    src = tmp_path / "main.cpp"
+    src.write_text(
+        "class Base {};\nclass Derived : public Base {};\n", encoding="utf-8"
+    )
+    # A real C++ file cgr indexes and the database does NOT name.
+    (tmp_path / "extra.cpp").write_text(
+        "class Other {};\nclass AlsoDerived : public Other {};\n", encoding="utf-8"
+    )
+    (tmp_path / "compile_commands.json").write_text(
+        json.dumps(
+            [
+                {
+                    "directory": str(tmp_path),
+                    "command": f"clang++ -std=c++17 -c {src}",
+                    "file": str(src),
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    oracle = cpp_oracle_inheritance(tmp_path)
+    uncovered = ("extra.cpp:2", "Other")
+    # The premise: cgr really does produce an edge the oracle never saw.
+    cgr = CgrResult(inherits={*oracle.inherits, uncovered}, overrides=set())
+
+    row = score_inheritance(cgr, oracle, inherits_label=ec.CPP_BASES_LABEL).rows[0]
+
+    assert uncovered not in oracle.inherits
+    assert row["fp"] == 0
+    assert row["precision"] == 1.0
