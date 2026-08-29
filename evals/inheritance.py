@@ -265,6 +265,15 @@ def java_cgr_inheritance(target: Path, project: str) -> CgrResult:
     return CgrResult(inherits=inherits, overrides=set())
 
 
+def _resolves_inside(path: str, target: Path) -> bool:
+    """Whether `path` lies within `target`, mirroring the oracle's `_rel`."""
+    try:
+        Path(path).resolve().relative_to(target.resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
 def _cpp_compile_db_units(target: Path) -> int | None:
     """Translation units the target's compilation database yields, or None.
 
@@ -313,21 +322,22 @@ def _cpp_compile_db_units(target: Path) -> int | None:
         # database is reported ungradable (CodeRabbit, PR #1513).
         directory = Path(command.directory)
         source = directory / command.filename
-        # Scope BEFORE existence: an out-of-target entry is legitimately
-        # ignored whether or not it exists, while a missing IN-target source is
-        # a hole in the grade. Testing existence first counted neither, so a
-        # deleted in-target source was skipped as silently as an out-of-target
-        # one (Greptile, PR #1513).
-        #
-        # The oracle only walks cursors whose file resolves INSIDE the target
-        # (`_rel` returns None otherwise), so an entry pointing outside it
-        # contributes nothing to the grade and is not a hole.
+        # Whether the entry's own source sits inside the target decides only
+        # whether its ABSENCE is a hole. It does NOT decide whether the entry
+        # is worth parsing: the oracle keeps cursors by the CURSOR's file, not
+        # the translation unit's, so an out-of-target driver that includes an
+        # in-target header yields gradeable edges. Skipping such an entry
+        # refused targets that could be graded (Greptile, PR #1513).
         try:
             source.resolve().relative_to(target.resolve())
+            in_target = True
         except (ValueError, OSError):
-            continue
+            in_target = False
         if not source.exists():
-            unreadable += 1
+            # A missing in-target source is a hole in the grade; a missing
+            # out-of-target one is simply not our concern.
+            if in_target:
+                unreadable += 1
             continue
         cwd = Path.cwd()
         try:
@@ -338,18 +348,39 @@ def _cpp_compile_db_units(target: Path) -> int | None:
             # chance (Greptile, PR #1513).
             os.chdir(directory)
         except OSError:
-            unreadable += 1
+            if in_target:
+                unreadable += 1
             continue
         try:
-            tu = index.parse(None, args=list(command.arguments)[1:])
-        except ci.TranslationUnitLoadError:
-            unreadable += 1
-            continue
+            try:
+                tu = index.parse(None, args=list(command.arguments)[1:])
+            except ci.TranslationUnitLoadError:
+                if in_target:
+                    unreadable += 1
+                continue
+            if any(d.severity >= ci.Diagnostic.Fatal for d in tu.diagnostics):
+                if in_target:
+                    unreadable += 1
+                continue
+            # An entry counts when the oracle can take something from it OR
+            # when it is an in-target unit that legitimately declares nothing
+            # (a comment-only source is a valid empty grade, not a refusal --
+            # an earlier round on this PR fixed exactly that). What must NOT
+            # count is an out-of-target driver that reaches no in-target
+            # declaration: it is neither a hole nor gradeable.
+            #
+            # Evaluated INSIDE the chdir: cursor locations come back as the
+            # relative paths the command used, and resolving them after
+            # restoring the cwd points them outside the target (the same
+            # cwd-dependence fixed in `run_cpp_oracle`'s walk).
+            if not in_target and not any(
+                cur.location.file is not None
+                and _resolves_inside(cur.location.file.name, target)
+                for cur in tu.cursor.get_children()
+            ):
+                continue
         finally:
             os.chdir(cwd)
-        if any(d.severity >= ci.Diagnostic.Fatal for d in tu.diagnostics):
-            unreadable += 1
-            continue
         parsed += 1
     # An in-target entry the oracle cannot read is a hole in the grade, not a
     # file to skip: report it rather than grading the remainder.

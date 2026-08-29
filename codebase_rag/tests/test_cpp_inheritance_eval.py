@@ -592,6 +592,46 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
 
         assert _cpp_compile_db_units(tmp_path) == 1
 
+    def test_an_out_of_target_driver_including_an_in_target_header_counts(
+        self, tmp_path: Path
+    ) -> None:
+        """Scope is a property of the CURSOR, not of the translation unit.
+
+        The oracle keeps a cursor when the cursor's own file resolves inside
+        the target, so an out-of-target driver that includes an in-target
+        header yields gradeable edges. The preflight judged entries by the
+        TU's path and refused such a target outright -- the same
+        preflight/oracle disagreement as the earlier findings, in the opposite
+        direction: refusing something gradeable rather than admitting
+        something that is not (Greptile, PR #1513).
+        """
+        target = tmp_path / "target"
+        target.mkdir()
+        build = tmp_path / "build"
+        build.mkdir()
+        (target / "lib.hpp").write_text(
+            "class TargetBase {};\nclass TargetDerived : public TargetBase {};\n",
+            encoding="utf-8",
+        )
+        driver = build / "driver.cpp"
+        driver.write_text('#include "lib.hpp"\n', encoding="utf-8")
+        (target / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(build),
+                        "command": f"clang++ -std=c++17 -I{target} -c {driver}",
+                        "file": str(driver),
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        # Admitted, and the premise: the oracle really does find the edge.
+        assert _cpp_compile_db_units(target) == 1
+        assert cpp_oracle_inheritance(target).inherits == {("lib.hpp:2", "TargetBase")}
+
     def test_a_usable_database_yields_units(self, tmp_path: Path) -> None:
         # The control: without this the three assertions above are satisfied by
         # a helper that returns 0 unconditionally.
@@ -654,17 +694,22 @@ def test_a_cpp_file_outside_the_compilation_database_is_not_a_false_positive(
 def test_every_preflight_skip_is_counted_or_deliberately_silent() -> None:
     """Structural guard: a new skip path must not be silent by accident.
 
-    Seven findings on PR #1513 were one class -- the preflight admitting a
-    target the oracle then partly or wholly fails to grade -- and four of them
-    were a `continue` that dropped an entry without recording it. Rather than
-    wait for the eighth, this pins the accounting: exactly ONE skip in the
-    loop may be silent (an out-of-scope entry, which contributes nothing to
-    the grade and is therefore not a hole); every other must increment
-    `unreadable`.
+    Eight findings on PR #1513 were one class -- the preflight disagreeing with
+    the oracle about what is gradeable -- and several were a `continue` that
+    dropped an entry without recording it. This pins the accounting: a skip is
+    "counted" when an `unreadable += 1` appears anywhere in the statements
+    leading to it, and exactly ONE skip may be silent: an out-of-target unit
+    whose cursors reach no in-target declaration, which is neither a hole nor
+    gradeable.
 
     An AST check rather than a behavioural one, because the failure mode is a
-    path that no fixture happens to reach -- which is precisely what a
-    behavioural test cannot see.
+    path no fixture happens to reach -- precisely what a behavioural test
+    cannot see.
+
+    The counting rule looks at the whole enclosing statement list rather than
+    the immediate siblings: an increment guarded by `if in_target:` still
+    counts the entry, and an earlier version of this guard missed that and
+    reported five silent skips where there was one.
     """
     import ast
     import inspect
@@ -677,29 +722,32 @@ def test_every_preflight_skip_is_counted_or_deliberately_silent() -> None:
     )
     loop = next(n for n in ast.walk(tree) if isinstance(n, ast.For))
 
-    silent = 0
-    for node in ast.walk(loop):
-        if not isinstance(node, ast.Continue):
-            continue
-        # The statement list this `continue` belongs to; a counted skip has an
-        # `unreadable += 1` immediately before it.
-        counted = any(
-            isinstance(sib, ast.AugAssign)
-            and isinstance(sib.target, ast.Name)
-            and sib.target.id == "unreadable"
-            for parent in ast.walk(loop)
-            for body in (
-                getattr(parent, "body", []),
-                getattr(parent, "orelse", []),
-                getattr(parent, "finalbody", []),
-            )
-            if node in body
-            for sib in body
+    def increments(nodes: list[ast.stmt]) -> bool:
+        return any(
+            isinstance(inner, ast.AugAssign)
+            and isinstance(inner.target, ast.Name)
+            and inner.target.id == "unreadable"
+            for stmt in nodes
+            for inner in ast.walk(stmt)
         )
-        if not counted:
-            silent += 1
+
+    silent = 0
+    for parent in ast.walk(loop):
+        for body in (
+            getattr(parent, "body", []),
+            getattr(parent, "orelse", []),
+            getattr(parent, "finalbody", []),
+        ):
+            if not isinstance(body, list):
+                continue
+            if any(isinstance(stmt, ast.Continue) for stmt in body) and not increments(
+                body
+            ):
+                silent += 1
 
     assert silent == 1, (
         f"{silent} skip paths in the preflight loop drop an entry without "
-        "counting it; exactly one (the out-of-scope entry) may do so"
+        "counting it; exactly one may -- an out-of-target unit reaching no "
+        "in-target declaration, which is neither a hole nor gradeable. Every "
+        "other skip must increment `unreadable`"
     )
