@@ -58,6 +58,19 @@ _AGGREGATED_READ_RE = re.compile(
     r"([A-Z_][A-Z0-9_]*)(?:\.[A-Z_][A-Z0-9_]*)?\s*\)"
 )
 
+# The trailing clauses that end a projection, matched on ANY whitespace.
+# Built from the same constants rather than spelled again, so the two cannot
+# drift. Matching them as literal single-spaced strings meant a NEWLINE
+# before `ORDER BY` defeated the cut and left the sort key inside the parsed
+# projection, where its `n.qualified_name` read as projected evidence for a
+# query returning only `n.name` (issue #1494).
+_POST_RETURN_RE = re.compile(
+    "|".join(
+        r"\s+".join(re.escape(word) for word in keyword.split())
+        for keyword in cs.CYPHER_POST_RETURN_KEYWORDS
+    ).join((r"\s(?:", r")")),
+)
+
 # Constructs a scoped query may not use, matched as whole words.
 _UNANALYSABLE_RE = re.compile(cs.CYPHER_UNANALYSABLE_PATTERN)
 
@@ -444,10 +457,8 @@ def _return_clause(cypher_query: str) -> str:
     if marker < 0:
         return ""
     projection = upper[marker + len(cs.CYPHER_RETURN_KEYWORD) :]
-    for tail in cs.CYPHER_POST_RETURN_KEYWORDS:
-        cut = projection.find(tail)
-        if cut >= 0:
-            projection = projection[:cut]
+    if cut := _POST_RETURN_RE.search(projection):
+        projection = projection[: cut.start()]
     return projection.strip()
 
 

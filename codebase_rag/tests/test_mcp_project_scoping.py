@@ -1437,6 +1437,60 @@ class TestTheRestrictionMustBindTheAliasToThisProject:
         )
 
 
+class TestTrailingClausesAreCutOnAnyWhitespace:
+    """`ORDER BY` on the next line must not stay inside the projection.
+
+    `CYPHER_POST_RETURN_KEYWORDS` were matched as literal single-spaced
+    strings, so a NEWLINE before `ORDER BY` defeated the cut and the sort
+    key stayed in the parsed projection. `RETURN n.name AS a` then looked
+    like it projected a qualified name -- because `n.qualified_name` was
+    sitting in the ORDER BY -- while the rows actually returned carry only
+    `n.name`, which the row filter cannot attribute (reported on #1494).
+
+    The aliased form is the one that leaks: `_every_term_is_plain` splits
+    the term at ` AS `, so the trailing clause falls outside the part it
+    checks and the term passes as a bare property read.
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_a_newline_before_order_by_is_still_cut(self) -> None:
+        assert self._refused("MATCH (n) RETURN n.name AS a\nORDER BY n.qualified_name")
+
+    def test_a_newline_inside_order_by_is_still_cut(self) -> None:
+        assert self._refused("MATCH (n) RETURN n.name AS a\nORDER\nBY n.qualified_name")
+
+    def test_a_newline_before_skip_is_still_cut(self) -> None:
+        assert self._refused(
+            "MATCH (n) RETURN n.name AS a\nSKIP 1\nORDER BY n.qualified_name"
+        )
+
+    def test_a_newline_before_limit_is_still_cut(self) -> None:
+        assert self._refused(
+            "MATCH (n) RETURN n.name AS a\nLIMIT 5\nORDER BY n.qualified_name"
+        )
+
+    def test_a_real_projection_with_a_newline_order_by_is_allowed(self) -> None:
+        """THE CONTROL. Cutting the clause must not lose genuine evidence."""
+        assert not self._refused(
+            "MATCH (n) RETURN n.qualified_name AS q\nORDER BY n.name"
+        )
+
+    def test_a_property_containing_a_keyword_is_not_a_trailing_clause(self) -> None:
+        """The upper-bound guard: `n.reunion` contains the letters UNION.
+
+        `" UNION"` carries no trailing space, so the leading whitespace is
+        its only boundary. Without it the projection is truncated mid-word
+        at `RE|UNION`, the qualified name that follows is lost, and a
+        legitimate query is refused. Found by mutating the boundary away and
+        seeing every test still pass.
+        """
+        assert not self._refused("MATCH (n) RETURN n.reunion, n.qualified_name")
+
+
 class TestADisjunctionCannotMakeTheRestrictionOptional:
     """`... STARTS WITH 'alpha.' OR TRUE` restricts nothing.
 
