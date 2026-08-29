@@ -541,7 +541,7 @@ def test_scala_wildcard_import_records_span_without_alias(
     wildcard = [
         props
         for dst, props in _imports_from(mock_ingestor, ".a")
-        if dst.endswith("scala.io")
+        if dst.rpartition(".")[2] == "io" and "scala" in dst.split(".")
     ]
     (props,) = wildcard
     assert _site(props) == _span(SCALA_SRC, "import scala.io._")
