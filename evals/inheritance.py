@@ -18,6 +18,7 @@ from . import constants as ec
 from . import logs as ls
 from .ast_oracle import _from_base_parts, _iter_py_files, _module_dotted
 from .cgr_graph import _capture
+from .oracles.cpp_oracle import cpp_available, run_cpp_oracle
 from .oracles.java_oracle import java_available, run_java_oracle
 from .score import _prf
 from .structure_report import render, write_outputs
@@ -259,6 +260,69 @@ def java_cgr_inheritance(target: Path, project: str) -> CgrResult:
     return CgrResult(inherits=inherits, overrides=set())
 
 
+def cpp_oracle_inheritance(target: Path) -> OracleResult:
+    # The libclang oracle emits base-specifiers as `name_edges` keyed the same
+    # way javac's are: the subclass pinned to a file and line, the base by
+    # SIMPLE name (`_base_simple_name` already collapses `::` and keeps the
+    # last component, mirroring cgr's normalisation). So no oracle-side work is
+    # needed here either (issue #1190).
+    #
+    # C++ has no interfaces, so every inheritance edge arrives as INHERITS and
+    # there is no IMPLEMENTS counterpart to fold in. The oracle emits no
+    # OVERRIDES -- a virtual override is not distinguishable from a shadowing
+    # redeclaration without more analysis than the oracle does -- so that
+    # category stays empty and _prf omits the row rather than scoring a
+    # category the oracle cannot adjudicate.
+    graph = run_cpp_oracle(target)
+    inherits: set[InheritEdge] = set()
+    subclasses: set[str] = set()
+    for edge in graph.name_edges:
+        # Defensive rather than load-bearing today: the C++ oracle has a single
+        # name-edge construction site and it is hard-coded to INHERITS, so this
+        # filter currently rejects nothing and no test can distinguish its
+        # removal. It stays because the oracle gaining a second edge kind must
+        # not silently start scoring that kind as inheritance; the guard in
+        # test_cpp_inheritance_eval.py fails if that assumption stops holding.
+        if edge.rel_type != _INHERITS:
+            continue
+        key = _location_key(edge.source.file, edge.source.start_line)
+        subclasses.add(key)
+        inherits.add((key, edge.target_name))
+    return OracleResult(
+        inherits=inherits,
+        overrides=set(),
+        top_classes=frozenset(subclasses),
+        override_scope=frozenset(),
+    )
+
+
+def cpp_cgr_inheritance(target: Path, project: str) -> CgrResult:
+    ingestor = _capture(target, project)
+    props_by_node = {
+        (label, str(uid)): props for (label, uid), props in ingestor.nodes.items()
+    }
+    inherits: set[InheritEdge] = set()
+    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
+        if rel_type != _INHERITS:
+            continue
+        props = props_by_node.get((from_label, str(from_val)))
+        path = str(props.get(cs.KEY_PATH, "")) if props else ""
+        # A C++ class can be declared in any of the header or source suffixes,
+        # so the whole set is eligible rather than one extension.
+        if not path.endswith(ec.CPP_SUFFIXES):
+            continue
+        line = props.get(cs.KEY_START_LINE) if props else None
+        # Node properties are a heterogeneous union; a non-integer start_line
+        # is unusable as a location key, so skip rather than coerce it.
+        if not isinstance(line, int):
+            continue
+        # The oracle names the base simply, so the qn is reduced to its last
+        # segment to compare like with like.
+        base = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        inherits.add((_location_key(path, line), base))
+    return CgrResult(inherits=inherits, overrides=set())
+
+
 def score_inheritance(
     cgr: CgrResult,
     oracle: OracleResult,
@@ -311,6 +375,31 @@ def main(
     target = target.resolve()
     project = project_name or target.name
     logger.info(ls.INHERITANCE_TARGET.format(target=target, project=project))
+
+    if language == ec.InheritanceLanguage.CPP:
+        # Same reasoning as the Java branch: without libclang the oracle yields
+        # nothing, and scoring that would write a header-only CSV and an empty
+        # diff while exiting 0 -- reporting "no gradeable edges" when the truth
+        # is "the grader never ran".
+        if not cpp_available():
+            logger.error(ls.CPP_ORACLE_MISSING)
+            raise typer.Exit(code=1)
+        # The libclang oracle names bases by SIMPLE name while it pins the
+        # subclass to a location, so the row carries its own label: a C++ 1.0
+        # is not measuring the same unit as the Python one (issue #1190).
+        result = score_inheritance(
+            cpp_cgr_inheritance(target, project),
+            cpp_oracle_inheritance(target),
+            inherits_label=ec.CPP_BASES_LABEL,
+        )
+        write_outputs(
+            result,
+            out_dir,
+            ec.INHERITANCE_SCORES_FILENAME,
+            ec.INHERITANCE_DIFF_FILENAME,
+        )
+        render(result, ec.INHERITANCE_TITLE)
+        return
 
     if language == ec.InheritanceLanguage.JAVA:
         # Without a JDK the oracle yields nothing, and scoring that would write

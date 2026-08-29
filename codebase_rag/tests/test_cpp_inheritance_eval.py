@@ -1,0 +1,209 @@
+"""C++ resolved-INHERITS grading against the libclang oracle (issue #1190).
+
+Gap 2 of that issue is resolved-edge grading beyond Python. Inheritance was
+graded for Python and Java only; the libclang oracle already emitted base
+specifiers as `name_edges` in the exact shape the Java path consumes, so this
+adds the C++ grading arm rather than any oracle-side work.
+
+The oracle names a base by SIMPLE name while pinning the subclass to a file
+and line, so the scored row carries its own label: a C++ 1.0 is not measuring
+the same unit as the Python one.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from evals import constants as ec
+from evals.inheritance import (
+    CgrResult,
+    OracleResult,
+    cpp_oracle_inheritance,
+    score_inheritance,
+)
+from evals.oracles.cpp_oracle import cpp_available, run_cpp_oracle
+
+_NEEDS_LIBCLANG = pytest.mark.skipif(
+    not cpp_available(), reason="libclang not available"
+)
+
+
+def _cpp_project(tmp_path: Path, source: str) -> Path:
+    """A minimal compile_commands.json project.
+
+    The source path inside it must be ABSOLUTE: `index.parse` runs from the
+    process cwd rather than the compile directory, and a relative path yields
+    zero nodes SILENTLY, which reads exactly like "no inheritance support".
+    """
+    src = tmp_path / "a.cpp"
+    src.write_text(source, encoding="utf-8")
+    (tmp_path / "compile_commands.json").write_text(
+        json.dumps(
+            [
+                {
+                    "directory": str(tmp_path),
+                    "command": f"clang++ -std=c++17 -c {src}",
+                    "file": str(src),
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+@_NEEDS_LIBCLANG
+class TestTheOracleReadsBaseSpecifiers:
+    def test_a_single_base_is_reported_against_the_subclass_location(
+        self, tmp_path: Path
+    ) -> None:
+        project = _cpp_project(
+            tmp_path, "class Base {};\nclass Derived : public Base {};\n"
+        )
+
+        result = cpp_oracle_inheritance(project)
+
+        assert result.inherits == {("a.cpp:2", "Base")}
+        assert result.top_classes == frozenset({"a.cpp:2"})
+
+    def test_every_base_of_a_multiply_derived_class_is_reported(
+        self, tmp_path: Path
+    ) -> None:
+        # One subclass, two bases: the pair must not collapse to one edge.
+        project = _cpp_project(
+            tmp_path,
+            "class A {};\nclass B {};\nclass C : public A, public B {};\n",
+        )
+
+        result = cpp_oracle_inheritance(project)
+
+        assert result.inherits == {("a.cpp:3", "A"), ("a.cpp:3", "B")}
+
+    def test_a_namespaced_base_is_named_by_its_last_component(
+        self, tmp_path: Path
+    ) -> None:
+        # `ns::Base` must arrive as `Base`, mirroring cgr's normalisation;
+        # without the collapse the two sides never match and every edge is
+        # scored as one false positive plus one false negative.
+        project = _cpp_project(
+            tmp_path,
+            "namespace ns { class Base {}; }\nclass Derived : public ns::Base {};\n",
+        )
+
+        result = cpp_oracle_inheritance(project)
+
+        assert result.inherits == {("a.cpp:2", "Base")}
+
+    def test_a_class_with_no_base_contributes_no_edge(self, tmp_path: Path) -> None:
+        project = _cpp_project(tmp_path, "class Alone {};\n")
+
+        result = cpp_oracle_inheritance(project)
+
+        assert result.inherits == set()
+        assert result.top_classes == frozenset()
+
+    def test_the_oracle_adjudicates_no_overrides(self, tmp_path: Path) -> None:
+        # A virtual override is not distinguishable from a shadowing
+        # redeclaration without more analysis than the oracle does, so the
+        # category stays empty and _prf omits the row rather than scoring
+        # what the oracle cannot adjudicate.
+        project = _cpp_project(
+            tmp_path,
+            "class B { public: virtual void f() {} };\n"
+            "class D : public B { public: void f() {} };\n",
+        )
+
+        result = cpp_oracle_inheritance(project)
+
+        assert result.overrides == set()
+        assert result.override_scope == frozenset()
+
+
+class TestTheScoreDistinguishesDisagreement:
+    """A 1.0 means nothing unless the grader can report something else.
+
+    These pin that each kind of disagreement moves the metric it should, so a
+    perfect score on a real fixture is evidence of agreement rather than of a
+    comparison that cannot fail.
+    """
+
+    ORACLE = OracleResult(
+        inherits={("f.cpp:1", "Base"), ("f.cpp:2", "Other")},
+        overrides=set(),
+        top_classes=frozenset({"f.cpp:1", "f.cpp:2"}),
+        override_scope=frozenset(),
+    )
+
+    def _row(self, cgr: CgrResult) -> dict[str, object]:
+        return score_inheritance(
+            cgr, self.ORACLE, inherits_label=ec.CPP_BASES_LABEL
+        ).rows[0]
+
+    def test_agreement_scores_one(self) -> None:
+        row = self._row(CgrResult(inherits=self.ORACLE.inherits, overrides=set()))
+
+        assert row["precision"] == 1.0
+        assert row["recall"] == 1.0
+
+    def test_a_missed_edge_lowers_recall_only(self) -> None:
+        row = self._row(CgrResult(inherits={("f.cpp:1", "Base")}, overrides=set()))
+
+        assert row["recall"] == 0.5
+        assert row["precision"] == 1.0
+        assert row["fn"] == 1
+
+    def test_an_invented_edge_lowers_precision_only(self) -> None:
+        row = self._row(
+            CgrResult(
+                inherits={*self.ORACLE.inherits, ("f.cpp:2", "Ghost")}, overrides=set()
+            )
+        )
+
+        assert row["precision"] < 1.0
+        assert row["recall"] == 1.0
+        assert row["fp"] == 1
+
+    def test_a_wrong_base_name_lowers_both(self) -> None:
+        row = self._row(
+            CgrResult(
+                inherits={("f.cpp:1", "WrongName"), ("f.cpp:2", "Other")},
+                overrides=set(),
+            )
+        )
+
+        assert row["precision"] == 0.5
+        assert row["recall"] == 0.5
+
+    def test_the_row_carries_the_cpp_label(self) -> None:
+        # The unit differs from Python's resolved-qn inheritance, so the label
+        # must say so rather than letting a C++ 1.0 read as the Python one.
+        row = self._row(CgrResult(inherits=self.ORACLE.inherits, overrides=set()))
+
+        assert row["label"] == ec.CPP_BASES_LABEL
+        assert row["label"] != ec.INHERITS_LABEL
+
+
+@_NEEDS_LIBCLANG
+def test_the_cpp_oracle_emits_only_inheritance_name_edges(tmp_path: Path) -> None:
+    """Pins the assumption that makes the INHERITS filter unreachable.
+
+    `cpp_oracle_inheritance` filters `rel_type != _INHERITS`, and removing that
+    filter today changes nothing -- the oracle has one name-edge construction
+    site, hard-coded to INHERITS. That makes the filter untestable by behaviour
+    alone, so the assumption is pinned directly instead: if the oracle ever
+    emits a second edge kind, this fails and whoever added it has to decide
+    whether inheritance grading should count it.
+    """
+    project = _cpp_project(
+        tmp_path,
+        "class A {};\nclass B {};\nclass C : public A, public B {};\n"
+        "class D { public: virtual void f() {} };\n"
+        "class E : public D { public: void f() {} };\n",
+    )
+
+    graph = run_cpp_oracle(project)
+
+    assert {edge.rel_type for edge in graph.name_edges} == {"INHERITS"}
