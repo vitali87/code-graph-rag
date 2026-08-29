@@ -28,7 +28,10 @@ from evals.inheritance import (
     score_inheritance,
     ts_oracle_inheritance,
 )
-from evals.oracles.typescript_oracle import typescript_available
+from evals.oracles.typescript_oracle import (
+    run_typescript_oracle,
+    typescript_available,
+)
 
 pytestmark = pytest.mark.skipif(
     not typescript_available(),
@@ -128,3 +131,35 @@ def test_a_missing_cgr_edge_costs_recall(tmp_path: Path) -> None:
     assert row["recall"] == 0.5
     assert row["precision"] == 1.0
     assert row["fn"] == 1
+
+
+def test_the_oracle_emits_only_supertype_edges(tmp_path: Path) -> None:
+    """Pin the assumption the rel_type filter rests on.
+
+    Removing `if edge.rel_type not in (_INHERITS, _IMPLEMENTS)` from
+    `ts_oracle_inheritance` passes every behavioural test above, and that
+    survival is CORRECT rather than a coverage gap: `ts_ast.js` has a single
+    `emitNameEdge` call site and it can only produce INHERITS or IMPLEMENTS,
+    so no fixture can distinguish the filter's removal.
+
+    The filter still earns its place, because the oracle gaining a third edge
+    kind must not silently start scoring that kind as inheritance. That is an
+    assumption about the oracle rather than a behaviour of the grader, so it
+    is pinned here: this fails the day the oracle emits something else,
+    turning "unreachable today" into a loud failure instead of a quiet
+    mis-grade.
+    """
+    _write(
+        tmp_path,
+        "g.ts",
+        "class Base {}\n"
+        "interface Shape { area(): number; }\n"
+        "class Derived extends Base implements Shape {\n"
+        "  area(): number { return 1; }\n"
+        "}\n"
+        "function free(): number { return 1; }\n"
+        "const value = 2;\n",
+    )
+    graph = run_typescript_oracle(tmp_path)
+    assert graph.name_edges, "a fixture with no edges would pass vacuously"
+    assert {e.rel_type for e in graph.name_edges} <= {"INHERITS", "IMPLEMENTS"}
