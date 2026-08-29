@@ -24,7 +24,7 @@ from pathlib import Path
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.cpp_frontend.qn import build_module_qn_map
-from codebase_rag.utils.path_utils import walk_eligible_files
+from codebase_rag.utils.path_utils import base_module_qn, walk_eligible_files
 
 PROJECT = "proj"
 
@@ -119,3 +119,27 @@ class TestTheQnMapWalksInIndexerOrder:
         qn_map = build_module_qn_map(tmp_path, PROJECT, unignore_paths=rescues)
 
         assert list(qn_map) == _indexer_order(tmp_path, unignore_paths=rescues)
+
+
+class TestTheBaseModuleQnIsSharedNotMirrored:
+    """``__init__.py``/``mod.rs`` name their package, not themselves.
+
+    Both the indexer and the C++ qn map need that rule, and previously each
+    spelled it out. The whole graph keys on these names, so a disagreement
+    splits one module into two nodes without raising.
+    """
+
+    def test_a_plain_file_keeps_its_stem(self) -> None:
+        assert base_module_qn(Path("src/b.h"), PROJECT) == f"{PROJECT}.src.b"
+
+    def test_a_package_init_names_its_parent(self) -> None:
+        assert base_module_qn(Path("pkg/__init__.py"), PROJECT) == f"{PROJECT}.pkg"
+        assert base_module_qn(Path("x/mod.rs"), PROJECT) == f"{PROJECT}.x"
+
+    def test_only_the_final_suffix_is_stripped(self) -> None:
+        # `.tar.gz` loses only `.gz`; a dotted DIRECTORY keeps its dots.
+        assert base_module_qn(Path("weird.tar.gz"), PROJECT) == f"{PROJECT}.weird.tar"
+        assert (
+            base_module_qn(Path("dir.with.dots/f.py"), PROJECT)
+            == f"{PROJECT}.dir.with.dots.f"
+        )

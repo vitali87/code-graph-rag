@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import constants as cs
-from ...utils.path_utils import walk_eligible_files
+from ...utils.path_utils import base_module_qn, walk_eligible_files
 from ..cpp.utils import convert_operator_symbol_to_name
 from . import constants as fc
 
@@ -31,15 +31,6 @@ def _eligible_rel_files(
     ]
 
 
-def _base_module_qn(rel: str, project_name: str) -> str:
-    rel_path = Path(rel)
-    if rel_path.name in (cs.INIT_PY, cs.MOD_RS):
-        parts = rel_path.parent.parts
-    else:
-        parts = rel_path.with_suffix("").parts
-    return cs.SEPARATOR_DOT.join([project_name, *parts])
-
-
 def build_module_qn_map(
     repo_path: Path,
     project_name: str,
@@ -52,7 +43,7 @@ def build_module_qn_map(
     claimed: dict[str, str] = {}
     result: dict[str, str] = {}
     for rel in _eligible_rel_files(repo_path, exclude_paths, unignore_paths):
-        base = _base_module_qn(rel, project_name)
+        base = base_module_qn(Path(rel), project_name)
         existing = claimed.get(base)
         if existing is None or existing == rel:
             final = base

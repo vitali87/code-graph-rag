@@ -22,7 +22,11 @@ from ..types_defs import (
     RustTraitImpl,
     SimpleNameLookup,
 )
-from ..utils.path_utils import cached_relative_path, cached_resolve_posix
+from ..utils.path_utils import (
+    base_module_qn,
+    cached_relative_path,
+    cached_resolve_posix,
+)
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
@@ -354,13 +358,7 @@ class DefinitionProcessor(
                 root_node = tree.root_node
                 pre_combined_captures = None
 
-            module_qn = cs.SEPARATOR_DOT.join(
-                [self.project_name] + list(relative_path.with_suffix("").parts)
-            )
-            if file_path.name in (cs.INIT_PY, cs.MOD_RS):
-                module_qn = cs.SEPARATOR_DOT.join(
-                    [self.project_name] + list(relative_path.parent.parts)
-                )
+            module_qn = base_module_qn(relative_path, self.project_name)
             module_qn = self._disambiguate_module_qn(module_qn, file_path)
             self.module_qn_to_file_path[module_qn] = file_path
             if language == cs.SupportedLanguage.GO and (

@@ -195,6 +195,24 @@ def should_skip_rel_file(
     return has_ignored_dir_part(dir_parts)
 
 
+def base_module_qn(rel_path: Path, project_name: str) -> str:
+    """The module qualified name for a file, BEFORE collision disambiguation.
+
+    Shared by the tree-sitter indexer (``DefinitionProcessor.process_file``)
+    and the C++ module-qn map (``cpp_frontend.qn``), which must agree
+    byte-for-byte: the whole graph keys on these names, and a disagreement
+    silently splits one module into two nodes rather than raising (#1025).
+
+    ``__init__.py`` and ``mod.rs`` name their PACKAGE rather than themselves,
+    so they drop their own filename segment.
+    """
+    if rel_path.name in (cs.INIT_PY, cs.MOD_RS):
+        parts = rel_path.parent.parts
+    else:
+        parts = rel_path.with_suffix("").parts
+    return cs.SEPARATOR_DOT.join([project_name, *parts])
+
+
 def walk_eligible_files(
     repo_path: Path,
     exclude_paths: frozenset[str] | None = None,
