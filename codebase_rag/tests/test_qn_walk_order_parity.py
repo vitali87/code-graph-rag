@@ -20,11 +20,16 @@ itself so the guarantee does not rest on that coincidence.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.cpp_frontend.qn import build_module_qn_map
-from codebase_rag.utils.path_utils import base_module_qn, walk_eligible_files
+from codebase_rag.utils.path_utils import (
+    _walk_dir_keys,
+    base_module_qn,
+    walk_eligible_files,
+)
 
 PROJECT = "proj"
 
@@ -188,3 +193,56 @@ class TestOneUnignorePatternIsEnoughToRescue:
 
         assert "node_modules/lib/thing.h" not in walked
         assert "src/main.cpp" in walked
+
+
+class TestARepoPathEndingInASeparator:
+    """The filesystem root must not eat the first character of every child.
+
+    `repo_prefix_len = len(repo_str) + 1` assumes the repo path carries no
+    trailing separator, so the slice skips it plus one. At the root `"/"` the
+    separator is already counted and `"/tmp"[2:]` yields `"mp"` -- every child
+    silently loses its first character, corrupting every derived qualified name
+    rather than raising (CodeRabbit, PR #1511). Pre-existing in both copies of
+    the walk before the merge; the merge made it fixable in one place.
+
+    **What this test does and does not cover, stated because two earlier
+    versions of it were worthless and passed.** The root is the ONLY reachable
+    case -- `Path` normalises a trailing separator away, so `Path("/repo/")` is
+    `"/repo"` and only `Path("/")` keeps one. A `tmp_path` fixture therefore
+    never reaches the branch, and the first version of this test used one and
+    survived a mutation restoring the defect.
+
+    Driving `walk_eligible_files` with the root as `repo_path` would `os.walk`
+    the entire filesystem, so the prefix arithmetic itself is not reachable in
+    a test. What IS asserted is the contract the arithmetic must satisfy: given
+    the root's correct prefix length, the helper must return the child's full
+    name. A mutation of the arithmetic in the caller does NOT fail this -- that
+    line is covered by review and by the reasoning here, not by a test.
+    """
+
+    def test_the_helper_keeps_the_full_child_name_at_the_root(self) -> None:
+        root = str(Path(os.sep))
+        # The prefix length the caller must produce for a root repo path: the
+        # separator is already part of `root`, so nothing is added.
+        parts, key, prefix = _walk_dir_keys(f"{root}tmp", len(root))
+
+        assert parts == ("tmp",), (parts, key, prefix)
+        assert key == "tmp"
+        assert prefix == "tmp/"
+
+    def test_the_helper_still_strips_a_non_root_prefix(self) -> None:
+        # The control: with an ordinary repo path the caller adds one for the
+        # separator, and the helper must strip that too.
+        parts, key, prefix = _walk_dir_keys("/repo/tmp", len("/repo") + 1)
+
+        assert parts == ("tmp",), (parts, key, prefix)
+        assert prefix == "tmp/"
+
+    def test_an_ordinary_repo_path_walks_correctly_end_to_end(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path, "pkg/thing.cpp")
+
+        walked = [rel for _d, _f, rel in walk_eligible_files(tmp_path)]
+
+        assert walked == ["pkg/thing.cpp"], walked

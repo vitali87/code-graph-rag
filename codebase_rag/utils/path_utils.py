@@ -260,7 +260,10 @@ def walk_eligible_files(
     indexer's mtime bookkeeping; it must not mutate the walk.
     """
     repo_str = str(repo_path)
-    repo_prefix_len = len(repo_str) + 1
+    # A repo path that already ends in a separator (the filesystem root, "/")
+    # must not have another counted, or the slice below eats the first
+    # character of every child -- "/tmp" became "mp" (CodeRabbit, PR #1511).
+    repo_prefix_len = len(repo_str) + (0 if repo_str.endswith(os.sep) else 1)
     state_filenames = cs.CGR_STATE_FILENAMES
     for dirpath, dirnames, filenames in os.walk(repo_str):
         dir_parts, dir_key, dir_prefix = _walk_dir_keys(dirpath, repo_prefix_len)
