@@ -31,6 +31,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from codebase_rag.constants import core as cs
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
@@ -124,6 +126,9 @@ def _run_gate(
         check=False,
         capture_output=True,
         text=True,
+        # Explicit rather than the locale's encoding, which varies by runner
+        # (issue #1454). The gate emits UTF-8: its messages carry ✅ and ❌.
+        encoding=cs.ENCODING_UTF8,
         env=env,
         timeout=wall_clock,
     )
