@@ -1430,6 +1430,68 @@ class TestTheRestrictionMustBindTheAliasToThisProject:
         )
 
 
+class TestADisjunctionCannotMakeTheRestrictionOptional:
+    """`... STARTS WITH 'alpha.' OR TRUE` restricts nothing.
+
+    `_alias_is_restricted` searches for the predicate as a SUBSTRING, so it
+    is satisfied by a predicate that appears in the query without being
+    required on every Boolean path. The aggregate then spans every project
+    and its scalar result carries no qualified name for the row filter to
+    reject (reported on #1494, reproduced end to end: `{'total': 2}` on a
+    two-project graph while scoped to one).
+
+    Refused rather than analysed. Deciding whether a project predicate is
+    mandatory across arbitrary Boolean structure is a satisfiability
+    question, and this module's stated rule is that an unanalysable shape is
+    refused -- the same default-deny that governs `_UNANALYSABLE_RE`.
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_or_true_is_refused(self) -> None:
+        assert self._refused(
+            f"MATCH (n:Function) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "OR TRUE RETURN count(n) AS total"
+        )
+
+    def test_or_a_tautology_is_refused(self) -> None:
+        assert self._refused(
+            f"MATCH (n:Function) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "OR 1=1 RETURN count(n) AS total"
+        )
+
+    def test_a_conjunction_is_still_allowed(self) -> None:
+        """THE CONTROL. `AND` keeps the restriction mandatory, so it stays."""
+        assert not self._refused(
+            f"MATCH (n:Function) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "AND n.name = 'x' RETURN count(n) AS total"
+        )
+
+    def test_the_plain_restriction_is_still_allowed(self) -> None:
+        assert not self._refused(
+            f"MATCH (n:Function) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(n) AS total"
+        )
+
+    def test_an_identifier_containing_or_is_not_a_disjunction(self) -> None:
+        """The upper-bound guard: `n.coordinator` contains the letters OR.
+
+        The body is uppercased before matching, so an unspaced `"OR" in body`
+        refuses any query mentioning a property whose name happens to contain
+        the substring. Found by mutating the spaced constant to an unspaced
+        one and seeing every test still pass -- nothing here distinguished
+        the operator from the letters until this case existed.
+        """
+        assert not self._refused(
+            "MATCH (n:Function) WHERE n.coordinator = 'x' "
+            f"AND n.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN count(n) AS total"
+        )
+
+
 class TestAPlainPropertyIsNotAttributionUnlessItIsTheQualifiedName:
     """Grouping by `n.name` does not let the row filter judge the row.
 

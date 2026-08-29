@@ -15,6 +15,10 @@ CYPHER_RETURN_KEYWORD = "RETURN "
 # project. `IS NOT NULL` / `<> ''` / `exists(...)` match every indexed node
 # in every project, so a count over them spans them all.
 CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
+# A disjunction makes any predicate beside it OPTIONAL, so a restriction
+# that appears in the query is not necessarily one the query enforces.
+# Spaced so it matches the operator and not an identifier ending in "or".
+CYPHER_DISJUNCTION = " OR "
 # Constructs a SCOPED query may not use. Each defeats clause-level
 # analysis: UNION means several RETURNs, CALL and WITH mean the projection
 # is assembled elsewhere. The system prompt mandates plain

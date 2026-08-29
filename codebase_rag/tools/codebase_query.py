@@ -381,6 +381,18 @@ def _restricts_to_project(
         return False
     if not project_name:
         return False
+    # A DISJUNCTION makes the restriction optional. `... STARTS WITH
+    # 'alpha.' OR TRUE` contains the predicate but does not require it, and
+    # every check here searches for the predicate rather than proving it
+    # mandatory -- so the aggregate ran across every project while the
+    # substring match was satisfied (issue #1494).
+    #
+    # Refused rather than analysed: deciding whether a predicate holds on
+    # every Boolean path is a satisfiability question, and this module's
+    # rule for shapes it cannot analyse is to reject them. `AND` is
+    # unaffected, so the ordinary scoped count keeps working.
+    if cs.CYPHER_DISJUNCTION in body:
+        return False
     # The LITERAL project name is required. "No literal" was read as
     # "safely parameterised", but a parameter's VALUE is invisible here,
     # so that accepted a restriction to any project at all -- and, for
