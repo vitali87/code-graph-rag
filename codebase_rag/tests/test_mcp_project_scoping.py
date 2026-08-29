@@ -1294,12 +1294,19 @@ def _prefixes(result: dict) -> set[str]:
 def _handler_returning(
     rows: list[dict],
     query_used: str = "MATCH (n) RETURN n.qualified_name AS qualified_name",
+    summary: str = "ok",
 ):
     """An MCPToolsRegistry bound to a stub graph, with the real handler logic.
 
     The default `query_used` PROJECTS a qualified name, because that is what
     a scoped request needs in order to be judgeable. Tests that want the
     unjudgeable case pass their own.
+
+    `summary` is a parameter so a test can assert the tool's own message
+    SURVIVES rather than merely that some other message is absent. With it
+    hardcoded, a translation-failure test could only check that the
+    unscopeable text was missing -- which any replacement message satisfies,
+    including a wrong one (reported on #1494).
     """
     from unittest.mock import AsyncMock, MagicMock
 
@@ -1313,7 +1320,7 @@ def _handler_returning(
         return_value=QueryGraphData(
             query_used=query_used,
             results=list(rows),
-            summary="ok",
+            summary=summary,
         )
     )
     handler.ingestor = MagicMock()
@@ -1628,24 +1635,32 @@ class TestATranslationFailureIsNotReportedAsUnscopeable:
 
     @pytest.mark.asyncio
     async def test_the_underlying_error_survives(self) -> None:
-        handler = _handler_returning([], query_used=cs.QUERY_NOT_AVAILABLE)
+        """Asserts the real message is PRESENT, not that another is absent.
+
+        An absence assertion is satisfied by every other outcome, including
+        a regression that replaces the translation failure with some third
+        error. So the fixture carries a representative message and the test
+        requires it to arrive intact.
+        """
+        translation_error = "Cypher generation failed: unparseable request"
+        handler = _handler_returning(
+            [], query_used=cs.QUERY_NOT_AVAILABLE, summary=translation_error
+        )
 
         result = await handler.query_code_graph("something unparseable", project=ALPHA)
 
-        assert cs.MCP_UNSCOPEABLE_QUERY.format(project=ALPHA) not in (
-            result.get("summary") or ""
-        )
+        assert result.get("summary") == translation_error
         assert result.get("query_used") == cs.QUERY_NOT_AVAILABLE
 
     @pytest.mark.asyncio
     async def test_an_empty_query_is_also_not_a_scoping_complaint(self) -> None:
-        handler = _handler_returning([], query_used="")
+        translation_error = "Cypher generation returned nothing"
+        handler = _handler_returning([], query_used="", summary=translation_error)
 
         result = await handler.query_code_graph("something unparseable", project=ALPHA)
 
-        assert cs.MCP_UNSCOPEABLE_QUERY.format(project=ALPHA) not in (
-            result.get("summary") or ""
-        )
+        assert result.get("summary") == translation_error
+        assert result.get("query_used") == ""
 
 
 class TestPropertyAggregatesAreAttributed:
