@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import constants as cs
-from ...utils.path_utils import should_keep_dir, should_skip_rel_file
+from ...utils.path_utils import base_module_qn, walk_eligible_files
 from ..cpp.utils import convert_operator_symbol_to_name
 from . import constants as fc
 
@@ -18,53 +17,18 @@ def _eligible_rel_files(
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
 ) -> list[str]:
-    # Reproduce GraphUpdater._collect_eligible_files' ordering exactly: an
-    # os.walk with dirnames AND filenames sorted, top-down, pruned and filtered
-    # with the same predicates. The module-qn disambiguation below depends on
-    # this order (the file processed LATER in a basename collision gets its
-    # extension appended), so it must match cgr's tree-sitter pass to produce
-    # identical qualified names. Walking a different file set is what makes the
-    # two disagree: an excluded file claiming a base qn pushes the indexed file
-    # onto the suffixed one, and a .cgrignore rescue the map never sees leaves
-    # an indexed file with no qn at all (issue #1099).
-    repo_str = str(repo_path)
-    repo_prefix_len = len(repo_str) + 1
-    state_filenames = cs.CGR_STATE_FILENAMES
-    rels: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(repo_str):
-        rel_dir = "" if len(dirpath) < repo_prefix_len else dirpath[repo_prefix_len:]
-        rel_dir = rel_dir.replace(os.sep, "/")
-        dir_parts = tuple(rel_dir.split("/")) if rel_dir else ()
-        dir_prefix = f"{rel_dir}/" if rel_dir else ""
-        dirnames[:] = sorted(
-            d
-            for d in dirnames
-            if should_keep_dir(d, dir_prefix, exclude_paths, unignore_paths)
+    # Delegates to the one shared walk so this path cannot drift from
+    # GraphUpdater._collect_eligible_files. The module-qn disambiguation below
+    # depends on walk ORDER (the file processed LATER in a basename collision
+    # gets its extension appended), so a divergence in ordering -- not just in
+    # which files are eligible -- silently reassigns qualified names across the
+    # graph (issues #1025, #1099).
+    return [
+        rel
+        for _dirpath, _fname, rel in walk_eligible_files(
+            repo_path, exclude_paths, unignore_paths
         )
-        for fname in sorted(filenames):
-            if fname in state_filenames:
-                continue
-            dot = fname.rfind(".")
-            suffix = fname[dot:] if dot != -1 else ""
-            rel_path_str = f"{dir_prefix}{fname}"
-            if not should_skip_rel_file(
-                rel_path_str,
-                dir_parts,
-                suffix,
-                exclude_paths=exclude_paths,
-                unignore_paths=unignore_paths,
-            ):
-                rels.append(rel_path_str)
-    return rels
-
-
-def _base_module_qn(rel: str, project_name: str) -> str:
-    rel_path = Path(rel)
-    if rel_path.name in (cs.INIT_PY, cs.MOD_RS):
-        parts = rel_path.parent.parts
-    else:
-        parts = rel_path.with_suffix("").parts
-    return cs.SEPARATOR_DOT.join([project_name, *parts])
+    ]
 
 
 def build_module_qn_map(
@@ -79,7 +43,7 @@ def build_module_qn_map(
     claimed: dict[str, str] = {}
     result: dict[str, str] = {}
     for rel in _eligible_rel_files(repo_path, exclude_paths, unignore_paths):
-        base = _base_module_qn(rel, project_name)
+        base = base_module_qn(Path(rel), project_name)
         existing = claimed.get(base)
         if existing is None or existing == rel:
             final = base

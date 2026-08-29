@@ -100,6 +100,7 @@ from .utils.path_utils import (
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
+    walk_eligible_files,
 )
 from .utils.source_extraction import extract_source_with_fallback
 
@@ -2244,43 +2245,23 @@ class GraphUpdater:
             return []
 
         eligible: list[tuple[Path, str]] = []
-        state_filenames = cs.CGR_STATE_FILENAMES
-        repo_str = str(self.repo_path)
-        repo_prefix_len = len(repo_str) + 1
-        exclude_paths = self.exclude_paths
-        unignore_paths = self.unignore_paths
         self._collected_dir_mtimes = {}
-        for dirpath, dirnames, filenames in os.walk(repo_str):
-            if len(dirpath) < repo_prefix_len:
-                rel_dir = ""
-                dir_parts: tuple[str, ...] = ()
-                dir_key = cs.ROOT_DIR_KEY
-            else:
-                rel_dir = dirpath[repo_prefix_len:].replace(os.sep, "/")
-                dir_parts = tuple(rel_dir.split("/")) if rel_dir else ()
-                dir_key = rel_dir or cs.ROOT_DIR_KEY
-            dir_prefix = f"{rel_dir}/" if rel_dir else ""
+
+        def _record_dir_mtime(dir_key: str, dirpath: str) -> None:
             try:
                 self._collected_dir_mtimes[dir_key] = os.stat(dirpath).st_mtime
             except OSError:
                 pass
-            dirnames[:] = sorted(
-                d for d in dirnames if self._should_keep_dir(d, dir_prefix)
-            )
-            for fname in sorted(filenames):
-                if fname in state_filenames:
-                    continue
-                dot = fname.rfind(".")
-                suffix = fname[dot:] if dot != -1 else ""
-                rel_path_str = f"{dir_prefix}{fname}"
-                if not should_skip_rel_file(
-                    rel_path_str,
-                    dir_parts,
-                    suffix,
-                    exclude_paths=exclude_paths,
-                    unignore_paths=unignore_paths,
-                ):
-                    eligible.append((Path(f"{dirpath}/{fname}"), rel_path_str))
+
+        # One shared walk with the C++ module-qn map, so the two cannot drift
+        # in ORDER as well as in membership (issues #1025, #1099).
+        for dirpath, fname, rel_path_str in walk_eligible_files(
+            self.repo_path,
+            self.exclude_paths,
+            self.unignore_paths,
+            on_dir=_record_dir_mtime,
+        ):
+            eligible.append((Path(f"{dirpath}/{fname}"), rel_path_str))
         return eligible
 
     def _process_files(self, force: bool = False) -> None:

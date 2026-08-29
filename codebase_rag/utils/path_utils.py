@@ -1,6 +1,7 @@
 import hashlib
+import os
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from functools import lru_cache
 from pathlib import Path
 
@@ -192,6 +193,101 @@ def should_skip_rel_file(
     if unignore_paths and matches_ignore_patterns(rel_path_str, unignore_paths):
         return False
     return has_ignored_dir_part(dir_parts)
+
+
+def base_module_qn(rel_path: Path, project_name: str) -> str:
+    """The module qualified name for a file, BEFORE collision disambiguation.
+
+    Shared by the tree-sitter indexer (``DefinitionProcessor.process_file``)
+    and the C++ module-qn map (``cpp_frontend.qn``), which must agree
+    byte-for-byte: the whole graph keys on these names, and a disagreement
+    silently splits one module into two nodes rather than raising (#1025).
+
+    ``__init__.py`` and ``mod.rs`` name their PACKAGE rather than themselves,
+    so they drop their own filename segment.
+    """
+    if rel_path.name in (cs.INIT_PY, cs.MOD_RS):
+        parts = rel_path.parent.parts
+    else:
+        parts = rel_path.with_suffix("").parts
+    return cs.SEPARATOR_DOT.join([project_name, *parts])
+
+
+def _walk_dir_keys(
+    dirpath: str, repo_prefix_len: int
+) -> tuple[tuple[str, ...], str, str]:
+    """Derive a walked directory's ``(parts, cache_key, prefix)``.
+
+    Split out of ``walk_eligible_files`` so the walk body reads as filtering
+    alone. The repository root is the special case: it has no relative path,
+    and its cache key is ``ROOT_DIR_KEY`` rather than the empty string.
+
+    The relative directory itself is deliberately not returned: every caller
+    needs it only as the ``dir_prefix`` built here, and handing back both
+    invites the two to be derived independently.
+    """
+    if len(dirpath) < repo_prefix_len:
+        return (), cs.ROOT_DIR_KEY, ""
+    rel_dir = dirpath[repo_prefix_len:].replace(os.sep, "/")
+    dir_parts = tuple(rel_dir.split("/")) if rel_dir else ()
+    return (
+        dir_parts,
+        rel_dir or cs.ROOT_DIR_KEY,
+        f"{rel_dir}/" if rel_dir else "",
+    )
+
+
+def walk_eligible_files(
+    repo_path: Path,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+    on_dir: Callable[[str, str], None] | None = None,
+) -> Iterator[tuple[str, str, str]]:
+    """Yield ``(dirpath, filename, rel_path)`` for every indexable file, in order.
+
+    The single definition of the repository walk. Both the tree-sitter indexer
+    (``GraphUpdater._collect_eligible_files``) and the C++ module-qn map
+    (``cpp_frontend.qn.build_module_qn_map``) consume it, because the module-qn
+    disambiguation rule hands the base qn to whichever file is seen FIRST and
+    appends an extension to the loser -- so the two must agree on ORDER, not
+    merely on which files are eligible (issues #1025, #1099).
+
+    They previously kept separate copies of this loop that shared only the
+    filter predicates. Nothing forced the two orderings to stay equal, and a
+    set-based parity test cannot see the difference.
+
+    ``on_dir`` receives ``(dir_key, dirpath)`` per visited directory, for the
+    indexer's mtime bookkeeping; it must not mutate the walk.
+    """
+    repo_str = str(repo_path)
+    # A repo path that already ends in a separator (the filesystem root, "/")
+    # must not have another counted, or the slice below eats the first
+    # character of every child -- "/tmp" became "mp" (CodeRabbit, PR #1511).
+    repo_prefix_len = len(repo_str) + (0 if repo_str.endswith(os.sep) else 1)
+    state_filenames = cs.CGR_STATE_FILENAMES
+    for dirpath, dirnames, filenames in os.walk(repo_str):
+        dir_parts, dir_key, dir_prefix = _walk_dir_keys(dirpath, repo_prefix_len)
+        if on_dir is not None:
+            on_dir(dir_key, dirpath)
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if should_keep_dir(d, dir_prefix, exclude_paths, unignore_paths)
+        )
+        for fname in sorted(filenames):
+            if fname in state_filenames:
+                continue
+            dot = fname.rfind(".")
+            suffix = fname[dot:] if dot != -1 else ""
+            rel_path_str = f"{dir_prefix}{fname}"
+            if not should_skip_rel_file(
+                rel_path_str,
+                dir_parts,
+                suffix,
+                exclude_paths=exclude_paths,
+                unignore_paths=unignore_paths,
+            ):
+                yield dirpath, fname, rel_path_str
 
 
 def project_roots_from_rows(
