@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -121,11 +122,30 @@ def run_cpp_oracle(target: Path) -> GraphData:
 
     for command in db.getAllCompileCommands():
         args = list(command.arguments)[1:]
+        # Per the Clang JSON Compilation Database spec, relative paths in
+        # `file` and the command are resolved against that entry's
+        # `directory`, not the reader's cwd. Parsing from the wrong working
+        # directory finds no source, so a spec-valid project produced an empty
+        # graph -- and since the eval's preflight now resolves correctly, that
+        # empty graph passed as a clean zero-inheritance grade for source
+        # nothing had analysed (Greptile, PR #1513).
+        cwd = Path.cwd()
         try:
-            tu = index.parse(None, args=args)
-        except ci.TranslationUnitLoadError:
+            os.chdir(command.directory)
+            try:
+                tu = index.parse(None, args=args)
+            except ci.TranslationUnitLoadError:
+                continue
+            # _walk must run INSIDE the entry's directory too: cursor
+            # locations come back as the relative paths the command used, and
+            # `_rel` resolves them against the process cwd. Restoring first
+            # made every location resolve outside `root`, so the walk dropped
+            # every cursor and produced an empty graph.
+            _walk(tu.cursor, root, nodes, edges, name_edges)
+        except OSError:
             continue
-        _walk(tu.cursor, root, nodes, edges, name_edges)
+        finally:
+            os.chdir(cwd)
 
     payload = OraclePayload(
         nodes=list(nodes.values()),

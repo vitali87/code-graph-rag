@@ -211,6 +211,43 @@ def test_the_cpp_oracle_emits_only_inheritance_name_edges(tmp_path: Path) -> Non
 
 
 @_NEEDS_LIBCLANG
+def test_a_relative_path_project_is_actually_graded_not_just_admitted(
+    tmp_path: Path,
+) -> None:
+    """The preflight and the oracle must agree about what they can read.
+
+    Fixing `_cpp_compile_db_units` to resolve against `command.directory`
+    without fixing `run_cpp_oracle` created a NEW fail-open: the preflight
+    admitted a spec-valid relative-path project and the oracle then graded
+    nothing, so an unanalysed target scored a clean zero (Greptile, PR #1513).
+
+    A guard that is smarter than the code it guards is worse than no guard,
+    because it converts a loud failure into a silent pass.
+    """
+    src = tmp_path / "a.cpp"
+    src.write_text(
+        "class Base {};\nclass Derived : public Base {};\n", encoding="utf-8"
+    )
+    (tmp_path / "compile_commands.json").write_text(
+        json.dumps(
+            [
+                {
+                    "directory": str(tmp_path),
+                    "command": "clang++ -std=c++17 -c a.cpp",
+                    "file": "a.cpp",  # relative, per the spec
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    # Admitted by the preflight AND graded by the oracle -- asserting only the
+    # first is what let this ship.
+    assert _cpp_compile_db_units(tmp_path) == 1
+    assert cpp_oracle_inheritance(tmp_path).inherits == {("a.cpp:2", "Base")}
+
+
+@_NEEDS_LIBCLANG
 class TestAnUngradableTargetIsRefusedNotScoredEmpty:
     """A target the oracle cannot read must stop the run, not score 0 vs 0.
 
