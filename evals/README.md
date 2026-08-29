@@ -266,6 +266,31 @@ the tests pin). Writes `evals/results/imports_scores.csv` and
 `evals/results/imports_diff.json`; the oracle and the misclassification signal
 are pinned by `codebase_rag/tests/test_import_resolution_eval.py`.
 
+**What the two rows measure, at different granularities.** The reduction reads as
+informative from the external side, where top-level names separate `numpy` from
+`os`, and it does not carry over: an internal import's top level *is* the project
+package, by the same expression that decides externality. So every first-party
+import from one file collapses to a single dep, and `imports/internal` measures
+which files import something internal rather than which module they import. A
+graph resolving `proj.alpha` to the wrong first-party module scores identically.
+That is deliberate, since resolved internal targets are graded by file in the
+structural L1 above and keying them here would fold resolution accuracy back into
+the misclassification signal this eval exists to isolate. It is stated because a
+`1.0` on that row is narrower than the label suggests, and pinned by
+`test_every_internal_import_from_one_file_collapses_to_one_dep`.
+
+The external key is the **first import-path component**, which matters before this
+eval is generalised (issue #1190). That component usually coincides with the
+distribution in this repository's dependencies, which is what makes the external
+row informative here. It is not guaranteed to: under a shared namespace package
+`import google.protobuf` and `import google.cloud.storage` both reduce to
+`google`, so two distributions become one dep, and `azure.*` behaves the same
+way. Java package paths break the same way as a rule rather than as an
+exception, with `com.fasterxml.jackson` and `com.google.common` both reducing to
+`com`. The difference is degree, not kind, so extending this eval to another
+language needs a different external-side unit. The external row, not the
+internal one, is what breaks first.
+
 ## Inheritance — resolved INHERITS and OVERRIDES
 
 The structural L1 grades `INHERITS` by the base's simple *name*. This eval grades
