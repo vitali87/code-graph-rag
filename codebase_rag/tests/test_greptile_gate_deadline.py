@@ -23,15 +23,28 @@ under `set -e`, and neither would emit the message this guards.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 JOB_ID = "greptile-gate"
+
+# The gate is a POSIX shell script and these tests EXECUTE it, with `bash`, a
+# stubbed `gh` and a stubbed `timeout` on PATH. Windows runners have no such
+# shell, so the tests cannot run there -- and the gate never runs there either:
+# `greptile-gate` is `runs-on: ubuntu-latest`. Skipping loses no coverage of
+# any platform the job actually uses.
+_NEEDS_POSIX_SHELL = pytest.mark.skipif(
+    sys.platform == "win32" or shutil.which("bash") is None,
+    reason="the gate is a bash script executed here; needs a POSIX shell",
+)
 
 
 def _gate_script() -> str:
@@ -116,6 +129,7 @@ def _run_gate(
     )
 
 
+@_NEEDS_POSIX_SHELL
 def test_a_stalled_api_call_still_reaches_the_deadline_message() -> None:
     """The defect: an unbounded `gh api` blocks past the deadline.
 
@@ -151,6 +165,7 @@ def test_a_stalled_api_call_still_reaches_the_deadline_message() -> None:
     )
 
 
+@_NEEDS_POSIX_SHELL
 def test_a_five_of_five_review_of_head_still_passes() -> None:
     """The bound must not break the success path.
 
@@ -192,6 +207,7 @@ def test_a_five_of_five_review_of_head_still_passes() -> None:
     assert "5/5" in result.stdout
 
 
+@_NEEDS_POSIX_SHELL
 def test_many_stalled_candidates_cannot_outlast_the_deadline() -> None:
     """Per-call bounds do not bound the loop.
 
