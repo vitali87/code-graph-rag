@@ -227,14 +227,24 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
     actually parse.
     """
 
-    def test_a_missing_database_yields_no_units(self, tmp_path: Path) -> None:
+    def test_a_missing_database_is_reported_as_absent_not_empty(
+        self, tmp_path: Path
+    ) -> None:
+        # `None` rather than `0`: the caller reports "no compile_commands.json"
+        # for one and "it yielded no translation units" for the other, and
+        # collapsing them sends the reader to the wrong remedy (CodeRabbit,
+        # PR #1513).
         (tmp_path / "a.cpp").write_text(
             "class Base {};\nclass Derived : public Base {};\n", encoding="utf-8"
         )
 
-        assert _cpp_compile_db_units(tmp_path) == 0
+        assert _cpp_compile_db_units(tmp_path) is None
 
-    def test_an_empty_database_yields_no_units(self, tmp_path: Path) -> None:
+    def test_an_empty_database_is_reported_as_empty_not_absent(
+        self, tmp_path: Path
+    ) -> None:
+        # The counterpart: the file opened, so the remedy is "your database is
+        # stale or empty", not "create one".
         (tmp_path / "a.cpp").write_text(
             "class Base {};\nclass Derived : public Base {};\n", encoding="utf-8"
         )
@@ -280,6 +290,34 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
         project = _cpp_project(tmp_path, "// only a comment, no declarations\n")
 
         assert _cpp_compile_db_units(project) > 0
+
+    def test_a_relative_source_path_is_resolved_against_its_directory(
+        self, tmp_path: Path
+    ) -> None:
+        """Spec-valid relative paths must not read as an ungradable target.
+
+        The Clang JSON Compilation Database spec resolves `file` and relative
+        command paths against that entry's `directory`, not the reader's cwd.
+        Checking them as given skipped spec-valid entries, so a perfectly
+        usable database was refused (CodeRabbit, PR #1513).
+        """
+        (tmp_path / "a.cpp").write_text(
+            "class Base {};\nclass Derived : public Base {};\n", encoding="utf-8"
+        )
+        (tmp_path / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(tmp_path),
+                        "command": "clang++ -std=c++17 -c a.cpp",
+                        "file": "a.cpp",  # relative, per the spec
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        assert _cpp_compile_db_units(tmp_path) == 1
 
     def test_a_usable_database_yields_units(self, tmp_path: Path) -> None:
         # The control: without this the three assertions above are satisfied by

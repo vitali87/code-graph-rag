@@ -286,7 +286,7 @@ uv run python -m evals.inheritance --target repo --language csharp    # Roslyn
 ```
 
 **Language scope, and why the numbers are not comparable across it** (issue
-#1190). Each arm grades a different unit, so each writes its own row label and a
+ #1190). Each arm grades a different unit, so each writes its own row label and a
 1.0 in one is not a 1.0 in another:
 
 | `--language` | oracle | row label | unit graded | OVERRIDES |

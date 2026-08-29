@@ -6,6 +6,7 @@
 # <first-party> import <Base>`, skipping attribute/ambiguous/external bases
 # (counted, never dropped), so it stays independent of cgr.
 import ast
+import os
 from pathlib import Path
 from typing import Annotated, NamedTuple
 
@@ -264,14 +265,14 @@ def java_cgr_inheritance(target: Path, project: str) -> CgrResult:
     return CgrResult(inherits=inherits, overrides=set())
 
 
-def _cpp_compile_db_units(target: Path) -> int:
-    """How many translation units the target's compilation database yields.
+def _cpp_compile_db_units(target: Path) -> int | None:
+    """Translation units the target's compilation database yields, or None.
 
-    Zero covers three distinct causes -- no `compile_commands.json`, an empty
-    one, and one naming files that no longer exist -- and all three must stop
-    the run rather than grade nothing. Returns a count rather than a bool so
-    the caller could report it; the distinction between causes is not worth
-    surfacing when the remedy is identical.
+    `None` means the database could not be OPENED (absent or unreadable); a
+    count of zero means it opened and yielded nothing gradeable (empty, or
+    naming files that no longer exist). Both stop the run, but the remedies
+    differ -- "create one" versus "the one you have is stale" -- and reporting
+    the wrong cause sends the reader to the wrong fix (CodeRabbit, PR #1513).
     """
     try:
         import clang.cindex as ci
@@ -280,10 +281,10 @@ def _cpp_compile_db_units(target: Path) -> int:
     except Exception:
         # fromDirectory raises CompilationDatabaseError when the file is absent
         # or unreadable; libclang may be missing entirely on some platforms.
-        return 0
+        return None
     commands = db.getAllCompileCommands()
     if commands is None:  # an empty database returns None, not an empty list
-        return 0
+        return 0  # opened, but declares nothing
     # Count units that actually PARSE, not entries that merely exist: a stale
     # database naming files that have since been deleted has entries and
     # yields no AST, which is the fail-open case this guard is for.
@@ -297,12 +298,22 @@ def _cpp_compile_db_units(target: Path) -> int:
     parsed = 0
     index = ci.Index.create()
     for command in commands:
-        if not Path(command.filename).exists():
+        # Per the Clang JSON Compilation Database spec, `file` and any relative
+        # paths in the command are resolved against that entry's `directory`,
+        # not the reader's cwd. Checking them as given skips spec-valid entries
+        # and parses others from the wrong working directory, so a usable
+        # database is reported ungradable (CodeRabbit, PR #1513).
+        directory = Path(command.directory)
+        if not (directory / command.filename).exists():
             continue
+        cwd = Path.cwd()
         try:
+            os.chdir(directory)
             tu = index.parse(None, args=list(command.arguments)[1:])
         except ci.TranslationUnitLoadError:
             continue
+        finally:
+            os.chdir(cwd)
         if any(d.severity >= ci.Diagnostic.Fatal for d in tu.diagnostics):
             continue
         parsed += 1
@@ -512,8 +523,12 @@ def main(
         # empty graph and the run scores 0 edges against 0 edges -- an UNGRADED
         # target reported as a clean result. Same fail-open shape the
         # cpp_available() check above exists to prevent (Greptile, PR #1513).
-        if not _cpp_compile_db_units(target):
+        units = _cpp_compile_db_units(target)
+        if units is None:
             logger.error(ls.CPP_ORACLE_NO_COMPILE_DB.format(target=target))
+            raise typer.Exit(code=1)
+        if units == 0:
+            logger.error(ls.CPP_ORACLE_EMPTY_COMPILE_DB.format(target=target))
             raise typer.Exit(code=1)
         # The libclang oracle names bases by SIMPLE name while it pins the
         # subclass to a location, so the row carries its own label: a C++ 1.0
