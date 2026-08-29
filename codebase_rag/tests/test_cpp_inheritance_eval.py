@@ -632,6 +632,48 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
         assert _cpp_compile_db_units(target) == 1
         assert cpp_oracle_inheritance(target).inherits == {("lib.hpp:2", "TargetBase")}
 
+    def test_an_unreadable_out_of_target_driver_is_still_a_hole(
+        self, tmp_path: Path
+    ) -> None:
+        """Unreadability is a hole wherever the source sits.
+
+        A consequence of admitting out-of-target drivers for their in-target
+        cursors: once such a driver CAN contribute edges, one we cannot read
+        might have been the one exposing in-target declarations -- and we
+        cannot know, because reading it is exactly what failed. Treating it as
+        harmless because its own path is outside the target reasons from the
+        one fact that no longer decides anything (Greptile, PR #1513).
+
+        `in_target` now gates only the EXISTENCE check, where it is genuinely
+        the right question: a source outside the target that does not exist
+        was never going to be read anyway.
+        """
+        target = tmp_path / "target"
+        target.mkdir()
+        build = tmp_path / "build"
+        build.mkdir()
+        (target / "lib.hpp").write_text(
+            "class TB {};\nclass TD : public TB {};\n", encoding="utf-8"
+        )
+        driver = build / "driver.cpp"
+        driver.write_text('#include "lib.hpp"\n', encoding="utf-8")
+        (target / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        # Never created, so the chdir fails: the entry cannot
+                        # be read, and it is an out-of-target source.
+                        "directory": str(build / "gone"),
+                        "command": f"clang++ -std=c++17 -I{target} -c {driver}",
+                        "file": str(driver),
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        assert _cpp_compile_db_units(target) == -1
+
     def test_a_usable_database_yields_units(self, tmp_path: Path) -> None:
         # The control: without this the three assertions above are satisfied by
         # a helper that returns 0 unconditionally.

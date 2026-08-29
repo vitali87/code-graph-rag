@@ -348,19 +348,20 @@ def _cpp_compile_db_units(target: Path) -> int | None:
             # chance (Greptile, PR #1513).
             os.chdir(directory)
         except OSError:
-            if in_target:
-                unreadable += 1
+            # Unreadable is a hole wherever the source sits: after admitting
+            # out-of-target drivers for their in-target cursors, an entry we
+            # cannot read might have been the one exposing in-target
+            # declarations, and we cannot know (Greptile, PR #1513).
+            unreadable += 1
             continue
         try:
             try:
                 tu = index.parse(None, args=list(command.arguments)[1:])
             except ci.TranslationUnitLoadError:
-                if in_target:
-                    unreadable += 1
+                unreadable += 1
                 continue
             if any(d.severity >= ci.Diagnostic.Fatal for d in tu.diagnostics):
-                if in_target:
-                    unreadable += 1
+                unreadable += 1
                 continue
             # An entry counts when the oracle can take something from it OR
             # when it is an in-target unit that legitimately declares nothing
