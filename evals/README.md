@@ -279,12 +279,17 @@ the misclassification signal this eval exists to isolate. It is stated because a
 `1.0` on that row is narrower than the label suggests, and pinned by
 `test_every_internal_import_from_one_file_collapses_to_one_dep`.
 
-The reduction is also **Python-shaped**, which matters before this eval is
-generalised (issue #1190). Python's flat package namespace is what makes a
-top-level name identify a third-party package; Java's does not, where
-`com.fasterxml.jackson` and `com.google.common` both reduce to `com`. Extending
-this eval to another language therefore needs a different external-side unit.
-The external row, not the internal one, is what breaks first.
+The external key is the **first import-path component**, which matters before this
+eval is generalised (issue #1190). That component usually coincides with the
+distribution in this repository's dependencies, which is what makes the external
+row informative here. It is not guaranteed to: under a shared namespace package
+`import google.protobuf` and `import google.cloud.storage` both reduce to
+`google`, so two distributions become one dep, and `azure.*` behaves the same
+way. Java package paths break the same way as a rule rather than as an
+exception, with `com.fasterxml.jackson` and `com.google.common` both reducing to
+`com`. The difference is degree, not kind, so extending this eval to another
+language needs a different external-side unit. The external row, not the
+internal one, is what breaks first.
 
 ## Inheritance — resolved INHERITS and OVERRIDES
 
