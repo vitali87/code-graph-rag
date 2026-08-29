@@ -542,7 +542,18 @@ jobs:
                 # Resolve to the full SHA so the comparison below is exact
                 # equality, never a prefix guess; an unresolvable reference
                 # just skips this candidate.
-                reviewed=$(timeout 60 gh api "repos/$REPO/commits/$reviewed" \
+                #
+                # The bound is the REMAINING budget, not a fixed 60s. A
+                # per-call bound does not bound the loop: one stalled call per
+                # abbreviated candidate accumulates, and with enough candidates
+                # the total runs past the deadline and into the job timeout,
+                # which kills the job without the remedy below. Bounding each
+                # call by what is left makes the aggregate unable to exceed the
+                # deadline however many candidates there are.
+                remaining=$(( deadline - $(date +%s) ))
+                [ "$remaining" -lt 1 ] && break
+                [ "$remaining" -gt 60 ] && remaining=60
+                reviewed=$(timeout "$remaining" gh api "repos/$REPO/commits/$reviewed" \
                   --jq .sha 2>/dev/null || true)
               fi
               [ "$reviewed" = "$HEAD_SHA" ] || continue
