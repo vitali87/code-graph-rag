@@ -215,19 +215,22 @@ def base_module_qn(rel_path: Path, project_name: str) -> str:
 
 def _walk_dir_keys(
     dirpath: str, repo_prefix_len: int
-) -> tuple[str, tuple[str, ...], str, str]:
-    """Derive a walked directory's ``(rel_dir, parts, key, prefix)``.
+) -> tuple[tuple[str, ...], str, str]:
+    """Derive a walked directory's ``(parts, cache_key, prefix)``.
 
     Split out of ``walk_eligible_files`` so the walk body reads as filtering
     alone. The repository root is the special case: it has no relative path,
     and its cache key is ``ROOT_DIR_KEY`` rather than the empty string.
+
+    The relative directory itself is deliberately not returned: every caller
+    needs it only as the ``dir_prefix`` built here, and handing back both
+    invites the two to be derived independently.
     """
     if len(dirpath) < repo_prefix_len:
-        return "", (), cs.ROOT_DIR_KEY, ""
+        return (), cs.ROOT_DIR_KEY, ""
     rel_dir = dirpath[repo_prefix_len:].replace(os.sep, "/")
     dir_parts = tuple(rel_dir.split("/")) if rel_dir else ()
     return (
-        rel_dir,
         dir_parts,
         rel_dir or cs.ROOT_DIR_KEY,
         f"{rel_dir}/" if rel_dir else "",
@@ -260,9 +263,7 @@ def walk_eligible_files(
     repo_prefix_len = len(repo_str) + 1
     state_filenames = cs.CGR_STATE_FILENAMES
     for dirpath, dirnames, filenames in os.walk(repo_str):
-        rel_dir, dir_parts, dir_key, dir_prefix = _walk_dir_keys(
-            dirpath, repo_prefix_len
-        )
+        dir_parts, dir_key, dir_prefix = _walk_dir_keys(dirpath, repo_prefix_len)
         if on_dir is not None:
             on_dir(dir_key, dirpath)
         dirnames[:] = sorted(
