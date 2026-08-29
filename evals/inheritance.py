@@ -313,16 +313,21 @@ def _cpp_compile_db_units(target: Path) -> int | None:
         # database is reported ungradable (CodeRabbit, PR #1513).
         directory = Path(command.directory)
         source = directory / command.filename
-        if not source.exists():
-            continue
+        # Scope BEFORE existence: an out-of-target entry is legitimately
+        # ignored whether or not it exists, while a missing IN-target source is
+        # a hole in the grade. Testing existence first counted neither, so a
+        # deleted in-target source was skipped as silently as an out-of-target
+        # one (Greptile, PR #1513).
+        #
         # The oracle only walks cursors whose file resolves INSIDE the target
-        # (`_rel` returns None otherwise), so a database entry pointing outside
-        # it contributes nothing to the grade. Counting it here would admit a
-        # target the oracle then scores empty -- the same preflight/oracle
-        # asymmetry twice already fixed in this file (Greptile, PR #1513).
+        # (`_rel` returns None otherwise), so an entry pointing outside it
+        # contributes nothing to the grade and is not a hole.
         try:
             source.resolve().relative_to(target.resolve())
-        except ValueError:
+        except (ValueError, OSError):
+            continue
+        if not source.exists():
+            unreadable += 1
             continue
         cwd = Path.cwd()
         try:

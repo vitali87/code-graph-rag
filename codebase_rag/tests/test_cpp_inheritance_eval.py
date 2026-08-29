@@ -309,7 +309,10 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
             encoding="utf-8",
         )
 
-        assert _cpp_compile_db_units(tmp_path) == 0
+        # -1 rather than 0: the sole entry is a deleted IN-target source,
+        # which is now counted as a hole rather than skipped. Both refuse the
+        # run; the sign is what the error message keys on.
+        assert _cpp_compile_db_units(tmp_path) == -1
 
     def test_a_valid_but_empty_translation_unit_still_counts(
         self, tmp_path: Path
@@ -523,6 +526,72 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
         # The premise, so this cannot pass on a fixture where nothing parses.
         assert cpp_oracle_inheritance(tmp_path).inherits == {("good.cpp:2", "GoodBase")}
 
+    def test_a_deleted_in_target_source_counts_as_a_hole(self, tmp_path: Path) -> None:
+        """A missing in-target source is a hole, not an entry to skip.
+
+        The existence check ran BEFORE the scope check and `continue`d without
+        counting, so a deleted in-target source was skipped as silently as a
+        legitimately out-of-scope one and the target was admitted with a hole
+        (Greptile, PR #1513). The order is now scope-then-existence.
+        """
+        good = tmp_path / "good.cpp"
+        good.write_text(
+            "class GoodBase {};\nclass GoodDerived : public GoodBase {};\n",
+            encoding="utf-8",
+        )
+        gone = tmp_path / "deleted.cpp"  # named by the database, never created
+        (tmp_path / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(tmp_path),
+                        "command": f"clang++ -std=c++17 -c {good}",
+                        "file": str(good),
+                    },
+                    {
+                        "directory": str(tmp_path),
+                        "command": f"clang++ -std=c++17 -c {gone}",
+                        "file": str(gone),
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        assert _cpp_compile_db_units(tmp_path) == -1
+
+    def test_a_missing_out_of_target_source_is_not_a_hole(self, tmp_path: Path) -> None:
+        """The control for the ordering, and the reason it is scope-first.
+
+        An out-of-target entry contributes nothing to the grade whether or not
+        it exists, so it must NOT be counted. Without this, moving the
+        existence check after the scope check could have been "fixed" by
+        counting every missing file, which would refuse targets whose database
+        happens to mention a vendored source that is gone.
+        """
+        good = tmp_path / "good.cpp"
+        good.write_text("class B {};\nclass D : public B {};\n", encoding="utf-8")
+        outside = tmp_path.parent / "elsewhere_gone.cpp"
+        (tmp_path / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(tmp_path),
+                        "command": f"clang++ -std=c++17 -c {good}",
+                        "file": str(good),
+                    },
+                    {
+                        "directory": str(tmp_path.parent),
+                        "command": f"clang++ -c {outside}",
+                        "file": str(outside),
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        assert _cpp_compile_db_units(tmp_path) == 1
+
     def test_a_usable_database_yields_units(self, tmp_path: Path) -> None:
         # The control: without this the three assertions above are satisfied by
         # a helper that returns 0 unconditionally.
@@ -580,3 +649,57 @@ def test_a_cpp_file_outside_the_compilation_database_is_not_a_false_positive(
     assert uncovered not in oracle.inherits
     assert row["fp"] == 0
     assert row["precision"] == 1.0
+
+
+def test_every_preflight_skip_is_counted_or_deliberately_silent() -> None:
+    """Structural guard: a new skip path must not be silent by accident.
+
+    Seven findings on PR #1513 were one class -- the preflight admitting a
+    target the oracle then partly or wholly fails to grade -- and four of them
+    were a `continue` that dropped an entry without recording it. Rather than
+    wait for the eighth, this pins the accounting: exactly ONE skip in the
+    loop may be silent (an out-of-scope entry, which contributes nothing to
+    the grade and is therefore not a hole); every other must increment
+    `unreadable`.
+
+    An AST check rather than a behavioural one, because the failure mode is a
+    path that no fixture happens to reach -- which is precisely what a
+    behavioural test cannot see.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from evals import inheritance
+
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(inheritance._cpp_compile_db_units))
+    )
+    loop = next(n for n in ast.walk(tree) if isinstance(n, ast.For))
+
+    silent = 0
+    for node in ast.walk(loop):
+        if not isinstance(node, ast.Continue):
+            continue
+        # The statement list this `continue` belongs to; a counted skip has an
+        # `unreadable += 1` immediately before it.
+        counted = any(
+            isinstance(sib, ast.AugAssign)
+            and isinstance(sib.target, ast.Name)
+            and sib.target.id == "unreadable"
+            for parent in ast.walk(loop)
+            for body in (
+                getattr(parent, "body", []),
+                getattr(parent, "orelse", []),
+                getattr(parent, "finalbody", []),
+            )
+            if node in body
+            for sib in body
+        )
+        if not counted:
+            silent += 1
+
+    assert silent == 1, (
+        f"{silent} skip paths in the preflight loop drop an entry without "
+        "counting it; exactly one (the out-of-scope entry) may do so"
+    )
