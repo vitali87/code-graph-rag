@@ -452,7 +452,8 @@ jobs:
     name: Greptile 5/5 Gate
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    timeout-minutes: 65
+    # Comfortably over the poll deadline below; the deadline is the real bound.
+    timeout-minutes: 25
     permissions:
       # contents: read backs the commits API call that resolves an
       # abbreviated reviewed-commit reference to a full SHA.
@@ -473,9 +474,39 @@ jobs:
           # a missing review, or any lower score fails this job, which fails
           # "All Checks Pass", which the branch ruleset requires. Greptile
           # posts its review minutes after a push, so poll until its summary
-          # comment covers this exact commit. The deadline leaves headroom
-          # over Greptile's slowest observed review (37 minutes on PR #1404).
-          deadline=$(( $(date +%s) + 3600 ))
+          # comment covers this exact commit.
+          #
+          # The deadline is 20 minutes rather than 60, because a job that polls
+          # holds the WHOLE RUN open, and GitHub refuses the logs of every job
+          # in a run until the run completes (issue #1507). A gate waiting on an
+          # external service was therefore withholding the failure logs of the
+          # unit-test matrix beside it -- on #1480, nine failing jobs were
+          # undiagnosable for over an hour while this job polled.
+          #
+          # 20 minutes costs no legitimate pass. Measured over 48 gate runs:
+          # every success that did not need human intervention finished within
+          # 11 minutes, and 8 of 9 failures within 18. The three successes past
+          # 20 minutes (28, 46 and 54) each had a review REQUESTED mid-poll, so
+          # none of them would have passed unaided anyway -- and the remedy for
+          # those is the same after a fast fail as during a long poll: request
+          # the review, then re-run this job.
+          #
+          # Failing closed is safe here. Nothing merges without a 5/5 review of
+          # head; a fast fail only moves the wait out of a job that is blocking
+          # everyone else's logs.
+          # `timeout` bounds the API calls below. If it were ever missing, each
+          # call would fail, `|| true` would swallow it, and the gate would
+          # report "no review yet" forever -- a false statement that blocks
+          # every merge. Fail loudly here instead: a missing tool is a broken
+          # gate, not an unreviewed pull request.
+          command -v timeout >/dev/null || {
+            echo "❌ 'timeout' (GNU coreutils) is not available on this runner."
+            echo "The gate bounds its API calls with it; without it a stalled"
+            echo "request cannot be distinguished from a missing review."
+            exit 1
+          }
+
+          deadline=$(( $(date +%s) + 1200 ))
           while :; do
             # --jq would run per page; slurp the pages so every scored comment
             # is considered across all of them. Walk candidates NEWEST FIRST
@@ -483,11 +514,22 @@ jobs:
             # the globally latest comment instead would let a late update to
             # an old-commit review mask a valid 5/5 review of head. Bodies are
             # multiline, so ship them through base64.
-            candidates=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            # `timeout` bounds the request itself. The deadline below is only
+            # consulted AFTER this call returns, so an unbounded `gh api` that
+            # stalls runs past the deadline and into the job timeout, which
+            # kills the job WITHOUT printing the remedy underneath -- the whole
+            # point of failing fast. Capping the poll at 20 minutes made that
+            # more reachable, not less: the job timeout is now 25 minutes.
+            # A stalled or failed request is treated as a poll that found no
+            # review, so the loop proceeds to the deadline check and either
+            # retries or fails with guidance. `|| true` keeps a non-zero exit
+            # (124 on timeout) from aborting the loop.
+            candidates=$(timeout 120 gh api "repos/$REPO/issues/$PR/comments" --paginate 2>/dev/null \
               | jq -rs 'add
                         | [.[] | select(.user.login == "greptile-apps[bot]")
                                | select(.body | contains("Confidence Score:"))]
-                        | sort_by(.updated_at) | reverse | .[].body | @base64')
+                        | sort_by(.updated_at) | reverse | .[].body | @base64' \
+              2>/dev/null || true)
             score=""
             for encoded in $candidates; do
               body=$(printf '%s' "$encoded" | base64 -d)
@@ -500,7 +542,18 @@ jobs:
                 # Resolve to the full SHA so the comparison below is exact
                 # equality, never a prefix guess; an unresolvable reference
                 # just skips this candidate.
-                reviewed=$(gh api "repos/$REPO/commits/$reviewed" \
+                #
+                # The bound is the REMAINING budget, not a fixed 60s. A
+                # per-call bound does not bound the loop: one stalled call per
+                # abbreviated candidate accumulates, and with enough candidates
+                # the total runs past the deadline and into the job timeout,
+                # which kills the job without the remedy below. Bounding each
+                # call by what is left makes the aggregate unable to exceed the
+                # deadline however many candidates there are.
+                remaining=$(( deadline - $(date +%s) ))
+                [ "$remaining" -lt 1 ] && break
+                [ "$remaining" -gt 60 ] && remaining=60
+                reviewed=$(timeout "$remaining" gh api "repos/$REPO/commits/$reviewed" \
                   --jq .sha 2>/dev/null || true)
               fi
               [ "$reviewed" = "$HEAD_SHA" ] || continue
@@ -520,8 +573,13 @@ jobs:
             fi
             echo "No Greptile review of $HEAD_SHA yet, waiting ..."
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "❌ No Greptile review of $HEAD_SHA appeared within 60 minutes."
-              echo "Re-trigger the Greptile review, then re-run this job."
+              echo "❌ No Greptile review of $HEAD_SHA appeared within 20 minutes."
+              echo "Greptile does not review a new head automatically here: post"
+              echo "'@greptile-apps review' on the pull request, wait for its"
+              echo "summary comment to name $HEAD_SHA, then re-run this job with"
+              echo "  gh run rerun \$GITHUB_RUN_ID --failed"
+              echo "This job fails fast so the other jobs' logs are readable now;"
+              echo "see issue #1507."
               exit 1
             fi
             sleep 60

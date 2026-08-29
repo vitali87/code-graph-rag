@@ -351,6 +351,16 @@ KEY_PARAMETERS = "parameters"
 # Declared Markdown front-matter, as sorted "key=value" entries (issue #1448).
 KEY_FRONT_MATTER = "front_matter"
 KEY_DECORATORS = "decorators"
+# Declared POSITIONAL parameter names of a Python function, receiver included,
+# for arity-TypeError diagnosis (issue #227). Positional-only because CPython's
+# "takes N positional arguments" counts nothing after `*`/`*args`, and
+# receiver-inclusive because it counts the bound `self`.
+#
+# Absent on every other language rather than empty: absent means "kinds
+# unknown", which `diagnose_arity` answers with "cannot corroborate", whereas
+# an empty list would assert "declares zero positional parameters" and produce
+# a false mismatch on correct code.
+KEY_POSITIONAL_PARAMS = "positional_params"
 # Target-module qn candidates of `#[cfg(test)] mod NAME;` declarations in a
 # Rust file, stored on the DECLARING module's node (issue #1010). The
 # ungated counterpart lets a production target's declaration of the SAME

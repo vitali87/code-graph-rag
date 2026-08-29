@@ -288,6 +288,9 @@ def _is_abstract_decorator(decorators: list[str]) -> bool:
 _PY_NAMED_PARAMETERS = frozenset(
     {cs.TS_PY_DEFAULT_PARAMETER, cs.TS_PY_TYPED_DEFAULT_PARAMETER}
 )
+_PY_KEYWORD_ONLY_BOUNDARIES = frozenset(
+    {cs.TS_PY_KEYWORD_SEPARATOR, cs.TS_PY_LIST_SPLAT_PATTERN}
+)
 _PY_SCOPE_BOUNDARIES = frozenset(
     {
         cs.TS_PY_FUNCTION_DEFINITION,
@@ -380,34 +383,17 @@ _RUST_REF_PATTERNS = frozenset(
 )
 
 
-def _python_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
+def _invoked_parameter_names(
+    body_node: Node,
+    candidates: set[str],
+    scan: _CallableScanConfig,
+    scope_bound_names: Callable[[Node], set[str]],
+) -> set[str]:
+    # Every language differs only in its scan config and its scope-binding
+    # rule; the scan itself is shared.
     invoked: set[str] = set()
     _scan_invoked_parameters(
-        body_node, set(candidates), invoked, _PY_SCAN, _python_scope_bound_names
-    )
-    return invoked
-
-
-def _go_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
-    invoked: set[str] = set()
-    _scan_invoked_parameters(
-        body_node, set(candidates), invoked, _GO_SCAN, _go_scope_bound_names
-    )
-    return invoked
-
-
-def _js_ts_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
-    invoked: set[str] = set()
-    _scan_invoked_parameters(
-        body_node, set(candidates), invoked, _JS_SCAN, _js_ts_scope_bound_names
-    )
-    return invoked
-
-
-def _cpp_invoked_parameter_names(body_node: Node, candidates: set[str]) -> set[str]:
-    invoked: set[str] = set()
-    _scan_invoked_parameters(
-        body_node, set(candidates), invoked, _CPP_SCAN, _cpp_scope_bound_names
+        body_node, set(candidates), invoked, scan, scope_bound_names
     )
     return invoked
 
@@ -727,6 +713,31 @@ def python_parameter_names(func_node: Node) -> list[str]:
     return names
 
 
+def python_positional_parameter_names(func_node: Node) -> list[str]:
+    # Declared POSITIONAL parameters, in order, with the receiver kept.
+    #
+    # Distinct from `python_parameter_names` in both respects, and both
+    # differences are load-bearing for arity diagnosis (issue #227):
+    # `*`/`*args` end the positional run because CPython counts nothing after
+    # them in "takes N positional arguments", and the receiver stays because
+    # CPython counts the bound `self` in that same N. `/` marks the preceding
+    # parameters positional-ONLY and does not end the run.
+    params_node = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params_node is None:
+        return []
+    names: list[str] = []
+    for child in params_node.named_children:
+        if child.type in _PY_KEYWORD_ONLY_BOUNDARIES:
+            break
+        if child.type == cs.TS_PY_DICTIONARY_SPLAT_PATTERN:
+            continue
+        if child.type == cs.TS_PY_POSITIONAL_SEPARATOR:
+            continue
+        if (name := _python_parameter_name(child)) is not None:
+            names.append(name)
+    return names
+
+
 def callable_parameter_indices(
     func_node: Node, language: cs.SupportedLanguage | None
 ) -> dict[str, int]:
@@ -735,22 +746,22 @@ def callable_parameter_indices(
     # index lines up with how bound methods are invoked).
     if language == cs.SupportedLanguage.PYTHON:
         names = python_parameter_names(func_node)
-        invoke = _python_invoked_parameter_names
+        scan, scope_bound = _PY_SCAN, _python_scope_bound_names
     elif language == cs.SupportedLanguage.GO:
         names = go_parameter_names(func_node)
-        invoke = _go_invoked_parameter_names
+        scan, scope_bound = _GO_SCAN, _go_scope_bound_names
     elif language in cs.JS_TS_LANGUAGES:
         names = js_ts_parameter_names(func_node)
-        invoke = _js_ts_invoked_parameter_names
+        scan, scope_bound = _JS_SCAN, _js_ts_scope_bound_names
     elif language == cs.SupportedLanguage.CPP:
         names = cpp_parameter_names(func_node)
-        invoke = _cpp_invoked_parameter_names
+        scan, scope_bound = _CPP_SCAN, _cpp_scope_bound_names
     else:
         return {}
     body_node = func_node.child_by_field_name(cs.FIELD_BODY)
     if body_node is None or not names:
         return {}
-    invoked = invoke(body_node, set(names))
+    invoked = _invoked_parameter_names(body_node, set(names), scan, scope_bound)
     if not invoked:
         return {}
     return {name: index for index, name in enumerate(names) if name in invoked}
@@ -1294,6 +1305,13 @@ def ingest_method(
             file_path, repo_path
         ).as_posix()
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    # Python only, and the receiver is deliberately kept: CPython counts the
+    # bound `self` in "takes N positional arguments", so a stored list that
+    # dropped it would under-count by one on every method (issue #227).
+    if language == cs.SupportedLanguage.PYTHON:
+        method_props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
+            method_node
+        )
     method_props.update(fingerprint_props(method_node))
 
     # Persist @property status on the node so an incremental rebuild can restore

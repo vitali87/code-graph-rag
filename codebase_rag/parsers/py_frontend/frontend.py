@@ -32,6 +32,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
+from ..frontend_mode import resolve_frontend_mode
 from ..frontends.protocol import CallSiteKey, ResolvedCallSite, SemanticFacts
 
 # Generous enough for jedi's cold-start typeshed parse (the dominant cost,
@@ -50,14 +51,14 @@ def python_frontend_available() -> bool:
 
 
 def resolve_python_frontend() -> cs.PythonFrontend:
-    # The parser fingerprint records the RESOLVED mode: a graph built with
-    # jedi facts and one without must never share an identity.
-    mode = settings.PYTHON_FRONTEND
-    if mode == cs.PythonFrontend.HEURISTIC:
-        return mode
-    if not python_frontend_available():
-        return cs.PythonFrontend.HEURISTIC
-    return cs.PythonFrontend.JEDI
+    # Only two modes: anything not explicitly HEURISTIC means JEDI when jedi
+    # is importable, so the non-fallback branch always lands on JEDI.
+    return resolve_frontend_mode(
+        settings.PYTHON_FRONTEND,
+        cs.PythonFrontend.HEURISTIC,
+        python_frontend_available,
+        auto_resolves_to=cs.PythonFrontend.JEDI,
+    )
 
 
 class _CallSite(ast.NodeVisitor):

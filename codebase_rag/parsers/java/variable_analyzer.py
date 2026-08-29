@@ -140,19 +140,32 @@ class JavaVariableAnalyzerMixin:
             local_var_types[param_name] = resolved_type
             logger.debug(ls.JAVA_VARARGS_PARAM, name=param_name, type=resolved_type)
 
+    def _traverse_for(
+        self,
+        node: ASTNode,
+        node_type: str,
+        process: Callable[[ASTNode, dict[str, str], str], None],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        # One walker for every "find nodes of type T under this scope and feed
+        # them to a processor" pass; the passes differ only in (T, processor).
+        if node.type == node_type:
+            process(node, local_var_types, module_qn)
+
+        for child in node.children:
+            self._traverse_for(child, node_type, process, local_var_types, module_qn)
+
     def _analyze_java_local_variables(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        self._traverse_for_local_variables(scope_node, local_var_types, module_qn)
-
-    def _traverse_for_local_variables(
-        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        if node.type == cs.TS_LOCAL_VARIABLE_DECLARATION:
-            self._process_java_variable_declaration(node, local_var_types, module_qn)
-
-        for child in node.children:
-            self._traverse_for_local_variables(child, local_var_types, module_qn)
+        self._traverse_for(
+            scope_node,
+            cs.TS_LOCAL_VARIABLE_DECLARATION,
+            self._process_java_variable_declaration,
+            local_var_types,
+            module_qn,
+        )
 
     def _process_java_variable_declaration(
         self, decl_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -238,16 +251,13 @@ class JavaVariableAnalyzerMixin:
     def _analyze_java_constructor_assignments(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        self._traverse_for_assignments(scope_node, local_var_types, module_qn)
-
-    def _traverse_for_assignments(
-        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        if node.type == cs.TS_ASSIGNMENT_EXPRESSION:
-            self._process_java_assignment(node, local_var_types, module_qn)
-
-        for child in node.children:
-            self._traverse_for_assignments(child, local_var_types, module_qn)
+        self._traverse_for(
+            scope_node,
+            cs.TS_ASSIGNMENT_EXPRESSION,
+            self._process_java_assignment,
+            local_var_types,
+            module_qn,
+        )
 
     def _process_java_assignment(
         self, assignment_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -290,16 +300,13 @@ class JavaVariableAnalyzerMixin:
     def _analyze_java_enhanced_for_loops(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        self._traverse_for_enhanced_for_loops(scope_node, local_var_types, module_qn)
-
-    def _traverse_for_enhanced_for_loops(
-        self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        if node.type == cs.TS_ENHANCED_FOR_STATEMENT:
-            self._process_enhanced_for_statement(node, local_var_types, module_qn)
-
-        for child in node.children:
-            self._traverse_for_enhanced_for_loops(child, local_var_types, module_qn)
+        self._traverse_for(
+            scope_node,
+            cs.TS_ENHANCED_FOR_STATEMENT,
+            self._process_enhanced_for_statement,
+            local_var_types,
+            module_qn,
+        )
 
     def _process_enhanced_for_statement(
         self, for_node: ASTNode, local_var_types: dict[str, str], module_qn: str

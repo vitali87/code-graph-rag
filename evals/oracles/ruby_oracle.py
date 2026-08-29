@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from codebase_rag import constants as cs
 
 from .. import constants as ec
 from ..types_defs import GraphData, OraclePayload
-from ._common import is_ignored, payload_to_graph, run_node_oracle_payload
+from ._common import (
+    is_ignored,
+    node_oracle_available,
+    payload_to_graph,
+    run_node_oracle_payload,
+)
 
 _ORACLE_DIR = Path(__file__).parent / ec.RUBY_ORACLE_DIRNAME
 _SCRIPT = _ORACLE_DIR / ec.RUBY_ORACLE_SCRIPT
@@ -16,9 +20,7 @@ _CALLABLE_KINDS = frozenset({cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.va
 
 
 def ruby_oracle_available() -> bool:
-    return (
-        shutil.which(ec.NODE_BIN) is not None and shutil.which(ec.NPM_BIN) is not None
-    )
+    return node_oracle_available()
 
 
 def _run_ruby_oracle_payload(target: Path) -> OraclePayload:

@@ -43,6 +43,14 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "File": frozenset({"absolute_path"}),
     "Module": frozenset({"absolute_path", "end_line", "start_line"}),
     "Class": frozenset({"absolute_path", "modifiers", "path", "start_col"}),
+    # `positional_params` (issue #227) is the one entry here added with a
+    # known cost rather than as a record of the past: a graph round-tripped
+    # through protobuf loses it, so arity diagnosis on an IMPORTED graph
+    # reports "cannot corroborate" instead of a verdict. That degradation is
+    # safe by construction -- an absent property reads as unknown kinds, never
+    # as zero positional parameters, so no false mismatch is produced -- but it
+    # is a real loss of capability, not a non-issue. Exporting it needs a proto
+    # field plus regenerated bindings, which needs protoc; #1490 carries that.
     "Function": frozenset(
         {
             "absolute_path",
@@ -51,6 +59,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "name_start_col",
             "name_start_line",
             "path",
+            "positional_params",
             "start_col",
         }
     ),
@@ -64,6 +73,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "name_start_line",
             "overrides_external",
             "path",
+            "positional_params",
             "start_col",
         }
     ),

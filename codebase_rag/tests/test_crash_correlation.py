@@ -14,6 +14,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.crash_correlation import (
     CYPHER_CRASH_CALLS,
+    CYPHER_CRASH_POSITIONAL_PARAMS,
     explain_traceback,
     parse_python_traceback,
     rank_root_causes,
@@ -80,7 +81,12 @@ def _callable_row(label: str, qn: str, start: int | None, end: int | None) -> di
     }
 
 
-def _fetch_all_for(*, flow_edges: list[tuple[str, str]], gaps: list[str] | None = None):
+def _fetch_all_for(
+    *,
+    flow_edges: list[tuple[str, str]],
+    gaps: list[str] | None = None,
+    positional_params: dict[str, list[str]] | None = None,
+):
     callables = [
         _callable_row(cs.NodeLabel.MODULE, f"{_P}.app.service", None, None),
         _callable_row(cs.NodeLabel.FUNCTION, f"{_P}.app.service.load_config", 2, 6),
@@ -106,6 +112,11 @@ def _fetch_all_for(*, flow_edges: list[tuple[str, str]], gaps: list[str] | None 
             return [{"source": s, "target": t} for s, t in flow_edges]
         if query == CYPHER_FLOW_COVERAGE_GAPS:
             return [{cs.KEY_PATH: path} for path in gaps or []]
+        if query == CYPHER_CRASH_POSITIONAL_PARAMS:
+            return [
+                {"qn": qn, "positional_params": declared}
+                for qn, declared in (positional_params or {}).items()
+            ]
         raise AssertionError(f"unexpected query: {query}")
 
     return fetch_all
@@ -738,3 +749,169 @@ def resolve(self, stats):
         "so counting it would demand a recorded reason on a path the "
         "resolver does not take"
     )
+
+
+def _arity_crash_text(repo: Path, message: str) -> str:
+    """An arity TypeError raises at the CALL SITE, so the callee is absent.
+
+    `dispatch` is the innermost frame here and `handle` never appears: it was
+    never entered. Any wiring that reads the callee off the stack fails on
+    this shape, which is the shape every arity TypeError has.
+    """
+    src = (repo / "app" / "service.py").as_posix()
+    return (
+        "Traceback (most recent call last):\n"
+        f'  File "{src}", line 22, in main\n'
+        "    dispatch(cfg)\n"
+        f'  File "{src}", line 16, in dispatch\n'
+        "    return handle(cfg, extra)\n"
+        f"TypeError: {message}\n"
+    )
+
+
+class TestArityDiagnosisReachesThePublicFlow:
+    """The criterion of #227 that `explain_traceback` itself must answer.
+
+    These exercise the public entry point rather than `diagnose_arity`
+    directly: the helpers were correct in isolation long before anything
+    called them, so a test that imports them proves nothing about the report.
+    """
+
+    def test_a_mismatch_is_confirmed_against_the_stored_signature(self, tmp_path):
+        fetch_all = _fetch_all_for(
+            flow_edges=[],
+            positional_params={f"{_P}.app.service.handle": ["cfg"]},
+        )
+        report = explain_traceback(
+            fetch_all,
+            _P,
+            tmp_path,
+            _arity_crash_text(
+                tmp_path, "handle() takes 1 positional argument but 2 were given"
+            ),
+        )
+        assert report.arity is not None
+        assert report.arity.callee_qualified_name == f"{_P}.app.service.handle"
+        assert report.arity.verdict is not None
+        assert report.arity.verdict.declared_count == 1
+        assert report.arity.verdict.confirmed is True
+
+    def test_a_disagreeing_signature_is_reported_unconfirmed(self, tmp_path):
+        """The graph says two positional parameters; the message says one.
+
+        Not a failure to diagnose: it means the node the graph matched is not
+        the function that raised, which is worth reporting.
+        """
+        fetch_all = _fetch_all_for(
+            flow_edges=[],
+            positional_params={f"{_P}.app.service.handle": ["cfg", "mode"]},
+        )
+        report = explain_traceback(
+            fetch_all,
+            _P,
+            tmp_path,
+            _arity_crash_text(
+                tmp_path, "handle() takes 1 positional argument but 2 were given"
+            ),
+        )
+        assert report.arity is not None
+        assert report.arity.verdict is not None
+        assert report.arity.verdict.confirmed is False
+
+    def test_a_callee_without_stored_parameters_declines(self, tmp_path):
+        """No ingested signature reads as "cannot corroborate", not as "zero".
+
+        An empty list would make `declared_count` 0 and report a mismatch
+        against every correct non-Python callee in the project.
+        """
+        fetch_all = _fetch_all_for(flow_edges=[])
+        report = explain_traceback(
+            fetch_all,
+            _P,
+            tmp_path,
+            _arity_crash_text(
+                tmp_path, "handle() takes 1 positional argument but 2 were given"
+            ),
+        )
+        assert report.arity is not None
+        assert report.arity.callee_qualified_name == f"{_P}.app.service.handle"
+        assert report.arity.verdict is not None
+        assert report.arity.verdict.confirmed is False
+        assert report.arity.verdict.declared_count == -1
+
+    def test_the_missing_argument_form_also_reaches_the_report(self, tmp_path):
+        fetch_all = _fetch_all_for(
+            flow_edges=[],
+            positional_params={f"{_P}.app.service.handle": ["cfg", "mode"]},
+        )
+        report = explain_traceback(
+            fetch_all,
+            _P,
+            tmp_path,
+            _arity_crash_text(
+                tmp_path, "handle() missing 1 required positional argument: 'mode'"
+            ),
+        )
+        assert report.arity is not None
+        assert report.arity.error.missing == ("mode",)
+        assert report.arity.verdict is not None
+        assert report.arity.verdict.confirmed is True
+
+    def test_an_unknown_callee_yields_no_verdict(self, tmp_path):
+        fetch_all = _fetch_all_for(flow_edges=[])
+        report = explain_traceback(
+            fetch_all,
+            _P,
+            tmp_path,
+            _arity_crash_text(
+                tmp_path, "nowhere() takes 1 positional argument but 2 were given"
+            ),
+        )
+        assert report.arity is not None
+        assert report.arity.callee_qualified_name is None
+        assert report.arity.verdict is None
+
+    def test_a_nested_callee_reaches_the_report(self, tmp_path):
+        """`outer.<locals>.inner` must resolve to the same node as `inner`.
+
+        The parser reduces the callee to its final component, so the graph
+        lookup is unaffected by the qualifier -- but only if the message
+        parses at all, and a word-only qualifier pattern rejects `<locals>`
+        outright and drops the finding silently.
+        """
+        fetch_all = _fetch_all_for(
+            flow_edges=[],
+            positional_params={f"{_P}.app.service.handle": ["cfg"]},
+        )
+        report = explain_traceback(
+            fetch_all,
+            _P,
+            tmp_path,
+            _arity_crash_text(
+                tmp_path,
+                "dispatch.<locals>.handle() takes 1 positional argument "
+                "but 2 were given",
+            ),
+        )
+        assert report.arity is not None
+        assert report.arity.callee_qualified_name == f"{_P}.app.service.handle"
+        assert report.arity.verdict is not None
+        assert report.arity.verdict.confirmed is True
+
+    def test_a_non_arity_type_error_produces_no_finding(self, tmp_path):
+        fetch_all = _fetch_all_for(flow_edges=[])
+        report = explain_traceback(
+            fetch_all,
+            _P,
+            tmp_path,
+            _arity_crash_text(tmp_path, "unsupported operand type(s) for +: 'int'"),
+        )
+        assert report.arity is None
+
+    def test_a_non_type_error_crash_produces_no_finding(self, tmp_path):
+        """The control: an ordinary report must be unchanged by this feature."""
+        fetch_all = _fetch_all_for(flow_edges=[])
+        report = explain_traceback(fetch_all, _P, tmp_path, _crash_text(tmp_path))
+        assert report.exception_type == "AttributeError"
+        assert report.arity is None
+        assert report.resolution.resolved == 3

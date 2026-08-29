@@ -153,3 +153,83 @@ def test_unusable_legacy_pid_falls_back_to_age(tmp_path: Path, bad_pid: str) -> 
     assert handle is not None
     assert lock.is_file()
     release_build_lock(handle)
+
+
+def test_a_probe_emitting_non_utf8_reports_unavailable_rather_than_raising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A toolchain whose version banner is not UTF-8 must answer False.
+
+    `toolchain_runs` decodes with strict UTF-8 (`encoding=ENCODING_UTF8`) and
+    catches only `OSError` / `SubprocessError`. `UnicodeDecodeError` is
+    neither -- it is a `ValueError` -- so a single non-UTF-8 byte from
+    `java -version` propagates out of an availability CHECK.
+
+    That is the wrong failure mode for this function specifically: every
+    caller asks "can I use this toolchain?" and handles False by falling back
+    to another frontend or skipping an oracle. An exception instead of False
+    turns a graceful degradation into a crash, and the trigger is a locale or
+    a vendor JDK printing a non-ASCII byte in its banner (CodeRabbit, #1480).
+
+    Drives the real `toolchain_runs` against a real subprocess rather than
+    mocking the decode, because the defect is in the decode configuration and
+    a mock would encode my assumption about where it happens.
+    """
+    from codebase_rag.parsers.build_lock import toolchain_runs
+
+    probe = tmp_path / ("probe.bat" if sys.platform == "win32" else "probe.py")
+    if sys.platform == "win32":
+        pytest.skip("shell quoting differs; the defect is platform-independent")
+    probe.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        # 0x80 is a continuation byte with no lead byte: invalid UTF-8.
+        "sys.stdout.buffer.write(b'openjdk version \\x80\\n')\n"
+        "sys.exit(0)\n",
+        encoding="utf-8",
+    )
+    probe.chmod(0o755)
+
+    # `toolchain_runs` resolves via `shutil.which`, so the probe must be on PATH.
+    # `monkeypatch` restores PATH even if the assertion below raises, which a
+    # hand-rolled try/finally has to re-implement per test.
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}")
+    result = toolchain_runs(probe.name, timeout=10.0)
+
+    assert result is True, (
+        "the probe exits 0, so the toolchain IS available; a non-UTF-8 byte in "
+        "its banner must not turn that into an exception or a False"
+    )
+
+
+def test_a_programming_error_in_the_probe_is_not_swallowed_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The handler must catch environment failures, not every failure.
+
+    `toolchain_runs` answers "can I use this toolchain?", and its callers
+    read False as "fall back to another frontend". That makes the exception
+    list an UPPER bound as well as a lower one: `OSError` and
+    `SubprocessError` are the environment saying no, and returning False for
+    them is right. A `TypeError` from a mis-called API or an
+    `AttributeError` after a refactor is this code being wrong, and
+    reporting that as "toolchain unavailable" hides a bug behind a plausible
+    answer -- callers would silently degrade forever with nothing to find.
+
+    Guards the WIDENING rather than the fix. The preceding test pins that a
+    non-UTF-8 banner is tolerated; without this one, broadening the handler
+    to a bare `except Exception` passes the whole file. Measured: it does.
+    A fix that loosens what is accepted needs a test for what must still be
+    refused, or it has no upper bound (raised by peer review on #1485).
+    """
+    from codebase_rag.parsers import build_lock
+
+    def _exploding_run(*args: object, **kwargs: object) -> object:
+        raise TypeError("subprocess.run() got an unexpected keyword argument")
+
+    monkeypatch.setattr(build_lock.shutil, "which", lambda _binary: "/usr/bin/true")
+    monkeypatch.setattr(build_lock.subprocess, "run", _exploding_run)
+
+    with pytest.raises(TypeError):
+        build_lock.toolchain_runs("anything", timeout=1.0)

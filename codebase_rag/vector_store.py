@@ -286,6 +286,49 @@ def _upsert_with_retry(points: list[Any]) -> None:
             time.sleep(delay)
 
 
+def _store_batch(records: Sequence[Any], upsert: Callable[[], None]) -> int:
+    # The count/log/swallow wrapper is identical per backend; only the payload
+    # shape and the client call differ, and those stay with each store.
+    try:
+        upsert()
+        logger.debug(ls.EMBEDDING_BATCH_STORED.format(count=len(records)))
+        return len(records)
+    except Exception as e:
+        logger.warning(ls.EMBEDDING_BATCH_FAILED.format(error=e))
+        return 0
+
+
+def _delete_scoped_embeddings(
+    backend: VectorStoreBackend,
+    project_name: str,
+    node_ids: Sequence[int],
+    delete: Callable[[list[int]], None],
+) -> None:
+    # Shared by every backend: only the client call differs, so the empty
+    # guard, the progress logs, and the swallow-and-warn live here once.
+    if not node_ids:
+        return
+    ids = list(node_ids)
+    try:
+        logger.info(
+            ls.VECTOR_STORE_DELETE_PROJECT.format(
+                count=len(ids), backend=backend, project=project_name
+            )
+        )
+        delete(ids)
+        logger.info(
+            ls.VECTOR_STORE_DELETE_PROJECT_DONE.format(
+                backend=backend, project=project_name
+            )
+        )
+    except Exception as e:
+        logger.warning(
+            ls.VECTOR_STORE_DELETE_PROJECT_FAILED.format(
+                backend=backend, project=project_name, error=e
+            )
+        )
+
+
 class QdrantVectorStore:
     backend = VectorStoreBackend.QDRANT
 
@@ -305,41 +348,18 @@ class QdrantVectorStore:
             )
             for node_id, embedding, qualified_name in points
         ]
-        try:
-            _upsert_with_retry(point_structs)
-            logger.debug(ls.EMBEDDING_BATCH_STORED.format(count=len(point_structs)))
-            return len(point_structs)
-        except Exception as e:
-            logger.warning(ls.EMBEDDING_BATCH_FAILED.format(error=e))
-            return 0
+        return _store_batch(point_structs, lambda: _upsert_with_retry(point_structs))
 
     def delete_project_embeddings(
         self, project_name: str, node_ids: Sequence[int]
     ) -> None:
-        if not node_ids:
-            return
-        try:
-            logger.info(
-                ls.VECTOR_STORE_DELETE_PROJECT.format(
-                    count=len(node_ids), backend=self.backend, project=project_name
-                )
-            )
-            client = get_qdrant_client()
-            client.delete(
+        def _delete(ids: list[int]) -> None:
+            get_qdrant_client().delete(
                 collection_name=settings.QDRANT_COLLECTION_NAME,
-                points_selector=list(node_ids),
+                points_selector=ids,
             )
-            logger.info(
-                ls.VECTOR_STORE_DELETE_PROJECT_DONE.format(
-                    backend=self.backend, project=project_name
-                )
-            )
-        except Exception as e:
-            logger.warning(
-                ls.VECTOR_STORE_DELETE_PROJECT_FAILED.format(
-                    backend=self.backend, project=project_name, error=e
-                )
-            )
+
+        _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
 
     def clear_all_embeddings(self) -> None:
         # Vectors are keyed by Memgraph-internal node ids, which a clean
@@ -425,45 +445,25 @@ class MilvusVectorStore:
             }
             for node_id, embedding, qualified_name in points
         ]
-        try:
-            client = get_milvus_client()
-            client.upsert(
+
+        def _upsert() -> None:
+            get_milvus_client().upsert(
                 collection_name=settings.MILVUS_COLLECTION_NAME,
                 data=rows,
             )
-            logger.debug(ls.EMBEDDING_BATCH_STORED.format(count=len(rows)))
-            return len(rows)
-        except Exception as e:
-            logger.warning(ls.EMBEDDING_BATCH_FAILED.format(error=e))
-            return 0
+
+        return _store_batch(rows, _upsert)
 
     def delete_project_embeddings(
         self, project_name: str, node_ids: Sequence[int]
     ) -> None:
-        if not node_ids:
-            return
-        try:
-            logger.info(
-                ls.VECTOR_STORE_DELETE_PROJECT.format(
-                    count=len(node_ids), backend=self.backend, project=project_name
-                )
-            )
-            client = get_milvus_client()
-            client.delete(
+        def _delete(ids: list[int]) -> None:
+            get_milvus_client().delete(
                 collection_name=settings.MILVUS_COLLECTION_NAME,
-                ids=list(node_ids),
+                ids=ids,
             )
-            logger.info(
-                ls.VECTOR_STORE_DELETE_PROJECT_DONE.format(
-                    backend=self.backend, project=project_name
-                )
-            )
-        except Exception as e:
-            logger.warning(
-                ls.VECTOR_STORE_DELETE_PROJECT_FAILED.format(
-                    backend=self.backend, project=project_name, error=e
-                )
-            )
+
+        _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
 
     def clear_all_embeddings(self) -> None:
         # Failures propagate; see QdrantVectorStore.clear_all_embeddings.
