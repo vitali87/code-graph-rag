@@ -312,3 +312,42 @@ def test_the_unexported_list_names_only_declared_properties() -> None:
         f"{len(unknown)} entr(ies) in _NOT_EXPORTED do not name a declared "
         "property:\n" + "\n".join(unknown)
     )
+
+
+def test_the_guard_is_actually_inspecting_something() -> None:
+    """A control on the INSTRUMENT rather than on the schemas.
+
+    The default-deny check above iterates `NODE_SCHEMAS` and asserts the
+    result is empty. If that collection were ever empty -- renamed, moved,
+    or built lazily -- it would iterate nothing, find nothing, and PASS. A
+    green default-deny guard that inspected zero properties is
+    indistinguishable from one that inspected all of them and approved.
+
+    Measured rather than assumed: emptying `NODE_SCHEMAS` leaves
+    `test_every_declared_property_is_exported_or_declared_unexported`
+    passing. One sibling test does catch it, but the main guard -- the one
+    this file exists for -- does not, so its green tick becomes a claim
+    about whether the check ran rather than about the proto being in sync.
+
+    The opposite emptiness needs no control: a generated module carrying no
+    messages makes every label report "no proto message at all" and fails
+    loudly, which is the safe direction.
+    """
+    assert NODE_SCHEMAS, (
+        "NODE_SCHEMAS is empty; the default-deny guard passes vacuously"
+    )
+
+    labels = {schema.label.value for schema in NODE_SCHEMAS}
+    assert {"Function", "Method"} <= labels, sorted(labels)
+
+    unparsed = sorted(
+        schema.label.value
+        for schema in NODE_SCHEMAS
+        if not _declared_properties(schema.properties)
+    )
+    assert not unparsed, (
+        "these labels parsed to ZERO properties, so nothing about them was "
+        "checked:\n" + "\n".join(unparsed)
+    )
+
+    assert _proto_fields("Function"), "the generated proto module carries no fields"
