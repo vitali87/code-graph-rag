@@ -19,6 +19,10 @@ from . import logs as ls
 from .ast_oracle import _from_base_parts, _iter_py_files, _module_dotted
 from .cgr_graph import _capture
 from .oracles.cpp_oracle import cpp_available, run_cpp_oracle
+from .oracles.csharp_oracle import (
+    csharp_oracle_available,
+    run_csharp_oracle,
+)
 from .oracles.java_oracle import java_available, run_java_oracle
 from .score import _prf
 from .structure_report import render, write_outputs
@@ -260,6 +264,41 @@ def java_cgr_inheritance(target: Path, project: str) -> CgrResult:
     return CgrResult(inherits=inherits, overrides=set())
 
 
+def _cpp_compile_db_units(target: Path) -> int:
+    """How many translation units the target's compilation database yields.
+
+    Zero covers three distinct causes -- no `compile_commands.json`, an empty
+    one, and one naming files that no longer exist -- and all three must stop
+    the run rather than grade nothing. Returns a count rather than a bool so
+    the caller could report it; the distinction between causes is not worth
+    surfacing when the remedy is identical.
+    """
+    try:
+        import clang.cindex as ci
+
+        db = ci.CompilationDatabase.fromDirectory(str(target.resolve()))
+    except Exception:
+        # fromDirectory raises CompilationDatabaseError when the file is absent
+        # or unreadable; libclang may be missing entirely on some platforms.
+        return 0
+    commands = db.getAllCompileCommands()
+    if commands is None:  # an empty database returns None, not an empty list
+        return 0
+    # Count units that actually PARSE, not entries that merely exist: a stale
+    # database naming files that have since been deleted has entries and
+    # yields no AST, which is the fail-open case this guard is for.
+    parsed = 0
+    index = ci.Index.create()
+    for command in commands:
+        try:
+            tu = index.parse(None, args=list(command.arguments)[1:])
+        except ci.TranslationUnitLoadError:
+            continue
+        if any(True for _ in tu.cursor.get_children()):
+            parsed += 1
+    return parsed
+
+
 def cpp_oracle_inheritance(target: Path) -> OracleResult:
     # The libclang oracle emits base-specifiers as `name_edges` keyed the same
     # way javac's are: the subclass pinned to a file and line, the base by
@@ -323,6 +362,58 @@ def cpp_cgr_inheritance(target: Path, project: str) -> CgrResult:
     return CgrResult(inherits=inherits, overrides=set())
 
 
+def csharp_oracle_inheritance(target: Path) -> OracleResult:
+    # The Roslyn oracle emits base classes as INHERITS and base interfaces as
+    # IMPLEMENTS, both by SIMPLE name with the subtype pinned to a location --
+    # the same shape javac's oracle produces, so both kinds fold together here
+    # exactly as they do for Java (issue #1190).
+    #
+    # Unlike the C++ arm, the rel_type filter is load-bearing rather than
+    # defensive: this oracle really does emit two kinds, and the pair is
+    # deliberately kept rather than split, because cgr's own edges are graded
+    # as one supertype relation.
+    graph = run_csharp_oracle(target)
+    inherits: set[InheritEdge] = set()
+    subclasses: set[str] = set()
+    for edge in graph.name_edges:
+        if edge.rel_type not in (_INHERITS, _IMPLEMENTS):
+            continue
+        key = _location_key(edge.source.file, edge.source.start_line)
+        subclasses.add(key)
+        inherits.add((key, edge.target_name))
+    return OracleResult(
+        inherits=inherits,
+        overrides=set(),
+        top_classes=frozenset(subclasses),
+        override_scope=frozenset(),
+    )
+
+
+def csharp_cgr_inheritance(target: Path, project: str) -> CgrResult:
+    ingestor = _capture(target, project)
+    props_by_node = {
+        (label, str(uid)): props for (label, uid), props in ingestor.nodes.items()
+    }
+    inherits: set[InheritEdge] = set()
+    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
+        if rel_type not in (_INHERITS, _IMPLEMENTS):
+            continue
+        props = props_by_node.get((from_label, str(from_val)))
+        path = str(props.get(cs.KEY_PATH, "")) if props else ""
+        if not path.endswith(ec.CS_SUFFIX):
+            continue
+        line = props.get(cs.KEY_START_LINE) if props else None
+        # Node properties are a heterogeneous union; a non-integer start_line
+        # is unusable as a location key, so skip rather than coerce it.
+        if not isinstance(line, int):
+            continue
+        # The oracle names the supertype simply, so the qn is reduced to its
+        # last segment to compare like with like.
+        base = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        inherits.add((_location_key(path, line), base))
+    return CgrResult(inherits=inherits, overrides=set())
+
+
 def score_inheritance(
     cgr: CgrResult,
     oracle: OracleResult,
@@ -376,6 +467,27 @@ def main(
     project = project_name or target.name
     logger.info(ls.INHERITANCE_TARGET.format(target=target, project=project))
 
+    if language == ec.InheritanceLanguage.CSHARP:
+        # Same reasoning as the Java and C++ branches: without the oracle this
+        # would write a header-only CSV and exit 0, reporting "no gradeable
+        # edges" when the truth is "the grader never ran".
+        if not csharp_oracle_available():
+            logger.error(ls.CSHARP_ORACLE_MISSING)
+            raise typer.Exit(code=1)
+        result = score_inheritance(
+            csharp_cgr_inheritance(target, project),
+            csharp_oracle_inheritance(target),
+            inherits_label=ec.CSHARP_SUPERTYPES_LABEL,
+        )
+        write_outputs(
+            result,
+            out_dir,
+            ec.INHERITANCE_SCORES_FILENAME,
+            ec.INHERITANCE_DIFF_FILENAME,
+        )
+        render(result, ec.INHERITANCE_TITLE)
+        return
+
     if language == ec.InheritanceLanguage.CPP:
         # Same reasoning as the Java branch: without libclang the oracle yields
         # nothing, and scoring that would write a header-only CSV and an empty
@@ -383,6 +495,15 @@ def main(
         # is "the grader never ran".
         if not cpp_available():
             logger.error(ls.CPP_ORACLE_MISSING)
+            raise typer.Exit(code=1)
+        # A compilation database is as much a precondition as libclang itself.
+        # Absent, libclang raises; present but yielding no translation unit
+        # (empty, or naming files that no longer exist), the oracle returns an
+        # empty graph and the run scores 0 edges against 0 edges -- an UNGRADED
+        # target reported as a clean result. Same fail-open shape the
+        # cpp_available() check above exists to prevent (Greptile, PR #1513).
+        if not _cpp_compile_db_units(target):
+            logger.error(ls.CPP_ORACLE_NO_COMPILE_DB.format(target=target))
             raise typer.Exit(code=1)
         # The libclang oracle names bases by SIMPLE name while it pins the
         # subclass to a location, so the row carries its own label: a C++ 1.0

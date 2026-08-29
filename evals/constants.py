@@ -708,17 +708,19 @@ INSTANTIATION_TITLE = "cgr instantiation eval: file-level INSTANTIATES vs ast or
 # Python row's label.
 JAVA_SUPERTYPES_LABEL = "supertypes(simple-name)"
 CPP_BASES_LABEL = "bases(simple-name)"
+CSHARP_SUPERTYPES_LABEL = "supertypes(simple-name)"
 
 
 class InheritanceLanguage(StrEnum):
     PYTHON = "python"
     JAVA = "java"
     CPP = "cpp"
+    CSHARP = "csharp"
 
 
 INHERITANCE_LANGUAGE_HELP = (
-    "Language to grade: python (ast oracle), java (javac oracle) "
-    "or cpp (libclang oracle)."
+    "Language to grade: python (ast oracle), java (javac oracle), "
+    "cpp (libclang oracle) or csharp (Roslyn oracle)."
 )
 
 INDEXING_DEFAULT_CORPUS = "django"

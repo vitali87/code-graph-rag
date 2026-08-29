@@ -21,6 +21,7 @@ from evals import constants as ec
 from evals.inheritance import (
     CgrResult,
     OracleResult,
+    _cpp_compile_db_units,
     cpp_oracle_inheritance,
     score_inheritance,
 )
@@ -207,3 +208,65 @@ def test_the_cpp_oracle_emits_only_inheritance_name_edges(tmp_path: Path) -> Non
     graph = run_cpp_oracle(project)
 
     assert {edge.rel_type for edge in graph.name_edges} == {"INHERITS"}
+
+
+@_NEEDS_LIBCLANG
+class TestAnUngradableTargetIsRefusedNotScoredEmpty:
+    """A target the oracle cannot read must stop the run, not score 0 vs 0.
+
+    Raised by Greptile on PR #1513. Its example was wrong -- a MISSING
+    `compile_commands.json` raises `CompilationDatabaseError` rather than
+    returning empty -- but the class was real, and a non-reproducing example
+    refutes the example rather than the class. Two genuine cases found by
+    sweeping it: an empty database (`getAllCompileCommands()` returns None,
+    giving `TypeError`) and a STALE one naming files that no longer exist,
+    which has entries, parses nothing, and reports a clean empty result for a
+    target that was never graded.
+
+    Counting entries would miss the stale case, so the guard counts units that
+    actually parse.
+    """
+
+    def test_a_missing_database_yields_no_units(self, tmp_path: Path) -> None:
+        (tmp_path / "a.cpp").write_text(
+            "class Base {};\nclass Derived : public Base {};\n", encoding="utf-8"
+        )
+
+        assert _cpp_compile_db_units(tmp_path) == 0
+
+    def test_an_empty_database_yields_no_units(self, tmp_path: Path) -> None:
+        (tmp_path / "a.cpp").write_text(
+            "class Base {};\nclass Derived : public Base {};\n", encoding="utf-8"
+        )
+        (tmp_path / "compile_commands.json").write_text("[]", encoding="utf-8")
+
+        assert _cpp_compile_db_units(tmp_path) == 0
+
+    def test_a_stale_database_naming_a_deleted_file_yields_no_units(
+        self, tmp_path: Path
+    ) -> None:
+        # Entries exist, so an entry COUNT would report 1 and let the run
+        # proceed to grade nothing. Only parsing distinguishes this.
+        (tmp_path / "a.cpp").write_text("class Base {};\n", encoding="utf-8")
+        gone = tmp_path / "gone.cpp"
+        (tmp_path / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(tmp_path),
+                        "command": f"clang++ -std=c++17 -c {gone}",
+                        "file": str(gone),
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        assert _cpp_compile_db_units(tmp_path) == 0
+
+    def test_a_usable_database_yields_units(self, tmp_path: Path) -> None:
+        # The control: without this the three assertions above are satisfied by
+        # a helper that returns 0 unconditionally.
+        project = _cpp_project(tmp_path, "class Base {};\nclass D : public Base {};\n")
+
+        assert _cpp_compile_db_units(project) > 0
