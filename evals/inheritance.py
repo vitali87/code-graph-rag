@@ -318,7 +318,15 @@ def _cpp_compile_db_units(target: Path) -> int | None:
             continue
         cwd = Path.cwd()
         try:
+            # A stale database can name a build directory that no longer
+            # exists; chdir raises OSError there. That is an unusable entry,
+            # not a crash -- the caller's job is to report the database as
+            # ungradable, and an escaping FileNotFoundError denies it the
+            # chance (Greptile, PR #1513).
             os.chdir(directory)
+        except OSError:
+            continue
+        try:
             tu = index.parse(None, args=list(command.arguments)[1:])
         except ci.TranslationUnitLoadError:
             continue

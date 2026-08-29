@@ -433,6 +433,40 @@ class TestAnUngradableTargetIsRefusedNotScoredEmpty:
         assert _cpp_compile_db_units(target) == 1
         assert cpp_oracle_inheritance(target).inherits == set()
 
+    def test_a_missing_command_directory_is_reported_not_raised(
+        self, tmp_path: Path
+    ) -> None:
+        """A stale build directory is an unusable entry, not a crash.
+
+        `os.chdir(command.directory)` raises `FileNotFoundError` when the
+        directory named by the database no longer exists. Letting that escape
+        denies the caller its whole job -- reporting the database as
+        ungradable with an actionable message (Greptile, PR #1513).
+
+        The source itself exists and is in-target, so every earlier guard
+        passes and only the chdir can fail: the fixture is degenerate for
+        exactly this branch.
+        """
+        src = tmp_path / "a.cpp"
+        src.write_text(
+            "class Base {};\nclass Derived : public Base {};\n", encoding="utf-8"
+        )
+        (tmp_path / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        # Never created.
+                        "directory": str(tmp_path / "build_gone"),
+                        "command": f"clang++ -std=c++17 -c {src}",
+                        "file": str(src),
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        assert _cpp_compile_db_units(tmp_path) == 0
+
     def test_a_usable_database_yields_units(self, tmp_path: Path) -> None:
         # The control: without this the three assertions above are satisfied by
         # a helper that returns 0 unconditionally.

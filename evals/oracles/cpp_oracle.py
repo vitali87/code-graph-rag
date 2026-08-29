@@ -130,8 +130,14 @@ def run_cpp_oracle(target: Path) -> GraphData:
         # empty graph passed as a clean zero-inheritance grade for source
         # nothing had analysed (Greptile, PR #1513).
         cwd = Path.cwd()
+        # A stale database can name a build directory that no longer exists;
+        # chdir raises OSError there. Skip the entry rather than crashing the
+        # whole oracle run (Greptile, PR #1513).
         try:
             os.chdir(command.directory)
+        except OSError:
+            continue
+        try:
             try:
                 tu = index.parse(None, args=args)
             except ci.TranslationUnitLoadError:
