@@ -93,6 +93,12 @@
 - name: ready
   color: 0ede72
   description: Vetted (by the owner or the vetting workflow) and safe for an agent to implement
+- name: needs-human
+  color: fbca04
+  description: Automated vetting could not accept this; waiting for the maintainer
+- name: rejected
+  color: "000000"
+  description: Automated vetting did not accept this for implementation
 - name: claimed
   color: b60205
   description: An agent/session is actively working this — check before taking it over
