@@ -6,6 +6,7 @@
 # imported symbol, so a consumer can jump to, check, or rewrite the exact site.
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -190,7 +191,7 @@ def test_typescript_call_and_import_sites(
     assert _site(imports["h"]) == _span(TS_B, 'import { helper as h } from "./a";')
     assert imports["h"][cs.KEY_IMPORTED_NAME] == "helper"
     assert _site(imports["ns"]) == _span(TS_B, 'import * as ns from "./a";')
-    assert cs.KEY_IMPORTED_NAME not in imports["ns"]
+    assert imports["ns"][cs.KEY_IMPORTED_NAME] == cs.IMPORTED_NAME_WILDCARD
 
 
 # --- Go ------------------------------------------------------------------------
@@ -639,3 +640,55 @@ def test_call_site_cache_is_not_keyed_by_recycled_node_ids() -> None:
     # above passes on the old code too; the key must be the node itself.
     assert cp._site_cache is not None
     assert cp._site_cache[0] is call_b
+
+
+CPP_CONSTRUCTIONS = (
+    "class Point {\n"
+    " public:\n"
+    "  Point(int x, int y) : x_(x), y_(y) {}\n"
+    "  int x_;\n"
+    "  int y_;\n"
+    "};\n"
+    "\n"
+    "class Line : public Point {\n"
+    " public:\n"
+    "  Line() : Point(0, 0) {}\n"
+    "};\n"
+    "\n"
+    "Point make() { return {1, 2}; }\n"
+    "\n"
+    "int main() {\n"
+    "  Point origin(3, 4);\n"
+    "  return origin.x_;\n"
+    "}\n"
+)
+
+
+def test_cpp_construction_paths_carry_their_site(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """Declaration, member-initializer and braced-return constructions have
+    no call node; their edges still carry the statement that constructs.
+
+    The per-call loop pinned the site for explicit `Point(3, 4)` calls only;
+    these three C++ paths emitted edges with no site at all (CodeRabbit on
+    #1537).
+    """
+    (temp_repo / "main.cpp").write_text(CPP_CONSTRUCTIONS, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="cpp")
+
+    def sites(caller_suffix: str) -> set[tuple[Any, ...]]:
+        found = set()
+        for rel in (cs.RelationshipType.CALLS, cs.RelationshipType.INSTANTIATES):
+            for src, dst, props in _edges(mock_ingestor, rel):
+                if (
+                    re.search(rf"{re.escape(caller_suffix)}(\(|$)", src)
+                    and "Point" in dst
+                ):
+                    assert props is not None, (src, dst)
+                    found.add(_site(props))
+        return found
+
+    assert sites(".main") == {_span(CPP_CONSTRUCTIONS, "Point origin(3, 4);")}
+    assert sites(".Line.Line") == {_span(CPP_CONSTRUCTIONS, "Point(0, 0)")}
+    assert sites(".make") == {_span(CPP_CONSTRUCTIONS, "return {1, 2};")}

@@ -3207,7 +3207,10 @@ class ImportProcessor:
                             source_module
                         )
                         self._record_import_site(
-                            current_module, namespace_name, statement
+                            current_module,
+                            namespace_name,
+                            statement,
+                            cs.IMPORTED_NAME_WILDCARD,
                         )
                         logger.debug(
                             ls.IMP_JS_NAMESPACE,

@@ -4811,6 +4811,7 @@ class CallProcessor:
                         )
             stack.extend(node.children)
 
+    @_site_scoped
     def _ingest_cpp_braced_return_instantiations(
         self,
         caller_node: Node,
@@ -4846,6 +4847,8 @@ class CallProcessor:
             return
         registry = self._resolver.function_registry
         ensure_rel = self._emit_rel
+        # The return statement is the construction site (issue #1522).
+        self._site_node = node
         for class_variant in registry.variants(class_qn):
             variant_type = registry.get(class_variant)
             if variant_type is not None and variant_type != NodeType.CLASS:
@@ -4857,6 +4860,7 @@ class CallProcessor:
             )
         self._emit_cpp_ctor_calls(caller_spec, class_qn)
 
+    @_site_scoped
     def _ingest_cpp_member_init_ctor_calls(
         self,
         caller_node: Node,
@@ -4887,6 +4891,7 @@ class CallProcessor:
                     else None
                 )
                 if class_qn is not None:
+                    self._site_node = initializer
                     self._emit_cpp_ctor_calls(caller_spec, class_qn)
 
     def _ingest_cpp_implicit_base_lifecycle_calls(
@@ -5000,6 +5005,7 @@ class CallProcessor:
                     named.add(resolved)
         return named
 
+    @_site_scoped
     def _ingest_cpp_declaration_ctor_calls(
         self,
         caller_node: Node,
@@ -5037,6 +5043,7 @@ class CallProcessor:
                 else None
             )
             if class_qn is not None:
+                self._site_node = node
                 self._emit_cpp_construction_edges(caller_spec, class_qn)
 
     @staticmethod
