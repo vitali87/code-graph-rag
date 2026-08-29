@@ -119,3 +119,30 @@ def test_a_usable_database_is_not_refused(tmp_path: Path) -> None:
     graph = run_cpp_oracle(tmp_path)
 
     assert graph.nodes
+
+
+def test_the_diagnostic_does_not_blame_a_single_cause() -> None:
+    """An empty oracle has at least four causes; the message must not pick one.
+
+    The first version said "the database is stale or names no reachable
+    source". Both bots flagged it independently, and both were right: a
+    comment-only project parses perfectly and legitimately yields zero nodes,
+    so that wording sends the reader to check a database that is fine
+    (CodeRabbit and Greptile, PR #1517).
+
+    Pinned as an assertion on the message rather than left to review, because
+    a diagnostic that names the wrong cause is worse than one that names none
+    -- it spends the reader's time before they can start looking.
+    """
+    from evals import logs as ls
+
+    message = ls.CPP_ORACLE_GRADED_NOTHING.format(
+        compdb="compile_commands.json", target="/repo"
+    )
+
+    # Each cause the oracle can return empty for must be reachable from the
+    # text; none may be presented as the explanation.
+    assert "outside" in message
+    assert "stale" in message
+    assert "failed to parse" in message
+    assert "declare nothing" in message

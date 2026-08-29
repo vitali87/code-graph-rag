@@ -21,9 +21,12 @@ CPP_EXTRACTING_ORACLE = "Running libclang oracle over {target} (compile_commands
 CPP_ORACLE_DONE = "libclang oracle nodes: {count}"
 CPP_ORACLE_MISSING = "libclang unavailable, or no {compdb} found in {target}"
 CPP_ORACLE_GRADED_NOTHING = (
-    "the libclang oracle read {compdb} in {target} but produced no nodes; "
-    "the database is stale or names no reachable source, so there is nothing "
-    "to grade against (a 0-vs-0 score would report a clean pass)"
+    "the libclang oracle read {compdb} in {target} but produced no nodes, so "
+    "there is nothing to grade against (a 0-vs-0 score would report a clean "
+    "pass). Any of these produces it: the entries name sources outside "
+    "{target}; their command directories are stale; every translation unit "
+    "failed to parse; or the sources genuinely declare nothing. Check the "
+    "oracle node count above against the files you expect it to cover"
 )
 RS_EXTRACTING_CGR = "Building cgr Rust nodes for {target} (project={project})"
 RS_CGR_DONE = "cgr Rust nodes: {count}"
