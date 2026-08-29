@@ -143,3 +143,48 @@ class TestTheBaseModuleQnIsSharedNotMirrored:
             base_module_qn(Path("dir.with.dots/f.py"), PROJECT)
             == f"{PROJECT}.dir.with.dots.f"
         )
+
+
+class TestOneUnignorePatternIsEnoughToRescue:
+    """A rescue asks whether SOME pattern matches, not whether every one does.
+
+    Found by mutating every quantifier the shared walk routes through rather
+    than only the one under suspicion: flipping `any` to `all` in
+    `should_keep_dir` passed the entire 8502-test suite. The reason is that
+    every existing fixture passes a single unignore pattern, and with one
+    pattern the two readings are indistinguishable -- both reduce to that
+    pattern's own result.
+
+    The distinguishing case needs TWO patterns of which only one is relevant.
+    Under `all`, an unrelated pattern elsewhere in the set defeats an
+    otherwise-valid rescue, so adding a second `.cgrignore` entry would
+    silently un-index a directory the first entry rescued.
+    """
+
+    def test_an_unrelated_second_pattern_does_not_defeat_the_rescue(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path, "src/main.cpp")
+        _write(tmp_path, "node_modules/lib/thing.h")
+        # Only the first pattern concerns node_modules; the second is about a
+        # directory that does not even exist here.
+        rescues = frozenset({"node_modules", "vendor/keep"})
+
+        walked = [rel for _d, _f, rel in walk_eligible_files(tmp_path, None, rescues)]
+
+        assert "node_modules/lib/thing.h" in walked
+
+    def test_the_rescue_still_needs_a_pattern_that_matches(
+        self, tmp_path: Path
+    ) -> None:
+        # Same fixture minus the one property under test: with only the
+        # irrelevant pattern, node_modules stays pruned. Without this, the
+        # test above would pass on a function that rescued unconditionally.
+        _write(tmp_path, "src/main.cpp")
+        _write(tmp_path, "node_modules/lib/thing.h")
+        rescues = frozenset({"vendor/keep"})
+
+        walked = [rel for _d, _f, rel in walk_eligible_files(tmp_path, None, rescues)]
+
+        assert "node_modules/lib/thing.h" not in walked
+        assert "src/main.cpp" in walked
