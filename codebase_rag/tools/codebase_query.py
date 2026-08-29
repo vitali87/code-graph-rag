@@ -71,6 +71,10 @@ _POST_RETURN_RE = re.compile(
     ).join((r"\s(?:", r")")),
 )
 
+# A disjunction anywhere in the restriction body, on word boundaries so
+# tabs and newlines count as separators and `n.coordinator` does not.
+_DISJUNCTION_RE = re.compile(cs.CYPHER_DISJUNCTION_PATTERN)
+
 # Constructs a scoped query may not use, matched as whole words.
 _UNANALYSABLE_RE = re.compile(cs.CYPHER_UNANALYSABLE_PATTERN)
 
@@ -404,7 +408,7 @@ def _restricts_to_project(
     # every Boolean path is a satisfiability question, and this module's
     # rule for shapes it cannot analyse is to reject them. `AND` is
     # unaffected, so the ordinary scoped count keeps working.
-    if cs.CYPHER_DISJUNCTION in body:
+    if _DISJUNCTION_RE.search(body):
         return False
     # The LITERAL project name is required. "No literal" was read as
     # "safely parameterised", but a parameter's VALUE is invisible here,

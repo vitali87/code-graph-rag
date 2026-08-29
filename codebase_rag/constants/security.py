@@ -17,8 +17,12 @@ CYPHER_RETURN_KEYWORD = "RETURN "
 CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
 # A disjunction makes any predicate beside it OPTIONAL, so a restriction
 # that appears in the query is not necessarily one the query enforces.
-# Spaced so it matches the operator and not an identifier ending in "or".
-CYPHER_DISJUNCTION = " OR "
+#
+# A WORD-BOUNDARY pattern, not a spaced literal. Cypher treats tabs and
+# newlines as whitespace, so `'alpha.'\nOR TRUE` slipped past a `" OR "`
+# check while meaning exactly the same thing. The boundaries are what keep
+# it from matching inside an identifier such as `n.coordinator`.
+CYPHER_DISJUNCTION_PATTERN = r"\bOR\b"
 # Constructs a SCOPED query may not use. Each defeats clause-level
 # analysis: UNION means several RETURNs, CALL and WITH mean the projection
 # is assembled elsewhere. The system prompt mandates plain

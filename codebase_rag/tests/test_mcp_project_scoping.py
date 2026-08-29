@@ -1524,6 +1524,25 @@ class TestADisjunctionCannotMakeTheRestrictionOptional:
             "OR 1=1 RETURN count(n) AS total"
         )
 
+    def test_a_newline_separated_or_is_refused(self) -> None:
+        """Cypher treats a newline as whitespace; a literal `" OR "` did not.
+
+        The first version of this guard matched the spaced string, so the
+        same disjunction written across two lines walked straight past it --
+        the identical literal-whitespace defect that let a newline `ORDER BY`
+        stay in the projection, reintroduced one function away (#1494).
+        """
+        assert self._refused(
+            f"MATCH (n:Function) WHERE n.qualified_name STARTS WITH '{ALPHA}.'\n"
+            "OR TRUE RETURN count(n) AS total"
+        )
+
+    def test_a_tab_separated_or_is_refused(self) -> None:
+        assert self._refused(
+            f"MATCH (n:Function) WHERE n.qualified_name STARTS WITH '{ALPHA}.'\t"
+            "OR\tTRUE RETURN count(n) AS total"
+        )
+
     def test_a_conjunction_is_still_allowed(self) -> None:
         """THE CONTROL. `AND` keeps the restriction mandatory, so it stays."""
         assert not self._refused(
