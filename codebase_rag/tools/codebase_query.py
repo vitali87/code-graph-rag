@@ -58,18 +58,6 @@ _AGGREGATED_READ_RE = re.compile(
     r"([A-Z_][A-Z0-9_]*)(?:\.[A-Z_][A-Z0-9_]*)?\s*\)"
 )
 
-# Comments only, with quoted strings matched FIRST so they are preserved.
-# The restriction check cannot use `_INERT_TEXT_RE`: that blanks quoted
-# strings too, and the project literal legitimately lives inside quotes --
-# blanking it would refuse every correctly-scoped query. But it cannot use
-# the raw text either, because a predicate inside a comment is never executed
-# (issue #1494). Ordering the string alternative first also stops `"http://x"`
-# from being read as a line comment, which would swallow the rest of the line.
-_COMMENT_RE = re.compile(
-    r"('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")|(//[^\n]*|/\*.*?\*/)",
-    re.DOTALL,
-)
-
 # Constructs a scoped query may not use, matched as whole words.
 _UNANALYSABLE_RE = re.compile(cs.CYPHER_UNANALYSABLE_PATTERN)
 
@@ -234,14 +222,20 @@ def _without_comments(cypher_query: str) -> str:
     `_without_inert_text`. A comment is not executed, so a project predicate
     written inside one restricts nothing -- but a quoted string IS the
     project literal the check looks for, so it has to survive.
+
+    Reuses `_INERT_TEXT_RE` rather than adding a second pattern: it already
+    alternates quoted strings BEFORE comments, so a string is consumed as a
+    string and `"http://x"` is never read as a line comment. Only the
+    decision differs, so it belongs in the callback, not in a new regex.
     """
 
     def _blank(match: re.Match[str]) -> str:
-        if match.group(1) is not None:
-            return match.group(1)
-        return "".join("\n" if ch == "\n" else " " for ch in match.group(2))
+        text = match.group(0)
+        if text[:1] in ("'", '"'):
+            return text
+        return "".join("\n" if ch == "\n" else " " for ch in text)
 
-    return _COMMENT_RE.sub(_blank, cypher_query)
+    return _INERT_TEXT_RE.sub(_blank, cypher_query)
 
 
 def _without_inert_text(cypher_query: str) -> str:
