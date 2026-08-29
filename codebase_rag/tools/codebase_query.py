@@ -306,8 +306,16 @@ def _entities_only_ever_aggregated(projection: str) -> set[str]:
     for term in projection.split(cs.CHAR_COMMA):
         if any(agg in term for agg in cs.CYPHER_AGGREGATE_TOKENS):
             aggregated.update(_AGGREGATED_READ_RE.findall(term))
-        else:
-            plain.update(entity for entity, _ in _PROPERTY_READ_RE.findall(term))
+            continue
+        for entity, prop in _PROPERTY_READ_RE.findall(term):
+            # Only the QUALIFIED NAME excuses an aggregate. Any other plain
+            # property is a grouping column the row filter cannot judge:
+            # `RETURN n.name, count(n.qualified_name)` returns a name and a
+            # number, neither attributable, while the count still spans every
+            # project. An earlier version of this accepted any plain read
+            # (issue #1494).
+            if prop == cs.CYPHER_QUALIFIED_NAME_TOKEN:
+                plain.add(entity)
     return aggregated - plain
 
 
@@ -387,14 +395,26 @@ def _restricts_to_project(
     # Every COUNTED alias must itself be restricted. A restriction on `a`
     # says nothing about `count(b)`, and the two differ whenever the query
     # matches more than one entity.
-    return all(_alias_is_restricted(body, alias) for alias in counted or ())
+    return all(
+        _alias_is_restricted(body, alias, project_name.upper())
+        for alias in counted or ()
+    )
 
 
-def _alias_is_restricted(body: str, alias: str) -> bool:
-    """Whether `body` constrains `alias`'s qualified name to a prefix."""
+def _alias_is_restricted(body: str, alias: str, project_upper: str) -> bool:
+    """Whether `body` binds `alias`'s qualified name to THIS project's prefix.
+
+    The operand is required, not just the operator. Checking only that
+    `<alias>.qualified_name` was followed by a prefix predicate accepted a
+    VACUOUS one -- `STARTS WITH ''` -- and the separate literal check was
+    satisfied by the project name appearing anywhere, including in a
+    tautology like `'proj' = 'proj'`. Together those two half-checks passed
+    a query whose aggregate spanned every project (issue #1494).
+    """
+    operators = "|".join(re.escape(op.strip()) for op in cs.CYPHER_PREFIX_PREDICATES)
     pattern = re.compile(
         rf"\b{re.escape(alias)}\.{cs.CYPHER_QUALIFIED_NAME_TOKEN}\s*"
-        rf"(?:{'|'.join(re.escape(op.strip()) for op in cs.CYPHER_PREFIX_PREDICATES)})"
+        rf"(?:{operators})\s*['\"]{re.escape(project_upper)}"
     )
     return pattern.search(body) is not None
 

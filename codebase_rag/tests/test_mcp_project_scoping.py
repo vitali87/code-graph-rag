@@ -1394,6 +1394,73 @@ class TestEnforcementSurvivesAnUnfilteredQuery:
         assert prefixes == {ALPHA, BETA}
 
 
+class TestTheRestrictionMustBindTheAliasToThisProject:
+    """A prefix operator on the alias is not a restriction TO the project.
+
+    `_alias_is_restricted` checked only that `<alias>.qualified_name` was
+    followed by a prefix operator, and `_restricts_to_project` accepted the
+    project literal ANYWHERE in the body. So a vacuous predicate plus a
+    tautology carrying the project name satisfied both, and the aggregate
+    ran across every project (reported on #1494, reproduced by execution).
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_a_vacuous_prefix_with_a_tautology_is_refused(self) -> None:
+        assert self._refused(
+            "MATCH (n:Function) WHERE n.qualified_name STARTS WITH '' "
+            f"AND '{ALPHA}' = '{ALPHA}' RETURN count(n) AS total"
+        )
+
+    def test_a_prefix_naming_another_project_is_refused(self) -> None:
+        """The operand must be THIS project, not merely project-shaped."""
+        assert self._refused(
+            f'MATCH (n:Function) WHERE n.qualified_name STARTS WITH "{BETA}." '
+            f"AND '{ALPHA}' = '{ALPHA}' RETURN count(n) AS total"
+        )
+
+    def test_a_genuine_binding_is_still_allowed(self) -> None:
+        """THE CONTROL. The ordinary scoped count must keep working."""
+        assert not self._refused(
+            f'MATCH (n:Function) WHERE n.qualified_name STARTS WITH "{ALPHA}." '
+            "RETURN count(n) AS total"
+        )
+
+
+class TestAPlainPropertyIsNotAttributionUnlessItIsTheQualifiedName:
+    """Grouping by `n.name` does not let the row filter judge the row.
+
+    `_entities_only_ever_aggregated` treated ANY plain property read as
+    making an entity filterable, on the reasoning that it supplies a
+    grouping column. Only a plain `qualified_name` does: `RETURN n.name,
+    count(n.qualified_name)` returns a name and a number, neither of which
+    the row filter can attribute, while the count spans every project.
+
+    That was my own rule and this is the case it got wrong (#1494).
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_a_non_identifying_plain_property_does_not_excuse_the_aggregate(
+        self,
+    ) -> None:
+        assert self._refused(
+            "MATCH (n:Function) RETURN n.name, count(n.qualified_name) AS total"
+        )
+
+    def test_a_plain_qualified_name_still_excuses_the_aggregate(self) -> None:
+        """THE CONTROL. A real grouping key keeps mixed aggregates usable."""
+        assert not self._refused(
+            "MATCH (n:Function) RETURN n.qualified_name AS q, count(n) AS total"
+        )
+
+
 class TestAnOpaqueValueCannotSmuggleAForeignProject:
     """A value the inspector cannot read must not be assumed harmless.
 
