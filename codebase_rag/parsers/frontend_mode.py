@@ -9,19 +9,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import Enum
-from typing import TypeVar
-
-_FrontendMode = TypeVar("_FrontendMode", bound=Enum)
 
 
-def resolve_frontend_mode(
-    mode: _FrontendMode,
-    fallback: _FrontendMode,
+def resolve_frontend_mode[FrontendMode: Enum](
+    mode: FrontendMode,
+    fallback: FrontendMode,
     available: Callable[[], bool],
     *,
-    auto: _FrontendMode | None = None,
-    auto_resolves_to: _FrontendMode | None = None,
-) -> _FrontendMode:
+    auto: FrontendMode | None = None,
+    auto_resolves_to: FrontendMode | None = None,
+) -> FrontendMode:
     """The EFFECTIVE frontend mode for a configured one.
 
     Every language frontend resolves the same way: the explicitly disabled

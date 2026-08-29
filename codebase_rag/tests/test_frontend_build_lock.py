@@ -157,6 +157,7 @@ def test_unusable_legacy_pid_falls_back_to_age(tmp_path: Path, bad_pid: str) -> 
 
 def test_a_probe_emitting_non_utf8_reports_unavailable_rather_than_raising(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A toolchain whose version banner is not UTF-8 must answer False.
 
@@ -191,12 +192,10 @@ def test_a_probe_emitting_non_utf8_reports_unavailable_rather_than_raising(
     probe.chmod(0o755)
 
     # `toolchain_runs` resolves via `shutil.which`, so the probe must be on PATH.
-    original = os.environ.get("PATH", "")
-    os.environ["PATH"] = f"{tmp_path}{os.pathsep}{original}"
-    try:
-        result = toolchain_runs(probe.name, timeout=10.0)
-    finally:
-        os.environ["PATH"] = original
+    # `monkeypatch` restores PATH even if the assertion below raises, which a
+    # hand-rolled try/finally has to re-implement per test.
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}")
+    result = toolchain_runs(probe.name, timeout=10.0)
 
     assert result is True, (
         "the probe exits 0, so the toolchain IS available; a non-UTF-8 byte in "
