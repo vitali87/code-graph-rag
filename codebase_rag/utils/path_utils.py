@@ -10,19 +10,18 @@ from pathspec import PathSpec
 from .. import constants as cs
 
 _PROJECT_NAME_INVALID_CHARS = re.compile(r"[^A-Za-z0-9_-]+")
-_PROJECT_NAME_DIGEST_LEN = 8
 _PROJECT_NAME_FALLBACK_BASE = "repo"
 
 
 def derive_project_name(repo_path: Path) -> str:
     resolved = repo_path.resolve()
     digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[
-        :_PROJECT_NAME_DIGEST_LEN
+        : cs.PROJECT_NAME_DIGEST_LEN
     ]
     base = _PROJECT_NAME_INVALID_CHARS.sub("_", resolved.name).strip("_")
     if not base:
         base = _PROJECT_NAME_FALLBACK_BASE
-    return f"{base}__{digest}"
+    return f"{base}{cs.PROJECT_NAME_DIGEST_MARKER}{digest}"
 
 
 def resolve_repo_path(repo_path: str | None, target_default: str) -> Path:

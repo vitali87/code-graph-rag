@@ -22,7 +22,11 @@ from codebase_rag.tools.code_retrieval import (
     CodeRetriever,
     create_code_retrieval_tool,
 )
-from codebase_rag.tools.codebase_query import create_query_tool
+from codebase_rag.tools.codebase_query import (
+    create_query_tool,
+    requires_project_evidence,
+    scope_rows_to_project,
+)
 from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
@@ -219,7 +223,14 @@ class MCPToolsRegistry:
                         cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
                             type=cs.MCPSchemaType.STRING,
                             description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
-                        )
+                        ),
+                        # Declared as well as accepted: a client reads this
+                        # schema to learn what it may send, so omitting it
+                        # made per-request scoping undiscoverable (#1494).
+                        cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_PROJECT,
+                        ),
                     },
                     required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
                 ),
@@ -350,6 +361,10 @@ class MCPToolsRegistry:
                             type=cs.MCPSchemaType.INTEGER,
                             description=td.MCP_PARAM_TOP_K,
                             default=5,
+                        ),
+                        cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_PROJECT,
                         ),
                     },
                     required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
@@ -769,14 +784,26 @@ class MCPToolsRegistry:
             cs.MCP_UPDATE_ERROR,
         )
 
-    async def semantic_search(self, natural_language_query: str, top_k: int = 5) -> str:
+    async def semantic_search(
+        self, natural_language_query: str, top_k: int = 5, project: str | None = None
+    ) -> str:
         assert self._semantic_search_tool is not None
         logger.info(lg.MCP_SEMANTIC_SEARCH.format(query=natural_language_query))
+        # The underlying tool already accepted `project` and passes it to
+        # `search_embeddings`, which filters in the vector store. Only this
+        # handler failed to forward it, so scoping here is plumbing rather
+        # than a second filter (issue #1494).
+        if project is not None:
+            known = await asyncio.to_thread(self.ingestor.list_projects)
+            if project not in known:
+                return cs.MCP_UNKNOWN_PROJECT.format(
+                    project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
+                )
         # Serialise against index/update, which delete and rebuild the graph
         # under this lock; an interleaved read mixes generations.
         async with self._ingestor_lock:
             result = await self._semantic_search_tool.function(
-                query=natural_language_query, top_k=top_k
+                query=natural_language_query, top_k=top_k, project=project
             )
         return str(result)
 
@@ -850,14 +877,66 @@ class MCPToolsRegistry:
             logger.error(lg.MCP_ASK_AGENT_ERROR.format(error=e))
             return {"error": cs.MCP_ASK_AGENT_ERROR.format(error=e)}
 
-    async def query_code_graph(self, natural_language_query: str) -> QueryResultDict:
+    async def query_code_graph(
+        self, natural_language_query: str, project: str | None = None
+    ) -> QueryResultDict:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
+            # Per REQUEST, not per process: one HTTP server hosts several
+            # projects, and a scope fixed at startup would force a process
+            # each (issue #1494). The pre-built `_query_tool` has its project
+            # bound at construction, so the filter is applied here instead.
+            #
+            # Validated against the known projects first: a typo returning
+            # zero rows is indistinguishable from a genuine empty result.
+            if project is not None:
+                known = await asyncio.to_thread(self.ingestor.list_projects)
+                if project not in known:
+                    return QueryResultDict(
+                        error=cs.MCP_UNKNOWN_PROJECT.format(
+                            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
+                        ),
+                        query_used=cs.QUERY_NOT_AVAILABLE,
+                        results=[],
+                        summary=cs.MCP_UNKNOWN_PROJECT.format(
+                            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
+                        ),
+                    )
             # Serialise against index/update, which delete and rebuild the
             # graph under this lock; an interleaved read mixes generations.
             async with self._ingestor_lock:
                 graph_data = await self._query_tool.function(natural_language_query)
             result_dict: QueryResultDict = graph_data.model_dump()
+            # A query returning no qualified name yields rows the filter
+            # cannot judge, so it keeps them -- it cannot prove them
+            # foreign. Answering a SCOPED request with those would ignore
+            # the scope silently, which is the original bug in new clothes.
+            # Refused instead, so the caller learns the scope did not hold.
+            #
+            # Only when a query was actually GENERATED. Translation failure
+            # yields `QUERY_NOT_AVAILABLE` (or nothing), which has no RETURN
+            # clause and so fails the evidence check -- reporting "cannot be
+            # scoped" for a query that was never written, and discarding the
+            # real translation error the caller needs (issue #1494).
+            query_used = result_dict.get(cs.DICT_KEY_QUERY_USED, "")
+            generated = bool(query_used) and query_used != cs.QUERY_NOT_AVAILABLE
+            if (
+                project is not None
+                and generated
+                and not requires_project_evidence(query_used, project)
+            ):
+                message = cs.MCP_UNSCOPEABLE_QUERY.format(project=project)
+                return QueryResultDict(
+                    error=message,
+                    query_used=result_dict.get(
+                        cs.DICT_KEY_QUERY_USED, cs.QUERY_NOT_AVAILABLE
+                    ),
+                    results=[],
+                    summary=message,
+                )
+            result_dict[cs.DICT_KEY_RESULTS] = scope_rows_to_project(
+                result_dict.get(cs.DICT_KEY_RESULTS, []), project
+            )
             logger.info(
                 lg.MCP_QUERY_RESULTS.format(
                     count=len(result_dict.get(cs.DICT_KEY_RESULTS, []))

@@ -5,6 +5,69 @@ CYPHER_PREFIX = "cypher"
 CYPHER_SEMICOLON = ";"
 CYPHER_BACKTICK = "`"
 CYPHER_MATCH_KEYWORD = "MATCH"
+# A scoped query must return something a project filter can judge. Matched
+# against the UPPERCASED query, so these are upper case.
+CYPHER_QUALIFIED_NAME_TOKEN = "QUALIFIED_NAME"
+# Evidence must be in what the query RETURNS: a qualified name mentioned
+# only in WHERE or ORDER BY does not make the returned rows attributable.
+CYPHER_RETURN_KEYWORD = "RETURN "
+# Only a predicate that narrows to a PREFIX restricts an aggregate to one
+# project. `IS NOT NULL` / `<> ''` / `exists(...)` match every indexed node
+# in every project, so a count over them spans them all.
+CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
+# Named so the alias-binding check can exclude it: a regex operand cannot be
+# shown limited to one project by inspection, whereas a literal can.
+CYPHER_REGEX_PREDICATE = "=~"
+# Stripped from a captured aggregate operand in code rather than matched in
+# the pattern: matching it there placed two whitespace-consuming quantifiers
+# side by side, which backtracks super-linearly.
+CYPHER_DISTINCT_KEYWORD = "DISTINCT"
+# Cypher literals that uppercase into something indistinguishable from an
+# alias, so an aggregate over one would look bindable. Enumerating is sound
+# here because the LANGUAGE defines exactly these three -- unlike a list of
+# "constant spellings", which is open-ended and missed a quoted string.
+CYPHER_LITERAL_OPERANDS = frozenset({"TRUE", "FALSE", "NULL"})
+# The WHERE clause a scoped aggregate is allowed to have: a conjunction of
+# plain `<entity>.<property> <op> <value>` comparisons, joined by AND.
+#
+# A WHITELIST, after a blacklist of `OR|NOT|XOR` proved to be the wrong
+# shape. Those three widen or invert a predicate, but Cypher's boolean
+# surface is larger -- `CASE WHEN <pred> THEN true ELSE true END` and
+# `coalesce(<pred>, true)` contain none of them, evaluate true for every
+# row, and were accepted. A blacklist tests for known-bad SPELLINGS; the
+# contract is that the restriction BINDS, which is a property.
+#
+# Sound only because the input language is small: the Cypher is generated
+# against a system prompt mandating plain MATCH/WHERE/RETURN/LIMIT, and
+# anything outside that shape is refused rather than analysed -- the same
+# default-deny `CYPHER_UNANALYSABLE_PATTERN` applies to query structure.
+# If this ever accepts user-authored Cypher, this rule is what must be
+# revisited first (issue #1494).
+CYPHER_CONJUNCT_PATTERN = (
+    r"^\s*[A-Z_][A-Z0-9_]*\.[A-Z_][A-Z0-9_]*\s*"
+    r"(?:STARTS WITH|ENDS WITH|CONTAINS|=~|<>|=|<|>|<=|>=)\s*"
+    r"(?:'[^']*'|\"[^\"]*\"|[A-Z0-9_.$]+)\s*$"
+)
+CYPHER_CONJUNCTION_SEPARATOR = r"\bAND\b"
+CYPHER_WHERE_KEYWORD = "WHERE"
+# Constructs a SCOPED query may not use. Each defeats clause-level
+# analysis: UNION means several RETURNs, CALL and WITH mean the projection
+# is assembled elsewhere. The system prompt mandates plain
+# MATCH/WHERE/RETURN/LIMIT, so refusing these costs nothing the model
+# should be emitting, and it closes the bypass class instead of
+# enumerating members of it.
+#
+# WITH is matched only as a standalone clause. A bare "WITH" also occurs
+# inside "STARTS WITH" -- the predicate scoping requires -- and inside
+# "ENDS WITH", which prompts.py line 64 recommends for matching a symbol
+# by its short name. Both must survive.
+CYPHER_UNANALYSABLE_PATTERN = r"\bUNION\b|\bCALL\b|(?<!STARTS )(?<!ENDS )\bWITH\b"
+# Separates a projection term from its alias.
+CYPHER_ALIAS_KEYWORD = " AS "
+CYPHER_POST_RETURN_KEYWORDS = (" ORDER BY", " SKIP ", " LIMIT ", " UNION")
+# An aggregate exposes no names, so a scoped request needs no evidence from
+# it -- and refusing one would make scoping useless for counting queries.
+CYPHER_AGGREGATE_TOKENS = ("COUNT(", "SUM(", "AVG(", "MIN(", "MAX(", "COLLECT(")
 CYPHER_DANGEROUS_KEYWORDS: frozenset[str] = frozenset(
     {
         "DELETE",

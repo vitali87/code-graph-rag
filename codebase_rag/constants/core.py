@@ -21,6 +21,13 @@ SEPARATOR_SLASH = "/"
 # Splits "provider:model" both in user-supplied settings and in the model
 # names pydantic-ai enumerates.
 MODEL_STRING_SEPARATOR = ":"
+# `derive_project_name` builds "<name>__<8-hex-digest>", so this marker is
+# what distinguishes a project-qualified name from free text that merely
+# contains dots (a docstring, a file path).
+PROJECT_NAME_DIGEST_MARKER = "__"
+# Hex digits after the marker. Shared so `derive_project_name` and the
+# scoping filter that recognises its output cannot drift apart.
+PROJECT_NAME_DIGEST_LEN = 8
 # Disambiguates definitions that share one qualified name (if/else import
 # fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
 DUP_QN_MARKER = "@"
