@@ -1696,6 +1696,35 @@ class TestAnAggregateWithNoBindableEntityIsRefused:
             "MATCH (n) RETURN n.qualified_name AS q, count(*) AS total"
         )
 
+    def test_a_constant_string_operand_is_refused(self) -> None:
+        """`count('x')` binds no alias, so its contributors are unchecked.
+
+        The reported example was `count(true)`, which does NOT reproduce --
+        `TRUE` uppercases into something the alias pattern matches, so it is
+        collected as an alias, found unrestricted, and refused already. The
+        CLASS is real even though that member is not: a QUOTED constant
+        matches no identifier pattern, contributes nothing to the alias set,
+        and left the contributor check with nothing to verify (#1494).
+
+        So the rule is now what an operand must BE -- an alias this analysis
+        can bind -- rather than a list of constant spellings to exclude.
+        """
+        assert self._refused(
+            "MATCH (a)-[:CALLS]->(b) RETURN a.qualified_name AS q, count('x') AS total"
+        )
+
+    def test_a_boolean_operand_is_refused(self) -> None:
+        """Pinned even though it already passed, so it stays deliberate."""
+        assert self._refused(
+            "MATCH (a)-[:CALLS]->(b) RETURN a.qualified_name AS q, count(true) AS total"
+        )
+
+    def test_a_property_operand_is_still_allowed(self) -> None:
+        """THE CONTROL. `count(n.qualified_name)` binds `n` and is checkable."""
+        assert not self._refused(
+            "MATCH (n) RETURN n.qualified_name AS q, count(n.name) AS total"
+        )
+
     def test_a_grouped_count_over_a_restricted_alias_is_allowed(self) -> None:
         """THE CONTROL that replaces it: a NAMED alias can be checked."""
         assert not self._refused(

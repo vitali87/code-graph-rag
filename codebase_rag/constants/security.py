@@ -18,6 +18,11 @@ CYPHER_PREFIX_PREDICATES = ("STARTS WITH", "=~", " = ")
 # Named so the alias-binding check can exclude it: a regex operand cannot be
 # shown limited to one project by inspection, whereas a literal can.
 CYPHER_REGEX_PREDICATE = "=~"
+# Cypher literals that uppercase into something indistinguishable from an
+# alias, so an aggregate over one would look bindable. Enumerating is sound
+# here because the LANGUAGE defines exactly these three -- unlike a list of
+# "constant spellings", which is open-ended and missed a quoted string.
+CYPHER_LITERAL_OPERANDS = frozenset({"TRUE", "FALSE", "NULL"})
 # The WHERE clause a scoped aggregate is allowed to have: a conjunction of
 # plain `<entity>.<property> <op> <value>` comparisons, joined by AND.
 #

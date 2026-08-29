@@ -58,12 +58,19 @@ _AGGREGATED_READ_RE = re.compile(
     r"([A-Z_][A-Z0-9_]*)(?:\.[A-Z_][A-Z0-9_]*)?\s*\)"
 )
 
-# An aggregate over `*` or a constant: `count(*)`, `count(DISTINCT *)`,
-# `count(1)`. No alias to bind, so nothing about its contributors can be
-# checked -- and its magnitude is not bounded by any grouping key.
-_WILDCARD_AGGREGATE_RE = re.compile(
-    r"\b(?:COUNT|SUM|AVG|MIN|MAX|COLLECT)\(\s*(?:DISTINCT\s+)?(?:\*|\d)"
+# Every aggregate and whatever it is applied to, so the operand can be
+# judged rather than pattern-matched against known-bad spellings. Listing the
+# constant forms was the wrong shape: it caught `*` and digits and missed a
+# QUOTED string, which binds no alias just as thoroughly (issue #1494).
+_AGGREGATE_OPERAND_RE = re.compile(
+    r"\b(?:COUNT|SUM|AVG|MIN|MAX|COLLECT)\(\s*(?:DISTINCT\s+)?([^)]*)\)"
 )
+
+# What an operand must BE for its contributors to be checkable: an alias this
+# analysis can bind, optionally with one property. Cypher's boolean and null
+# literals uppercase into that same shape, so they are excluded by name --
+# sound because the language defines exactly three of them.
+_BINDABLE_OPERAND_RE = re.compile(r"^[A-Z_][A-Z0-9_]*(?:\.[A-Z_][A-Z0-9_]*)?$")
 
 # The trailing clauses that end a projection, matched on ANY whitespace.
 # Built from the same constants rather than spelled again, so the two cannot
@@ -214,7 +221,7 @@ def requires_project_evidence(
     # counts beta callees, so the label passes the row filter and carries a
     # foreign magnitude past it. Refused wherever it appears in a scoped
     # projection, not only in an all-aggregate one (issue #1494).
-    if _WILDCARD_AGGREGATE_RE.search(projection):
+    if not _every_aggregate_operand_is_bindable(projection):
         return False
     aggregated_only = _entities_only_ever_aggregated(projection)
     if aggregated_only and not _restricts_to_project(
@@ -326,6 +333,28 @@ def _every_term_is_plain(projection: str) -> bool:
         # The term must be exactly `<entity>.<prop>`, optionally aliased.
         bare = term.split(cs.CYPHER_ALIAS_KEYWORD, 1)[0].strip()
         if bare != f"{entity}{cs.SEPARATOR_DOT}{prop}":
+            return False
+    return True
+
+
+def _every_aggregate_operand_is_bindable(projection: str) -> bool:
+    """Whether every aggregate applies to an alias this analysis can check.
+
+    `count(*)`, `count(1)`, `count('x')` and `count(true)` all bind nothing,
+    so their contributors cannot be enumerated and none of them can be shown
+    restricted. Grouping does not rescue them: the grouping key bounds which
+    ROWS survive the filter, while the aggregate ranges over MATCHES, so an
+    in-project label can carry a foreign magnitude past the row filter.
+
+    Asked as "is the operand an alias" rather than "is it one of the constant
+    forms I thought of". The first version listed `*` and digits and missed a
+    quoted string (issue #1494).
+    """
+    for operand in _AGGREGATE_OPERAND_RE.findall(projection):
+        candidate = operand.strip()
+        if not _BINDABLE_OPERAND_RE.match(candidate):
+            return False
+        if candidate in cs.CYPHER_LITERAL_OPERANDS:
             return False
     return True
 
