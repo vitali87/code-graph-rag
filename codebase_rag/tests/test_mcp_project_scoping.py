@@ -1491,6 +1491,41 @@ class TestTrailingClausesAreCutOnAnyWhitespace:
         assert not self._refused("MATCH (n) RETURN n.reunion, n.qualified_name")
 
 
+class TestAForeignProjectLiteralAnywhereIsRefused:
+    """Deliberately conservative, and pinned because nothing else pins it.
+
+    `_restricts_to_project` requires EVERY project-shaped literal in the
+    body to name the requested project. Since `_alias_is_restricted` began
+    checking the operand, that is belt-and-braces: a query restricting the
+    counted alias to another project is already refused there.
+
+    What survives is a genuine over-restriction -- a query whose counted
+    alias IS correctly bound to this project but which mentions another
+    project's name in a non-restricting position. That is refused, which is
+    the SAFE direction, but it was an unguarded decision: mutating the
+    quantifier from `all` to `any` killed no test at all. Found by sweeping
+    every quantifier in the module after one of them turned out to be wrong.
+    """
+
+    def _refused(self, query: str) -> bool:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        return not requires_project_evidence(query, ALPHA)
+
+    def test_a_foreign_literal_in_a_non_restricting_position_is_refused(self) -> None:
+        assert self._refused(
+            f"MATCH (n) WHERE n.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND n.path CONTAINS '{BETA}.' RETURN count(n) AS total"
+        )
+
+    def test_a_counted_alias_bound_to_another_project_is_refused(self) -> None:
+        """The case the literal rule was originally written for."""
+        assert self._refused(
+            f"MATCH (n) WHERE n.qualified_name STARTS WITH '{BETA}.' "
+            f"AND n.path CONTAINS '{ALPHA}.' RETURN count(n) AS total"
+        )
+
+
 class TestTheRestrictionMustBeAPlainConjunction:
     """A token blacklist tests spellings; the contract is a PROPERTY.
 
