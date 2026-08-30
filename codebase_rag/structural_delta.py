@@ -284,6 +284,7 @@ def _renames(
                 qn
             )
     renames: list[RenameFinding] = []
+    unpaired: list[str] = []
     for qn in removed:
         definition = before.definitions[qn]
         candidates = by_shape.get((definition.path, definition.fingerprint))
@@ -291,6 +292,24 @@ def _renames(
             renames.append(
                 RenameFinding(old=qn, new=candidates.pop(0), path=definition.path)
             )
+        else:
+            unpaired.append(qn)
+    # A move keeps the name and the body but changes the file: pair what is
+    # left by name and fingerprint across files (issue #1534).
+    by_name_shape: dict[tuple[str, str], list[str]] = {}
+    for candidates in by_shape.values():
+        for qn in candidates:
+            definition = after.definitions[qn]
+            by_name_shape.setdefault(
+                (definition.name, definition.fingerprint), []
+            ).append(qn)
+    for qn in unpaired:
+        definition = before.definitions[qn]
+        candidates = by_name_shape.get((definition.name, definition.fingerprint))
+        if definition.fingerprint and candidates:
+            new = candidates.pop(0)
+            by_shape[(after.definitions[new].path, definition.fingerprint)].remove(new)
+            renames.append(RenameFinding(old=qn, new=new, path=definition.path))
     return renames
 
 
@@ -639,6 +658,11 @@ def _cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
         if len(component) > 1
         or any(member in graph.get(member, ()) for member in component)
     }
+
+
+def import_cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
+    """The cyclic strongly connected components of a module import graph."""
+    return _cycles(graph)
 
 
 def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:
