@@ -95,12 +95,15 @@ def test_span_edits_apply_in_any_order() -> None:
 
 def test_span_edits_refuse_overlap_and_bad_spans() -> None:
     src = b"0123456789"
+    overlapping = [SpanEdit(0, 5, b"x"), SpanEdit(4, 6, b"y")]
+    past_end = [SpanEdit(0, 11, b"x")]
+    reversed_span = [SpanEdit(5, 2, b"x")]
     with pytest.raises(PatcherError, match="overlaps"):
-        apply_span_edits(src, [SpanEdit(0, 5, b"x"), SpanEdit(4, 6, b"y")])
+        apply_span_edits(src, overlapping)
     with pytest.raises(PatcherError, match="outside"):
-        apply_span_edits(src, [SpanEdit(0, 11, b"x")])
+        apply_span_edits(src, past_end)
     with pytest.raises(PatcherError, match="outside"):
-        apply_span_edits(src, [SpanEdit(5, 2, b"x")])
+        apply_span_edits(src, reversed_span)
     # Adjacent spans are fine, and an insertion at a boundary is kept.
     assert apply_span_edits(src, [SpanEdit(0, 5, b"a"), SpanEdit(5, 10, b"b")]) == b"ab"
     assert (
