@@ -105,7 +105,7 @@ class FunctionRegistryTrie:
         simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         if self._simple_name_lookup is not None:
             self._simple_name_lookup[simple_name].add(qualified_name)
-        self._invalidate_ending_with_cache(qualified_name, simple_name)
+        self._invalidate_ending_with_cache(simple_name)
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         current: TrieNode = self.root
@@ -162,7 +162,7 @@ class FunctionRegistryTrie:
         self._abstracts.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
 
-        self._invalidate_ending_with_cache(qualified_name, simple_name)
+        self._invalidate_ending_with_cache(simple_name)
 
         if self._simple_name_lookup is not None:
             if simple_name in self._simple_name_lookup:
@@ -245,9 +245,7 @@ class FunctionRegistryTrie:
         )
         return [qn for qn, _ in matches]
 
-    def _invalidate_ending_with_cache(
-        self, qualified_name: QualifiedName, simple_name: str
-    ) -> None:
+    def _invalidate_ending_with_cache(self, simple_name: str) -> None:
         if not self._ending_with_cache:
             return
         self._ending_with_cache.pop(simple_name, None)

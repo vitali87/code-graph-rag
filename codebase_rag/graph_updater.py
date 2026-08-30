@@ -2774,6 +2774,148 @@ class GraphUpdater:
             self._run_python_frontend()
             self._rehydrate_function_locations()
 
+    def _reingest_split(
+        self, paths: Iterable[Path | str], deleted: Iterable[Path | str]
+    ) -> tuple[dict[str, Path], dict[str, Path]]:
+        # (present, gone): a listed path missing on disk counts as gone, and
+        # an explicit deletion wins over a same-named file that reappeared.
+        present: dict[str, Path] = {}
+        gone: dict[str, Path] = {}
+        for raw in paths:
+            key, path = self._reingest_target(raw)
+            (present if path.is_file() else gone)[key] = path
+        for raw in deleted:
+            key, path = self._reingest_target(raw)
+            present.pop(key, None)
+            gone[key] = path
+        return present, gone
+
+    def _reingest_dependents(
+        self, present: dict[str, Path], gone: dict[str, Path]
+    ) -> dict[str, Path]:
+        # Files whose bindings the change can move (one level, from the
+        # graph's own edges) plus any file whose delombok overlay changed.
+        keys = sorted({*present, *gone})
+        affected: dict[str, Path] = {}
+        for caller_key in self._affected_caller_keys(keys):
+            caller_path = self.repo_path / caller_key
+            if (
+                caller_key not in present
+                and caller_key not in gone
+                and caller_path.is_file()
+            ):
+                affected[caller_key] = caller_path
+        for key in self._delombok_stale_keys:
+            if (
+                key not in present
+                and key not in gone
+                and (self.repo_path / key).is_file()
+            ):
+                affected[key] = self.repo_path / key
+        return affected
+
+    def _reingest_delete(
+        self, reparse: dict[str, Path], gone: dict[str, Path], hashes: FileHashCache
+    ) -> None:
+        import_processor = self.factory.import_processor
+        for key, path in reparse.items():
+            self.remove_file_from_state(path)
+            self._delete_module_entities(key)
+            # The Rust path caches were filled by the last run; a created or
+            # modified file must be re-observed before crate::/super:: paths
+            # resolve against them.
+            import_processor.refresh_rust_path_caches_for(
+                path, created=key not in hashes
+            )
+        for key, path in gone.items():
+            self.remove_file_from_state(path)
+            self._delete_module_entities(key)
+            if isinstance(self.ingestor, QueryProtocol):
+                # Keyed on the absolute path: a sibling project's File node
+                # can share the relative path (issue #897).
+                self.ingestor.execute_write(
+                    cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: path.resolve().as_posix()}
+                )
+
+    def _reingest_reparse(
+        self, reparse: dict[str, Path], gone: dict[str, Path]
+    ) -> None:
+        touched_languages: set[cs.SupportedLanguage] = set()
+        for path in (*reparse.values(), *gone.values()):
+            spec = get_language_spec(path.suffix)
+            if spec is not None and isinstance(spec.language, cs.SupportedLanguage):
+                touched_languages.add(spec.language)
+        if touched_languages & cs.C_FAMILY_LANGUAGES and (
+            settings.CPP_FRONTEND != cs.CppFrontend.HYBRID
+        ):
+            # LIBCLANG emits C/C++ definitions itself and marks the files it
+            # covered so the tree-sitter pass skips them; the deleted subtrees
+            # need it to run again BEFORE the re-parse, as run() does. (HYBRID
+            # runs after Pass 2, inside the deferred stages.)
+            self._cpp_frontend_covered = frozenset()
+            self._run_cpp_frontend()
+        for key, path in reparse.items():
+            # The delombok overlay stands in for the checked-in bytes exactly
+            # as the batch path does (issue #1140).
+            self._process_single_file(path, file_bytes=self._delombok_overlay.get(key))
+        self._rerun_frontends_for(touched_languages)
+
+    def _reingest_resolve(
+        self, reparse: dict[str, Path], captured: list[ResultRow]
+    ) -> None:
+        # The deferred definition-level stages run() applies after Pass 2
+        # (C/C++ macros and includes, containment, forward declarations,
+        # inheritance, Rust inline-mod arbitration): the deleted subtrees
+        # held those relationships too. The registry is already live or was
+        # hydrated above, so no graph read-back here.
+        known_module_paths = self._resolve_deferred_definitions(rehydrate=False)
+        # The re-parsed files' own CALLS edges went with their Module
+        # subtrees; a moved use must not serve last pass's cached answer.
+        self.factory.call_processor.reset_resolution_caches()
+        self._process_function_calls(only=set(reparse.values()))
+        # Editing a PROVIDER recreated its Module node and severed the
+        # unchanged C# importers' edges (issue #1347).
+        import_processor = self.factory.import_processor
+        import_processor.requeue_csharp_import_edges()
+        import_processor.flush_deferred_import_edges(known_module_paths)
+        self._emit_csharp_query_calls()
+        self.factory.definition_processor.process_all_method_overrides()
+        # Endpoints and route registrations, scoped to the re-parsed modules:
+        # the project-wide passes would load every route-capable module's
+        # AST, which on a fresh updater means re-parsing most of the repo.
+        reparsed_paths = set(reparse.values())
+        touched_modules = {
+            qn
+            for qn, module_path in self.factory.definition_processor.module_qn_to_file_path.items()
+            if module_path in reparsed_paths
+        }
+        self._emit_pending_endpoints(only=touched_modules)
+        self._emit_route_call_endpoints(only=touched_modules)
+        self._restore_inbound_edges(captured)
+        if isinstance(self.ingestor, QueryProtocol):
+            self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+        self.ingestor.flush_all()
+
+    def _reingest_update_hashes(
+        self,
+        cache_path: Path,
+        hashes: FileHashCache,
+        reparse: dict[str, Path],
+        gone: dict[str, Path],
+    ) -> None:
+        # Keep the hash cache honest so the next update_repository does not
+        # re-parse what this call already applied.
+        if not cache_path.is_file():
+            return
+        for key, path in reparse.items():
+            try:
+                hashes[key] = _hash_file(path)
+            except OSError:
+                hashes.pop(key, None)
+        for key in gone:
+            hashes.pop(key, None)
+        _save_hash_cache(cache_path, hashes)
+
     def reingest(
         self,
         paths: Iterable[Path | str],
@@ -2796,131 +2938,28 @@ class GraphUpdater:
         same-named file has since reappeared (a watch DELETE event).
         """
         started = time.perf_counter()
-        present: dict[str, Path] = {}
-        gone: dict[str, Path] = {}
-        for raw in paths:
-            key, path = self._reingest_target(raw)
-            if path.is_file():
-                present[key] = path
-            else:
-                gone[key] = path
-        for raw in deleted:
-            key, path = self._reingest_target(raw)
-            present.pop(key, None)
-            gone[key] = path
+        present, gone = self._reingest_split(paths, deleted)
         if not present and not gone:
             return ReingestReport((), (), (), 0.0)
 
         self._hydrate_for_reingest()
         # Generated-source roots and the delombok overlay are per-run inputs;
         # a watcher's updater lives across many events, so refresh them per
-        # call and pull any file whose overlay changed into the re-parse set
-        # (the batch path does the same through _delombok_stale_keys).
+        # call (the batch path does the same through _delombok_stale_keys).
         self._register_generated_sources()
-        stale_overlay = {
-            key for key in self._delombok_stale_keys if (self.repo_path / key).is_file()
-        }
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         hashes = _load_hash_cache(cache_path)
 
-        keys = sorted({*present, *gone})
-        affected: dict[str, Path] = {}
-        for caller_key in self._affected_caller_keys(keys):
-            if caller_key in present or caller_key in gone:
-                continue
-            caller_path = self.repo_path / caller_key
-            if caller_path.is_file():
-                affected[caller_key] = caller_path
-        for key in stale_overlay - set(present) - set(gone):
-            affected[key] = self.repo_path / key
-        all_keys = sorted({*keys, *affected})
+        affected = self._reingest_dependents(present, gone)
+        all_keys = sorted({*present, *gone, *affected})
         captured = self._capture_inbound_edges(all_keys)
         self._reparsed_file_keys = set(all_keys)
 
-        import_processor = self.factory.import_processor
         reparse = {**present, **affected}
-        for key, path in reparse.items():
-            self.remove_file_from_state(path)
-            self._delete_module_entities(key)
-            # The Rust path caches were filled by the last run; a created or
-            # modified file must be re-observed before crate::/super:: paths
-            # resolve against them.
-            import_processor.refresh_rust_path_caches_for(
-                path, created=key not in hashes
-            )
-        for key, path in gone.items():
-            self.remove_file_from_state(path)
-            self._delete_module_entities(key)
-            if isinstance(self.ingestor, QueryProtocol):
-                # Keyed on the absolute path: a sibling project's File node
-                # can share the relative path (issue #897).
-                self.ingestor.execute_write(
-                    cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: path.resolve().as_posix()}
-                )
-        touched_languages: set[cs.SupportedLanguage] = set()
-        for path in (*reparse.values(), *gone.values()):
-            spec = get_language_spec(path.suffix)
-            if spec is not None and isinstance(spec.language, cs.SupportedLanguage):
-                touched_languages.add(spec.language)
-        if touched_languages & cs.C_FAMILY_LANGUAGES and (
-            settings.CPP_FRONTEND != cs.CppFrontend.HYBRID
-        ):
-            # LIBCLANG emits C/C++ definitions itself and marks the files it
-            # covered so the tree-sitter pass skips them; the deleted subtrees
-            # need it to run again BEFORE the re-parse, as run() does. (HYBRID
-            # runs after Pass 2, inside the deferred stages.)
-            self._cpp_frontend_covered = frozenset()
-            self._run_cpp_frontend()
-        for key, path in reparse.items():
-            # The delombok overlay stands in for the checked-in bytes exactly
-            # as the batch path does (issue #1140).
-            self._process_single_file(path, file_bytes=self._delombok_overlay.get(key))
-        self._rerun_frontends_for(touched_languages)
-
-        # The deferred definition-level stages run() applies after Pass 2
-        # (C/C++ macros and includes, containment, forward declarations,
-        # inheritance, Rust inline-mod arbitration): the deleted subtrees
-        # held those relationships too. The registry is already live or was
-        # hydrated above, so no graph read-back here.
-        known_module_paths = self._resolve_deferred_definitions(rehydrate=False)
-
-        # The re-parsed files' own CALLS edges went with their Module
-        # subtrees; a moved use must not serve last pass's cached answer.
-        self.factory.call_processor.reset_resolution_caches()
-        self._process_function_calls(only=set(reparse.values()))
-
-        # Editing a PROVIDER recreated its Module node and severed the
-        # unchanged C# importers' edges (issue #1347).
-        import_processor.requeue_csharp_import_edges()
-        import_processor.flush_deferred_import_edges(known_module_paths)
-        self._emit_csharp_query_calls()
-        self.factory.definition_processor.process_all_method_overrides()
-        # Endpoints and route registrations, scoped to the re-parsed modules:
-        # the project-wide passes would load every route-capable module's
-        # AST, which on a fresh updater means re-parsing most of the repo.
-        touched_modules = {
-            qn
-            for qn, module_path in self.factory.definition_processor.module_qn_to_file_path.items()
-            if module_path in reparse.values()
-        }
-        self._emit_pending_endpoints(only=touched_modules)
-        self._emit_route_call_endpoints(only=touched_modules)
-        self._restore_inbound_edges(captured)
-        if isinstance(self.ingestor, QueryProtocol):
-            self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
-        self.ingestor.flush_all()
-
-        # Keep the hash cache honest so the next update_repository does not
-        # re-parse what this call already applied.
-        if cache_path.is_file():
-            for key, path in reparse.items():
-                try:
-                    hashes[key] = _hash_file(path)
-                except OSError:
-                    hashes.pop(key, None)
-            for key in gone:
-                hashes.pop(key, None)
-            _save_hash_cache(cache_path, hashes)
+        self._reingest_delete(reparse, gone, hashes)
+        self._reingest_reparse(reparse, gone)
+        self._reingest_resolve(reparse, captured)
+        self._reingest_update_hashes(cache_path, hashes, reparse, gone)
 
         report = ReingestReport(
             reparsed=tuple(sorted(present)),
