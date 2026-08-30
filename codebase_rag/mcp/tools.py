@@ -22,11 +22,7 @@ from codebase_rag.tools.code_retrieval import (
     CodeRetriever,
     create_code_retrieval_tool,
 )
-from codebase_rag.tools.codebase_query import (
-    create_query_tool,
-    requires_project_evidence,
-    scope_rows_to_project,
-)
+from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
@@ -101,9 +97,11 @@ class MCPToolsRegistry:
         self.shell_commander = ShellCommander(project_root=project_root)
         self.ast_grep_service = AstGrepService(project_root=project_root)
 
-        stderr_console = Console(file=sys.stderr, width=None, force_terminal=True)
+        # Kept on self: a scoped request builds its own query tool per call,
+        # and that tool must print to the same console as the pre-built one.
+        self._stderr_console = Console(file=sys.stderr, width=None, force_terminal=True)
         self._query_tool = create_query_tool(
-            ingestor=ingestor, cypher_gen=cypher_gen, console=stderr_console
+            ingestor=ingestor, cypher_gen=cypher_gen, console=self._stderr_console
         )
         self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
         self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
@@ -882,11 +880,6 @@ class MCPToolsRegistry:
     ) -> QueryResultDict:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
-            # Per REQUEST, not per process: one HTTP server hosts several
-            # projects, and a scope fixed at startup would force a process
-            # each (issue #1494). The pre-built `_query_tool` has its project
-            # bound at construction, so the filter is applied here instead.
-            #
             # Validated against the known projects first: a typo returning
             # zero rows is indistinguishable from a genuine empty result.
             if project is not None:
@@ -902,41 +895,33 @@ class MCPToolsRegistry:
                             project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
                         ),
                     )
+            # Per REQUEST, not per process: one HTTP server hosts several
+            # projects, and a scope fixed at startup would force a process
+            # each (issue #1494). The pre-built `_query_tool` has its project
+            # bound at construction, so a scoped request gets a tool of its
+            # own -- which runs the evidence guard and the row filter BEFORE
+            # its row cap and token truncation. Filtering here instead spent
+            # the caps on foreign rows and left `summary` describing rows the
+            # caller never received (issue #1508).
+            query_tool = (
+                self._query_tool
+                if project is None
+                else create_query_tool(
+                    ingestor=self.ingestor,
+                    cypher_gen=self.cypher_gen,
+                    console=self._stderr_console,
+                    project_name=project,
+                )
+            )
             # Serialise against index/update, which delete and rebuild the
             # graph under this lock; an interleaved read mixes generations.
             async with self._ingestor_lock:
-                graph_data = await self._query_tool.function(natural_language_query)
+                graph_data = await query_tool.function(natural_language_query)
             result_dict: QueryResultDict = graph_data.model_dump()
-            # A query returning no qualified name yields rows the filter
-            # cannot judge, so it keeps them -- it cannot prove them
-            # foreign. Answering a SCOPED request with those would ignore
-            # the scope silently, which is the original bug in new clothes.
-            # Refused instead, so the caller learns the scope did not hold.
-            #
-            # Only when a query was actually GENERATED. Translation failure
-            # yields `QUERY_NOT_AVAILABLE` (or nothing), which has no RETURN
-            # clause and so fails the evidence check -- reporting "cannot be
-            # scoped" for a query that was never written, and discarding the
-            # real translation error the caller needs (issue #1494).
-            query_used = result_dict.get(cs.DICT_KEY_QUERY_USED, "")
-            generated = bool(query_used) and query_used != cs.QUERY_NOT_AVAILABLE
-            if (
-                project is not None
-                and generated
-                and not requires_project_evidence(query_used, project)
-            ):
-                message = cs.MCP_UNSCOPEABLE_QUERY.format(project=project)
-                return QueryResultDict(
-                    error=message,
-                    query_used=result_dict.get(
-                        cs.DICT_KEY_QUERY_USED, cs.QUERY_NOT_AVAILABLE
-                    ),
-                    results=[],
-                    summary=message,
-                )
-            result_dict[cs.DICT_KEY_RESULTS] = scope_rows_to_project(
-                result_dict.get(cs.DICT_KEY_RESULTS, []), project
-            )
+            # The error key marks a scoping refusal; absent it means success,
+            # so a None must not leak into the wire shape as a present key.
+            if graph_data.error is None:
+                result_dict.pop(cs.MCP_KEY_ERROR, None)
             logger.info(
                 lg.MCP_QUERY_RESULTS.format(
                     count=len(result_dict.get(cs.DICT_KEY_RESULTS, []))

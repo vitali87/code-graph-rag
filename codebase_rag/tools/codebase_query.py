@@ -662,10 +662,14 @@ def create_query_tool(
             if project_name is not None and not requires_project_evidence(
                 cypher_query, project_name
             ):
+                message = QUERY_SUMMARY_UNSCOPEABLE.format(project=project_name)
+                # `error` as well as `summary`: MCP callers distinguish a
+                # refusal from a genuine empty result by the error key.
                 return QueryGraphData(
                     query_used=cypher_query,
                     results=[],
-                    summary=QUERY_SUMMARY_UNSCOPEABLE.format(project=project_name),
+                    summary=message,
+                    error=message,
                 )
 
             results = await asyncio.wait_for(
