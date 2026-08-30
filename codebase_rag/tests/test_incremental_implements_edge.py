@@ -113,3 +113,17 @@ def test_incremental_reindex_of_an_interface_keeps_its_implementors(
 
     assert _implements(after) == _implements(clean)
     assert after == clean
+
+
+def test_emulator_inbound_rels_match_the_production_query() -> None:
+    # The emulator restores inbound edges for the relations production
+    # captures; a set that drifts from CYPHER_INBOUND_EDGES makes every
+    # clean-vs-incremental eval silently disagree with production.
+    import re
+
+    from evals.cgr_graph import _INBOUND_DEPENDENT_RELS
+
+    match = re.search(r"\[r:([A-Z|_]+)\]", cs.CYPHER_INBOUND_EDGES)
+    assert match is not None, "could not read the relation list from the query"
+    production = set(match.group(1).split("|"))
+    assert set(_INBOUND_DEPENDENT_RELS) == production

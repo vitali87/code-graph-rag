@@ -81,6 +81,7 @@ _DEFINITION_LABELS = frozenset(
 _INBOUND_DEPENDENT_RELS = frozenset(
     {
         cs.RelationshipType.CALLS.value,
+        cs.RelationshipType.REFERENCES.value,
         cs.RelationshipType.INSTANTIATES.value,
         cs.RelationshipType.IMPORTS.value,
         cs.RelationshipType.INHERITS.value,
