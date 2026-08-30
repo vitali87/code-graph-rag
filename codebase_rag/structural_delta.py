@@ -407,7 +407,8 @@ def _arity_verdict(
     if site.arg_count is None:
         return len(declared), cs.DELTA_ARITY_UNKNOWN
     is_method = definition.label in _METHOD_LABELS
-    passed = site.arg_count + len(site.kwarg_names) + (1 if is_method else 0)
+    # `arg_count` already counts keyword arguments (issue #1522).
+    passed = site.arg_count + (1 if is_method else 0)
     # `diagnose_arity` owns the receiver arithmetic (`self` counts for
     # CPython but is not caller-supplied); here the "message" is the site.
     verdict = diagnose_arity(
