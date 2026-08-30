@@ -350,6 +350,9 @@ message GraphCodeIndex {
     string ast_fingerprint = 8;
     int32 ast_fingerprint_nodes = 9;
     repeated string ast_branch_fingerprints = 10;
+    // Annotations as written (#1527); absent return_type is the empty string.
+    string return_type = 11;
+    repeated string param_types = 12;
   }
 
   message Method {
@@ -365,6 +368,9 @@ message GraphCodeIndex {
     string ast_fingerprint = 7;
     int32 ast_fingerprint_nodes = 8;
     repeated string ast_branch_fingerprints = 9;
+    // Annotations as written (#1527); absent return_type is the empty string.
+    string return_type = 10;
+    repeated string param_types = 11;
   }
 
   message Class {
