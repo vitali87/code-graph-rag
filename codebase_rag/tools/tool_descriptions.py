@@ -243,6 +243,23 @@ MCP_PARAM_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites too (default false)."
 )
 MCP_PARAM_RENAME_DRY_RUN = "Plan only: report the sites and diff, write nothing."
+MCP_CHANGE_SIGNATURE = (
+    "Change a function's or method's parameter list and rewrite every call "
+    "site the graph knows per an explicit mapping. `new_params` lists the "
+    "new parameters in order as `name[:annotation][=default][@source]`: "
+    "`@2` takes the value from old positional index 2, `@old` from the old "
+    "parameter `old`, `=literal` without a source inserts that literal where "
+    "a site passes nothing (and becomes the definition's default), and a "
+    "bare name is unmapped: sites passing no value for it are left untouched "
+    "and listed. Overrides in the hierarchy are rewritten too; sites resolved "
+    "by guesswork are listed as unmapped unless `allow_heuristic`. A default "
+    "literal that does not fit the declared type is refused. Applied through "
+    "one transaction and held to the postcondition contract; set `dry_run` to "
+    "see the plan."
+)
+MCP_PARAM_NEW_PARAMS = (
+    "The new parameter list, in order, as `name[:annotation][=default][@source]` specs."
+)
 
 MCP_QUERY_CODE_GRAPH = (
     "Prefer the deterministic tools (resolve, definition, callers, callees, "
@@ -425,6 +442,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.IMPORTERS: MCP_IMPORTERS,
     MCPToolName.TESTS_REACHING: MCP_TESTS_REACHING,
     MCPToolName.RENAME: MCP_RENAME,
+    MCPToolName.CHANGE_SIGNATURE: MCP_CHANGE_SIGNATURE,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,

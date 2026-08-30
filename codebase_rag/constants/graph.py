@@ -54,6 +54,8 @@ KEY_UNLOCATABLE = "unlocatable"
 # Rename report fields (issue #1532).
 KEY_SITES = "sites"
 KEY_AMBIGUOUS = "ambiguous"
+KEY_UNMAPPED = "unmapped"
+KEY_VERDICT = "verdict"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
 

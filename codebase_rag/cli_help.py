@@ -21,6 +21,7 @@ class CLICommandName(StrEnum):
     GRAPH = "graph"
     CHECK = "check"
     RENAME = "rename"
+    CHANGE_SIGNATURE = "change-signature"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -145,6 +146,20 @@ HELP_RENAME_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites as well."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_CHANGE_SIGNATURE = (
+    "Change a definition's parameter list and rewrite every call site the "
+    "graph knows per an explicit mapping; unmappable sites are listed."
+)
+EXAMPLES_CHANGE_SIGNATURE = (
+    "Examples:\n  cgr change-signature myproj.pkg.util.helper -p a@0 -p n:int=1 -p b@1\n"
+    "  cgr change-signature myproj.pkg.Store.get -p key@key -p default=None --dry-run"
+)
+HELP_SIGNATURE_PARAM = (
+    "A new parameter, in order: name[:annotation][=default][@source] where "
+    "@2 maps from old index 2, @old from the old parameter old, =literal "
+    "without a source is inserted where a site passes nothing, and a bare "
+    "name is unmapped."
+)
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -466,6 +481,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.GRAPH: CMD_GRAPH,
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
+    CLICommandName.CHANGE_SIGNATURE: CMD_CHANGE_SIGNATURE,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,
