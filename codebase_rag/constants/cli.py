@@ -520,6 +520,7 @@ GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
 
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
+DICT_KEY_ERROR = "error"
 DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
