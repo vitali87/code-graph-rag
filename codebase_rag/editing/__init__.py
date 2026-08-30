@@ -1,6 +1,15 @@
 """Graph-aware editing primitives: span-preserving patchers (issue #1529),
 transactions (issue #1528) and import rewriting (issue #1530)."""
 
+from .contract import (
+    Expectation,
+    Verdict,
+    change_signature_expectation,
+    measure,
+    move_expectation,
+    rename_expectation,
+    verify,
+)
 from .imports import ImportRewriter, ImportSite, Rewrite, RewriteError, SymbolMove
 from .patcher import (
     Patcher,
@@ -25,6 +34,13 @@ from .transaction import (
 )
 
 __all__ = [
+    "Expectation",
+    "Verdict",
+    "change_signature_expectation",
+    "measure",
+    "move_expectation",
+    "rename_expectation",
+    "verify",
     "EditTransaction",
     "ImportRewriter",
     "ImportSite",
