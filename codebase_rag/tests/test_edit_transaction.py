@@ -40,11 +40,11 @@ def _tree_digest(root: Path) -> dict[str, str]:
 def repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     (root / "pkg").mkdir(parents=True)
-    (root / "pkg" / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
-    (root / "pkg" / "b.py").write_text("def b():\n    return 2\n", encoding="utf-8")
-    (root / "README.md").write_text("# repo\n", encoding="utf-8")
+    (root / "pkg" / "a.py").write_bytes(b"def a():\n    return 1\n")
+    (root / "pkg" / "b.py").write_bytes(b"def b():\n    return 2\n")
+    (root / "README.md").write_bytes(b"# repo\n")
     (root / "node_modules").mkdir()
-    (root / "node_modules" / "junk.js").write_text("x", encoding="utf-8")
+    (root / "node_modules" / "junk.js").write_bytes(b"x")
     return root
 
 
@@ -183,7 +183,7 @@ def test_paths_outside_the_repo_are_refused(repo: Path) -> None:
 def test_a_file_changed_after_staging_makes_commit_refuse(repo: Path) -> None:
     tx = EditTransaction(repo)
     tx.stage("pkg/a.py", "mine\n")
-    (repo / "pkg" / "a.py").write_text("someone else\n", encoding="utf-8")
+    (repo / "pkg" / "a.py").write_bytes(b"someone else\n")
     before = _tree_digest(repo)
     with pytest.raises(TransactionConflict):
         tx.commit()
@@ -301,7 +301,7 @@ def test_undo_stops_at_a_file_that_changed_since(repo: Path) -> None:
     tx2 = EditTransaction(repo)
     tx2.stage("pkg/b.py", "two\n")
     tx2.commit()
-    (repo / "pkg" / "b.py").write_text("hand edit\n", encoding="utf-8")
+    (repo / "pkg" / "b.py").write_bytes(b"hand edit\n")
 
     with pytest.raises(TransactionConflict):
         undo_last(repo, count=2)
@@ -377,7 +377,7 @@ def test_cli_undo_conflict_exits_nonzero(repo: Path) -> None:
     tx = EditTransaction(repo)
     tx.stage("pkg/a.py", "v1\n")
     tx.commit()
-    (repo / "pkg" / "a.py").write_text("hand edit\n", encoding="utf-8")
+    (repo / "pkg" / "a.py").write_bytes(b"hand edit\n")
     result = CliRunner().invoke(edits_cli, ["undo", "--repo-path", str(repo)])
     assert result.exit_code == 1
     assert (repo / "pkg" / "a.py").read_text() == "hand edit\n"
@@ -392,7 +392,7 @@ def test_escaping_symlink_cannot_reach_the_live_tree_from_the_staging_copy(
     """A verifier writing through a symlink in `tree.root` must never touch
     the working tree (or anything outside it) when it then fails."""
     outside = tmp_path / "outside.txt"
-    outside.write_text("keep\n", encoding="utf-8")
+    outside.write_bytes(b"keep\n")
     (repo / "escape").symlink_to(outside)
     (repo / "inner").symlink_to(repo / "README.md")
     before = _tree_digest(repo)
@@ -403,8 +403,8 @@ def test_escaping_symlink_cannot_reach_the_live_tree_from_the_staging_copy(
         # An in-repo link is a plain copy: writing to it changes the staging
         # tree only.
         assert not (root / "inner").is_symlink()
-        (root / "inner").write_text("scribble\n", encoding="utf-8")
-        (root / "README.md").write_text("scribble\n", encoding="utf-8")
+        (root / "inner").write_bytes(b"scribble\n")
+        (root / "README.md").write_bytes(b"scribble\n")
         return VerificationResult(False, "no")
 
     tx = EditTransaction(repo)
@@ -420,7 +420,7 @@ def test_undo_rejects_history_paths_outside_the_repo(
     repo: Path, tmp_path: Path
 ) -> None:
     victim = tmp_path / "victim.txt"
-    victim.write_text("keep\n", encoding="utf-8")
+    victim.write_bytes(b"keep\n")
     history = repo / cs.EDIT_HISTORY_FILENAME
     history.write_text(
         json.dumps(
@@ -520,7 +520,7 @@ def test_replacing_an_executable_keeps_its_mode(repo: Path) -> None:
     import stat
 
     script = repo / "run.sh"
-    script.write_text("#!/bin/sh\necho one\n", encoding="utf-8")
+    script.write_bytes(b"#!/bin/sh\necho one\n")
     script.chmod(0o755)
     tx = EditTransaction(repo)
     tx.stage("run.sh", "#!/bin/sh\necho two\n")
@@ -568,7 +568,8 @@ def test_materialise_failure_removes_the_staging_copy(
     tree = StagedTree(repo, {})
     with pytest.raises(OSError):
         _ = tree.root
-    assert made and not made[0].exists()
+    assert made
+    assert not made[0].exists()
 
 
 def test_reserved_state_files_cannot_be_staged(repo: Path) -> None:
@@ -584,7 +585,7 @@ def test_deleted_executable_is_restored_executable(repo: Path) -> None:
     import stat
 
     script = repo / "run.sh"
-    script.write_text("#!/bin/sh\necho one\n", encoding="utf-8")
+    script.write_bytes(b"#!/bin/sh\necho one\n")
     script.chmod(0o755)
     tx = EditTransaction(repo)
     tx.stage("run.sh", None)

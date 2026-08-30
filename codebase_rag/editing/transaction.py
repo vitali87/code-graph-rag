@@ -461,10 +461,11 @@ def _contained(root: Path, rel_path: str) -> Path:
     # Every path written comes from a repo-relative key; resolving it and
     # checking containment again here means no caller (an undo replaying a
     # history file, a restore) can reach outside the root.
-    candidate = (root / rel_path).resolve()
-    if not candidate.is_relative_to(root.resolve()):
+    real_root = os.path.realpath(root)
+    candidate = os.path.realpath(os.path.join(real_root, rel_path))
+    if os.path.commonpath([real_root, candidate]) != real_root:
         raise TransactionError(ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT))
-    return candidate
+    return Path(candidate)
 
 
 def _write_file(path: Path, content: bytes | None, mode: int | None = None) -> None:
