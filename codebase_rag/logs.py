@@ -811,6 +811,7 @@ MCP_SEMANTIC_NOT_AVAILABLE = (
 MCP_UPDATING_REPO = "[MCP] Updating repository at: {path}"
 MCP_ERROR_UPDATING = "[MCP] Error updating repository: {error}"
 MCP_REINGESTING = "[MCP] Re-ingesting {count} file(s)"
+MCP_DELTA_FAILED = "[MCP] Structural delta failed: {error}"
 MCP_ERROR_REINGEST = "[MCP] Error re-ingesting files: {error}"
 MCP_GRAPH_QUERY_ERROR = "[MCP] Error running {tool}: {error}"
 MCP_SEMANTIC_SEARCH = "[MCP] semantic_search: {query}"

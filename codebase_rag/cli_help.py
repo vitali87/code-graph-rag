@@ -19,6 +19,7 @@ class CLICommandName(StrEnum):
     TRACE = "trace"
     EDITS = "edits"
     GRAPH = "graph"
+    CHECK = "check"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -114,6 +115,21 @@ HELP_GRAPH_REPO_PATH = (
     "Repository root the project name derives from and source is read from."
 )
 HELP_GRAPH_DEPTH = "How many hops to follow (1 to 5)."
+CMD_CHECK = (
+    "Report the structural delta of the working tree against a git ref: "
+    "dangling callers, arity findings, new duplicates, new import cycles, "
+    "tests reaching the edited symbols."
+)
+EXAMPLES_CHECK = (
+    "Examples:\n  cgr check --base HEAD\n  cgr check --base origin/main --fail-on-found"
+)
+HELP_CHECK_BASE = (
+    "Git ref the graph was indexed at; files differing from it are re-ingested."
+)
+HELP_CHECK_FAIL_ON_FOUND = (
+    "Exit with status 1 when the delta reports dangling callers, arity "
+    "findings, new duplicates or new import cycles."
+)
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -433,6 +449,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.TRACE: CMD_TRACE,
     CLICommandName.EDITS: CMD_EDITS,
     CLICommandName.GRAPH: CMD_GRAPH,
+    CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,

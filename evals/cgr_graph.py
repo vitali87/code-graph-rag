@@ -1,9 +1,15 @@
 from pathlib import Path
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
+from codebase_rag.types_defs import (
+    PropertyDict,
+    PropertyValue,
+    ResultRow,
+    ResultValue,
+)
 
 from . import constants as ec
 from .types_defs import DefNode, EdgeKey, GraphData, NameEdge, NodeKey
@@ -99,6 +105,18 @@ _INBOUND_DEPENDENT_RELS = frozenset(
 _INHERITS_REL = cs.RelationshipType.INHERITS.value
 
 
+def _str(value: PropertyValue | None) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _result(value: PropertyValue | None) -> ResultValue:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else str(value)
+    return value
+
+
 def _text(value: PropertyValue) -> str | None:
     # path / qualified_name / absolute_path are always textual; narrow the
     # general PropertyValue (which includes list[str]) to the ResultValue
@@ -151,6 +169,214 @@ class _StatefulIngestor:
         if properties:
             self.edge_props[edge] = dict(properties)
 
+    # --- structural delta reads (issue #1525) --------------------------------
+
+    _DELTA_NODE_KEYS = (
+        cs.KEY_QUALIFIED_NAME,
+        cs.KEY_NAME,
+        cs.KEY_PATH,
+        cs.KEY_START_LINE,
+        cs.KEY_START_COL,
+        cs.KEY_END_LINE,
+        cs.KEY_POSITIONAL_PARAMS,
+        cs.KEY_AST_FINGERPRINT,
+        cs.KEY_AST_FINGERPRINT_NODES,
+        cs.KEY_AST_BRANCH_FINGERPRINTS,
+        cs.KEY_DECORATORS,
+        cs.KEY_IS_EXPORTED,
+        cs.KEY_RUST_CFG_TEST_MODS,
+        cs.KEY_RUST_UNGATED_MODS,
+    )
+    _DELTA_SITE_RELS = frozenset(
+        {
+            cs.RelationshipType.CALLS.value,
+            cs.RelationshipType.REFERENCES.value,
+            cs.RelationshipType.INSTANTIATES.value,
+        }
+    )
+    _DELTA_SKIPPED_LABELS = frozenset(
+        {_FILE_LABEL, _FOLDER_LABEL, cs.NodeLabel.MODULE.value}
+    )
+
+    def _delta_node_row(self, label: str, props: PropertyDict) -> ResultRow:
+        row: ResultRow = {cs.KEY_LABEL: label}
+        for key in self._DELTA_NODE_KEYS:
+            row[key] = _result(props.get(key))
+        return row
+
+    def _delta_path_of(self, label: str, uid: PropertyValue) -> str:
+        return _str(self.nodes.get((label, uid), {}).get(cs.KEY_PATH))
+
+    def _delta_definitions(
+        self, prefix: str, paths: set[str] | None, qns: set[str] | None
+    ) -> list[ResultRow]:
+        rows: list[ResultRow] = []
+        for (label, _uid), props in self.nodes.items():
+            qn = _str(props.get(cs.KEY_QUALIFIED_NAME))
+            if not qn or label in self._DELTA_SKIPPED_LABELS:
+                continue
+            if paths is not None and (
+                not qn.startswith(prefix) or props.get(cs.KEY_PATH) not in paths
+            ):
+                continue
+            if qns is not None and qn not in qns:
+                continue
+            rows.append(self._delta_node_row(label, props))
+        return rows
+
+    def _delta_sites(self, prefix: str, paths: set[str]) -> list[ResultRow]:
+        # Through the adjacency indexes: the edges into and out of the
+        # nodes at `paths`, not a scan of every edge.
+        candidates: set[_RelTuple] = set()
+        for node_id, props in self.nodes.items():
+            if props.get(cs.KEY_PATH) in paths:
+                candidates.update(self._in.get(node_id, ()))
+                candidates.update(self._out.get(node_id, ()))
+        rows: list[ResultRow] = []
+        ordered: list[_RelTuple] = sorted(candidates, key=repr)
+        for edge in ordered:
+            fl, fv, rel, tl, tv = edge
+            if rel not in self._DELTA_SITE_RELS or not _str(fv).startswith(prefix):
+                continue
+            from_path = self._delta_path_of(fl, fv)
+            to_path = self._delta_path_of(tl, tv)
+            if from_path not in paths and to_path not in paths:
+                continue
+            props = self.edge_props.get(edge, {})
+            rows.append(
+                {
+                    cs.KEY_FROM_QN: _result(fv),
+                    cs.KEY_FROM_PATH: _result(from_path),
+                    cs.KEY_REL_TYPE: _result(rel),
+                    cs.KEY_TO_QN: _result(tv),
+                    cs.KEY_TO_PATH: _result(to_path),
+                    cs.KEY_LINE: _result(props.get(cs.KEY_LINE)),
+                    cs.KEY_COL: _result(props.get(cs.KEY_COL)),
+                    cs.KEY_ARG_COUNT: _result(props.get(cs.KEY_ARG_COUNT)),
+                    cs.KEY_KWARG_NAMES: _result(props.get(cs.KEY_KWARG_NAMES)),
+                }
+            )
+        return rows
+
+    def _delta_callers_of(self, prefix: str, qns: set[str]) -> list[ResultRow]:
+        # Through the inbound index, the way the real query uses the
+        # qualified-name index: one lookup per frontier name.
+        rows: list[ResultRow] = []
+        seen: set[tuple[str, str]] = set()
+        labels = [
+            label
+            for label in (str(value) for value in cs.NodeLabel)
+            if label not in self._DELTA_SKIPPED_LABELS
+        ]
+        for qn in sorted(qns):
+            for label in labels:
+                if (label, qn) not in self.nodes:
+                    continue
+                self._delta_callers_into(prefix, (label, qn), seen, rows)
+        return rows
+
+    def _delta_callers_into(
+        self,
+        prefix: str,
+        target: _NodeId,
+        seen: set[tuple[str, str]],
+        rows: list[ResultRow],
+    ) -> None:
+        for edge in self._in.get(target, ()):
+            fl, fv, rel, _tl, tv = edge
+            caller = self.nodes.get((fl, fv))
+            if (
+                rel not in self._DELTA_SITE_RELS
+                or caller is None
+                or not _str(fv).startswith(prefix)
+                or (_str(fv), _str(tv)) in seen
+            ):
+                continue
+            seen.add((_str(fv), _str(tv)))
+            row = self._delta_node_row(fl, caller)
+            row[cs.KEY_TO_QN] = _result(tv)
+            rows.append(row)
+
+    def _delta_module_imports(self, prefix: str) -> list[ResultRow]:
+        module = cs.NodeLabel.MODULE.value
+        rows: list[ResultRow] = []
+        for node_id, props in self.nodes.items():
+            label, uid = node_id
+            if label != module or not _str(uid).startswith(prefix):
+                continue
+            for _fl, fv, rel, tl, tv in self._out.get(node_id, ()):
+                if (
+                    rel == cs.RelationshipType.IMPORTS.value
+                    and tl == module
+                    and _str(tv).startswith(prefix)
+                ):
+                    rows.append(
+                        {
+                            cs.KEY_FROM_QN: _result(fv),
+                            cs.KEY_FROM_PATH: _result(props.get(cs.KEY_PATH)),
+                            cs.KEY_TO_QN: _result(tv),
+                        }
+                    )
+        return rows
+
+    def _delta_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
+        paths = set(raw_paths) if isinstance(raw_paths, list) else set()
+        module = cs.NodeLabel.MODULE.value
+        if query == cq.CYPHER_DELTA_CALLERS_OF:
+            raw_qns = params.get(cs.KEY_QNS)
+            return self._delta_callers_of(
+                prefix,
+                {str(q) for q in raw_qns} if isinstance(raw_qns, list) else set(),
+            )
+        if query == cq.CYPHER_DELTA_RUST_MODULES:
+            return [
+                self._delta_node_row(label, props)
+                for (label, _uid), props in self.nodes.items()
+                if label == module
+                and _str(props.get(cs.KEY_PATH)).endswith(cs.EXT_RS)
+                and _str(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+            ]
+        if query == cq.CYPHER_DELTA_RUST_TEST_FNS:
+            return [
+                self._delta_node_row(label, props)
+                for (label, _uid), props in self.nodes.items()
+                if label in (cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value)
+                and props.get(cs.KEY_PATH) in paths
+            ]
+        if query == cq.CYPHER_DELTA_DEFINITIONS:
+            return self._delta_definitions(prefix, paths, None)
+        if query == cq.CYPHER_DELTA_DEFINITIONS_BY_QN:
+            raw_qns = params.get(cs.KEY_QNS)
+            wanted = {str(q) for q in raw_qns} if isinstance(raw_qns, list) else set()
+            return self._delta_definitions(prefix, None, wanted)
+        if query == cq.CYPHER_DELTA_SITES:
+            return self._delta_sites(prefix, paths)
+        if query == cq.CYPHER_DELTA_MODULE_IMPORTS:
+            return self._delta_module_imports(prefix)
+        if query == cq.CYPHER_DEAD_CODE_RELS:
+            return [
+                {
+                    cs.KEY_FROM_LABEL: _result(fl),
+                    cs.KEY_FROM_QN: _result(fv),
+                    cs.KEY_REL_TYPE: _result(rel),
+                    cs.KEY_TO_LABEL: _result(tl),
+                    cs.KEY_TO_QN: _result(tv),
+                }
+                for (fl, fv, rel, tl, tv) in self.edges
+                if _str(fv).startswith(prefix)
+            ]
+        # Duplicate fingerprints and dead-code nodes: every definition of
+        # the project (the module rows the real query omits are skipped by
+        # the label filter above).
+        return [
+            self._delta_node_row(label, props)
+            for (label, _uid), props in self.nodes.items()
+            if label not in self._DELTA_SKIPPED_LABELS
+            and _str(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+        ]
+
     def reset_edges(self) -> None:
         self.edges = set()
         self.edge_props = {}
@@ -166,6 +392,19 @@ class _StatefulIngestor:
         match query:
             case cs.CYPHER_ALL_FILE_PATHS:
                 return self._path_rows(_FILE_LABEL)
+            case (
+                cq.CYPHER_DELTA_DEFINITIONS
+                | cq.CYPHER_DELTA_DEFINITIONS_BY_QN
+                | cq.CYPHER_DELTA_SITES
+                | cq.CYPHER_DELTA_MODULE_IMPORTS
+                | cq.CYPHER_DELTA_CALLERS_OF
+                | cq.CYPHER_DELTA_RUST_MODULES
+                | cq.CYPHER_DELTA_RUST_TEST_FNS
+                | cq.CYPHER_DUPLICATE_FINGERPRINTS
+                | cq.CYPHER_DEAD_CODE_NODES
+                | cq.CYPHER_DEAD_CODE_RELS
+            ):
+                return self._delta_rows(query, params or {})
             case cs.CYPHER_ALL_FOLDER_PATHS:
                 return self._path_rows(_FOLDER_LABEL)
             case cs.CYPHER_INBOUND_EDGES:
