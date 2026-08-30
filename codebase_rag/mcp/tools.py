@@ -307,6 +307,8 @@ class MCPToolsRegistry:
             cs.MCPToolName.RENAME: self._rename_tool(),
             cs.MCPToolName.CHANGE_SIGNATURE: self._change_signature_tool(),
             cs.MCPToolName.MOVE: self._move_tool(),
+            cs.MCPToolName.EXTRACT: self._extract_tool(),
+            cs.MCPToolName.INLINE: self._inline_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
                 description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
@@ -1424,6 +1426,150 @@ class MCPToolsRegistry:
         payload = dict(report._asdict())
         if report.verdict is not None:
             payload[cs.KEY_VERDICT] = report.verdict._asdict()
+        return payload
+
+    def _extract_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.EXTRACT,
+            description=td.MCP_TOOLS[cs.MCPToolName.EXTRACT],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.START_LINE: prop(
+                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_START_LINE
+                    ),
+                    cs.MCPParamName.END_LINE: prop(
+                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_END_LINE
+                    ),
+                    cs.MCPParamName.NEW_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_NEW_NAME
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[
+                    cs.MCPParamName.QUALIFIED_NAME,
+                    cs.MCPParamName.START_LINE,
+                    cs.MCPParamName.END_LINE,
+                    cs.MCPParamName.NEW_NAME,
+                ],
+            ),
+            handler=self.extract,
+            returns_json=True,
+        )
+
+    def _inline_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.INLINE,
+            description=td.MCP_TOOLS[cs.MCPToolName.INLINE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[cs.MCPParamName.QUALIFIED_NAME],
+            ),
+            handler=self.inline,
+            returns_json=True,
+        )
+
+    async def extract(
+        self,
+        qualified_name: str,
+        start_line: int,
+        end_line: int,
+        new_name: str,
+        dry_run: bool = False,
+        project: str | None = None,
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.EXTRACT,
+            project,
+            lambda name: self._run_extract(
+                name, qualified_name, start_line, end_line, new_name, dry_run
+            ),
+        )
+
+    def _run_extract(
+        self,
+        project_name: str,
+        qualified_name: str,
+        start_line: int,
+        end_line: int,
+        new_name: str,
+        dry_run: bool,
+    ) -> object:
+        from codebase_rag.editing.extract import ExtractRefused, extract
+
+        try:
+            report = extract(
+                Path(self.project_root),
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                (start_line, end_line),
+                new_name,
+                dry_run=dry_run,
+                reingest=self._reingest_for_contract(),
+            )
+        except ExtractRefused as refused:
+            return {cs.DICT_KEY_ERROR: str(refused)}
+        return self._report_payload(report)
+
+    async def inline(
+        self, qualified_name: str, dry_run: bool = False, project: str | None = None
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.INLINE,
+            project,
+            lambda name: self._run_inline(name, qualified_name, dry_run),
+        )
+
+    def _run_inline(
+        self, project_name: str, qualified_name: str, dry_run: bool
+    ) -> object:
+        from codebase_rag.editing.extract import InlineRefused, inline
+
+        try:
+            report = inline(
+                Path(self.project_root),
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                dry_run=dry_run,
+                reingest=self._reingest_for_contract(),
+            )
+        except InlineRefused as refused:
+            return {cs.DICT_KEY_ERROR: str(refused), cs.KEY_SITES: list(refused.sites)}
+        return self._report_payload(report)
+
+    @staticmethod
+    def _report_payload(report: object) -> dict[str, object]:
+        payload = dict(report._asdict())  # type: ignore[attr-defined]
+        verdict = payload.get(cs.KEY_VERDICT)
+        if verdict is not None:
+            payload[cs.KEY_VERDICT] = verdict._asdict()
         return payload
 
     def _reingest_for_contract(self) -> Callable[[list[str]], ReingestReport] | None:

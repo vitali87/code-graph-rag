@@ -556,6 +556,27 @@ SIGNATURE_SPLAT = "the site spreads its arguments"
 SIGNATURE_UNKNOWN_KEYWORD = "the site passes an unknown keyword {name}"
 SIGNATURE_NEEDS_KEYWORDS = "the mapping needs keyword arguments this language lacks"
 SIGNATURE_UNMAPPED_PARAM = "the site passes no value for {name}"
+# extract and inline (issue #1535).
+EXTRACT_UNKNOWN = "No definition named {qn} in the graph"
+EXTRACT_NO_GRAMMAR = "No grammar for {path}; the span cannot be extracted"
+EXTRACT_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
+EXTRACT_SPLITS_STATEMENT = "The span cuts through the statement at lines {line}-{end}; extract whole statements"
+EXTRACT_EMPTY_SPAN = "No statement of the function lies within lines {start}-{end}"
+EXTRACT_EARLY_EXIT = (
+    "The span leaves the function early ({kind} at line {line}) and cannot be one call"
+)
+EXTRACT_PLANNED = (
+    "{inputs} input(s) become parameters, {outputs} output(s) are returned"
+)
+EXTRACT_PARSE_FAILED = "Extract rolled back: {files} would no longer parse"
+EXTRACT_CONTRACT_FAILED = "Extract rolled back, postcondition failed: {reasons}"
+INLINE_NOT_SINGLE_RETURN = "{qn} is not a single-return function; only those inline"
+INLINE_GUESSED_CALLERS = (
+    "Refusing to inline: callers resolved by guesswork or trace only: {sites}"
+)
+INLINE_PLANNED = "{count} call site(s) would be inlined; definition removed: {removed}"
+INLINE_PARSE_FAILED = "Inline rolled back: {files} would no longer parse"
+INLINE_CONTRACT_FAILED = "Inline rolled back, postcondition failed: {reasons}"
 # move (issue #1534).
 MOVE_UNKNOWN = "No definition named {qn} in the graph"
 MOVE_METHOD = "{qn} is a method; move its class instead"
@@ -571,6 +592,8 @@ SIGNATURE_DEFAULT_ORDER = "Parameter {name} has no default but follows one that 
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"
 CONTRACT_OP_MOVE = "move"
+CONTRACT_OP_EXTRACT = "extract"
+CONTRACT_OP_INLINE = "inline"
 CONTRACT_RENAME_MISSING = "{old} was not renamed to {new}"
 CONTRACT_SYMBOLS_MOVED = "symbol set changed: added {added}; removed {removed}"
 CONTRACT_CALLERS_MOVED = "call site count changed: {before} before, {after} after"

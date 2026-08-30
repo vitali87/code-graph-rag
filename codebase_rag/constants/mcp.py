@@ -23,6 +23,8 @@ class MCPToolName(StrEnum):
     RENAME = "rename"
     CHANGE_SIGNATURE = "change_signature"
     MOVE = "move"
+    EXTRACT = "extract"
+    INLINE = "inline"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
@@ -107,6 +109,8 @@ class MCPParamName(StrEnum):
     NEW_PARAMS = "new_params"
     TARGET_MODULE = "target_module"
     KEEP_ALIAS = "keep_alias"
+    START_LINE = "start_line"
+    END_LINE = "end_line"
 
 
 # MCP server constants
