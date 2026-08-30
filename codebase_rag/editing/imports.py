@@ -230,6 +230,9 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
 
 _JS_SPEC = re.compile(r"""(?P<q>['"])(?P<spec>[^'"]+)(?P=q)""")
 _JS_NAMED = re.compile(r"\{(?P<names>[^}]*)\}")
+# The leading keyword only ("import ", "export ", with any indent), so a
+# default clause after it can be separated from the moved statement.
+_JS_KEYWORD = re.compile(r"\s*(?:import|export)\s+")
 
 
 def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | None:
@@ -262,11 +265,23 @@ def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | N
     head = statement[: named.start()]
     between = statement[named.end() : spec_match.start("spec")]
     tail = statement[spec_match.end("spec") :]
-    moved_stmt = f"{head}{{ {moved_entries} }}{between}{new_spec}{tail}"
-    if not kept:
-        return moved_stmt
-    kept_stmt = f"{head}{{ {', '.join(kept)} }}{between}{move.old_module}{tail}"
+    # `head` carries any default/namespace clause ("import def, "), which binds
+    # a name from the ORIGINAL module: it must stay there, never be redeclared
+    # in the moved statement nor follow the symbol to the new module.
+    keyword = _JS_KEYWORD.match(head)
+    moved_head = keyword.group(0) if keyword else head
+    moved_stmt = f"{moved_head}{{ {moved_entries} }}{between}{new_spec}{tail}"
     indent = re.match(r"\s*", statement).group(0)  # type: ignore[union-attr]
+    if not kept:
+        default_clause = head[len(moved_head) :].rstrip().rstrip(",").rstrip()
+        if not default_clause:
+            return moved_stmt
+        # The named list emptied but a default binding remains behind.
+        kept_stmt = (
+            f"{head[: len(moved_head)]}{default_clause}{between}{move.old_module}{tail}"
+        )
+        return f"{kept_stmt}\n{indent}{moved_stmt.lstrip()}"
+    kept_stmt = f"{head}{{ {', '.join(kept)} }}{between}{move.old_module}{tail}"
     return f"{kept_stmt}\n{indent}{moved_stmt.lstrip()}"
 
 

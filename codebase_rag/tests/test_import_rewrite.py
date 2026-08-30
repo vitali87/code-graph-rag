@@ -329,10 +329,7 @@ def test_every_alias_of_the_moved_symbol_survives_the_move() -> None:
         "from pkg.util import helper, helper as h, other",
         SymbolMove("helper", "pkg.util", "pkg.new"),
     )
-    assert out is not None
-    assert "other" in out
-    assert "helper" in out
-    assert " as h" in out, f"the `h` alias was dropped: {out!r}"
+    assert out == "from pkg.util import other\nfrom pkg.new import helper, helper as h"
 
 
 def test_every_js_alias_of_the_moved_symbol_survives_the_move() -> None:
@@ -345,9 +342,10 @@ def test_every_js_alias_of_the_moved_symbol_survives_the_move() -> None:
         SymbolMove("helper", "./util", "./lib/helpers"),
         "src/app.ts",
     )
-    assert out is not None
-    assert "other" in out
-    assert " as h" in out, f"the `h` alias was dropped: {out!r}"
+    assert out == (
+        "import { other } from './util';\n"
+        "import { helper, helper as h } from './lib/helpers';"
+    )
 
 
 def test_every_rust_alias_of_the_moved_symbol_survives_the_move() -> None:
@@ -358,6 +356,22 @@ def test_every_rust_alias_of_the_moved_symbol_survives_the_move() -> None:
         "use pkg::util::{helper, helper as h, other};",
         SymbolMove("helper", "pkg::util", "pkg::new"),
     )
-    assert out is not None
-    assert "other" in out
-    assert " as h" in out, f"the `h` alias was dropped: {out!r}"
+    assert out == "use pkg::util::other;\nuse pkg::new::{helper, helper as h};"
+
+
+def test_a_default_binding_stays_with_its_original_module() -> None:
+    # `import def, { helper } from './util'` binds `def` to ./util. Moving
+    # `helper` must not redeclare `def` in the new statement, nor carry it to
+    # the new module when the named list empties.
+    from codebase_rag.editing.imports import _js_rewrite
+
+    move = SymbolMove("helper", "./util", "./new")
+    with_kept = _js_rewrite(
+        "import def, { helper, other } from './util';", move, "src/app.ts"
+    )
+    assert with_kept == (
+        "import def, { other } from './util';\nimport { helper } from './new';"
+    )
+
+    emptied = _js_rewrite("import def, { helper } from './util';", move, "src/app.ts")
+    assert emptied == ("import def from './util';\nimport { helper } from './new';")
