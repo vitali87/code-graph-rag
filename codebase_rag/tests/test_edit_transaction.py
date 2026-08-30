@@ -82,7 +82,8 @@ def test_successful_commit_applies_every_file_and_returns_the_diff(
     assert (repo / "pkg" / "a.py").read_text() == "def a():\n    return 10\n"
     assert (repo / "pkg" / "new.py").read_text() == "def n():\n    return 0\n"
     assert not (repo / "pkg" / "b.py").exists()
-    assert "--- a/pkg/a.py" in outcome.diff and "+++ b/pkg/a.py" in outcome.diff
+    assert "--- a/pkg/a.py" in outcome.diff
+    assert "+++ b/pkg/a.py" in outcome.diff
     assert "-    return 1\n+    return 10\n" in outcome.diff
     assert f"--- {cs.DIFF_DEV_NULL}\n+++ b/pkg/new.py" in outcome.diff
     assert f"--- a/pkg/b.py\n+++ {cs.DIFF_DEV_NULL}" in outcome.diff
@@ -220,10 +221,17 @@ def test_finished_transactions_cannot_be_reused(repo: Path) -> None:
 
 
 def test_context_manager_rolls_back_on_exception(repo: Path) -> None:
-    with pytest.raises(RuntimeError), transaction(repo) as tx:
-        tx.stage("pkg/a.py", "x\n")
-        raise RuntimeError("abort")
-    assert tx.staged == ()
+    holder: dict[str, EditTransaction] = {}
+
+    def abort() -> None:
+        with transaction(repo) as tx:
+            holder["tx"] = tx
+            tx.stage("pkg/a.py", "x\n")
+            raise RuntimeError("abort")
+
+    with pytest.raises(RuntimeError):
+        abort()
+    assert holder["tx"].staged == ()
     assert (repo / "pkg" / "a.py").read_text() == "def a():\n    return 1\n"
 
 
@@ -237,11 +245,11 @@ def test_a_write_failure_midway_restores_what_already_landed(
     original = module._write_file
     calls: list[str] = []
 
-    def flaky(path: Path, content: bytes | None) -> None:
+    def flaky(path: Path, content: bytes | None, mode: int | None = None) -> None:
         calls.append(path.name)
         if path.name == "b.py":
             raise OSError("disk full")
-        original(path, content)
+        original(path, content, mode)
 
     monkeypatch.setattr(module, "_write_file", flaky)
     before = _tree_digest(repo)
@@ -522,3 +530,96 @@ def test_replacing_an_executable_keeps_its_mode(repo: Path) -> None:
     assert undone.applied
     assert script.read_text() == "#!/bin/sh\necho one\n"
     assert stat.S_IMODE(os.stat(script).st_mode) == 0o755
+
+
+def test_dangling_symlink_does_not_break_staging(repo: Path) -> None:
+    (repo / "broken").symlink_to(repo / "does-not-exist")
+    tx = EditTransaction(repo)
+    tx.stage("pkg/a.py", "x\n")
+    seen: dict[str, bool] = {}
+
+    def verify(tree: StagedTree) -> bool:
+        seen["broken"] = (tree.root / "broken").exists()
+        seen["a"] = (tree.root / "pkg" / "a.py").read_text() == "x\n"
+        return True
+
+    assert tx.commit(verify).applied
+    assert seen == {"broken": False, "a": True}
+
+
+def test_materialise_failure_removes_the_staging_copy(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+
+    module = importlib.import_module("codebase_rag.editing.transaction")
+    made: list[Path] = []
+    original = module.tempfile.mkdtemp
+
+    def tracking_mkdtemp(*args: object, **kwargs: object) -> str:
+        path = original(*args, **kwargs)
+        made.append(Path(path))
+        return path
+
+    monkeypatch.setattr(module.tempfile, "mkdtemp", tracking_mkdtemp)
+    monkeypatch.setattr(
+        module.shutil, "copytree", lambda *a, **k: (_ for _ in ()).throw(OSError("no"))
+    )
+    tree = StagedTree(repo, {})
+    with pytest.raises(OSError):
+        _ = tree.root
+    assert made and not made[0].exists()
+
+
+def test_reserved_state_files_cannot_be_staged(repo: Path) -> None:
+    tx = EditTransaction(repo)
+    with pytest.raises(TransactionError):
+        tx.stage(cs.EDIT_LOCK_FILENAME, "x")
+    with pytest.raises(TransactionError):
+        tx.stage(cs.EDIT_HISTORY_FILENAME, "[]")
+
+
+def test_deleted_executable_is_restored_executable(repo: Path) -> None:
+    import os
+    import stat
+
+    script = repo / "run.sh"
+    script.write_text("#!/bin/sh\necho one\n", encoding="utf-8")
+    script.chmod(0o755)
+    tx = EditTransaction(repo)
+    tx.stage("run.sh", None)
+    assert tx.commit().applied
+    assert not script.exists()
+    (undone,) = undo_last(repo)
+    assert undone.applied
+    assert stat.S_IMODE(os.stat(script).st_mode) == 0o755
+
+
+def test_undo_reads_the_history_under_the_lock(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+
+    module = importlib.import_module("codebase_rag.editing.transaction")
+    tx = EditTransaction(repo)
+    tx.stage("pkg/a.py", "v1\n")
+    tx.commit()
+    state = {"locked": False, "loaded_locked": None}
+    original_lock = module._repo_lock
+    original_load = module.load_history
+
+    @module.contextmanager
+    def spy_lock(root: Path):  # type: ignore[no-untyped-def]
+        state["locked"] = True
+        with original_lock(root):
+            yield
+        state["locked"] = False
+
+    def spy_load(root: Path) -> list[dict]:
+        state["loaded_locked"] = state["locked"]
+        return original_load(root)
+
+    monkeypatch.setattr(module, "_repo_lock", spy_lock)
+    monkeypatch.setattr(module, "load_history", spy_load)
+    undo_last(repo)
+    assert state["loaded_locked"] is True

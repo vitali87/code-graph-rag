@@ -49,11 +49,16 @@ Verifier = Callable[["StagedTree"], "VerificationResult | bool | None"]
 
 
 class StagedFile(NamedTuple):
-    """One file's before/after bytes; `None` means absent (create / delete)."""
+    """One file's before/after bytes; `None` means absent (create / delete).
+
+    `mode` is the permission bits the file had when it was staged (`None`
+    when absent), so a restore of a deleted executable is executable again.
+    """
 
     path: str
     before: bytes | None
     after: bytes | None
+    mode: int | None = None
 
 
 class TransactionOutcome(NamedTuple):
@@ -195,30 +200,46 @@ class StagedTree:
             skipped: set[str] = set()
             for name in names:
                 candidate = here / name
-                if name in cs.CGR_STATE_FILENAMES:
-                    skipped.add(name)
-                elif candidate.is_symlink() and not _inside(candidate, resolved_root):
-                    # A link out of the repo would let a verifier write
-                    # through the copy into the live tree or beyond it.
-                    skipped.add(name)
-                elif candidate.is_dir() and should_skip_path(
-                    candidate, repo_root, exclude, unignore, is_file=False
+                # State files never travel; a link out of the repo would let
+                # a verifier write through the copy into the live tree or
+                # beyond it; ignored directories are not part of the tree.
+                if (
+                    name in cs.CGR_STATE_FILENAMES
+                    or (
+                        candidate.is_symlink() and not _inside(candidate, resolved_root)
+                    )
+                    or (
+                        candidate.is_dir()
+                        and should_skip_path(
+                            candidate, repo_root, exclude, unignore, is_file=False
+                        )
+                    )
                 ):
                     skipped.add(name)
             return skipped
 
-        # symlinks=False: in-repo links are copied as the files they point
-        # at, so nothing under `root` reaches outside the staging copy.
-        shutil.copytree(
-            repo_root, target, ignore=ignore, symlinks=False, dirs_exist_ok=True
-        )
-        for rel_path, staged in self._overlay.items():
-            path = target / rel_path
-            if staged.after is None:
-                path.unlink(missing_ok=True)
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(staged.after)
+        try:
+            # symlinks=False: in-repo links are copied as the files they
+            # point at, so nothing under `root` reaches outside the staging
+            # copy; a dangling in-repo link is skipped rather than fatal.
+            shutil.copytree(
+                repo_root,
+                target,
+                ignore=ignore,
+                symlinks=False,
+                ignore_dangling_symlinks=True,
+                dirs_exist_ok=True,
+            )
+            for rel_path, staged in self._overlay.items():
+                path = target / rel_path
+                if staged.after is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(staged.after)
+        except Exception:
+            shutil.rmtree(target, ignore_errors=True)
+            raise
         return target
 
     def cleanup(self) -> None:
@@ -277,12 +298,20 @@ class EditTransaction:
         """Set a file's full content; `None` deletes it. Later stages win."""
         self._check_open()
         key = self._relative(rel_path)
+        if key in cs.CGR_STATE_FILENAMES:
+            # The lock file and the history are the transaction's own
+            # machinery; replacing the lock's inode would let another
+            # process lock the new one without waiting.
+            raise TransactionError(cs.EDIT_RESERVED_PATH.format(path=key))
         after = (
             content.encode(cs.ENCODING_UTF8) if isinstance(content, str) else content
         )
         existing = self._overlay.get(key)
-        before = existing.before if existing is not None else self._current(key)
-        staged = StagedFile(key, before, after)
+        if existing is not None:
+            before, mode = existing.before, existing.mode
+        else:
+            before, mode = self._current(key), _mode_of(self.repo_root / key)
+        staged = StagedFile(key, before, after, mode)
         if before == after:
             # Staging what is already there is not an edit; forgetting a
             # no-op also lets a later real stage of the same path start
@@ -384,7 +413,9 @@ class EditTransaction:
         done: list[StagedFile] = []
         try:
             for staged in self.staged:
-                _write_file(self.repo_root / staged.path, staged.after)
+                _write_file(
+                    _contained(self.repo_root, staged.path), staged.after, staged.mode
+                )
                 done.append(staged)
             if self._record:
                 record_transaction(
@@ -400,7 +431,7 @@ def _restore(repo_root: Path, applied: list[StagedFile]) -> None:
     # the first write; a disk that fails here is logged, not masked.
     for staged in reversed(applied):
         try:
-            _write_file(repo_root / staged.path, staged.before)
+            _write_file(_contained(repo_root, staged.path), staged.before, staged.mode)
         except OSError as error:  # pragma: no cover - disk failure
             logger.error(ls.EDIT_TX_RESTORE_FAILED, path=staged.path, error=error)
 
@@ -419,7 +450,24 @@ def _run_verifier(verify: Verifier | None, tree: StagedTree) -> VerificationResu
     return result
 
 
-def _write_file(path: Path, content: bytes | None) -> None:
+def _mode_of(path: Path) -> int | None:
+    try:
+        return path.stat().st_mode & cs.EDIT_MODE_MASK
+    except OSError:
+        return None
+
+
+def _contained(root: Path, rel_path: str) -> Path:
+    # Every path written comes from a repo-relative key; resolving it and
+    # checking containment again here means no caller (an undo replaying a
+    # history file, a restore) can reach outside the root.
+    candidate = (root / rel_path).resolve()
+    if not candidate.is_relative_to(root.resolve()):
+        raise TransactionError(ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT))
+    return candidate
+
+
+def _write_file(path: Path, content: bytes | None, mode: int | None = None) -> None:
     if content is None:
         path.unlink(missing_ok=True)
         return
@@ -428,9 +476,10 @@ def _write_file(path: Path, content: bytes | None) -> None:
     try:
         temp_path.write_bytes(content)
         # The replacement keeps the target's mode (an executable stays
-        # executable); a new file takes the temp file's default.
-        if path.exists():
-            os.chmod(temp_path, path.stat().st_mode & cs.EDIT_MODE_MASK)
+        # executable); a re-created file takes the mode it was staged with.
+        current = _mode_of(path) if mode is None else mode
+        if current is not None:
+            os.chmod(temp_path, current)
         os.replace(temp_path, path)
     except Exception:
         temp_path.unlink(missing_ok=True)
@@ -488,6 +537,7 @@ def record_transaction(
                     cs.KEY_PATH: s.path,
                     cs.EDIT_KEY_BEFORE: _b64(s.before),
                     cs.EDIT_KEY_AFTER: _b64(s.after),
+                    cs.EDIT_KEY_MODE: s.mode,
                 }
                 for s in staged
             ],
@@ -506,6 +556,7 @@ def entry_files(entry: dict) -> list[StagedFile]:
             f[cs.KEY_PATH],
             _unb64(f.get(cs.EDIT_KEY_BEFORE)),
             _unb64(f.get(cs.EDIT_KEY_AFTER)),
+            mode if isinstance(mode := f.get(cs.EDIT_KEY_MODE), int) else None,
         )
         for f in entry.get(cs.EDIT_KEY_FILES, [])
     ]
@@ -527,16 +578,21 @@ def undo_last(repo_root: Path, count: int = 1) -> list[TransactionOutcome]:
     root = repo_root.resolve()
     outcomes: list[TransactionOutcome] = []
     for _ in range(count):
-        entries = load_history(root)
-        if not entries:
-            break
-        entry = entries[-1]
-        reverse = EditTransaction(root, record=False)
-        for staged in entry_files(entry):
-            key = reverse._relative(staged.path)
-            reverse._overlay[key] = StagedFile(key, staged.after, staged.before)
-        reversed_files = reverse.staged
+        # The history read, the reversal and the truncation share one lock
+        # window: a commit landing in between would otherwise be dropped
+        # from the history by a truncation of a stale snapshot.
         with _repo_lock(root):
+            entries = load_history(root)
+            if not entries:
+                break
+            entry = entries[-1]
+            reverse = EditTransaction(root, record=False)
+            for staged in entry_files(entry):
+                key = reverse._relative(staged.path)
+                reverse._overlay[key] = StagedFile(
+                    key, staged.after, staged.before, staged.mode
+                )
+            reversed_files = reverse.staged
             outcome = reverse.commit(_lock=False)
             if outcome.applied:
                 try:

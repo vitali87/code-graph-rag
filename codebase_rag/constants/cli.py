@@ -496,6 +496,7 @@ PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
 PATCH_OK = "{path}: {count} edit(s) applied"
 # Edit transactions (issue #1528).
 EDIT_NOT_A_FILE = "Staged path is not a regular file: {path}"
+EDIT_RESERVED_PATH = "Path is cgr state, not part of the tree: {path}"
 EDIT_TRANSACTION_FINISHED = "This transaction has already been committed or rolled back"
 EDIT_CONFLICT = "File changed since it was staged; transaction refused: {path}"
 EDIT_NOTHING_STAGED = "Nothing staged; the working tree is untouched"

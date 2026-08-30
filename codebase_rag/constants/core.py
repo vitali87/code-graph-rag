@@ -158,6 +158,7 @@ EDIT_KEY_AFTER = "after"
 EDIT_KEY_VERIFICATION = "verification"
 EDIT_KEY_OK = "ok"
 EDIT_KEY_MESSAGE = "message"
+EDIT_KEY_MODE = "mode"
 
 # Inputs to the parser fingerprint: everything that changes how source files
 # become graph nodes and edges, plus the installed grammar wheels. Paths are
