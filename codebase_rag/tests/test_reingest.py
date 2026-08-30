@@ -573,3 +573,45 @@ def test_cpp_reingest_keeps_deferred_relationships(
         (frozenset(), deferred(actual)), (frozenset(), deferred(before))
     )
     assert known <= actual[0], sorted(known - actual[0])
+
+
+def test_reingest_reruns_the_libclang_frontend_for_c_family_files(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In LIBCLANG mode the frontend emits C/C++ definitions itself and marks
+    covered files for the tree-sitter pass to skip; a scoped re-ingest that
+    deleted the subtree must run it again before re-parsing."""
+    from codebase_rag.config import settings
+
+    path = temp_repo / "a.cpp"
+    path.write_text("int f() { return 1; }\n", encoding="utf-8")
+    updater = create_and_run_updater(temp_repo, mock_ingestor)
+    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
+    order: list[str] = []
+    updater._run_cpp_frontend = MagicMock(side_effect=lambda: order.append("frontend"))  # type: ignore[method-assign]
+    original = updater._process_single_file
+
+    def spy(*args: object, **kwargs: object) -> None:
+        order.append("parse")
+        original(*args, **kwargs)  # type: ignore[arg-type]
+
+    updater._process_single_file = spy  # type: ignore[method-assign]
+
+    updater.reingest([path])
+
+    assert order[:2] == ["frontend", "parse"]
+
+
+def test_reingest_of_a_python_file_does_not_run_the_cpp_frontend(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from codebase_rag.config import settings
+
+    path = temp_repo / "a.py"
+    path.write_text("x = 1\n", encoding="utf-8")
+    updater = create_and_run_updater(temp_repo, mock_ingestor)
+    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
+    run_cpp = MagicMock()
+    updater._run_cpp_frontend = run_cpp  # type: ignore[method-assign]
+    updater.reingest([path])
+    run_cpp.assert_not_called()

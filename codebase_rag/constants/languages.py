@@ -255,6 +255,10 @@ class SupportedLanguage(StrEnum):
     SQL = "sql"
 
 
+# The languages the C/C++ frontends cover (issue #1524 re-runs them per file).
+C_FAMILY_LANGUAGES = frozenset({SupportedLanguage.C, SupportedLanguage.CPP})
+
+
 class LanguageStatus(StrEnum):
     FULL = "Fully Supported"
     DEV = "In Development"
