@@ -52,6 +52,18 @@ The rename also refuses when the new name is not a valid identifier, when
 the qualified name has no definition in the graph, or when the definition's
 name token cannot be found at the recorded position (a stale graph).
 
+## Postcondition contract
+
+An applied rename is measured through the [structural
+delta](structural-delta.md) and held to its
+[contract](postcondition-contract.md): the symbol set and call-site count
+must be unchanged apart from the renamed hierarchy, no caller may be left
+dangling, no site resolved by guesswork may have been rewritten without
+`--allow-heuristic`, and no duplicate group or import cycle may appear.
+A failing contract undoes the transaction, re-ingests the restored files
+and reports the reasons in `message`; `verdict.affected_tests` lists the
+tests to run after a rename that passed.
+
 ## Atomicity
 
 All edits are staged in one [edit transaction](edit-transactions.md). Every

@@ -1288,6 +1288,16 @@ class MCPToolsRegistry:
         from codebase_rag.editing.rename import RenameRefused, rename, sites_for
 
         try:
+            # The applied rename is held to its postcondition contract through
+            # the scoped re-ingest (issue #1531); a project that is not indexed
+            # has no graph to measure against and skips it.
+            reingest = (
+                self._updater_for_reingest().reingest
+                if self._live_updater is not None
+                or derive_project_name(Path(self.project_root))
+                in self.ingestor.list_projects()
+                else None
+            )
             report = rename(
                 Path(self.project_root),
                 self.ingestor.fetch_all,
@@ -1296,6 +1306,7 @@ class MCPToolsRegistry:
                 new_name,
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
+                reingest=reingest,
             )
         except RenameRefused as refused:
             return {

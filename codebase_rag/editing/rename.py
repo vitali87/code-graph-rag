@@ -38,9 +38,15 @@ from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
 from ..types_defs import PropertyDict, ResultRow
 from ..utils.path_utils import base_module_qn
+from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove
 from .patcher import Patcher, PatcherError, line_col_to_byte
-from .transaction import EditTransaction, StagedTree, VerificationResult
+from .transaction import (
+    EditTransaction,
+    StagedTree,
+    VerificationResult,
+    undo_last,
+)
 
 QueryFn = Callable[[str, PropertyDict | None], list[ResultRow]]
 
@@ -90,6 +96,7 @@ class RenameReport(NamedTuple):
     hierarchy: tuple[str, ...]
     diff: str
     message: str
+    verdict: Verdict | None = None
 
 
 # --- site collection -----------------------------------------------------------
@@ -180,12 +187,17 @@ class Renamer:
         project_name: str,
         verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
         after_apply: Callable[[list[str]], None] | None = None,
+        reingest: Reingest | None = None,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.fetch_all = fetch_all
         self.project = project_name
         self.verify = verify
         self.after_apply = after_apply
+        # With a re-ingest the rename is held to its postcondition contract
+        # (issue #1531): the delta of what it wrote is measured and the
+        # transaction undone when the contract fails.
+        self.reingest = reingest
 
     def _module_of(self, qn: str) -> tuple[str, str | None]:
         # The defining module's qn and path, from the definition's own path:
@@ -443,14 +455,52 @@ class Renamer:
             return self.verify(tree) if self.verify is not None else True
 
         outcome = tx.commit(verify)
-        if outcome.applied and self.after_apply is not None:
-            self.after_apply(list(outcome.files))
-        return report._replace(
+        report = report._replace(
             applied=outcome.applied,
             transaction_id=outcome.transaction_id,
             files=outcome.files,
             diff=outcome.diff,
             message=outcome.message,
+        )
+        if outcome.applied and self.reingest is not None:
+            report = self._enforce_contract(report, new_name, allow_heuristic)
+        if report.applied and self.after_apply is not None:
+            self.after_apply(list(report.files))
+        return report
+
+    def _enforce_contract(
+        self, report: RenameReport, new_name: str, allow_heuristic: bool
+    ) -> RenameReport:
+        assert self.reingest is not None
+        delta = measure(
+            self.fetch_all, self.project, self.repo_root, report.files, self.reingest
+        )
+        pairs = [
+            (
+                member,
+                member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
+            )
+            for member in report.hierarchy
+        ]
+        verdict = verify(
+            rename_expectation(pairs, allow_heuristic),
+            delta,
+            rewritten=[
+                (f"{site.path}:{site.line}", site.resolution)
+                for site in report.sites
+                if site.kind != "unlocatable"
+            ],
+        )
+        if verdict.ok:
+            return report._replace(verdict=verdict)
+        undo_last(self.repo_root)
+        self.reingest(list(report.files))
+        return report._replace(
+            applied=False,
+            verdict=verdict,
+            message=cs.RENAME_CONTRACT_FAILED.format(
+                reasons="; ".join(verdict.failures)
+            ),
         )
 
 
@@ -464,10 +514,20 @@ def rename(
     dry_run: bool = False,
     verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
     after_apply: Callable[[list[str]], None] | None = None,
+    reingest: Reingest | None = None,
 ) -> RenameReport:
-    """The op: plan (and refuse on ambiguity) or plan and apply."""
+    """The op: plan (and refuse on ambiguity) or plan and apply.
+
+    With `reingest` the applied rename is measured through the structural
+    delta and undone when its postcondition contract fails (issue #1531).
+    """
     renamer = Renamer(
-        repo_root, fetch_all, project_name, verify=verify, after_apply=after_apply
+        repo_root,
+        fetch_all,
+        project_name,
+        verify=verify,
+        after_apply=after_apply,
+        reingest=reingest,
     )
     if dry_run:
         return renamer.plan(qualified_name, new_name, allow_heuristic)
