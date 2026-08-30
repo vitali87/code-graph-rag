@@ -129,14 +129,30 @@ HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
+# Recorded edit transactions for `cgr edits show|undo` (issue #1528).
+EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 CGR_STATE_FILENAMES: frozenset[str] = frozenset(
     {
         HASH_CACHE_FILENAME,
         DIR_MTIMES_FILENAME,
         PARSER_FINGERPRINT_FILENAME,
         DELOMBOK_STATE_FILENAME,
+        EDIT_HISTORY_FILENAME,
     }
 )
+# Edit transactions (issue #1528).
+EDIT_HISTORY_LIMIT = 50
+EDIT_TRANSACTION_ID_LENGTH = 12
+EDIT_STAGING_PREFIX = "cgr-edit-"
+DIFF_DEV_NULL = "/dev/null"
+EDIT_KEY_ID = "id"
+EDIT_KEY_AT = "at"
+EDIT_KEY_FILES = "files"
+EDIT_KEY_BEFORE = "before"
+EDIT_KEY_AFTER = "after"
+EDIT_KEY_VERIFICATION = "verification"
+EDIT_KEY_OK = "ok"
+EDIT_KEY_MESSAGE = "message"
 
 # Inputs to the parser fingerprint: everything that changes how source files
 # become graph nodes and edges, plus the installed grammar wheels. Paths are

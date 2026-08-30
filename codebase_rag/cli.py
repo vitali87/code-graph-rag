@@ -27,6 +27,7 @@ from . import cypher_queries as cq
 from . import logs as ls
 from .capture import CaptureSelection, resolve_capture, split_spec
 from .config import load_ignore_patterns, settings
+from .editing.cli import cli as edits_cli
 from .editor_links import (
     EditorTemplateError,
     diff_command,
@@ -1074,6 +1075,18 @@ def workspace_command(ctx: typer.Context) -> None:
 )
 def trace_command(ctx: typer.Context) -> None:
     _run_delegated_group(trace_cli, ctx)
+
+
+@app.command(
+    name=ch.CLICommandName.EDITS,
+    help=ch.CMD_EDITS,
+    short_help=ch.CMD_EDITS,
+    add_help_option=False,
+    context_settings=_DELEGATED_GROUP_CONTEXT,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
+def edits_command(ctx: typer.Context) -> None:
+    _run_delegated_group(edits_cli, ctx)
 
 
 @app.command(
