@@ -10,6 +10,15 @@ class MCPToolName(StrEnum):
     INDEX_REPOSITORY = "index_repository"
     UPDATE_REPOSITORY = "update_repository"
     REINGEST = "reingest"
+    # Deterministic graph queries (issue #1523): fixed Cypher, no LLM.
+    RESOLVE = "resolve"
+    DEFINITION = "definition"
+    CALLERS = "callers"
+    CALLEES = "callees"
+    IMPLEMENTORS = "implementors"
+    OVERRIDES = "overrides"
+    IMPORTERS = "importers"
+    TESTS_REACHING = "tests_reaching"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
@@ -86,6 +95,9 @@ class MCPParamName(StrEnum):
     MIN_SIZE = "min_size"
     PATHS = "paths"
     DELETED = "deleted"
+    TARGET = "target"
+    DEPTH = "depth"
+    MODULE_QN = "module_qualified_name"
 
 
 # MCP server constants
@@ -112,6 +124,8 @@ MCP_REINGEST_NEEDS_INDEX = (
     "before reingest"
 )
 REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
+MCP_GRAPH_QUERY_ERROR = "Error running {tool}: {error}"
+GRAPH_QUERY_MAX_DEPTH = 5
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )
