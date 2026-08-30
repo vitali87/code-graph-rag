@@ -9,6 +9,7 @@
 # index and a production run keep both edges (issue #1560).
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,16 @@ def _index(
     ).run(force=force)
 
 
+def _touch_after_cache(path: Path, root: Path) -> None:
+    # The incremental pass skips a cached file whose mtime is not newer than
+    # the hash cache's, without hashing it; on a coarse-timestamp filesystem
+    # a write landing in the cache's own tick would be skipped and the test
+    # would pass without re-parsing anything. Place the edit past the cache.
+    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path.write_text(path.read_text(encoding="utf-8") + "// touched\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+
+
 @pytest.mark.parametrize(
     ("language", "fixture", "edited", "call"),
     [
@@ -97,8 +108,7 @@ def test_incremental_reindex_keeps_inbound_calls_to_deferred_targets(
     # A trailing comment changes the hash but not the AST: the defining file
     # re-parses and the caller joins it as a dependent, so its edge into the
     # re-indexed file is recomputed rather than restored.
-    path = root / edited
-    path.write_text(path.read_text(encoding="utf-8") + "// touched\n")
+    _touch_after_cache(root / edited, root)
     _index(store, root, language, force=False)
     after = _snapshot(store)
 
