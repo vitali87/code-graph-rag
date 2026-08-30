@@ -2,7 +2,6 @@
 edges in the same event cycle, exactly as a modified file does (issue #1028)."""
 
 from pathlib import Path
-from typing import Protocol, runtime_checkable
 from unittest.mock import MagicMock
 
 import pytest
@@ -51,12 +50,6 @@ def test_watch_created_rust_file_emits_calls_in_the_same_cycle(
     )
     updater.run()
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -102,21 +95,15 @@ def test_watch_updates_run_under_the_update_lock(
     )
     updater.run()
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     held: list[bool] = []
     original = updater._process_function_calls
 
-    def probe() -> None:
+    def probe(*args: object, **kwargs: object) -> None:
         held.append(handler._update_lock.locked())
-        original()
+        original(*args, **kwargs)
 
     monkeypatch.setattr(updater, "_process_function_calls", probe)
     from watchdog.events import FileModifiedEvent
