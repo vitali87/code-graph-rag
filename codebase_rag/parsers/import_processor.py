@@ -876,13 +876,7 @@ class ImportProcessor:
         lang_config = queries[language]["config"]
 
         self.import_mapping[module_qn] = {}
-        for scope_qn, name in self._import_site_owners.pop(module_qn, ()):
-            scope_sites = self._import_sites.get(scope_qn)
-            if scope_sites is not None:
-                scope_sites.pop(name, None)
-                if not scope_sites:
-                    del self._import_sites[scope_qn]
-        self._import_sites[module_qn] = {}
+        self._retract_import_sites(module_qn)
         # A watch-mode re-parse must not carry references the edited file no
         # longer makes (issue #1347).
         self._inferred_module_imports.pop(module_qn, None)
@@ -971,6 +965,18 @@ class ImportProcessor:
 
         except Exception as e:
             logger.warning(ls.IMP_PARSE_FAILED, module=module_qn, error=e)
+
+    def _retract_import_sites(self, module_qn: str) -> None:
+        # A re-parse must not keep the sub-scope site entries the previous
+        # parse of this file wrote under other scope keys (issue #1522).
+        for scope_qn, name in self._import_site_owners.pop(module_qn, ()):
+            scope_sites = self._import_sites.get(scope_qn)
+            if scope_sites is None:
+                continue
+            scope_sites.pop(name, None)
+            if not scope_sites:
+                del self._import_sites[scope_qn]
+        self._import_sites[module_qn] = {}
 
     def _record_import_site(
         self,
