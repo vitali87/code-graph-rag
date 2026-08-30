@@ -480,6 +480,20 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+# Span-preserving patchers (issue #1529).
+PATCH_BAD_POSITION = "No such position: line {line}, column {col}"
+PATCH_BAD_OFFSET = "Byte offset {offset} is outside the file"
+PATCH_BAD_SPAN = "Span ({start}, {end}) is outside the file or reversed"
+PATCH_OVERLAP = "Edit ({start}, {end}) overlaps an earlier edit in the same file"
+PATCH_OUTSIDE_ROOT = "Path is outside the repository: {path}"
+PATCH_NO_FILE = "No such file to patch: {path}"
+PATCH_IDENTIFIER_MISMATCH = (
+    "{path}:{line}:{col} holds {found!r}, not the identifier {expected!r}"
+)
+PATCH_NOT_AN_IDENTIFIER = "{path}:{line}:{col} is not a whole identifier"
+PATCH_PARSE_FAILED = "{path} no longer parses after the patch"
+PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
+PATCH_OK = "{path}: {count} edit(s) applied"
 MSG_SURGICAL_FAILED = (
     "Failed to apply surgical replacement in {path}. "
     "Target code not found or patches failed."

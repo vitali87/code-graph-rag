@@ -106,6 +106,7 @@ nav:
     - Language Support: architecture/language-support.md
     - Adding a Language Frontend: architecture/language-frontends.md
     - Security Model: architecture/security.md
+    - Span-Preserving Patchers: architecture/patchers.md
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
     - Ignore Patterns: advanced/ignore-patterns.md
