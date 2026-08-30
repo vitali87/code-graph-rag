@@ -476,8 +476,16 @@ def _write_file(path: Path, content: bytes | None, mode: int | None = None) -> N
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f"{path.name}{cs.TMP_EXTENSION}")
+    # A leftover at the temp path (a stale sibling, or a planted symlink) is
+    # removed by name, never followed, and the sibling is then created
+    # exclusively: an `open("wb")` would write through a symlink to wherever
+    # it points, and the replace below would then install the link itself.
+    temp_path.unlink(missing_ok=True)
     try:
-        with open(temp_path, "wb") as handle:
+        fd = os.open(
+            temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, cs.EDIT_TEMP_FILE_MODE
+        )
+        with os.fdopen(fd, "wb") as handle:
             handle.write(content)
         # The replacement keeps the target's mode (an executable stays
         # executable); a re-created file takes the mode it was staged with.

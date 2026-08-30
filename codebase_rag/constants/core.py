@@ -135,6 +135,9 @@ EDIT_LOCK_FILENAME = ".cgr-edit-lock"
 PLATFORM_WINDOWS = "win32"
 # Permission bits copied onto a replacement file (rwx for u/g/o, setuid etc.).
 EDIT_MODE_MASK = 0o7777
+# Mode of the exclusively created temp sibling before the target's mode is
+# copied onto it: owner-only, so nothing reads staged bytes mid-write.
+EDIT_TEMP_FILE_MODE = 0o600
 CGR_STATE_FILENAMES: frozenset[str] = frozenset(
     {
         HASH_CACHE_FILENAME,

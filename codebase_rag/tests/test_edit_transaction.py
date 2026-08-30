@@ -664,3 +664,26 @@ def test_containment_accepts_a_filesystem_root(monkeypatch: pytest.MonkeyPatch) 
     root = Path(Path.cwd().anchor)
     child = _contained(root, "some/file.py")
     assert child == (root / "some" / "file.py").resolve()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges")
+def test_a_planted_symlink_at_the_temp_path_cannot_redirect_the_write(
+    repo: Path, tmp_path: Path
+) -> None:
+    """The temp sibling is created exclusively, never opened through a
+    pre-existing symlink: a `README.md.tmp -> outside` planted before the
+    apply must neither receive the bytes nor become the file itself."""
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"untouched\n")
+    planted = repo / f"README.md{cs.TMP_EXTENSION}"
+    planted.symlink_to(outside)
+
+    tx = EditTransaction(repo)
+    tx.stage("README.md", "# edited\n")
+    outcome = tx.commit(lambda tree: True)
+
+    assert outcome.applied is True
+    assert outside.read_bytes() == b"untouched\n"
+    assert not (repo / "README.md").is_symlink()
+    assert (repo / "README.md").read_bytes() == b"# edited\n"
+    assert not planted.exists() and not planted.is_symlink()
