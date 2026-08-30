@@ -820,6 +820,16 @@ class RustTraitImpl(NamedTuple):
     method_qns: list[str]
 
 
+class PendingTypeFact(NamedTuple):
+    """A definition whose annotations still need resolving into edges (#1527)."""
+
+    label: str
+    qualified_name: str
+    module_qn: str
+    return_type: str | None
+    param_types: list[str] | None
+
+
 class DeferredImportEdge(NamedTuple):
     """IMPORTS edge held back until every file is parsed.
 
@@ -879,11 +889,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, positional_params: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
@@ -956,6 +966,15 @@ RELATIONSHIP_PROPERTY_SCHEMAS: tuple[RelationshipPropertySchema, ...] = (
         (RelationshipType.FLOWS_TO,),
         "{kind: string, via: string?}",
     ),
+)
+
+# What a return or parameter annotation can name (issue #1527).
+_TYPE_NODE_LABELS = (
+    NodeLabel.CLASS,
+    NodeLabel.INTERFACE,
+    NodeLabel.ENUM,
+    NodeLabel.TYPE,
+    NodeLabel.UNION,
 )
 
 RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
@@ -1060,6 +1079,16 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.METHOD, NodeLabel.FUNCTION),
         RelationshipType.OVERRIDES,
         (NodeLabel.METHOD,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.RETURNS,
+        _TYPE_NODE_LABELS,
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.ACCEPTS,
+        _TYPE_NODE_LABELS,
     ),
     RelationshipSchema(
         (NodeLabel.MODULE_IMPLEMENTATION,),

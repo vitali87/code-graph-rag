@@ -16,8 +16,8 @@ The knowledge graph uses a unified schema across all supported languages.
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
 | Module | `{qualified_name: string, name: string, path: string, absolute_path: string, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
-| Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
+| Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
+| Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
 | Enum | same as Interface |
 | Type | same as Interface, but `path` and `absolute_path` are optional |
@@ -58,6 +58,8 @@ The knowledge graph uses a unified schema across all supported languages.
 | Class, Interface, Function | INHERITS | Class, Interface, Function, ExternalModule |
 | Class, Enum | IMPLEMENTS | Interface, Class, Enum, ExternalModule |
 | Method, Function | OVERRIDES | Method |
+| Function, Method | RETURNS | Class, Interface, Enum, Type, Union |
+| Function, Method | ACCEPTS | Class, Interface, Enum, Type, Union |
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
 | Module, Function, Method | CALLS | Function, Method, Enum, Type |
@@ -88,6 +90,25 @@ Sites are stored as **one edge per site**: a function that calls `g` twice has t
 Edges emitted without a syntactic site carry none of these properties and keep collapsing on their endpoints: libclang macro uses and `#include` edges, Roslyn-only facts, inferred C# namespace imports, interprocedural callable-parameter flow edges, and edges written back by dynamic tracing. For a Go grouped `import ( ... )` block the site is the individual spec line, which is the unit an import rewrite edits. `cgr diff` treats these properties as location, not structure: a line shift never reports as a changed relationship.
 
 `CALLS` edges are otherwise created by static analysis with no further properties. [Dynamic call tracing](../guide/dynamic-tracing.md) decorates them with runtime provenance (`dynamic`, `dynamic_call_count`, `dynamic_workloads`, `dynamic_workload_count`, `dynamic_receiver_types`) and creates runtime-only edges flagged `static_missed: true` when no matching static edge existed in the graph at ingest time. Dynamic dispatch, reflection, and registries are the common causes.
+
+### Type facts on definitions
+
+`return_type` and `param_types` (issue #1527) hold a definition's annotations
+as written in the source. `return_type` is absent when the definition has no
+return annotation, so "unknown" and "annotated as `None`" stay
+distinguishable. `param_types` is parallel to the declared parameters in
+source order, one entry per parameter and `""` for an unannotated one; it is
+absent, not empty, for languages the extractor does not read (Python,
+TypeScript/JavaScript, Go, Java, Rust, C# and, return type only, C/C++ are
+read). Receivers (`self`, `&self`) count as a parameter with `""`.
+
+The names an annotation mentions are resolved after every file is parsed:
+through the module's imports first, then the module and its enclosing
+modules, then a unique project type of that name (two equally near
+candidates stay unresolved rather than guessed). Each resolved name yields
+one `RETURNS` (return annotation) or `ACCEPTS` (any parameter annotation)
+edge to the Class / Interface / Enum / Type / Union node. Builtins and
+third-party types produce no edge.
 
 ## I/O and Data-Flow Edges
 

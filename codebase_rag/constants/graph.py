@@ -211,6 +211,9 @@ class RelationshipType(StrEnum):
     INHERITS = "INHERITS"
     IMPLEMENTS = "IMPLEMENTS"
     OVERRIDES = "OVERRIDES"
+    # Function/Method -> the project type its annotation names (issue #1527).
+    RETURNS = "RETURNS"
+    ACCEPTS = "ACCEPTS"
     CALLS = "CALLS"
     REFERENCES = "REFERENCES"
     INSTANTIATES = "INSTANTIATES"
@@ -266,6 +269,8 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.IMPLEMENTS,
             RelationshipType.IMPLEMENTS_MODULE,
             RelationshipType.OVERRIDES,
+            RelationshipType.RETURNS,
+            RelationshipType.ACCEPTS,
         }
     ),
     CaptureGroup.IMPORTS: frozenset(
@@ -374,6 +379,12 @@ KEY_PARAMETERS = "parameters"
 # Declared Markdown front-matter, as sorted "key=value" entries (issue #1448).
 KEY_FRONT_MATTER = "front_matter"
 KEY_DECORATORS = "decorators"
+# Return and parameter annotations as written (issue #1527). `return_type` is
+# absent when the definition has none; `param_types` is parallel to the
+# declared parameters ("" for an unannotated one) and absent, not empty, for
+# languages the extractor does not read (the positional_params rule).
+KEY_RETURN_TYPE = "return_type"
+KEY_PARAM_TYPES = "param_types"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
 # for arity-TypeError diagnosis (issue #227). Positional-only because CPython's
 # "takes N positional arguments" counts nothing after `*`/`*args`, and

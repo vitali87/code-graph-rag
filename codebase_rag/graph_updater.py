@@ -1143,7 +1143,11 @@ class GraphUpdater:
         linked = self.factory.definition_processor.resolve_deferred_parent_links()
         if linked:
             logger.info("Resolved {} deferred containment parents", linked)
-
+        # Return/parameter annotations resolve against the complete registry
+        # (issue #1527), so a type defined in a later file still gets its edge.
+        typed = self.factory.definition_processor.emit_type_edges()
+        if typed:
+            logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
 
     def run(self, force: bool = False) -> None:
