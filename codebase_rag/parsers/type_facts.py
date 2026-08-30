@@ -82,7 +82,7 @@ def _field_type(node: Node) -> str:
     return _text(node.child_by_field_name(cs.FIELD_TYPE))
 
 
-def _python(node: Node) -> TypeFacts:
+def _extract_python_type_facts(node: Node) -> TypeFacts:
     ret = _text(node.child_by_field_name(cs.FIELD_RETURN_TYPE)) or None
     params = node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
@@ -95,7 +95,7 @@ def _python(node: Node) -> TypeFacts:
     return TypeFacts(ret, types)
 
 
-def _js_ts(node: Node) -> TypeFacts:
+def _extract_js_ts_type_facts(node: Node) -> TypeFacts:
     ret = _annotation_text(node.child_by_field_name(cs.FIELD_RETURN_TYPE)) or None
     params = node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
@@ -109,7 +109,7 @@ def _js_ts(node: Node) -> TypeFacts:
     return TypeFacts(ret, types)
 
 
-def _go(node: Node) -> TypeFacts:
+def _extract_go_type_facts(node: Node) -> TypeFacts:
     ret = _text(node.child_by_field_name(cs.FIELD_RESULT)) or None
     params = node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
@@ -127,7 +127,7 @@ def _go(node: Node) -> TypeFacts:
     return TypeFacts(ret, types)
 
 
-def _java(node: Node) -> TypeFacts:
+def _extract_java_type_facts(node: Node) -> TypeFacts:
     ret = _field_type(node) or None
     params = node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
@@ -145,7 +145,7 @@ def _java(node: Node) -> TypeFacts:
     return TypeFacts(ret, types)
 
 
-def _rust(node: Node) -> TypeFacts:
+def _extract_rust_type_facts(node: Node) -> TypeFacts:
     ret = _text(node.child_by_field_name(cs.FIELD_RETURN_TYPE)) or None
     params = node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
@@ -159,7 +159,7 @@ def _rust(node: Node) -> TypeFacts:
     return TypeFacts(ret, types)
 
 
-def _csharp(node: Node) -> TypeFacts:
+def _extract_csharp_type_facts(node: Node) -> TypeFacts:
     returns = node.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
     if returns is None:
         returns = node.child_by_field_name(cs.FIELD_TYPE)
@@ -167,31 +167,34 @@ def _csharp(node: Node) -> TypeFacts:
     params = node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
         return TypeFacts(ret, None)
-    types = [
-        _field_type(child)
-        for child in params.named_children
-        if child.type == cs.TS_CSHARP_PARAMETER
-    ]
+    types: list[str] = []
+    for child in params.named_children:
+        if child.type == cs.TS_CSHARP_PARAMETER:
+            types.append(_field_type(child))
+        elif child.type == cs.TS_CSHARP_ARRAY_TYPE:
+            # `params Item[] items`: the grammar puts the modifier, the
+            # array_type and the identifier straight under the list.
+            types.append(f"{cs.CSHARP_PARAMS_PREFIX}{_text(child)}")
     return TypeFacts(ret, types)
 
 
-def _c_cpp(node: Node) -> TypeFacts:
+def _extract_c_cpp_type_facts(node: Node) -> TypeFacts:
     # Best effort: the declared type specifier, without declarator-level
     # pointers or references; parameters are left to the C++ frontend.
     return TypeFacts(_field_type(node) or None, None)
 
 
 _EXTRACTORS = {
-    cs.SupportedLanguage.PYTHON: _python,
-    cs.SupportedLanguage.JS: _js_ts,
-    cs.SupportedLanguage.TS: _js_ts,
-    cs.SupportedLanguage.TSX: _js_ts,
-    cs.SupportedLanguage.GO: _go,
-    cs.SupportedLanguage.JAVA: _java,
-    cs.SupportedLanguage.RUST: _rust,
-    cs.SupportedLanguage.CSHARP: _csharp,
-    cs.SupportedLanguage.C: _c_cpp,
-    cs.SupportedLanguage.CPP: _c_cpp,
+    cs.SupportedLanguage.PYTHON: _extract_python_type_facts,
+    cs.SupportedLanguage.JS: _extract_js_ts_type_facts,
+    cs.SupportedLanguage.TS: _extract_js_ts_type_facts,
+    cs.SupportedLanguage.TSX: _extract_js_ts_type_facts,
+    cs.SupportedLanguage.GO: _extract_go_type_facts,
+    cs.SupportedLanguage.JAVA: _extract_java_type_facts,
+    cs.SupportedLanguage.RUST: _extract_rust_type_facts,
+    cs.SupportedLanguage.CSHARP: _extract_csharp_type_facts,
+    cs.SupportedLanguage.C: _extract_c_cpp_type_facts,
+    cs.SupportedLanguage.CPP: _extract_c_cpp_type_facts,
 }
 
 

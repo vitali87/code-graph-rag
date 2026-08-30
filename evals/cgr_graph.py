@@ -240,6 +240,14 @@ class _StatefulIngestor:
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                         cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
                         cs.KEY_END_LINE: _int(props.get(cs.KEY_END_LINE)),
+                        cs.KEY_RETURN_TYPE: _text(props[cs.KEY_RETURN_TYPE])
+                        if cs.KEY_RETURN_TYPE in props
+                        else None,
+                        cs.KEY_PARAM_TYPES: [_text(p) for p in raw_param_types]
+                        if isinstance(
+                            raw_param_types := props.get(cs.KEY_PARAM_TYPES), list
+                        )
+                        else None,
                     }
                     defs.append(row)
                 return defs

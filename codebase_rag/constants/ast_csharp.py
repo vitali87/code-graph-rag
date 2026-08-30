@@ -145,6 +145,8 @@ TS_CSHARP_MODIFIER_PROTECTED = "protected"
 # of the parameter_list (grammar quirk), captured directly.
 TS_CSHARP_PARAMETER = "parameter"
 TS_CSHARP_ARRAY_TYPE = "array_type"
+# `params T[] items` renders as the modifier plus the array type (#1527).
+CSHARP_PARAMS_PREFIX = "params "
 TS_CSHARP_PARAMETER_LIST = "parameter_list"
 
 # Local/field declarations for type inference. A local is a variable_declaration
