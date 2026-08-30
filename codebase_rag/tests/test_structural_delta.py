@@ -448,3 +448,23 @@ def test_check_reports_the_delta_since_a_git_ref(
     assert delta["dangling_callers"][0]["target"] == _qn("pkg.util.helper")
     assert _qn("main.main") in delta["symbols"]["removed"]
     assert delta["symbols"]["added"] == [_qn("pkg.new.fresh")]
+
+
+def test_keyword_arguments_are_counted_once(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def helper(a, b=1):"),
+    )
+    _write(
+        root, "pkg/app.py", FIXTURE["pkg/app.py"].replace("helper(1)", "helper(1, b=2)")
+    )
+    delta = _observe(root, store, updater, ["pkg/util.py", "pkg/app.py"])
+    # `arg_count` already includes the keyword: two arguments for two
+    # parameters is exact, not one too many.
+    assert delta["arity_findings"] == []
+    (change,) = delta["signature_changes"]
+    assert change["sites"][0]["verdict"] == cs.DELTA_ARITY_OK
