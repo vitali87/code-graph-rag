@@ -197,6 +197,14 @@ def test_change_signature_requires_every_site_mapped_or_listed() -> None:
         change_signature_expectation(["pkg/app.py:9", "pkg/cli.py:3"]), delta
     )
     assert listed.ok
+    # A site the operation rewrote is mapped by construction: a
+    # `possibly_missing` there relies on a default the mapping supplied.
+    rewritten = verify(
+        change_signature_expectation(["pkg/cli.py:3"]),
+        delta,
+        rewritten=[("pkg/app.py:9", "exact")],
+    )
+    assert rewritten.ok
 
 
 def test_move_requires_no_new_cycle_and_updated_importers() -> None:
