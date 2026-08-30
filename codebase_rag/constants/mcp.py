@@ -9,6 +9,7 @@ class MCPToolName(StrEnum):
     WIPE_DATABASE = "wipe_database"
     INDEX_REPOSITORY = "index_repository"
     UPDATE_REPOSITORY = "update_repository"
+    REINGEST = "reingest"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
@@ -45,6 +46,7 @@ class MCPSchemaType(StrEnum):
     # similarity threshold at the client before the call is even made.
     NUMBER = "number"
     BOOLEAN = "boolean"
+    ARRAY = "array"
 
 
 class MCPSchemaField(StrEnum):
@@ -82,6 +84,8 @@ class MCPParamName(StrEnum):
     NODE_ID = "node_id"
     THRESHOLD = "threshold"
     MIN_SIZE = "min_size"
+    PATHS = "paths"
+    DELETED = "deleted"
 
 
 # MCP server constants
@@ -102,6 +106,8 @@ MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
 MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
 MCP_UPDATE_ERROR = "Error updating repository: {error}"
+MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"
+REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )

@@ -442,6 +442,7 @@ class MCPInputSchemaProperty(TypedDict, total=False):
     type: str
     description: str
     default: str | int | float | bool
+    items: dict[str, str]
 
 
 MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]
@@ -545,6 +546,16 @@ class GraphQueryClient(Protocol):
     def fetch_all(
         self, query: str, params: dict[str, PropertyValue] | None = None
     ) -> list[ResultRow]: ...
+
+
+class ReingestToolResult(TypedDict, total=False):
+    """MCP ``reingest`` payload: what was re-parsed and how long it took."""
+
+    reparsed: list[str]
+    affected: list[str]
+    removed: list[str]
+    elapsed_ms: float
+    error: str
 
 
 class ListProjectsSuccessResult(TypedDict):
@@ -822,6 +833,15 @@ class DeferredImportEdge(NamedTuple):
     # Import-site edge properties (statement span, alias, imported name;
     # issue #1522), or None for an import shape that records no site.
     site: PropertyDict | None = None
+
+
+class ReingestReport(NamedTuple):
+    """What one GraphUpdater.reingest() call touched (issue #1524)."""
+
+    reparsed: tuple[str, ...]
+    affected: tuple[str, ...]
+    removed: tuple[str, ...]
+    elapsed_ms: float
 
 
 class RelationshipSchema(NamedTuple):

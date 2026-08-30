@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, runtime_checkable
 from unittest.mock import MagicMock
 
 import pytest
@@ -3194,12 +3193,6 @@ def test_watch_reparse_recommits_inline_mod_map(
     )
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -3211,10 +3204,14 @@ def test_watch_reparse_recommits_inline_mod_map(
     assert (f"{base}.foo.env.go2", f"{base}.beta.helper") in calls, calls
     assert (f"{base}.foo.env.go2", f"{base}.alpha.helper") not in calls, calls
 
-    # A later event on an UNRELATED file recomputes calls repo-wide; the
-    # recommitted inline map must still be standing.
+    # A later event on an UNRELATED file must leave the recommitted inline
+    # map standing. The watch path resolves only the touched file and its
+    # dependents (issue #1524), so the sibling's pass is driven explicitly
+    # to prove it still binds through the map.
     mock_ingestor.reset_mock()
     handler.dispatch(FileModifiedEvent(str(project / "src" / "alpha.rs")))
+    mock_ingestor.reset_mock()
+    updater._process_function_calls(only={project / "src" / "foo.rs"})
 
     calls = _calls(mock_ingestor)
     assert (f"{base}.foo.env.go2", f"{base}.beta.helper") in calls, calls
@@ -3407,12 +3404,6 @@ def test_watch_touch_cannot_flip_mod_key_arbitration(
     assert (f"{base}.a.b.c.go", f"{base}.beta.helper") in calls, calls
     assert (f"{base}.a.b.c.gb", f"{base}.gamma.helper") in calls, calls
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -3475,12 +3466,6 @@ def test_watch_delete_of_mod_rs_drops_its_import_state(
     key = f"{base}.a.c"
     assert updater.factory.import_processor.import_mapping.get(key), "not committed"
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -3529,12 +3514,6 @@ def test_python_sibling_edit_keeps_rust_import_state(
     expected = {"helper": f"{base}.beta.helper"}
     assert updater.factory.import_processor.import_mapping.get(key) == expected
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -3587,12 +3566,6 @@ def test_watch_create_of_owned_module_keeps_its_own_imports(
     mapping = updater.factory.import_processor.import_mapping.get(key)
     assert mapping == {"helper": f"{base}.beta.helper"}, mapping
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -3661,12 +3634,6 @@ def test_watch_touch_of_mod_rs_beside_same_stem_rs_keeps_sibling_state(
     expected = {"helper": f"{base}.beta.helper"}
     assert updater.factory.import_processor.import_mapping.get(key) == expected
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -3675,6 +3642,11 @@ def test_watch_touch_of_mod_rs_beside_same_stem_rs_keeps_sibling_state(
 
     mapping = updater.factory.import_processor.import_mapping.get(key)
     assert mapping == expected, mapping
+    # The sibling a.rs is not re-parsed by this event (issue #1524 scopes the
+    # watch path), so its pass is driven explicitly to prove the surviving
+    # writer still binds its inline mod.
+    mock_ingestor.reset_mock()
+    updater._process_function_calls(only={project / "src" / "a.rs"})
     calls = _calls(mock_ingestor)
     assert (f"{base}.a.inner.g", f"{base}.beta.helper") in calls, calls
 
@@ -3716,12 +3688,6 @@ def test_watch_delete_of_disambiguated_mod_rs_drops_its_writer(
     expected = {"helper": f"{base}.beta.helper"}
     assert updater.factory.import_processor.import_mapping.get(key) == expected
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -4499,12 +4465,6 @@ def test_watch_create_refreshes_rust_path_caches(
     calls = _calls(mock_ingestor)
     assert (f"{base}.a.top", f"{base}.beta.helper") in calls, calls
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -4707,12 +4667,6 @@ def test_watch_storm_delete_and_restore_of_entry_keeps_sibling_maps(
         expected
     )
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -4769,12 +4723,6 @@ def test_watch_create_during_entry_absence_keeps_sibling_maps(
         expected
     )
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -4934,12 +4882,6 @@ def test_touching_one_entry_keeps_the_siblings_declarations(
         expected
     )
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -5060,12 +5002,6 @@ def test_entry_modify_racing_its_own_deletion_keeps_declarations(
         expected
     )
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -5231,12 +5167,6 @@ def test_manifest_repoint_evicts_the_dead_explicit_stem(
         "Config": f"{base}.cli.Config"
     }
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -5348,12 +5278,6 @@ def test_watch_reparse_recomputes_edges_through_fresh_resolutions(
     calls = _calls(mock_ingestor)
     assert (f"{base}.q.ay", f"{base}.lib.helper") in calls, calls
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -5456,12 +5380,6 @@ def test_watch_create_of_second_implementer_drops_sole_impl_edge(
     calls = _calls(mock_ingestor)
     assert (f"{base}.caller.go", f"{base}.a.A.m") in calls, calls
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -5882,12 +5800,6 @@ def test_watch_modify_of_build_script_refreshes_its_declarations(
         "Cfg": f"{base}.build.Cfg"
     }
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -6001,12 +5913,6 @@ def test_watch_modify_of_a_module_named_build_stays_a_module(
         expected
     )
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -6106,12 +6012,6 @@ def test_watch_modify_standing_in_for_a_coalesced_create_updates_listing(
 
     base = "rs_watch_coalesced_create.src"
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -6191,12 +6091,6 @@ def test_watch_modify_of_an_already_deleted_file_leaves_the_listing_alone(
     )
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
