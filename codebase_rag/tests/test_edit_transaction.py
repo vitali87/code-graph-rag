@@ -505,3 +505,20 @@ def test_cli_counts_must_be_positive(repo: Path) -> None:
     for args in (["show", "-n", "0"], ["undo", "-n", "0"], ["undo", "-n", "-2"]):
         result = CliRunner().invoke(edits_cli, [*args, "--repo-path", str(repo)])
         assert result.exit_code == 2, args
+
+
+def test_replacing_an_executable_keeps_its_mode(repo: Path) -> None:
+    import os
+    import stat
+
+    script = repo / "run.sh"
+    script.write_text("#!/bin/sh\necho one\n", encoding="utf-8")
+    script.chmod(0o755)
+    tx = EditTransaction(repo)
+    tx.stage("run.sh", "#!/bin/sh\necho two\n")
+    assert tx.commit().applied
+    assert stat.S_IMODE(os.stat(script).st_mode) == 0o755
+    (undone,) = undo_last(repo)
+    assert undone.applied
+    assert script.read_text() == "#!/bin/sh\necho one\n"
+    assert stat.S_IMODE(os.stat(script).st_mode) == 0o755

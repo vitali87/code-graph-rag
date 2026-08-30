@@ -427,6 +427,10 @@ def _write_file(path: Path, content: bytes | None) -> None:
     temp_path = path.with_name(f"{path.name}{cs.TMP_EXTENSION}")
     try:
         temp_path.write_bytes(content)
+        # The replacement keeps the target's mode (an executable stays
+        # executable); a new file takes the temp file's default.
+        if path.exists():
+            os.chmod(temp_path, path.stat().st_mode & cs.EDIT_MODE_MASK)
         os.replace(temp_path, path)
     except Exception:
         temp_path.unlink(missing_ok=True)

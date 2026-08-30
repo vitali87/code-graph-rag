@@ -133,6 +133,8 @@ DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"
 PLATFORM_WINDOWS = "win32"
+# Permission bits copied onto a replacement file (rwx for u/g/o, setuid etc.).
+EDIT_MODE_MASK = 0o7777
 CGR_STATE_FILENAMES: frozenset[str] = frozenset(
     {
         HASH_CACHE_FILENAME,
