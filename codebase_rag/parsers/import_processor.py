@@ -989,10 +989,14 @@ class ImportProcessor:
         # ANOTHER file wrote (a file-backed `a/b/mod.rs` and an inline `mod b`
         # in `a.rs` share `p.src.a.b`): keep those, drop only this file's.
         own = self._import_sites.get(module_qn, {})
-        for name in list(own):
-            if self._import_site_writers.get((module_qn, name), module_qn) == module_qn:
-                del own[name]
-                self._import_site_writers.pop((module_qn, name), None)
+        mine = [
+            name
+            for name in own
+            if self._import_site_writers.get((module_qn, name), module_qn) == module_qn
+        ]
+        for name in mine:
+            del own[name]
+            self._import_site_writers.pop((module_qn, name), None)
         self._import_sites[module_qn] = own
 
     def _record_import_site(
