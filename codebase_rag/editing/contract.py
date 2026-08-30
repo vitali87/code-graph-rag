@@ -132,17 +132,29 @@ def _check_callers(expectation: Expectation, delta: StructuralDelta) -> list[str
     return failures
 
 
-def _check_sites_mapped(expectation: Expectation, delta: StructuralDelta) -> list[str]:
-    """Every call site of a changed signature is mapped or explicitly unmapped."""
+def _check_sites_mapped(
+    expectation: Expectation, delta: StructuralDelta, rewritten: set[str]
+) -> list[str]:
+    """Every call site of a changed signature is mapped or explicitly unmapped.
+
+    A site the operation rewrote is mapped by construction (the mapping
+    supplied every value); a site it left alone must read `ok` or be
+    listed as unmapped. `too_many` is definitive either way.
+    """
     unmapped = set(expectation.unmapped)
     bad: list[str] = []
     for change in delta["signature_changes"]:
         for site in change["sites"]:
             key = _site_key(site)
-            if site["verdict"] not in (cs.DELTA_ARITY_OK, cs.DELTA_ARITY_UNKNOWN) and (
-                key not in unmapped
+            verdict = site["verdict"]
+            if (
+                verdict in (cs.DELTA_ARITY_OK, cs.DELTA_ARITY_UNKNOWN)
+                or key in unmapped
             ):
-                bad.append(f"{key} ({site['verdict']})")
+                continue
+            if verdict == cs.DELTA_ARITY_POSSIBLY_MISSING and key in rewritten:
+                continue
+            bad.append(f"{key} ({verdict})")
     for site in delta["arity_findings"]:
         key = _site_key(site)
         if key not in unmapped:
@@ -197,10 +209,11 @@ def verify(
     parse (the transaction refuses those itself, so a caller normally
     passes none, but the contract states the rule in one place).
     """
+    rewritten = list(rewritten)
     failures = [
         *_check_symbols(expectation, delta),
         *_check_callers(expectation, delta),
-        *_check_sites_mapped(expectation, delta),
+        *_check_sites_mapped(expectation, delta, {key for key, _r in rewritten}),
         *_check_rewrites(expectation, rewritten),
         *_check_structure(expectation, delta),
     ]
