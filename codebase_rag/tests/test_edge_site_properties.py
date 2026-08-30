@@ -756,3 +756,46 @@ def test_rust_file_module_reparse_keeps_the_inline_siblings_entries(
     assert processor._import_sites[scope]["Inline"] is inline_site
     assert "Own" not in processor._import_sites[scope]
     assert "Own2" in processor._import_sites[scope]
+
+
+def test_incremental_update_restores_inbound_edges_with_their_sites(
+    temp_repo: Path,
+) -> None:
+    """An untouched caller's edge into a re-indexed file keeps its site.
+
+    Per-site edges are keyed by their site, so restoring the captured edge
+    bare would land a second, site-less edge beside the original.
+    """
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+
+    sink = MagicMock()
+    site = {cs.KEY_LINE: 5, cs.KEY_COL: 4, cs.KEY_END_LINE: 5, cs.KEY_END_COL: 9}
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(sink, temp_repo, parsers, queries)
+    updater.function_registry["proj.pkg.util.helper"] = cs.NodeLabel.FUNCTION.value
+    updater._restore_inbound_edges(
+        [
+            {
+                cs.KEY_CALLER_LABEL: cs.NodeLabel.FUNCTION.value,
+                cs.KEY_CALLER_QN: "proj.main.main",
+                cs.KEY_REL: cs.RelationshipType.CALLS.value,
+                cs.KEY_TARGET_LABEL: cs.NodeLabel.FUNCTION.value,
+                cs.KEY_TARGET_QN: "proj.pkg.util.helper",
+                cs.KEY_PROPS: dict(site),
+            },
+            {
+                cs.KEY_CALLER_LABEL: cs.NodeLabel.MODULE.value,
+                cs.KEY_CALLER_QN: "proj.main",
+                cs.KEY_REL: cs.RelationshipType.IMPORTS.value,
+                cs.KEY_TARGET_LABEL: cs.NodeLabel.MODULE.value,
+                cs.KEY_TARGET_QN: "proj.pkg.util",
+                cs.KEY_PROPS: {},
+            },
+        ]
+    )
+    calls = sink.ensure_relationship_batch.call_args_list
+    assert len(calls) == 2
+    assert calls[0].kwargs[cs.KEY_PROPERTIES] == site
+    assert calls[1].kwargs[cs.KEY_PROPERTIES] is None
+    assert "properties(r) AS props" in cs.CYPHER_INBOUND_EDGES

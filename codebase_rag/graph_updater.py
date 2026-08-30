@@ -89,6 +89,7 @@ from .types_defs import (
     NodeType,
     PendingExpansionCall,
     PendingMacroCall,
+    PropertyDict,
     ResultRow,
     SimpleNameLookup,
 )
@@ -1810,10 +1811,17 @@ class GraphUpdater:
             target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
             if caller_key is None or target_key is None:
                 continue
+            # The edge's own properties (its site, issue #1522) come back with
+            # it: per-site edges are keyed by them, so a bare re-emission
+            # would land beside the original instead of restoring it.
+            props = row.get(cs.KEY_PROPS)
             self._sink.ensure_relationship_batch(
                 (caller_label, caller_key, caller_qn),
                 rel,
                 (target_label, target_key, target_qn),
+                properties=cast(PropertyDict, props)
+                if isinstance(props, dict) and props
+                else None,
             )
             restored += 1
         if restored:
