@@ -206,8 +206,12 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
         if not moved:
             return None
         kept = [e for e in entries if _imported(e) != move.symbol]
-        moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=True)
-        moved_stmt = f"{lead}{move.new_module}{mid}{moved_entry}"
+        # Every entry binding the symbol moves: `helper, helper as h` binds it
+        # twice, and keeping only the first would drop the `h` binding.
+        moved_entries = [
+            _rewrite_entry(entry, move.new_name, keep_local=True) for entry in moved
+        ]
+        moved_stmt = f"{lead}{move.new_module}{mid}{', '.join(moved_entries)}"
         if not kept:
             return f"{moved_stmt}{tail}"
         kept_stmt = f"{lead}{module}{mid}{open_deco}{', '.join(kept)}{close_deco}"

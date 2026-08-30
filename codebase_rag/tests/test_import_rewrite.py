@@ -318,3 +318,18 @@ def test_missing_importer_file_is_an_error(tmp_path: Path, bad: ImportSite) -> N
     move = SymbolMove("x", "a", "b")
     with pytest.raises(PatcherError):
         rewriter.retarget([bad], move)
+
+
+def test_every_alias_of_the_moved_symbol_survives_the_move() -> None:
+    # `helper` and `helper as h` both bind the moved symbol; a rewrite that
+    # keeps only the first drops the `h` binding and breaks its call sites.
+    from codebase_rag.editing.imports import _py_rewrite
+
+    out = _py_rewrite(
+        "from pkg.util import helper, helper as h, other",
+        SymbolMove("helper", "pkg.util", "pkg.new"),
+    )
+    assert out is not None
+    assert "other" in out
+    assert "helper" in out
+    assert " as h" in out, f"the `h` alias was dropped: {out!r}"
