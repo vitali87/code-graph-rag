@@ -107,6 +107,10 @@ MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
 MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
 MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"
+MCP_REINGEST_NEEDS_INDEX = (
+    "Project {project} is not indexed; run index_repository or update_repository "
+    "before reingest"
+)
 REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"

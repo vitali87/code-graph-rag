@@ -100,7 +100,7 @@ def measure_reingest(
     if iterations <= 0:
         raise ValueError(f"iterations must be positive, got {iterations}")
     corpus = corpus.resolve()
-    target = (corpus / target).resolve() if not target.is_absolute() else target
+    target = (target if target.is_absolute() else corpus / target).resolve()
     try:
         target.relative_to(corpus)
     except ValueError as error:
