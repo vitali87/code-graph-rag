@@ -518,6 +518,20 @@ CYPHER_ALL_MODULE_QNS = (
 # Re-resolving the callers instead would diverge from a clean index, because
 # cgr's call resolution is context-sensitive (protocol vs concrete receiver,
 # import granularity); the original edges already match a clean re-index.
+#
+# The STRUCTURE of this query and of CYPHER_AFFECTED_CALLER_PATHS below is not
+# covered by the unit suite, only their relation lists are. The eval emulator
+# (evals/cgr_graph.py) dispatches on these constants by IDENTITY and never
+# parses the Cypher, so a structural edit keeps every unit test green while
+# breaking production: measured 2026-08-30, flipping the arrow here to
+# `(caller)<-[r:...]-(target)` left all of test_incremental_implements_edge.py
+# passing. Both queries do reach a real backend in production, via
+# `ingestor.fetch_all` in graph_updater.py (the affected-caller read and
+# `_capture_inbound_edges`), so such an edit ships a broken incremental
+# restore. Verify a change to the MATCH shape, the WHERE clauses or the
+# RETURN keys against a real graph (the Docker-backed integration tier), not
+# against a green unit run. Adding or removing a relation type is the one
+# edit the unit suite does catch.
 CYPHER_INBOUND_EDGES = (
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
