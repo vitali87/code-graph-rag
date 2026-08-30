@@ -34,9 +34,7 @@ from .utils import safe_decode_with_fallback
 # Identifiers, dotted paths and Rust `::` paths inside an annotation. Generic
 # brackets, pointers, arrays and unions fall away; every candidate is then
 # checked against the registry, so builtins simply resolve to nothing.
-_TYPE_NAME_RE = re.compile(
-    r"[A-Za-z_][A-Za-z0-9_]*(?:(?:\.|::)[A-Za-z_][A-Za-z0-9_]*)*"
-)
+_TYPE_NAME_RE = re.compile(r"[A-Za-z_]\w*(?:(?:\.|::)[A-Za-z_]\w*)*")
 
 # Parameter-list children that declare no parameter (`*` and `/` separators).
 _PY_SEPARATORS = frozenset({cs.TS_PY_KEYWORD_SEPARATOR, cs.TS_PY_POSITIONAL_SEPARATOR})
@@ -273,7 +271,7 @@ class TypeReferenceResolver:
         node_type = self._registry.get(qn)
         return node_type is not None and str(node_type) in TYPE_NODE_TYPES
 
-    def resolve(self, name: str, module_qn: str) -> str | None:
+    def _scoped_candidates(self, name: str, module_qn: str) -> list[str]:
         head, _sep, rest = name.partition(cs.SEPARATOR_DOT)
         imports = self._imports.get(module_qn, {})
         # 1. Through the module's imports: `Item` -> pkg.models.Item, or
@@ -287,27 +285,19 @@ class TypeReferenceResolver:
         while scope.startswith(self._prefix):
             candidates.append(f"{scope}{cs.SEPARATOR_DOT}{name}")
             scope = scope.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        for candidate in candidates:
-            if self._is_type(candidate):
-                return candidate
+        return candidates
+
+    def _nearest_unique(self, matches: list[str], module_qn: str) -> str | None:
         # 3. A unique project type with that name, preferring the nearest
         #    package; two equally near candidates stay unresolved rather
         #    than guessed.
-        matches = [
-            qn
-            for qn in self._registry.find_ending_with(name)
-            if qn.startswith(self._prefix) and self._is_type(qn)
-        ]
-        if not matches:
-            return None
         if len(matches) == 1:
             return matches[0]
         module_parts = module_qn.split(cs.SEPARATOR_DOT)
 
         def shared(qn: str) -> int:
-            parts = qn.split(cs.SEPARATOR_DOT)
             n = 0
-            for a, b in zip(module_parts, parts, strict=False):
+            for a, b in zip(module_parts, qn.split(cs.SEPARATOR_DOT), strict=False):
                 if a != b:
                     break
                 n += 1
@@ -318,6 +308,19 @@ class TypeReferenceResolver:
             return ranked[0]
         return None
 
+    def resolve(self, name: str, module_qn: str) -> str | None:
+        for candidate in self._scoped_candidates(name, module_qn):
+            if self._is_type(candidate):
+                return candidate
+        matches = [
+            qn
+            for qn in self._registry.find_ending_with(name)
+            if qn.startswith(self._prefix) and self._is_type(qn)
+        ]
+        if not matches:
+            return None
+        return self._nearest_unique(matches, module_qn)
+
     def resolve_annotation(self, annotation: str, module_qn: str) -> list[str]:
         found: dict[str, None] = {}
         for name in type_reference_names(annotation):
@@ -325,6 +328,47 @@ class TypeReferenceResolver:
             if qn is not None:
                 found.setdefault(qn, None)
         return list(found)
+
+
+def _target_spec(
+    resolver: TypeReferenceResolver, target_qn: str
+) -> tuple[str, str, str]:
+    return (str(resolver._registry[target_qn]), cs.KEY_QUALIFIED_NAME, target_qn)
+
+
+def _emit_returns(
+    fact: PendingTypeFact,
+    resolver: TypeReferenceResolver,
+    ingestor: IngestorProtocol,
+    source: tuple[str, str, str],
+) -> int:
+    if fact.return_type is None:
+        return 0
+    targets = resolver.resolve_annotation(fact.return_type, fact.module_qn)
+    for target_qn in targets:
+        ingestor.ensure_relationship_batch(
+            source, cs.RelationshipType.RETURNS, _target_spec(resolver, target_qn)
+        )
+    return len(targets)
+
+
+def _emit_accepts(
+    fact: PendingTypeFact,
+    resolver: TypeReferenceResolver,
+    ingestor: IngestorProtocol,
+    source: tuple[str, str, str],
+) -> int:
+    accepted: dict[str, None] = {}
+    for annotation in fact.param_types or ():
+        if not annotation:
+            continue
+        for target_qn in resolver.resolve_annotation(annotation, fact.module_qn):
+            accepted.setdefault(target_qn, None)
+    for target_qn in accepted:
+        ingestor.ensure_relationship_batch(
+            source, cs.RelationshipType.ACCEPTS, _target_spec(resolver, target_qn)
+        )
+    return len(accepted)
 
 
 def emit_type_edges(
@@ -340,32 +384,7 @@ def emit_type_edges(
     emitted = 0
     for fact in pending:
         source = (fact.label, cs.KEY_QUALIFIED_NAME, fact.qualified_name)
-        if fact.return_type is not None:
-            targets = resolver.resolve_annotation(fact.return_type, fact.module_qn)
-            for target_qn in targets:
-                ingestor.ensure_relationship_batch(
-                    source,
-                    cs.RelationshipType.RETURNS,
-                    (
-                        str(resolver._registry[target_qn]),
-                        cs.KEY_QUALIFIED_NAME,
-                        target_qn,
-                    ),
-                )
-                emitted += 1
-        accepted: dict[str, None] = {}
-        for annotation in fact.param_types or ():
-            if annotation:
-                for target_qn in resolver.resolve_annotation(
-                    annotation, fact.module_qn
-                ):
-                    accepted.setdefault(target_qn, None)
-        for target_qn in accepted:
-            ingestor.ensure_relationship_batch(
-                source,
-                cs.RelationshipType.ACCEPTS,
-                (str(resolver._registry[target_qn]), cs.KEY_QUALIFIED_NAME, target_qn),
-            )
-            emitted += 1
+        emitted += _emit_returns(fact, resolver, ingestor, source)
+        emitted += _emit_accepts(fact, resolver, ingestor, source)
     pending.clear()
     return emitted
