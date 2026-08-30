@@ -463,7 +463,9 @@ def _contained(root: Path, rel_path: str) -> Path:
     # history file, a restore) can reach outside the root.
     real_root = os.path.realpath(root)
     candidate = os.path.realpath(os.path.join(real_root, rel_path))
-    if not candidate.startswith(real_root + os.sep):
+    # A filesystem root already ends with the separator.
+    root_prefix = real_root if real_root.endswith(os.sep) else real_root + os.sep
+    if not candidate.startswith(root_prefix):
         raise TransactionError(ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT))
     return Path(candidate)
 
@@ -475,7 +477,8 @@ def _write_file(path: Path, content: bytes | None, mode: int | None = None) -> N
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f"{path.name}{cs.TMP_EXTENSION}")
     try:
-        temp_path.write_bytes(content)
+        with open(temp_path, "wb") as handle:
+            handle.write(content)
         # The replacement keeps the target's mode (an executable stays
         # executable); a re-created file takes the mode it was staged with.
         current = _mode_of(path) if mode is None else mode

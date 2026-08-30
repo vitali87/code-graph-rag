@@ -655,3 +655,12 @@ def test_undo_rejects_history_entries_naming_state_files(repo: Path) -> None:
     with pytest.raises(TransactionError):
         undo_last(repo)
     assert len(load_history(repo)) == 1
+
+
+def test_containment_accepts_a_filesystem_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A repo at `/` must not reject every child through a doubled separator."""
+    from codebase_rag.editing.transaction import _contained
+
+    root = Path(Path.cwd().anchor)
+    child = _contained(root, "some/file.py")
+    assert child == (root / "some" / "file.py").resolve()
