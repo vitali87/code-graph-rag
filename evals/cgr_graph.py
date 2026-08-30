@@ -153,7 +153,8 @@ class _StatefulIngestor:
                     set(raw_paths) if isinstance(raw_paths, list) else set()
                 )
                 inbound: list[ResultRow] = []
-                for from_label, from_val, rel_type, to_label, to_val in self.edges:
+                for edge in self.edges:
+                    from_label, from_val, rel_type, to_label, to_val = edge
                     if rel_type not in _INBOUND_DEPENDENT_RELS:
                         continue
                     target = self.nodes.get((to_label, to_val))
@@ -170,6 +171,7 @@ class _StatefulIngestor:
                             cs.KEY_REL: rel_type,
                             cs.KEY_TARGET_LABEL: to_label,
                             cs.KEY_TARGET_QN: _text(to_val),
+                            cs.KEY_PROPS: dict(self.edge_props.get(edge, {})),
                         }
                     )
                 return inbound

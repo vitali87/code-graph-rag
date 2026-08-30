@@ -42,6 +42,10 @@ PATH_BASED_LABELS = frozenset({cs.NodeLabel.FOLDER, cs.NodeLabel.FILE})
 NAME_BASED_LABELS = frozenset({cs.NodeLabel.EXTERNAL_PACKAGE, cs.NodeLabel.PROJECT})
 
 
+# Endpoints plus the site-keyed props (issue #1522) that make parallel edges
+# between one node pair distinct records, mirroring MERGE_KEY_PROPS_BY_REL.
+_RelKey = tuple[str, int, str, tuple[tuple[str, PropertyValue], ...]]
+
 _REL_TYPE_CACHE: dict = {}
 _MSG_CLASS_CACHE: dict[str, type | None] = {}
 
@@ -63,7 +67,7 @@ class ProtobufFileIngestor:
     ):
         self.output_dir = Path(output_path)
         self._nodes: dict[str, pb.Node] = {}
-        self._relationships: dict[tuple[str, int, str], pb.Relationship] = {}
+        self._relationships: dict[_RelKey, pb.Relationship] = {}
         self.split_index = split_index
         # File/Folder identities are ABSOLUTE paths in the live graph (the
         # realtime watcher deletes by absolute path, issue #1141), which would
@@ -180,7 +184,15 @@ class ProtobufFileIngestor:
         )
         to_val = self._canonical_ref(str(to_val_raw)) if to_val_raw is not None else ""
 
-        unique_key = (from_val, rel_type_enum, to_val)
+        # Site-keyed edges (one CALLS per call site, one IMPORTS per bound
+        # name; issue #1522) are distinct records, mirroring the graph sink's
+        # MERGE key; a row without a site still collapses on its endpoints.
+        site_key = tuple(
+            (key, properties[key])
+            for key in cs.MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
+            if properties and key in properties
+        )
+        unique_key = (from_val, rel_type_enum, to_val, site_key)
         if unique_key in self._relationships:
             if properties:
                 self._relationships[unique_key].properties.update(properties)

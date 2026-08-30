@@ -1,7 +1,9 @@
 from .types_defs import (
     NODE_SCHEMAS,
+    RELATIONSHIP_PROPERTY_SCHEMAS,
     RELATIONSHIP_SCHEMAS,
     NodeSchema,
+    RelationshipPropertySchema,
     RelationshipSchema,
 )
 
@@ -32,10 +34,29 @@ def build_relationships_section() -> str:
     return "\n".join(lines)
 
 
+def _format_relationship_property_schema(schema: RelationshipPropertySchema) -> str:
+    types = "|".join(str(t) for t in schema.rel_types)
+    return f"- {types}: {schema.properties}"
+
+
+def build_relationship_properties_section() -> str:
+    lines = [
+        "Relationship properties (one CALLS/REFERENCES/INSTANTIATES edge per "
+        "call site, one IMPORTS edge per bound name; use DISTINCT for endpoints):"
+    ]
+    lines.extend(
+        _format_relationship_property_schema(schema)
+        for schema in RELATIONSHIP_PROPERTY_SCHEMAS
+    )
+    return "\n".join(lines)
+
+
 def build_graph_schema_text() -> str:
     return f"""{build_node_labels_section()}
 
-{build_relationships_section()}"""
+{build_relationships_section()}
+
+{build_relationship_properties_section()}"""
 
 
 GRAPH_SCHEMA_DEFINITION = build_graph_schema_text()

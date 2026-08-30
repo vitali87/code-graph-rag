@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -38,19 +38,24 @@ def test_function_call_relationships_are_created(
     local_func_qn = f"{project_name}.main.local_func"
 
     expected_calls = [
-        call(
+        (
             ("Function", "qualified_name", main_func_qn),
             "CALLS",
             ("Function", "qualified_name", util_func_qn),
         ),
-        call(
+        (
             ("Function", "qualified_name", main_func_qn),
             "CALLS",
             ("Function", "qualified_name", local_func_qn),
         ),
     ]
 
-    actual_calls = get_relationships(mock_ingestor, "CALLS")
+    # Endpoints only: every CALLS edge also carries its call-site properties
+    # (line/col/arg shape, issue #1522), which this test does not pin.
+    actual_calls = [
+        (c.args[0], c.args[1], c.args[2])
+        for c in get_relationships(mock_ingestor, "CALLS")
+    ]
 
     assert len(actual_calls) >= len(expected_calls)
     assert expected_calls[0] in actual_calls
