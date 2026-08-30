@@ -149,3 +149,13 @@ def test_emulator_inbound_rels_match_the_production_query() -> None:
     assert match is not None, "could not read the relation list from the query"
     production = set(match.group(1).split("|"))
     assert set(_INBOUND_DEPENDENT_RELS) == production
+
+
+def test_the_affected_caller_query_returns_the_key_its_reader_unpacks() -> None:
+    # `_affected_caller_keys` reads each row as `row.get(cs.KEY_CALLER_PATH)`,
+    # so the RETURN alias and that constant must agree. Asserting the literal
+    # would not couple them: renaming both together would keep a literal
+    # assertion green while a rename of either alone breaks the incremental
+    # path against a real graph. The emulator builds its rows in Python and
+    # never executes this projection, so no behavioural test can see it.
+    assert f"AS {cs.KEY_CALLER_PATH}" in cs.CYPHER_AFFECTED_CALLER_PATHS

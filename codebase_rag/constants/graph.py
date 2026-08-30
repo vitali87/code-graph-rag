@@ -521,17 +521,22 @@ CYPHER_ALL_MODULE_QNS = (
 #
 # The STRUCTURE of this query and of CYPHER_AFFECTED_CALLER_PATHS below is not
 # covered by the unit suite, only their relation lists are. The eval emulator
-# (evals/cgr_graph.py) dispatches on these constants by IDENTITY and never
-# parses the Cypher, so a structural edit keeps every unit test green while
-# breaking production: measured 2026-08-30, flipping the arrow here to
+# (evals/cgr_graph.py) matches these constants whole, in a `case` that compares
+# the query by VALUE, and never parses the Cypher: it reimplements the
+# semantics in Python over its own frozensets. So an edit to the text here is
+# followed automatically by the `case` while the emulator's behaviour stays
+# hardcoded, and a structural edit keeps every unit test green while breaking
+# production. Measured 2026-08-30: flipping the arrow here to
 # `(caller)<-[r:...]-(target)` left all of test_incremental_implements_edge.py
-# passing. Both queries do reach a real backend in production, via
-# `ingestor.fetch_all` in graph_updater.py (the affected-caller read and
+# passing, and deleting the `caller.path` guard from CYPHER_AFFECTED_CALLER_PATHS
+# left all 29 tests green. Both queries do reach a real backend in production,
+# via `ingestor.fetch_all` in graph_updater.py (the affected-caller read and
 # `_capture_inbound_edges`), so such an edit ships a broken incremental
-# restore. Verify a change to the MATCH shape, the WHERE clauses or the
-# RETURN keys against a real graph (the Docker-backed integration tier), not
-# against a green unit run. Adding or removing a relation type is the one
-# edit the unit suite does catch.
+# restore. Verify a change to the MATCH shape or the WHERE clauses against a
+# real graph (the Docker-backed integration tier), not against a green unit
+# run. Two edits the unit suite DOES catch: adding or removing a relation
+# type, and renaming this query's `props` key (test_edge_site_properties.py).
+# CYPHER_AFFECTED_CALLER_PATHS has no such guard on its `caller_path` key.
 CYPHER_INBOUND_EDGES = (
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
