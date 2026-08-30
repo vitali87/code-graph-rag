@@ -1001,6 +1001,19 @@ class GraphUpdater:
             self._run_cpp_frontend()
         self._run_emitting_frontends(FrontendPhase.AFTER_DEFINITIONS)
 
+        go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
+        if go_methods:
+            logger.info("Resolved {} Go receiver methods", go_methods)
+
+        if not force:
+            self._rehydrate_registry_from_graph()
+
+        # After rehydration: an incremental run re-parses the `.cpp` holding
+        # an out-of-class method while its class stays in an unchanged
+        # header, and the class is only known once the registry is read back
+        # from the graph. Resolving earlier bound such a method to a
+        # module-anchored fallback qn beside its class-anchored node, in a
+        # parse-order-dependent way (issue #1552).
         corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
         if corrected:
             logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
@@ -1013,13 +1026,6 @@ class GraphUpdater:
         # is recorded only once its class binding resolves, and a macro use
         # inside such a method must attribute to it, not the Module.
         self._resolve_hybrid_macro_calls()
-
-        go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
-        if go_methods:
-            logger.info("Resolved {} Go receiver methods", go_methods)
-
-        if not force:
-            self._rehydrate_registry_from_graph()
 
         # After rehydration: an expansion call's callee join needs spans
         # for unchanged files too.
