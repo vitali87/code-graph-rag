@@ -3,7 +3,6 @@ produced: a sibling file's inline-mod functions sharing the qn prefix (the
 #1017 shape) survive the sweep and keep their full caller qns (issue #1025)."""
 
 from pathlib import Path
-from typing import Protocol, runtime_checkable
 from unittest.mock import MagicMock
 
 import pytest
@@ -63,12 +62,6 @@ def test_sibling_inline_mod_functions_survive_the_prefix_sweep(
     go_qn = f"{base}.src.a.b.c.go"
     assert go_qn in updater.function_registry
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -79,8 +72,12 @@ def test_sibling_inline_mod_functions_survive_the_prefix_sweep(
 
     # The sibling's registration survives the sweep untouched...
     assert go_qn in updater.function_registry
-    # ...and the recompute records the edge from the FULL caller qn, not a
-    # prefix-degraded one.
+    # ...and a recompute over the sibling records the edge from the FULL
+    # caller qn, not a prefix-degraded one. The watch path itself resolves
+    # only the touched file and its dependents (issue #1524), so the
+    # sibling's pass is driven explicitly here.
+    mock_ingestor.reset_mock()
+    updater._process_function_calls(only={project / "src" / "a.rs"})
     calls = {
         (str(call.args[0][2]), str(call.args[2][2]))
         for call in get_relationships(mock_ingestor, "CALLS")

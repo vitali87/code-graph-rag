@@ -296,7 +296,6 @@ def test_watched_modification_reemits_internal_import_edges(
     # A watched edit runs the realtime path, not run(): the deferred import
     # flush must happen there too, or the live graph loses the module-level
     # import edges until the next full index (issue #1347).
-    from typing import Protocol, runtime_checkable
 
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
     from watchdog.events import FileModifiedEvent
@@ -347,12 +346,6 @@ public class RemoteStorageProvider
     )
     updater.run()
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -473,7 +466,6 @@ def test_watched_provider_edit_keeps_the_importers_edge(
     # unchanged importer's edge; the importer never re-parses, so its using
     # entries must be requeued from the persistent import mapping or the edge
     # stays lost until a full re-index (issue #1347).
-    from typing import Protocol, runtime_checkable
 
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
     from watchdog.events import FileModifiedEvent
@@ -524,12 +516,6 @@ public class RemoteStorageProvider
     )
     updater.run()
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
@@ -604,7 +590,6 @@ def test_watched_provider_deletion_stops_targeting_its_module(
     # Deleting the provider must also drop its in-memory C# import state, or
     # the requeue rebuilds an IMPORTS edge to a Module that no longer exists,
     # diverging from what a clean rebuild of the same tree would produce.
-    from typing import Protocol, runtime_checkable
 
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
     from watchdog.events import FileDeletedEvent
@@ -655,12 +640,6 @@ public class RemoteStorageProvider
     )
     updater.run()
 
-    class _AnyProtocol(Protocol):
-        pass
-
-    monkeypatch.setattr(
-        realtime_updater, "QueryProtocol", runtime_checkable(_AnyProtocol)
-    )
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
     handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 

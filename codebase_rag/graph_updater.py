@@ -4,8 +4,9 @@ import hashlib
 import json
 import os
 import sys
+import time
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -90,6 +91,7 @@ from .types_defs import (
     PendingExpansionCall,
     PendingMacroCall,
     PropertyDict,
+    ReingestReport,
     ResultRow,
     SimpleNameLookup,
 )
@@ -360,6 +362,9 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
+        # reingest() reads the registry back from the graph once on a fresh
+        # updater; a reused one already holds live state (issue #1524).
+        self._reingest_hydrated = False
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
@@ -894,6 +899,123 @@ class GraphUpdater:
             or filepath.suffix.lower() == cs.CSPROJ_SUFFIX
         )
 
+    def _resolve_deferred_definitions(self, rehydrate: bool) -> dict[str, str]:
+        """Every deferred definition-level resolution that must follow Pass 2.
+
+        Shared by run() and reingest() (issue #1524): a scoped re-ingest
+        deletes a file's Module subtree like an incremental run does, so the
+        C/C++ macro, containment, forward-declaration, inheritance and
+        module-implementation relationships it held have to be rebuilt by
+        the same stages, or they vanish until a full update. Returns the
+        module qn -> path map the IMPORTS flush verifies against.
+        """
+        # HYBRID must run after Pass 2: an incremental run deletes each
+        # changed file's Module subtree before re-parsing it, so macro
+        # nodes and include IMPORTS emitted earlier would be deleted with
+        # it and vanish until a forced rebuild.
+        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
+            self._run_cpp_frontend()
+        self._run_emitting_frontends(FrontendPhase.AFTER_DEFINITIONS)
+
+        corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
+        if corrected:
+            logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
+
+        contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
+        if contained:
+            logger.info("Resolved {} deferred C++ nested containments", contained)
+
+        # After resolve_deferred_cpp_methods: an out-of-class method's span
+        # is recorded only once its class binding resolves, and a macro use
+        # inside such a method must attribute to it, not the Module.
+        self._resolve_hybrid_macro_calls()
+
+        go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
+        if go_methods:
+            logger.info("Resolved {} Go receiver methods", go_methods)
+
+        if rehydrate:
+            self._rehydrate_registry_from_graph()
+
+        # After rehydration: an expansion call's callee join needs spans
+        # for unchanged files too.
+        self._resolve_hybrid_expansion_calls()
+
+        # After rehydration so the "does a real definition exist?" check sees
+        # definitions in files an incremental run did not re-parse; otherwise a
+        # forward declaration whose definition lives in an unchanged file is
+        # kept as a phantom and re-fragments the class.
+        kept_forwards = (
+            self.factory.definition_processor.resolve_deferred_forward_declarations()
+        )
+        if kept_forwards:
+            logger.info(
+                "Registered {} forward-declared C/C++ types with no definition",
+                kept_forwards,
+            )
+
+        # After rehydration (an incremental run's class may live in an
+        # unchanged header) and after forward declarations (a kept
+        # forward-declared TYPE also proves the name is a class, not a
+        # macro).
+        orphan_ctors = (
+            self.factory.definition_processor.resolve_deferred_cpp_artifacts()
+        )
+        if orphan_ctors:
+            logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
+
+        # After artifact resolution so a recovery-registered definition also
+        # counts; a prototype duplicating any bodied definition is dropped.
+        kept_prototypes = (
+            self.factory.definition_processor.resolve_deferred_cpp_prototypes()
+        )
+        if kept_prototypes:
+            logger.info(
+                "Registered {} C/C++ function prototypes with no definition",
+                kept_prototypes,
+            )
+
+        # After forward declarations so a base whose only representation is
+        # a kept forward declaration still resolves to a real node.
+        inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()
+        if inherits:
+            logger.info("Resolved {} deferred C++ inheritance bases", inherits)
+
+        # IMPORTS edges and the Rust sub-scope arbitration verify against
+        # every module qn this run produced (files, inline modules,
+        # rehydrated unchanged files); an internal target that resolves
+        # nowhere emits no edge.
+        known_module_paths = self.known_module_paths()
+
+        # Inline-mod import maps commit BEFORE the deferred inheritance
+        # pass below: it re-resolves module-anchored trait guesses through
+        # them.
+        self.factory.import_processor.finalise_rust_mod_scope_uses(known_module_paths)
+
+        # Same reasoning for every other language: parents resolve against
+        # the full registry (including rehydrated definitions), and an
+        # unresolvable parent emits no edge instead of a phantom.
+        generic_inherits = self.factory.definition_processor.resolve_deferred_inherits()
+        if generic_inherits:
+            logger.info(
+                "Resolved {} deferred inheritance/implements parents",
+                generic_inherits,
+            )
+
+        module_impls = (
+            self.factory.definition_processor.resolve_deferred_cpp_module_impls()
+        )
+        if module_impls:
+            logger.info("Resolved {} C++20 module implementation links", module_impls)
+
+        # Last containment step: every node-registering pass above (deferred
+        # C++ methods, Go receivers, kept forward declarations) must finish
+        # before parent qns are verified against the registry.
+        linked = self.factory.definition_processor.resolve_deferred_parent_links()
+        if linked:
+            logger.info("Resolved {} deferred containment parents", linked)
+        return known_module_paths
+
     def run(self, force: bool = False) -> None:
         """Ingest the repository; ``force`` rebuilds instead of updating incrementally."""
         py_engine = self.factory.type_inference._python_type_inference
@@ -993,111 +1115,7 @@ class GraphUpdater:
         # method name-token locations Pass 2 registered.
         self._run_java_frontend()
 
-        # HYBRID must run after Pass 2: an incremental run deletes each
-        # changed file's Module subtree before re-parsing it, so macro
-        # nodes and include IMPORTS emitted earlier would be deleted with
-        # it and vanish until a forced rebuild.
-        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
-            self._run_cpp_frontend()
-        self._run_emitting_frontends(FrontendPhase.AFTER_DEFINITIONS)
-
-        corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
-        if corrected:
-            logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
-
-        contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
-        if contained:
-            logger.info("Resolved {} deferred C++ nested containments", contained)
-
-        # After resolve_deferred_cpp_methods: an out-of-class method's span
-        # is recorded only once its class binding resolves, and a macro use
-        # inside such a method must attribute to it, not the Module.
-        self._resolve_hybrid_macro_calls()
-
-        go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
-        if go_methods:
-            logger.info("Resolved {} Go receiver methods", go_methods)
-
-        if not force:
-            self._rehydrate_registry_from_graph()
-
-        # After rehydration: an expansion call's callee join needs spans
-        # for unchanged files too.
-        self._resolve_hybrid_expansion_calls()
-
-        # After rehydration so the "does a real definition exist?" check sees
-        # definitions in files an incremental run did not re-parse; otherwise a
-        # forward declaration whose definition lives in an unchanged file is
-        # kept as a phantom and re-fragments the class.
-        kept_forwards = (
-            self.factory.definition_processor.resolve_deferred_forward_declarations()
-        )
-        if kept_forwards:
-            logger.info(
-                "Registered {} forward-declared C/C++ types with no definition",
-                kept_forwards,
-            )
-
-        # After rehydration (an incremental run's class may live in an
-        # unchanged header) and after forward declarations (a kept
-        # forward-declared TYPE also proves the name is a class, not a
-        # macro).
-        orphan_ctors = (
-            self.factory.definition_processor.resolve_deferred_cpp_artifacts()
-        )
-        if orphan_ctors:
-            logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
-
-        # After artifact resolution so a recovery-registered definition also
-        # counts; a prototype duplicating any bodied definition is dropped.
-        kept_prototypes = (
-            self.factory.definition_processor.resolve_deferred_cpp_prototypes()
-        )
-        if kept_prototypes:
-            logger.info(
-                "Registered {} C/C++ function prototypes with no definition",
-                kept_prototypes,
-            )
-
-        # After forward declarations so a base whose only representation is
-        # a kept forward declaration still resolves to a real node.
-        inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()
-        if inherits:
-            logger.info("Resolved {} deferred C++ inheritance bases", inherits)
-
-        # IMPORTS edges and the Rust sub-scope arbitration verify against
-        # every module qn this run produced (files, inline modules,
-        # rehydrated unchanged files); an internal target that resolves
-        # nowhere emits no edge.
-        known_module_paths = self.known_module_paths()
-
-        # Inline-mod import maps commit BEFORE the deferred inheritance
-        # pass below: it re-resolves module-anchored trait guesses through
-        # them.
-        self.factory.import_processor.finalise_rust_mod_scope_uses(known_module_paths)
-
-        # Same reasoning for every other language: parents resolve against
-        # the full registry (including rehydrated definitions), and an
-        # unresolvable parent emits no edge instead of a phantom.
-        generic_inherits = self.factory.definition_processor.resolve_deferred_inherits()
-        if generic_inherits:
-            logger.info(
-                "Resolved {} deferred inheritance/implements parents",
-                generic_inherits,
-            )
-
-        module_impls = (
-            self.factory.definition_processor.resolve_deferred_cpp_module_impls()
-        )
-        if module_impls:
-            logger.info("Resolved {} C++20 module implementation links", module_impls)
-
-        # Last containment step: every node-registering pass above (deferred
-        # C++ methods, Go receivers, kept forward declarations) must finish
-        # before parent qns are verified against the registry.
-        linked = self.factory.definition_processor.resolve_deferred_parent_links()
-        if linked:
-            logger.info("Resolved {} deferred containment parents", linked)
+        known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         logger.info(ls.PASS_3_CALLS)
@@ -1151,17 +1169,24 @@ class GraphUpdater:
                 self._delombok_state_candidate,
             )
 
-    def _emit_pending_endpoints(self) -> None:
+    def _emit_pending_endpoints(self, only: set[str] | None = None) -> None:
+        # `only` (a scoped re-ingest, issue #1524) limits the AST loads to
+        # those modules plus the router modules their mounts need; the
+        # mount-prefix registry is still built from every Python module the
+        # graph knows, but through the disk-backed cache only for the
+        # scoped set.
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
             return
         dp = self.factory.definition_processor
         module_files = self._python_module_files()
+        if only is not None:
+            module_files = {qn: p for qn, p in module_files.items() if qn in only}
         module_asts = self._python_module_asts(module_files)
         entries = list(dp.pending_endpoints)
         # A mount-only incremental change re-parses just the mounting module;
         # the unchanged handlers must still re-emit under the new prefix, so
         # they come back from the graph. A full build queued them all already.
-        if not self._is_full_build:
+        if not self._is_full_build and only is None:
             entries.extend(
                 self._rehydrated_route_handlers(
                     {qn for _label, qn, _decorators, _module in entries},
@@ -1210,10 +1235,10 @@ class GraphUpdater:
         except Exception:
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
-    def _emit_route_call_endpoints(self) -> None:
+    def _emit_route_call_endpoints(self, only: set[str] | None = None) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
             return
-        modules = self._route_module_asts()
+        modules = self._route_module_asts(only=only)
         if not modules:
             return
         # Cleanup keyed on every scanned module, BEFORE emission:
@@ -1268,12 +1293,15 @@ class GraphUpdater:
         return cs.NodeLabel.MODULE, module_qn
 
     def _route_module_asts(
-        self,
+        self, only: set[str] | None = None
     ) -> dict[str, tuple[Node, cs.SupportedLanguage, Path]]:
         dp = self.factory.definition_processor
         files: dict[str, Path] = dict(dp.module_qn_to_file_path)
-        for qn, path in self._graph_route_module_paths():
-            files.setdefault(qn, path)
+        if only is None:
+            for qn, path in self._graph_route_module_paths():
+                files.setdefault(qn, path)
+        else:
+            files = {qn: p for qn, p in files.items() if qn in only}
         out: dict[str, tuple[Node, cs.SupportedLanguage, Path]] = {}
         for qn, path in files.items():
             entry = self.ast_cache.load(path)
@@ -2628,7 +2656,9 @@ class GraphUpdater:
         if all(existing != file_path for existing, _ in self._parsed_files):
             self._parsed_files.append((file_path, language))
 
-    def _process_function_calls(self) -> None:
+    def _process_function_calls(self, only: Collection[Path] | None = None) -> None:
+        # `only` scopes the pass to a re-ingested subset (issue #1524); every
+        # other file keeps the edges it already has.
         # A reused updater (watch mode, a second run) re-parses files; the
         # JS receiver-binding index holds nodes from the PREVIOUS parse,
         # whose spans would resolve against the refreshed registry onto
@@ -2638,7 +2668,12 @@ class GraphUpdater:
         # Iterate every file parsed this run, not the bounded AST cache: on a
         # large repo the cache evicts most files, and iterating it drops their
         # calls (a whole module ends up with zero CALLS edges).
-        for file_path, language in self._parsed_files:
+        files = (
+            self._parsed_files
+            if only is None
+            else [(fp, lang) for fp, lang in self._parsed_files if fp in only]
+        )
+        for file_path, language in files:
             root_node = self._ast_for(file_path)
             if root_node is None:
                 continue
@@ -2659,7 +2694,7 @@ class GraphUpdater:
         # defining kX.
         self.factory.call_processor.finalize_callable_field_bindings()
         self.factory.call_processor.finalize_js_symbol_bindings()
-        for file_path, language in self._parsed_files:
+        for file_path, language in files:
             root_node = self._ast_for(file_path)
             if root_node is None:
                 continue
@@ -2679,6 +2714,267 @@ class GraphUpdater:
         self.factory.call_processor.finalize_callable_param_flow()
         self.factory.call_processor.finalize_flow()
         self.factory.call_processor.finalize_dispatch()
+
+    # --- Scoped re-ingest (issue #1524) --------------------------------------
+
+    def _reingest_target(self, raw: Path | str) -> tuple[str, Path]:
+        """(relative posix key, absolute path) for a file inside the repo.
+
+        Relative inputs resolve against the repo root; anything escaping it
+        (``..`` segments, symlinks out) is refused rather than silently
+        clamped, since the caller is an agent naming files it just wrote.
+        """
+        path = Path(raw)
+        if not path.is_absolute():
+            path = self.repo_path / path
+        resolved = path.resolve()
+        root = self.repo_path.resolve()
+        if not resolved.is_relative_to(root):
+            raise ValueError(cs.REINGEST_OUTSIDE_REPO.format(path=raw))
+        key = resolved.relative_to(root).as_posix()
+        return key, self.repo_path / key
+
+    def _hydrate_for_reingest(self) -> None:
+        # A fresh updater (the MCP tool builds one per project) holds no
+        # registry, so every cross-file call from the re-parsed files would
+        # go unresolved; read the definitions back once, the way an
+        # incremental run() does. A reused updater already has live state.
+        if self._reingest_hydrated or self._parsed_files:
+            self._reingest_hydrated = True
+            return
+        # Pass 1 of run(): without the package map a re-parsed module hangs
+        # off a Folder instead of its Package. Generated-source roots and the
+        # delombok overlay are per-run inputs run() computes before Pass 2;
+        # a fresh updater must compute them too or a Lombok class re-parses
+        # without its generated members.
+        self.factory.structure_processor.identify_structure()
+        self._rehydrate_registry_from_graph()
+        self._rehydrate_function_locations()
+        self._reingest_hydrated = True
+
+    def _rerun_frontends_for(self, languages: set[cs.SupportedLanguage]) -> None:
+        # Semantic facts are location-keyed against the compiler's view of
+        # the whole module, so a change in one file can rebind calls in
+        # unchanged files (issue #1229 phase 3): the applicable frontend
+        # re-runs and its joins re-emit before the scoped call pass.
+        if cs.SupportedLanguage.GO in languages:
+            self._run_go_frontend()
+            self._rehydrate_go_type_locations()
+            self._rehydrate_function_locations()
+            self._join_go_implements()
+        if cs.SupportedLanguage.CSHARP in languages:
+            self._run_csharp_frontend()
+            self._rehydrate_csharp_type_locations()
+            self._rehydrate_function_locations()
+            self._join_csharp_partials()
+        if cs.SupportedLanguage.JAVA in languages:
+            self._run_java_frontend()
+            self._rehydrate_function_locations()
+        if cs.SupportedLanguage.PYTHON in languages:
+            self._run_python_frontend()
+            self._rehydrate_function_locations()
+
+    def _reingest_split(
+        self, paths: Iterable[Path | str], deleted: Iterable[Path | str]
+    ) -> tuple[dict[str, Path], dict[str, Path]]:
+        # (present, gone): a listed path missing on disk counts as gone, and
+        # an explicit deletion wins over a same-named file that reappeared.
+        present: dict[str, Path] = {}
+        gone: dict[str, Path] = {}
+        for raw in paths:
+            key, path = self._reingest_target(raw)
+            (present if path.is_file() else gone)[key] = path
+        for raw in deleted:
+            key, path = self._reingest_target(raw)
+            present.pop(key, None)
+            gone[key] = path
+        return present, gone
+
+    def _reingest_dependents(
+        self, present: dict[str, Path], gone: dict[str, Path]
+    ) -> dict[str, Path]:
+        # Files whose bindings the change can move (one level, from the
+        # graph's own edges) plus any file whose delombok overlay changed.
+        keys = sorted({*present, *gone})
+        affected: dict[str, Path] = {}
+        for caller_key in self._affected_caller_keys(keys):
+            caller_path = self.repo_path / caller_key
+            if (
+                caller_key not in present
+                and caller_key not in gone
+                and caller_path.is_file()
+            ):
+                affected[caller_key] = caller_path
+        for key in self._delombok_stale_keys:
+            if (
+                key not in present
+                and key not in gone
+                and (self.repo_path / key).is_file()
+            ):
+                affected[key] = self.repo_path / key
+        return affected
+
+    def _reingest_delete(
+        self, reparse: dict[str, Path], gone: dict[str, Path], hashes: FileHashCache
+    ) -> None:
+        import_processor = self.factory.import_processor
+        for key, path in reparse.items():
+            self.remove_file_from_state(path)
+            self._delete_module_entities(key)
+            # The Rust path caches were filled by the last run; a created or
+            # modified file must be re-observed before crate::/super:: paths
+            # resolve against them.
+            import_processor.refresh_rust_path_caches_for(
+                path, created=key not in hashes
+            )
+        for key, path in gone.items():
+            self.remove_file_from_state(path)
+            self._delete_module_entities(key)
+            if isinstance(self.ingestor, QueryProtocol):
+                # Keyed on the absolute path: a sibling project's File node
+                # can share the relative path (issue #897).
+                self.ingestor.execute_write(
+                    cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: path.resolve().as_posix()}
+                )
+
+    def _reingest_reparse(
+        self, reparse: dict[str, Path], gone: dict[str, Path]
+    ) -> None:
+        touched_languages: set[cs.SupportedLanguage] = set()
+        for path in (*reparse.values(), *gone.values()):
+            spec = get_language_spec(path.suffix)
+            if spec is not None and isinstance(spec.language, cs.SupportedLanguage):
+                touched_languages.add(spec.language)
+        if touched_languages & cs.C_FAMILY_LANGUAGES and (
+            settings.CPP_FRONTEND != cs.CppFrontend.HYBRID
+        ):
+            # LIBCLANG emits C/C++ definitions itself and marks the files it
+            # covered so the tree-sitter pass skips them; the deleted subtrees
+            # need it to run again BEFORE the re-parse, as run() does. (HYBRID
+            # runs after Pass 2, inside the deferred stages.)
+            self._cpp_frontend_covered = frozenset()
+            self._run_cpp_frontend()
+        for key, path in reparse.items():
+            # The delombok overlay stands in for the checked-in bytes exactly
+            # as the batch path does (issue #1140).
+            self._process_single_file(path, file_bytes=self._delombok_overlay.get(key))
+        self._rerun_frontends_for(touched_languages)
+
+    def _reingest_resolve(
+        self, reparse: dict[str, Path], captured: list[ResultRow]
+    ) -> None:
+        # The deferred definition-level stages run() applies after Pass 2
+        # (C/C++ macros and includes, containment, forward declarations,
+        # inheritance, Rust inline-mod arbitration): the deleted subtrees
+        # held those relationships too. The registry is already live or was
+        # hydrated above, so no graph read-back here.
+        known_module_paths = self._resolve_deferred_definitions(rehydrate=False)
+        # The re-parsed files' own CALLS edges went with their Module
+        # subtrees; a moved use must not serve last pass's cached answer.
+        self.factory.call_processor.reset_resolution_caches()
+        self._process_function_calls(only=set(reparse.values()))
+        # Editing a PROVIDER recreated its Module node and severed the
+        # unchanged C# importers' edges (issue #1347).
+        import_processor = self.factory.import_processor
+        import_processor.requeue_csharp_import_edges()
+        import_processor.flush_deferred_import_edges(known_module_paths)
+        self._emit_csharp_query_calls()
+        self.factory.definition_processor.process_all_method_overrides()
+        # Endpoints and route registrations, scoped to the re-parsed modules:
+        # the project-wide passes would load every route-capable module's
+        # AST, which on a fresh updater means re-parsing most of the repo.
+        reparsed_paths = set(reparse.values())
+        touched_modules = {
+            qn
+            for qn, module_path in self.factory.definition_processor.module_qn_to_file_path.items()
+            if module_path in reparsed_paths
+        }
+        self._emit_pending_endpoints(only=touched_modules)
+        self._emit_route_call_endpoints(only=touched_modules)
+        self._restore_inbound_edges(captured)
+        if isinstance(self.ingestor, QueryProtocol):
+            self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+        self.ingestor.flush_all()
+
+    def _reingest_update_hashes(
+        self,
+        cache_path: Path,
+        hashes: FileHashCache,
+        reparse: dict[str, Path],
+        gone: dict[str, Path],
+    ) -> None:
+        # Keep the hash cache honest so the next update_repository does not
+        # re-parse what this call already applied.
+        if not cache_path.is_file():
+            return
+        for key, path in reparse.items():
+            try:
+                hashes[key] = _hash_file(path)
+            except OSError:
+                hashes.pop(key, None)
+        for key in gone:
+            hashes.pop(key, None)
+        _save_hash_cache(cache_path, hashes)
+
+    def reingest(
+        self,
+        paths: Iterable[Path | str],
+        deleted: Iterable[Path | str] = (),
+    ) -> ReingestReport:
+        """Re-ingest the given files with file-scoped call resolution.
+
+        The batch incremental path already knows how to do this for the
+        files a hash walk finds changed: re-parse them plus the files that
+        depend on them (one level, via the graph's edges), restore every
+        other inbound edge verbatim, and resolve calls only in the re-parsed
+        set. This is the same recipe cut down to an explicit file list, so
+        an agent's edit reaches the graph in the time it takes to parse
+        those files rather than to walk and re-resolve the project (issue
+        #1524). The watcher and the MCP ``reingest`` tool both run through
+        here.
+
+        ``paths`` that no longer exist on disk are treated as deleted;
+        ``deleted`` names files whose removal should be applied even if a
+        same-named file has since reappeared (a watch DELETE event).
+        """
+        started = time.perf_counter()
+        present, gone = self._reingest_split(paths, deleted)
+        if not present and not gone:
+            return ReingestReport((), (), (), 0.0)
+
+        self._hydrate_for_reingest()
+        # Generated-source roots and the delombok overlay are per-run inputs;
+        # a watcher's updater lives across many events, so refresh them per
+        # call (the batch path does the same through _delombok_stale_keys).
+        self._register_generated_sources()
+        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        hashes = _load_hash_cache(cache_path)
+
+        affected = self._reingest_dependents(present, gone)
+        all_keys = sorted({*present, *gone, *affected})
+        captured = self._capture_inbound_edges(all_keys)
+        self._reparsed_file_keys = set(all_keys)
+
+        reparse = {**present, **affected}
+        self._reingest_delete(reparse, gone, hashes)
+        self._reingest_reparse(reparse, gone)
+        self._reingest_resolve(reparse, captured)
+        self._reingest_update_hashes(cache_path, hashes, reparse, gone)
+
+        report = ReingestReport(
+            reparsed=tuple(sorted(present)),
+            affected=tuple(sorted(affected)),
+            removed=tuple(sorted(gone)),
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+        )
+        logger.info(
+            ls.REINGEST_DONE,
+            reparsed=len(report.reparsed),
+            affected=len(report.affected),
+            removed=len(report.removed),
+            ms=round(report.elapsed_ms, 1),
+        )
+        return report
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""

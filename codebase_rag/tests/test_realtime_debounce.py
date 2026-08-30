@@ -141,6 +141,11 @@ class TestCodeChangeEventHandlerDebounce:
         updater.remove_file_from_state = MagicMock()
         updater.factory = MagicMock()
         updater.factory.definition_processor.process_file = MagicMock(return_value=None)
+        # The graph work moved into GraphUpdater.reingest (issue #1524); one
+        # flush per processed batch is what the debounce assertions count.
+        updater.reingest = MagicMock(
+            side_effect=lambda *a, **k: mock_ingestor.flush_all()
+        )
         updater._process_function_calls = MagicMock()
         updater.parsers = {}
         updater.queries = {}
@@ -429,6 +434,11 @@ class TestTimerFactoryContract:
         updater.remove_file_from_state = MagicMock()
         updater.factory = MagicMock()
         updater.factory.definition_processor.process_file = MagicMock(return_value=None)
+        # The graph work moved into GraphUpdater.reingest (issue #1524); one
+        # flush per processed batch is what the debounce assertions count.
+        updater.reingest = MagicMock(
+            side_effect=lambda *a, **k: mock_ingestor.flush_all()
+        )
         updater._process_function_calls = MagicMock()
         updater.parsers = {}
         updater.queries = {}
@@ -547,6 +557,11 @@ class TestDebounceIntegration:
         updater.remove_file_from_state = MagicMock()
         updater.factory = MagicMock()
         updater.factory.definition_processor.process_file = MagicMock(return_value=None)
+        # The graph work moved into GraphUpdater.reingest (issue #1524); one
+        # flush per processed batch is what the debounce assertions count.
+        updater.reingest = MagicMock(
+            side_effect=lambda *a, **k: mock_ingestor.flush_all()
+        )
         updater._process_function_calls = MagicMock()
         updater.parsers = {}
         updater.queries = {}

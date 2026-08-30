@@ -52,6 +52,7 @@ from codebase_rag.types_defs import (
     MCPInputSchemaProperty,
     MCPToolSchema,
     QueryResultDict,
+    ReingestToolResult,
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
 from codebase_rag.utils.path_utils import derive_project_name
@@ -90,6 +91,10 @@ class MCPToolsRegistry:
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
         self._ingestor_lock = asyncio.Lock()
+        # The updater that last indexed this root, kept warm so reingest()
+        # resolves cross-file calls without re-reading the registry from the
+        # graph on every call (issue #1524).
+        self._live_updater: GraphUpdater | None = None
 
         self.parsers, self.queries = load_parsers()
 
@@ -213,6 +218,28 @@ class MCPToolsRegistry:
                 ),
                 handler=self.update_repository,
                 returns_json=False,
+            ),
+            cs.MCPToolName.REINGEST: ToolMetadata(
+                name=cs.MCPToolName.REINGEST,
+                description=td.MCP_TOOLS[cs.MCPToolName.REINGEST],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.PATHS: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.ARRAY,
+                            description=td.MCP_PARAM_REINGEST_PATHS,
+                            items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                        ),
+                        cs.MCPParamName.DELETED: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.ARRAY,
+                            description=td.MCP_PARAM_REINGEST_DELETED,
+                            items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                        ),
+                    },
+                    required=[cs.MCPParamName.PATHS],
+                ),
+                handler=self.reingest,
+                returns_json=True,
             ),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
@@ -681,6 +708,9 @@ class MCPToolsRegistry:
             )
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
+        # The retained reingest updater holds definitions of the graph that
+        # was just removed; the next reingest must start from the store.
+        self._live_updater = None
         return DeleteProjectSuccessResult(
             success=True,
             project=project_name,
@@ -703,6 +733,10 @@ class MCPToolsRegistry:
         try:
             async with self._ingestor_lock:
                 await asyncio.to_thread(self.ingestor.clean_database)
+                # Dropped as soon as the graph is gone, before the embedding
+                # sweep can fail: the retained updater holds definitions of a
+                # graph that no longer exists.
+                self._live_updater = None
                 await asyncio.to_thread(clear_all_embeddings)
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
@@ -729,6 +763,7 @@ class MCPToolsRegistry:
         )
         updater.run()
         self.ingestor.flush_all()
+        self._live_updater = updater
 
         return cs.MCP_INDEX_SUCCESS_PROJECT.format(
             path=self.project_root, project_name=project_name
@@ -774,7 +809,58 @@ class MCPToolsRegistry:
         )
         updater.run()
         self.ingestor.flush_all()
+        self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
+
+    def _reingest_sync(
+        self, paths: list[str], deleted: list[str]
+    ) -> ReingestToolResult:
+        updater = self._live_updater
+        if updater is None:
+            # A scoped re-ingest completes a graph; it cannot stand in for
+            # the first index. After delete_project or wipe_database the
+            # project is gone, and hydrating from nothing would leave every
+            # unrelated definition missing.
+            project_name = derive_project_name(Path(self.project_root))
+            if project_name not in self.ingestor.list_projects():
+                raise ValueError(
+                    cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
+                )
+            self.ingestor.ensure_constraints()
+            updater = GraphUpdater(
+                ingestor=self.ingestor,
+                repo_path=Path(self.project_root),
+                parsers=self.parsers,
+                queries=self.queries,
+                project_name=project_name,
+            )
+            self._live_updater = updater
+        report = updater.reingest(paths, deleted=deleted)
+        return ReingestToolResult(
+            reparsed=list(report.reparsed),
+            affected=list(report.affected),
+            removed=list(report.removed),
+            elapsed_ms=round(report.elapsed_ms, 1),
+        )
+
+    async def reingest(
+        self, paths: list[str], deleted: list[str] | None = None
+    ) -> ReingestToolResult:
+        logger.info(lg.MCP_REINGESTING.format(count=len(paths)))
+        try:
+            async with self._ingestor_lock:
+                return await asyncio.to_thread(
+                    self._reingest_sync, list(paths), list(deleted or ())
+                )
+        except Exception as e:
+            logger.error(lg.MCP_ERROR_REINGEST.format(error=e))
+            return ReingestToolResult(
+                error=cs.MCP_REINGEST_ERROR.format(error=e),
+                reparsed=[],
+                affected=[],
+                removed=[],
+                elapsed_ms=0.0,
+            )
 
     async def update_repository(self) -> str:
         return await self._run_ingest(

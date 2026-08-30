@@ -21,6 +21,7 @@ class FunctionRegistryTrie:
         "_entries",
         "_simple_name_lookup",
         "_ending_with_cache",
+        "_ending_with_tails",
         "_duplicates",
         "_variant_columns",
         "_properties",
@@ -34,6 +35,11 @@ class FunctionRegistryTrie:
         self._entries: FunctionRegistry = {}
         self._simple_name_lookup = simple_name_lookup
         self._ending_with_cache: dict[str, list[QualifiedName]] = {}
+        # Dotted cache keys grouped by their last segment, so an insert or
+        # delete invalidates only the keys its simple name can end with
+        # instead of scanning the whole cache (issue #1524: a scoped
+        # re-ingest of a hub file re-registers thousands of definitions).
+        self._ending_with_tails: dict[str, set[str]] = {}
         self._duplicates: dict[QualifiedName, list[QualifiedName]] = {}
         self._variant_columns: dict[QualifiedName, int] = {}
         self._properties: set[QualifiedName] = set()
@@ -99,7 +105,7 @@ class FunctionRegistryTrie:
         simple_name = qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         if self._simple_name_lookup is not None:
             self._simple_name_lookup[simple_name].add(qualified_name)
-        self._invalidate_ending_with_cache(qualified_name, simple_name)
+        self._invalidate_ending_with_cache(simple_name)
 
         parts = qualified_name.split(cs.SEPARATOR_DOT)
         current: TrieNode = self.root
@@ -156,7 +162,7 @@ class FunctionRegistryTrie:
         self._abstracts.discard(qualified_name)
         self._callable_params.pop(qualified_name, None)
 
-        self._invalidate_ending_with_cache(qualified_name, simple_name)
+        self._invalidate_ending_with_cache(simple_name)
 
         if self._simple_name_lookup is not None:
             if simple_name in self._simple_name_lookup:
@@ -239,19 +245,17 @@ class FunctionRegistryTrie:
         )
         return [qn for qn, _ in matches]
 
-    def _invalidate_ending_with_cache(
-        self, qualified_name: QualifiedName, simple_name: str
-    ) -> None:
+    def _invalidate_ending_with_cache(self, simple_name: str) -> None:
         if not self._ending_with_cache:
             return
         self._ending_with_cache.pop(simple_name, None)
-        # dotted suffixes are cached too (#513); drop any the qn ends with.
-        for key in [
-            k
-            for k in self._ending_with_cache
-            if cs.SEPARATOR_DOT in k and qualified_name.endswith(f".{k}")
-        ]:
-            del self._ending_with_cache[key]
+        # dotted suffixes are cached too (#513); a qn can only end with a
+        # dotted key whose last segment is its own simple name, so only that
+        # bucket is consulted. Dropping the whole bucket over-invalidates
+        # (keys the qn does not end with are recomputed on the next lookup),
+        # which is cheap and never wrong.
+        for key in self._ending_with_tails.pop(simple_name, ()):
+            self._ending_with_cache.pop(key, None)
 
     def find_ending_with(self, suffix: str) -> list[QualifiedName]:
         cached = self._ending_with_cache.get(suffix)
@@ -276,6 +280,9 @@ class FunctionRegistryTrie:
                 qn for qn in self._entries.keys() if qn.endswith(f".{suffix}")
             )
         self._ending_with_cache[suffix] = result
+        if cs.SEPARATOR_DOT in suffix:
+            tail = suffix.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            self._ending_with_tails.setdefault(tail, set()).add(suffix)
         return result
 
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:

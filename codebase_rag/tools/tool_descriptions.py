@@ -158,6 +158,24 @@ MCP_UPDATE_REPOSITORY = (
     "Use this for incremental updates."
 )
 
+MCP_REINGEST = (
+    "Re-ingest specific files into the knowledge graph after editing them. "
+    "Re-parses only the given files and the files that depend on them, and "
+    "re-resolves calls in that set only, so an edit lands in the graph in the "
+    "time it takes to parse the affected dependents (hundreds of milliseconds "
+    "for a typical file, seconds for a hub imported by dozens) instead of a "
+    "full update_repository pass. "
+    "Paths are relative to the project root; files that no longer exist are "
+    "removed from the graph. Returns the files re-parsed, the dependents "
+    "re-parsed with them, the files removed, and the elapsed milliseconds."
+)
+MCP_PARAM_REINGEST_PATHS = (
+    "Files to re-ingest, relative to the project root (created, modified, or deleted)."
+)
+MCP_PARAM_REINGEST_DELETED = (
+    "Files to remove from the graph even if a same-named file exists on disk."
+)
+
 MCP_QUERY_CODE_GRAPH = (
     "Query the codebase knowledge graph using natural language. "
     "Use semantic_search unless you know the exact names of classes/functions you are searching for. "
@@ -314,6 +332,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.WIPE_DATABASE: MCP_WIPE_DATABASE,
     MCPToolName.INDEX_REPOSITORY: MCP_INDEX_REPOSITORY,
     MCPToolName.UPDATE_REPOSITORY: MCP_UPDATE_REPOSITORY,
+    MCPToolName.REINGEST: MCP_REINGEST,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,
