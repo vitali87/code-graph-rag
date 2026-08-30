@@ -39,13 +39,19 @@ outcome.files        # repo-relative paths, sorted
 - **Verify** runs the caller's callback against a `StagedTree`. Most checks
   only need `read`/`exists`; a check that runs a real tool asks for `root`,
   which copies the tree once (ignored directories and cgr state files
-  excluded) and writes the overlay on top. A verifier that returns `False`,
-  returns a failing `VerificationResult`, or raises rejects the transaction.
+  excluded, symlinks pointing outside the repo dropped, in-repo symlinks
+  copied as the files they point at) and writes the overlay on top, so
+  nothing a verifier writes under `root` can reach the working tree. A
+  verifier that returns `False`, returns a failing `VerificationResult`, or
+  raises rejects the transaction.
 - **Commit** first refuses (`TransactionConflict`) if any staged file no
   longer holds the bytes it was staged on, then writes each file through a
-  temp sibling and `os.replace`, holding the originals so a failure part-way
-  restores what already landed. Commits to one repo serialise on a lock.
-  On a rejected verification the working tree is byte-identical to before.
+  temp sibling and `os.replace` and records the history entry, holding the
+  originals so a failure anywhere after the first write (a later file, the
+  history record) restores what already landed. Commits to one repo
+  serialise on an OS-level lock (`.cgr-edit-lock`), so a `cgr edits undo`
+  in another process queues behind an agent's commit. On a rejected
+  verification the working tree is byte-identical to before.
 - **Rollback** discards the overlay. `with transaction(root) as tx:` rolls
   back on an exception.
 
@@ -65,4 +71,6 @@ cgr edits undo -n 3       # reverse the latest three, newest first
 An undo is itself a transaction staging `after -> before`. It refuses, and
 stops the run, when a file no longer holds what the transaction wrote, so an
 undo never clobbers a later hand edit; the entry stays in the history until
-it is undone.
+it is undone. History paths are validated against the repo root before they
+are staged (the file is data on disk, not a trusted instruction), and a
+reversal whose history update fails is put back so tree and history agree.

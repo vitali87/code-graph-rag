@@ -373,3 +373,135 @@ def test_cli_undo_conflict_exits_nonzero(repo: Path) -> None:
     result = CliRunner().invoke(edits_cli, ["undo", "--repo-path", str(repo)])
     assert result.exit_code == 1
     assert (repo / "pkg" / "a.py").read_text() == "hand edit\n"
+
+
+# --- Review findings on PR #1540 ----------------------------------------------
+
+
+def test_escaping_symlink_cannot_reach_the_live_tree_from_the_staging_copy(
+    repo: Path, tmp_path: Path
+) -> None:
+    """A verifier writing through a symlink in `tree.root` must never touch
+    the working tree (or anything outside it) when it then fails."""
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep\n", encoding="utf-8")
+    (repo / "escape").symlink_to(outside)
+    (repo / "inner").symlink_to(repo / "README.md")
+    before = _tree_digest(repo)
+
+    def verify(tree: StagedTree) -> VerificationResult:
+        root = tree.root
+        assert not (root / "escape").exists(), "escaping link is not copied"
+        # An in-repo link is a plain copy: writing to it changes the staging
+        # tree only.
+        assert not (root / "inner").is_symlink()
+        (root / "inner").write_text("scribble\n", encoding="utf-8")
+        (root / "README.md").write_text("scribble\n", encoding="utf-8")
+        return VerificationResult(False, "no")
+
+    tx = EditTransaction(repo)
+    tx.stage("pkg/a.py", "x\n")
+    outcome = tx.commit(verify)
+    assert outcome.applied is False
+    assert outside.read_text() == "keep\n"
+    assert (repo / "README.md").read_text() == "# repo\n"
+    assert _tree_digest(repo) == before
+
+
+def test_undo_rejects_history_paths_outside_the_repo(
+    repo: Path, tmp_path: Path
+) -> None:
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep\n", encoding="utf-8")
+    history = repo / cs.EDIT_HISTORY_FILENAME
+    history.write_text(
+        json.dumps(
+            [
+                {
+                    cs.EDIT_KEY_ID: "evil",
+                    cs.EDIT_KEY_AT: "now",
+                    cs.EDIT_KEY_FILES: [
+                        {
+                            cs.KEY_PATH: str(victim),
+                            cs.EDIT_KEY_BEFORE: None,
+                            cs.EDIT_KEY_AFTER: "a2VlcAo=",
+                        }
+                    ],
+                    cs.EDIT_KEY_VERIFICATION: {
+                        cs.EDIT_KEY_OK: True,
+                        cs.EDIT_KEY_MESSAGE: "",
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(TransactionError):
+        undo_last(repo)
+    assert victim.read_text() == "keep\n"
+    assert len(load_history(repo)) == 1
+
+
+def test_commit_holds_an_os_level_lock_file(repo: Path) -> None:
+    tx = EditTransaction(repo)
+    tx.stage("pkg/a.py", "x\n")
+    seen: dict[str, bool] = {}
+
+    def verify(tree: StagedTree) -> bool:
+        seen["lock_exists"] = (repo / cs.EDIT_LOCK_FILENAME).exists()
+        return True
+
+    tx.commit(verify)
+    assert seen["lock_exists"] is True
+    assert cs.EDIT_LOCK_FILENAME in cs.CGR_STATE_FILENAMES
+
+
+def test_history_record_failure_restores_the_files(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+
+    module = importlib.import_module("codebase_rag.editing.transaction")
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise OSError("history disk full")
+
+    monkeypatch.setattr(module, "record_transaction", broken)
+    before = _tree_digest(repo)
+    tx = EditTransaction(repo)
+    tx.stage("pkg/a.py", "changed\n")
+    tx.stage("pkg/new.py", "new\n")
+    with pytest.raises(OSError):
+        tx.commit()
+    assert _tree_digest(repo) == before
+    assert not (repo / "pkg" / "new.py").exists()
+
+
+def test_undo_history_truncation_failure_restores_the_reversal(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+
+    module = importlib.import_module("codebase_rag.editing.transaction")
+    tx = EditTransaction(repo)
+    tx.stage("pkg/a.py", "v1\n")
+    tx.commit()
+    original_save = module._save_history
+
+    def broken(root: Path, entries: list[dict]) -> None:
+        if entries == []:
+            raise OSError("history disk full")
+        original_save(root, entries)
+
+    monkeypatch.setattr(module, "_save_history", broken)
+    with pytest.raises(OSError):
+        undo_last(repo)
+    # The reversal was put back: tree and history still agree.
+    assert (repo / "pkg" / "a.py").read_text() == "v1\n"
+    assert len(load_history(repo)) == 1
+
+
+def test_cli_counts_must_be_positive(repo: Path) -> None:
+    for args in (["show", "-n", "0"], ["undo", "-n", "0"], ["undo", "-n", "-2"]):
+        result = CliRunner().invoke(edits_cli, [*args, "--repo-path", str(repo)])
+        assert result.exit_code == 2, args

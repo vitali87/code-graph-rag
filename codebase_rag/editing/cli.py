@@ -40,7 +40,12 @@ def _repo_option[F: Callable[..., None]](fn: F) -> F:
     epilog=ch.EXAMPLES_EDITS_SHOW,
 )
 @click.option(
-    "-n", "--count", type=int, default=5, show_default=True, help=ch.HELP_EDITS_COUNT
+    "-n",
+    "--count",
+    type=click.IntRange(min=1),
+    default=5,
+    show_default=True,
+    help=ch.HELP_EDITS_COUNT,
 )
 @click.option(
     "--diff", "show_diff", is_flag=True, default=False, help=ch.HELP_EDITS_DIFF
@@ -75,7 +80,12 @@ def show_cmd(count: int, show_diff: bool, repo_path: Path) -> None:
     epilog=ch.EXAMPLES_EDITS_UNDO,
 )
 @click.option(
-    "-n", "--count", type=int, default=1, show_default=True, help=ch.HELP_EDITS_COUNT
+    "-n",
+    "--count",
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help=ch.HELP_EDITS_COUNT,
 )
 @_repo_option
 def undo_cmd(count: int, repo_path: Path) -> None:

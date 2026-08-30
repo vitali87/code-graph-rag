@@ -131,6 +131,8 @@ PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
+EDIT_LOCK_FILENAME = ".cgr-edit-lock"
+PLATFORM_WINDOWS = "win32"
 CGR_STATE_FILENAMES: frozenset[str] = frozenset(
     {
         HASH_CACHE_FILENAME,
@@ -138,6 +140,7 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         PARSER_FINGERPRINT_FILENAME,
         DELOMBOK_STATE_FILENAME,
         EDIT_HISTORY_FILENAME,
+        EDIT_LOCK_FILENAME,
     }
 )
 # Edit transactions (issue #1528).

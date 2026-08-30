@@ -20,14 +20,15 @@ import difflib
 import json
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import uuid
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import IO, NamedTuple
 
 from loguru import logger
 
@@ -74,17 +75,54 @@ class TransactionError(ValueError):
     """The transaction could not be prepared (bad path, unreadable file)."""
 
 
-# One lock per repo root: two transactions committing into the same tree must
-# serialise their read-verify-write windows, the same invariant FileEditor keeps
-# for single-file writes.
+# Two transactions committing into the same tree must serialise their
+# read-verify-write windows, and `cgr edits undo` may run in another process
+# than the agent's server: the lock is an OS advisory lock on a file at the
+# repo root, held across the baseline check, the verifier, the writes and the
+# history update. A thread lock per root sits in front of it so threads of
+# one process queue rather than contend for the file.
 _REPO_LOCKS: dict[str, threading.Lock] = {}
 _REPO_LOCKS_GUARD = threading.Lock()
 
 
-def _repo_lock(root: Path) -> threading.Lock:
+def _thread_lock(root: Path) -> threading.Lock:
     key = str(root)
     with _REPO_LOCKS_GUARD:
         return _REPO_LOCKS.setdefault(key, threading.Lock())
+
+
+def _lock_file(handle: IO[bytes]) -> None:
+    if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock_file(handle: IO[bytes]) -> None:
+    if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _repo_lock(root: Path) -> Iterator[None]:
+    with _thread_lock(root):
+        lock_path = root / cs.EDIT_LOCK_FILENAME
+        with lock_path.open("ab") as handle:
+            _lock_file(handle)
+            try:
+                yield
+            finally:
+                _unlock_file(handle)
 
 
 def _decode(data: bytes | None) -> list[str]:
@@ -150,6 +188,8 @@ class StagedTree:
         unignore = patterns.unignore
         repo_root = self.repo_root
 
+        resolved_root = repo_root.resolve()
+
         def ignore(directory: str, names: list[str]) -> set[str]:
             here = Path(directory)
             skipped: set[str] = set()
@@ -157,14 +197,20 @@ class StagedTree:
                 candidate = here / name
                 if name in cs.CGR_STATE_FILENAMES:
                     skipped.add(name)
+                elif candidate.is_symlink() and not _inside(candidate, resolved_root):
+                    # A link out of the repo would let a verifier write
+                    # through the copy into the live tree or beyond it.
+                    skipped.add(name)
                 elif candidate.is_dir() and should_skip_path(
                     candidate, repo_root, exclude, unignore, is_file=False
                 ):
                     skipped.add(name)
             return skipped
 
+        # symlinks=False: in-repo links are copied as the files they point
+        # at, so nothing under `root` reaches outside the staging copy.
         shutil.copytree(
-            repo_root, target, ignore=ignore, symlinks=True, dirs_exist_ok=True
+            repo_root, target, ignore=ignore, symlinks=False, dirs_exist_ok=True
         )
         for rel_path, staged in self._overlay.items():
             path = target / rel_path
@@ -179,6 +225,13 @@ class StagedTree:
         if self._materialised is not None:
             shutil.rmtree(self._materialised, ignore_errors=True)
             self._materialised = None
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(root)
+    except OSError:
+        return False
 
 
 class EditTransaction:
@@ -272,7 +325,9 @@ class EditTransaction:
             if self._current(staged.path) != staged.before:
                 raise TransactionConflict(cs.EDIT_CONFLICT.format(path=staged.path))
 
-    def commit(self, verify: Verifier | None = None) -> TransactionOutcome:
+    def commit(
+        self, verify: Verifier | None = None, *, _lock: bool = True
+    ) -> TransactionOutcome:
         """Verify the staged tree, then apply every file or none of them."""
         self._check_open()
         diff = self.diff()
@@ -287,7 +342,7 @@ class EditTransaction:
                 VerificationResult(True),
                 cs.EDIT_NOTHING_STAGED,
             )
-        with _repo_lock(self.repo_root):
+        with _repo_lock(self.repo_root) if _lock else nullcontext():
             self._check_unchanged()
             tree = self.tree()
             try:
@@ -309,11 +364,7 @@ class EditTransaction:
                     verification,
                     cs.EDIT_VERIFICATION_FAILED.format(reason=verification.message),
                 )
-            self._apply_all()
-            if self._record:
-                record_transaction(
-                    self.repo_root, self.transaction_id, self.staged, verification
-                )
+            self._apply_all(verification)
         self._finished = True
         logger.info(ls.EDIT_TX_APPLIED, tx=self.transaction_id, count=len(files))
         return TransactionOutcome(
@@ -325,23 +376,33 @@ class EditTransaction:
             cs.EDIT_APPLIED.format(count=len(files)),
         )
 
-    def _apply_all(self) -> None:
+    def _apply_all(self, verification: VerificationResult) -> None:
+        # One recovery path for the writes AND the history record: a failure
+        # anywhere after the first write restores every file already landed,
+        # so a caller never sees changed files without their history entry
+        # (a later undo could not know about them).
         done: list[StagedFile] = []
         try:
             for staged in self.staged:
                 _write_file(self.repo_root / staged.path, staged.after)
                 done.append(staged)
+            if self._record:
+                record_transaction(
+                    self.repo_root, self.transaction_id, self.staged, verification
+                )
         except Exception:
-            # Best-effort restore of what already landed, so the caller sees
-            # either every file or the tree it started from.
-            for staged in reversed(done):
-                try:
-                    _write_file(self.repo_root / staged.path, staged.before)
-                except OSError as error:  # pragma: no cover - disk failure
-                    logger.error(
-                        ls.EDIT_TX_RESTORE_FAILED, path=staged.path, error=error
-                    )
+            _restore(self.repo_root, done)
             raise
+
+
+def _restore(repo_root: Path, applied: list[StagedFile]) -> None:
+    # Best-effort, newest first, so the tree returns to what it was before
+    # the first write; a disk that fails here is logged, not masked.
+    for staged in reversed(applied):
+        try:
+            _write_file(repo_root / staged.path, staged.before)
+        except OSError as error:  # pragma: no cover - disk failure
+            logger.error(ls.EDIT_TX_RESTORE_FAILED, path=staged.path, error=error)
 
 
 def _run_verifier(verify: Verifier | None, tree: StagedTree) -> VerificationResult:
@@ -455,7 +516,9 @@ def undo_last(repo_root: Path, count: int = 1) -> list[TransactionOutcome]:
 
     Each undo is itself a transaction staging `after -> before`; it refuses
     (and stops the run) if a file no longer holds what the transaction
-    wrote, so an undo never clobbers later hand edits.
+    wrote, so an undo never clobbers later hand edits. A history entry
+    naming a path outside the repo is rejected whole: the history file is
+    data on disk, not a trusted instruction.
     """
     root = repo_root.resolve()
     outcomes: list[TransactionOutcome] = []
@@ -466,16 +529,24 @@ def undo_last(repo_root: Path, count: int = 1) -> list[TransactionOutcome]:
         entry = entries[-1]
         reverse = EditTransaction(root, record=False)
         for staged in entry_files(entry):
-            reverse._overlay[staged.path] = StagedFile(
-                staged.path, staged.after, staged.before
-            )
-        outcome = reverse.commit()
+            key = reverse._relative(staged.path)
+            reverse._overlay[key] = StagedFile(key, staged.after, staged.before)
+        reversed_files = reverse.staged
+        with _repo_lock(root):
+            outcome = reverse.commit(_lock=False)
+            if outcome.applied:
+                try:
+                    _save_history(root, entries[:-1])
+                except Exception:
+                    # The reversal landed but its record did not go: put the
+                    # files back as the entry says, so history and tree agree.
+                    _restore(root, list(reversed_files))
+                    raise
         outcomes.append(
             outcome._replace(transaction_id=str(entry.get(cs.EDIT_KEY_ID, "")))
         )
         if not outcome.applied and outcome.message != cs.EDIT_NOTHING_STAGED:
             break
-        _save_history(root, entries[:-1])
     return outcomes
 
 
