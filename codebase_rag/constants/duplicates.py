@@ -112,6 +112,13 @@ DUPLICATES_MAX_SIMILAR_GROUPS = 1000
 
 KIND_EXACT = "exact"
 KIND_SIMILAR = "similar"
+# Per-site arity verdicts in a structural delta (issue #1525).
+DELTA_ARITY_OK = "ok"
+DELTA_ARITY_TOO_MANY = "too_many"
+DELTA_ARITY_POSSIBLY_MISSING = "possibly_missing"
+DELTA_ARITY_UNKNOWN = "unknown"
+# Hops the backward test-reach walk follows before giving up.
+DELTA_REACH_MAX_DEPTH = 12
 
 # Cypher return alias for the not-analyzed symbol count.
 KEY_SKIPPED = "skipped"

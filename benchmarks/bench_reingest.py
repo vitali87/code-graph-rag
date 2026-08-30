@@ -46,6 +46,8 @@ class ReingestMeasurement:
     reingest_max_ms: float
     reparsed_files: int
     affected_files: int
+    delta_p50_ms: float
+    delta_p95_ms: float
     full_update_p50_ms: float
     full_update_runs: int
 
@@ -95,6 +97,7 @@ def measure_reingest(
     # Imported here so `--help` stays cheap.
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.structural_delta import observe
     from evals.cgr_graph import _StatefulIngestor
 
     if iterations <= 0:
@@ -143,6 +146,21 @@ def measure_reingest(
             reparsed = len(report.reparsed)
             affected = len(report.affected)
 
+        # The structural delta (issue #1525) wraps the same re-ingest in two
+        # subgraph reads and the diff; its overhead is what is measured.
+        delta_samples: list[float] = []
+        relative = target.relative_to(corpus).as_posix()
+        for i in range(iterations):
+            _toggle_edit(target, i)
+            delta = observe(
+                store.fetch_all,
+                corpus.name,
+                [relative],
+                lambda: updater.reingest([target]),
+                repo_root=corpus,
+            )
+            delta_samples.append(delta["delta_ms"])
+
         full_samples: list[float] = []
         for i in range(full_runs):
             _toggle_edit(target, i)
@@ -172,6 +190,8 @@ def measure_reingest(
         reingest_max_ms=max(samples),
         reparsed_files=reparsed,
         affected_files=affected,
+        delta_p50_ms=statistics.median(delta_samples),
+        delta_p95_ms=_percentile(delta_samples, PERCENTILE_95),
         full_update_p50_ms=statistics.median(full_samples) if full_samples else 0.0,
         full_update_runs=len(full_samples),
     )
@@ -183,6 +203,7 @@ def format_markdown_row(result: ReingestMeasurement) -> str:
         f"{result.line_count:,} lines) | `{result.target}` "
         f"(+{result.affected_files} dependents) | "
         f"{result.reingest_p50_ms:.0f} ms | {result.reingest_p95_ms:.0f} ms | "
+        f"{result.delta_p50_ms:.0f} ms | {result.delta_p95_ms:.0f} ms | "
         f"{result.full_update_p50_ms:.0f} ms |"
     )
 

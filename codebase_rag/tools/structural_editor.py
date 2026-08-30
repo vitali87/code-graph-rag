@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 from pydantic_ai import Tool
 
@@ -26,10 +27,16 @@ def format_changes(changes: list[StructuralReplaceChange], dry_run: bool) -> str
 
 
 def create_structural_editor_tool(
-    service: AstGrepService, read_record: ReadContentRecord | None = None
+    service: AstGrepService,
+    read_record: ReadContentRecord | None = None,
+    on_changes: Callable[[list[StructuralReplaceChange]], None] | None = None,
 ) -> Tool:
     """Build the `structural_replace` tool, recording rewrite diffs in
-    `read_record` so they feed the egress taint gate (issue #1128)."""
+    `read_record` so they feed the egress taint gate (issue #1128).
+
+    `on_changes` receives the change records (with their `applied` flag)
+    before they are formatted, so a caller can learn which files were
+    written (the structural delta, issue #1525)."""
 
     async def structural_replace(
         pattern: str,
@@ -56,6 +63,8 @@ def create_structural_editor_tool(
             return str(e)
         if not changes:
             return cs.AST_GREP_NO_MATCHES.format(pattern=pattern)
+        if on_changes is not None:
+            on_changes(changes)
         formatted = format_changes(changes, dry_run)
         if read_record is not None:
             # Diffs carry repository source on both sides; feed the egress
