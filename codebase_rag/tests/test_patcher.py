@@ -35,9 +35,11 @@ PY_SRC = (
 
 
 def _write(root: Path, rel: str, text: str) -> Path:
+    # Bytes, not text: the patcher's promise is byte-exactness, and a text
+    # write would turn every "\n" into "\r\n" on Windows.
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    path.write_bytes(text.encode("utf-8"))
     return path
 
 
