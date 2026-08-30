@@ -315,5 +315,6 @@ def test_missing_importer_file_is_an_error(tmp_path: Path, bad: ImportSite) -> N
     from codebase_rag.editing import PatcherError
 
     rewriter = ImportRewriter(tmp_path)
+    move = SymbolMove("x", "a", "b")
     with pytest.raises(PatcherError):
-        rewriter.retarget([bad], SymbolMove("x", "a", "b"))
+        rewriter.retarget([bad], move)

@@ -84,19 +84,30 @@ def _span_bytes(source: bytes, site: ImportSite) -> tuple[int, int]:
     return start, end
 
 
-# Possessive quantifiers: a run of whitespace not followed by `as` must not
-# be re-tried at every shorter length (super-linear on long entries).
-_AS_SEPARATOR = re.compile(r"\s++as\s++")
+def _split_on_as(entry: str) -> list[str]:
+    # `a as b as c` -> ["a", "b", "c"] without a regex: scanning a
+    # whitespace-delimited pattern over a long run is super-linear (S8786),
+    # a single whitespace tokenisation is not.
+    tokens = entry.split()
+    parts: list[str] = []
+    current: list[str] = []
+    for index, token in enumerate(tokens):
+        if token == "as" and current and index < len(tokens) - 1:
+            parts.append(" ".join(current))
+            current = []
+        else:
+            current.append(token)
+    parts.append(" ".join(current))
+    return parts
 
 
 def _local_name(entry: str) -> str:
     # `a as b` -> b, `a` -> a (Python/TS/Rust forms alike).
-    parts = _AS_SEPARATOR.split(entry.strip())
-    return parts[-1].strip()
+    return _split_on_as(entry)[-1]
 
 
 def _imported(entry: str) -> str:
-    return _AS_SEPARATOR.split(entry.strip())[0].strip()
+    return _split_on_as(entry)[0]
 
 
 def _rewrite_entry(entry: str, new_name: str | None, keep_local: bool) -> str:
@@ -139,13 +150,31 @@ def _relative_specifier(importer_path: str, target_path: str) -> str:
 
 # --- Python -------------------------------------------------------------------
 
-# `names` runs to the end of the statement; the trailing whitespace is
-# split off in code rather than by a lazy `.+?` racing a `\s*$`, which
-# backtracks quadratically on a long name list.
-_PY_FROM = re.compile(
-    r"^(?P<lead>\s*from\s+)(?P<module>[\w.]+)(?P<mid>\s+import\s+)(?P<names>.+)$",
-    re.S,
-)
+# `from module import names` is matched in three anchored steps: each
+# sub-pattern is unambiguous at its own start position, so matching stays
+# linear where one statement-wide regex is super-linear (S8786), and the
+# names run to the end of the statement by construction.
+_PY_FROM_LEAD = re.compile(r"\s*from\s+")
+_PY_FROM_MODULE = re.compile(r"[\w.]+")
+_PY_FROM_MID = re.compile(r"\s+import\s+")
+
+
+def _match_py_from(statement: str) -> tuple[str, str, str, str] | None:
+    lead = _PY_FROM_LEAD.match(statement)
+    if lead is None:
+        return None
+    module = _PY_FROM_MODULE.match(statement, lead.end())
+    if module is None:
+        return None
+    mid = _PY_FROM_MID.match(statement, module.end())
+    if mid is None:
+        return None
+    names = statement[mid.end() :]
+    if not names:
+        return None
+    return lead.group(0), module.group(0), mid.group(0), names
+
+
 _PY_IMPORT = re.compile(
     r"^(?P<lead>\s*import\s+)(?P<module>[\w.]+)(?P<rest>(?:\s+as\s+\w+)?\s*)$", re.S
 )
@@ -166,10 +195,10 @@ def _split_names(names: str) -> tuple[list[str], str, str]:
 
 
 def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
-    if m := _PY_FROM.match(statement):
-        if m.group("module") != move.old_module:
+    if parsed := _match_py_from(statement):
+        lead, module, mid, raw_names = parsed
+        if module != move.old_module:
             return None
-        raw_names = m.group("names")
         names = raw_names.rstrip()
         tail = raw_names[len(names) :]
         entries, open_deco, close_deco = _split_names(names)
@@ -178,13 +207,10 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
             return None
         kept = [e for e in entries if _imported(e) != move.symbol]
         moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=True)
-        moved_stmt = f"{m.group('lead')}{move.new_module}{m.group('mid')}{moved_entry}"
+        moved_stmt = f"{lead}{move.new_module}{mid}{moved_entry}"
         if not kept:
             return f"{moved_stmt}{tail}"
-        kept_stmt = (
-            f"{m.group('lead')}{m.group('module')}{m.group('mid')}"
-            f"{open_deco}{', '.join(kept)}{close_deco}"
-        )
+        kept_stmt = f"{lead}{module}{mid}{open_deco}{', '.join(kept)}{close_deco}"
         indent = re.match(r"\s*", statement.splitlines()[0]).group(0)  # type: ignore[union-attr]
         return f"{kept_stmt}\n{indent}{moved_stmt.lstrip()}{tail}"
     if (
