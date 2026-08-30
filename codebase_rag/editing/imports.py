@@ -230,9 +230,12 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
 
 _JS_SPEC = re.compile(r"""(?P<q>['"])(?P<spec>[^'"]+)(?P=q)""")
 _JS_NAMED = re.compile(r"\{(?P<names>[^}]*)\}")
-# The leading keyword only ("import ", "export ", with any indent), so a
-# default clause after it can be separated from the moved statement.
-_JS_KEYWORD = re.compile(r"\s*(?:import|export)\s+")
+# The leading keyword and any type-only modifier ("import ", "export type "),
+# so a default clause after it can be separated from the moved statement.
+# `type` must be absorbed here: left as residue it reads as a default binding,
+# and `import type from './util'` is VALID TypeScript (a default import named
+# `type`), so the patcher's parse gate would pass corrupt output through.
+_JS_KEYWORD = re.compile(r"\s*(?:import|export)\s+(?:type\s+)?")
 
 
 def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | None:

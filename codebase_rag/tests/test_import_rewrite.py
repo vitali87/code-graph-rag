@@ -375,3 +375,23 @@ def test_a_default_binding_stays_with_its_original_module() -> None:
 
     emptied = _js_rewrite("import def, { helper } from './util';", move, "src/app.ts")
     assert emptied == ("import def from './util';\nimport { helper } from './new';")
+
+
+def test_a_type_only_import_keeps_its_modifier() -> None:
+    # `type` is a modifier, not a default binding: it must stay attached to
+    # the braces on both statements. `import type from './util'` parses as a
+    # default import named `type`, so the patcher's parse gate cannot catch it.
+    from codebase_rag.editing.imports import _js_rewrite
+
+    move = SymbolMove("helper", "./util", "./new")
+    assert (
+        _js_rewrite("import type { helper } from './util';", move, "src/app.ts")
+        == "import type { helper } from './new';"
+    )
+    assert (
+        _js_rewrite("export type { helper } from './util';", move, "src/app.ts")
+        == "export type { helper } from './new';"
+    )
+    assert _js_rewrite(
+        "import type { helper, other } from './util';", move, "src/app.ts"
+    ) == ("import type { other } from './util';\nimport type { helper } from './new';")
