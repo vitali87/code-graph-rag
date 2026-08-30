@@ -256,11 +256,13 @@ def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | N
     if not moved:
         return None
     kept = [e for e in entries if _imported(e) != move.symbol]
-    moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=True)
+    moved_entries = ", ".join(
+        _rewrite_entry(entry, move.new_name, keep_local=True) for entry in moved
+    )
     head = statement[: named.start()]
     between = statement[named.end() : spec_match.start("spec")]
     tail = statement[spec_match.end("spec") :]
-    moved_stmt = f"{head}{{ {moved_entry} }}{between}{new_spec}{tail}"
+    moved_stmt = f"{head}{{ {moved_entries} }}{between}{new_spec}{tail}"
     if not kept:
         return moved_stmt
     kept_stmt = f"{head}{{ {', '.join(kept)} }}{between}{move.old_module}{tail}"
@@ -341,8 +343,15 @@ def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
     if not moved:
         return None
     kept = [e for e in entries if _imported(e) != move.symbol]
-    moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=True)
-    moved_stmt = f"{lead}{move.new_module}::{moved_entry}{tail}"
+    moved_entries = [
+        _rewrite_entry(entry, move.new_name, keep_local=True) for entry in moved
+    ]
+    moved_body = (
+        moved_entries[0]
+        if len(moved_entries) == 1
+        else "{" + ", ".join(moved_entries) + "}"
+    )
+    moved_stmt = f"{lead}{move.new_module}::{moved_body}{tail}"
     if not kept:
         return moved_stmt
     kept_body = kept[0] if len(kept) == 1 else "{" + ", ".join(kept) + "}"

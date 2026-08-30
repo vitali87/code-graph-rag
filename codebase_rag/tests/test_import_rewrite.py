@@ -333,3 +333,31 @@ def test_every_alias_of_the_moved_symbol_survives_the_move() -> None:
     assert "other" in out
     assert "helper" in out
     assert " as h" in out, f"the `h` alias was dropped: {out!r}"
+
+
+def test_every_js_alias_of_the_moved_symbol_survives_the_move() -> None:
+    # `helper as h` in a named-import list binds the moved symbol too; losing
+    # it leaves `h()` in the body pointing at nothing.
+    from codebase_rag.editing.imports import _js_rewrite
+
+    out = _js_rewrite(
+        "import { helper, helper as h, other } from './util';",
+        SymbolMove("helper", "./util", "./lib/helpers"),
+        "src/app.ts",
+    )
+    assert out is not None
+    assert "other" in out
+    assert " as h" in out, f"the `h` alias was dropped: {out!r}"
+
+
+def test_every_rust_alias_of_the_moved_symbol_survives_the_move() -> None:
+    # Same defect in the Rust `use` list: `helper as h` must move with it.
+    from codebase_rag.editing.imports import _rs_rewrite
+
+    out = _rs_rewrite(
+        "use pkg::util::{helper, helper as h, other};",
+        SymbolMove("helper", "pkg::util", "pkg::new"),
+    )
+    assert out is not None
+    assert "other" in out
+    assert " as h" in out, f"the `h` alias was dropped: {out!r}"
