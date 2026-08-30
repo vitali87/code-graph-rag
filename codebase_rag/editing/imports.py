@@ -59,6 +59,12 @@ class SymbolMove(NamedTuple):
     new_module: str
     new_name: str | None = None
     new_module_path: str | None = None
+    # A rename that also rebinds: a bare `import x` becomes `import y` (the
+    # use sites are renamed with it); an aliased entry keeps its alias.
+    rebind: bool = False
+
+
+ANY_MODULE = "*"
 
 
 class RewriteError(ValueError):
@@ -103,9 +109,19 @@ def _rewrite_entry(entry: str, new_name: str | None, keep_local: bool) -> str:
     imported = _imported(entry)
     local = _local_name(entry)
     target = new_name or imported
-    if local != imported or (keep_local and target != local):
+    if local != imported:
+        return f"{target} as {local}"
+    if keep_local and target != local:
         return f"{target} as {local}"
     return target
+
+
+def _module_matches(spelled: str, move: SymbolMove) -> bool:
+    return move.old_module in (ANY_MODULE, spelled)
+
+
+def _target_module(spelled: str, move: SymbolMove) -> str:
+    return spelled if move.old_module == ANY_MODULE else move.new_module
 
 
 def _relative_specifier(importer_path: str, target_path: str) -> str:
@@ -159,15 +175,27 @@ def _split_names(names: str) -> tuple[list[str], str, str]:
 
 def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
     if m := _PY_FROM.match(statement):
-        if m.group("module") != move.old_module:
+        if not _module_matches(m.group("module"), move):
             return None
         entries, open_deco, close_deco = _split_names(m.group("names"))
         moved = [e for e in entries if _imported(e) == move.symbol]
         if not moved:
             return None
         kept = [e for e in entries if _imported(e) != move.symbol]
-        moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=True)
-        moved_stmt = f"{m.group('lead')}{move.new_module}{m.group('mid')}{moved_entry}"
+        moved_entry = _rewrite_entry(
+            moved[0], move.new_name, keep_local=not move.rebind
+        )
+        new_module = _target_module(m.group("module"), move)
+        if new_module == m.group("module"):
+            # Same module (a rename): keep one statement, entry rewritten in place.
+            rewritten = [
+                moved_entry if _imported(e) == move.symbol else e for e in entries
+            ]
+            return (
+                f"{m.group('lead')}{m.group('module')}{m.group('mid')}"
+                f"{open_deco}{', '.join(rewritten)}{close_deco}{m.group('tail')}"
+            )
+        moved_stmt = f"{m.group('lead')}{new_module}{m.group('mid')}{moved_entry}"
         if not kept:
             return f"{moved_stmt}{m.group('tail')}"
         kept_stmt = (
@@ -193,9 +221,11 @@ _JS_NAMED = re.compile(r"\{(?P<names>[^}]*)\}")
 
 def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | None:
     spec_match = _JS_SPEC.search(statement)
-    if spec_match is None or spec_match.group("spec") != move.old_module:
+    if spec_match is None or not _module_matches(spec_match.group("spec"), move):
         return None
-    if move.new_module_path is not None:
+    if move.old_module == ANY_MODULE:
+        new_spec = spec_match.group("spec")
+    elif move.new_module_path is not None:
         new_spec = _relative_specifier(importer_path, move.new_module_path)
     else:
         new_spec = move.new_module
@@ -215,10 +245,13 @@ def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | N
     if not moved:
         return None
     kept = [e for e in entries if _imported(e) != move.symbol]
-    moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=True)
+    moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=not move.rebind)
     head = statement[: named.start()]
     between = statement[named.end() : spec_match.start("spec")]
     tail = statement[spec_match.end("spec") :]
+    if new_spec == spec_match.group("spec"):
+        rewritten = [moved_entry if _imported(e) == move.symbol else e for e in entries]
+        return f"{head}{{ {', '.join(rewritten)} }}{between}{new_spec}{tail}"
     moved_stmt = f"{head}{{ {moved_entry} }}{between}{new_spec}{tail}"
     if not kept:
         return moved_stmt
@@ -239,9 +272,11 @@ def _java_rewrite(statement: str, move: SymbolMove) -> str | None:
     if m is None:
         return None
     path = m.group("path")
-    if path != f"{move.old_module}.{move.symbol}":
+    package, _dot, leaf = path.rpartition(".")
+    if leaf != move.symbol or not _module_matches(package, move):
         return None
-    return f"{m.group('lead')}{move.new_module}.{move.new_name or move.symbol}{m.group('tail')}"
+    new_package = _target_module(package, move)
+    return f"{m.group('lead')}{new_package}.{move.new_name or move.symbol}{m.group('tail')}"
 
 
 def _go_rewrite(statement: str, move: SymbolMove) -> str | None:
@@ -267,22 +302,28 @@ def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
         return None
     path = m.group("path")
     if m.group("group") is None:
-        if path != f"{move.old_module}::{move.symbol}":
+        prefix, _sep, leaf = path.rpartition("::")
+        if leaf != move.symbol or not _module_matches(prefix, move):
             return None
         alias = m.group("alias") or ""
         new_name = move.new_name or move.symbol
-        if not alias and move.new_name:
+        if not alias and move.new_name and not move.rebind:
             alias = f" as {move.symbol}"
-        return f"{m.group('lead')}{move.new_module}::{new_name}{alias}{m.group('tail')}"
-    if path != move.old_module:
+        new_prefix = _target_module(prefix, move)
+        return f"{m.group('lead')}{new_prefix}::{new_name}{alias}{m.group('tail')}"
+    if not _module_matches(path, move):
         return None
     entries = [e.strip() for e in m.group("names").split(",") if e.strip()]
     moved = [e for e in entries if _imported(e) == move.symbol]
     if not moved:
         return None
     kept = [e for e in entries if _imported(e) != move.symbol]
-    moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=True)
-    moved_stmt = f"{m.group('lead')}{move.new_module}::{moved_entry}{m.group('tail')}"
+    moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=not move.rebind)
+    new_path = _target_module(path, move)
+    if new_path == path:
+        rewritten = [moved_entry if _imported(e) == move.symbol else e for e in entries]
+        return f"{m.group('lead')}{path}::{{{', '.join(rewritten)}}}{m.group('tail')}"
+    moved_stmt = f"{m.group('lead')}{new_path}::{moved_entry}{m.group('tail')}"
     if not kept:
         return moved_stmt
     kept_body = kept[0] if len(kept) == 1 else "{" + ", ".join(kept) + "}"
