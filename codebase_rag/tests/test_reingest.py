@@ -501,3 +501,69 @@ def test_reingest_creates_file_nodes_for_non_code_files(
     updater.reingest([path])
 
     assert _file_nodes(mock_ingestor, path) == 1
+
+
+# --- Deferred definition-level relationships (Greptile P1 on #1538) -----------
+
+
+CPP_FIXTURE: dict[str, str] = {
+    "base.h": "class Base {\n public:\n  virtual int run();\n};\n",
+    "derived.h": (
+        '#include "base.h"\n\nclass Derived : public Base {\n public:\n'
+        "  int run() override;\n};\n"
+    ),
+    "derived.cpp": '#include "derived.h"\n\nint Derived::run() { return 1; }\n',
+}
+
+
+@pytest.mark.parametrize("edited", ["derived.h", "derived.cpp", "base.h"])
+def test_cpp_reingest_keeps_deferred_relationships(
+    temp_repo: Path, edited: str
+) -> None:
+    """INHERITS, includes and out-of-class method containment are resolved
+    in deferred stages after Pass 2; a scoped re-ingest that skipped them
+    left the re-parsed file without them until a full update."""
+    root = temp_repo / "cpp_reingest"
+    root.mkdir()
+    for rel, text in CPP_FIXTURE.items():
+        _write(root, rel, text)
+    parsers, _queries = load_parsers()
+    if cs.SupportedLanguage.CPP not in parsers:
+        pytest.skip("cpp parser not available")
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    updater.run(force=True)
+    before = _snapshot(store)
+    inherits = {e for e in before[1] if e[2] == cs.RelationshipType.INHERITS.value}
+    assert inherits, "fixture must produce an INHERITS edge to protect"
+
+    path = root / edited
+    path.write_text(path.read_text() + "// touched\n", encoding="utf-8")
+    updater.reingest([path])
+    actual = _snapshot(store)
+
+    # The relationships the deferred stages produce must all be back. Full
+    # snapshot equality is not the oracle here: the batch incremental path
+    # itself re-registers an out-of-class C++ method under a module-anchored
+    # qn beside its class-anchored one, in a parse-order-dependent way
+    # (pre-existing, filed separately), so only edges between nodes the
+    # clean index knows are compared.
+    deferred_rels = {
+        cs.RelationshipType.INHERITS.value,
+        cs.RelationshipType.IMPORTS.value,
+        cs.RelationshipType.DEFINES_METHOD.value,
+        cs.RelationshipType.OVERRIDES.value,
+    }
+    known = before[0]
+
+    def deferred(snapshot: Snapshot) -> frozenset[tuple[str, ...]]:
+        return frozenset(
+            e
+            for e in snapshot[1]
+            if e[2] in deferred_rels and (e[0], e[1]) in known and (e[3], e[4]) in known
+        )
+
+    assert deferred(actual) == deferred(before), _diff(
+        (frozenset(), deferred(actual)), (frozenset(), deferred(before))
+    )
+    assert known <= actual[0], sorted(known - actual[0])
