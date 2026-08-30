@@ -985,7 +985,15 @@ class ImportProcessor:
             scope_sites.pop(name, None)
             if not scope_sites:
                 del self._import_sites[scope_qn]
-        self._import_sites[module_qn] = {}
+        # The file's own scope key may also hold entries an inline module of
+        # ANOTHER file wrote (a file-backed `a/b/mod.rs` and an inline `mod b`
+        # in `a.rs` share `p.src.a.b`): keep those, drop only this file's.
+        own = self._import_sites.get(module_qn, {})
+        for name in list(own):
+            if self._import_site_writers.get((module_qn, name), module_qn) == module_qn:
+                del own[name]
+                self._import_site_writers.pop((module_qn, name), None)
+        self._import_sites[module_qn] = own
 
     def _record_import_site(
         self,

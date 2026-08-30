@@ -725,3 +725,34 @@ def test_rust_reparse_keeps_a_sibling_writers_sub_scope_site(temp_repo: Path) ->
     # Re-parsing src/a.rs without the use must leave the child's entry alone.
     parse("p.src.a", "fn main() {}\n")
     assert processor._import_sites[scope]["Shared"] is child_site
+
+
+def test_rust_file_module_reparse_keeps_the_inline_siblings_entries(
+    temp_repo: Path,
+) -> None:
+    """The mirror case: re-parsing the FILE-backed module whose key an inline
+    mod of another file also writes must keep that inline mod's entries,
+    including names the file never bound (CodeRabbit on #1537)."""
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.import_processor import ImportProcessor
+
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.RUST not in parsers:
+        pytest.skip("rust parser not available")
+    processor = ImportProcessor(repo_path=temp_repo, project_name="p")
+
+    def parse(module_qn: str, source: str) -> None:
+        tree = parsers[cs.SupportedLanguage.RUST].parse(source.encode())
+        processor.parse_imports(
+            tree.root_node, module_qn, cs.SupportedLanguage.RUST, queries
+        )
+
+    scope = "p.src.a.b"
+    parse(scope, "use std::fmt::Debug as Own;\n")
+    parse("p.src.a", "mod b {\n    use std::fmt::Display as Inline;\n}\n")
+    inline_site = processor._import_sites[scope]["Inline"]
+
+    parse(scope, "use std::fmt::Write as Own2;\n")
+    assert processor._import_sites[scope]["Inline"] is inline_site
+    assert "Own" not in processor._import_sites[scope]
+    assert "Own2" in processor._import_sites[scope]
