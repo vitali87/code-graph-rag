@@ -179,8 +179,63 @@ MCP_PARAM_REINGEST_PATHS = (
 MCP_PARAM_REINGEST_DELETED = (
     "Files to remove from the graph even if a same-named file exists on disk."
 )
+_MCP_DETERMINISTIC_NOTE = (
+    "Deterministic: fixed graph queries, no LLM, same graph gives the same "
+    "JSON. Use this instead of query_code_graph whenever you know the exact "
+    "name or location. "
+)
+MCP_RESOLVE = (
+    "Resolve a name or a location to qualified names in the graph. `target` is "
+    "a qualified name, a bare name like `helper` or `Store.get`, or "
+    "`path:line` (repo-relative path, 1-based line) for the definitions "
+    "spanning that line, innermost first. Exact matches come first, then "
+    "dotted-suffix matches, then same-name matches. " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_DEFINITION = (
+    "File, line span, docstring and source of one definition by qualified "
+    "name (`found` is false when the graph has no such node). "
+    + _MCP_DETERMINISTIC_NOTE
+)
+MCP_CALLERS = (
+    "Call sites that invoke a qualified name, one row per site with the "
+    "caller, file, line, column, argument count and keyword names taken from "
+    "the CALLS edges; `depth` > 1 follows the callers' callers (`through` "
+    "names the callee each site invokes). " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_CALLEES = (
+    "Call sites inside a qualified name, one row per site with the callee and "
+    "the location of the call; `depth` > 1 follows the callees' callees. "
+    + _MCP_DETERMINISTIC_NOTE
+)
+MCP_IMPLEMENTORS = (
+    "Types that inherit from or implement a class, interface or trait "
+    "(INHERITS / IMPLEMENTS edges). " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_OVERRIDES = (
+    "Methods overriding a method, and the method it overrides (OVERRIDES "
+    "edges in both directions). " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_IMPORTERS = (
+    "Modules that import a module, with each import statement's line, "
+    "column, bound alias and imported symbol. " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_TESTS_REACHING = (
+    "Test functions and methods from which a qualified name is reachable "
+    "through CALLS / REFERENCES / INSTANTIATES, with the distance and the "
+    "symbol each test reaches it through: what to run after editing it. "
+    + _MCP_DETERMINISTIC_NOTE
+)
+MCP_PARAM_TARGET = (
+    "A qualified name, a bare name (`helper`, `Store.get`), or `path:line`."
+)
+MCP_PARAM_DEPTH = "How many hops to follow (1 to 5; default 1)."
+MCP_PARAM_MODULE_QN = "The module's qualified name (for example `myproj.pkg.util`)."
 
 MCP_QUERY_CODE_GRAPH = (
+    "Prefer the deterministic tools (resolve, definition, callers, callees, "
+    "implementors, overrides, importers, tests_reaching) when you know the "
+    "exact name or location: they run fixed queries with no LLM. Use this for "
+    "open-ended questions. "
     "Query the codebase knowledge graph using natural language. "
     "Use semantic_search unless you know the exact names of classes/functions you are searching for. "
     "Ask questions like 'What functions call UserService.create_user?' or "
@@ -338,6 +393,14 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.INDEX_REPOSITORY: MCP_INDEX_REPOSITORY,
     MCPToolName.UPDATE_REPOSITORY: MCP_UPDATE_REPOSITORY,
     MCPToolName.REINGEST: MCP_REINGEST,
+    MCPToolName.RESOLVE: MCP_RESOLVE,
+    MCPToolName.DEFINITION: MCP_DEFINITION,
+    MCPToolName.CALLERS: MCP_CALLERS,
+    MCPToolName.CALLEES: MCP_CALLEES,
+    MCPToolName.IMPLEMENTORS: MCP_IMPLEMENTORS,
+    MCPToolName.OVERRIDES: MCP_OVERRIDES,
+    MCPToolName.IMPORTERS: MCP_IMPORTERS,
+    MCPToolName.TESTS_REACHING: MCP_TESTS_REACHING,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,

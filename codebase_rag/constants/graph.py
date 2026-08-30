@@ -46,6 +46,9 @@ KEY_END_LINE = "end_line"
 # facts, dynamic-trace write-back, inferred C# namespace imports) carry none of
 # these keys and keep collapsing on their endpoints.
 KEY_LINE = "line"
+# Fixed-Cypher parameter names for the deterministic graph queries (#1523).
+KEY_QN = "qn"
+KEY_SUFFIX = "suffix"
 KEY_COL = "col"
 KEY_END_COL = "end_col"
 KEY_ARG_COUNT = "arg_count"

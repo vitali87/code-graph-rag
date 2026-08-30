@@ -361,3 +361,60 @@ def build_create_relationship_query(
     )
     query += CYPHER_SET_PROPS_RETURN_COUNT if has_props else CYPHER_RETURN_COUNT
     return query
+
+
+# Deterministic graph queries for agents (issue #1523). All project-scoped
+# through $project_prefix; walks of depth > 1 run client-side in
+# codebase_rag/graph_query.py so each query stays linear.
+_GRAPH_DEFINITION_LABELS = "|".join(
+    (
+        NodeLabel.FUNCTION.value,
+        NodeLabel.METHOD.value,
+        NodeLabel.CLASS.value,
+        NodeLabel.INTERFACE.value,
+        NodeLabel.ENUM.value,
+        NodeLabel.TYPE.value,
+        NodeLabel.UNION.value,
+        NodeLabel.MODULE.value,
+    )
+)
+CYPHER_GRAPH_RESOLVE_NAME = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND (n.qualified_name = $qn OR n.qualified_name ENDS WITH $suffix OR n.name = $name)
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
+       n.start_line AS start_line, n.end_line AS end_line"""
+CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
+  AND n.start_line <= $line AND $line <= n.end_line
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
+       n.start_line AS start_line, n.end_line AS end_line"""
+CYPHER_GRAPH_DEFINITION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
+       n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
+       n.docstring AS docstring
+LIMIT 1"""
+# One row per call SITE (edges carry the site from issue #1522).
+CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)
+WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
+RETURN labels(caller)[0] AS label, caller.qualified_name AS qualified_name,
+       caller.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
+       r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names"""
+CYPHER_GRAPH_CALLEES = """MATCH (caller)-[r:CALLS]->(callee)
+WHERE caller.qualified_name = $qn AND callee.qualified_name STARTS WITH $project_prefix
+RETURN labels(callee)[0] AS label, callee.qualified_name AS qualified_name,
+       callee.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
+       r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names"""
+CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
+WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
+RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
+       impl.path AS path, type(r) AS rel_type"""
+CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
+WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
+RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
+       type(r) AS rel_type"""
+CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
+WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
+RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
+       r.col AS col, r.end_line AS end_line, r.end_col AS end_col,
+       r.alias AS alias, r.imported_name AS imported_name"""
