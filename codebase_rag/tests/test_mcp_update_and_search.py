@@ -615,3 +615,22 @@ class TestReingest:
             result = await mcp_registry.reingest(["a.py"])
             assert mock_updater_cls.call_count == 1
             assert "not indexed" in result["error"]
+
+    async def test_failed_embedding_wipe_still_drops_the_retained_updater(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        _mark_indexed(mcp_registry)
+        with (
+            patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls,
+            patch(
+                "codebase_rag.mcp.tools.clear_all_embeddings",
+                side_effect=RuntimeError("x"),
+            ),
+        ):
+            mock_updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), elapsed_ms=0.1
+            )
+            await mcp_registry.reingest(["a.py"])
+            result = await mcp_registry.wipe_database(confirm=True)
+            assert "rror" in result
+            assert mcp_registry._live_updater is None
