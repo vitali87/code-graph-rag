@@ -142,6 +142,10 @@ class _StatefulIngestor:
         self.nodes: dict[_NodeId, PropertyDict] = {}
         self.edges: set[_RelTuple] = set()
         self.edge_props: dict[_RelTuple, PropertyDict] = {}
+        # Every distinct site of an endpoint pair (issue #1522): the real
+        # store keeps one edge per site; `edge_props` keeps the last one
+        # for the callers that only need the pair.
+        self.edge_sites: dict[_RelTuple, list[PropertyDict]] = {}
         # Adjacency indexes so a subtree delete costs the subtree, not a
         # scan of every edge per node (the real store has indexes too).
         self._out: dict[_NodeId, set[_RelTuple]] = {}
@@ -168,6 +172,13 @@ class _StatefulIngestor:
         self._in.setdefault((str(to_label), to_val), set()).add(edge)
         if properties:
             self.edge_props[edge] = dict(properties)
+            sites = self.edge_sites.setdefault(edge, [])
+            if dict(properties) not in sites:
+                sites.append(dict(properties))
+
+    def sites_of(self, edge: _RelTuple) -> list[PropertyDict]:
+        """Every site of an edge (one empty record for a site-less edge)."""
+        return self.edge_sites.get(edge) or [self.edge_props.get(edge, {})]
 
     # --- structural delta reads (issue #1525) --------------------------------
 
@@ -242,20 +253,20 @@ class _StatefulIngestor:
             to_path = self._delta_path_of(tl, tv)
             if from_path not in paths and to_path not in paths:
                 continue
-            props = self.edge_props.get(edge, {})
-            rows.append(
-                {
-                    cs.KEY_FROM_QN: _result(fv),
-                    cs.KEY_FROM_PATH: _result(from_path),
-                    cs.KEY_REL_TYPE: _result(rel),
-                    cs.KEY_TO_QN: _result(tv),
-                    cs.KEY_TO_PATH: _result(to_path),
-                    cs.KEY_LINE: _result(props.get(cs.KEY_LINE)),
-                    cs.KEY_COL: _result(props.get(cs.KEY_COL)),
-                    cs.KEY_ARG_COUNT: _result(props.get(cs.KEY_ARG_COUNT)),
-                    cs.KEY_KWARG_NAMES: _result(props.get(cs.KEY_KWARG_NAMES)),
-                }
-            )
+            for props in self.sites_of(edge):
+                rows.append(
+                    {
+                        cs.KEY_FROM_QN: _result(fv),
+                        cs.KEY_FROM_PATH: _result(from_path),
+                        cs.KEY_REL_TYPE: _result(rel),
+                        cs.KEY_TO_QN: _result(tv),
+                        cs.KEY_TO_PATH: _result(to_path),
+                        cs.KEY_LINE: _result(props.get(cs.KEY_LINE)),
+                        cs.KEY_COL: _result(props.get(cs.KEY_COL)),
+                        cs.KEY_ARG_COUNT: _result(props.get(cs.KEY_ARG_COUNT)),
+                        cs.KEY_KWARG_NAMES: _result(props.get(cs.KEY_KWARG_NAMES)),
+                    }
+                )
         return rows
 
     def _delta_callers_of(self, prefix: str, qns: set[str]) -> list[ResultRow]:
@@ -356,21 +367,23 @@ class _StatefulIngestor:
             if uid == qn and label not in (_FILE_LABEL, _FOLDER_LABEL)
         ]
 
-    def _graph_edge_row(
+    def _graph_edge_rows(
         self, edge: _RelTuple, keys: tuple[str, ...], node: _NodeId
-    ) -> ResultRow:
+    ) -> list[ResultRow]:
         label, uid = node
         props = self.nodes.get(node, {})
-        row: ResultRow = {
-            cs.KEY_LABEL: label,
-            cs.KEY_QUALIFIED_NAME: _result(uid),
-            cs.KEY_PATH: _result(props.get(cs.KEY_PATH)),
-            cs.KEY_REL_TYPE: edge[2],
-        }
-        edge_props = self.edge_props.get(edge, {})
-        for key in keys:
-            row[key] = _result(edge_props.get(key))
-        return row
+        rows: list[ResultRow] = []
+        for edge_props in self.sites_of(edge):
+            row: ResultRow = {
+                cs.KEY_LABEL: label,
+                cs.KEY_QUALIFIED_NAME: _result(uid),
+                cs.KEY_PATH: _result(props.get(cs.KEY_PATH)),
+                cs.KEY_REL_TYPE: edge[2],
+            }
+            for key in keys:
+                row[key] = _result(edge_props.get(key))
+            rows.append(row)
+        return rows
 
     def _graph_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
         qn = _str(params.get(cs.KEY_QN))
@@ -410,18 +423,27 @@ class _StatefulIngestor:
                 for edge in self._in.get(target, ()):
                     source = (edge[0], edge[1])
                     if edge[2] in wanted and source in self.nodes:
-                        rows.append(
-                            self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, source)
+                        rows.extend(
+                            self._graph_edge_rows(edge, self._GRAPH_SITE_KEYS, source)
                         )
         elif query == cq.CYPHER_GRAPH_OVERRIDES:
             overrides = cs.RelationshipType.OVERRIDES.value
             for target in targets:
                 for edge in self._in.get(target, ()):
                     if edge[2] == overrides and (edge[0], edge[1]) in self.nodes:
-                        rows.append(self._graph_edge_row(edge, (), (edge[0], edge[1])))
+                        rows.extend(self._graph_edge_rows(edge, (), (edge[0], edge[1])))
                 for edge in self._out.get(target, ()):
                     if edge[2] == overrides and (edge[3], edge[4]) in self.nodes:
-                        rows.append(self._graph_edge_row(edge, (), (edge[3], edge[4])))
+                        rows.extend(self._graph_edge_rows(edge, (), (edge[3], edge[4])))
+        elif query == cq.CYPHER_GRAPH_IMPORTS_OF:
+            for target in targets:
+                for edge in self._out.get(target, ()):
+                    if edge[2] == cs.RelationshipType.IMPORTS.value:
+                        for row in self._graph_edge_rows(
+                            edge, self._GRAPH_IMPORT_KEYS, (edge[3], edge[4])
+                        ):
+                            row[cs.KEY_TO_QN] = _result(edge[4])
+                            rows.append(row)
         elif query == cq.CYPHER_GRAPH_IMPORTERS:
             for target in targets:
                 for edge in self._in.get(target, ()):
@@ -430,8 +452,8 @@ class _StatefulIngestor:
                         edge[2] == cs.RelationshipType.IMPORTS.value
                         and source in self.nodes
                     ):
-                        rows.append(
-                            self._graph_edge_row(edge, self._GRAPH_IMPORT_KEYS, source)
+                        rows.extend(
+                            self._graph_edge_rows(edge, self._GRAPH_IMPORT_KEYS, source)
                         )
         return rows
 
@@ -496,6 +518,7 @@ class _StatefulIngestor:
     def reset_edges(self) -> None:
         self.edges = set()
         self.edge_props = {}
+        self.edge_sites = {}
         self._out = {}
         self._in = {}
 
@@ -528,6 +551,7 @@ class _StatefulIngestor:
                 | cq.CYPHER_GRAPH_OVERRIDES
                 | cq.CYPHER_GRAPH_IMPORTERS
                 | cq.CYPHER_GRAPH_SIGNATURE
+                | cq.CYPHER_GRAPH_IMPORTS_OF
             ):
                 return self._graph_rows(query, params or {})
             case cs.CYPHER_ALL_FOLDER_PATHS:
@@ -744,6 +768,7 @@ class _StatefulIngestor:
             for edge in touched:
                 self.edges.discard(edge)
                 self.edge_props.pop(edge, None)
+                self.edge_sites.pop(edge, None)
                 self._out.get((edge[0], edge[1]), set()).discard(edge)
                 self._in.get((edge[3], edge[4]), set()).discard(edge)
 

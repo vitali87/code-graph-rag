@@ -22,6 +22,7 @@ class CLICommandName(StrEnum):
     CHECK = "check"
     RENAME = "rename"
     CHANGE_SIGNATURE = "change-signature"
+    MOVE = "move"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -153,6 +154,18 @@ CMD_CHANGE_SIGNATURE = (
 EXAMPLES_CHANGE_SIGNATURE = (
     "Examples:\n  cgr change-signature myproj.pkg.util.helper -p a@0 -p n:int=1 -p b@1\n"
     "  cgr change-signature myproj.pkg.Store.get -p key@key -p default=None --dry-run"
+)
+CMD_MOVE = (
+    "Move a module-level definition to another module: importers rewritten, "
+    "needed imports carried, refused when it would create an import cycle."
+)
+EXAMPLES_MOVE = (
+    "Examples:\n  cgr move myproj.pkg.util.helper pkg.core --dry-run\n"
+    "  cgr move myproj.pkg.util.helper pkg/core.py --keep-alias"
+)
+HELP_MOVE_TARGET = "Destination module: dotted name (pkg.core) or repo-relative path."
+HELP_MOVE_KEEP_ALIAS = (
+    "Leave a re-export at the old location so the old import path still works."
 )
 HELP_SIGNATURE_PARAM = (
     "A new parameter, in order: name[:annotation][=default][@source] where "
@@ -482,6 +495,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
     CLICommandName.CHANGE_SIGNATURE: CMD_CHANGE_SIGNATURE,
+    CLICommandName.MOVE: CMD_MOVE,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,
