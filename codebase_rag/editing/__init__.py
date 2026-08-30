@@ -11,6 +11,7 @@ from .contract import (
     verify,
 )
 from .imports import ImportRewriter, ImportSite, Rewrite, RewriteError, SymbolMove
+from .move import MoveRefused, MoveReport, move
 from .patcher import (
     Patcher,
     PatcherError,
@@ -42,6 +43,9 @@ from .transaction import (
 
 __all__ = [
     "Expectation",
+    "MoveRefused",
+    "MoveReport",
+    "move",
     "ParamSpec",
     "SignatureRefused",
     "SignatureReport",

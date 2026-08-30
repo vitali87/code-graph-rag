@@ -56,6 +56,7 @@ KEY_SITES = "sites"
 KEY_AMBIGUOUS = "ambiguous"
 KEY_UNMAPPED = "unmapped"
 KEY_VERDICT = "verdict"
+KEY_CYCLE = "cycle"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
 
