@@ -7,6 +7,7 @@
 # order (issue #1552).
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,16 @@ def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
     ).run(force=force)
 
 
+def _touch_after_cache(path: Path, root: Path) -> None:
+    # The incremental pass skips a cached file whose mtime is not newer than
+    # the hash cache's, without hashing it; on a coarse-timestamp filesystem
+    # a write landing in the cache's own tick would be skipped and the test
+    # would pass without re-parsing anything. Place the edit past the cache.
+    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path.write_text(path.read_text(encoding="utf-8") + "// touched\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+
+
 @pytest.mark.parametrize("edited", ["derived.cpp", "derived.h", "base.h"])
 def test_incremental_reparse_registers_out_of_class_method_once(
     temp_repo: Path, edited: str
@@ -67,8 +78,7 @@ def test_incremental_reparse_registers_out_of_class_method_once(
 
     # A trailing comment changes the hash but not the AST, so only the edited
     # file re-parses; the others are rehydration-only.
-    path = root / edited
-    path.write_text(path.read_text(encoding="utf-8") + "// touched\n")
+    _touch_after_cache(root / edited, root)
     _index(store, root, force=False)
     nodes, edges = _snapshot(store)
 
