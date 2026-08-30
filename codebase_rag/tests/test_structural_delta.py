@@ -468,3 +468,23 @@ def test_keyword_arguments_are_counted_once(
     assert delta["arity_findings"] == []
     (change,) = delta["signature_changes"]
     assert change["sites"][0]["verdict"] == cs.DELTA_ARITY_OK
+
+
+def test_moved_definition_is_paired_across_files(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    # `tally` leaves util.py for core.py unchanged: a move, reported as a
+    # rename across files rather than a removal plus an addition.
+    _write(root, "pkg/util.py", "def helper(a):\n    return a + 1\n")
+    _write(root, "pkg/core.py", "def tally(items):\n" + BIG_BODY)
+    delta = _observe(root, store, updater, ["pkg/util.py", "pkg/core.py"])
+    assert delta["symbols"]["renamed"] == [
+        {
+            "old": _qn("pkg.util.tally"),
+            "new": _qn("pkg.core.tally"),
+            "path": "pkg/util.py",
+        }
+    ]
+    assert delta["symbols"]["added"] == [] and delta["symbols"]["removed"] == []
+    assert delta["new_duplicates"] == []
