@@ -519,7 +519,7 @@ CYPHER_ALL_MODULE_QNS = (
 # cgr's call resolution is context-sensitive (protocol vs concrete receiver,
 # import granularity); the original edges already match a clean re-index.
 CYPHER_INBOUND_EDGES = (
-    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|OVERRIDES]->(target) "
+    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
     "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
     "RETURN head(labels(caller)) AS caller_label, "
@@ -531,9 +531,12 @@ CYPHER_INBOUND_EDGES = (
 # change there can rebind their calls (a new override shadowing an inherited
 # method), so restoring their old edges verbatim would freeze a stale
 # binding. They are re-parsed instead, one level deep: their own definitions
-# are unchanged, so their callers' bindings cannot move.
+# are unchanged, so their callers' bindings cannot move. IMPLEMENTS counts
+# like INHERITS: an implementor in the same package holds no import edge into
+# its interface's file, and without this it was neither re-parsed nor
+# restored when that file was re-indexed (issue #1565).
 CYPHER_AFFECTED_CALLER_PATHS = (
-    "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS]->(target) "
+    "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS]->(target) "
     "WHERE target.path IN $paths AND caller.path IS NOT NULL "
     "AND NOT caller.path IN $paths "
     "AND caller.qualified_name STARTS WITH $project_prefix "
