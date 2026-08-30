@@ -481,6 +481,12 @@ WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN n.positional_params AS positional_params, n.param_types AS param_types,
        n.return_type AS return_type
 LIMIT 1"""
+# What one module imports, with each statement's site (issue #1534).
+CYPHER_GRAPH_IMPORTS_OF = """MATCH (m:Module)-[r:IMPORTS]->(target)
+WHERE m.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
+RETURN target.qualified_name AS to_qn, r.line AS line, r.col AS col,
+       r.end_line AS end_line, r.end_col AS end_col, r.alias AS alias,
+       r.imported_name AS imported_name"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
 WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
