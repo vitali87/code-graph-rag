@@ -529,6 +529,34 @@ RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
 RENAME_PLANNED = "{count} site(s) would be rewritten"
 RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"
 RENAME_CONTRACT_FAILED = "Rename rolled back, postcondition failed: {reasons}"
+# change_signature (issue #1533).
+SIGNATURE_BAD_SPEC = (
+    "Not a parameter spec: {spec!r} (expected name[:annotation][=default][@source])"
+)
+SIGNATURE_UNKNOWN = "No function or method named {qn} in the graph"
+SIGNATURE_NO_GRAMMAR = "No grammar for {path}; the signature cannot be rewritten"
+SIGNATURE_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
+SIGNATURE_DUPLICATE_PARAM = "Parameter {name} is listed twice"
+SIGNATURE_UNKNOWN_SOURCE = (
+    "No old parameter {source!r}; the old parameters are: {names}"
+)
+SIGNATURE_LITERAL_TYPE = (
+    "Default {literal} for {name} does not fit its declared type {annotation}"
+)
+SIGNATURE_PLANNED = "{count} call site(s) would be rewritten, {unmapped} left unmapped"
+SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
+SIGNATURE_CONTRACT_FAILED = (
+    "Signature change rolled back, postcondition failed: {reasons}"
+)
+SIGNATURE_UNLOCATABLE = "site cannot be located"
+SIGNATURE_GUESSED = "resolved by {resolution}; pass allow_heuristic to rewrite"
+SIGNATURE_MISSING_FILE = "file is missing"
+SIGNATURE_NO_CALL = "no call with an argument list at the recorded site"
+SIGNATURE_SPLAT = "the site spreads its arguments"
+SIGNATURE_UNKNOWN_KEYWORD = "the site passes an unknown keyword {name}"
+SIGNATURE_NEEDS_KEYWORDS = "the mapping needs keyword arguments this language lacks"
+SIGNATURE_UNMAPPED_PARAM = "the site passes no value for {name}"
+SIGNATURE_DEFAULT_ORDER = "Parameter {name} has no default but follows one that does"
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"
