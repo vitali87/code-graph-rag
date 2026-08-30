@@ -463,7 +463,7 @@ def _contained(root: Path, rel_path: str) -> Path:
     # history file, a restore) can reach outside the root.
     real_root = os.path.realpath(root)
     candidate = os.path.realpath(os.path.join(real_root, rel_path))
-    if os.path.commonpath([real_root, candidate]) != real_root:
+    if not candidate.startswith(real_root + os.sep):
         raise TransactionError(ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT))
     return Path(candidate)
 
@@ -583,36 +583,42 @@ def undo_last(repo_root: Path, count: int = 1) -> list[TransactionOutcome]:
         # window: a commit landing in between would otherwise be dropped
         # from the history by a truncation of a stale snapshot.
         with _repo_lock(root):
-            entries = load_history(root)
-            if not entries:
-                break
-            entry = entries[-1]
-            reverse = EditTransaction(root, record=False)
-            for staged in entry_files(entry):
-                key = reverse._relative(staged.path)
-                if key in cs.CGR_STATE_FILENAMES:
-                    # The history is data on disk: an entry naming the lock
-                    # or the history itself must not replace their inodes.
-                    raise TransactionError(cs.EDIT_RESERVED_PATH.format(path=key))
-                reverse._overlay[key] = StagedFile(
-                    key, staged.after, staged.before, staged.mode
-                )
-            reversed_files = reverse.staged
-            outcome = reverse.commit(_lock=False)
-            if outcome.applied:
-                try:
-                    _save_history(root, entries[:-1])
-                except Exception:
-                    # The reversal landed but its record did not go: put the
-                    # files back as the entry says, so history and tree agree.
-                    _restore(root, list(reversed_files))
-                    raise
-        outcomes.append(
-            outcome._replace(transaction_id=str(entry.get(cs.EDIT_KEY_ID, "")))
-        )
+            outcome = _undo_newest(root)
+        if outcome is None:
+            break
+        outcomes.append(outcome)
         if not outcome.applied and outcome.message != cs.EDIT_NOTHING_STAGED:
             break
     return outcomes
+
+
+def _undo_newest(root: Path) -> TransactionOutcome | None:
+    """Reverse the newest history entry under the caller's lock; None if empty."""
+    entries = load_history(root)
+    if not entries:
+        return None
+    entry = entries[-1]
+    reverse = EditTransaction(root, record=False)
+    for staged in entry_files(entry):
+        key = reverse._relative(staged.path)
+        if key in cs.CGR_STATE_FILENAMES:
+            # The history is data on disk: an entry naming the lock or the
+            # history itself must not replace their inodes.
+            raise TransactionError(cs.EDIT_RESERVED_PATH.format(path=key))
+        reverse._overlay[key] = StagedFile(
+            key, staged.after, staged.before, staged.mode
+        )
+    reversed_files = reverse.staged
+    outcome = reverse.commit(_lock=False)
+    if outcome.applied:
+        try:
+            _save_history(root, entries[:-1])
+        except Exception:
+            # The reversal landed but its record did not go: put the files
+            # back as the entry says, so history and tree agree.
+            _restore(root, list(reversed_files))
+            raise
+    return outcome._replace(transaction_id=str(entry.get(cs.EDIT_KEY_ID, "")))
 
 
 @contextmanager

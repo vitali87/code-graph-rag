@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -515,6 +516,7 @@ def test_cli_counts_must_be_positive(repo: Path) -> None:
         assert result.exit_code == 2, args
 
 
+@pytest.mark.skipif(sys.platform == cs.PLATFORM_WINDOWS, reason="no executable bit")
 def test_replacing_an_executable_keeps_its_mode(repo: Path) -> None:
     import os
     import stat
@@ -580,6 +582,7 @@ def test_reserved_state_files_cannot_be_staged(repo: Path) -> None:
         tx.stage(cs.EDIT_HISTORY_FILENAME, "[]")
 
 
+@pytest.mark.skipif(sys.platform == cs.PLATFORM_WINDOWS, reason="no executable bit")
 def test_deleted_executable_is_restored_executable(repo: Path) -> None:
     import os
     import stat
