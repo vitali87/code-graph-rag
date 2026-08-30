@@ -487,6 +487,22 @@ WHERE m.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
 RETURN target.qualified_name AS to_qn, r.line AS line, r.col AS col,
        r.end_line AS end_line, r.end_col AS end_col, r.alias AS alias,
        r.imported_name AS imported_name"""
+# Context slice reads (issue #1536): trace hotness of the callers of one
+# symbol, the types it returns and accepts, and the sections of the
+# documents whose links point at its file.
+CYPHER_CONTEXT_HOTNESS = """MATCH (caller)-[r:CALLS]->(callee)
+WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
+  AND r.dynamic_call_count IS NOT NULL
+RETURN caller.qualified_name AS qualified_name, r.dynamic_call_count AS dynamic_call_count"""
+CYPHER_CONTEXT_TYPES = """MATCH (n)-[r:RETURNS|ACCEPTS]->(t)
+WHERE n.qualified_name = $qn AND t.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT type(r) AS rel_type, t.qualified_name AS qualified_name, t.path AS path,
+       t.start_line AS start_line, t.end_line AS end_line"""
+CYPHER_CONTEXT_DOC_SECTIONS = """MATCH (doc:Module)-[:LINKS_TO]->(f:File {absolute_path: $absolute_path})
+MATCH (doc)-[:CONTAINS_SECTION]->(s:Section)
+WHERE doc.qualified_name STARTS WITH $project_prefix
+RETURN doc.qualified_name AS from_qn, s.qualified_name AS qualified_name, s.name AS name,
+       s.path AS path, s.start_line AS start_line, s.end_line AS end_line"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
 WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
