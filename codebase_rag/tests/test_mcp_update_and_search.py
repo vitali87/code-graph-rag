@@ -502,6 +502,14 @@ class TestMCPClient:
             mock_open.assert_called_once()
 
 
+def _mark_indexed(registry: MCPToolsRegistry) -> str:
+    from codebase_rag.utils.path_utils import derive_project_name
+
+    project = derive_project_name(Path(registry.project_root))
+    registry.ingestor.list_projects.return_value = [project]
+    return project
+
+
 class TestReingest:
     async def test_reingest_registered(self, mcp_registry: MCPToolsRegistry) -> None:
         meta = mcp_registry._tools[cs.MCPToolName.REINGEST]
@@ -518,6 +526,7 @@ class TestReingest:
     ) -> None:
         # The registry must stay warm across calls: a fresh updater per call
         # would read every definition back from the graph each time.
+        _mark_indexed(mcp_registry)
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             mock_updater = MagicMock()
             mock_updater.reingest.return_value = MagicMock(
@@ -560,6 +569,7 @@ class TestReingest:
     async def test_reingest_error_is_reported_not_raised(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
+        _mark_indexed(mcp_registry)
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.return_value.reingest.side_effect = ValueError(
                 "Path is outside the repository: ../x"
@@ -572,26 +582,36 @@ class TestReingest:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         # The retained updater holds the deleted graph's definitions; a
-        # reingest after the delete must start from the store again.
+        # reingest after the delete must refuse until the project is indexed
+        # again (a scoped re-ingest cannot stand in for the first index).
+        project = _mark_indexed(mcp_registry)
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), elapsed_ms=0.1
             )
             await mcp_registry.reingest(["a.py"])
-            mcp_registry.ingestor.list_projects.return_value = ["proj"]
-            await mcp_registry.delete_project("proj")
+            mcp_registry.ingestor.list_projects.return_value = [project, "other"]
+            await mcp_registry.delete_project(project)
+            mcp_registry.ingestor.list_projects.return_value = ["other"]
+            result = await mcp_registry.reingest(["a.py"])
+            assert mock_updater_cls.call_count == 1
+            assert "not indexed" in result["error"]
+            # Re-indexed: the next reingest builds a fresh updater.
+            mcp_registry.ingestor.list_projects.return_value = [project]
             await mcp_registry.reingest(["a.py"])
             assert mock_updater_cls.call_count == 2
 
     async def test_wipe_database_drops_the_retained_updater(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
+        _mark_indexed(mcp_registry)
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             mock_updater_cls.return_value.reingest.return_value = MagicMock(
                 reparsed=(), affected=(), removed=(), elapsed_ms=0.1
             )
             await mcp_registry.reingest(["a.py"])
-            mcp_registry.ingestor.list_projects.return_value = ["proj"]
             await mcp_registry.wipe_database(confirm=True)
-            await mcp_registry.reingest(["a.py"])
-            assert mock_updater_cls.call_count == 2
+            mcp_registry.ingestor.list_projects.return_value = []
+            result = await mcp_registry.reingest(["a.py"])
+            assert mock_updater_cls.call_count == 1
+            assert "not indexed" in result["error"]
