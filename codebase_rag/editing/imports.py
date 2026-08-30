@@ -84,14 +84,19 @@ def _span_bytes(source: bytes, site: ImportSite) -> tuple[int, int]:
     return start, end
 
 
+# Possessive quantifiers: a run of whitespace not followed by `as` must not
+# be re-tried at every shorter length (super-linear on long entries).
+_AS_SEPARATOR = re.compile(r"\s++as\s++")
+
+
 def _local_name(entry: str) -> str:
     # `a as b` -> b, `a` -> a (Python/TS/Rust forms alike).
-    parts = re.split(r"\s+as\s+", entry.strip())
+    parts = _AS_SEPARATOR.split(entry.strip())
     return parts[-1].strip()
 
 
 def _imported(entry: str) -> str:
-    return re.split(r"\s+as\s+", entry.strip())[0].strip()
+    return _AS_SEPARATOR.split(entry.strip())[0].strip()
 
 
 def _rewrite_entry(entry: str, new_name: str | None, keep_local: bool) -> str:
@@ -134,8 +139,11 @@ def _relative_specifier(importer_path: str, target_path: str) -> str:
 
 # --- Python -------------------------------------------------------------------
 
+# `names` runs to the end of the statement; the trailing whitespace is
+# split off in code rather than by a lazy `.+?` racing a `\s*$`, which
+# backtracks quadratically on a long name list.
 _PY_FROM = re.compile(
-    r"^(?P<lead>\s*from\s+)(?P<module>[\w.]+)(?P<mid>\s+import\s+)(?P<names>.+?)(?P<tail>\s*)$",
+    r"^(?P<lead>\s*from\s+)(?P<module>[\w.]+)(?P<mid>\s+import\s+)(?P<names>.+)$",
     re.S,
 )
 _PY_IMPORT = re.compile(
@@ -161,7 +169,10 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
     if m := _PY_FROM.match(statement):
         if m.group("module") != move.old_module:
             return None
-        entries, open_deco, close_deco = _split_names(m.group("names"))
+        raw_names = m.group("names")
+        names = raw_names.rstrip()
+        tail = raw_names[len(names) :]
+        entries, open_deco, close_deco = _split_names(names)
         moved = [e for e in entries if _imported(e) == move.symbol]
         if not moved:
             return None
@@ -169,13 +180,13 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
         moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=True)
         moved_stmt = f"{m.group('lead')}{move.new_module}{m.group('mid')}{moved_entry}"
         if not kept:
-            return f"{moved_stmt}{m.group('tail')}"
+            return f"{moved_stmt}{tail}"
         kept_stmt = (
             f"{m.group('lead')}{m.group('module')}{m.group('mid')}"
             f"{open_deco}{', '.join(kept)}{close_deco}"
         )
         indent = re.match(r"\s*", statement.splitlines()[0]).group(0)  # type: ignore[union-attr]
-        return f"{kept_stmt}\n{indent}{moved_stmt.lstrip()}{m.group('tail')}"
+        return f"{kept_stmt}\n{indent}{moved_stmt.lstrip()}{tail}"
     if (
         (m := _PY_IMPORT.match(statement))
         and m.group("module") == move.old_module
@@ -255,16 +266,35 @@ def _go_rewrite(statement: str, move: SymbolMove) -> str | None:
     return statement[: m.start("spec")] + move.new_module + statement[m.end("spec") :]
 
 
-_RS_USE = re.compile(
-    r"^(?P<lead>\s*(?:pub(?:\([^)]*\))?\s+)?use\s+)(?P<path>[\w:]+)(?P<group>::\{(?P<names>[^}]*)\})?(?P<alias>\s+as\s+\w+)?(?P<tail>\s*;\s*)$",
-    re.S,
+# The statement is taken apart in two steps (the `use` head, then the path
+# with its optional group and alias) rather than by one regex whose
+# alternation count trips the complexity bar.
+_RS_USE_HEAD = re.compile(r"^(?P<lead>\s*(?:pub(?:\([^)]*\))?\s+)?use\s+)")
+_RS_USE_BODY = re.compile(
+    r"^(?P<path>[\w:]+)(?P<group>::\{(?P<names>[^}]*)\})?(?P<alias>\s+as\s+\w+)?$"
 )
 
 
-def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
-    m = _RS_USE.match(statement)
-    if m is None:
+def _split_rs_use(statement: str) -> tuple[str, re.Match[str], str] | None:
+    """`(lead, body match, tail)` of a `use` statement, None if it is not one."""
+    head = _RS_USE_HEAD.match(statement)
+    if head is None:
         return None
+    rest = statement[head.end() :]
+    semicolon = rest.rfind(";")
+    if semicolon < 0 or rest[semicolon + 1 :].strip():
+        return None
+    body = _RS_USE_BODY.match(rest[:semicolon].rstrip())
+    if body is None:
+        return None
+    return head.group("lead"), body, rest[semicolon:]
+
+
+def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
+    parts = _split_rs_use(statement)
+    if parts is None:
+        return None
+    lead, m, tail = parts
     path = m.group("path")
     if m.group("group") is None:
         if path != f"{move.old_module}::{move.symbol}":
@@ -273,7 +303,7 @@ def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
         new_name = move.new_name or move.symbol
         if not alias and move.new_name:
             alias = f" as {move.symbol}"
-        return f"{m.group('lead')}{move.new_module}::{new_name}{alias}{m.group('tail')}"
+        return f"{lead}{move.new_module}::{new_name}{alias}{tail}"
     if path != move.old_module:
         return None
     entries = [e.strip() for e in m.group("names").split(",") if e.strip()]
@@ -282,11 +312,11 @@ def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
         return None
     kept = [e for e in entries if _imported(e) != move.symbol]
     moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=True)
-    moved_stmt = f"{m.group('lead')}{move.new_module}::{moved_entry}{m.group('tail')}"
+    moved_stmt = f"{lead}{move.new_module}::{moved_entry}{tail}"
     if not kept:
         return moved_stmt
     kept_body = kept[0] if len(kept) == 1 else "{" + ", ".join(kept) + "}"
-    kept_stmt = f"{m.group('lead')}{path}::{kept_body}{m.group('tail')}"
+    kept_stmt = f"{lead}{path}::{kept_body}{tail}"
     indent = re.match(r"\s*", statement).group(0)  # type: ignore[union-attr]
     return f"{kept_stmt.rstrip()}\n{indent}{moved_stmt.lstrip()}"
 

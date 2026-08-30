@@ -14,6 +14,14 @@ from codebase_rag.editing import ImportRewriter, ImportSite, SymbolMove
 from codebase_rag.tests.conftest import create_and_run_updater
 
 
+def _assert_parses(parses: bool | None, grammar: str) -> None:
+    # The patcher reports None when no grammar is installed for the file
+    # (the base install ships none for Rust and Go): nothing to verify then.
+    if parses is None:
+        pytest.skip(f"{grammar} grammar not installed")
+    assert parses is True
+
+
 def _write(root: Path, rel: str, text: str) -> Path:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -283,7 +291,7 @@ def test_rust_use_single_grouped_and_aliased(tmp_path: Path) -> None:
         "use crate::helpers::assist as hh;",
     ]
     (result,) = rewriter.patcher.apply().values()
-    assert result.parses is True
+    _assert_parses(result.parses, "rust")
 
 
 def test_go_import_path_retarget(tmp_path: Path) -> None:
@@ -299,12 +307,13 @@ def test_go_import_path_retarget(tmp_path: Path) -> None:
     )
     assert rewrite.after == 'u "example.com/mod/core/util"'
     (result,) = rewriter.patcher.apply().values()
-    assert result.parses is True
+    _assert_parses(result.parses, "go")
 
 
 @pytest.mark.parametrize("bad", [ImportSite("nope.py", 1, 0, 1, 5, None, None)])
 def test_missing_importer_file_is_an_error(tmp_path: Path, bad: ImportSite) -> None:
     from codebase_rag.editing import PatcherError
 
+    rewriter = ImportRewriter(tmp_path)
     with pytest.raises(PatcherError):
-        ImportRewriter(tmp_path).retarget([bad], SymbolMove("x", "a", "b"))
+        rewriter.retarget([bad], SymbolMove("x", "a", "b"))
