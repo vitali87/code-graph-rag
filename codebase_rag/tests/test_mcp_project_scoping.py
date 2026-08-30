@@ -1478,6 +1478,31 @@ class TestScopedBudgetIsSpentOnInProjectRows:
         assert len(result["results"]) == len(_ROWS)
 
     @pytest.mark.asyncio
+    async def test_a_successful_response_carries_no_error_key_at_all(self) -> None:
+        """Absent, not present-and-null. A client tests `"error" in result`.
+
+        `QueryGraphData.error` defaults to None and `model_dump()` emits
+        every field, so a successful scoped response would ship
+        `{"error": None}` and read as a failure to any client checking for
+        the key. Found by mutation: deleting the handler's pop left all 190
+        tests in this file and its neighbour green.
+        """
+        handler = _registry_over_graph(_ROWS, cypher=_QN_CYPHER)
+
+        result = await handler.query_code_graph("everything", project=ALPHA)
+
+        assert cs.MCP_KEY_ERROR not in result, result
+
+    @pytest.mark.asyncio
+    async def test_an_unscoped_success_carries_no_error_key_either(self) -> None:
+        """The control: the unscoped path shares the same serialisation."""
+        handler = _registry_over_graph(_ROWS, cypher=_QN_CYPHER)
+
+        result = await handler.query_code_graph("everything")
+
+        assert cs.MCP_KEY_ERROR not in result, result
+
+    @pytest.mark.asyncio
     async def test_a_scoped_refusal_still_reports_an_error(self) -> None:
         """Delegating to the tool must not demote the refusal to a summary.
 
