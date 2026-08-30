@@ -385,9 +385,73 @@ class _StatefulIngestor:
             rows.append(row)
         return rows
 
+    _GRAPH_RESOLVE_LABELS = frozenset(
+        {
+            cs.NodeLabel.FUNCTION.value,
+            cs.NodeLabel.METHOD.value,
+            cs.NodeLabel.CLASS.value,
+            cs.NodeLabel.INTERFACE.value,
+            cs.NodeLabel.ENUM.value,
+            cs.NodeLabel.TYPE.value,
+            cs.NodeLabel.UNION.value,
+            cs.NodeLabel.MODULE.value,
+        }
+    )
+
+    def _graph_resolve_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        rows: list[ResultRow] = []
+        for (label, uid), props in self.nodes.items():
+            qn = _str(uid)
+            if label not in self._GRAPH_RESOLVE_LABELS or not qn.startswith(prefix):
+                continue
+            if query == cq.CYPHER_GRAPH_RESOLVE_NAME:
+                wanted = (
+                    qn == _str(params.get(cs.KEY_QN))
+                    or qn.endswith(_str(params.get(cs.KEY_SUFFIX)))
+                    or props.get(cs.KEY_NAME) == params.get(cs.KEY_NAME)
+                )
+            else:
+                start = props.get(cs.KEY_START_LINE)
+                end = props.get(cs.KEY_END_LINE)
+                line = params.get(cs.KEY_LINE)
+                wanted = (
+                    props.get(cs.KEY_PATH) == params.get(cs.KEY_PATH)
+                    and isinstance(start, int)
+                    and isinstance(end, int)
+                    and isinstance(line, int)
+                    and start <= line <= end
+                )
+            if wanted:
+                rows.append(
+                    {
+                        cs.KEY_LABEL: label,
+                        cs.KEY_QUALIFIED_NAME: _result(uid),
+                        cs.KEY_PATH: _result(props.get(cs.KEY_PATH)),
+                        cs.KEY_START_LINE: _result(props.get(cs.KEY_START_LINE)),
+                        cs.KEY_END_LINE: _result(props.get(cs.KEY_END_LINE)),
+                    }
+                )
+        return rows
+
     def _graph_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
         qn = _str(params.get(cs.KEY_QN))
         targets = self._graph_node_ids(qn)
+        if query in (cq.CYPHER_GRAPH_RESOLVE_NAME, cq.CYPHER_GRAPH_RESOLVE_LOCATION):
+            return self._graph_resolve_rows(query, params)
+        if query == cq.CYPHER_GRAPH_CALLEES:
+            rows: list[ResultRow] = []
+            for source in targets:
+                for edge in self._out.get(source, ()):
+                    callee = (edge[3], edge[4])
+                    if (
+                        edge[2] == cs.RelationshipType.CALLS.value
+                        and callee in self.nodes
+                    ):
+                        rows.extend(
+                            self._graph_edge_rows(edge, self._GRAPH_SITE_KEYS, callee)
+                        )
+            return rows
         if query == cq.CYPHER_GRAPH_SIGNATURE:
             for label, uid in targets:
                 props = self.nodes[(label, uid)]
@@ -455,6 +519,79 @@ class _StatefulIngestor:
                         rows.extend(
                             self._graph_edge_rows(edge, self._GRAPH_IMPORT_KEYS, source)
                         )
+        return rows
+
+    # --- context slice reads (issue #1536) -----------------------------------
+
+    def _context_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        qn = _str(params.get(cs.KEY_QN))
+        rows: list[ResultRow] = []
+        if query == cq.CYPHER_CONTEXT_HOTNESS:
+            for target in self._graph_node_ids(qn):
+                for edge in self._in.get(target, ()):
+                    if edge[2] != cs.RelationshipType.CALLS.value:
+                        continue
+                    count = self.edge_props.get(edge, {}).get(cs.TRACE_PROP_CALL_COUNT)
+                    if isinstance(count, int) and _str(edge[1]).startswith(prefix):
+                        rows.append(
+                            {
+                                cs.KEY_QUALIFIED_NAME: _result(edge[1]),
+                                cs.TRACE_PROP_CALL_COUNT: count,
+                            }
+                        )
+            return rows
+        if query == cq.CYPHER_CONTEXT_TYPES:
+            wanted = {
+                cs.RelationshipType.RETURNS.value,
+                cs.RelationshipType.ACCEPTS.value,
+            }
+            seen: set[tuple[str, str]] = set()
+            for source in self._graph_node_ids(qn):
+                for edge in self._out.get(source, ()):
+                    target = (edge[3], edge[4])
+                    if edge[2] not in wanted or target not in self.nodes:
+                        continue
+                    if (edge[2], _str(edge[4])) in seen:
+                        continue
+                    seen.add((edge[2], _str(edge[4])))
+                    props = self.nodes[target]
+                    rows.append(
+                        {
+                            cs.KEY_REL_TYPE: edge[2],
+                            cs.KEY_QUALIFIED_NAME: _result(edge[4]),
+                            cs.KEY_PATH: _result(props.get(cs.KEY_PATH)),
+                            cs.KEY_START_LINE: _result(props.get(cs.KEY_START_LINE)),
+                            cs.KEY_END_LINE: _result(props.get(cs.KEY_END_LINE)),
+                        }
+                    )
+            return rows
+        absolute = _str(params.get(cs.KEY_ABSOLUTE_PATH))
+        module = cs.NodeLabel.MODULE.value
+        for doc_id, edges in self._out.items():
+            doc_label, doc_qn = doc_id
+            if doc_label != module or not _str(doc_qn).startswith(prefix):
+                continue
+            links = any(
+                e[2] == cs.RelationshipType.LINKS_TO.value and _str(e[4]) == absolute
+                for e in edges
+            )
+            if not links:
+                continue
+            for e in edges:
+                if e[2] != cs.RelationshipType.CONTAINS_SECTION.value:
+                    continue
+                section = self.nodes.get((e[3], e[4]), {})
+                rows.append(
+                    {
+                        cs.KEY_FROM_QN: _result(doc_qn),
+                        cs.KEY_QUALIFIED_NAME: _result(e[4]),
+                        cs.KEY_NAME: _result(section.get(cs.KEY_NAME)),
+                        cs.KEY_PATH: _result(section.get(cs.KEY_PATH)),
+                        cs.KEY_START_LINE: _result(section.get(cs.KEY_START_LINE)),
+                        cs.KEY_END_LINE: _result(section.get(cs.KEY_END_LINE)),
+                    }
+                )
         return rows
 
     def _delta_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
@@ -552,8 +689,17 @@ class _StatefulIngestor:
                 | cq.CYPHER_GRAPH_IMPORTERS
                 | cq.CYPHER_GRAPH_SIGNATURE
                 | cq.CYPHER_GRAPH_IMPORTS_OF
+                | cq.CYPHER_GRAPH_RESOLVE_NAME
+                | cq.CYPHER_GRAPH_RESOLVE_LOCATION
+                | cq.CYPHER_GRAPH_CALLEES
             ):
                 return self._graph_rows(query, params or {})
+            case (
+                cq.CYPHER_CONTEXT_HOTNESS
+                | cq.CYPHER_CONTEXT_TYPES
+                | cq.CYPHER_CONTEXT_DOC_SECTIONS
+            ):
+                return self._context_rows(query, params or {})
             case cs.CYPHER_ALL_FOLDER_PATHS:
                 return self._path_rows(_FOLDER_LABEL)
             case cs.CYPHER_INBOUND_EDGES:

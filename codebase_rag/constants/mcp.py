@@ -25,6 +25,7 @@ class MCPToolName(StrEnum):
     MOVE = "move"
     EXTRACT = "extract"
     INLINE = "inline"
+    CONTEXT = "context"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
@@ -111,6 +112,7 @@ class MCPParamName(StrEnum):
     KEEP_ALIAS = "keep_alias"
     START_LINE = "start_line"
     END_LINE = "end_line"
+    BUDGET_TOKENS = "budget_tokens"
 
 
 # MCP server constants
@@ -134,6 +136,7 @@ MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"
 # Structural delta appended to write tools (issue #1525).
 MCP_DELTA_HEADER = "Structural delta:"
+CONTEXT_DEFAULT_BUDGET = 4000
 MCP_DELTA_ERROR = "Structural delta unavailable: {error}"
 MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "
