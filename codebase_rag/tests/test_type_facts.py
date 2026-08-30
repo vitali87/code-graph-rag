@@ -371,3 +371,91 @@ def test_schema_documents_the_new_triples_and_properties(
         cs.NodeLabel.UNION,
     ):
         assert (label.value, rel.value, target.value) in triples
+
+
+# --- Review findings on PR #1539 ----------------------------------------------
+
+
+def test_csharp_params_array_is_kept(temp_repo: Path, mock_ingestor: MagicMock) -> None:
+    """`params Item[] items` sits under the parameter list as a bare
+    array_type; it must still count as a parameter and resolve to Item."""
+    _write(
+        temp_repo,
+        {
+            "Svc.cs": (
+                "namespace App {\n"
+                "    public class Item {}\n"
+                "    public class Svc {\n"
+                "        public void Add(int n, params Item[] items) {}\n"
+                "    }\n"
+                "}\n"
+            )
+        },
+    )
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="c_sharp")
+    methods = _props(mock_ingestor, cs.NodeLabel.METHOD.value)
+    add = next(p for qn, p in methods.items() if ".Svc.Add" in qn)
+    assert add[cs.KEY_PARAM_TYPES] == ["int", "params Item[]"]
+    accepts = _edges(mock_ingestor, cs.RelationshipType.ACCEPTS)
+    assert {d.rsplit(".", 1)[1] for _s, d in accepts} == {"Item"}
+
+
+def test_incremental_run_requeues_unchanged_definitions(temp_repo: Path) -> None:
+    """A changed file adding the first resolvable `Widget` gives an UNCHANGED
+    function's `-> Widget` annotation its RETURNS edge without re-parsing it."""
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+    from evals.cgr_graph import _StatefulIngestor
+
+    root = temp_repo / "requeue"
+    _write(root, {"a.py": "def make() -> Widget:\n    return None\n"})
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+
+    def run(force: bool) -> None:
+        GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="requeue",
+        ).run(force=force)
+
+    run(force=True)
+    assert not {e for e in store.edges if e[2] == cs.RelationshipType.RETURNS.value}
+
+    cache = root / cs.HASH_CACHE_FILENAME
+    _write(root, {"z.py": "class Widget:\n    pass\n"})
+    future = cache.stat().st_mtime + 5
+    import os
+
+    os.utime(root / "z.py", (future, future))
+    run(force=False)
+
+    returns = {
+        (e[1], e[4]) for e in store.edges if e[2] == cs.RelationshipType.RETURNS.value
+    }
+    assert returns == {("requeue.a.make", "requeue.z.Widget")}
+
+
+def test_protobuf_export_carries_the_annotations(tmp_path: Path) -> None:
+    import codec.schema_pb2 as pb
+    from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+
+    ingestor = ProtobufFileIngestor(str(tmp_path), split_index=False)
+    ingestor.ensure_node_batch(
+        cs.NodeLabel.FUNCTION,
+        {
+            cs.KEY_QUALIFIED_NAME: "p.m.f",
+            cs.KEY_NAME: "f",
+            cs.KEY_PATH: "m.py",
+            cs.KEY_RETURN_TYPE: "list[Item]",
+            cs.KEY_PARAM_TYPES: ["int", ""],
+        },
+    )
+    ingestor.flush_all()
+    index = pb.GraphCodeIndex()
+    index.ParseFromString((tmp_path / "index.bin").read_bytes())
+    (node,) = index.nodes
+    assert node.function.return_type == "list[Item]"
+    assert list(node.function.param_types) == ["int", ""]

@@ -518,7 +518,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
-    "n.start_line AS start_line, n.end_line AS end_line"
+    "n.start_line AS start_line, n.end_line AS end_line, "
+    "n.return_type AS return_type, n.param_types AS param_types"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

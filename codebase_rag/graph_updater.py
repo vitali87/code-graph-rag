@@ -91,6 +91,7 @@ from .types_defs import (
     NodeType,
     PendingExpansionCall,
     PendingMacroCall,
+    PendingTypeFact,
     PropertyDict,
     ReingestReport,
     ResultRow,
@@ -99,6 +100,7 @@ from .types_defs import (
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
+    base_module_qn,
     cached_file_identity_posix,
     cached_relative_path,
     should_keep_dir,
@@ -1719,6 +1721,27 @@ class GraphUpdater:
             logger.info("Anchored {} artefacts to contract operations", anchored)
             self.ingestor.flush_all()
 
+    def _requeue_type_facts(
+        self, node_type: NodeType, qn: str, path: str, row: ResultRow
+    ) -> None:
+        if node_type not in (NodeType.FUNCTION, NodeType.METHOD):
+            return
+        return_type = row.get(cs.KEY_RETURN_TYPE)
+        param_types = row.get(cs.KEY_PARAM_TYPES)
+        if not return_type and not param_types:
+            return
+        self.factory.definition_processor.pending_type_facts.append(
+            PendingTypeFact(
+                node_type.value,
+                qn,
+                base_module_qn(Path(path), self.project_name),
+                return_type if isinstance(return_type, str) else None,
+                [str(p) for p in param_types]
+                if isinstance(param_types, list)
+                else None,
+            )
+        )
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -1768,6 +1791,11 @@ class GraphUpdater:
             # after this and must reach bases in UNCHANGED headers).
             if isinstance(path := row.get(cs.KEY_PATH), str):
                 self.factory.definition_processor.rehydrated_definition_paths[qn] = path
+                # Persisted annotations of UNCHANGED definitions rejoin the
+                # type-edge queue (issue #1527): a changed file can add the
+                # first resolvable type an old annotation names, and MERGE
+                # makes re-emitting the already-known edges harmless.
+                self._requeue_type_facts(node_type, qn, path, row)
                 # Spans for hybrid expansion-call callee joins: only C/C++
                 # Function/Method rows carry a usable span.
                 start = row.get(cs.KEY_START_LINE)
