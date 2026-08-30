@@ -161,8 +161,10 @@ MCP_UPDATE_REPOSITORY = (
 MCP_REINGEST = (
     "Re-ingest specific files into the knowledge graph after editing them. "
     "Re-parses only the given files and the files that depend on them, and "
-    "re-resolves calls in that set only, so an edit is reflected in the graph "
-    "in well under a second instead of a full update_repository pass. "
+    "re-resolves calls in that set only, so an edit lands in the graph in the "
+    "time it takes to parse the affected dependents (hundreds of milliseconds "
+    "for a typical file, seconds for a hub imported by dozens) instead of a "
+    "full update_repository pass. "
     "Paths are relative to the project root; files that no longer exist are "
     "removed from the graph. Returns the files re-parsed, the dependents "
     "re-parsed with them, the files removed, and the elapsed milliseconds."
