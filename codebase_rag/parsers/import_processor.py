@@ -495,6 +495,7 @@ class ImportProcessor:
         "_deferred_import_edges",
         "_import_sites",
         "_import_site_owners",
+        "_import_site_writers",
         "_inferred_module_imports",
         "_csharp_module_namespaces",
         "_csharp_module_identifiers",
@@ -563,6 +564,10 @@ class ImportProcessor:
         # Sub-scope site entries a file wrote under OTHER scope keys (Rust
         # fn/inline-mod uses), so its re-parse can retract them (#1522).
         self._import_site_owners: dict[str, set[tuple[str, str]]] = {}
+        # (scope, name) -> the file module that wrote the CURRENT entry, so a
+        # re-parse retracts only entries it still owns: a fn-local inline mod
+        # in src/a.rs and src/a/b/mod.rs can share a scope key and a name.
+        self._import_site_writers: dict[tuple[str, str], str] = {}
         self._inferred_module_imports: dict[str, set[str]] = {}
         self._csharp_module_namespaces: dict[str, dict[str, set[str]]] = {}
         self._csharp_module_identifiers: dict[str, frozenset[str]] = {}
@@ -970,6 +975,10 @@ class ImportProcessor:
         # A re-parse must not keep the sub-scope site entries the previous
         # parse of this file wrote under other scope keys (issue #1522).
         for scope_qn, name in self._import_site_owners.pop(module_qn, ()):
+            if self._import_site_writers.get((scope_qn, name)) != module_qn:
+                # Another file wrote the live entry since; it is theirs.
+                continue
+            self._import_site_writers.pop((scope_qn, name), None)
             scope_sites = self._import_sites.get(scope_qn)
             if scope_sites is None:
                 continue
@@ -1000,6 +1009,10 @@ class ImportProcessor:
             self._import_site_owners.setdefault(owner_qn, set()).add(
                 (scope_qn, local_name)
             )
+        # A file-level record is written by the scope's own file.
+        self._import_site_writers[(scope_qn, local_name)] = (
+            owner_qn if owner_qn is not None else scope_qn
+        )
         site = node_site_properties(node)
         if not local_name.startswith((cs.IMPORTED_NAME_WILDCARD, cs.SEPARATOR_DOT)):
             site[cs.KEY_ALIAS] = local_name
