@@ -88,6 +88,52 @@ class TestTheFilter:
 
         assert [r["qualified_name"] for r in kept] == [f"{base}.real.Thing"]
 
+    def test_a_project_named_after_another_projects_name_is_still_excluded(
+        self, tmp_path: Path
+    ) -> None:
+        """The pair above cannot fail if the separator is dropped.
+
+        `alpha` and `alpha_extra` derive to `alpha__<digest>` and
+        `alpha_extra__<digest>`, which diverge before the digest -- so a bare
+        `startswith` excludes the sibling anyway and the fixture proves
+        nothing about the separator. Deleting it leaves the whole suite
+        green.
+
+        A directory named after an EXISTING project's derived name does
+        produce a strict prefix, because the digest is appended to a base
+        that may itself already end in one:
+
+            alpha                    -> alpha__11912daa
+            alpha__11912daa_extra    -> alpha__11912daa_extra__f71503af
+
+        Both match the generator's own `<base>__<8 hex digits>` shape, and
+        the second starts with the first. Without the separator, that row
+        would be served to a caller scoped to the first project.
+        """
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+        from codebase_rag.utils.path_utils import derive_project_name
+
+        base_dir = tmp_path / "alpha"
+        base_dir.mkdir()
+        base = derive_project_name(base_dir)
+
+        nested_dir = tmp_path / f"{base}_extra"
+        nested_dir.mkdir()
+        nested = derive_project_name(nested_dir)
+
+        # The premise: without this the test could pass for the same
+        # non-reason the fixture above does.
+        assert nested.startswith(base), (base, nested)
+
+        rows = [
+            {"qualified_name": f"{base}.real.Thing"},
+            {"qualified_name": f"{nested}.other.Thing"},
+        ]
+
+        kept = scope_rows_to_project(rows, base)
+
+        assert [r["qualified_name"] for r in kept] == [f"{base}.real.Thing"]
+
     def test_a_row_keyed_on_something_other_than_qualified_name_is_scoped(
         self,
     ) -> None:

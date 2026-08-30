@@ -156,6 +156,11 @@ def scope_rows_to_project(
     """
     if not project_name:
         return rows
+    # The separator makes this a COMPONENT-boundary match, so one project
+    # cannot swallow another whose name extends it. Reachable: a directory
+    # named after an existing project's derived name derives again, giving
+    # `alpha__11912daa` and `alpha__11912daa_extra__f71503af` -- a genuine
+    # strict prefix, both in the generator's own shape.
     prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     kept: list[ResultRow] = []
     for row in rows:
