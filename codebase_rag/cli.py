@@ -36,6 +36,7 @@ from .editor_links import (
     resolve_editor,
     url_template_problem,
 )
+from .graph_cli import cli as graph_cli
 from .graph_updater import GraphUpdater
 from .main import (
     _create_configuration_table,
@@ -1087,6 +1088,18 @@ def trace_command(ctx: typer.Context) -> None:
 )
 def edits_command(ctx: typer.Context) -> None:
     _run_delegated_group(edits_cli, ctx)
+
+
+@app.command(
+    name=ch.CLICommandName.GRAPH,
+    help=ch.CMD_GRAPH,
+    short_help=ch.CMD_GRAPH,
+    add_help_option=False,
+    context_settings=_DELEGATED_GROUP_CONTEXT,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
+def graph_command(ctx: typer.Context) -> None:
+    _run_delegated_group(graph_cli, ctx)
 
 
 @app.command(
