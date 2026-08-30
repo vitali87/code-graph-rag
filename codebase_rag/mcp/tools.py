@@ -732,10 +732,11 @@ class MCPToolsRegistry:
         try:
             async with self._ingestor_lock:
                 await asyncio.to_thread(self.ingestor.clean_database)
-                await asyncio.to_thread(clear_all_embeddings)
-                # The retained reingest updater holds definitions of the
-                # graph just wiped; the next reingest starts from the store.
+                # Dropped as soon as the graph is gone, before the embedding
+                # sweep can fail: the retained updater holds definitions of a
+                # graph that no longer exists.
                 self._live_updater = None
+                await asyncio.to_thread(clear_all_embeddings)
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))

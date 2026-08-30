@@ -3290,16 +3290,24 @@ class GraphUpdater:
                 self.ingestor.execute_write(
                     cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: path.resolve().as_posix()}
                 )
-        for key, path in reparse.items():
-            # The delombok overlay stands in for the checked-in bytes exactly
-            # as the batch path does (issue #1140).
-            self._process_single_file(path, file_bytes=self._delombok_overlay.get(key))
-
         touched_languages: set[cs.SupportedLanguage] = set()
         for path in (*reparse.values(), *gone.values()):
             spec = get_language_spec(path.suffix)
             if spec is not None and isinstance(spec.language, cs.SupportedLanguage):
                 touched_languages.add(spec.language)
+        if touched_languages & cs.C_FAMILY_LANGUAGES and (
+            settings.CPP_FRONTEND != cs.CppFrontend.HYBRID
+        ):
+            # LIBCLANG emits C/C++ definitions itself and marks the files it
+            # covered so the tree-sitter pass skips them; the deleted subtrees
+            # need it to run again BEFORE the re-parse, as run() does. (HYBRID
+            # runs after Pass 2, inside the deferred stages.)
+            self._cpp_frontend_covered = frozenset()
+            self._run_cpp_frontend()
+        for key, path in reparse.items():
+            # The delombok overlay stands in for the checked-in bytes exactly
+            # as the batch path does (issue #1140).
+            self._process_single_file(path, file_bytes=self._delombok_overlay.get(key))
         self._rerun_frontends_for(touched_languages)
 
         # The deferred definition-level stages run() applies after Pass 2
