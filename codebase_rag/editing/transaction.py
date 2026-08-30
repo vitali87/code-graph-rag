@@ -590,6 +590,10 @@ def undo_last(repo_root: Path, count: int = 1) -> list[TransactionOutcome]:
             reverse = EditTransaction(root, record=False)
             for staged in entry_files(entry):
                 key = reverse._relative(staged.path)
+                if key in cs.CGR_STATE_FILENAMES:
+                    # The history is data on disk: an entry naming the lock
+                    # or the history itself must not replace their inodes.
+                    raise TransactionError(cs.EDIT_RESERVED_PATH.format(path=key))
                 reverse._overlay[key] = StagedFile(
                     key, staged.after, staged.before, staged.mode
                 )

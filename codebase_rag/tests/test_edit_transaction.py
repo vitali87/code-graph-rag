@@ -624,3 +624,31 @@ def test_undo_reads_the_history_under_the_lock(
     monkeypatch.setattr(module, "load_history", spy_load)
     undo_last(repo)
     assert state["loaded_locked"] is True
+
+
+def test_undo_rejects_history_entries_naming_state_files(repo: Path) -> None:
+    history = repo / cs.EDIT_HISTORY_FILENAME
+    history.write_bytes(
+        json.dumps(
+            [
+                {
+                    cs.EDIT_KEY_ID: "evil",
+                    cs.EDIT_KEY_AT: "now",
+                    cs.EDIT_KEY_FILES: [
+                        {
+                            cs.KEY_PATH: cs.EDIT_LOCK_FILENAME,
+                            cs.EDIT_KEY_BEFORE: "eA==",
+                            cs.EDIT_KEY_AFTER: None,
+                        }
+                    ],
+                    cs.EDIT_KEY_VERIFICATION: {
+                        cs.EDIT_KEY_OK: True,
+                        cs.EDIT_KEY_MESSAGE: "",
+                    },
+                }
+            ]
+        ).encode("utf-8")
+    )
+    with pytest.raises(TransactionError):
+        undo_last(repo)
+    assert len(load_history(repo)) == 1
