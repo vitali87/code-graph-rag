@@ -135,6 +135,13 @@ class TestReach(TypedDict):
     through: str
 
 
+class SiteCounts(TypedDict):
+    """CALLS sites into the touched files' definitions, before and after."""
+
+    before: int
+    after: int
+
+
 class SymbolDelta(TypedDict):
     added: list[str]
     removed: list[str]
@@ -154,6 +161,7 @@ class StructuralDelta(TypedDict):
     new_duplicates: list[NewDuplicate]
     new_import_cycles: list[list[str]]
     tests_reaching: list[TestReach]
+    call_sites: SiteCounts
     reingest_ms: float
     delta_ms: float
 
@@ -773,6 +781,15 @@ def _tests_reaching(
 # --- the delta ----------------------------------------------------------------
 
 
+def _inbound_calls(snap: Snapshot) -> int:
+    return sum(
+        1
+        for site in snap.sites
+        if site.rel == cs.RelationshipType.CALLS.value
+        and site.callee in snap.definitions
+    )
+
+
 def structural_delta(
     fetch_all: QueryFn,
     project_name: str,
@@ -806,6 +823,9 @@ def structural_delta(
         tests_reaching=_tests_reaching(fetch_all, project_name, touched)
         if touched
         else [],
+        call_sites=SiteCounts(
+            before=_inbound_calls(before), after=_inbound_calls(after)
+        ),
         reingest_ms=round(report.elapsed_ms, 1) if report else 0.0,
         delta_ms=round((time.perf_counter() - started) * 1000, 1),
     )

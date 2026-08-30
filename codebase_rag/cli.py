@@ -1172,6 +1172,14 @@ def rename_command(
 
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
     with ingestor:  # type: ignore[attr-defined]
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=ingestor,  # type: ignore[arg-type]
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
         try:
             report = rename(
                 repo_path.resolve(),
@@ -1181,6 +1189,7 @@ def rename_command(
                 new_name,
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
+                reingest=updater.reingest,
             )
         except RenameRefused as refused:
             typer.echo(str(refused), err=True)
