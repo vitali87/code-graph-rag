@@ -1,0 +1,173 @@
+name: Issue vetting
+
+# Agents implement an issue only if it is owner-authored or carries `ready`
+# (CLAUDE.md). Owner-authored issues never reach this workflow: the job-level
+# `if` skips them at evaluation, so no runner starts and nothing hits the
+# inference server. For everyone else, scripts/vet_issue.py screens the text
+# deterministically, the model on the self-hosted endpoint judges what passes,
+# and the verdict lands as exactly one of ready / needs-human / rejected plus
+# a comment. A non-owner edit or comment drops `ready` first and re-vets, so a
+# stale verdict never survives a change to the text it was given for.
+#
+# Every failure mode is closed: no endpoint, no answer, an unparseable answer,
+# low confidence, suspected injection all land on needs-human.
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  issue_comment:
+    types: [created, edited]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to vet
+        required: true
+        type: string
+  schedule:
+    # Daily sweep for external issues that missed their event.
+    - cron: "23 4 * * *"
+
+permissions: read-all
+
+concurrency:
+  group: issue-vetting-${{ github.event.issue.number || inputs.issue || 'sweep' }}
+  cancel-in-progress: true
+
+env:
+  VETTING_PROJECT: >-
+    Code Graph RAG, a Python tool that parses multi-language codebases with
+    tree-sitter into a Memgraph knowledge graph so an LLM can query,
+    understand, and edit them; also shipped as an MCP server.
+
+jobs:
+  vet:
+    name: Vet external issue
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        (github.event_name == 'issues' || github.event_name == 'issue_comment') &&
+        github.event.issue.pull_request == null &&
+        github.event.issue.author_association != 'OWNER' &&
+        !(github.event_name == 'issue_comment' && github.event.comment.author_association == 'OWNER') &&
+        github.event.sender.login != 'github-actions[bot]'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ISSUE: ${{ github.event.issue.number || inputs.issue }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Drop a stale verdict before re-vetting
+        if: github.event_name != 'issues' || github.event.action != 'opened'
+        run: gh issue edit "$ISSUE" --remove-label ready || true
+
+      - name: Fetch the issue, its comments, and the author
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE}" > issue.json
+          if [ "$(jq -r '.pull_request != null' issue.json)" = true ]; then
+            echo "#${ISSUE} is a pull request, nothing to vet"; exit 0
+          fi
+          if [ "$(jq -r .author_association issue.json)" = OWNER ]; then
+            echo "#${ISSUE} is owner-authored, nothing to vet"; exit 0
+          fi
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${ISSUE}/comments" --jq '.[]' | jq -s . > comments.json
+          gh api "users/$(jq -r .user.login issue.json)" > author.json
+          echo "vet=true" >> "$GITHUB_ENV"
+
+      - name: Deterministic screening
+        if: env.vet == 'true'
+        id: prepare
+        run: |
+          python3 scripts/vet_issue.py prepare \
+            --issue issue.json --comments comments.json --author author.json \
+            --project "$VETTING_PROJECT" \
+            --out-request request.json --out-decision decision.json | tee -a "$GITHUB_OUTPUT"
+
+      - name: Ask the screening model
+        if: env.vet == 'true' && steps.prepare.outputs.needs_model == 'true'
+        env:
+          INFERENCE_API_URL: ${{ secrets.INFERENCE_API_URL || secrets.HIGHLIGHTS_API_URL }}
+          INFERENCE_API_TOKEN: ${{ secrets.INFERENCE_API_TOKEN || secrets.HIGHLIGHTS_API_TOKEN }}
+          INFERENCE_RESOLVE: ${{ secrets.INFERENCE_RESOLVE || secrets.HIGHLIGHTS_RESOLVE }}
+        run: |
+          # A missing endpoint or a failed call leaves no response.json, which
+          # `decide` turns into needs-human. Never exit non-zero here: the
+          # verdict must still be written and applied.
+          if [ -z "$INFERENCE_API_URL" ]; then
+            echo "::warning::INFERENCE_API_URL is not set; the issue goes to needs-human"; exit 0
+          fi
+          RESOLVE_ARGS=()
+          [ -n "$INFERENCE_RESOLVE" ] && RESOLVE_ARGS=(--resolve "$INFERENCE_RESOLVE")
+          curl -sf --max-time 1500 "${RESOLVE_ARGS[@]}" \
+            -H "Authorization: Bearer ${INFERENCE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d @request.json \
+            "${INFERENCE_API_URL}/v1/chat/completions" > response.json \
+            || { echo "::warning::screening model call failed"; rm -f response.json; }
+
+      - name: Turn the answer into a verdict
+        if: env.vet == 'true' && steps.prepare.outputs.needs_model == 'true'
+        run: python3 scripts/vet_issue.py decide --response response.json --out-decision decision.json
+
+      - name: Apply the verdict
+        if: env.vet == 'true'
+        run: |
+          set -euo pipefail
+          status="$(jq -r .status decision.json)"
+          echo "verdict for #${ISSUE}: ${status} $(jq -c .flags decision.json)"
+          case "$status" in ready|needs-human|rejected) ;; *) echo "::error::unknown status ${status}"; exit 1 ;; esac
+
+          gh label create ready --color 0ede72 --force \
+            --description "Vetted (by the owner or the vetting workflow) and safe for an agent to implement" >/dev/null
+          gh label create needs-human --color fbca04 --force \
+            --description "Automated vetting could not accept this; waiting for the maintainer" >/dev/null
+          gh label create rejected --color 000000 --force \
+            --description "Automated vetting did not accept this for implementation" >/dev/null
+
+          for other in ready needs-human rejected; do
+            [ "$other" = "$status" ] || gh issue edit "$ISSUE" --remove-label "$other" >/dev/null 2>&1 || true
+          done
+          gh issue edit "$ISSUE" --add-label "$status" >/dev/null
+
+          # One vetting comment per issue, edited in place on every re-vet.
+          jq -r .comment decision.json > comment.md
+          existing="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${ISSUE}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- issue-vetting -->"))) | .id' | head -n1)"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -F body=@comment.md >/dev/null
+          else
+            gh issue comment "$ISSUE" --body-file comment.md >/dev/null
+          fi
+
+  sweep:
+    name: Dispatch a vet for unvetted external issues
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      issues: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Find open external issues with no verdict and dispatch each
+        run: |
+          set -euo pipefail
+          gh issue list --state open --limit 500 --json number,author,labels \
+            --jq --arg owner "$GITHUB_REPOSITORY_OWNER" '
+              .[] | select(.author.login != $owner)
+                  | select(any(.labels[].name; . == "ready" or . == "needs-human" or . == "rejected") | not)
+                  | .number' \
+          | while read -r n; do
+              echo "dispatching vet for #${n}"
+              gh workflow run issue-vetting.yml -f issue="$n"
+            done
