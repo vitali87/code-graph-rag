@@ -91,7 +91,11 @@ def test_incremental_add_of_cross_language_sibling_does_not_collide(
     assert len(set(modules.values())) == 2, (
         f"cross-language module qn collision on incremental add: {modules}"
     )
-    assert modules["shapes.rs"] == "proj.shapes", modules
+    # Which sibling holds the bare qn follows the clean rule (walk order),
+    # not index history: a clean index of the final tree agrees (issue #1569).
+    clean = _StatefulIngestor()
+    _index(clean, temp_repo, force=True)
+    assert modules == _shapes_modules(clean)
 
 
 @pytest.mark.usefixtures("_needs_rust_cpp")

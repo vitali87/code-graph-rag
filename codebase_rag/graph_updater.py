@@ -280,6 +280,11 @@ def _save_parser_fingerprint(stamp_path: Path, fingerprint: str) -> None:
         logger.warning(ls.PARSER_FINGERPRINT_SAVE_FAILED, path=stamp_path, error=e)
 
 
+def _stem_key(file_key: str) -> str:
+    """The relative path without its extension: what same-stem siblings share."""
+    return Path(file_key).with_suffix("").as_posix()
+
+
 def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
     if not cache_path.is_file():
         return {}
@@ -1666,7 +1671,11 @@ class GraphUpdater:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
 
-    def _seed_module_qns_from_graph(self, eligible_paths: set[str]) -> None:
+    def _seed_module_qns_from_graph(
+        self,
+        eligible_paths: set[str],
+        flux_stems: frozenset[str] | set[str] = frozenset(),
+    ) -> None:
         # Cross-language module-qn disambiguation (definition_processor.
         # _disambiguate_module_qn) only sees files processed this run. On an
         # incremental ADD of a file whose basename collides with an already-
@@ -1693,6 +1702,9 @@ class GraphUpdater:
             # eligible_paths, so a same-basename ADD (delete shapes.rs + add
             # shapes.cpp) takes the bare qn a clean index would give it.
             if path not in eligible_paths:
+                continue
+            # A survivor of a stem in flux re-parses unseeded (issue #1569).
+            if _stem_key(path) in flux_stems:
                 continue
             module_map.setdefault(qn, self.repo_path / path)
 
@@ -2528,8 +2540,22 @@ class GraphUpdater:
 
         eligible_files = self._collect_eligible_files()
 
+        # Stems with a same-stem sibling added or deleted this run: their
+        # survivors are not seeded and re-parse below, so the bare qn goes to
+        # whichever file the clean rule (first in walk order) gives it,
+        # rather than to whichever file was indexed first (issue #1569).
+        eligible_keys = {key for _fp, key in eligible_files}
+        flux_stems = (
+            set()
+            if is_full_build
+            else {
+                _stem_key(key)
+                for key in (eligible_keys - old_hashes.keys())
+                | (old_hashes.keys() - eligible_keys)
+            }
+        )
         if not is_full_build:
-            self._seed_module_qns_from_graph({key for _fp, key in eligible_files})
+            self._seed_module_qns_from_graph(eligible_keys, flux_stems)
         # A full build can still land on a graph that already holds this
         # project: the cache lives in the repo working tree, the graph does
         # not, so a fresh clone of an indexed repo (or a force run) parses
@@ -2673,7 +2699,8 @@ class GraphUpdater:
         siblings = {
             key
             for key in eligible_by_key
-            if flipped_dirs and Path(key).parent.as_posix() in flipped_dirs
+            if (flipped_dirs and Path(key).parent.as_posix() in flipped_dirs)
+            or (flux_stems and _stem_key(key) in flux_stems)
         }
         affected = 0
         for caller_key in sorted(
@@ -2702,10 +2729,34 @@ class GraphUpdater:
             reindexed_keys = sorted(
                 file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
             )
-        captured_inbound = self._capture_inbound_edges(reindexed_keys)
+        # Pass 2 order decides which same-stem file claims the bare module
+        # qn; a clean build processes files in walk order, so the re-parse
+        # set follows it too instead of the order the dependents were found.
+        eligible_order = {key: i for i, (_fp, key) in enumerate(eligible_files)}
+        changed_entries.sort(key=lambda entry: eligible_order.get(entry[1], -1))
+        # A caller that lives in a DELETED file must not be restored: its
+        # module is gone, and if a surviving same-stem sibling has just taken
+        # over its qn the restore would hang the dead file's edge on the
+        # survivor (issue #1569).
+        deleted_set = set(deleted_before_parse)
+        captured_inbound = [
+            row
+            for row in self._capture_inbound_edges(reindexed_keys)
+            if row.get(cs.KEY_CALLER_PATH) not in deleted_set
+        ]
         self._reparsed_file_keys = {
             file_key for _fp, file_key, _new, _b in changed_entries
         }
+
+        # Every old subtree goes BEFORE any file of this run is parsed, not
+        # one by one as each file is reached: a same-stem sibling parsed
+        # earlier claims the survivor's old module qn, the MERGE lands on the
+        # old node and rewrites its path, and the per-file delete by path
+        # then finds nothing, leaving the old definitions beside the new
+        # ones (issue #1569). The per-file delete below stays as a no-op
+        # guard for the cacheless full build.
+        for stale_key in (*reindexed_keys, *deleted_before_parse):
+            self._delete_module_entities(stale_key)
 
         pre_parsed = self._pre_parse_changed_files(changed_entries)
 
