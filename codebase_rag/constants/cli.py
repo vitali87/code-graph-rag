@@ -494,6 +494,23 @@ PATCH_NOT_AN_IDENTIFIER = "{path}:{line}:{col} is not a whole identifier"
 PATCH_PARSE_FAILED = "{path} no longer parses after the patch"
 PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
 PATCH_OK = "{path}: {count} edit(s) applied"
+# Edit transactions (issue #1528).
+EDIT_NOT_A_FILE = "Staged path is not a regular file: {path}"
+EDIT_RESERVED_PATH = "Path is cgr state, not part of the tree: {path}"
+EDIT_TRANSACTION_FINISHED = "This transaction has already been committed or rolled back"
+EDIT_CONFLICT = "File changed since it was staged; transaction refused: {path}"
+EDIT_NOTHING_STAGED = "Nothing staged; the working tree is untouched"
+EDIT_VERIFICATION_FAILED = (
+    "Verification failed; the working tree is untouched: {reason}"
+)
+EDIT_VERIFIER_RAISED = "verifier raised {error!r}"
+EDIT_VERIFIER_FALSE = "verifier returned False"
+EDIT_APPLIED = "Applied {count} file(s)"
+EDIT_UNDO_NONE = "No recorded edit transactions to undo"
+EDIT_UNDO_DONE = "Undid transaction {tx} ({count} file(s))"
+EDIT_UNDO_STOPPED = "Stopped at transaction {tx}: {reason}"
+EDIT_SHOW_NONE = "No recorded edit transactions"
+EDIT_SHOW_HEADER = "{tx}  {at}  {count} file(s)  verification={ok}"
 MSG_SURGICAL_FAILED = (
     "Failed to apply surgical replacement in {path}. "
     "Target code not found or patches failed."

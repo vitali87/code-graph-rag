@@ -266,6 +266,9 @@ DEBOUNCE_MAX_WAIT_ADJUSTED = (
 )
 DELETION_QUERY = "Ran deletion query for path: {path}"
 RECALC_CALLS = "Recalculating all function call relationships for consistency..."
+EDIT_TX_REJECTED = "Edit transaction {tx} rejected by verification: {why}"
+EDIT_TX_APPLIED = "Edit transaction {tx} applied {count} file(s)"
+EDIT_TX_RESTORE_FAILED = "Edit transaction could not restore {path}: {error}"
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
