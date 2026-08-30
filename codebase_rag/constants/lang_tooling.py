@@ -150,6 +150,18 @@ LANG_TABLE_PLACEHOLDER = "—"
 
 LANG_MSG_AVAILABLE_NODES = "Available nodes for mapping:"
 LANG_ELLIPSIS = "..."
+# Span-preserving patchers (issue #1529): formatter checks and the identifier
+# node types a rename may target beyond the shared `identifier` family.
+PATCH_GOFMT = "gofmt"
+PATCH_GOFMT_LIST_FLAG = "-l"
+PATCH_RUSTFMT = "rustfmt"
+PATCH_RUSTFMT_CHECK_FLAG = "--check"
+PATCH_RUSTFMT_EDITION_FLAG = "--edition"
+PATCH_RUSTFMT_EDITION = "2021"
+PATCH_FORMATTER_TIMEOUT_S = 60
+PATCH_TS_FIELD_IDENTIFIER = "field_identifier"
+PATCH_TS_NAMESPACE_IDENTIFIER = "namespace_identifier"
+PATCH_TS_STATEMENT_IDENTIFIER = "statement_identifier"
 LANG_GIT_SUFFIX = ".git"
 LANG_GITMODULES_FILE = ".gitmodules"
 LANG_CALL_KEYWORD_EXCLUDE = "call"
