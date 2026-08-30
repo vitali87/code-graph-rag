@@ -816,13 +816,22 @@ class MCPToolsRegistry:
     ) -> ReingestToolResult:
         updater = self._live_updater
         if updater is None:
+            # A scoped re-ingest completes a graph; it cannot stand in for
+            # the first index. After delete_project or wipe_database the
+            # project is gone, and hydrating from nothing would leave every
+            # unrelated definition missing.
+            project_name = derive_project_name(Path(self.project_root))
+            if project_name not in self.ingestor.list_projects():
+                raise ValueError(
+                    cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
+                )
             self.ingestor.ensure_constraints()
             updater = GraphUpdater(
                 ingestor=self.ingestor,
                 repo_path=Path(self.project_root),
                 parsers=self.parsers,
                 queries=self.queries,
-                project_name=derive_project_name(Path(self.project_root)),
+                project_name=project_name,
             )
             self._live_updater = updater
         report = updater.reingest(paths, deleted=deleted)

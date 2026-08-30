@@ -2748,7 +2748,6 @@ class GraphUpdater:
         # a fresh updater must compute them too or a Lombok class re-parses
         # without its generated members.
         self.factory.structure_processor.identify_structure()
-        self._register_generated_sources()
         self._rehydrate_registry_from_graph()
         self._rehydrate_function_locations()
         self._reingest_hydrated = True
@@ -2813,6 +2812,14 @@ class GraphUpdater:
             return ReingestReport((), (), (), 0.0)
 
         self._hydrate_for_reingest()
+        # Generated-source roots and the delombok overlay are per-run inputs;
+        # a watcher's updater lives across many events, so refresh them per
+        # call and pull any file whose overlay changed into the re-parse set
+        # (the batch path does the same through _delombok_stale_keys).
+        self._register_generated_sources()
+        stale_overlay = {
+            key for key in self._delombok_stale_keys if (self.repo_path / key).is_file()
+        }
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         hashes = _load_hash_cache(cache_path)
 
@@ -2824,6 +2831,8 @@ class GraphUpdater:
             caller_path = self.repo_path / caller_key
             if caller_path.is_file():
                 affected[caller_key] = caller_path
+        for key in stale_overlay - set(present) - set(gone):
+            affected[key] = self.repo_path / key
         all_keys = sorted({*keys, *affected})
         captured = self._capture_inbound_edges(all_keys)
         self._reparsed_file_keys = set(all_keys)
