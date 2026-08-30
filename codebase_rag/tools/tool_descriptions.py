@@ -269,6 +269,26 @@ MCP_MOVE = (
     "an import cycle, naming the cycle. One transaction, held to the "
     "postcondition contract; set `dry_run` to see the plan."
 )
+MCP_EXTRACT = (
+    "Extract a run of whole statements (lines `start_line` to `end_line`, "
+    "inclusive) inside a function or method into a new function named "
+    "`new_name`, placed right after it. Names the span reads from the "
+    "enclosing scope become parameters; names it binds that the rest of the "
+    "function still reads are returned; the span becomes a call. A span that "
+    "leaves the function early (return, break, continue, yield) or cuts "
+    "through a statement is refused. One transaction, held to the "
+    "postcondition contract; set `dry_run` to see the plan."
+)
+MCP_INLINE = (
+    "Inline a single-return function or method at every call site the graph "
+    "knows, binding arguments to parameters (defaults included), and delete "
+    "the definition and the imports that bound its name once no caller "
+    "remains. Refused when any caller was resolved by guesswork or only by a "
+    "trace. One transaction, held to the postcondition contract; set "
+    "`dry_run` to see the plan."
+)
+MCP_PARAM_START_LINE = "First line of the span to extract (1-based, inclusive)."
+MCP_PARAM_END_LINE = "Last line of the span to extract (1-based, inclusive)."
 MCP_PARAM_TARGET_MODULE = (
     "Destination module: a dotted module name (`pkg.core`) or a repo-relative path."
 )
@@ -462,6 +482,8 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.RENAME: MCP_RENAME,
     MCPToolName.CHANGE_SIGNATURE: MCP_CHANGE_SIGNATURE,
     MCPToolName.MOVE: MCP_MOVE,
+    MCPToolName.EXTRACT: MCP_EXTRACT,
+    MCPToolName.INLINE: MCP_INLINE,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,

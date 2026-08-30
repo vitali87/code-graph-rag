@@ -10,6 +10,14 @@ from .contract import (
     rename_expectation,
     verify,
 )
+from .extract import (
+    ExtractRefused,
+    ExtractReport,
+    InlineRefused,
+    InlineReport,
+    extract,
+    inline,
+)
 from .imports import ImportRewriter, ImportSite, Rewrite, RewriteError, SymbolMove
 from .move import MoveRefused, MoveReport, move
 from .patcher import (
@@ -43,6 +51,12 @@ from .transaction import (
 
 __all__ = [
     "Expectation",
+    "ExtractRefused",
+    "ExtractReport",
+    "InlineRefused",
+    "InlineReport",
+    "extract",
+    "inline",
     "MoveRefused",
     "MoveReport",
     "move",

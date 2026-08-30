@@ -1266,6 +1266,114 @@ def move_command(
         raise typer.Exit(code=1)
 
 
+def _edit_context(
+    project: str | None, repo_path: Path
+) -> tuple[str, object, object, GraphUpdater]:
+    from .graph_cli import _project_and_fetch
+
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=ingestor,  # type: ignore[arg-type]
+        repo_path=repo_path.resolve(),
+        parsers=parsers,
+        queries=queries,
+        project_name=name,
+    )
+    return name, fetch_all, ingestor, updater
+
+
+def _emit_report(report: object, dry_run: bool) -> None:
+    payload = dict(report._asdict())  # type: ignore[attr-defined]
+    verdict = payload.get(cs.KEY_VERDICT)
+    if verdict is not None:
+        payload[cs.KEY_VERDICT] = verdict._asdict()
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if not payload.get("applied") and not dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.command(
+    name=ch.CLICommandName.EXTRACT,
+    help=ch.CMD_EXTRACT,
+    short_help=ch.CMD_EXTRACT,
+    epilog=ch.EXAMPLES_EXTRACT,
+    rich_help_panel=ch.PANEL_USE,
+)
+def extract_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_RENAME_QN),
+    start_line: int = typer.Argument(..., min=1, help=ch.HELP_EXTRACT_START),
+    end_line: int = typer.Argument(..., min=1, help=ch.HELP_EXTRACT_END),
+    new_name: str = typer.Argument(..., help=ch.HELP_EXTRACT_NEW_NAME),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
+) -> None:
+    from .editing.extract import ExtractRefused, extract
+
+    name, fetch_all, ingestor, updater = _edit_context(project, repo_path)
+    with ingestor:  # type: ignore[attr-defined]
+        try:
+            report = extract(
+                repo_path.resolve(),
+                fetch_all,  # type: ignore[arg-type]
+                name,
+                qualified_name,
+                (start_line, end_line),
+                new_name,
+                dry_run=dry_run,
+                reingest=updater.reingest,
+            )
+        except ExtractRefused as refused:
+            typer.echo(str(refused), err=True)
+            raise typer.Exit(code=1) from refused
+    _emit_report(report, dry_run)
+
+
+@app.command(
+    name=ch.CLICommandName.INLINE,
+    help=ch.CMD_INLINE,
+    short_help=ch.CMD_INLINE,
+    epilog=ch.EXAMPLES_INLINE,
+    rich_help_panel=ch.PANEL_USE,
+)
+def inline_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_RENAME_QN),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
+) -> None:
+    from .editing.extract import InlineRefused, inline
+
+    name, fetch_all, ingestor, updater = _edit_context(project, repo_path)
+    with ingestor:  # type: ignore[attr-defined]
+        try:
+            report = inline(
+                repo_path.resolve(),
+                fetch_all,  # type: ignore[arg-type]
+                name,
+                qualified_name,
+                dry_run=dry_run,
+                reingest=updater.reingest,
+            )
+        except InlineRefused as refused:
+            typer.echo(str(refused), err=True)
+            raise typer.Exit(code=1) from refused
+    _emit_report(report, dry_run)
+
+
 @app.command(
     name=ch.CLICommandName.CHANGE_SIGNATURE,
     help=ch.CMD_CHANGE_SIGNATURE,
