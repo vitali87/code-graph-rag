@@ -80,7 +80,8 @@ def test_incremental_reparse_registers_out_of_class_method_once(
     # file re-parses; the others are rehydration-only.
     _touch_after_cache(root / edited, root)
     _index(store, root, force=False)
-    nodes, edges = _snapshot(store)
+    after = _snapshot(store)
+    nodes, edges = after
 
     methods = {
         qn
@@ -103,4 +104,4 @@ def test_incremental_reparse_registers_out_of_class_method_once(
         and e[3] == cs.NodeLabel.METHOD.value
     }
     assert module_defines_method == set()
-    assert (nodes, edges) == clean
+    assert after == clean

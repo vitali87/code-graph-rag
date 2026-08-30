@@ -17,6 +17,7 @@ class CLICommandName(StrEnum):
     DAEMON = "daemon"
     WORKSPACE = "workspace"
     TRACE = "trace"
+    EDITS = "edits"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -72,6 +73,26 @@ CMD_WORKSPACE_REMOVE_REPO = "Remove a repository from a workspace by path"
 
 CMD_TRACE = "Ingest runtime call traces as dynamic CALLS edges"
 CMD_TRACE_GROUP = CMD_TRACE
+CMD_EDITS = (
+    "Show or undo recorded edit transactions (multi-file edits applied through cgr)."
+)
+CMD_EDITS_GROUP = CMD_EDITS
+CMD_EDITS_SHOW = (
+    "List the last N recorded edit transactions, newest first, with their diffs."
+)
+CMD_EDITS_UNDO = "Reverse the last N recorded edit transactions, newest first; stops at the first file that changed since."
+EPILOG_EDITS = "Run 'cgr help edits COMMAND' for command-specific help."
+EXAMPLES_EDITS_SHOW = (
+    "Examples:\n  cgr edits show\n  cgr edits show -n 5 --repo-path ~/proj"
+)
+EXAMPLES_EDITS_UNDO = (
+    "Examples:\n  cgr edits undo\n  cgr edits undo -n 2 --repo-path ~/proj"
+)
+HELP_EDITS_COUNT = "How many transactions to show or undo."
+HELP_EDITS_REPO_PATH = (
+    "Repository root holding .cgr-edit-history.json (default: current directory)."
+)
+HELP_EDITS_DIFF = "Print each transaction's unified diff."
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -385,6 +406,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DAEMON: CMD_DAEMON,
     CLICommandName.TRACE: CMD_TRACE,
+    CLICommandName.EDITS: CMD_EDITS,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,

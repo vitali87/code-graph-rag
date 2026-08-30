@@ -1,5 +1,7 @@
-"""Graph-aware editing primitives: span-preserving patchers (issue #1529)."""
+"""Graph-aware editing primitives: span-preserving patchers (issue #1529),
+transactions (issue #1528) and import rewriting (issue #1530)."""
 
+from .imports import ImportRewriter, ImportSite, Rewrite, RewriteError, SymbolMove
 from .patcher import (
     Patcher,
     PatcherError,
@@ -10,14 +12,39 @@ from .patcher import (
     formatter_check,
     line_col_to_byte,
 )
+from .transaction import (
+    EditTransaction,
+    StagedFile,
+    StagedTree,
+    TransactionConflict,
+    TransactionError,
+    TransactionOutcome,
+    VerificationResult,
+    transaction,
+    undo_last,
+)
 
 __all__ = [
+    "EditTransaction",
+    "ImportRewriter",
+    "ImportSite",
     "PatchResult",
     "Patcher",
     "PatcherError",
+    "Rewrite",
+    "RewriteError",
     "SpanEdit",
+    "StagedFile",
+    "StagedTree",
+    "SymbolMove",
+    "TransactionConflict",
+    "TransactionError",
+    "TransactionOutcome",
+    "VerificationResult",
     "apply_span_edits",
     "byte_to_line_col",
     "formatter_check",
     "line_col_to_byte",
+    "transaction",
+    "undo_last",
 ]
