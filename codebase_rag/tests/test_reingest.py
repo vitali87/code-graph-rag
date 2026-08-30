@@ -534,8 +534,14 @@ def test_cpp_reingest_keeps_deferred_relationships(
     updater = _updater(store, root)
     updater.run(force=True)
     before = _snapshot(store)
-    inherits = {e for e in before[1] if e[2] == cs.RelationshipType.INHERITS.value}
-    assert inherits, "fixture must produce an INHERITS edge to protect"
+    present = {e[2] for e in before[1]}
+    for rel in (
+        cs.RelationshipType.INHERITS,
+        cs.RelationshipType.IMPORTS,
+        cs.RelationshipType.DEFINES_METHOD,
+        cs.RelationshipType.OVERRIDES,
+    ):
+        assert rel.value in present, f"fixture must produce a {rel.value} edge"
 
     path = root / edited
     path.write_text(path.read_text() + "// touched\n", encoding="utf-8")

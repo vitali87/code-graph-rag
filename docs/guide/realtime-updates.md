@@ -64,8 +64,9 @@ runs `GraphUpdater.reingest`, which deletes what the file previously
 contributed, re-parses it together with the files that import or call into it
 (one level deep, found through the graph's own edges), resolves calls within
 that set only, and restores every other inbound edge verbatim. A change in one
-file therefore costs the parse of a handful of files rather than a re-resolution
-of the project; see [Scoped re-ingest latency](../reports/REINGEST_BENCHMARK.md)
+file therefore costs the parse of its affected dependents rather than a
+re-resolution of the project (a hub file imported by dozens still pays for each
+of them); see [Scoped re-ingest latency](../reports/REINGEST_BENCHMARK.md)
 for measured numbers.
 
 Agents that edit files directly can call the MCP `reingest` tool with the paths
