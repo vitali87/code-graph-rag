@@ -374,6 +374,10 @@ HELP_DEADCODE_CLASSES = (
 )
 HELP_DEADCODE_FORMAT = "Report format: table or json."
 HELP_DEADCODE_OUTPUT = "Write the report to this file instead of stdout."
+HELP_DEADCODE_MIN_RESOLUTION = (
+    "Ignore call edges below this confidence when deciding liveness: "
+    "heuristic < overload < exact < trace_confirmed (dynamic counts as confirmed)."
+)
 HELP_DEADCODE_FAIL_ON_FOUND = (
     "Exit with status 1 when any candidate is found. Useful in CI."
 )

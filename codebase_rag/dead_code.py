@@ -38,6 +38,19 @@ _NodeId = tuple[str, PropertyValue]
 _RelTuple = tuple[str, PropertyValue, str, str, PropertyValue]
 
 
+def resolution_at_least(resolution: ResultValue | None, minimum: str | None) -> bool:
+    """Whether an edge's confidence meets `--min-resolution` (issue #1526).
+
+    An edge without the label predates the label (or was emitted by a pass
+    that binds exactly) and ranks as exact; an unknown label never passes.
+    """
+    if minimum is None:
+        return True
+    floor = cs.RESOLUTION_RANK.get(minimum, 0)
+    label = str(resolution) if isinstance(resolution, str) else cs.EdgeResolution.EXACT
+    return cs.RESOLUTION_RANK.get(label, 0) >= floor
+
+
 def default_dead_code_config(
     include_tests: bool,
     include_classes: bool,
@@ -890,6 +903,7 @@ def collect_dead_code_with_coverage(
             str(row.get(cs.KEY_TO_QN) or ""),
         )
         for row in ingestor.fetch_all(cq.CYPHER_DEAD_CODE_RELS, params)
+        if resolution_at_least(row.get(cs.KEY_RESOLUTION), config.min_resolution)
     ]
 
     dead = dead_code_from_graph(nodes, rels, prefix, config)

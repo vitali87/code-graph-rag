@@ -613,6 +613,7 @@ def test_call_site_cache_is_not_keyed_by_recycled_node_ids() -> None:
     cp.ingestor = ingestor
     cp._site_node = None
     cp._site_cache = None
+    cp._resolution = cs.EdgeResolution.EXACT
 
     src_a = "f(1)\n"
     src_b = "g(1, 2, k=3)\n"
