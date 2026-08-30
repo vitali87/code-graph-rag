@@ -38,7 +38,10 @@ from codebase_rag.tools.duplicate_detection import create_find_duplicates_tool
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
-from codebase_rag.tools.semantic_search import create_get_function_source_tool
+from codebase_rag.tools.semantic_search import (
+    create_get_function_source_tool,
+    semantic_code_search,
+)
 from codebase_rag.tools.shell_command import ShellCommander, create_shell_command_tool
 from codebase_rag.tools.structural_editor import create_structural_editor_tool
 from codebase_rag.tools.structural_search import create_structural_search_tool
@@ -57,6 +60,7 @@ from codebase_rag.types_defs import (
     QueryResultDict,
     ReingestReport,
     ReingestToolResult,
+    SemanticSearchResult,
     StructuralReplaceChange,
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
@@ -309,6 +313,7 @@ class MCPToolsRegistry:
             cs.MCPToolName.MOVE: self._move_tool(),
             cs.MCPToolName.EXTRACT: self._extract_tool(),
             cs.MCPToolName.INLINE: self._inline_tool(),
+            cs.MCPToolName.CONTEXT: self._context_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
                 description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
@@ -1571,6 +1576,61 @@ class MCPToolsRegistry:
         if verdict is not None:
             payload[cs.KEY_VERDICT] = verdict._asdict()
         return payload
+
+    def _context_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.CONTEXT,
+            description=td.MCP_TOOLS[cs.MCPToolName.CONTEXT],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.TARGET: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_CONTEXT_TARGET
+                    ),
+                    cs.MCPParamName.BUDGET_TOKENS: prop(
+                        cs.MCPSchemaType.INTEGER, td.MCP_PARAM_BUDGET_TOKENS
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[cs.MCPParamName.TARGET],
+            ),
+            handler=self.context,
+            returns_json=True,
+        )
+
+    async def context(
+        self,
+        target: str,
+        budget_tokens: int = cs.CONTEXT_DEFAULT_BUDGET,
+        project: str | None = None,
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.CONTEXT,
+            project,
+            lambda name: self._run_context(name, target, budget_tokens, project),
+        )
+
+    def _run_context(
+        self, project_name: str, target: str, budget_tokens: int, project: str | None
+    ) -> object:
+        from codebase_rag.context_slice import context as build_context
+
+        def search(text: str) -> list[SemanticSearchResult]:
+            return semantic_code_search(self.ingestor, text, project=project)
+
+        return build_context(
+            self.ingestor.fetch_all,
+            project_name,
+            target,
+            budget_tokens,
+            Path(self.project_root),
+            search=search if self._semantic_search_tool is not None else None,
+        )
 
     def _reingest_for_contract(self) -> Callable[[list[str]], ReingestReport] | None:
         """The live updater's re-ingest for an edit's postcondition contract.
