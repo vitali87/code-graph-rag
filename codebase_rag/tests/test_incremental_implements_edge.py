@@ -115,6 +115,28 @@ def test_incremental_reindex_of_an_interface_keeps_its_implementors(
     assert after == clean
 
 
+def test_production_queries_walk_implements() -> None:
+    # The shipped fix for #1565 is two relation lists in constants/graph.py.
+    # The language tests below run against the eval emulator, which filters by
+    # its own frozensets, so they stay green even if these queries are gutted.
+    # This is the only assertion that fails if the production fix is reverted.
+    assert "IMPLEMENTS" in cs.CYPHER_INBOUND_EDGES
+    assert "IMPLEMENTS" in cs.CYPHER_AFFECTED_CALLER_PATHS
+
+
+def test_emulator_affected_caller_rels_match_the_production_query() -> None:
+    # Sibling guard to the inbound one: the affected-caller set drifts just as
+    # silently, which is the same defect class one level over.
+    import re
+
+    from evals.cgr_graph import _AFFECTED_CALLER_RELS
+
+    match = re.search(r"\[:([A-Z|_]+)\]", cs.CYPHER_AFFECTED_CALLER_PATHS)
+    assert match is not None, "could not read the relation list from the query"
+    production = set(match.group(1).split("|"))
+    assert set(_AFFECTED_CALLER_RELS) == production
+
+
 def test_emulator_inbound_rels_match_the_production_query() -> None:
     # The emulator restores inbound edges for the relations production
     # captures; a set that drifts from CYPHER_INBOUND_EDGES makes every
