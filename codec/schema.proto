@@ -163,6 +163,9 @@ message GraphCodeIndex {
       LINKS_TO = 25;
       REFERENCES = 26;
       RESOLVES_TO = 27;
+      // Function/Method -> the project type its annotation names (#1527).
+      RETURNS = 28;
+      ACCEPTS = 29;
     }
 
     RelationshipType type = 1;

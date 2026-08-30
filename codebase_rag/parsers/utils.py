@@ -1221,6 +1221,7 @@ def ingest_method(
     annotated_override_sink: dict[str, list[tuple[str, str]]] | None = None,
     skip_cpp_artifact_check: bool = False,
     pending_endpoints: list | None = None,
+    type_fact_sink: list | None = None,
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
     # @line dedup suffix) so a caller can wire further edges to the exact node,
@@ -1327,6 +1328,14 @@ def ingest_method(
         method_props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
             method_node
         )
+    # Local import: type_facts imports this module for safe_decode_with_fallback.
+    from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
+
+    type_facts = extract_type_facts(method_node, language)
+    method_props.update(type_facts_props(type_facts))
+    queue_type_facts(
+        type_fact_sink, cs.NodeLabel.METHOD, method_qn, module_qn, type_facts
+    )
     method_props.update(fingerprint_props(method_node))
 
     # Persist @property status on the node so an incremental rebuild can restore

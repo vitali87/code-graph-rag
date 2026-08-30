@@ -58,11 +58,15 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "modifiers",
             "name_start_col",
             "name_start_line",
+            "param_types",
             "path",
             "positional_params",
+            "return_type",
             "start_col",
         }
     ),
+    # `return_type` and `param_types` (issue #1527) join
+    # `positional_params` under the same #1490 caveat: a proto field each.
     "Method": frozenset(
         {
             "absolute_path",
@@ -72,8 +76,10 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "name_start_col",
             "name_start_line",
             "overrides_external",
+            "param_types",
             "path",
             "positional_params",
+            "return_type",
             "start_col",
         }
     ),
