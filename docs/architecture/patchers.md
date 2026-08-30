@@ -50,3 +50,31 @@ Tree-sitter grammars cover Python, TypeScript/JavaScript, Go, Java, Rust,
 C#, C/C++, PHP, Lua, Scala and Dart for the identifier check and the
 post-patch parse; Go and Rust add the formatter check. Files with no grammar
 take the generic byte-span path: bytes are verified, the tree is not.
+
+## Import rewriting for rename and move
+
+`codebase_rag.editing.ImportRewriter` (issue #1530) turns the `IMPORTS` edge
+sites (file, statement span, bound alias, imported symbol) into span edits
+on the patcher. Given a `SymbolMove(symbol, old_module, new_module,
+new_name=None, new_module_path=None)` and the sites the graph reports for
+the old module, `retarget(sites, move)` rewrites each importing statement
+once:
+
+- the moved symbol's entry is retargeted to the new module and, when the
+  statement imported several names, split off into its own statement so
+  the others stay where they were;
+- an alias is kept, and a renamed symbol keeps its local name through an
+  alias (`from a import new as old`, `{ new as old }`, `use a::new as old`),
+  so use sites and barrel consumers stay valid until a rename touches them;
+- a whole-module import (`import a.b as x`, `import * as ns from './a'`,
+  `u "mod/pkg"`) is retargeted when the module itself moved
+  (`symbol == old_module`);
+- JS/TS specifiers are recomputed relative to the importing file from
+  `new_module_path`.
+
+Languages: Python (`import`, `from ... import`, parenthesised lists, `__all__`
+entries via `rename_in_all`), TypeScript/JavaScript (named, default,
+namespace, `require`, barrel `export { x } from`), Java (`import a.b.C;`),
+Rust (`use a::b::c`, `use a::b::{c as d, e}`, `pub use`), Go (import path
+strings, grouped specs). Statements that do not import the symbol from the
+old module are reported in `untouched` rather than guessed at.
