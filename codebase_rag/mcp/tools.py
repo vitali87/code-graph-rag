@@ -708,6 +708,9 @@ class MCPToolsRegistry:
             )
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
+        # The retained reingest updater holds definitions of the graph that
+        # was just removed; the next reingest must start from the store.
+        self._live_updater = None
         return DeleteProjectSuccessResult(
             success=True,
             project=project_name,
@@ -731,6 +734,9 @@ class MCPToolsRegistry:
             async with self._ingestor_lock:
                 await asyncio.to_thread(self.ingestor.clean_database)
                 await asyncio.to_thread(clear_all_embeddings)
+                # The retained reingest updater holds definitions of the
+                # graph just wiped; the next reingest starts from the store.
+                self._live_updater = None
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
