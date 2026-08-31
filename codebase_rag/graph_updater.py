@@ -2828,7 +2828,17 @@ class GraphUpdater:
                     ):
                         legacy_file_keys.append((path, abs_path))
                     continue
-                if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
+                # The root directory's own node is qualified as exactly the
+                # project name, with no dot: testing only the dotted prefix
+                # dropped it here and let a stale root Package survive beside
+                # the Folder that replaced it. `_package_paths` reads these
+                # same rows and admits both forms; the two must agree.
+                if (
+                    isinstance(qn, str)
+                    and qn
+                    and qn != self.project_name
+                    and not qn.startswith(project_prefix)
+                ):
                     continue
                 stale_kind = (label == "Folder" and path in packages_now) or (
                     label == "Package" and path not in packages_now

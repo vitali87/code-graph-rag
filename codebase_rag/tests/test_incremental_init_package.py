@@ -120,3 +120,37 @@ def test_adding_init_py_turns_the_folder_into_a_package(temp_repo: Path) -> None
     }
     assert contains == {"proj.pkg", "proj.pkg.base", "proj.pkg.derived"}
     assert after == clean
+
+
+# The root directory's own __init__.py makes the repo root a Package whose
+# qualified name is exactly the project name, with no dot and no suffix. The
+# prune filter admitted a row only when its qn started with `project_name + "."`,
+# so the root Package failed that test and took the `continue` before ever
+# reaching the stale-kind check, surviving beside the Folder that replaced it.
+ROOT_INIT = "__init__.py"
+ROOT_FIXTURE: dict[str, str] = {ROOT_INIT: "", **FIXTURE}
+
+
+def test_deleting_the_root_init_py_prunes_the_root_package(temp_repo: Path) -> None:
+    root = temp_repo / "proj"
+    _materialise(root, ROOT_FIXTURE)
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    # The root is a Package while its __init__.py exists: without this the
+    # deletion below could pass by never having created the node at all.
+    assert (cs.NodeLabel.PACKAGE.value, "proj") in _snapshot(store, root)[0]
+
+    (root / ROOT_INIT).unlink()
+    _index(store, root, force=False)
+    after = _snapshot(store, root)
+
+    without_root_init = {
+        rel: text for rel, text in ROOT_FIXTURE.items() if rel != ROOT_INIT
+    }
+    clean = _clean(temp_repo, "clean", without_root_init)
+    # The repo root carries no Folder node in either path (a clean index of the
+    # same tree emits only Package proj.pkg), so the stale root Package is
+    # removed rather than replaced. Assert its absence directly, and let the
+    # parity check below cover everything the deletion should have left alone.
+    assert (cs.NodeLabel.PACKAGE.value, "proj") not in after[0]
+    assert after == clean
