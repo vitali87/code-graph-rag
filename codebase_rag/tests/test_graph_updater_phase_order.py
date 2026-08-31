@@ -343,6 +343,14 @@ def test_every_pinned_dependency_is_still_explained_at_its_call_site() -> None:
     `analyze()`) makes both the ordering and drift tests FAIL loudly. A
     false positive someone must investigate, never a silent pass.
 
+    That membership limit is REACHABLE, not theoretical: the rewrite above
+    is an ordinary English sentence someone writes on believing a constraint
+    was superseded, and it passes all three tests. What makes it tolerable
+    is measured, not argued -- rewrite the comment that way AND then act on
+    it by moving the call, and
+    `test_resolution_phases_keep_their_documented_order` FAILS. The prose
+    can be made to lie; the order cannot.
+
     That limit is acceptable only because it is not the load-bearing guard.
     `test_resolution_phases_keep_their_documented_order` reads no prose at
     all, so the CODE-corrupting defect -- the reordering itself -- is caught
