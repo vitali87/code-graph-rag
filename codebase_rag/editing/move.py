@@ -137,9 +137,16 @@ def _cut_span(source: bytes, node: Node) -> _Cut:
     end = source.find(b"\n", target.end_byte)
     end = len(source) if end < 0 else end + 1
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
-    # Swallow the blank lines that separated it from what follows.
-    while source[end : end + 1] == b"\n":
-        end += 1
+    # Swallow the blank lines that separated it from what follows. A blank line
+    # is b"\r\n" in a CRLF file, so testing only for b"\n" stopped on the b"\r"
+    # and left the separator behind on every Windows checkout.
+    while True:
+        if source[end : end + 2] == b"\r\n":
+            end += 2
+        elif source[end : end + 1] in (b"\n", b"\r"):
+            end += 1
+        else:
+            break
     return _Cut(start, end, text)
 
 
