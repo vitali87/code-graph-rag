@@ -258,6 +258,26 @@ def _git_config_exec_key(cmd_parts: list[str]) -> str | None:
     )
 
 
+def _xargs_short_cluster(arg: str) -> int | None:
+    """Tokens consumed by a bundled short-flag cluster, or None if unknown.
+
+    `xargs -0pt cat` and `xargs -n1 cat` are ordinary spellings, so treating a
+    cluster as unrecognisable would block routine use and collapse the
+    fail-closed rule into blocking everything. Returns 1 when the cluster is
+    self-contained and 2 when its final flag takes the following token.
+    """
+    for position, letter in enumerate(arg[1:], start=1):
+        short = f"-{letter}"
+        if short in cs.SHELL_XARGS_BOOLEAN_FLAGS:
+            continue
+        if short in cs.SHELL_XARGS_VALUE_FLAGS:
+            # A trailing value flag takes the next token; anything after it in
+            # the cluster is its value and is consumed with it.
+            return 2 if position == len(arg) - 1 else 1
+        return None
+    return 1
+
+
 def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
     """Return the program `xargs` would launch, or None if it launches none.
 
@@ -277,6 +297,10 @@ def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
         if not arg.startswith("-"):
             return arg
 
+        # `--` ends option parsing: the very next token is the program.
+        if arg == "--":
+            return args[index + 1] if index + 1 < len(args) else None
+
         flag = _flag_name(arg)
         if flag in cs.SHELL_XARGS_VALUE_FLAGS:
             # `-I{}` and `--replace=%` carry their value in the same token; the
@@ -290,6 +314,15 @@ def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
         if flag in cs.SHELL_XARGS_BOOLEAN_FLAGS:
             index += 1
             continue
+
+        # Short flags bundle (`-0pt`, `-n1`, `-I{}`). Walk the cluster: a
+        # boolean keeps the scan going, while a value flag takes the rest of
+        # the token as its value, or the next token when it ends the cluster.
+        if len(arg) > 2 and not arg.startswith("--"):
+            consumed = _xargs_short_cluster(arg)
+            if consumed is not None:
+                index += consumed
+                continue
 
         # An unrecognised flag may or may not consume the next token, so the
         # program xargs will launch cannot be identified. Skipping it is how

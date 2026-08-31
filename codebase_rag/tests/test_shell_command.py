@@ -1508,6 +1508,13 @@ class TestYoloLauncherConfinement:
             'xargs -J cat python3 -c "1"',
             'xargs -R 2 python3 -c "1"',
             'xargs --nosuchflag python3 -c "1"',
+            # Bundled short flags and `--` are ordinary xargs spellings, so
+            # each is a route to the same bypass if the scan mishandles it.
+            'xargs -n1 python3 -c "1"',
+            'xargs -I{} python3 -c "1"',
+            'xargs -0pt python3 -c "1"',
+            'xargs -- python3 -c "1"',
+            'xargs -S 100 python3 -c "1"',
         ),
     )
     async def test_yolo_still_blocks_launchers(
@@ -1537,6 +1544,14 @@ class TestYoloLauncherConfinement:
             # fail-closed rule has not collapsed into blocking all of xargs.
             "xargs -n 1 cat",
             "xargs -0 cat",
+            # The same spellings with an allowlisted program must still run:
+            # a scan that blocked these would satisfy every "must block" case
+            # above while having simply stopped allowing anything.
+            "xargs -n1 cat",
+            "xargs -I{} cat {}",
+            "xargs -0pt cat",
+            "xargs -- cat",
+            "xargs -P4 cat",
             # `-c` after the subcommand is git's reuse-message flag, not a
             # config setter. `git log -c HEAD` would not discriminate: HEAD is
             # not an exec key, so it passes either way. This spelling puts a
