@@ -428,6 +428,16 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     (r"eval\s+", "eval command"),
     (r"exec\s+[0-9]+<>", "exec file descriptor manipulation"),
     (r"awk\s+.*system\s*\(", "awk system() call"),
+    # awk also runs a command by piping to it (`print x | "cmd"`) and by
+    # reading one (`"cmd" | getline`). Verified executing on this platform:
+    # the system() pattern alone left `awk 'BEGIN{print 1 | "echo X"}'`
+    # running in both modes. `close()` and `printf ... |` are the same door.
+    # The quote may arrive escaped (`| \"cmd\"`) or bare (`| "cmd"`) depending
+    # on how the caller quoted the program text, so allow an optional
+    # backslash; matching only the bare form left the escaped spelling running.
+    (r"awk\s+.*\|\s*\\?[\"']", "awk pipes to a command"),
+    (r"awk\s+.*\|\s*getline", "awk reads from a command"),
+    (r"awk\s+.*\\?[\"'][^\"']*\\?[\"']\s*\|\s*getline", "awk reads from a command"),
     (r"awk\s+.*getline\s*[<|]", "awk getline file/pipe execution"),
     (r"sed\s+.*s(.).*?\1.*?\1[gip]*e[gip]*", "sed execute flag"),
     (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),

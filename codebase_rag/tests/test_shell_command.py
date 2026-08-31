@@ -1586,6 +1586,48 @@ def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
             ), f"shlex.join changed the pattern verdict for: {spelling}"
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # awk runs a command three ways. Only system() was caught; the pipe
+        # forms executed in BOTH modes, verified end-to-end. Both quoting
+        # spellings are covered because the escaped form (`| \"cmd\"`) and the
+        # bare form (`| "cmd"`) reach the pattern differently.
+        'awk "BEGIN{system(\\"id\\")}"',
+        'awk "BEGIN{print 1 | \\"id\\"}"',
+        'awk "BEGIN{printf 1 | \\"id\\"}"',
+        'awk "{print | \\"sh\\"}"',
+        'awk "BEGIN{\\"id\\" | getline x}"',
+        """awk 'BEGIN{print 1 | "id"}'""",
+        """awk 'BEGIN{"id" | getline x}'""",
+        """awk '{print | "sh"}'""",
+    ),
+)
+def test_awk_cannot_run_a_command(segment: str) -> None:
+    assert _check_segment_patterns(segment) is not None, (
+        f"awk executed a command: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # ...and ordinary awk must keep working, or the pattern has simply
+        # banned the tool rather than the capability.
+        "awk '{print $1}' f",
+        "awk -F, '{print $2}' f",
+        "awk 'NR>1' f",
+        "awk '{sum+=$1} END{print sum}' f",
+        "awk '/x/{print}' f",
+        "awk '{print $1, $2}' f",
+    ),
+)
+def test_awk_ordinary_programs_still_run(segment: str) -> None:
+    assert _check_segment_patterns(segment) is None, (
+        f"ordinary awk was blocked: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
