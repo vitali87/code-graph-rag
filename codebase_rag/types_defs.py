@@ -819,6 +819,9 @@ class DeferredImportEdge(NamedTuple):
     module_qn: str
     full_name: str
     language: SupportedLanguage
+    # Import-site edge properties (statement span, alias, imported name;
+    # issue #1522), or None for an import shape that records no site.
+    site: PropertyDict | None = None
 
 
 class RelationshipSchema(NamedTuple):
@@ -903,6 +906,35 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.SECURITY_ISSUE, _FINDING_NODE_PROPS),
 )
 
+
+class RelationshipPropertySchema(NamedTuple):
+    rel_types: tuple[RelationshipType, ...]
+    properties: str
+
+
+# Edge properties, documented for the query-generation prompt (issue #1522):
+# every CALLS/REFERENCES/INSTANTIATES edge locates its producing expression
+# and every IMPORTS edge its statement; FLOWS_TO carries its conduit shape.
+RELATIONSHIP_PROPERTY_SCHEMAS: tuple[RelationshipPropertySchema, ...] = (
+    RelationshipPropertySchema(
+        (
+            RelationshipType.CALLS,
+            RelationshipType.REFERENCES,
+            RelationshipType.INSTANTIATES,
+        ),
+        "{line: int?, col: int?, end_line: int?, end_col: int?, "
+        "arg_count: int?, kwarg_names: list[string]?}",
+    ),
+    RelationshipPropertySchema(
+        (RelationshipType.IMPORTS,),
+        "{line: int?, col: int?, end_line: int?, end_col: int?, "
+        "alias: string?, imported_name: string?}",
+    ),
+    RelationshipPropertySchema(
+        (RelationshipType.FLOWS_TO,),
+        "{kind: string, via: string?}",
+    ),
+)
 
 RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     RelationshipSchema(

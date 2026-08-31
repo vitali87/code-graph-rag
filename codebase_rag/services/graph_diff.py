@@ -130,6 +130,24 @@ def _node_map(indexes: list[pb.GraphCodeIndex]) -> dict[NodeKey, JsonDict]:
     return nodes
 
 
+# Edge-site properties (issue #1522) locate an edge in the file; they are not
+# part of the structure a diff reports, or every line shift would surface as
+# a changed relationship. Per-site parallel edges collapse onto their
+# endpoint triple here for the same reason.
+_SITE_PROPS = frozenset(
+    {
+        cs.KEY_LINE,
+        cs.KEY_COL,
+        cs.KEY_END_LINE,
+        cs.KEY_END_COL,
+        cs.KEY_ARG_COUNT,
+        cs.KEY_KWARG_NAMES,
+        cs.KEY_ALIAS,
+        cs.KEY_IMPORTED_NAME,
+    }
+)
+
+
 def _rel_map(indexes: list[pb.GraphCodeIndex]) -> dict[tuple[str, str, str], JsonDict]:
     rels: dict[tuple[str, str, str], JsonDict] = {}
     for index in indexes:
@@ -139,7 +157,8 @@ def _rel_map(indexes: list[pb.GraphCodeIndex]) -> dict[tuple[str, str, str], Jso
                 pb.Relationship.RelationshipType.Name(rel.type),
                 rel.target_id,
             )
-            rels[key] = dict(rel.properties)
+            props = {k: v for k, v in rel.properties.items() if k not in _SITE_PROPS}
+            rels.setdefault(key, {}).update(props)
     return rels
 
 

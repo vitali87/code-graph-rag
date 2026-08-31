@@ -1766,6 +1766,21 @@ def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
         raise ValueError(ex.CONFIG.format(role=role.value.title(), error=e)) from e
 
 
+def _cli_query_scope(active_projects: list[str] | None) -> str | None:
+    """The project a CLI session's graph queries are restricted to, if any.
+
+    EXACTLY one active project, not the first of several: a session that
+    activated more than one asked for all of them, and narrowing to one
+    would silently drop results the user deliberately included.
+
+    The CLI shares the cross-project bleed the MCP server had (issue
+    #1494); it is simply less visible when a session points at one repo.
+    """
+    if not active_projects or len(active_projects) != 1:
+        return None
+    return active_projects[0]
+
+
 def _initialize_services_and_agent(
     repo_path: str,
     ingestor: QueryProtocol,
@@ -1799,7 +1814,12 @@ def _initialize_services_and_agent(
     # egress gate refuses queries carrying verbatim spans of it (issue #1128).
     read_record = ReadContentRecord()
 
-    query_tool = create_query_tool(ingestor, cypher_generator, app_context.console)
+    query_tool = create_query_tool(
+        ingestor,
+        cypher_generator,
+        app_context.console,
+        project_name=_cli_query_scope(active_projects),
+    )
     code_tool = create_code_retrieval_tool(code_retriever, read_record)
     file_reader_tool = create_file_reader_tool(file_reader, read_record)
     file_writer_tool = create_file_writer_tool(file_writer)

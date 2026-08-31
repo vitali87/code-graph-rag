@@ -72,7 +72,22 @@ The knowledge graph uses a unified schema across all supported languages.
 
 `REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict). `INSTANTIATES` records a class being constructed. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
 
-`CALLS` edges are created by static analysis and carry no properties by default. [Dynamic call tracing](../guide/dynamic-tracing.md) decorates them with runtime provenance (`dynamic`, `dynamic_call_count`, `dynamic_workloads`, `dynamic_workload_count`, `dynamic_receiver_types`) and creates runtime-only edges flagged `static_missed: true` when no matching static edge existed in the graph at ingest time. Dynamic dispatch, reflection, and registries are the common causes.
+### Edge-site properties
+
+`CALLS`, `REFERENCES` and `INSTANTIATES` edges record *where* they were produced, not only that they exist, and `IMPORTS` edges record the statement that produced them (issue #1522):
+
+| Edge types | Property | Meaning |
+|---|---|---|
+| CALLS, REFERENCES, INSTANTIATES, IMPORTS | `line: int`, `col: int`, `end_line: int`, `end_col: int` | Span of the producing expression (the call, the referencing name, the constructor invocation) or of the import statement. Lines are 1-based, columns 0-based and the end is exclusive, matching node `start_line` / `start_col`. |
+| CALLS, REFERENCES, INSTANTIATES | `arg_count: int?`, `kwarg_names: list[string]?` | Present when the site has an argument list: the number of arguments passed (positional plus keyword) and the keyword names in source order. A reference site (a bare function value) carries neither. |
+| IMPORTS | `alias: string?` | The name the statement binds in the importing scope: the `as` name when renamed, otherwise the imported symbol or module name. Wildcard imports and Go dot-imports bind no name and carry no alias. |
+| IMPORTS | `imported_name: string?` | For symbol-level imports (`from x import y`, `import { y as z }`, `use a::b::y`, Java `import a.b.C`, `const { y } = require(...)`) the symbol's own name; `*` for wildcards; absent for whole-module imports. |
+
+Sites are stored as **one edge per site**: a function that calls `g` twice has two `CALLS` edges to `g`, one per call expression, and `from x import a, b` yields two `IMPORTS` edges to `x` (same statement span, different `alias`). The site properties join the write-time `MERGE` key (`line`, `col`; plus `alias` for `IMPORTS`), the same mechanism that keeps parallel `FLOWS_TO` edges apart, so re-indexing is idempotent. A query that wants callers rather than call sites should `DISTINCT` on the endpoint; a query that wants the sites reads `r.line`.
+
+Edges emitted without a syntactic site carry none of these properties and keep collapsing on their endpoints: libclang macro uses and `#include` edges, Roslyn-only facts, inferred C# namespace imports, interprocedural callable-parameter flow edges, and edges written back by dynamic tracing. For a Go grouped `import ( ... )` block the site is the individual spec line, which is the unit an import rewrite edits. `cgr diff` treats these properties as location, not structure: a line shift never reports as a changed relationship.
+
+`CALLS` edges are otherwise created by static analysis with no further properties. [Dynamic call tracing](../guide/dynamic-tracing.md) decorates them with runtime provenance (`dynamic`, `dynamic_call_count`, `dynamic_workloads`, `dynamic_workload_count`, `dynamic_receiver_types`) and creates runtime-only edges flagged `static_missed: true` when no matching static edge existed in the graph at ingest time. Dynamic dispatch, reflection, and registries are the common causes.
 
 ## I/O and Data-Flow Edges
 

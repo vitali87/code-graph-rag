@@ -21,6 +21,13 @@ SEPARATOR_SLASH = "/"
 # Splits "provider:model" both in user-supplied settings and in the model
 # names pydantic-ai enumerates.
 MODEL_STRING_SEPARATOR = ":"
+# `derive_project_name` builds "<name>__<8-hex-digest>", so this marker is
+# what distinguishes a project-qualified name from free text that merely
+# contains dots (a docstring, a file path).
+PROJECT_NAME_DIGEST_MARKER = "__"
+# Hex digits after the marker. Shared so `derive_project_name` and the
+# scoping filter that recognises its output cannot drift apart.
+PROJECT_NAME_DIGEST_LEN = 8
 # Disambiguates definitions that share one qualified name (if/else import
 # fallbacks, typing.overload, try/except fallbacks): "<qn>@<start_line>".
 DUP_QN_MARKER = "@"
@@ -122,14 +129,39 @@ HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
+# Recorded edit transactions for `cgr edits show|undo` (issue #1528).
+EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
+EDIT_LOCK_FILENAME = ".cgr-edit-lock"
+PLATFORM_WINDOWS = "win32"
+# Permission bits copied onto a replacement file (rwx for u/g/o, setuid etc.).
+EDIT_MODE_MASK = 0o7777
+# Mode of the exclusively created temp sibling before the target's mode is
+# copied onto it: owner-only, so nothing reads staged bytes mid-write.
+EDIT_TEMP_FILE_MODE = 0o600
 CGR_STATE_FILENAMES: frozenset[str] = frozenset(
     {
         HASH_CACHE_FILENAME,
         DIR_MTIMES_FILENAME,
         PARSER_FINGERPRINT_FILENAME,
         DELOMBOK_STATE_FILENAME,
+        EDIT_HISTORY_FILENAME,
+        EDIT_LOCK_FILENAME,
     }
 )
+# Edit transactions (issue #1528).
+EDIT_HISTORY_LIMIT = 50
+EDIT_TRANSACTION_ID_LENGTH = 12
+EDIT_STAGING_PREFIX = "cgr-edit-"
+DIFF_DEV_NULL = "/dev/null"
+EDIT_KEY_ID = "id"
+EDIT_KEY_AT = "at"
+EDIT_KEY_FILES = "files"
+EDIT_KEY_BEFORE = "before"
+EDIT_KEY_AFTER = "after"
+EDIT_KEY_VERIFICATION = "verification"
+EDIT_KEY_OK = "ok"
+EDIT_KEY_MESSAGE = "message"
+EDIT_KEY_MODE = "mode"
 
 # Inputs to the parser fingerprint: everything that changes how source files
 # become graph nodes and edges, plus the installed grammar wheels. Paths are

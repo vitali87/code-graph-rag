@@ -480,6 +480,37 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+# Span-preserving patchers (issue #1529).
+PATCH_BAD_POSITION = "No such position: line {line}, column {col}"
+PATCH_BAD_OFFSET = "Byte offset {offset} is outside the file"
+PATCH_BAD_SPAN = "Span ({start}, {end}) is outside the file or reversed"
+PATCH_OVERLAP = "Edit ({start}, {end}) overlaps an earlier edit in the same file"
+PATCH_OUTSIDE_ROOT = "Path is outside the repository: {path}"
+PATCH_NO_FILE = "No such file to patch: {path}"
+PATCH_IDENTIFIER_MISMATCH = (
+    "{path}:{line}:{col} holds {found!r}, not the identifier {expected!r}"
+)
+PATCH_NOT_AN_IDENTIFIER = "{path}:{line}:{col} is not a whole identifier"
+PATCH_PARSE_FAILED = "{path} no longer parses after the patch"
+PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
+PATCH_OK = "{path}: {count} edit(s) applied"
+# Edit transactions (issue #1528).
+EDIT_NOT_A_FILE = "Staged path is not a regular file: {path}"
+EDIT_RESERVED_PATH = "Path is cgr state, not part of the tree: {path}"
+EDIT_TRANSACTION_FINISHED = "This transaction has already been committed or rolled back"
+EDIT_CONFLICT = "File changed since it was staged; transaction refused: {path}"
+EDIT_NOTHING_STAGED = "Nothing staged; the working tree is untouched"
+EDIT_VERIFICATION_FAILED = (
+    "Verification failed; the working tree is untouched: {reason}"
+)
+EDIT_VERIFIER_RAISED = "verifier raised {error!r}"
+EDIT_VERIFIER_FALSE = "verifier returned False"
+EDIT_APPLIED = "Applied {count} file(s)"
+EDIT_UNDO_NONE = "No recorded edit transactions to undo"
+EDIT_UNDO_DONE = "Undid transaction {tx} ({count} file(s))"
+EDIT_UNDO_STOPPED = "Stopped at transaction {tx}: {reason}"
+EDIT_SHOW_NONE = "No recorded edit transactions"
+EDIT_SHOW_HEADER = "{tx}  {at}  {count} file(s)  verification={ok}"
 MSG_SURGICAL_FAILED = (
     "Failed to apply surgical replacement in {path}. "
     "Target code not found or patches failed."
@@ -489,6 +520,7 @@ GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
 
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
+DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
 QUERY_SUMMARY_TRUNCATED = (
@@ -499,6 +531,13 @@ QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
 )
 QUERY_SUMMARY_DB_ERROR = "There was an error querying the database: {error}"
+# Refused rather than answered unscoped: rows with no qualified name cannot
+# be attributed to a project, so the requested scope cannot be honoured.
+QUERY_SUMMARY_UNSCOPEABLE = (
+    "This query cannot be scoped to project {project!r}: it returns no "
+    "qualified name, so results cannot be attributed to a project. Ask for "
+    "the qualified name in the query."
+)
 QUERY_SUMMARY_TIMEOUT = (
     "Query exceeded the {timeout:.1f}s timeout and was cancelled. "
     "Avoid unbounded traversals; add depth bounds or use a graph-algorithm procedure."

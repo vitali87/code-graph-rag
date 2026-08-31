@@ -245,6 +245,21 @@ def _cached_decode_bytes(text_bytes: bytes) -> str:
     return text_bytes.decode(cs.ENCODING_UTF8)
 
 
+def node_site_properties(node: Node) -> PropertyDict:
+    """Edge-site span of a tree-sitter node (issue #1522).
+
+    1-based lines, 0-based columns, end exclusive, matching the node
+    `start_line`/`start_col` convention so a site can be sliced straight
+    out of the file.
+    """
+    return {
+        cs.KEY_LINE: node.start_point[0] + 1,
+        cs.KEY_COL: node.start_point[1],
+        cs.KEY_END_LINE: node.end_point[0] + 1,
+        cs.KEY_END_COL: node.end_point[1],
+    }
+
+
 def safe_decode_text(node: ASTNode | TreeSitterNodeProtocol | None) -> str | None:
     if node is None or (text_bytes := node.text) is None:
         return None

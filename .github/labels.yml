@@ -89,7 +89,3 @@
 - name: skip-review
   color: ededed
   description: Skip automated code review
-
-- name: claimed
-  color: b60205
-  description: An agent/session is actively working this — check before taking it over

@@ -50,7 +50,12 @@ def run_l1_eval(
     title: str,
 ) -> None:
     if not available():
-        logger.error(oracle_missing)
+        # Formatted here, as `extracting_oracle` already is below, because the
+        # arm that reports a MISSING toolchain is the one arm that never runs
+        # and so is never seen by whoever tested the language (issue #1518).
+        # Callers that pre-format, or whose message has no placeholder, are
+        # unaffected: `str.format` on a string with no fields is the identity.
+        logger.error(oracle_missing.format(binary=oracle_binary))
         raise typer.Exit(code=1)
 
     target = target.resolve()
