@@ -46,13 +46,17 @@ from pathlib import Path
 
 _SOURCE = Path(__file__).resolve().parents[1] / "graph_updater.py"
 
-# (earlier, later, reason). `earlier` must be called before `later` in
-# `GraphUpdater.run`. Every reason is quoted from the comment that states
-# the dependency at the call site.
-_ORDER: tuple[tuple[str, str, str], ...] = (
+# (earlier, later, marker, reason). `earlier` must be called before `later`
+# in `GraphUpdater.run`. `marker` is the phrase the comment above the `later`
+# call uses to name that dependency -- the source states several of these in
+# prose ("After rehydration", "After artifact resolution") rather than by
+# attribute name, so the phrase is recorded per pair instead of guessed from
+# the identifier. `reason` is the dependency itself, quoted from that comment.
+_ORDER: tuple[tuple[str, str, str, str], ...] = (
     (
         "_rehydrate_registry_from_graph",
         "resolve_deferred_cpp_methods",
+        "after rehydration",
         "an out-of-class method's class is only known once the registry is "
         "read back from the graph; resolving earlier binds it to a "
         "module-anchored fallback qn (issue #1552)",
@@ -60,6 +64,7 @@ _ORDER: tuple[tuple[str, str, str], ...] = (
     (
         "resolve_deferred_cpp_methods",
         "_resolve_hybrid_macro_calls",
+        "after resolve_deferred_cpp_methods",
         "an out-of-class method's span is recorded only once its class "
         "binding resolves, and a macro use inside such a method must "
         "attribute to it, not the Module",
@@ -67,11 +72,13 @@ _ORDER: tuple[tuple[str, str, str], ...] = (
     (
         "_rehydrate_registry_from_graph",
         "_resolve_hybrid_expansion_calls",
+        "after rehydration",
         "an expansion call's callee join needs spans for unchanged files too",
     ),
     (
         "_rehydrate_registry_from_graph",
         "resolve_deferred_forward_declarations",
+        "after rehydration",
         'the "does a real definition exist?" check must see definitions in '
         "files an incremental run did not re-parse, or a forward declaration "
         "whose definition lives in an unchanged file is kept as a phantom",
@@ -79,47 +86,55 @@ _ORDER: tuple[tuple[str, str, str], ...] = (
     (
         "resolve_deferred_forward_declarations",
         "resolve_deferred_cpp_artifacts",
+        "forward declarations",
         "a kept forward-declared TYPE also proves the name is a class, not a macro",
     ),
     (
         "resolve_deferred_cpp_artifacts",
         "resolve_deferred_cpp_prototypes",
+        "after artifact resolution",
         "a recovery-registered definition also counts when dropping a "
         "prototype that duplicates a bodied definition",
     ),
     (
         "resolve_deferred_forward_declarations",
         "resolve_deferred_cpp_inherits",
+        "after forward declarations",
         "a base whose only representation is a kept forward declaration "
         "still resolves to a real node",
     ),
     (
         "finalise_rust_mod_scope_uses",
         "resolve_deferred_inherits",
+        "full registry",
         "inline-mod import maps commit before the deferred inheritance pass, "
         "which re-resolves module-anchored trait guesses through them",
     ),
     (
         "resolve_deferred_cpp_methods",
         "resolve_deferred_parent_links",
+        "deferred c++ methods",
         "every node-registering pass must finish before parent qns are "
         "verified against the registry",
     ),
     (
         "resolve_deferred_go_methods",
         "resolve_deferred_parent_links",
+        "go receivers",
         "every node-registering pass must finish before parent qns are "
         "verified against the registry",
     ),
     (
         "resolve_deferred_forward_declarations",
         "resolve_deferred_parent_links",
+        "forward declarations",
         "every node-registering pass must finish before parent qns are "
         "verified against the registry",
     ),
     (
         "_process_function_calls",
         "flush_deferred_import_edges",
+        "after pass 3",
         "a C# namespace import lands on the modules the file actually "
         "resolved entities from, and those resolutions are recorded during "
         "call processing (issue #1347)",
@@ -152,6 +167,61 @@ def _call_lines() -> dict[str, list[int]]:
     return {name: sorted(found) for name, found in lines.items()}
 
 
+def _comment_above(line: int) -> str:
+    """The contiguous `#` comment block immediately above `line`.
+
+    The call may be an assignment wrapped over several lines
+    (`x = (\\n    self.factory...`), so skip back over any continuation
+    lines before looking for the comment block.
+    """
+    source = _SOURCE.read_text(encoding="utf-8").splitlines()
+    index = line - 1  # `line` is 1-based
+    while index > 0:
+        stripped = source[index - 1].strip()
+        if stripped.startswith("#") or not stripped:
+            break
+        if stripped.endswith("(") or stripped.endswith("="):
+            index -= 1
+            continue
+        break
+    block: list[str] = []
+    while index > 0 and source[index - 1].strip().startswith("#"):
+        block.insert(0, source[index - 1].strip().lstrip("#").strip())
+        index -= 1
+    return " ".join(block)
+
+
+def test_every_pinned_dependency_is_still_explained_at_its_call_site() -> None:
+    """The constraint and the prose that justifies it must not drift apart.
+
+    `_ORDER` records WHY each pair is ordered, quoted from the comment at
+    the call site. If that comment is deleted or rewritten to say something
+    else, the table keeps asserting an order whose reason no longer exists
+    anywhere in the source -- and an unexplained ordering constraint is how
+    a real dependency decays into cargo that the next reader reorders or
+    deletes because nothing says it matters.
+
+    This checks only that the `later` call site still carries SOME comment
+    naming its dependency, not that the wording matches: pinning exact
+    prose would fail on every copy-edit, and a guard that punishes
+    legitimate edits gets deleted rather than obeyed.
+    """
+    called = _call_lines()
+    unexplained: list[str] = []
+    for earlier, later, marker, _reason in _ORDER:
+        comment = _comment_above(called[later][0]).lower()
+        if marker not in comment:
+            unexplained.append(
+                f"the call to {later} (line {called[later][0]}) depends on "
+                f"{earlier}, but the comment above it no longer says "
+                f"{marker!r}: {comment[:110]!r}"
+            )
+    assert not unexplained, (
+        "A pinned ordering dependency lost the comment that justifies it:\n"
+        + "\n".join(unexplained)
+    )
+
+
 def test_every_pinned_phase_is_actually_called() -> None:
     """A renamed or deleted phase must fail here, not silently unpin itself.
 
@@ -160,7 +230,7 @@ def test_every_pinned_phase_is_actually_called() -> None:
     which is the failure mode `test_mcp_read_handler_lock.py` documents.
     """
     called = _call_lines()
-    pinned = {name for earlier, later, _ in _ORDER for name in (earlier, later)}
+    pinned = {name for earlier, later, _m, _r in _ORDER for name in (earlier, later)}
     missing = sorted(name for name in pinned if name not in called)
     assert not missing, (
         f"{missing} are pinned by this test but no longer called in "
@@ -174,7 +244,7 @@ def test_resolution_phases_keep_their_documented_order() -> None:
     """Each documented dependency holds in the source order of `run`."""
     called = _call_lines()
     violations: list[str] = []
-    for earlier, later, reason in _ORDER:
+    for earlier, later, _marker, reason in _ORDER:
         # Compare the LAST call of `earlier` against the FIRST of `later`:
         # the dependency is that every `earlier` has completed, so a second
         # `earlier` after `later` breaks it just as a swap does.
