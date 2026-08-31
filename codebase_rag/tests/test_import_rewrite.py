@@ -14,6 +14,14 @@ from codebase_rag.editing import ImportRewriter, ImportSite, SymbolMove
 from codebase_rag.tests.conftest import create_and_run_updater
 
 
+def _assert_parses(parses: bool | None, grammar: str) -> None:
+    # The patcher reports None when no grammar is installed for the file
+    # (the base install ships none for Rust and Go): nothing to verify then.
+    if parses is None:
+        pytest.skip(f"{grammar} grammar not installed")
+    assert parses is True
+
+
 def _write(root: Path, rel: str, text: str) -> Path:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -283,7 +291,7 @@ def test_rust_use_single_grouped_and_aliased(tmp_path: Path) -> None:
         "use crate::helpers::assist as hh;",
     ]
     (result,) = rewriter.patcher.apply().values()
-    assert result.parses is True
+    _assert_parses(result.parses, "rust")
 
 
 def test_go_import_path_retarget(tmp_path: Path) -> None:
@@ -299,12 +307,179 @@ def test_go_import_path_retarget(tmp_path: Path) -> None:
     )
     assert rewrite.after == 'u "example.com/mod/core/util"'
     (result,) = rewriter.patcher.apply().values()
-    assert result.parses is True
+    _assert_parses(result.parses, "go")
 
 
 @pytest.mark.parametrize("bad", [ImportSite("nope.py", 1, 0, 1, 5, None, None)])
 def test_missing_importer_file_is_an_error(tmp_path: Path, bad: ImportSite) -> None:
     from codebase_rag.editing import PatcherError
 
+    rewriter = ImportRewriter(tmp_path)
+    move = SymbolMove("x", "a", "b")
     with pytest.raises(PatcherError):
-        ImportRewriter(tmp_path).retarget([bad], SymbolMove("x", "a", "b"))
+        rewriter.retarget([bad], move)
+
+
+def test_every_alias_of_the_moved_symbol_survives_the_move() -> None:
+    # `helper` and `helper as h` both bind the moved symbol; a rewrite that
+    # keeps only the first drops the `h` binding and breaks its call sites.
+    from codebase_rag.editing.imports import _py_rewrite
+
+    out = _py_rewrite(
+        "from pkg.util import helper, helper as h, other",
+        SymbolMove("helper", "pkg.util", "pkg.new"),
+    )
+    assert out == "from pkg.util import other\nfrom pkg.new import helper, helper as h"
+
+
+def test_every_js_alias_of_the_moved_symbol_survives_the_move() -> None:
+    # `helper as h` in a named-import list binds the moved symbol too; losing
+    # it leaves `h()` in the body pointing at nothing.
+    from codebase_rag.editing.imports import _js_rewrite
+
+    out = _js_rewrite(
+        "import { helper, helper as h, other } from './util';",
+        SymbolMove("helper", "./util", "./lib/helpers"),
+        "src/app.ts",
+    )
+    assert out == (
+        "import { other } from './util';\n"
+        "import { helper, helper as h } from './lib/helpers';"
+    )
+
+
+def test_every_rust_alias_of_the_moved_symbol_survives_the_move() -> None:
+    # Same defect in the Rust `use` list: `helper as h` must move with it.
+    from codebase_rag.editing.imports import _rs_rewrite
+
+    out = _rs_rewrite(
+        "use pkg::util::{helper, helper as h, other};",
+        SymbolMove("helper", "pkg::util", "pkg::new"),
+    )
+    assert out == "use pkg::util::other;\nuse pkg::new::{helper, helper as h};"
+
+
+def test_a_default_binding_stays_with_its_original_module() -> None:
+    # `import def, { helper } from './util'` binds `def` to ./util. Moving
+    # `helper` must not redeclare `def` in the new statement, nor carry it to
+    # the new module when the named list empties.
+    from codebase_rag.editing.imports import _js_rewrite
+
+    move = SymbolMove("helper", "./util", "./new")
+    with_kept = _js_rewrite(
+        "import def, { helper, other } from './util';", move, "src/app.ts"
+    )
+    assert with_kept == (
+        "import def, { other } from './util';\nimport { helper } from './new';"
+    )
+
+    emptied = _js_rewrite("import def, { helper } from './util';", move, "src/app.ts")
+    assert emptied == ("import def from './util';\nimport { helper } from './new';")
+
+
+def test_a_type_only_import_keeps_its_modifier() -> None:
+    # `type` is a modifier, not a default binding: it must stay attached to
+    # the braces on both statements. `import type from './util'` parses as a
+    # default import named `type`, so the patcher's parse gate cannot catch it.
+    from codebase_rag.editing.imports import _js_rewrite
+
+    move = SymbolMove("helper", "./util", "./new")
+    assert (
+        _js_rewrite("import type { helper } from './util';", move, "src/app.ts")
+        == "import type { helper } from './new';"
+    )
+    assert (
+        _js_rewrite("export type { helper } from './util';", move, "src/app.ts")
+        == "export type { helper } from './new';"
+    )
+    assert _js_rewrite(
+        "import type { helper, other } from './util';", move, "src/app.ts"
+    ) == ("import type { other } from './util';\nimport type { helper } from './new';")
+
+
+# The four behaviours the #1545 merge has to preserve. Two are rename-op's own
+# (`ANY_MODULE`, `rebind`) and have no counterpart on `main`, so a port onto
+# main's token parser drops them silently -- nothing else asserts on them.
+# The fourth is main's, and is the one case where the two sides genuinely
+# DISAGREE: rename-op rewrites `moved[0]` only and loses the second binding,
+# main rewrites every entry. The port must take main's answer there, so the
+# test states main's behaviour rather than this branch's.
+def test_wildcard_old_module_matches_any_module() -> None:
+    from codebase_rag.editing.imports import ANY_MODULE, _py_rewrite
+
+    move = SymbolMove(symbol="helper", old_module=ANY_MODULE, new_module="pkg.helpers")
+    # A wildcard rename leaves the module alone and only touches the name; the
+    # statement is returned unchanged when there is no new name to write.
+    assert (
+        _py_rewrite("from anything.at.all import helper", move)
+        == "from anything.at.all import helper"
+    )
+    # ...and a non-matching symbol is still refused, so the wildcard widens the
+    # MODULE test only.
+    assert _py_rewrite("from anything.at.all import other", move) is None
+
+
+def test_rebind_drops_the_local_alias_and_no_rebind_keeps_it() -> None:
+    from codebase_rag.editing.imports import _py_rewrite
+
+    rebinding = SymbolMove(
+        symbol="helper",
+        old_module="pkg.util",
+        new_module="pkg.util",
+        new_name="helper2",
+        rebind=True,
+    )
+    # rebind=True renames the use sites too, so the local name follows.
+    assert (
+        _py_rewrite("from pkg.util import helper", rebinding)
+        == "from pkg.util import helper2"
+    )
+
+    keeping = rebinding._replace(rebind=False)
+    # rebind=False leaves the use sites alone, so the old name must stay bound.
+    assert (
+        _py_rewrite("from pkg.util import helper", keeping)
+        == "from pkg.util import helper2 as helper"
+    )
+
+
+def test_every_entry_binding_the_symbol_moves_not_just_the_first() -> None:
+    from codebase_rag.editing.imports import _py_rewrite
+
+    move = SymbolMove(symbol="helper", old_module="pkg.util", new_module="pkg.helpers")
+    # `helper, helper as h` binds the symbol twice; keeping only the first
+    # would drop the `h` binding and break its use sites. This is main's
+    # behaviour and the port must adopt it.
+    assert _py_rewrite("from pkg.util import helper, helper as h, other", move) == (
+        "from pkg.util import other\nfrom pkg.helpers import helper, helper as h"
+    )
+
+
+def test_same_module_rename_keeps_each_binding_its_own_local_name() -> None:
+    from pathlib import Path as _Path
+
+    from codebase_rag.editing.imports import _js_rewrite, _py_rewrite, _rs_rewrite
+
+    # The SAME-module branches are the ones the cross-module tests never reach:
+    # a rename keeps one statement and rewrites entries in place, so each
+    # binding must keep its own local name. Mapping the moved entries
+    # positionally (`moved_entries[0]` for every match, as the pre-merge branch
+    # did) collapses `helper as h` onto `helper`, binding one name twice and
+    # losing the other -- and every other test in this file stays green.
+    move = SymbolMove("helper", "pkg.util", "pkg.util", new_name="renamed")
+    assert (
+        _py_rewrite("from pkg.util import helper, helper as h", move)
+        == "from pkg.util import renamed as helper, renamed as h"
+    )
+
+    js = SymbolMove("helper", "./m", "./m", new_name="renamed", new_module_path="m.ts")
+    assert (
+        _js_rewrite("import { helper, helper as h } from './m';", js, _Path("a.ts"))
+        == "import { renamed as helper, renamed as h } from './m';"
+    )
+
+    rs = SymbolMove("helper", "m", "m", new_name="renamed")
+    assert (
+        _rs_rewrite("use m::{helper, helper as h};", rs)
+        == "use m::{renamed as helper, renamed as h};"
+    )

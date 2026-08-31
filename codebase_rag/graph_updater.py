@@ -919,6 +919,19 @@ class GraphUpdater:
             self._run_cpp_frontend()
         self._run_emitting_frontends(FrontendPhase.AFTER_DEFINITIONS)
 
+        go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
+        if go_methods:
+            logger.info("Resolved {} Go receiver methods", go_methods)
+
+        if rehydrate:
+            self._rehydrate_registry_from_graph()
+
+        # After rehydration: an incremental run re-parses the `.cpp` holding
+        # an out-of-class method while its class stays in an unchanged
+        # header, and the class is only known once the registry is read back
+        # from the graph. Resolving earlier bound such a method to a
+        # module-anchored fallback qn beside its class-anchored node, in a
+        # parse-order-dependent way (issue #1552).
         corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
         if corrected:
             logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
@@ -931,13 +944,6 @@ class GraphUpdater:
         # is recorded only once its class binding resolves, and a macro use
         # inside such a method must attribute to it, not the Module.
         self._resolve_hybrid_macro_calls()
-
-        go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
-        if go_methods:
-            logger.info("Resolved {} Go receiver methods", go_methods)
-
-        if rehydrate:
-            self._rehydrate_registry_from_graph()
 
         # After rehydration: an expansion call's callee join needs spans
         # for unchanged files too.
@@ -2440,8 +2446,28 @@ class GraphUpdater:
         # file's (issue #1229 phase 4).
         present = {file_key for _fp, file_key, _new, _b in changed_entries}
         eligible_by_key = {file_key: fp for fp, file_key in eligible_files}
+        # A dependent of a DELETED file is in the same position: its edges
+        # into that file go with the subtree and cannot be restored, and a
+        # clean index would re-derive them from what remains (a phantom
+        # external parent, a fallback, or nothing). The deleted set is what
+        # the cache remembers and the walk no longer finds; it joins the
+        # dependents query now, while the subtrees still exist to match
+        # against (issue #1567).
+        # `old_hashes` has already had the Delombok-stale keys popped (so a
+        # changed overlay forces those files through a reparse), which would
+        # otherwise hide a file that is BOTH stale and deleted: it would be
+        # absent from the cache set here and never join the dependents query.
+        # Union them back in; the walk-eligible subtraction below drops the
+        # ones that still exist (issue #1567).
+        deleted_before_parse = sorted(
+            (set(old_hashes) | self._delombok_stale_keys)
+            - eligible_by_key.keys()
+            - unreadable_keys
+        )
         affected = 0
-        for caller_key in self._affected_caller_keys(reindexed_keys):
+        for caller_key in self._affected_caller_keys(
+            sorted({*reindexed_keys, *deleted_before_parse})
+        ):
             if caller_key in present:
                 continue
             caller_path = eligible_by_key.get(caller_key)
