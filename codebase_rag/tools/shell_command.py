@@ -415,6 +415,31 @@ def _awk_program_skeleton(program: str) -> str:
     return "".join(out)
 
 
+def _awk_redirects_output(program: str) -> bool:
+    """Whether an awk program redirects print/printf output to a file.
+
+    A redirect's `>` sits at the top level of the output list; a comparison
+    sits inside parentheses. Tracking depth is awk's actual grammar, where
+    every spelling-based attempt failed: excluding parentheses hid
+    `printf("x") > "f"`, and excluding a `$` target hid `print $2 > $1`,
+    which was verified writing a file.
+    """
+    skeleton = _awk_program_skeleton(program)
+    for match in re.finditer(r"\b(?:print|printf)\b", skeleton):
+        depth = 0
+        index = match.end()
+        while index < len(skeleton) and skeleton[index] not in ";}":
+            char = skeleton[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif char == ">" and depth <= 0:
+                return True
+            index += 1
+    return False
+
+
 def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
     """Return the construct through which this awk program reaches a command.
 
@@ -466,6 +491,8 @@ def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
             else:
                 index += 1
             continue
+        if _awk_redirects_output(arg):
+            return "redirect to a file"
         skeleton = _awk_program_skeleton(arg)
         for pattern, reason in cs.SHELL_AWK_EXEC_TOKENS:
             if re.search(pattern, skeleton):

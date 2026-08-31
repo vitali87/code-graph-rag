@@ -363,15 +363,6 @@ SHELL_AWK_EXEC_TOKENS = (
     # outside the root. awk's output redirect always follows a print/printf
     # output list, which is what distinguishes it from a `>` comparison
     # (`NR>1`), so match the construct rather than the target's spelling.
-    # Parentheses are part of the SPELLING, not the construct: excluding them
-    # missed `printf("x") > "f"` entirely. String literals are blanked before
-    # this runs, so a `>` inside printed text is already gone and the class
-    # need only stop at a statement boundary.
-    # ...and a redirect TARGET is a filename, a variable or a string -- never
-    # a $field, which is what `print ($1 > $2) ? x : y` compares against.
-    # That is awk syntax rather than a guess, and it keeps the parenthesised
-    # comparison working now that parentheses no longer end the match.
-    (r"\b(print|printf)\b[^;}]*>>?\s*(?!\$)\S", "redirect to a file"),
 )
 
 SHELL_LAUNCHER_COMMANDS = frozenset({"xargs", "uv", "pytest", "pre-commit", "find"})
