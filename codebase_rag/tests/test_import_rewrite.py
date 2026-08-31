@@ -308,3 +308,61 @@ def test_missing_importer_file_is_an_error(tmp_path: Path, bad: ImportSite) -> N
 
     with pytest.raises(PatcherError):
         ImportRewriter(tmp_path).retarget([bad], SymbolMove("x", "a", "b"))
+
+
+# The four behaviours the #1545 merge has to preserve. Two are rename-op's own
+# (`ANY_MODULE`, `rebind`) and have no counterpart on `main`, so a port onto
+# main's token parser drops them silently -- nothing else asserts on them.
+# The fourth is main's, and is the one case where the two sides genuinely
+# DISAGREE: rename-op rewrites `moved[0]` only and loses the second binding,
+# main rewrites every entry. The port must take main's answer there, so the
+# test states main's behaviour rather than this branch's.
+def test_wildcard_old_module_matches_any_module() -> None:
+    from codebase_rag.editing.imports import ANY_MODULE, _py_rewrite
+
+    move = SymbolMove(symbol="helper", old_module=ANY_MODULE, new_module="pkg.helpers")
+    # A wildcard rename leaves the module alone and only touches the name; the
+    # statement is returned unchanged when there is no new name to write.
+    assert (
+        _py_rewrite("from anything.at.all import helper", move)
+        == "from anything.at.all import helper"
+    )
+    # ...and a non-matching symbol is still refused, so the wildcard widens the
+    # MODULE test only.
+    assert _py_rewrite("from anything.at.all import other", move) is None
+
+
+def test_rebind_drops_the_local_alias_and_no_rebind_keeps_it() -> None:
+    from codebase_rag.editing.imports import _py_rewrite
+
+    rebinding = SymbolMove(
+        symbol="helper",
+        old_module="pkg.util",
+        new_module="pkg.util",
+        new_name="helper2",
+        rebind=True,
+    )
+    # rebind=True renames the use sites too, so the local name follows.
+    assert (
+        _py_rewrite("from pkg.util import helper", rebinding)
+        == "from pkg.util import helper2"
+    )
+
+    keeping = rebinding._replace(rebind=False)
+    # rebind=False leaves the use sites alone, so the old name must stay bound.
+    assert (
+        _py_rewrite("from pkg.util import helper", keeping)
+        == "from pkg.util import helper2 as helper"
+    )
+
+
+def test_every_entry_binding_the_symbol_moves_not_just_the_first() -> None:
+    from codebase_rag.editing.imports import _py_rewrite
+
+    move = SymbolMove(symbol="helper", old_module="pkg.util", new_module="pkg.helpers")
+    # `helper, helper as h` binds the symbol twice; keeping only the first
+    # would drop the `h` binding and break its use sites. This is main's
+    # behaviour and the port must adopt it.
+    assert _py_rewrite("from pkg.util import helper, helper as h, other", move) == (
+        "from pkg.util import other\nfrom pkg.helpers import helper, helper as h"
+    )
