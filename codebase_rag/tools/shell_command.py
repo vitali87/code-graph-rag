@@ -407,10 +407,17 @@ def _awk_program_skeleton(program: str) -> str:
                 if program[end] == "\\":
                     end += 1
                 end += 1
+            if end >= len(program):
+                return cs.SHELL_AWK_UNPARSEABLE
             out.append('""')
-            index = min(end + 1, len(program))
+            index = end + 1
             continue
         if char == "/" and _awk_regex_starts_here(program, index):
+            if "/" not in program[index + 1 :]:
+                # Unterminated: blanking would swallow the rest of the
+                # program and could hide a construct behind it, so signal
+                # that the program cannot be scanned.
+                return cs.SHELL_AWK_UNPARSEABLE
             # A /regex/ literal is user text too: `/a|b/` is alternation, not
             # a pipe to a command, and gsub(/x|y/,...) is everyday awk.
             end = index + 1
@@ -516,9 +523,11 @@ def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
             else:
                 index += 1
             continue
+        skeleton = _awk_program_skeleton(arg)
+        if skeleton == cs.SHELL_AWK_UNPARSEABLE:
+            return "a program with an unterminated string or regex"
         if _awk_redirects_output(arg):
             return "redirect to a file"
-        skeleton = _awk_program_skeleton(arg)
         for pattern, reason in cs.SHELL_AWK_EXEC_TOKENS:
             if re.search(pattern, skeleton):
                 return reason

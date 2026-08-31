@@ -1647,6 +1647,13 @@ def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
         "awk '{print > $1}'",
         "awk '{print $2 > $1}'",
         "awk '{print > $0}'",
+        # An UNTERMINATED literal swallows the rest of the program when
+        # blanked, which can hide a construct behind it -- the pipe in the
+        # first case was invisible. Such a program is not valid awk, so
+        # refusing it loses nothing.
+        "awk '/x{print 1 | \"id\"}'",
+        "awk '/unclosed system(\"id\")'",
+        "awk 'BEGIN{print \"unterminated'",
         'awk \'BEGIN{print("y") > "/tmp/p"}\'',
         "awk '{print > \"/tmp/p\"}'",
         "awk '{print $1 > out}'",

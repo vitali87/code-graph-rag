@@ -353,6 +353,12 @@ SHELL_SED_KNOWN_FLAGS = frozenset(
 SHELL_SED_OPTIONAL_ARG_FLAGS = frozenset({"-i", "--in-place", "-l", "--line-length"})
 
 
+# Sentinel: the awk program could not be scanned because a string or regex
+# literal is unterminated. Blanking one swallows everything after it, which
+# can hide a real construct -- and an unterminated literal is not a valid
+# program, so refusing loses nothing.
+SHELL_AWK_UNPARSEABLE = "\x00unparseable"
+
 SHELL_AWK_EXEC_TOKENS = (
     (r"system\s*\(", "system() call"),
     (r"\|&", "coprocess pipe"),
