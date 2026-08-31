@@ -431,6 +431,44 @@ def test_importers_order_does_not_depend_on_the_fetch_order() -> None:
     assert [r["end_col"] for r in forward] == [20, 27]
 
 
+def test_importers_absent_line_is_distinct_from_line_zero() -> None:
+    """`line` needs the same sentinel discipline as `col`, one field up.
+
+    The test above pins `col`, and nothing pinned `line`: no fixture gave it
+    `None` beside a row with `line == 0`, so changing its sentinel to `0` --
+    or reverting it to `or 0` -- passed every test in this file. That is the
+    identical collision the column fix removed, on the field that outranks it.
+
+    The branch is reachable: `_opt_int` yields `None` for any non-int the
+    graph returns, so a row genuinely can arrive without a line.
+    """
+
+    def row(line: int | None, end_col: int) -> ResultRow:
+        return {
+            cs.KEY_QUALIFIED_NAME: f"{P}.app",
+            cs.KEY_PATH: "app.py",
+            cs.KEY_LINE: line,
+            cs.KEY_COL: 0,
+            cs.KEY_END_LINE: 1,
+            cs.KEY_END_COL: end_col,
+            cs.KEY_ALIAS: "same",
+            cs.KEY_IMPORTED_NAME: "same",
+        }
+
+    # Every field the key READS is equal apart from `line`, so nothing else
+    # can order the pair -- the same discipline the column fixture uses.
+    rows = [row(None, 20), row(0, 27)]
+
+    def fetch(order: list[ResultRow]) -> list[graph_query.ImporterRow]:
+        return graph_query.importers(lambda _q, _p=None: list(order), P, f"{P}.util")
+
+    forward = fetch(rows)
+    assert json.dumps(forward) == json.dumps(fetch(list(reversed(rows))))
+    # -1 (absent) sorts before 0 (line zero); folding them together would
+    # leave the pair in whatever order the graph happened to return.
+    assert [r["end_col"] for r in forward] == [20, 27]
+
+
 def test_importers_co_located_on_one_statement_order_by_name() -> None:
     """Names from a single `from x import a, b` share module, line AND column.
 
@@ -485,9 +523,16 @@ def test_importers_group_by_importing_module_first() -> None:
 
     Every other importers fixture uses a single importing module, so `module`
     never discriminates and dropping it from the key is a mutation they all
-    pass through. It is not equivalent: dropping it loses per-module grouping
-    AND reintroduces the fetch-order dependence this whole key exists to
-    remove, because rows from different modules then collide on position.
+    pass through. It is not equivalent: dropping it loses per-module grouping,
+    so importers are interleaved by position across modules instead of listed
+    together.
+
+    The ORDER assertion is what catches that; the permutation assertion below
+    is a redundant guard here rather than the discriminating one. These rows
+    sit at lines 1 and 9, so without `module` their keys are still distinct
+    and the output stays deterministic -- wrong, but stable under
+    permutation. Fetch-order dependence needs a genuine key COLLISION, which
+    is what the sentinel and tie-breaker tests above supply.
 
     `zeta` imports at line 1 and `alpha` at line 9, so grouping by module is
     the only thing that can put `alpha` first -- ordering by position would
