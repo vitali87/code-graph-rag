@@ -179,6 +179,29 @@ SHELL_CMD_RG = "rg"
 # auditing the ALLOWLIST for exec capability rather than the launcher set:
 # nine review rounds reasoned from the launcher set, which by construction
 # cannot contain a launcher nobody has recognised yet.
+# Suffixes a flag carries when its value names a program to run. The explicit
+# flag lists cannot catch an option nobody enumerated -- that is how `rg --pre`
+# sat unnoticed through nine review rounds -- so this backstops them the way
+# the config-key suffix rule backstops the key names. Checked against 13
+# program-naming flags (13 matched) and 13 ordinary ones (0 matched); `--pre`
+# and `--gpg-sign` follow no convention and stay named explicitly.
+SHELL_PROGRAM_NAMING_FLAG_SUFFIXES = (
+    "cmd",
+    "command",
+    "exec",
+    "pack",
+    "bin",
+    "program",
+    "tool",
+    "helper",
+    "proxy",
+    "filter",
+    "editor",
+    "pager",
+    "server",
+)
+
+
 SHELL_RG_EXEC_FLAGS = frozenset({"--pre", "--hostname-bin"})
 
 SHELL_CMD_AWK = "awk"

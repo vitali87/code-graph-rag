@@ -2089,6 +2089,59 @@ def test_rg_ordinary_searches_still_run(segment: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Flags NOT in any list here, caught by the suffix backstop alone.
+        # The explicit lists cannot contain an option nobody enumerated,
+        # which is how `rg --pre` survived nine review rounds; this is the
+        # same fix as the config-key suffix rule, one level up.
+        "git config --editor id",
+        "git x --custom-pager id",
+        "rg --some-new-cmd id x f",
+        "rg --future-bin id x f",
+    ),
+)
+def test_unenumerated_program_naming_flags_are_refused(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a program-naming flag was allowed: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # ...and the suffix must not swallow ordinary options. These are the
+        # near-misses: value-taking flags whose names end in ordinary words.
+        "git log --format=short",
+        "git log --author=x",
+        "git log --grep=fix",
+        "git log --since=1.day",
+        "git branch --sort=-committerdate",
+        "git diff --stat",
+        "rg --max-count 5 pat f",
+        "rg --color never pat f",
+        "rg --ignore-file .rgignore pat f",
+        "rg -n --glob '*.py' pat",
+        # The --no- family turns a feature OFF and names no program:
+        # `git --no-pager log` ends in "pager" but disables the pager.
+        # Caught by the suite, not by my probe, which never tried it.
+        "git --no-pager log",
+        "git --no-replace-objects log",
+        "git --no-optional-locks status",
+        "git --no-advice status",
+        "git log --no-color",
+        "git commit --no-gpg-sign -m x",
+        "git log --no-ext-diff",
+        "rg --no-config pat f",
+    ),
+)
+def test_ordinary_flags_are_not_mistaken_for_programs(segment: str) -> None:
+    assert _validate_segment(segment, "", False) is None, (
+        f"an ordinary flag was blocked: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on

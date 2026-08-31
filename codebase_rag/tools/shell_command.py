@@ -468,11 +468,7 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_GIT:
         return None
 
-    for arg in cmd_parts[1:]:
-        if arg.startswith("-") and _flag_name(arg) in cs.SHELL_GIT_EXEC_FLAGS:
-            return _flag_name(arg)
-
-    return None
+    return _program_naming_flag(cmd_parts, cs.SHELL_GIT_EXEC_FLAGS)
 
 
 def _sed_script_skeleton(script: str) -> str:
@@ -609,19 +605,38 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     return None
 
 
+def _program_naming_flag(cmd_parts: list[str], known: frozenset[str]) -> str | None:
+    """A flag whose value names a program, by explicit list or by suffix.
+
+    The lists cannot contain an option nobody has enumerated, which is how
+    `rg --pre` survived nine review rounds. The suffix check backstops them:
+    a flag naming a program is conventionally spelled `--...-cmd`,
+    `--...-exec`, `--...-pack` and so on. Flags following no convention
+    (`--pre`, `--gpg-sign`) stay in the explicit list.
+    """
+    for arg in cmd_parts[1:]:
+        if not arg.startswith("-"):
+            continue
+        flag = _flag_name(arg)
+        if flag in known:
+            return flag
+        # A `--no-` flag turns the feature OFF and names no program:
+        # `git --no-pager log` ends in "pager" but disables the pager.
+        if (
+            flag.startswith("--")
+            and not flag.startswith("--no-")
+            and flag.endswith(cs.SHELL_PROGRAM_NAMING_FLAG_SUFFIXES)
+        ):
+            return flag
+    return None
+
+
 def _rg_exec_flag(cmd_parts: list[str]) -> str | None:
     """Return the ripgrep flag naming a program rg would run."""
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RG:
         return None
 
-    return next(
-        (
-            _flag_name(arg)
-            for arg in cmd_parts[1:]
-            if arg.startswith("-") and _flag_name(arg) in cs.SHELL_RG_EXEC_FLAGS
-        ),
-        None,
-    )
+    return _program_naming_flag(cmd_parts, cs.SHELL_RG_EXEC_FLAGS)
 
 
 def _is_dangerous_command(
