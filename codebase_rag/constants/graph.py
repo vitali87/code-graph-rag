@@ -528,15 +528,19 @@ CYPHER_ALL_MODULE_QNS = (
 # hardcoded, and a structural edit keeps every unit test green while breaking
 # production. Measured 2026-08-30: flipping the arrow here to
 # `(caller)<-[r:...]-(target)` left all of test_incremental_implements_edge.py
-# passing, and deleting the `caller.path` guard from CYPHER_AFFECTED_CALLER_PATHS
-# left all 29 tests green. Both queries do reach a real backend in production,
+# passing (7 passed), and deleting the `caller.path` guard from
+# CYPHER_AFFECTED_CALLER_PATHS left 16 passed across `pytest
+# test_incremental_implements_edge.py test_graph_updater_incremental_rename.py
+# test_cacheless_lookup_failure.py`. Both queries do reach a real backend,
 # via `ingestor.fetch_all` in graph_updater.py (the affected-caller read and
 # `_capture_inbound_edges`), so such an edit ships a broken incremental
 # restore. Verify a change to the MATCH shape or the WHERE clauses against a
 # real graph (the Docker-backed integration tier), not against a green unit
 # run. Two edits the unit suite DOES catch: adding or removing a relation
 # type, and renaming this query's `props` key (test_edge_site_properties.py).
-# CYPHER_AFFECTED_CALLER_PATHS has no such guard on its `caller_path` key.
+# CYPHER_AFFECTED_CALLER_PATHS' `caller_path` projection IS pinned, expression
+# and alias both, by test_incremental_implements_edge.py; its other RETURN
+# aliases are not.
 CYPHER_INBOUND_EDGES = (
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "

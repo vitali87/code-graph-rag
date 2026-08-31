@@ -151,11 +151,20 @@ def test_emulator_inbound_rels_match_the_production_query() -> None:
     assert set(_INBOUND_DEPENDENT_RELS) == production
 
 
-def test_the_affected_caller_query_returns_the_key_its_reader_unpacks() -> None:
+def test_the_affected_caller_query_projects_the_key_its_reader_unpacks() -> None:
     # `_affected_caller_keys` reads each row as `row.get(cs.KEY_CALLER_PATH)`,
-    # so the RETURN alias and that constant must agree. Asserting the literal
-    # would not couple them: renaming both together would keep a literal
-    # assertion green while a rename of either alone breaks the incremental
-    # path against a real graph. The emulator builds its rows in Python and
-    # never executes this projection, so no behavioural test can see it.
-    assert f"AS {cs.KEY_CALLER_PATH}" in cs.CYPHER_AFFECTED_CALLER_PATHS
+    # so the RETURN alias and that constant must agree. Interpolating the
+    # constant asserts that AGREEMENT; a hardcoded `"AS caller_path"` would
+    # instead pin a value, going red on a coordinated rename of both (a
+    # working system: measured 2026-08-31, the literal variant fails while
+    # this one passes) and staying green if KEY_CALLER_PATH later drifted
+    # away from the literal. The emulator builds its rows in Python and never
+    # executes this projection, so no behavioural test can see it.
+    #
+    # The source expression is pinned too, not just the alias: projecting
+    # `target.path AS caller_path` keeps the alias correct while returning
+    # re-indexed paths instead of dependent-caller paths, which empties the
+    # affected-caller set. Measured 2026-08-31: that edit left this file and
+    # test_graph_updater_incremental_rename.py green (9 passed) when the
+    # assertion covered the alias alone.
+    assert f"caller.path AS {cs.KEY_CALLER_PATH}" in cs.CYPHER_AFFECTED_CALLER_PATHS
