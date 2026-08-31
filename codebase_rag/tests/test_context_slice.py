@@ -435,11 +435,19 @@ def test_doc_lookup_key_is_built_with_the_writers_helper() -> None:
     from codebase_rag import context_slice as cs_mod
 
     source = inspect.getsource(cs_mod._doc_pieces)
-    key_lines = [ln.strip() for ln in source.splitlines() if "absolute =" in ln]
 
-    assert key_lines == ["absolute = cached_resolve_posix(repo_root / path)"], (
-        f"_doc_pieces must build its lookup key with cached_resolve_posix, the "
-        f"helper the indexer writes absolute_path with; found {key_lines!r}"
+    # Match on the two facts rather than on an exact line, so a behaviour-
+    # preserving refactor (renaming the local, inlining the call) does not fail
+    # this. Both halves are needed: the first alone passes if a stray
+    # `str(...resolve())` is reintroduced alongside the helper, the second alone
+    # passes if the key is built some third way that is also wrong on Windows.
+    assert "cached_resolve_posix(repo_root / path)" in source, (
+        "_doc_pieces must build its lookup key with cached_resolve_posix, the "
+        "helper the indexer writes absolute_path with"
+    )
+    assert "str((repo_root / path).resolve())" not in source, (
+        "_doc_pieces must not hand-build the lookup key: str(...resolve()) is "
+        "backslash-separated on Windows and matches no stored absolute_path"
     )
 
 
