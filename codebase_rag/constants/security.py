@@ -195,6 +195,7 @@ SHELL_PROGRAM_NAMING_FLAG_SUFFIXES = (
     "tool",
     "helper",
     "proxy",
+    "hook",
     "filter",
     "editor",
     "pager",
@@ -322,7 +323,13 @@ SHELL_SED_KNOWN_FLAGS = frozenset(
     }
 )
 
-SHELL_SED_VALUE_FLAGS = frozenset({"-i", "--in-place", "-l", "--line-length"})
+# GNU sed declares -i[SUFFIX] / --in-place[=SUFFIX] with an OPTIONAL,
+# attached-only argument, while BSD sed takes it separately. Treating it as
+# separate-value steps over the SCRIPT on GNU -- and CI runs GNU. The safe
+# reading is the one that still scans the script, so -i is attached-only here
+# and the BSD `sed -i ext SCRIPT` spelling is handled by scanning both tokens.
+SHELL_SED_OPTIONAL_ARG_FLAGS = frozenset({"-i", "--in-place"})
+SHELL_SED_VALUE_FLAGS = frozenset({"-l", "--line-length"})
 
 SHELL_SED_SCRIPT_FILE_FLAGS = frozenset({"-f", "--file"})
 
@@ -447,7 +454,10 @@ SHELL_NONINTERACTIVE_DENIED_OPTIONS: dict[str, tuple[str, ...]] = {
     ),
     "wc": ("--files0-from",),
     "find": ("-files0-from",),
-    "rg": ("--pre",),
+    # Derived, not restated: a hand-copied duplicate of
+    # SHELL_RG_EXEC_FLAGS drifted once already (--hostname-bin was
+    # guarded interactively and omitted here).
+    "rg": tuple(sorted(SHELL_RG_EXEC_FLAGS)),
 }
 
 # git subcommands that run a caller-supplied command. `filter-branch

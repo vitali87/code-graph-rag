@@ -559,6 +559,39 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # Its operand is a value, not a script; step over both.
             index += 2
             continue
+        if any(
+            arg.startswith(flag) and len(arg) > len(flag)
+            for flag in cs.SHELL_SED_OPTIONAL_ARG_FLAGS
+            if not flag.startswith("--")
+        ):
+            # `-i.bak`: the suffix is attached, so the NEXT token is the
+            # script and nothing else is consumed.
+            index += 1
+            continue
+        if arg in cs.SHELL_SED_OPTIONAL_ARG_FLAGS:
+            # The implementations disagree: GNU's -i takes an OPTIONAL
+            # attached-only suffix (so the next token is the SCRIPT), while
+            # BSD's takes a separate one (so the next token is a suffix and
+            # the script follows it). Scan both readings as candidate
+            # scripts, since a suffix like `.bak` or `ext` matches no command
+            # anchor while a real script does. Picking one reading is what
+            # let `sed -i 'w /tmp/evil'` through on GNU.
+            # Add the operands as candidates but do NOT consume them: a
+            # later `-e` may carry the real script, and stopping here missed
+            # `sed -i ext -e '<script>'`.
+            # Both operands are candidate scripts under one reading or the
+            # other, so scan both. Then step past the BSD suffix operand, or
+            # the non-flag branch below would treat it as the script and stop
+            # before a later -e carrying the real one.
+            for offset in (1, 2):
+                if index + offset < len(cmd_parts) and not cmd_parts[
+                    index + offset
+                ].startswith("-"):
+                    scripts.append(cmd_parts[index + offset])
+            following = cmd_parts[index + 1 : index + 2]
+            takes_separate_suffix = bool(following) and not following[0].startswith("-")
+            index += 2 if takes_separate_suffix else 1
+            continue
         known = _flag_name(arg) in cs.SHELL_SED_KNOWN_FLAGS or any(
             arg.startswith(flag) and len(arg) > len(flag)
             for flag in cs.SHELL_SED_VALUE_FLAGS

@@ -1925,6 +1925,19 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed -nQ 's/a/b/' f",
         "sed -an 'w/tmp/x' f",
         "sed -nE 'e id' f",
+        # GNU sed declares -i[SUFFIX] as an OPTIONAL, attached-only
+        # argument while BSD takes it separately, so the two disagree on
+        # which token is the script. Both readings are scanned; picking
+        # one let `sed -i 'w /tmp/evil'` through on GNU, which is what CI
+        # runs.
+        "sed -i '1e id' f",
+        "sed -i 'w /tmp/evil' f",
+        "sed -i 's/a/b/e' f",
+        "sed -i ext 'w /tmp/x' f",
+        "sed -i ext '1e id' f",
+        "sed --in-place 'e id' f",
+        "sed --in-place=.bak 'w /tmp/x' f",
+        "sed -n -i.bak 'e id' f",
     ),
 )
 def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
@@ -1987,6 +2000,9 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed -sz 's/a/b/' f",
         "sed --follow-symlinks 's/a/b/' f",
         "sed -b 's/a/b/' f",
+        "sed -i '' 's/a/b/' f",
+        "sed -n -i.bak 's/a/b/p' f",
+        "sed --in-place=.bak 's/a/b/' f",
         "sed --binary 's/a/b/' f",
         # `;s` gave the w a following non-space once the separator was
         # relaxed, and the s///w pattern spanned the `;` into the next
@@ -2100,6 +2116,14 @@ def test_rg_ordinary_searches_still_run(segment: str) -> None:
         "git x --custom-pager id",
         "rg --some-new-cmd id x f",
         "rg --future-bin id x f",
+        # git send-email documents four command-runner flags; the suffix
+        # backstop caught all four before they were ever enumerated, which
+        # is the point of having it. --access-hook needed "hook" adding.
+        "git send-email --sendmail-cmd=/tmp/e.sh p",
+        "git send-email --to-cmd=id p",
+        "git send-email --cc-cmd=id p",
+        "git send-email --header-cmd=id p",
+        "git daemon --access-hook=id",
     ),
 )
 def test_unenumerated_program_naming_flags_are_refused(segment: str) -> None:
@@ -2121,6 +2145,9 @@ def test_unenumerated_program_naming_flags_are_refused(segment: str) -> None:
         "git diff --stat",
         "rg --max-count 5 pat f",
         "rg --color never pat f",
+        "git send-email --to x@y p",
+        "git send-email --from x p",
+        "git send-email --confirm=never p",
         "rg --ignore-file .rgignore pat f",
         "rg -n --glob '*.py' pat",
         # The --no- family turns a feature OFF and names no program:
