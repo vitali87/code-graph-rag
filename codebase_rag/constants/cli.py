@@ -494,6 +494,12 @@ PATCH_NOT_AN_IDENTIFIER = "{path}:{line}:{col} is not a whole identifier"
 PATCH_PARSE_FAILED = "{path} no longer parses after the patch"
 PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
 PATCH_OK = "{path}: {count} edit(s) applied"
+# `parses is None` means no grammar was available, so the patch was checked
+# by nothing. Reported apart from PATCH_OK because reporting both as OK is
+# what turned an unverifiable write into an apparently verified one; the
+# write itself is still allowed, since refusing would make edits a silent
+# no-op on a base install where Rust and Go grammars are absent (#1580).
+PATCH_UNVERIFIED = "{path}: {count} edit(s) applied, unverified (no parser for it)"
 # Edit transactions (issue #1528).
 EDIT_NOT_A_FILE = "Staged path is not a regular file: {path}"
 EDIT_RESERVED_PATH = "Path is cgr state, not part of the tree: {path}"

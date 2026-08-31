@@ -230,6 +230,66 @@ def test_generic_fallback_for_a_language_without_a_grammar(tmp_path: Path) -> No
     assert result.formatter is None
 
 
+def test_an_unverifiable_patch_is_staged_but_reported_as_unverified(
+    tmp_path: Path,
+) -> None:
+    """`parses is None` means "could not check", not "checked and fine".
+
+    `stage_into` gates on `parses is not False`, which is two-valued over a
+    tri-state and so assigns the third value to the WRITING side: a file
+    whose language has no grammar is staged having been checked by nothing
+    (issue #1580). On a base install that is the common case, not an edge
+    one, because the Rust and Go grammars are absent there.
+
+    Staging is kept -- refusing would turn a working edit into a silent
+    no-op on exactly that install. What must not survive is the false
+    assurance: the caller has to be able to tell "verified" from
+    "unverifiable", and both arriving as PATCH_OK is what makes the gate
+    unsafe rather than merely weak.
+    """
+    _write(tmp_path, "notes.txt", "alpha beta\n")
+    patcher = Patcher(tmp_path)
+    patcher.replace_identifier_at("notes.txt", 1, 6, "beta", "gamma")
+
+    class Stub:
+        staged: dict[str, bytes] = {}
+
+        def stage(self, rel_path: str | Path, content: str | bytes | None) -> None:
+            self.staged[str(rel_path)] = content  # type: ignore[assignment]
+
+    stub = Stub()
+    results = patcher.stage_into(stub)
+    result = results["notes.txt"]
+
+    assert result.parses is None
+    assert stub.staged == {"notes.txt": b"alpha gamma\n"}, (
+        "an unverifiable patch must still be staged, or base installs "
+        "silently stop applying edits"
+    )
+    assert result.message != cs.PATCH_OK.format(path="notes.txt", count=1), (
+        "unverifiable reported as OK is the false assurance this fixes"
+    )
+    assert result.message == cs.PATCH_UNVERIFIED.format(path="notes.txt", count=1)
+
+
+def test_a_verified_patch_still_reports_ok(tmp_path: Path) -> None:
+    """The control: only the unverifiable case changes message.
+
+    Without it, a change that reported UNVERIFIED for everything would
+    satisfy the assertion above while destroying the distinction it exists
+    to create.
+    """
+    _grammar("python")
+    _write(tmp_path, "m.py", "x = 1\n")
+    patcher = Patcher(tmp_path)
+    patcher.replace_identifier_at("m.py", 1, 0, "x", "xx")
+
+    (result,) = patcher.apply().values()
+
+    assert result.parses is True
+    assert result.message == cs.PATCH_OK.format(path="m.py", count=1)
+
+
 # --- other languages ----------------------------------------------------------
 
 
