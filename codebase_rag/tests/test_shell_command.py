@@ -25,6 +25,7 @@ from codebase_rag.tools.shell_command import (
     _is_dangerous_rm_path,
     _parse_command,
     _requires_approval,
+    _sed_exec_construct,
     _validate_segment,
     _xargs_launched_command,
     create_noninteractive_shell_command_tool,
@@ -2167,6 +2168,57 @@ def test_ordinary_flags_are_not_mistaken_for_programs(segment: str) -> None:
     assert _validate_segment(segment, "", False) is None, (
         f"an ordinary flag was blocked: {segment}"
     )
+
+
+# Arities fixed from each tool's own manual, NOT read back from the sets in
+# the source. A fail-closed unknown-flag rule cannot catch a WRONG arity,
+# because the flag is known -- which is why `sed -i` (GNU: optional and
+# attached-only; filed here as required-value) stepped over the script itself
+# and was invisible to every other check. This is the sed equivalent of
+# _XARGS_KNOWN_ARITIES, whose absence is exactly what let that through.
+_SED_KNOWN_ARITIES = (
+    ("-n", "boolean"),
+    ("-E", "boolean"),
+    ("-r", "boolean"),
+    ("-s", "boolean"),
+    ("-u", "boolean"),
+    ("-z", "boolean"),
+    ("-a", "boolean"),
+    ("-H", "boolean"),
+    ("-b", "boolean"),
+    ("--binary", "boolean"),
+    ("--follow-symlinks", "boolean"),
+    ("--posix", "boolean"),
+    ("--sandbox", "boolean"),
+    ("--debug", "boolean"),
+    ("-l", "value"),
+    ("--line-length", "value"),
+    ("-i", "optional"),
+    ("--in-place", "optional"),
+)
+
+
+@pytest.mark.parametrize(("flag", "arity"), _SED_KNOWN_ARITIES)
+def test_sed_flag_arity_keeps_the_script_visible(flag: str, arity: str) -> None:
+    # With the flag at its documented arity, a dangerous script must still be
+    # found. A misfiled arity makes the scanner step over the script, so this
+    # fails where a membership check cannot: mutating -i back to required-value
+    # (the round-ten bug) is killed here.
+    #
+    # The limit, stated rather than implied: the reverse misfiling -- a value
+    # flag treated as boolean -- SURVIVES, because scanning one token too many
+    # still leaves the script visible. This table catches arities that make
+    # the scanner see too little, not too much; over-scanning shows up as a
+    # false positive in the ordinary-invocation tests instead.
+    danger = "w /tmp/x"
+    if arity == "value":
+        assert _sed_exec_construct(["sed", flag, "5", danger, "f"]) is not None
+    else:
+        assert _sed_exec_construct(["sed", flag, danger, "f"]) is not None
+    if arity == "optional":
+        # The implementations disagree about whether the operand is a suffix
+        # or the script, so both readings must keep the script visible.
+        assert _sed_exec_construct(["sed", flag, "ext", danger, "f"]) is not None
 
 
 def test_xargs_flag_partition_is_disjoint() -> None:
