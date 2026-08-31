@@ -180,7 +180,19 @@ SHELL_CMD_AWK = "awk"
 # the program. Skipping the flag but not its value made `awk -v c=id '...'`
 # treat `c=id` as the program text and never scan the real one -- the
 # optional-vs-required argument confusion again, fourth occurrence.
-SHELL_AWK_VALUE_FLAGS = frozenset({"-v", "-F", "-f"})
+SHELL_AWK_VALUE_FLAGS = frozenset(
+    {
+        "-v",
+        "-F",
+        "-f",
+        # gawk's long forms. BSD awk lacks them, CI runs gawk, and without
+        # them the loop reads the flag's VALUE as the program and never scans
+        # the real one.
+        "--assign",
+        "--field-separator",
+        "--file",
+    }
+)
 
 SHELL_CMD_SED = "sed"
 
@@ -199,9 +211,9 @@ SHELL_SED_EXEC_TOKENS = (
     # A command letter is preceded by a command separator (start, `;`, `{`,
     # newline) or by an address, which always ends in a digit, `/`, `%`, `+`,
     # `!`, `~`, `,` or a closing delimiter. So: any of those, then the letter.
-    (r"(?:^|[;{\n]|[\d/%+!~,I$])\s*e(?:\s|$)", "e command"),
+    (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*e(?:\s|$)", "e command"),
     (r"s(.).*?\1.*?\1[gip0-9]*e", "s///e execute flag"),
-    (r"(?:^|[;{\n]|[\d/%+!~,I$])\s*[wWrR]\s+\S", "reads or writes a named file"),
+    (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR]\s+\S", "reads or writes a named file"),
     (r"s(.).*?\1.*?\1[gip0-9]*w\s+\S", "s///w writes a named file"),
 )
 
@@ -363,6 +375,7 @@ SHELL_GIT_EXEC_FLAGS = frozenset(
     }
 )
 
+
 # The argument that turns one of those subcommands into a command runner.
 # `git submodule status` and `git bisect start` launch nothing.
 SHELL_GIT_EXEC_SUBCOMMAND_ARGS = frozenset(
@@ -409,6 +422,12 @@ SHELL_GIT_CONFIG_EXEC_KEYS = frozenset(
         # protocol.<name>.command are documented executors; ssh.variant and
         # init.templateDir steer which program runs or where hooks come from.
         "core.gitproxy",
+        # Program-valued keys whose names follow no suffix convention.
+        # core.askPass was verified executing against a local 401 server.
+        "core.askpass",
+        "man.viewer",
+        "web.browser",
+        "instaweb.httpd",
         "uploadpack.packobjectshook",
         "ssh.variant",
         "init.templatedir",

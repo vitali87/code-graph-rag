@@ -1630,6 +1630,10 @@ def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
         # every spelling. Matching only the exact token `-f` let the attached
         # and long forms through (review round seven).
         "awk -f prog.awk f",
+        # gawk's long option spellings: without them the loop reads the
+        # flag's VALUE as the program and never scans the real one.
+        "awk --assign c=id '{system(c)}'",
+        "awk --field-separator : '{system(1)}'",
         "awk -f/tmp/prog.awk",
         "awk --file=/tmp/prog.awk",
         # A redirect target need not be quoted: with the filename in a
@@ -1736,6 +1740,10 @@ def test_git_subcommands_cannot_run_a_command(segment: str) -> None:
         "git send-email x.patch",
         # -S is the short gpg-sign flag and names no program.
         "git commit -S -m x",
+        # ...but on log/diff the same letter is the pickaxe search and names
+        # no program, so history searching must keep working.
+        "git log -S pattern",
+        "git diff -Sfoo",
     ),
 )
 def test_git_ordinary_subcommands_still_run(segment: str) -> None:
@@ -1781,6 +1789,13 @@ def test_git_ordinary_subcommands_still_run(segment: str) -> None:
         "sendemail.sendmailCmd",
         "sendemail.toCmd",
         "sendemail.ccCmd",
+        # Program-valued keys whose names follow no suffix convention, so no
+        # rule reaches them and only naming them works. core.askPass was
+        # verified executing against a local 401 server.
+        "core.askPass",
+        "man.viewer",
+        "web.browser",
+        "instaweb.httpd",
     ),
 )
 def test_git_program_valued_config_keys_are_refused(key: str) -> None:
@@ -1856,6 +1871,15 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed '{e id}' f",
         "sed '1\ne id' f",
         # W, r and R read or write a named file just as w does.
+        # `-e` attached, and a command split across two tokens: real sed
+        # writes the file from `sed -ew /tmp/p`, where argv is
+        # ["-ew", "/tmp/p"] and neither token alone shows w with its target.
+        "sed -ew /tmp/p f",
+        "sed -e's/x/id/e' f",
+        # M is I's sibling regex-address modifier; covering one and not the
+        # other is the same fix-one-path-not-its-sibling class.
+        "sed '/x/Me id' f",
+        "sed '/x/Mw /tmp/p' f",
         "sed 'W /etc/x' f",
         "sed '1r /etc/passwd' f",
         "sed '1R /etc/passwd' f",
@@ -1901,6 +1925,12 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed 's/a/b/2' f",
         "sed '$d' f",
         "sed '$p' f",
+        # A letter inside a replacement or a /regex/ address is user text and
+        # must not read as a command; s/// and address bodies are blanked
+        # before the command anchors run.
+        "sed 's/x/Iw file/' f",
+        "sed '/HIw file/d' f",
+        "sed 's/Ie /x/' f",
     ),
 )
 def test_sed_ordinary_scripts_still_run(segment: str) -> None:

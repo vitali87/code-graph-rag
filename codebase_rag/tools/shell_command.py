@@ -466,14 +466,60 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_GIT:
         return None
 
-    return next(
-        (
-            _flag_name(arg)
-            for arg in cmd_parts[1:]
-            if arg.startswith("-") and _flag_name(arg) in cs.SHELL_GIT_EXEC_FLAGS
-        ),
-        None,
-    )
+    for arg in cmd_parts[1:]:
+        if arg.startswith("-") and _flag_name(arg) in cs.SHELL_GIT_EXEC_FLAGS:
+            return _flag_name(arg)
+
+    return None
+
+
+def _sed_script_skeleton(script: str) -> str:
+    """The script with s/// and y/// bodies blanked out.
+
+    A regex body or replacement can contain any text, including a letter that
+    the command-anchor patterns read as a command (`s/x/Iw file/` looked like
+    a `w` write). Blanking those spans leaves the command structure intact
+    while removing text the user chose, so the anchor sees only positions
+    where a command can actually appear.
+    """
+    out = []
+    index = 0
+    while index < len(script):
+        char = script[index]
+        if char in "sy" and index + 1 < len(script):
+            delim = script[index + 1]
+            if not delim.isalnum() and delim not in " \t\n;{}":
+                end = index + 2
+                fields = 0
+                while end < len(script) and fields < 2:
+                    if script[end] == "\\":
+                        end += 2
+                        continue
+                    if script[end] == delim:
+                        fields += 1
+                    end += 1
+                out.append(char)
+                out.append(" " * (end - index - 1))
+                index = end
+                continue
+        if char == "/":
+            # A /regex/ address body is user text too, and a letter inside it
+            # sits immediately before the command position. Blank it, keeping
+            # the delimiters so the address still anchors the command.
+            end = index + 1
+            while end < len(script) and script[end] != "/":
+                if script[end] == "\\":
+                    end += 1
+                end += 1
+            if end < len(script):
+                out.append("/")
+                out.append(" " * (end - index - 1))
+                out.append("/")
+                index = end + 1
+                continue
+        out.append(char)
+        index += 1
+    return "".join(out)
 
 
 def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
@@ -495,19 +541,34 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     ):
         return "a script file this validator cannot inspect"
 
-    for arg in cmd_parts[1:]:
-        # `-e SCRIPT` and `--expression=SCRIPT` both carry script text; the
-        # attached `--expression=` spelling has it in the same token.
-        # `-e SCRIPT` gives the script as the NEXT token, which the loop
-        # reaches on its own; `--expression=SCRIPT` carries it in this token.
-        # Scan the value alone, so the `=` does not sit where the pattern
-        # expects a script-start boundary.
-        if arg.startswith("-"):
-            if "=" not in arg:
-                continue
-            arg = arg.split("=", 1)[1]
+    # Script text arrives as the token after `-e`, attached as `-eSCRIPT`, or
+    # as `--expression=SCRIPT`, and a command can be SPLIT across two tokens:
+    # `sed -ew /tmp/p` gives argv ["-ew", "/tmp/p"] and real sed writes the
+    # file, so each token scanned alone never sees the `w` with its target.
+    # Joining the remainder keeps them together.
+    scripts: list[str] = []
+    index = 1
+    while index < len(cmd_parts):
+        arg = cmd_parts[index]
+        if not arg.startswith("-"):
+            scripts.append(" ".join(cmd_parts[index:]))
+            break
+        if "=" in arg:
+            scripts.append(arg.split("=", 1)[1])
+        elif arg.startswith("-e") and len(arg) > 2:
+            scripts.append(" ".join([arg[2:], *cmd_parts[index + 1 :]]))
+        elif arg in ("-e", "--expression"):
+            scripts.append(" ".join(cmd_parts[index + 1 :]))
+        index += 1
+
+    for arg in scripts:
+        skeleton = _sed_script_skeleton(arg)
         for pattern, reason in cs.SHELL_SED_EXEC_TOKENS:
-            if re.search(pattern, arg):
+            # The s///e and s///w patterns need the real text; the command
+            # anchors run on the skeleton so a letter inside a replacement
+            # cannot look like a command.
+            target = arg if reason.startswith("s///") else skeleton
+            if re.search(pattern, target):
                 return reason
 
     return None
