@@ -172,6 +172,15 @@ SHELL_CMD_FIND = "find"
 # input from a runtime RecursionError into a validator refusal.
 SHELL_MAX_LAUNCHER_NESTING = 16
 
+SHELL_CMD_RG = "rg"
+
+# ripgrep flags naming a program it runs. `--pre=COMMAND` searches the output
+# of COMMAND for each file -- verified executing a planted script. Found by
+# auditing the ALLOWLIST for exec capability rather than the launcher set:
+# nine review rounds reasoned from the launcher set, which by construction
+# cannot contain a launcher nobody has recognised yet.
+SHELL_RG_EXEC_FLAGS = frozenset({"--pre", "--hostname-bin"})
+
 SHELL_CMD_AWK = "awk"
 
 # Constructs through which an awk PROGRAM runs a command or writes a file:

@@ -601,6 +601,21 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     return None
 
 
+def _rg_exec_flag(cmd_parts: list[str]) -> str | None:
+    """Return the ripgrep flag naming a program rg would run."""
+    if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RG:
+        return None
+
+    return next(
+        (
+            _flag_name(arg)
+            for arg in cmd_parts[1:]
+            if arg.startswith("-") and _flag_name(arg) in cs.SHELL_RG_EXEC_FLAGS
+        ),
+        None,
+    )
+
+
 def _is_dangerous_command(
     cmd_parts: list[str], full_segment: str, bypass_allowlist: bool = False
 ) -> tuple[bool, str]:
@@ -658,6 +673,9 @@ def _is_dangerous_command(
 
     if form := _git_exec_subcommand(cmd_parts):
         return True, f"git {form} runs a caller-supplied command"
+
+    if flag := _rg_exec_flag(cmd_parts):
+        return True, f"rg {flag} names a program rg will run"
 
     if construct := _sed_exec_construct(cmd_parts):
         return True, f"sed can run a command or write a file via {construct}"

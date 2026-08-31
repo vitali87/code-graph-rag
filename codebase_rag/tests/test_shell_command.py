@@ -2027,6 +2027,44 @@ def test_git_config_reads_and_unsets_still_allowed(segment: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # ripgrep runs a program: --pre=COMMAND searches the output of
+        # COMMAND for each file. Verified executing a planted script. Found
+        # by auditing the ALLOWLIST for exec capability rather than the
+        # launcher set -- nine review rounds reasoned from the launcher set,
+        # which by construction cannot contain a launcher not yet recognised.
+        "rg --pre /tmp/x.sh pat f",
+        "rg --pre=id pat f",
+        "rg --hostname-bin id pat f",
+        "xargs rg --pre=id pat f",
+    ),
+)
+def test_rg_cannot_run_a_program(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"rg ran a program: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Ordinary searching must keep working, including the flags that
+        # merely name a FILE rather than a program.
+        "rg pat f",
+        "rg -n pat f",
+        "rg --search-zip pat f",
+        "rg --ignore-file .rgignore pat f",
+        "rg -i --glob '*.py' pat",
+    ),
+)
+def test_rg_ordinary_searches_still_run(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"ordinary rg was blocked: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
