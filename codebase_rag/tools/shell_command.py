@@ -581,11 +581,11 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     #  * The one exception is a script ending in a bare file command, where
     #    the operand is genuinely the next argv entry (`sed -ew /tmp/p`).
     scripts: list[str] = []
-    # Indices into `scripts` for tokens that may be an input FILENAME rather
-    # than script text. A filename can contain any letter, so the anchors
-    # that merely spot a command letter are not applied to these -- only the
-    # ones whose shape cannot occur in a path.
-    ambiguous: list[int] = []
+    # Every candidate token is scanned. Telling script text from an input
+    # filename by inspecting the token was tried twice and was a bypass both
+    # times (a suffix-shape guess, then a whitespace rule). The file-command
+    # anchor now requires a space-separated or path-like target, which no
+    # ordinary filename has, so no such distinction is needed.
 
     def add(position: int) -> None:
         if not 0 < position < len(cmd_parts):
@@ -603,7 +603,7 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # End of options: the next token is the script unless a -e/-f has
             # already given one. A preceding -i contributes only AMBIGUOUS
             # candidates, so it must not suppress this.
-            if len(scripts) == len(ambiguous):
+            if not scripts:
                 add(index + 1)
             break
 
@@ -632,16 +632,9 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             if operand and not operand[0].startswith("-"):
                 # Only a non-flag token can be the script or a suffix; `--`
                 # and a following flag belong to the branches below.
-                if index + 1 == len(cmd_parts) - 1:
-                    ambiguous.append(len(scripts))
                 add(index + 1)
                 # Under the BSD reading this is a suffix and the script
-                # follows it, so scan the next token too -- also flagged as
-                # possibly-a-filename, since under GNU it is an input file.
-                if index + 2 == len(cmd_parts) - 1:
-                    # Last argument: under GNU this is the input file, so it
-                    # is genuinely ambiguous and must not be scanned.
-                    ambiguous.append(len(scripts))
+                # follows it, so scan the next token too.
                 add(index + 2)
                 index += 1
             index += 1
@@ -677,7 +670,7 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
 
         index += 1
 
-    for position, arg in enumerate(scripts):
+    for arg in scripts:
         skeleton = _sed_script_skeleton(arg)
         for pattern, reason in cs.SHELL_SED_EXEC_TOKENS:
             # The s///e and s///w patterns need the real text; the command
@@ -686,15 +679,6 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # Only the s/// forms need the real text (the skeleton blanks
             # the very bodies they match inside); every other anchor runs on
             # the skeleton so user text cannot look like a command.
-            if position in ambiguous:
-                # This token may be an input FILENAME rather than script
-                # text. Position settles it structurally: sed needs a file
-                # AFTER its script, so a token that is the LAST argument can
-                # only be a filename, and anything earlier can be a script.
-                # No content heuristic works here -- `w.txt` is both a valid
-                # filename and a valid write to `.txt`, and guessing by shape
-                # or by whitespace were each a bypass in earlier rounds.
-                continue
             target = arg if reason.startswith("s///") else skeleton
             if re.search(pattern, target):
                 return reason

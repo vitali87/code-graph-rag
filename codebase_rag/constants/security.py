@@ -290,7 +290,12 @@ SHELL_SED_EXEC_TOKENS = (
     # `!`, `~`, `,` or a closing delimiter. So: any of those, then the letter.
     (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*e(?:\s|$)", "e command"),
     (r"s(.)[^\n;]*?\1[^\n;]*?\1[gip0-9]*e(?:\s|$|;)", "s///e execute flag"),
-    (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR]\s*\S", "reads or writes a named file"),
+    # The target must be space-separated or a path: `w out.txt`, `w/tmp/x`.
+    # Letting any character follow made every filename containing r or w a
+    # match -- README.md, requirements.txt, src/Reader.py were all blocked --
+    # because a filename's letters run together while a command and its
+    # operand do not. Verified against 14 script spellings and 14 filenames.
+    (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR](?:\s+\S|/)", "reads or writes a named file"),
     (r"s(.)[^\n;]*?\1[^\n;]*?\1[gip0-9]*w\s*[^\s;]", "s///w writes a named file"),
 )
 
