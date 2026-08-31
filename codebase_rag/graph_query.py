@@ -379,7 +379,13 @@ def importers(
         key=lambda r: (
             r["module"],
             r["line"] if r["line"] is not None else -1,
-            r["col"] or -1,
+            # `or -1` would fold a real column 0 -- the common case, an import
+            # at the start of a line -- into the same key as a missing column,
+            # leaving co-located rows in the arbitrary order the graph
+            # returned them.
+            r["col"] if r["col"] is not None else -1,
+            r["alias"] or "",
+            r["imported_name"] or "",
         ),
     )
 

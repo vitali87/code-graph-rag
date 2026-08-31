@@ -350,6 +350,89 @@ def test_importers_carry_the_statement_locations() -> None:
     ]
 
 
+def test_importers_order_does_not_depend_on_the_fetch_order() -> None:
+    """Column zero must stay distinct from a missing column in the sort key.
+
+    `col or -1` maps BOTH `0` and `None` to `-1`, so two imports of the same
+    module on the same line -- one at column 0, one with no recorded column --
+    collide on the sort key and keep whatever order the database happened to
+    return. Column 0 is the common case (an import at the start of a line),
+    so the collision is reachable rather than theoretical.
+
+    Asserting a specific output order would NOT catch this: Python's sort is
+    stable, so colliding keys preserve the input order and the buggy code
+    returns the expected list whenever the fixture is already in that order.
+    What the defect actually breaks is that the output stops being a function
+    of the rows alone, so the assertion is that two permutations of the same
+    rows produce the same JSON.
+    """
+    rows = [
+        {
+            cs.KEY_QUALIFIED_NAME: f"{P}.app",
+            cs.KEY_PATH: "app.py",
+            cs.KEY_LINE: 1,
+            cs.KEY_COL: None,
+            cs.KEY_END_LINE: 1,
+            cs.KEY_END_COL: 20,
+            cs.KEY_ALIAS: "same",
+            cs.KEY_IMPORTED_NAME: "same",
+        },
+        {
+            cs.KEY_QUALIFIED_NAME: f"{P}.app",
+            cs.KEY_PATH: "app.py",
+            cs.KEY_LINE: 1,
+            cs.KEY_COL: 0,
+            cs.KEY_END_LINE: 1,
+            cs.KEY_END_COL: 27,
+            cs.KEY_ALIAS: "same",
+            cs.KEY_IMPORTED_NAME: "same",
+        },
+    ]
+
+    def fetch(order: list[ResultRow]) -> list[graph_query.ImporterRow]:
+        return graph_query.importers(lambda _q, _p=None: list(order), P, f"{P}.util")
+
+    forward = fetch(rows)
+    reversed_ = fetch(list(reversed(rows)))
+    assert json.dumps(forward) == json.dumps(reversed_)
+    # The row with a real column 0 must sort after the one with no column,
+    # rather than tying with it: -1 (absent) < 0 (column zero). `end_col`
+    # identifies the rows because every field the sort key READS is equal
+    # between them apart from `col` -- otherwise a tie-breaker would order
+    # them and the assertion would hold even with the collision restored.
+    assert [r["end_col"] for r in forward] == [20, 27]
+
+
+def test_importers_co_located_on_one_statement_order_by_name() -> None:
+    """Names from a single `from x import a, b` share module, line AND column.
+
+    Position alone cannot separate them, so without a name tie-breaker the
+    pair keeps the graph's arbitrary order. This is a distinct collision from
+    the column-zero one above: that test still passes with the tie-breakers
+    removed, and this one still passes with the column fix reverted.
+    """
+
+    def row(name: str, end_col: int) -> ResultRow:
+        return {
+            cs.KEY_QUALIFIED_NAME: f"{P}.app",
+            cs.KEY_PATH: "app.py",
+            cs.KEY_LINE: 1,
+            cs.KEY_COL: 0,
+            cs.KEY_END_LINE: 1,
+            cs.KEY_END_COL: end_col,
+            cs.KEY_ALIAS: name,
+            cs.KEY_IMPORTED_NAME: name,
+        }
+
+    rows = [row("b", 30), row("a", 20)]
+
+    def fetch(order: list[ResultRow]) -> list[graph_query.ImporterRow]:
+        return graph_query.importers(lambda _q, _p=None: list(order), P, f"{P}.util")
+
+    assert [r["alias"] for r in fetch(rows)] == ["a", "b"]
+    assert json.dumps(fetch(rows)) == json.dumps(fetch(list(reversed(rows))))
+
+
 def test_tests_reaching_walks_backwards_to_test_symbols() -> None:
     rows = graph_query.tests_reaching(fake_fetch_all, P, f"{P}.util.helper")
     assert [(r["depth"], r["qualified_name"], r["through"]) for r in rows] == [
