@@ -81,16 +81,18 @@ _DEFINITION_LABELS = frozenset(
 _INBOUND_DEPENDENT_RELS = frozenset(
     {
         cs.RelationshipType.CALLS.value,
+        cs.RelationshipType.REFERENCES.value,
         cs.RelationshipType.INSTANTIATES.value,
         cs.RelationshipType.IMPORTS.value,
         cs.RelationshipType.INHERITS.value,
+        cs.RelationshipType.IMPLEMENTS.value,
         cs.RelationshipType.OVERRIDES.value,
     }
 )
 # The dependency relations CYPHER_AFFECTED_CALLER_PATHS walks: a file holding
 # one of these into a re-indexed file is re-parsed rather than restored
 # verbatim (issue #1229 phase 4). REFERENCES is in, OVERRIDES is out, exactly
-# as in the production query.
+# as in the production query; IMPLEMENTS joined both lists with issue #1565.
 _AFFECTED_CALLER_RELS = frozenset(
     {
         cs.RelationshipType.CALLS.value,
@@ -98,6 +100,7 @@ _AFFECTED_CALLER_RELS = frozenset(
         cs.RelationshipType.INSTANTIATES.value,
         cs.RelationshipType.IMPORTS.value,
         cs.RelationshipType.INHERITS.value,
+        cs.RelationshipType.IMPLEMENTS.value,
     }
 )
 _INHERITS_REL = cs.RelationshipType.INHERITS.value

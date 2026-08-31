@@ -518,8 +518,31 @@ CYPHER_ALL_MODULE_QNS = (
 # Re-resolving the callers instead would diverge from a clean index, because
 # cgr's call resolution is context-sensitive (protocol vs concrete receiver,
 # import granularity); the original edges already match a clean re-index.
+#
+# The STRUCTURE of this query and of CYPHER_AFFECTED_CALLER_PATHS below is not
+# covered by the unit suite, only their relation lists are. The eval emulator
+# (evals/cgr_graph.py) matches these constants whole, in a `case` that compares
+# the query by VALUE, and never parses the Cypher: it reimplements the
+# semantics in Python over its own frozensets. So an edit to the text here is
+# followed automatically by the `case` while the emulator's behaviour stays
+# hardcoded, and a structural edit keeps every unit test green while breaking
+# production. Measured 2026-08-30: flipping the arrow here to
+# `(caller)<-[r:...]-(target)` left all of test_incremental_implements_edge.py
+# passing (7 passed), and deleting the `caller.path` guard from
+# CYPHER_AFFECTED_CALLER_PATHS left 16 passed across `pytest
+# test_incremental_implements_edge.py test_graph_updater_incremental_rename.py
+# test_cacheless_lookup_failure.py`. Both queries do reach a real backend,
+# via `ingestor.fetch_all` in graph_updater.py (the affected-caller read and
+# `_capture_inbound_edges`), so such an edit ships a broken incremental
+# restore. Verify a change to the MATCH shape or the WHERE clauses against a
+# real graph (the Docker-backed integration tier), not against a green unit
+# run. Two edits the unit suite DOES catch: adding or removing a relation
+# type, and renaming this query's `props` key (test_edge_site_properties.py).
+# CYPHER_AFFECTED_CALLER_PATHS' `caller_path` projection IS pinned, expression
+# and alias both, by test_incremental_implements_edge.py; its other RETURN
+# aliases are not.
 CYPHER_INBOUND_EDGES = (
-    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|OVERRIDES]->(target) "
+    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
     "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
     "RETURN head(labels(caller)) AS caller_label, "
@@ -531,9 +554,12 @@ CYPHER_INBOUND_EDGES = (
 # change there can rebind their calls (a new override shadowing an inherited
 # method), so restoring their old edges verbatim would freeze a stale
 # binding. They are re-parsed instead, one level deep: their own definitions
-# are unchanged, so their callers' bindings cannot move.
+# are unchanged, so their callers' bindings cannot move. IMPLEMENTS counts
+# like INHERITS: an implementor in the same package holds no import edge into
+# its interface's file, and without this it was neither re-parsed nor
+# restored when that file was re-indexed (issue #1565).
 CYPHER_AFFECTED_CALLER_PATHS = (
-    "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS]->(target) "
+    "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS]->(target) "
     "WHERE target.path IN $paths AND caller.path IS NOT NULL "
     "AND NOT caller.path IN $paths "
     "AND caller.qualified_name STARTS WITH $project_prefix "
