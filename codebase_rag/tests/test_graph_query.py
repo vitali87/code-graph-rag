@@ -350,6 +350,34 @@ def test_importers_carry_the_statement_locations() -> None:
     ]
 
 
+def test_importers_sort_by_line_before_column() -> None:
+    """Position orders by line first, then column -- not the reverse.
+
+    The permutation tests below pin the SENTINELS but not the field ORDER:
+    their fixtures share a line, so swapping `line` and `col` in the key
+    leaves their output byte-identical and they pass either way. A row
+    earlier in the file but later in its line is what separates the two,
+    and reading imports out of file order is a real (if quiet) regression.
+    """
+
+    def row(line: int, col: int, alias: str) -> ResultRow:
+        return {
+            cs.KEY_QUALIFIED_NAME: f"{P}.app",
+            cs.KEY_PATH: "app.py",
+            cs.KEY_LINE: line,
+            cs.KEY_COL: col,
+            cs.KEY_END_LINE: line,
+            cs.KEY_END_COL: col + 5,
+            cs.KEY_ALIAS: alias,
+            cs.KEY_IMPORTED_NAME: alias,
+        }
+
+    # `first` is earlier in the file but at a LATER column than `second`.
+    rows = [row(2, 1, "second"), row(1, 5, "first")]
+    got = graph_query.importers(lambda _q, _p=None: list(rows), P, f"{P}.util")
+    assert [r["alias"] for r in got] == ["first", "second"]
+
+
 def test_importers_order_does_not_depend_on_the_fetch_order() -> None:
     """Column zero must stay distinct from a missing column in the sort key.
 
