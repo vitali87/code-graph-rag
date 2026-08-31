@@ -551,14 +551,25 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     while index < len(cmd_parts):
         arg = cmd_parts[index]
         if not arg.startswith("-"):
+            # The first non-flag token is the script when no -e/-f gave one;
+            # the tokens after it are input files. Joining the remainder
+            # matters because a command can span two tokens (`sed -ew /tmp/p`
+            # is argv ["-ew", "/tmp/p"] and real sed writes the file).
             scripts.append(" ".join(cmd_parts[index:]))
             break
         if "=" in arg:
             scripts.append(arg.split("=", 1)[1])
         elif arg.startswith("-e") and len(arg) > 2:
-            scripts.append(" ".join([arg[2:], *cmd_parts[index + 1 :]]))
-        elif arg in ("-e", "--expression"):
-            scripts.append(" ".join(cmd_parts[index + 1 :]))
+            # Attached script; its operand may be the next token.
+            scripts.append(" ".join([arg[2:], *cmd_parts[index + 1 : index + 2]]))
+        elif arg in ("-e", "--expression") and index + 1 < len(cmd_parts):
+            # EACH -e carries its own script. Joining the whole remainder
+            # instead swallowed later `-e` scripts into one string, where a
+            # command lost its position anchor: `sed -e p -e 'w /tmp/x'`
+            # became "p -e w /tmp/x f" and the w read as ordinary text, while
+            # real sed wrote the file.
+            scripts.append(" ".join(cmd_parts[index + 1 : index + 3]))
+            index += 1
         index += 1
 
     for arg in scripts:

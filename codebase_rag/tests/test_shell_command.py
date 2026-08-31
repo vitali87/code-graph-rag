@@ -1875,6 +1875,20 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         # writes the file from `sed -ew /tmp/p`, where argv is
         # ["-ew", "/tmp/p"] and neither token alone shows w with its target.
         "sed -ew /tmp/p f",
+        # EACH -e carries its own script. Joining the whole remainder made
+        # `sed -e p -e 'w /tmp/x'` read as "p -e w /tmp/x f", where the w lost
+        # its command position -- while real sed wrote the file.
+        "sed -e p -e 'w /tmp/x' f",
+        "sed -e 's/a/b/' -e 'e id' f",
+        "sed -e p -e r /etc/passwd f",
+        # Delimiters that are regex metacharacters, and an escaped delimiter,
+        # must not hide a following command.
+        r"sed 's/a\/b/c/;w /etc/x' f",
+        "sed 's|a|b|;w /etc/x' f",
+        "sed 's.a.b.;e id' f",
+        # A target several directories deep still resolves.
+        "sed 'w /tmp/a/b/c' f",
+        "sed 'r /a/b/c' f",
         "sed -e's/x/id/e' f",
         # M is I's sibling regex-address modifier; covering one and not the
         # other is the same fix-one-path-not-its-sibling class.
@@ -1931,6 +1945,11 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed 's/x/Iw file/' f",
         "sed '/HIw file/d' f",
         "sed 's/Ie /x/' f",
+        r"sed 's/a\/b/c/' f",
+        "sed 's.a.b.' f",
+        "sed '/[;]/d' f",
+        "sed -e p -e d f",
+        "sed 's/a/b/' notes.txt",
     ),
 )
 def test_sed_ordinary_scripts_still_run(segment: str) -> None:
