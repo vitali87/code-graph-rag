@@ -1642,6 +1642,15 @@ def test_xargs_flag_arity_matches_the_manual(flag: str, arity: str) -> None:
         # value itself becomes the program, which is how a misfiled VALUE flag
         # shows up here.
         assert _xargs_launched_command(["xargs", flag, "1", "python3"]) == "1"
+        # ...and it must not absorb the REST OF ITS CLUSTER either. Only a
+        # mixed cluster separates boolean from optional-arg: an all-boolean
+        # one like `-0pt` behaves identically under both classifications, so
+        # without a value-taking letter following, a BOOLEAN->OPTIONAL
+        # misfiling resolves an argument instead of the program -- the
+        # `-J cat python3` shape.
+        assert (
+            _xargs_launched_command(["xargs", f"{flag}n", "1", "python3"]) == "python3"
+        ), f"{flag} absorbed its cluster remainder as an attached value"
 
 
 class TestYoloLauncherConfinement:

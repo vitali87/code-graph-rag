@@ -421,7 +421,10 @@ def _is_dangerous_command(
 
 
 def _validate_segment(
-    segment: str, available_commands: str, bypass_allowlist: bool = False
+    segment: str,
+    available_commands: str,
+    bypass_allowlist: bool = False,
+    _depth: int = 0,
 ) -> str | None:
     try:
         cmd_parts = shlex.split(segment)
@@ -430,6 +433,15 @@ def _validate_segment(
 
     if not cmd_parts:
         return None
+
+    if _depth > cs.SHELL_MAX_LAUNCHER_NESTING:
+        # Each level drops at least one token, so this is unreachable for any
+        # plausible command; the cap exists so a pathological one fails with a
+        # validator reason rather than a bare RecursionError from the runtime.
+        return te.COMMAND_DANGEROUS_BLOCKED.format(
+            cmd=cmd_parts[0],
+            reason="launcher nesting is too deep to check",
+        )
 
     base_cmd = cmd_parts[0]
 
@@ -454,10 +466,17 @@ def _validate_segment(
         # launcher is itself allowlisted -- and nesting hides `git -c`, the
         # unknown-flag sentinel, and a further xargs from every check below,
         # because those all inspect cmd_parts[0] only (GHSA rounds 4 and 5).
+        # shlex.join, not " ".join: a bare join drops the quoting shlex.split
+        # removed, so a token containing whitespace is re-split into two by the
+        # nested parse. `git -c 'a b' -c core.pager=x log` then presents `b` as
+        # the first non-flag token, which stops _git_dash_c_exec_key's scan
+        # before the real -c behind it -- nesting weakening the decision, the
+        # very thing this recursion exists to prevent.
         if nested := _validate_segment(
-            " ".join(cmd_parts[launched_index:]),
+            shlex.join(cmd_parts[launched_index:]),
             available_commands,
             bypass_allowlist,
+            _depth + 1,
         ):
             return nested
 

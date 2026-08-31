@@ -147,6 +147,11 @@ SHELL_CMD_FIND = "find"
 # allowlist is bypassed wholesale, so these are blocked outright there rather
 # than merely gated behind an approval nobody is present to give
 # (GHSA-wvxg-744g-6pcg).
+# Depth cap for launcher-nesting recursion. Each level consumes at least one
+# token, so real commands never approach it; the cap converts a pathological
+# input from a runtime RecursionError into a validator refusal.
+SHELL_MAX_LAUNCHER_NESTING = 16
+
 SHELL_LAUNCHER_COMMANDS = frozenset({"xargs", "uv", "pytest", "pre-commit", "find"})
 
 
