@@ -2289,6 +2289,64 @@ def test_xargs_flag_cannot_hide_the_launched_program(flag: str, spelling: str) -
     )
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        "git status",
+        "git log --oneline -20",
+        "git diff --stat",
+        "git add .",
+        "git branch --show-current",
+        "git rev-parse HEAD",
+        "git show --stat HEAD",
+        "git blame README.md",
+        "git stash list",
+        "git remote -v",
+        "git describe --tags",
+        "git config --get user.name",
+        "git shortlog -sn",
+        "git rev-list --count main..HEAD",
+        "rg 'def foo' --type py",
+        "rg -n TODO",
+        "rg -l pattern src/",
+        "rg --stats pat",
+        "sed -n '10,20p' README.md",
+        "sed 's/old/new/g' notes.txt",
+        "sed -i.bak 's/a/b/' f.py",
+        "awk '{print $2}' data.txt",
+        "awk -F: '{print $1}' hosts",
+        "awk 'END{print NR}' f",
+        "find . -name '*.py' -type f",
+        "find src -newer Makefile",
+        "find . -maxdepth 2 -type d",
+        "xargs -n1 echo",
+        "cat README.md",
+        "head -20 f",
+        "wc -l f.py",
+        "sort -u f",
+        "uniq -c f",
+        "cut -d, -f2 f",
+        "ls -la",
+        "pwd",
+        "echo hi",
+        "mkdir -p build",
+        "cp a b",
+        "mv a b",
+        "rmdir empty",
+        "tee out.txt",
+    ),
+)
+def test_everyday_invocations_are_not_blocked(segment: str) -> None:
+    # False positives are as serious as bypasses here: a guard that refuses
+    # ordinary work gets disabled, and then it guards nothing. Every
+    # allowlisted command appears at least once, in the form someone would
+    # actually type. Two real regressions were caught this way -- editing
+    # this repo's own README.md, and `sed 's/we/us/;s/ws/xs/'`.
+    assert _validate_segment(segment, "", False) is None, (
+        f"an everyday invocation was blocked: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
