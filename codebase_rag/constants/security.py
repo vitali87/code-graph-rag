@@ -184,7 +184,7 @@ SHELL_CMD_AWK = "awk"
 # gawk's --exec is `-f` with the command line locked down, and is equally a
 # program file. Enumerated from gawk's option list rather than from the sets
 # in this file.
-SHELL_AWK_PROGRAM_FILE_FLAGS = frozenset({"--file", "--exec", "--source"})
+SHELL_AWK_PROGRAM_FILE_FLAGS = frozenset({"--file", "--exec", "--source", "-E"})
 
 SHELL_AWK_VALUE_FLAGS = frozenset(
     {
@@ -197,6 +197,19 @@ SHELL_AWK_VALUE_FLAGS = frozenset(
         "--assign",
         "--field-separator",
         "--file",
+        # gawk short forms that take a value; without them the loop scans the
+        # VALUE as the program and stops, never reaching the real one.
+        "-i",
+        "-l",
+        "-o",
+        "-E",
+        "-D",
+        "-p",
+        "--include",
+        "--load",
+        "--pretty-print",
+        "--profile",
+        "--debug",
     }
 )
 
@@ -219,8 +232,8 @@ SHELL_SED_EXEC_TOKENS = (
     # `!`, `~`, `,` or a closing delimiter. So: any of those, then the letter.
     (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*e(?:\s|$)", "e command"),
     (r"s(.).*?\1.*?\1[gip0-9]*e", "s///e execute flag"),
-    (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR]\s+\S", "reads or writes a named file"),
-    (r"s(.).*?\1.*?\1[gip0-9]*w\s+\S", "s///w writes a named file"),
+    (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR]\s*\S", "reads or writes a named file"),
+    (r"s(.).*?\1.*?\1[gip0-9]*w\s*\S", "s///w writes a named file"),
 )
 
 # sed flags naming a script file this validator cannot read.
@@ -230,6 +243,41 @@ SHELL_SED_EXEC_TOKENS = (
 # never scanned. Found by enumerating sed's own usage string rather than the
 # sets in this file -- a sweep driven by those sets cannot see a flag missing
 # from them.
+# Every sed option this validator knows. Anything else makes the script's
+# position unknowable, so the scan fails closed rather than treating the next
+# token as the script.
+SHELL_SED_KNOWN_FLAGS = frozenset(
+    {
+        "-e",
+        "--expression",
+        "-f",
+        "--file",
+        "-i",
+        "--in-place",
+        "-l",
+        "--line-length",
+        "-n",
+        "--quiet",
+        "--silent",
+        "-E",
+        "-r",
+        "--regexp-extended",
+        "-s",
+        "--separate",
+        "-u",
+        "--unbuffered",
+        "-z",
+        "--null-data",
+        "-a",
+        "-H",
+        "--debug",
+        "--posix",
+        "--sandbox",
+        "--help",
+        "--version",
+    }
+)
+
 SHELL_SED_VALUE_FLAGS = frozenset({"-i", "--in-place", "-l", "--line-length"})
 
 SHELL_SED_SCRIPT_FILE_FLAGS = frozenset({"-f", "--file"})
@@ -244,7 +292,7 @@ SHELL_AWK_EXEC_TOKENS = (
     # outside the root. awk's output redirect always follows a print/printf
     # output list, which is what distinguishes it from a `>` comparison
     # (`NR>1`), so match the construct rather than the target's spelling.
-    (r"\b(print|printf)\b[^;}]*>>?\s*\S", "redirect to a file"),
+    (r"\b(print|printf)\b[^;}()]*>>?\s*\S", "redirect to a file"),
 )
 
 SHELL_LAUNCHER_COMMANDS = frozenset({"xargs", "uv", "pytest", "pre-commit", "find"})
@@ -442,6 +490,10 @@ SHELL_GIT_CONFIG_EXEC_KEYS = frozenset(
         "man.viewer",
         "web.browser",
         "instaweb.httpd",
+        "imap.tunnel",
+        # These pull in another config file, which can set any exec key, so
+        # they are an indirection to every key above rather than a program.
+        "include.path",
         "uploadpack.packobjectshook",
         "ssh.variant",
         "init.templatedir",
@@ -486,6 +538,13 @@ SHELL_GIT_CONFIG_EXEC_KEY_SUFFIXES = (
     ".pager",
     ".tool",
     ".variant",
+    # "The default program to execute on the remote side" (remote.<n>.uploadpack
+    # / .receivepack) and "Command used to set up a tunnel" (imap.tunnel).
+    # The same capability is already refused as a FLAG (--upload-pack), so
+    # allowing it as a config key refused one spelling and not the other.
+    ".uploadpack",
+    ".receivepack",
+    ".tunnel",
     ".clean",
     ".smudge",
     ".process",

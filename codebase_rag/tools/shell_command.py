@@ -563,6 +563,16 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # Its operand is a value, not a script; step over both.
             index += 2
             continue
+        known = _flag_name(arg) in cs.SHELL_SED_KNOWN_FLAGS or any(
+            arg.startswith(flag) and len(arg) > len(flag)
+            for flag in cs.SHELL_SED_VALUE_FLAGS
+            if not flag.startswith("--")
+        )
+        if not known and "=" not in arg:
+            # An option this validator cannot classify may or may not consume
+            # the next token, so the script's position is unknown. Refuse
+            # rather than guess, the same rule the xargs scanner uses.
+            return "an option this validator cannot interpret"
         if "=" in arg:
             scripts.append(arg.split("=", 1)[1])
         elif arg.startswith("-e") and len(arg) > 2:
