@@ -84,16 +84,24 @@ def _prefix(project: str) -> str:
     return f"{project}{cs.SEPARATOR_DOT}"
 
 
+def _normalise(text: str) -> str:
+    """Excerpt text with the checkout's line endings folded to "\n".
+
+    Excerpts are compared and displayed, never written back, so they must not
+    carry a b"\r". Both sources need this: the graph stores the source it was
+    indexed from, and `extract_source_lines` keeps the file's own endings.
+    Normalising only the disk path left the graph path -- the one `_target_piece`
+    PREFERS -- still emitting "def scale(a: int) -> int:\r", so every Windows
+    unit job failed. Deliberately not done in the shared reader, whose byte
+    fidelity other callers rely on.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _lines(repo_root: Path | None, path: str | None, start: int, end: int) -> str:
     if repo_root is None or not path or start < 1 or end < start:
         return ""
-    text = extract_source_lines(repo_root / path, start, end) or ""
-    # extract_source_lines keeps the file's own endings, so a CRLF checkout
-    # carried a b"\r" into every excerpt and the trailing .strip("\n") below
-    # could not reach it. Excerpts are for display and comparison, so normalise
-    # here rather than in the shared reader, whose byte fidelity other callers
-    # rely on. Every Windows unit job failed on the stray b"\r".
-    return text.replace("\r\n", "\n").replace("\r", "\n")
+    return _normalise(extract_source_lines(repo_root / path, start, end) or "")
 
 
 def _line(repo_root: Path | None, path: str | None, line: int | None) -> str:
@@ -161,7 +169,9 @@ def _target_piece(
     definition: graph_query.DefinitionRow, repo_root: Path | None
 ) -> _Candidate:
     start, end = definition["start_line"] or 1, definition["end_line"] or 1
-    source = definition["source"] or _lines(repo_root, definition["path"], start, end)
+    source = _normalise(definition["source"] or "") or _lines(
+        repo_root, definition["path"], start, end
+    )
     return _Candidate(
         0,
         0,
@@ -293,7 +303,7 @@ def _test_pieces(
                 row["path"],
                 (start, end),
                 cs.CONTEXT_WHY_TEST.format(depth=row["depth"], through=row["through"]),
-                (definition["source"] or "").rstrip("\n"),
+                _normalise(definition["source"] or "").rstrip("\n"),
             )
         )
     return out

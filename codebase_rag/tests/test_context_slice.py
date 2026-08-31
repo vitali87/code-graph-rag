@@ -289,3 +289,27 @@ def test_excerpts_carry_no_carriage_return(tmp_path: Path, newline: str) -> None
     assert one == "def scale(a: int) -> int:", repr(one)
     assert "\r" not in many, repr(many)
     assert "\r" not in head, repr(head)
+
+
+# The disk path above is the FALLBACK. `_target_piece` prefers the source the
+# graph stored at index time, which keeps the indexed file's endings and never
+# reaches `_lines`, so normalising only the disk read left the common path
+# broken -- CI still failed on Windows while this suite was green locally.
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_graph_stored_source_is_normalised(newline: str) -> None:
+    from codebase_rag.context_slice import _target_piece
+
+    stored = newline.join(["def scale(a: int) -> int:", "    return a * 2", ""])
+    piece = _target_piece(
+        {  # type: ignore[arg-type]
+            "qualified_name": "p.m.scale",
+            "path": "m.py",
+            "start_line": 1,
+            "end_line": 2,
+            "source": stored,
+        },
+        None,
+    )
+
+    assert "\r" not in piece.source, repr(piece.source)
+    assert piece.source.startswith("def scale(a: int) -> int:")
