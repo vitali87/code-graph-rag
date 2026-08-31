@@ -1641,6 +1641,12 @@ def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
         # Parenthesised print/printf: the parentheses are part of the
         # SPELLING, and excluding them missed the redirect entirely.
         'awk \'BEGIN{printf("x") > "/tmp/p"}\'',
+        # A redirect TARGET can be a $field -- verified writing a file --
+        # so excluding "$" to protect the comparison was itself a write
+        # primitive. Depth tracking separates them by awk's grammar.
+        "awk '{print > $1}'",
+        "awk '{print $2 > $1}'",
+        "awk '{print > $0}'",
         'awk \'BEGIN{print("y") > "/tmp/p"}\'',
         "awk '{print > \"/tmp/p\"}'",
         "awk '{print $1 > out}'",
@@ -1692,6 +1698,7 @@ def test_awk_cannot_run_a_command(segment: str) -> None:
         "awk '{print $1 \" > \" $2}'",
         "awk 'BEGIN{print \"x -> y\"}'",
         "awk 'length > 80' f",
+        "awk '{if ($1 > $2) print}' f",
         # `>` as a comparison must not read as a redirect.
         "awk '{if ($1 > 5) print}' f",
         "awk 'BEGIN{OFS=\",\"}{print $1,$2}' f",
