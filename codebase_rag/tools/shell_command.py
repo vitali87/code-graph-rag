@@ -410,9 +410,34 @@ def _awk_program_skeleton(program: str) -> str:
             out.append('""')
             index = min(end + 1, len(program))
             continue
+        if char == "/" and _awk_regex_starts_here(program, index):
+            # A /regex/ literal is user text too: `/a|b/` is alternation, not
+            # a pipe to a command, and gsub(/x|y/,...) is everyday awk.
+            end = index + 1
+            while end < len(program) and program[end] != "/":
+                if program[end] == "\\":
+                    end += 1
+                end += 1
+            out.append("//")
+            index = min(end + 1, len(program))
+            continue
         out.append(char)
         index += 1
     return "".join(out)
+
+
+def _awk_regex_starts_here(program: str, index: int) -> bool:
+    """Whether the `/` at `index` opens a regex literal rather than division.
+
+    awk allows both; a regex can only appear where a value is expected, so it
+    follows an operator, a delimiter, or the start of the program -- never a
+    name, number or closing bracket, which is where division follows.
+    """
+    for char in reversed(program[:index]):
+        if char.isspace():
+            continue
+        return not (char.isalnum() or char in "_)]$")
+    return True
 
 
 def _awk_redirects_output(program: str) -> bool:

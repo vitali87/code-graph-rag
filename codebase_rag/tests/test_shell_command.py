@@ -1698,6 +1698,16 @@ def test_awk_cannot_run_a_command(segment: str) -> None:
         "awk '{print $1 \" > \" $2}'",
         "awk 'BEGIN{print \"x -> y\"}'",
         "awk 'length > 80' f",
+        # A | inside a REGEX LITERAL is alternation, not a pipe to a
+        # command. sed's skeleton has blanked regex bodies since round
+        # eight; awk's blanked only strings, so ordinary matching was
+        # refused. Division must still be told apart from a regex.
+        "awk '/a|b/{print}' f",
+        "awk '{gsub(/x|y/,\"z\"); print}' f",
+        "awk '$1 ~ /^a|b$/{print}' f",
+        "awk '{print $1/$2}' f",
+        "awk '{print 10/2}' f",
+        "awk '/error/{print}' f",
         "awk '{if ($1 > $2) print}' f",
         # `>` as a comparison must not read as a redirect.
         "awk '{if ($1 > 5) print}' f",
