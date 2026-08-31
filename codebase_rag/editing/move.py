@@ -36,12 +36,12 @@ from .contract import Reingest, Verdict, measure, move_expectation, verify
 from .imports import (
     _JS_NAMED,
     _JS_SPEC,
-    _PY_FROM,
     _PY_IMPORT,
     ImportRewriter,
     ImportSite,
     SymbolMove,
     _local_name,
+    _match_py_from,
     _relative_specifier,
     _split_names,
 )
@@ -632,13 +632,16 @@ def _narrow_statement(
         return (
             text[: named.start()] + "{ " + ", ".join(kept) + " }" + text[named.end() :]
         ).strip()
-    if m := _PY_FROM.match(statement):
-        entries, _open, _close = _split_names(m.group("names"))
+    if parsed := _match_py_from(statement):
+        # main replaced the _PY_FROM regex with a token parser returning
+        # (lead, module, mid, names); only those two fields are needed here.
+        _lead, module, _mid, raw_names = parsed
+        entries, _open, _close = _split_names(raw_names)
         kept = [e for e in entries if _local_name(e) == alias]
         if not kept:
             return None
-        return f"from {m.group('module')} import {kept[0]}"
-    if m := _PY_IMPORT.match(statement):
+        return f"from {module} import {kept[0]}"
+    if _PY_IMPORT.match(statement):
         return statement.strip()
     return statement.strip()
 
