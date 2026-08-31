@@ -297,6 +297,23 @@ def test_every_pinned_dependency_is_still_explained_at_its_call_site() -> None:
     wrong side matched a neighbouring comment about something else, so
     deleting the only prose that justified the Rust pair left this test
     green.
+
+    KNOWN LIMIT, measured rather than assumed. `marker in comment` is a
+    MEMBERSHIP test, so it sees what the comment lacks but not what it says
+    IN ADDITION. A rewrite that keeps the marker word and reverses the claim
+    ("After rehydration this used to matter, but the registry is now
+    populated eagerly, so the ordering is no longer load-bearing") passes
+    here. Whole-value equality would close that, as it does for a Cypher
+    projection, but a comment is free prose that must stay editable, and a
+    guard failing on every copy-edit gets deleted rather than obeyed.
+
+    That limit is acceptable only because it is not the load-bearing guard.
+    `test_resolution_phases_keep_their_documented_order` reads no prose at
+    all, so the CODE-corrupting defect -- the reordering itself -- is caught
+    whatever the comments say (verified: reversing `1ba25c7e`'s hunk with
+    every comment left pristine still fails it). What this test adds is that
+    a constraint cannot silently lose its explanation; what it does not
+    promise is that the surviving explanation is still TRUE.
     """
     called = _call_lines()
     unexplained: list[str] = []
