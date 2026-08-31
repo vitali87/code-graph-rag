@@ -4,12 +4,13 @@ import builtins
 import functools
 import os
 import shutil
+import stat
 import sys
 import tempfile
 from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, Self
+from typing import TYPE_CHECKING, Any, Protocol, Self
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -290,12 +291,42 @@ def _isolate_cgr_home(
     yield home
 
 
+def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
+    """Retry a failed removal after clearing the read-only bit.
+
+    On Windows `os.unlink` refuses a read-only file outright, so a tree
+    containing one cannot be removed; POSIX only needs write permission on
+    the containing DIRECTORY, which is why this never fires there. Git sets
+    that bit on every loose object it writes, so any fixture that runs
+    `git init` inside the temp repo leaves `.git/objects/**` unremovable
+    (issue #1586).
+
+    The mode is ADDED to the existing bits rather than replacing them.
+    `chmod(path, S_IWRITE)` sets the mode to exactly `0o200`, which on a
+    DIRECTORY strips the search bit and makes it permanently untraversable --
+    so a removal that failed for any other reason leaves behind a tree nobody
+    can delete, turning a recoverable error into a permanent one. That is the
+    opposite of this handler's purpose, and it bites on POSIX, where the
+    read-only case it exists for cannot even occur.
+    """
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        mode = 0
+    os.chmod(path, mode | stat.S_IWRITE | (stat.S_IEXEC if os.path.isdir(path) else 0))
+    func(path)
+
+
 @pytest.fixture
 def temp_repo() -> Generator[Path, None, None]:
     """Creates a temporary repository path for a test and cleans up afterward."""
     temp_dir = tempfile.mkdtemp()
     yield Path(temp_dir)
-    shutil.rmtree(temp_dir)
+    # `onexc` rather than a bare rmtree: see `_clear_readonly`. Teardown
+    # failures surface as an ERROR on a test that already passed, which is
+    # why this is worth handling here rather than per fixture -- `temp_repo`
+    # is used by 327 test modules and any of them may write a read-only file.
+    shutil.rmtree(temp_dir, onexc=_clear_readonly)
 
 
 class _MockIngestor:

@@ -324,8 +324,23 @@ class Patcher:
             tool, formatted = formatter_check(language, content, Path(key).suffix)
             if parses is False:
                 message = cs.PATCH_PARSE_FAILED.format(path=key)
+            elif parses is None and formatted is False:
+                # The two conditions are independent, so the message has to
+                # carry both. Reporting drift alone here would say the file
+                # merely needs reformatting while hiding that nothing checked
+                # it -- and this pair is not exotic: a language with no
+                # grammar loaded is precisely one whose formatter IS often
+                # installed (Rust, Go on a base install).
+                message = cs.PATCH_UNVERIFIED_DRIFT.format(
+                    path=key, count=len(edits), tool=tool
+                )
             elif formatted is False:
                 message = cs.PATCH_FORMAT_DRIFT.format(path=key, tool=tool)
+            elif parses is None:
+                # Three states, three messages. `parses` is `bool | None`, and
+                # folding None into the OK branch told the caller a file had
+                # been checked when nothing had checked it (issue #1580).
+                message = cs.PATCH_UNVERIFIED.format(path=key, count=len(edits))
             else:
                 message = cs.PATCH_OK.format(path=key, count=len(edits))
             results[key] = PatchResult(
@@ -340,6 +355,20 @@ class Patcher:
         transaction then has nothing from it and the caller sees the
         result's message. Formatter drift is staged (it is the caller's
         rename that changed the alignment) and reported.
+
+        `parses` is `bool | None` and this gate is two-valued, so the third
+        state has to be assigned deliberately rather than by omission. It
+        is assigned to STAGING, and the reason is that refusing would be
+        worse: `None` means no grammar was loaded for the language, which
+        on a base install is the ordinary case for Rust and Go, and a
+        refusal there turns a working edit into a silent no-op.
+
+        That is a decision about what to WRITE, and it is safe only because
+        it is paired with a decision about what to SAY: `apply` reports
+        those files as `PATCH_UNVERIFIED`, or `PATCH_UNVERIFIED_DRIFT` when
+        a formatter also objects, never as `PATCH_OK`. Staging a file
+        checked by nothing is defensible; telling the caller it was checked
+        is not (issue #1580).
         """
         results = self.apply()
         for key, result in results.items():
