@@ -180,6 +180,12 @@ SHELL_CMD_AWK = "awk"
 # the program. Skipping the flag but not its value made `awk -v c=id '...'`
 # treat `c=id` as the program text and never scan the real one -- the
 # optional-vs-required argument confusion again, fourth occurrence.
+# awk flags naming a program FILE, whose contents this validator cannot read.
+# gawk's --exec is `-f` with the command line locked down, and is equally a
+# program file. Enumerated from gawk's option list rather than from the sets
+# in this file.
+SHELL_AWK_PROGRAM_FILE_FLAGS = frozenset({"--file", "--exec", "--source"})
+
 SHELL_AWK_VALUE_FLAGS = frozenset(
     {
         "-v",
@@ -218,6 +224,14 @@ SHELL_SED_EXEC_TOKENS = (
 )
 
 # sed flags naming a script file this validator cannot read.
+# sed flags taking a SEPARATE value, so the token after them is that value
+# and not the script. On GNU sed `-i` takes a suffix argument; without this,
+# `sed -i ext 'w /etc/x'` had `ext` read as the script and the real one was
+# never scanned. Found by enumerating sed's own usage string rather than the
+# sets in this file -- a sweep driven by those sets cannot see a flag missing
+# from them.
+SHELL_SED_VALUE_FLAGS = frozenset({"-i", "--in-place", "-l", "--line-length"})
+
 SHELL_SED_SCRIPT_FILE_FLAGS = frozenset({"-f", "--file"})
 
 SHELL_AWK_EXEC_TOKENS = (

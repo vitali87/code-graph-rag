@@ -1634,6 +1634,12 @@ def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
         # flag's VALUE as the program and never scans the real one.
         "awk --assign c=id '{system(c)}'",
         "awk --field-separator : '{system(1)}'",
+        # gawk's --exec is -f with the command line locked down: still a
+        # program file this validator cannot read.
+        "awk --exec p.awk",
+        "awk --source '{system(1)}' f",
+        "awk --include lib '{system(1)}' f",
+        "awk --load lib '{system(1)}' f",
         "awk -f/tmp/prog.awk",
         "awk --file=/tmp/prog.awk",
         # A redirect target need not be quoted: with the filename in a
@@ -1881,6 +1887,14 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed -e p -e 'w /tmp/x' f",
         "sed -e 's/a/b/' -e 'e id' f",
         "sed -e p -e r /etc/passwd f",
+        # -i takes a SEPARATE value on GNU sed, so `ext` was read as the
+        # script and the real one never scanned. Found by enumerating sed's
+        # own usage string rather than the constant sets here -- a sweep
+        # driven by those sets cannot see a flag missing from them.
+        "sed -i ext 'w /etc/x' f",
+        "sed --in-place ext 'e id' f",
+        "sed -l 5 'w /etc/x' f",
+        "sed -i ext -e 'e id' f",
         # Delimiters that are regex metacharacters, and an escaped delimiter,
         # must not hide a following command.
         r"sed 's/a\/b/c/;w /etc/x' f",
@@ -1950,6 +1964,9 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed '/[;]/d' f",
         "sed -e p -e d f",
         "sed 's/a/b/' notes.txt",
+        "sed -i ext 's/a/b/' f",
+        "sed --in-place ext 's/a/b/' f",
+        "sed -l 5 's/a/b/' f",
     ),
 )
 def test_sed_ordinary_scripts_still_run(segment: str) -> None:

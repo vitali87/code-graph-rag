@@ -407,7 +407,9 @@ def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
     # `-f x`, `-fx` (attached) and `--file=x` all name a program file. Matching
     # only the exact token `-f` let the attached spellings through.
     if any(
-        a == "-f" or (a.startswith("-f") and len(a) > 2) or _flag_name(a) == "--file"
+        a == "-f"
+        or (a.startswith("-f") and len(a) > 2)
+        or _flag_name(a) in cs.SHELL_AWK_PROGRAM_FILE_FLAGS
         for a in cmd_parts[1:]
         if a.startswith("-")
     ):
@@ -557,6 +559,10 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # is argv ["-ew", "/tmp/p"] and real sed writes the file).
             scripts.append(" ".join(cmd_parts[index:]))
             break
+        if arg in cs.SHELL_SED_VALUE_FLAGS:
+            # Its operand is a value, not a script; step over both.
+            index += 2
+            continue
         if "=" in arg:
             scripts.append(arg.split("=", 1)[1])
         elif arg.startswith("-e") and len(arg) > 2:
