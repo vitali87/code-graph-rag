@@ -53,34 +53,49 @@ from pathlib import Path
 
 _SOURCE = Path(__file__).resolve().parents[1] / "graph_updater.py"
 
-# Two real constraints in `run` are deliberately NOT pinned, because the
-# phase is called more than once and a line-number comparison cannot express
-# "this particular call":
+# Real constraints in `run` that are deliberately NOT pinned. Recorded
+# rather than silently omitted: a reader who finds these comments and no
+# matching entry should know they were considered and why they were left
+# out. Each would need the check weakened in a way that costs more than the
+# pair is worth.
 #
 # * "LIBCLANG must run before Pass 2" / "HYBRID must run after Pass 2" --
 #   both are `_run_cpp_frontend`, called at two sites under opposite mode
-#   gates, so neither ordering holds of the name.
+#   gates, so neither ordering holds of the NAME, which is all a
+#   line-number comparison can see.
 # * "The delombok state commits ONLY here, after every pass and the graph
 #   flush" -- `flush_all` is called twice, so it is a poor anchor.
-#
-# Recorded rather than silently omitted: a reader who finds these comments
-# and no matching entry should know they were considered.
+# * "The C# Roslyn frontend must run before Pass 2" and the Go equivalent --
+#   stated above the frontends, not above `_process_files`. A "before"
+#   constraint whose prose sits above the earlier call is expressible via
+#   the `earlier:` prefix below, but only when that prose sits directly
+#   above the call.
+# * "Before the partial join on an incremental run: rebuild the type
+#   locations for unchanged .cs files" (#1229) -- a genuine
+#   `_rehydrate_csharp_type_locations` -> `_join_csharp_partials`
+#   dependency, but the comment sits above the enclosing `if`, not above
+#   the call. `_comment_above` reads the block directly above a call, and
+#   widening it to look through an enclosing statement would risk
+#   attaching a neighbouring phase's comment.
 #
 # (earlier, later, marker, reason). `earlier` must be called before `later`
-# in `GraphUpdater.run`. `marker` is the phrase the comment above the `later`
-# call uses to name that dependency -- the source states several of these in
-# prose ("After rehydration", "After artifact resolution") rather than by
-# attribute name, so the phrase is recorded per pair instead of guessed from
-# the identifier. `reason` is the dependency itself, quoted from that comment.
-# NOTE: "LIBCLANG/Roslyn/Go must run BEFORE Pass 2" is stated in comments
-# above those frontends, not above `_process_files`. This table's drift check
-# requires the justification above the LATER call, so a "before" constraint
-# whose prose sits above the EARLIER call cannot be expressed here without
-# weakening that check for every entry. Left unpinned rather than pinned
-# without its explanation; the "after Pass 2" constraints below are pinned
-# because their prose does sit above the later call.
+# in `GraphUpdater.run`. `marker` is the phrase the call-site comment uses to
+# name that dependency -- the source states several in prose ("After
+# rehydration", "After artifact resolution") rather than by attribute name,
+# so the phrase is recorded per pair instead of guessed from the identifier.
+# A marker prefixed `earlier:` is checked above the EARLIER call instead.
+# `reason` is the dependency itself, quoted from that comment.
 _ORDER: tuple[tuple[str, str, str, str], ...] = (
     # -- around Pass 2 (`_process_files`) --
+    (
+        "_rehydrate_go_type_locations",
+        "_join_go_implements",
+        # Stated above the earlier call, in the block that follows it.
+        "earlier:col-keyed indexes",
+        "the Go IMPLEMENTS join resolves against locations Pass 2 filled "
+        "only for re-parsed files, so the col-keyed indexes must be "
+        "rehydrated first (issue #1240)",
+    ),
     (
         "_process_files",
         "_join_csharp_partials",
