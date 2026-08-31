@@ -2251,6 +2251,44 @@ def test_sed_flag_arity_keeps_the_script_visible(flag: str, arity: str) -> None:
         assert _sed_exec_construct(["sed", flag, "ext", danger, "f"]) is not None
 
 
+@pytest.mark.parametrize(
+    "flag",
+    (
+        "-a",
+        "-d",
+        "-E",
+        "-I",
+        "-L",
+        "-n",
+        "-P",
+        "-s",
+        "--arg-file",
+        "--delimiter",
+        "--eof",
+        "--max-args",
+        "--max-chars",
+        "--max-lines",
+        "--max-procs",
+        "--process-slot-var",
+        "--replace",
+    ),
+)
+@pytest.mark.parametrize("spelling", ("separated", "bare"))
+def test_xargs_flag_cannot_hide_the_launched_program(flag: str, spelling: str) -> None:
+    # Class (f): implementations disagree about whether these take a value,
+    # so BOTH spellings must refuse a non-allowlisted program. Which reading
+    # the scanner takes does not matter as long as the DECISION is the same
+    # -- asserting the scanner's intermediate answer instead flagged three
+    # "gaps" that were not reachable, because the operand it resolved to was
+    # not allowlisted either.
+    parts = ["xargs", flag, "1", "python3", "-c", "1"]
+    if spelling == "bare":
+        parts = ["xargs", flag, "python3", "-c", "1"]
+    assert _validate_segment(" ".join(parts), "", True) is not None, (
+        f"{flag} hid the launched program ({spelling})"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
