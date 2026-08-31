@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pytest
@@ -17,6 +16,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.token_utils import count_tokens
 from evals.cgr_graph import _StatefulIngestor
 
+
 # The doc-section reasons come from DocumentTier, which builds its own markdown
 # parser and degrades to plain File nodes when the grammar is absent
 # (`document_tier._load_parser` returns None, `handles()` then False). The
@@ -25,9 +25,25 @@ from evals.cgr_graph import _StatefulIngestor
 # which ci.yml's base-install job exists to prevent (issues #1371, #1410).
 # Scoped to the two tests that assert on a doc reason: the other three must
 # keep running there, so a module-level importorskip would hide them.
+#
+# Ask the production loaders rather than testing importability: `find_spec` only
+# proves the module is FINDABLE, while `_load_parser` also fails when
+# `Language(...)` cannot be constructed from an installed-but-unusable wheel. On
+# Windows the import succeeded and the construction did not, so the skip never
+# fired and the test raised ValueError on a missing doc piece instead. Both
+# loaders are needed: the block grammar builds the sections and the inline one
+# builds the link edge that puts a section in the slice.
+def _markdown_unavailable() -> bool:
+    from codebase_rag.parsers import document_tier
+
+    return document_tier._load_parser() is None or (
+        document_tier._load_inline_parser() is None
+    )
+
+
 _needs_markdown = pytest.mark.skipif(
-    importlib.util.find_spec("tree_sitter_markdown") is None,
-    reason="markdown grammar not installed (treesitter-full extra)",
+    _markdown_unavailable(),
+    reason="markdown grammar unusable (treesitter-full extra)",
 )
 
 PROJECT = "context_fixture"
