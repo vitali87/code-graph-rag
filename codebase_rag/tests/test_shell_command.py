@@ -1939,6 +1939,18 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed -n -- 'w /etc/x' f",
         "sed -e 'w /tmp/x' -- README.md",
         "sed -i -- 'e id' f",
+        # No-separator file commands in the AMBIGUOUS position. A content
+        # heuristic cannot separate these from filenames -- "w.txt" is a
+        # valid filename AND a valid write to ".txt" -- so position does
+        # it: sed needs an input file after its script, hence a token that
+        # is LAST can only be a filename. Whitespace-based and
+        # shape-based guesses were each a bypass in earlier rounds.
+        "sed -i ext 'w/tmp/x' f",
+        "sed -i ext 'W/tmp/x' f",
+        "sed -i ext 'r/etc/passwd' f",
+        "sed -i ext '1w/tmp/x' f",
+        "sed -i ext 's/a/b/w/tmp/x' f",
+        "sed -i a/b 'w /tmp/x' f",
         # GNU sed declares -i[SUFFIX] as an OPTIONAL, attached-only
         # argument while BSD takes it separately, so the two disagree on
         # which token is the script. Both readings are scanned; picking

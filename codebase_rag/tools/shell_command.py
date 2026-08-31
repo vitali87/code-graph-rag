@@ -495,28 +495,6 @@ def _sed_awaits_operand(script: str) -> bool:
     return bool(re.search(r"[wWrR]\s*$", script))
 
 
-def _sed_token_is_script(token: str) -> bool:
-    """Whether a token can be sed script text rather than a bare filename.
-
-    Every construct that reaches a subprocess or a file needs a command
-    letter and an operand (`w FILE`, `e CMD`, `s/a/b/w FILE`), so it contains
-    whitespace or a substitution delimiter. An input filename has neither.
-    """
-    return any(c in token for c in " \t;{}") or bool(
-        re.search(r"s(.).*?\1.*?\1", token)
-    )
-
-
-def _is_sed_suffix(token: str) -> bool:
-    """Whether a token plausibly is BSD sed's -i backup suffix.
-
-    A suffix is short and inert (`.bak`, `ext`, ``); a script contains
-    whitespace or sed command punctuation. Distinguishing them keeps an
-    ordinary input filename from being scanned as script text.
-    """
-    return len(token) <= 8 and not any(c in token for c in " \t;{}/'\"")
-
-
 def _sed_script_skeleton(script: str) -> str:
     """The script with s/// and y/// bodies blanked out.
 
@@ -654,12 +632,16 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             if operand and not operand[0].startswith("-"):
                 # Only a non-flag token can be the script or a suffix; `--`
                 # and a following flag belong to the branches below.
-                ambiguous.append(len(scripts))
+                if index + 1 == len(cmd_parts) - 1:
+                    ambiguous.append(len(scripts))
                 add(index + 1)
                 # Under the BSD reading this is a suffix and the script
                 # follows it, so scan the next token too -- also flagged as
                 # possibly-a-filename, since under GNU it is an input file.
-                ambiguous.append(len(scripts))
+                if index + 2 == len(cmd_parts) - 1:
+                    # Last argument: under GNU this is the input file, so it
+                    # is genuinely ambiguous and must not be scanned.
+                    ambiguous.append(len(scripts))
                 add(index + 2)
                 index += 1
             index += 1
@@ -704,13 +686,14 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # Only the s/// forms need the real text (the skeleton blanks
             # the very bodies they match inside); every other anchor runs on
             # the skeleton so user text cannot look like a command.
-            if position in ambiguous and not _sed_token_is_script(arg):
+            if position in ambiguous:
                 # This token may be an input FILENAME rather than script
-                # text. Every construct here needs a command letter AND an
-                # operand, so a real script contains whitespace; a path does
-                # not. That is a property of the capability rather than a
-                # guess about a suffix's shape -- the guess was a bypass,
-                # since a nine-character suffix failed it and hid the script.
+                # text. Position settles it structurally: sed needs a file
+                # AFTER its script, so a token that is the LAST argument can
+                # only be a filename, and anything earlier can be a script.
+                # No content heuristic works here -- `w.txt` is both a valid
+                # filename and a valid write to `.txt`, and guessing by shape
+                # or by whitespace were each a bypass in earlier rounds.
                 continue
             target = arg if reason.startswith("s///") else skeleton
             if re.search(pattern, target):
