@@ -87,7 +87,13 @@ def _prefix(project: str) -> str:
 def _lines(repo_root: Path | None, path: str | None, start: int, end: int) -> str:
     if repo_root is None or not path or start < 1 or end < start:
         return ""
-    return extract_source_lines(repo_root / path, start, end) or ""
+    text = extract_source_lines(repo_root / path, start, end) or ""
+    # extract_source_lines keeps the file's own endings, so a CRLF checkout
+    # carried a b"\r" into every excerpt and the trailing .strip("\n") below
+    # could not reach it. Excerpts are for display and comparison, so normalise
+    # here rather than in the shared reader, whose byte fidelity other callers
+    # rely on. Every Windows unit job failed on the stray b"\r".
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _line(repo_root: Path | None, path: str | None, line: int | None) -> str:

@@ -251,3 +251,25 @@ async def test_mcp_context_tool(
     assert (
         payload["resolved"] == _qn("pkg.util.helper") and payload["used_tokens"] <= 300
     )
+
+
+# Excerpts are read from disk and trimmed with .strip("\n") / .rstrip("\n"),
+# which leaves the b"\r" of a CRLF file attached to every line. The slice then
+# reported `def scale(a: int) -> int:\r`, so every Windows unit job failed here
+# while Linux and macOS stayed green -- no fixture in this suite used CRLF.
+# Drive the helpers directly on both endings; the LF case is the control that
+# proves the assertion is not vacuous.
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_excerpts_carry_no_carriage_return(tmp_path: Path, newline: str) -> None:
+    from codebase_rag.context_slice import _header, _line, _lines
+
+    body = newline.join(["def scale(a: int) -> int:", "    return a * 2", ""])
+    (tmp_path / "mod.py").write_bytes(body.encode(cs.ENCODING_UTF8))
+
+    one = _line(tmp_path, "mod.py", 1)
+    many = _lines(tmp_path, "mod.py", 1, 2)
+    head = _header(tmp_path, "mod.py", 1, 2)
+
+    assert one == "def scale(a: int) -> int:", repr(one)
+    assert "\r" not in many, repr(many)
+    assert "\r" not in head, repr(head)
