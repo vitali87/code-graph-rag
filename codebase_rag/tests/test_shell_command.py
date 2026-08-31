@@ -1647,6 +1647,47 @@ def test_awk_ordinary_programs_still_run(segment: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # git subcommands that run a caller-supplied command. git is
+        # allowlisted and only its -c/config exec keys were guarded, so these
+        # reached a subprocess without meeting the allowlist at all.
+        # filter-branch --tree-filter was verified executing in a scratch repo.
+        "git submodule foreach id",
+        "git submodule foreach --recursive id",
+        "git bisect run id",
+        "git filter-branch --tree-filter id",
+        "git filter-branch --index-filter id",
+        "git filter-branch --env-filter id HEAD",
+    ),
+)
+def test_git_subcommands_cannot_run_a_command(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"git ran a caller-supplied command: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # The same subcommands in forms that launch nothing must still work,
+        # or the check has banned the subcommand rather than the capability.
+        "git submodule status",
+        "git submodule update --init",
+        "git bisect start",
+        "git bisect good",
+        "git status",
+        "git log --oneline",
+        "git diff",
+    ),
+)
+def test_git_ordinary_subcommands_still_run(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"ordinary git was blocked: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on

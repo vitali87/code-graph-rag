@@ -397,6 +397,30 @@ def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
     return None
 
 
+def _git_exec_subcommand(cmd_parts: list[str]) -> str | None:
+    """Return the git subcommand form that would run a caller-supplied command.
+
+    `git` is allowlisted and only its inline-config exec keys were guarded, so
+    `filter-branch --tree-filter`, `bisect run` and `submodule foreach` reached
+    a subprocess without meeting the allowlist at all.
+    """
+    if len(cmd_parts) < 3 or cmd_parts[0] != cs.SHELL_CMD_GIT:
+        return None
+
+    subcommand = next(
+        (a for a in cmd_parts[1:] if not a.startswith("-")),
+        None,
+    )
+    if subcommand not in cs.SHELL_GIT_EXEC_SUBCOMMANDS:
+        return None
+
+    for arg in cmd_parts[1:]:
+        if _flag_name(arg) in cs.SHELL_GIT_EXEC_SUBCOMMAND_ARGS:
+            return f"{subcommand} {_flag_name(arg)}"
+
+    return None
+
+
 def _is_dangerous_command(
     cmd_parts: list[str], full_segment: str, bypass_allowlist: bool = False
 ) -> tuple[bool, str]:
@@ -448,6 +472,9 @@ def _is_dangerous_command(
                 f"{base_cmd} launches arbitrary programs; blocked when the "
                 "allowlist is bypassed"
             )
+
+    if form := _git_exec_subcommand(cmd_parts):
+        return True, f"git {form} runs a caller-supplied command"
 
     if construct := _awk_exec_construct(cmd_parts):
         return True, f"awk can run a command via {construct}"

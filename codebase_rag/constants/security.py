@@ -302,6 +302,37 @@ SHELL_NONINTERACTIVE_DENIED_OPTIONS: dict[str, tuple[str, ...]] = {
     "rg": ("--pre",),
 }
 
+# git subcommands that run a caller-supplied command. `filter-branch
+# --tree-filter 'cmd'` was verified executing in a scratch repo; `bisect run`
+# and `submodule foreach` are documented executors that need a bisect in
+# progress or a submodule present to demonstrate. They reach a subprocess
+# without ever touching the shell allowlist, so git needs its own check --
+# `git` is allowlisted and only its `-c`/`config` exec keys were guarded.
+SHELL_GIT_EXEC_SUBCOMMANDS = frozenset(
+    {
+        "filter-branch",
+        "bisect",
+        "submodule",
+    }
+)
+
+# The argument that turns one of those subcommands into a command runner.
+# `git submodule status` and `git bisect start` launch nothing.
+SHELL_GIT_EXEC_SUBCOMMAND_ARGS = frozenset(
+    {
+        "foreach",
+        "run",
+        "--tree-filter",
+        "--index-filter",
+        "--parent-filter",
+        "--msg-filter",
+        "--commit-filter",
+        "--tag-name-filter",
+        "--subdirectory-filter",
+        "--env-filter",
+    }
+)
+
 SHELL_GIT_SUBCMD_CONFIG = "config"
 
 # `git config` writes to these keys plant a value that git later hands to a
