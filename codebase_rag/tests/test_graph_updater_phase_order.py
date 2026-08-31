@@ -250,7 +250,25 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
+# `run` may delegate its deferred-resolution stages to a helper so that the
+# scoped re-ingest path (#1524) can reuse the same sequence. The ordering
+# constraints hold wherever those stages LIVE, not only in `run`, so the
+# guard scans `run` plus the helpers it delegates to. Without this, extracting
+# the block would make every pinned pair vacuous -- the anti-vacuity test
+# catches that as a loud failure, and this is the correct response to it.
+#
+# `_DELEGATES` is a name this file READS rather than calls, so a rename here
+# yields an empty enumeration rather than an error -- and an empty
+# enumeration is zero violations, which is indistinguishable from
+# compliance. That is why `test_every_pinned_phase_is_actually_called` is
+# load-bearing twice over: it catches a pinned phase leaving `run`, AND a
+# delegate name going stale. Verified: renaming the helper makes all three
+# tests fail loudly rather than pass vacuously.
+_DELEGATES = ("_resolve_deferred_definitions",)
+
+
 def _run_function() -> ast.FunctionDef:
+    """`GraphUpdater.run`, the entry point whose phase order is pinned."""
     tree = ast.parse(_SOURCE.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "GraphUpdater":
@@ -258,6 +276,27 @@ def _run_function() -> ast.FunctionDef:
                 if isinstance(item, ast.FunctionDef) and item.name == "run":
                     return item
     raise AssertionError("GraphUpdater.run not found in graph_updater.py")
+
+
+def _ordered_functions() -> list[ast.FunctionDef]:
+    """`run` and any delegate helper, in source order.
+
+    Source order matters: the pinned pairs are compared by line number, and a
+    helper defined ABOVE `run` still executes where `run` calls it. Sorting by
+    `lineno` keeps a constraint spanning both bodies meaningful.
+    """
+    tree = ast.parse(_SOURCE.read_text(encoding="utf-8"))
+    found: list[ast.FunctionDef] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "GraphUpdater":
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef) and (
+                    item.name == "run" or item.name in _DELEGATES
+                ):
+                    found.append(item)
+    if not found:
+        raise AssertionError("GraphUpdater.run not found in graph_updater.py")
+    return sorted(found, key=lambda f: f.lineno)
 
 
 def _call_lines() -> dict[str, list[int]]:
@@ -269,9 +308,10 @@ def _call_lines() -> dict[str, list[int]]:
     depends on.
     """
     lines: dict[str, list[int]] = {}
-    for node in ast.walk(_run_function()):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            lines.setdefault(node.func.attr, []).append(node.func.lineno)
+    for fn in _ordered_functions():
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                lines.setdefault(node.func.attr, []).append(node.func.lineno)
     return {name: sorted(found) for name, found in lines.items()}
 
 
