@@ -182,6 +182,26 @@ SHELL_CMD_AWK = "awk"
 # optional-vs-required argument confusion again, fourth occurrence.
 SHELL_AWK_VALUE_FLAGS = frozenset({"-v", "-F", "-f"})
 
+SHELL_CMD_SED = "sed"
+
+# sed constructs that run a command or write a file. GNU sed executes via the
+# `s///e` flag AND a standalone `e` command; both `w FILE` and `s///w FILE`
+# write a named file. This host runs BSD sed, which rejects `e`, but CI runs
+# GNU -- the policy must deny regardless of which binary is present, or the
+# gate passes locally and fails open in CI.
+SHELL_SED_EXEC_TOKENS = (
+    # Addresses precede the command and a /regex/ address can contain
+    # anything, so match a trailing `/` or a numeric/$ address rather than
+    # trying to enumerate address characters.
+    (r"(^|[;{\s/])[\d$~,!]*\s*e(\s|$)", "e command"),
+    (r"s(.).*?\1.*?\1[gip0-9]*e", "s///e execute flag"),
+    (r"(^|[;{\s/])[\d$~,!]*\s*w\s+\S", "w writes a named file"),
+    (r"s(.).*?\1.*?\1[gip0-9]*w\s+\S", "s///w writes a named file"),
+)
+
+# sed flags naming a script file this validator cannot read.
+SHELL_SED_SCRIPT_FILE_FLAGS = frozenset({"-f", "--file"})
+
 SHELL_AWK_EXEC_TOKENS = (
     (r"system\s*\(", "system() call"),
     (r"\|&", "coprocess pipe"),

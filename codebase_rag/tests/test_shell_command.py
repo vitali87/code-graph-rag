@@ -1790,6 +1790,71 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # GNU sed executes via the s///e flag AND a standalone `e` command,
+        # and writes a named file via `w` and `s///w`. Only s///e was caught.
+        # This host runs BSD sed, which rejects `e`, so a local probe calls
+        # these harmless -- CI runs GNU, where they work. A policy that
+        # depends on which binary is installed fails open where it matters.
+        "sed 's/x/id/e' f",
+        "sed -e 's/x/id/e' f",
+        "sed '1e id' f",
+        "sed 'e id' f",
+        "sed '$e id' f",
+        "sed '/x/e id' f",
+        "sed -e '1e id' f",
+        "sed --expression='1e id' f",
+        "sed 'w /etc/x' f",
+        "sed '1w /etc/x' f",
+        "sed '$w /etc/x' f",
+        "sed '/x/w /etc/x' f",
+        "sed 's/a/b/w /etc/x' f",
+        "sed --expression='w /etc/x' f",
+        # A script file cannot be inspected, in any spelling.
+        "sed -f p.sed f",
+        "sed -fp.sed f",
+        "sed --file=p.sed f",
+    ),
+)
+def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"sed ran a command or wrote a file: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Ordinary sed must keep working. The near-misses matter: words
+        # containing e/w next to a delimiter ("we", "end", "where", "new")
+        # are what an over-eager pattern trips on.
+        "sed 's/a/b/' f",
+        "sed -n '1p' f",
+        "sed -e 's/a/b/' -e 's/c/d/' f",
+        "sed 's/a/b/g' f",
+        "sed '/x/d' f",
+        "sed -i.bak 's/a/b/' f",
+        "sed 's/we/you/' f",
+        "sed 's/a/b/gi' f",
+        "sed '1,3d' f",
+        "sed 's|a|b|' f",
+        "sed 's/end/start/' f",
+        "sed '/where/p' f",
+        "sed 's/new/old/' f",
+        "sed -n '/a/,/b/p' f",
+        "sed 's/.*//' f",
+        "sed '/^$/d' f",
+        "sed --expression='s/a/b/' f",
+    ),
+)
+def test_sed_ordinary_scripts_still_run(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"ordinary sed was blocked: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on

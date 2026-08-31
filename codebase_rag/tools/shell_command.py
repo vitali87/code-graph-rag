@@ -461,6 +461,43 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
     )
 
 
+def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
+    """Return the sed construct that would run a command or write a file.
+
+    GNU sed executes through the `s///e` flag and a standalone `e` command,
+    and writes through `w FILE` and `s///w FILE`. Only the `s///e` spelling
+    was caught. This host's BSD sed rejects `e`, so a local probe says the
+    others are harmless -- but CI runs GNU, where they work, and a policy that
+    depends on which binary is installed fails open exactly where it matters.
+    """
+    if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_SED:
+        return None
+
+    if any(
+        a == "-f" or (a.startswith("-f") and len(a) > 2) or _flag_name(a) == "--file"
+        for a in cmd_parts[1:]
+        if a.startswith("-")
+    ):
+        return "a script file this validator cannot inspect"
+
+    for arg in cmd_parts[1:]:
+        # `-e SCRIPT` and `--expression=SCRIPT` both carry script text; the
+        # attached `--expression=` spelling has it in the same token.
+        # `-e SCRIPT` gives the script as the NEXT token, which the loop
+        # reaches on its own; `--expression=SCRIPT` carries it in this token.
+        # Scan the value alone, so the `=` does not sit where the pattern
+        # expects a script-start boundary.
+        if arg.startswith("-"):
+            if "=" not in arg:
+                continue
+            arg = arg.split("=", 1)[1]
+        for pattern, reason in cs.SHELL_SED_EXEC_TOKENS:
+            if re.search(pattern, arg):
+                return reason
+
+    return None
+
+
 def _is_dangerous_command(
     cmd_parts: list[str], full_segment: str, bypass_allowlist: bool = False
 ) -> tuple[bool, str]:
@@ -518,6 +555,9 @@ def _is_dangerous_command(
 
     if form := _git_exec_subcommand(cmd_parts):
         return True, f"git {form} runs a caller-supplied command"
+
+    if construct := _sed_exec_construct(cmd_parts):
+        return True, f"sed can run a command or write a file via {construct}"
 
     if construct := _awk_exec_construct(cmd_parts):
         return True, f"awk can run a command via {construct}"
