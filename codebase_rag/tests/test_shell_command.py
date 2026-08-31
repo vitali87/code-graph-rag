@@ -2599,6 +2599,47 @@ def test_negated_flags_never_name_a_program(segment: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "delimiter", ("/", "#", "|", "@", ",", "!", "%", "^", "+", "=", ":")
+)
+@pytest.mark.parametrize(
+    "flags",
+    ("e", "ge", "eg", "ie", "ei", "gie", "ige", "egi", "2e", "e2", "gei", "pe", "ep"),
+)
+def test_sed_substitute_execute_covered_for_every_spelling(
+    delimiter: str, flags: str
+) -> None:
+    # The legacy `sed ... s///e` regex was retired because it read the s of
+    # "start" and the e of "end" as a substitute-execute. This is the
+    # replacement's coverage proof: every delimiter x every flag arrangement
+    # containing an e, 143 combinations, all refused structurally.
+    segment = f"sed 's{delimiter}x{delimiter}id{delimiter}{flags}' file"
+    assert _validate_segment(segment, "", True) is not None, (
+        f"s///e spelling escaped: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        # sed in a pipeline: the payload may sit in any segment, and the
+        # whole-command text differs from each segment's argv.
+        "cat f | sed 's/x/id/e'",
+        "cat f | sed 'w /etc/x'",
+        "echo a | sed 'eid'",
+        "cat f | sed -n 's/x/id/ep'",
+        "ls | sed 'wout1'",
+        "cat f | sed 's/a/b/' | sed 'w /tmp/x'",
+    ),
+)
+def test_sed_payload_blocked_in_any_pipeline_segment(command: str) -> None:
+    groups = _parse_command(command)
+    segments = [s.strip() for g in groups for s in g.commands if s.strip()]
+    assert any(_validate_segment(s, "", True) is not None for s in segments), (
+        f"no segment refused the payload: {command}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
