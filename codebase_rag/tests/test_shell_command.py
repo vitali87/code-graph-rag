@@ -1919,6 +1919,12 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed -f p.sed f",
         "sed -fp.sed f",
         "sed --file=p.sed f",
+        # An option the validator cannot classify hides the script's
+        # position, so it fails closed rather than guessing.
+        "sed -Q 'w /tmp/x' f",
+        "sed -nQ 's/a/b/' f",
+        "sed -an 'w/tmp/x' f",
+        "sed -nE 'e id' f",
     ),
 )
 def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
@@ -1971,6 +1977,24 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed -i ext 's/a/b/' f",
         "sed --in-place ext 's/a/b/' f",
         "sed -l 5 's/a/b/' f",
+        # Short flags bundle, and these are real GNU options. Refusing a
+        # cluster because the combined token is absent from an enumerated
+        # list is that list auditing itself -- the shape that made an
+        # earlier sweep report zero mismatches while three bugs were live.
+        "sed -an 's/a/b/' f",
+        "sed -nE 's/a/b/' f",
+        "sed -rn 's/a/b/p' f",
+        "sed -sz 's/a/b/' f",
+        "sed --follow-symlinks 's/a/b/' f",
+        "sed -b 's/a/b/' f",
+        "sed --binary 's/a/b/' f",
+        # `;s` gave the w a following non-space once the separator was
+        # relaxed, and the s///w pattern spanned the `;` into the next
+        # command. Both are now bounded to a single command.
+        "sed 's/we/us/;s/ws/xs/' f",
+        "sed 's/warning/error/' f",
+        "sed '/read/p' f",
+        "sed 'y/wr/WR/' f",
     ),
 )
 def test_sed_ordinary_scripts_still_run(segment: str) -> None:

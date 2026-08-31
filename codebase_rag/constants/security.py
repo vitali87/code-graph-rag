@@ -246,9 +246,9 @@ SHELL_SED_EXEC_TOKENS = (
     # newline) or by an address, which always ends in a digit, `/`, `%`, `+`,
     # `!`, `~`, `,` or a closing delimiter. So: any of those, then the letter.
     (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*e(?:\s|$)", "e command"),
-    (r"s(.).*?\1.*?\1[gip0-9]*e", "s///e execute flag"),
+    (r"s(.)[^\n;]*?\1[^\n;]*?\1[gip0-9]*e(?:\s|$|;)", "s///e execute flag"),
     (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR]\s*\S", "reads or writes a named file"),
-    (r"s(.).*?\1.*?\1[gip0-9]*w\s*\S", "s///w writes a named file"),
+    (r"s(.)[^\n;]*?\1[^\n;]*?\1[gip0-9]*w\s*[^\s;]", "s///w writes a named file"),
 )
 
 # sed flags naming a script file this validator cannot read.
@@ -263,6 +263,12 @@ SHELL_SED_EXEC_TOKENS = (
 # token as the script.
 SHELL_SED_KNOWN_FLAGS = frozenset(
     {
+        # GNU sed options absent until enumerated against sed's own docs,
+        # which is the inventory-fails-open shape this list is an instance
+        # of: a list cannot audit itself.
+        "-b",
+        "--binary",
+        "--follow-symlinks",
         "-e",
         "--expression",
         "-f",

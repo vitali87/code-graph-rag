@@ -568,6 +568,11 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             for flag in cs.SHELL_SED_VALUE_FLAGS
             if not flag.startswith("--")
         )
+        if not known and not arg.startswith("--") and len(arg) > 2:
+            # Short flags bundle (`-an`, `-nE`), so a cluster is known when
+            # every letter in it is. Refusing the whole cluster because the
+            # combined token is absent from the list rejected ordinary sed.
+            known = all(f"-{letter}" in cs.SHELL_SED_KNOWN_FLAGS for letter in arg[1:])
         if not known and "=" not in arg:
             # An option this validator cannot classify may or may not consume
             # the next token, so the script's position is unknown. Refuse
@@ -594,6 +599,9 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # The s///e and s///w patterns need the real text; the command
             # anchors run on the skeleton so a letter inside a replacement
             # cannot look like a command.
+            # Only the s/// forms need the real text (the skeleton blanks
+            # the very bodies they match inside); every other anchor runs on
+            # the skeleton so user text cannot look like a command.
             target = arg if reason.startswith("s///") else skeleton
             if re.search(pattern, target):
                 return reason
