@@ -2073,6 +2073,15 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed -e p -e d README.md",
         "sed 's/a/b/' w.txt",
         "sed -n 'p' Reader.txt",
+        # Filenames with spaces are fine unless the first word is exactly
+        # a file-command letter -- "w r.txt" is syntactically identical to
+        # a sed write, so that one is refused. Irreducible ambiguity, and
+        # the safe side; these five are the ordinary case.
+        "sed -i 1d 'raw data.txt'",
+        "sed -i 1d 'my report.md'",
+        "sed -i 1d 'final report.md'",
+        "sed -i 1d 'read me.txt'",
+        "sed -i 1d 'write up.md'",
         "sed -i '' 's/a/b/' f",
         "sed -n -i.bak 's/a/b/p' f",
         "sed --in-place=.bak 's/a/b/' f",
