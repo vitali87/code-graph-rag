@@ -360,3 +360,40 @@ async def test_mcp_extract_and_inline_tools(
     )
     assert isinstance(payload, dict) and payload["applied"] is True
     assert payload[cs.KEY_VERDICT]["ok"] is True
+
+
+# A CRLF file's blank line is b"\r\n", so the loop in `_cut_span` that swallows
+# the blank lines after a removed definition tested for b"\n" at a position
+# holding b"\r" and stopped immediately, leaving the separator behind. Every
+# Windows unit job failed on it while Linux and macOS stayed green, because no
+# fixture in this suite used CRLF. Drive `_cut_span` directly on both endings:
+# the LF case is the control that proves the assertion is not vacuous.
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_cut_span_swallows_the_blank_lines_after_a_definition(newline: str) -> None:
+    from codebase_rag.editing.move import _cut_span
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, _queries = load_parsers()
+    if cs.SupportedLanguage.PYTHON not in parsers:
+        pytest.skip("python parser not available")
+    lines = [
+        "def wrapper():",
+        "    return other()",
+        "",
+        "",
+        "def other():",
+        "    return 2",
+        "",
+    ]
+    source = newline.join(lines).encode(cs.ENCODING_UTF8)
+    tree = parsers[cs.SupportedLanguage.PYTHON].parse(source)
+    wrapper = tree.root_node.children[0]
+
+    cut = _cut_span(source, wrapper)
+
+    # What survives the cut is what the file keeps. Assert on that rather than
+    # on the offset, so the test states the user-visible outcome.
+    remainder = source[cut.end :].decode(cs.ENCODING_UTF8)
+    assert remainder.startswith("def other():"), (
+        f"blank separator survived the cut for {newline!r}: {remainder[:20]!r}"
+    )
