@@ -2025,6 +2025,18 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed -i '1,2d' 'w /tmp/x'",
         "sed -i '1d' 'r /etc/passwd' f",
         "sed -i bak 'w ../esc'",
+        # ATTACHED traversal in the ambiguous slot. The narrow anchor
+        # required the separator to be the FIRST character after the
+        # command letter, so `w../victim.txt` left the working directory --
+        # verified overwriting a file one level up. The suite tested the
+        # attached form in the OTHER slot and the separated form in this
+        # one, so it could not discriminate.
+        "sed -i bak 'w../victim.txt' in.txt",
+        "sed -i bak 'r../secret' f",
+        "sed -i bak 'w~/x' f",
+        "sed -i bak 'W../s' f",
+        "sed -i bak 'w./../esc' f",
+        "sed -l bak 'w../x' f",
         "sed 'w-file' f",
         "sed 'w.bak' f",
         "sed '1,2wout3' f",

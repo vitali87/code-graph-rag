@@ -273,9 +273,12 @@ SHELL_CMD_SED = "sed"
 # The reason string for the file-command anchor, and the narrower form used
 # in the -i operand slots where the token may be an input filename instead.
 # A write that leaves the working directory needs a separator or a path
-# before its target; a filename is one unbroken token.
+# before its target; a filename is one unbroken token. The path forms include
+# `..` and `~`, not just a leading slash -- requiring the separator to be the
+# FIRST character let `w../victim.txt` out of the working directory, verified
+# overwriting a file one level up.
 SHELL_SED_FILE_REASON = "reads or writes a named file"
-SHELL_SED_FILE_ESCAPING = r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR](?:\s+\S|/)"
+SHELL_SED_FILE_ESCAPING = r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR](?:\s+\S|/|\.\.?/|~)"
 
 SHELL_SED_EXEC_TOKENS = (
     # sed commands that reach a subprocess or a file. Anchored on the command
