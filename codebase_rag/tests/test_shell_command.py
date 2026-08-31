@@ -2775,6 +2775,43 @@ def test_awk_division_still_runs(segment: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "payload",
+    (
+        "w /tmp/x",
+        "w/tmp/x",
+        "w../esc",
+        "w~/x",
+        "w./../esc",
+        "W /tmp/x",
+        "r /etc/passwd",
+        "eid",
+        "1w/tmp/x",
+        "$w/tmp/x",
+        "s/a/b/w /etc/x",
+    ),
+)
+def test_both_sed_slots_agree_on_escaping_writes(payload: str) -> None:
+    # Class (d) -- a fix landing on one path and not its sibling -- produced
+    # the last two findings on this branch. The two sed anchors differ BY
+    # DESIGN (the ambiguous -i slot is narrower), so this pins where they
+    # must AGREE: every write that leaves the working directory. The only
+    # intended divergence is a bare CWD-relative target, covered separately.
+    assert (_validate_segment(f"sed '{payload}' f", "", True) is not None) is True
+    assert (
+        _validate_segment(f"sed -i bak '{payload}' f", "", True) is not None
+    ) is True
+
+
+@pytest.mark.parametrize("payload", ("wout1", "w.bak", "w-file"))
+def test_the_ambiguous_slot_permits_only_cwd_relative_targets(payload: str) -> None:
+    # ...and pins the divergence itself, so a future change that widens or
+    # narrows it has to say so. These three write inside the working
+    # directory, which tee/cp/redirection already permit.
+    assert _validate_segment(f"sed '{payload}' f", "", True) is not None
+    assert _validate_segment(f"sed -i bak '{payload}' f", "", True) is None
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
