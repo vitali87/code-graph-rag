@@ -172,5 +172,8 @@ def test_the_affected_caller_query_projects_the_key_its_reader_unpacks() -> None
     # `RETURN DISTINCT caller.path AS caller_path, target.path AS caller_path`,
     # which is a duplicate-column error against a real backend while leaving a
     # substring assertion green (measured 2026-08-31: 7 passed).
-    projection = cs.CYPHER_AFFECTED_CALLER_PATHS.split("RETURN DISTINCT ", 1)[1]
+    # Split rather than index so dropping DISTINCT fails with this message
+    # instead of an IndexError, which reports a missing clause as a crash.
+    _, sep, projection = cs.CYPHER_AFFECTED_CALLER_PATHS.partition("RETURN DISTINCT ")
+    assert sep, "the affected-caller query no longer projects with RETURN DISTINCT"
     assert projection.strip() == f"caller.path AS {cs.KEY_CALLER_PATH}"
