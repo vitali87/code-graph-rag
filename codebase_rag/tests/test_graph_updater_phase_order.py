@@ -329,6 +329,20 @@ def test_every_pinned_dependency_is_still_explained_at_its_call_site() -> None:
     stranded from its explanation is the state this test exists to prevent,
     and the remedy is to bring the comment along, not to relax the check.
 
+    SECOND KNOWN LIMIT: `_call_lines` keys on the attribute NAME and ignores
+    the receiver, because these phases are reached through several
+    (`self`, `self.factory.definition_processor`,
+    `self.factory.import_processor`, `self.finding_analyzer`) and the
+    receiver is not what the order depends on. Eleven of the pinned names
+    are not `GraphUpdater` methods at all, so this file never checks they
+    exist on the object that owns them -- a rename on a processor class
+    would leave these tests green while `run` calls something absent. That
+    is caught by running the code, not here.
+    The collision direction is fail-SAFE, verified rather than assumed: an
+    unrelated receiver gaining a same-named call inside `run` (e.g. a second
+    `analyze()`) makes both the ordering and drift tests FAIL loudly. A
+    false positive someone must investigate, never a silent pass.
+
     That limit is acceptable only because it is not the load-bearing guard.
     `test_resolution_phases_keep_their_documented_order` reads no prose at
     all, so the CODE-corrupting defect -- the reordering itself -- is caught
