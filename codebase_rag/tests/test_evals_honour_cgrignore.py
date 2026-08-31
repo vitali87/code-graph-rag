@@ -89,6 +89,7 @@ def test_both_sides_agree_under_cgrignore(tmp_path: Path) -> None:
     oracle = oracle_inheritance(src, "proj").inherits
     cgr = cgr_inheritance(src, "proj").inherits
 
-    assert _VISIBLE_EDGE in oracle and _VISIBLE_EDGE in cgr
-    assert _HIDDEN_EDGE not in oracle
-    assert _HIDDEN_EDGE not in cgr
+    assert _VISIBLE_EDGE in oracle, "the oracle stopped producing any row"
+    assert _VISIBLE_EDGE in cgr, "cgr stopped producing any row"
+    assert _HIDDEN_EDGE not in oracle, oracle
+    assert _HIDDEN_EDGE not in cgr, cgr
