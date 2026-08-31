@@ -6,6 +6,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
 
 from . import constants as ec
+from .ignore_rules import ignore_rules
 from .types_defs import DefNode, EdgeKey, GraphData, NameEdge, NodeKey
 
 _RelTuple = tuple[str, PropertyValue, str, str, PropertyValue]
@@ -367,11 +368,14 @@ class _StatefulIngestor:
 def _capture(target: Path, project_name: str) -> _CapturingIngestor:
     parsers, queries = load_parsers()
     ingestor = _CapturingIngestor()
+    exclude_paths, unignore_paths = ignore_rules(target)
     GraphUpdater(
         ingestor=ingestor,
         repo_path=target,
         parsers=parsers,
         queries=queries,
+        exclude_paths=exclude_paths,
+        unignore_paths=unignore_paths,
         project_name=project_name,
     ).run(force=True)
     return ingestor
