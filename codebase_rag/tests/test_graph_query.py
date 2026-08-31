@@ -438,9 +438,15 @@ def test_importers_co_located_on_one_statement_order_by_name() -> None:
     pair keeps the graph's arbitrary order. This is a distinct collision from
     the column-zero one above: that test still passes with the tie-breakers
     removed, and this one still passes with the column fix reverted.
+
+    `alias` and `imported_name` deliberately DISAGREE, modelling
+    `from x import b as y, a as z`. Setting them equal would tie the two
+    fields together, and a fixture that ties them cannot see which one the key
+    consults or in what order -- dropping either, or swapping the pair, would
+    leave the output identical and the test green.
     """
 
-    def row(name: str, end_col: int) -> ResultRow:
+    def row(alias: str, imported: str, end_col: int) -> ResultRow:
         return {
             cs.KEY_QUALIFIED_NAME: f"{P}.app",
             cs.KEY_PATH: "app.py",
@@ -448,16 +454,64 @@ def test_importers_co_located_on_one_statement_order_by_name() -> None:
             cs.KEY_COL: 0,
             cs.KEY_END_LINE: 1,
             cs.KEY_END_COL: end_col,
-            cs.KEY_ALIAS: name,
-            cs.KEY_IMPORTED_NAME: name,
+            cs.KEY_ALIAS: alias,
+            cs.KEY_IMPORTED_NAME: imported,
         }
 
-    rows = [row("b", 30), row("a", 20)]
+    # Alias order (y, z) is the REVERSE of imported-name order (b, a), so the
+    # expected result holds only if `alias` is read first.
+    rows = [row("z", "a", 30), row("y", "b", 20)]
 
     def fetch(order: list[ResultRow]) -> list[graph_query.ImporterRow]:
         return graph_query.importers(lambda _q, _p=None: list(order), P, f"{P}.util")
 
-    assert [r["alias"] for r in fetch(rows)] == ["a", "b"]
+    assert [r["alias"] for r in fetch(rows)] == ["y", "z"]
+    assert json.dumps(fetch(rows)) == json.dumps(fetch(list(reversed(rows))))
+
+    # `imported_name` needs its own rows. Above, the aliases differ, so `alias`
+    # separates the pair on its own and the second tie-breaker is never
+    # consulted -- dropping `imported_name` from the key passes every
+    # assertion above. Tying the alias is what makes it load-bearing, and the
+    # case is real: `from x import a as z, b as z` is a redefinition, but the
+    # graph holds both rows and must order them deterministically.
+    tied = [row("z", "b", 30), row("z", "a", 20)]
+
+    assert [r["imported_name"] for r in fetch(tied)] == ["a", "b"]
+    assert json.dumps(fetch(tied)) == json.dumps(fetch(list(reversed(tied))))
+
+
+def test_importers_group_by_importing_module_first() -> None:
+    """`module` is the primary key, ahead of every positional field.
+
+    Every other importers fixture uses a single importing module, so `module`
+    never discriminates and dropping it from the key is a mutation they all
+    pass through. It is not equivalent: dropping it loses per-module grouping
+    AND reintroduces the fetch-order dependence this whole key exists to
+    remove, because rows from different modules then collide on position.
+
+    `zeta` imports at line 1 and `alpha` at line 9, so grouping by module is
+    the only thing that can put `alpha` first -- ordering by position would
+    invert the pair.
+    """
+
+    def row(module: str, line: int) -> ResultRow:
+        return {
+            cs.KEY_QUALIFIED_NAME: module,
+            cs.KEY_PATH: f"{module.rsplit('.', 1)[-1]}.py",
+            cs.KEY_LINE: line,
+            cs.KEY_COL: 0,
+            cs.KEY_END_LINE: line,
+            cs.KEY_END_COL: 10,
+            cs.KEY_ALIAS: "same",
+            cs.KEY_IMPORTED_NAME: "same",
+        }
+
+    rows = [row(f"{P}.zeta", 1), row(f"{P}.alpha", 9)]
+
+    def fetch(order: list[ResultRow]) -> list[graph_query.ImporterRow]:
+        return graph_query.importers(lambda _q, _p=None: list(order), P, f"{P}.util")
+
+    assert [r["module"] for r in fetch(rows)] == [f"{P}.alpha", f"{P}.zeta"]
     assert json.dumps(fetch(rows)) == json.dumps(fetch(list(reversed(rows))))
 
 
