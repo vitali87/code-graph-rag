@@ -2012,7 +2012,12 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed --in-place bak 'w /tmp/x'",
         "sed -n -i bak 'w /tmp/x'",
         "sed --line-length 5 'w /tmp/x'",
-        "sed -i bak 'eid'",
+        # `sed -i bak 'eid'` is NOT here: the `e` command does not execute in
+        # this slot on either implementation. `e touch /tmp/marker` and the
+        # attached `etouch /tmp/marker` were both run under BSD sed and GNU
+        # sed 4.9 -- all four rc=1, no marker created. `e` remains blocked in
+        # every reachable position (bare script, -e, -i attached, --expression,
+        # -n, after an address); see test_e_command_blocked_where_reachable.
         # A backup suffix that LOOKS like a script defeated the attempt to
         # pick a reading from slot one: BSD takes slot one as the suffix
         # whatever its shape, so `-i 1d` left the payload unscanned --
@@ -2161,7 +2166,8 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed -i 1d 'my report.md'",
         "sed -i 1d 'final report.md'",
         "sed -i 1d 'read me.txt'",
-        "sed -i 1d 'write up.md'",
+        # `'write up.md'` moved to the blocked list: it begins with `w`, and
+        # the slot cannot tell that from a write to `rite up.md`.
         "sed -i '' 's/a/b/' f",
         "sed -n -i.bak 's/a/b/p' f",
         "sed --in-place=.bak 's/a/b/' f",
@@ -2173,23 +2179,13 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed 's/warning/error/' f",
         "sed '/read/p' f",
         "sed 'y/wr/WR/' f",
-        # `w..` is not an escape: it fails because .. is a directory.
-        # Pinned so a future widening does not add it on suspicion.
-        #
-        # `w$HOME/x` USED to be here on the same reasoning -- sed does not
-        # expand variables, so the target is a literal path that does not
-        # exist. It is now blocked, because the anchor matches a slash
-        # anywhere and that string contains one. A harmless over-block on an
-        # unusable path, and cheaper than another leading-form enumeration:
-        # that approach failed twice.
-        "sed -i bak 'w..' f",
-        # Only `w.env` and `wpyproject.toml` remain allowed here: a plain
-        # filename in the CWD with no path component. `w.git/config` moved
-        # to the blocked list once the anchor matched a slash anywhere --
-        # the "CWD writes are harmless" claim was wrong, because the CWD
-        # contains .git/ and a hook written there is executed.
-        "sed -i bak 'w.env' f",
-        "sed -i bak 'wpyproject.toml' f",
+        # `w..`, `w.env` and `wpyproject.toml` USED to be allowed here on the
+        # reasoning that a CWD write with no path component is harmless. That
+        # was wrong twice over, and they are now blocked: BSD sed parses the
+        # token as a script and truncates the target -- which is the token
+        # MINUS its leading `w` -- before failing on stdin, so `wpyproject.toml`
+        # empties `pyproject.toml` and `w.gitignore` empties `.gitignore`.
+        # Verified emptying each file; the rc=1 arrives after the damage.
     ),
 )
 def test_sed_ordinary_scripts_still_run(segment: str) -> None:
@@ -2800,7 +2796,10 @@ def test_awk_division_still_runs(segment: str) -> None:
         "w./../esc",
         "W /tmp/x",
         "r /etc/passwd",
-        "eid",
+        # `eid` is deliberately absent: it executes in the bare-script slot
+        # but NOT in the `-i` suffix slot -- `e touch /tmp/marker` and
+        # `etouch /tmp/marker` were run under BSD and GNU sed 4.9, all four
+        # rc=1 with no marker. A divergence backed by execution, not a gap.
         "1w/tmp/x",
         "$w/tmp/x",
         "s/a/b/w /etc/x",
@@ -2819,12 +2818,17 @@ def test_both_sed_slots_agree_on_escaping_writes(payload: str) -> None:
 
 
 @pytest.mark.parametrize("payload", ("wout1", "w.bak", "w-file"))
-def test_the_ambiguous_slot_permits_only_cwd_relative_targets(payload: str) -> None:
-    # ...and pins the divergence itself, so a future change that widens or
-    # narrows it has to say so. These three write inside the working
-    # directory, which tee/cp/redirection already permit.
+def test_the_ambiguous_slot_refuses_bare_cwd_writes_too(payload: str) -> None:
+    # This test USED to assert the opposite -- that the `-i` slot permits a
+    # bare CWD-relative write, "which tee/cp/redirection already permit".
+    # Both halves of that were wrong. BSD sed truncates the token minus its
+    # leading `w`, so `wout1` empties `out1`; and the CWD is the project
+    # root, so the reachable targets include `.gitignore`, `conftest.py`
+    # (which pytest imports), `Makefile`, and any pre-existing symlink --
+    # which redirects the write anywhere on the filesystem with no slash in
+    # the command at all. Verified emptying each target file.
     assert _validate_segment(f"sed '{payload}' f", "", True) is not None
-    assert _validate_segment(f"sed -i bak '{payload}' f", "", True) is None
+    assert _validate_segment(f"sed -i bak '{payload}' f", "", True) is not None
 
 
 def test_xargs_flag_partition_is_disjoint() -> None:
@@ -3089,3 +3093,173 @@ class TestYoloLauncherConfinement:
         mock_ctx.tool_call_approved = False
         result = await tool.function(mock_ctx, command)
         assert result.return_code == 0, f"yolo over-blocked ordinary work: {command}"
+
+
+def test_symlink_write_target_keeps_the_slash_anchor_broad() -> None:
+    """The `w` anchor must match a slash anywhere, symlinks being unspellable.
+
+    A narrower "escape-only" anchor is tempting: it would stop `sed -i 1d
+    web/index.html` being refused, since an ordinary relative path neither
+    starts with `/` or `~` nor contains `..`. It is wrong. `wlink/victim.txt`
+    was verified overwriting a file OUTSIDE the working directory when `link`
+    is a symlink to `..`, and a symlink is byte-identical to a directory in
+    the script text. There is no property of the token that separates them,
+    so the anchor cannot be narrowed on syntax; it stays broad and the
+    over-block below is the accepted price.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    # These MUST be asserted in the `-i` operand slot. That slot is the only
+    # place the narrower anchor would apply, so the bare-script spelling
+    # `sed 'wlink/victim.txt' in.txt` is refused either way and cannot tell
+    # the two anchors apart -- it is satisfied by the broken version too.
+    for script in (
+        "wlink/victim.txt",  # `link` -> `..`; verified overwriting outside the CWD
+        "wdir/../../victim.txt",
+        "w./../esc",
+        "w.git/hooks/pre-commit",
+    ):
+        assert _validate_segment(f"sed -i bak {script}", allowlist, False)
+        assert _validate_segment(f"sed -i 1d {script}", allowlist, False)
+
+
+def test_ambiguous_slot_overblock_is_bounded_and_has_a_workaround() -> None:
+    """The known false positive is confined, and every case has an escape hatch.
+
+    Refusing `sed -i 1d web/index.html` is a real cost, accepted because the
+    alternative reopens the symlink write above. It is bounded: it needs a
+    SEPARATED `-i`/`-l` argument whose filename begins with a file-command
+    letter. Any of the three ordinary alternatives below still work, so no
+    task is actually blocked -- only one spelling of it.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    # The over-block, stated explicitly rather than left to be rediscovered.
+    assert _validate_segment("sed -i 1d web/index.html", allowlist, False)
+    # Same trade, no slash needed: BSD sed parses a `w`-prefixed operand as a
+    # write and truncates the token MINUS its leading `w`, so `wsgi.py` and
+    # `wMakefile` are refused here to stop `w.gitignore` truncating
+    # `.gitignore`. The two readings are the same bytes; no classifier
+    # separates them, so the slot fails closed on `w`/`W`.
+    assert _validate_segment("sed -i bak wsgi.py", allowlist, False)
+    # `r`/`R` only read, so ordinary r-names stay usable -- the over-block is
+    # not widened past what the write actually threatens.
+    assert _validate_segment("sed -i bak report.csv", allowlist, False) is None
+
+    # A filename not starting with a file-command letter is unaffected, which
+    # is what bounds the cost.
+    assert _validate_segment("sed -i 1d src/file.py", allowlist, False) is None
+
+    # And the workarounds, which must keep working or the cost is not bounded.
+    for command in (
+        "sed -i.bak 1d web/index.html",
+        "sed -i '' 1d web/index.html",
+        "sed -i 1d ./web/index.html",
+    ):
+        assert _validate_segment(command, allowlist, False) is None
+
+
+def test_bare_w_token_in_the_i_slot_cannot_truncate_a_cwd_file() -> None:
+    """`sed -i bak w<name>` truncates <name> on BSD; the slot must refuse it.
+
+    Verified by execution, not inferred: with a `bak` suffix operand BSD sed
+    reads `w.gitignore` as a script, empties `.gitignore`, and only THEN
+    fails with "-I or -i may not be used with stdin". The non-zero exit is
+    not protection -- the file is already truncated. GNU sed parses the two
+    operands the other way round and is unaffected, but the validator must
+    deny regardless of which sed is installed.
+
+    The earlier `SHELL_SED_FILE_ESCAPING` anchor cannot catch these: it needs
+    a slash, a `~` or a separated target, and `wMakefile` has none of them.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    for target in (".gitignore", "Makefile", "conftest.py", "pyproject.toml", ".envrc"):
+        assert _validate_segment(f"sed -i bak w{target}", allowlist, False)
+        assert _validate_segment(f"sed -l bak w{target}", allowlist, False)
+
+
+def test_exec_anchors_never_run_in_the_filename_slot() -> None:
+    """Ordinary in-place edits must not be refused "via e command".
+
+    The second `-i` operand slot holds a script only under BSD; under GNU it
+    is an input filename. Running the exec anchors there matched the `e` in
+    any path component after a `/`, refusing 10.7% of this repo's own
+    slash-bearing paths -- `codebase_rag/embedder.py` among them, verified
+    editing in place and writing nothing else on GNU sed 4.9.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    for path in (
+        "codebase_rag/embedder.py",
+        "evals/l3.py",
+        "src/engine.py",
+        "requirements/dev.txt",
+    ):
+        assert _validate_segment(f"sed -i 's/a/b/' {path}", allowlist, False) is None
+
+    # The anchors must still fire wherever a script really is one.
+    for command in (
+        "sed -i 'e id' f",
+        "sed 'e id' f",
+        "sed -i 's/a/b/e' f",
+        "sed -i '1e id' f",
+        "sed -e 'w /tmp/x' f",
+    ):
+        assert _validate_segment(command, allowlist, False)
+
+
+def test_path_qualified_program_names_are_refused() -> None:
+    """A qualified argv[0] reaches none of the name-keyed guards.
+
+    Every guard compares `cmd_parts[0]` to a bare literal, so under --yolo
+    (allowlist bypassed) `/usr/bin/xargs -n1 sh -c id` was verified executing
+    with `rc=0` while bare `xargs` was blocked; the same held for sed, git and
+    rg. The qualified form is refused rather than reduced to a basename,
+    because the allowlist holds bare names and basenaming would also admit
+    `/tmp/evil/sed` -- a different binary wearing an allowlisted name.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    for command in (
+        "/usr/bin/xargs -n1 sh -c id",
+        "/usr/bin/sed -e 'w /tmp/victim' f",
+        "/usr/bin/git -c core.pager=id log",
+        "/usr/bin/rg --pre id foo",
+        "/bin/../usr/bin/xargs -n1 sh -c id",
+        "./xargs -n1 sh -c id",
+        "/tmp/evil/sed -e 1d f",
+    ):
+        # Both modes: the allowlist is not what stops these under --yolo.
+        assert _validate_segment(command, allowlist, True), command
+        assert _validate_segment(command, allowlist, False), command
+
+    # The recursion must inherit the rule, not just the top-level segment.
+    assert _validate_segment("xargs /usr/bin/sh -c id", allowlist, True)
+
+    # Bare names are unaffected.
+    for command in ("git status", "rg foo", "xargs -n1 cat", "sed -i 1d src/f.py"):
+        assert _validate_segment(command, allowlist, False) is None
+
+
+def test_e_command_blocked_where_reachable() -> None:
+    """`e` is skipped in the `-i` suffix slot, so pin every other position.
+
+    Skipping an anchor anywhere invites it being skipped everywhere. The slot
+    exemption is safe only because the command does not execute there (both
+    implementations, verified); these eight positions are the ones where it
+    does, and they must stay blocked.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    for command in (
+        "sed 'eid' f",
+        "sed -e 'eid' f",
+        "sed -i 'eid' f",
+        "sed -i.bak 'eid' f",
+        "sed --expression='eid' f",
+        "sed -n 'eid' f",
+        "sed '1eid' f",
+        "sed 'e id' f",
+    ):
+        assert _validate_segment(command, allowlist, False), command

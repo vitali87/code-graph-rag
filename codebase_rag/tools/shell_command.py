@@ -808,10 +808,33 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # Only the s/// forms need the real text (the skeleton blanks
             # the very bodies they match inside); every other anchor runs on
             # the skeleton so user text cannot look like a command.
+            if (
+                position in ambiguous_slots
+                and reason in cs.SHELL_SED_FILENAME_AMBIGUOUS_REASONS
+            ):
+                # This slot holds a script only under the BSD reading of
+                # `-i SUFFIX FILE`; under GNU it is an input FILENAME. The
+                # exec anchors cannot survive that ambiguity: `e` matches
+                # after any `/`, so `sed -i 's/a/b/' codebase_rag/embedder.py`
+                # -- an ordinary in-place edit, verified confined on GNU sed
+                # 4.9 -- was refused "via e command", along with 10.7% of this
+                # repo's own slash-bearing paths. An exec command cannot
+                # appear in a filename slot without a preceding real command,
+                # so only the file anchors are meaningful here.
+                continue
             if position in ambiguous_slots and reason == cs.SHELL_SED_FILE_REASON:
                 # In this slot the token may be an input filename, so the
-                # file command must show a separated or path-like target.
+                # file command must show a separated or path-like target...
                 if re.search(cs.SHELL_SED_FILE_ESCAPING, skeleton):
+                    return reason
+                # ...but a bare `w<name>` is a write to <name> even with no
+                # slash in it. BSD sed reads the token AS a script here, so
+                # `sed -i bak wMakefile` truncates `Makefile` and
+                # `sed -i bak w.gitignore` truncates `.gitignore` -- both
+                # verified emptying the file, rc=1 only AFTER the truncation.
+                # GNU reads the operands the other way round and is unharmed,
+                # but the policy must deny whichever binary is present.
+                if re.match(cs.SHELL_SED_BARE_WRITE_TOKEN, skeleton):
                     return reason
                 continue
             target = arg if reason.startswith("s///") else skeleton
@@ -958,6 +981,23 @@ def _validate_segment(
         )
 
     base_cmd = cmd_parts[0]
+
+    # Every guard below keys on the program NAME, so a path-qualified spelling
+    # would reach none of them: `/usr/bin/xargs -n1 sh -c id` was verified
+    # executing under --yolo while bare `xargs` was blocked, and the same held
+    # for sed, git and rg. Refuse the qualified form outright rather than
+    # reduce it to a basename -- the allowlist holds bare names, so basenaming
+    # would also admit `/tmp/evil/sed`, a DIFFERENT binary wearing an
+    # allowlisted name. Refusing loses nothing: every allowlisted command is
+    # resolved through PATH at execution anyway.
+    if "/" in base_cmd or os.sep in base_cmd:
+        return te.COMMAND_DANGEROUS_BLOCKED.format(
+            cmd=base_cmd,
+            reason=(
+                "a path-qualified program name bypasses every name-keyed "
+                "check; invoke the command by its bare name"
+            ),
+        )
 
     if not bypass_allowlist and base_cmd not in settings.SHELL_COMMAND_ALLOWLIST:
         suggestion = cs.GREP_SUGGESTION if base_cmd == cs.SHELL_CMD_GREP else ""

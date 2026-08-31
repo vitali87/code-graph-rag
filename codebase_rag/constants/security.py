@@ -284,6 +284,21 @@ SHELL_CMD_SED = "sed"
 SHELL_SED_FILE_REASON = "reads or writes a named file"
 SHELL_SED_FILE_ESCAPING = r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR](?:\s+\S|[^\s;]*/|~)"
 
+# A lone `w<name>`/`W<name>` token in an `-i`/`-l` operand slot. BSD sed
+# parses it as a script and truncates <name> -- the token minus its leading
+# command letter -- before failing on stdin, so the damage is done whatever
+# the exit code says. `r`/`R` only READ a file and are excluded: refusing
+# them would block ordinary filenames like `report.csv` for no gain.
+# Anchors a FILENAME can trip by accident, and so must not run in the `-i`
+# operand slot where the token may be one. Both match a lone letter after a
+# path separator: `e` fired on `codebase_rag/embedder.py` and `[wWrR]` on
+# `web/app.py`. Every OTHER anchor requires an `s///` construct, which no
+# filename contains, so those keep running here -- `sed -i bak 's/a/b/w
+# /tmp/x'` was verified writing outside the CWD with rc=0 on BSD.
+SHELL_SED_FILENAME_AMBIGUOUS_REASONS = frozenset({"e command"})
+
+SHELL_SED_BARE_WRITE_TOKEN = r"[wW][^\s;]"
+
 SHELL_SED_EXEC_TOKENS = (
     # sed commands that reach a subprocess or a file. Anchored on the command
     # LETTER, which the attacker cannot avoid, rather than on the address that
