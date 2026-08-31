@@ -1543,6 +1543,16 @@ def test_xargs_still_launches_allowlisted_programs(segment: str) -> None:
         "rm -rf /",
         "xargs python3 -c 1",
         "-J cat python3",
+        # The launcher checks added after this test was written must be
+        # covered by the same invariant, or each new check reopens the gap
+        # for its own command.
+        """awk 'BEGIN{system("id")}'""",
+        """awk 'BEGIN{print 1 | "id"}'""",
+        """awk -v c=id 'BEGIN{print 1|c}'""",
+        "awk -f p.awk f",
+        "git filter-branch --tree-filter id",
+        "git bisect run id",
+        "git submodule foreach id",
     ),
 )
 @pytest.mark.parametrize("bypass", (False, True))
