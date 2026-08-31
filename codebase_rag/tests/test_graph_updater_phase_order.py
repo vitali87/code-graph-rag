@@ -31,11 +31,12 @@ handler-lock guard is (see `test_mcp_read_handler_lock.py`):
   pinned pair, including in code paths no fixture reaches.
 
 The table is NOT a complete census of `run`'s ordering constraints, and a
-green run here is not evidence that an unpinned reordering is safe. Two
-constraints are deliberately unpinnable (see the note above `_ORDER`), and
-a constraint whose prose sits above neither call site could not be pinned
-without weakening the drift check. Treat this as a ratchet: when you find
-a documented dependency that is not in the table, add it.
+green run here is not evidence that an unpinned reordering is safe. Three
+constraints are left unpinned, each named with its reason in the note above
+`_ORDER`. Treat this as a ratchet: when you find a documented dependency
+that is not in the table, add it -- two of the entries below were added
+that way after a review showed the note's reason for excluding them no
+longer held.
 
 Each pair below is a dependency stated in `graph_updater.py`'s own
 comments, quoted in the `reason`. This deliberately pins PAIRS rather than
