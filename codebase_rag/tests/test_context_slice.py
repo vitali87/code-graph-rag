@@ -13,6 +13,7 @@ from codebase_rag import constants as cs
 from codebase_rag.context_slice import context
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.utils.path_utils import cached_resolve_posix
 from codebase_rag.utils.token_utils import count_tokens
 from evals.cgr_graph import _StatefulIngestor
 
@@ -411,3 +412,32 @@ def test_test_pieces_normalises_the_source_it_reads(
     assert pieces[0].source == "def test_run():\n    assert run() == 6", repr(
         pieces[0].source
     )
+
+
+# The indexer writes absolute_path through `cached_resolve_posix`, so the lookup
+# key must be POSIX too. Building it with `str(...resolve())` was identical on
+# Linux and macOS and emitted backslashes on Windows, so the doc query matched
+# nothing there and the CONTEXT_WHY_DOC grouping raised KeyError -- green on
+# every platform this suite normally runs on. Assert the key's SHAPE rather than
+# simulating Windows, so the guard holds wherever it runs.
+def test_doc_lookup_key_is_posix_separated(tmp_path: Path) -> None:
+    from codebase_rag import context_slice as cs_mod
+
+    seen: list[object] = []
+
+    def _fetch(_query: str, params: dict[str, object]) -> list[dict[str, object]]:
+        seen.append(params[cs.KEY_ABSOLUTE_PATH])
+        return []
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "mod.py").write_text("x = 1\n", encoding="utf-8")
+
+    cs_mod._doc_pieces(_fetch, "proj", "pkg/mod.py", "mod", tmp_path)
+
+    assert len(seen) == 1, repr(seen)
+    key = seen[0]
+    assert isinstance(key, str), repr(key)
+    # The one assertion that fails on a Windows runner under the old code: the
+    # writer's own form is what the reader must send.
+    assert key == cached_resolve_posix(tmp_path / "pkg/mod.py"), repr(key)
+    assert "\\" not in key, repr(key)

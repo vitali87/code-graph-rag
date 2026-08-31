@@ -26,6 +26,7 @@ from . import cypher_queries as cq
 from . import graph_query
 from .graph_query import QueryFn, ReachIndex
 from .types_defs import ResultRow, SemanticSearchResult
+from .utils.path_utils import cached_resolve_posix
 from .utils.source_extraction import extract_source_lines
 from .utils.token_utils import count_tokens
 
@@ -323,7 +324,12 @@ def _doc_pieces(
 ) -> list[_Candidate]:
     if repo_root is None or not path:
         return []
-    absolute = str((repo_root / path).resolve())
+    # The indexer stores absolute_path via `cached_resolve_posix`, i.e. always
+    # POSIX-separated. Building the lookup key with `str(...resolve())` matched
+    # on Linux and macOS and produced backslashes on Windows, so the query found
+    # no doc sections there, no CONTEXT_WHY_DOC candidate was built, and the
+    # grouping raised KeyError. Use the same helper the writer uses.
+    absolute = cached_resolve_posix(repo_root / path)
     out: list[_Candidate] = []
     rows = fetch_all(
         cq.CYPHER_CONTEXT_DOC_SECTIONS,
