@@ -1283,21 +1283,26 @@ class TestAwkSedXargsPatterns:
         assert reason is not None
         assert "getline" in reason.lower()
 
+    # These assert through the VALIDATOR rather than _check_segment_patterns.
+    # The legacy `sed ... s///e` regex they used to call was retired: it read
+    # the s of "start" and the e of "end" as a substitute-execute, so
+    # `sed -n '/start/,/end/p'` was refused. _sed_exec_construct covers the
+    # same ground structurally, on a skeleton with substitution bodies
+    # blanked, so the behaviour is unchanged where it matters and the false
+    # positive is gone.
     def test_sed_execute_flag_detected(self) -> None:
-        reason = _check_segment_patterns("sed 's/foo/bar/e'")
-        assert reason is not None
-        assert "sed" in reason.lower()
+        assert _validate_segment("sed 's/foo/bar/e' f", "", True) is not None
 
     def test_sed_execute_alternate_delimiters(self) -> None:
-        assert _check_segment_patterns("sed 's#foo#bar#e'") is not None
-        assert _check_segment_patterns("sed 's|foo|bar|e'") is not None
-        assert _check_segment_patterns("sed 's@foo@bar@ge'") is not None
+        assert _validate_segment("sed 's#foo#bar#e' f", "", True) is not None
+        assert _validate_segment("sed 's|foo|bar|e' f", "", True) is not None
+        assert _validate_segment("sed 's@foo@bar@ge' f", "", True) is not None
 
     def test_sed_execute_flag_any_position(self) -> None:
-        assert _check_segment_patterns("sed 's/foo/bar/eg'") is not None
-        assert _check_segment_patterns("sed 's/foo/bar/egi'") is not None
-        assert _check_segment_patterns("sed 's/foo/bar/gei'") is not None
-        assert _check_segment_patterns("sed 's/foo/bar/ige'") is not None
+        assert _validate_segment("sed 's/foo/bar/eg' f", "", True) is not None
+        assert _validate_segment("sed 's/foo/bar/egi' f", "", True) is not None
+        assert _validate_segment("sed 's/foo/bar/gei' f", "", True) is not None
+        assert _validate_segment("sed 's/foo/bar/ige' f", "", True) is not None
 
     def test_xargs_rm_detected(self) -> None:
         reason = _check_segment_patterns("xargs rm")
@@ -1983,6 +1988,19 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         # is LAST can only be a filename. Whitespace-based and
         # shape-based guesses were each a bypass in earlier rounds.
         "sed -i ext 'w/tmp/x' f",
+        # GNU sed needs no separator OR slash: `wout1` writes `out1` and
+        # `eid` runs `id`, verified against GNU sed 4.9. Requiring one was
+        # a spelling rule and a bypass, the same class as the three
+        # token-classification attempts before it.
+        "sed 'wout1' f",
+        "sed 'w-file' f",
+        "sed 'w.bak' f",
+        "sed '1,2wout3' f",
+        "sed 'rin1' f",
+        "sed 'eid' f",
+        "sed 'eecho HI' f",
+        "sed 'w../../pwned' f",
+        "sed -n 's/x/id/ep' f",
         "sed -i ext 'W/tmp/x' f",
         "sed -i ext 'r/etc/passwd' f",
         "sed -i ext '1w/tmp/x' f",
@@ -2073,6 +2091,10 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed -e p -e d README.md",
         "sed 's/a/b/' w.txt",
         "sed -n 'p' Reader.txt",
+        # The legacy s///e regex read the s of "start" and the e of "end"
+        # as a substitute-execute, refusing an ordinary range print.
+        "sed -n '/start/,/end/p' notes.md",
+        "sed -n '/setup/,/end/p' f",
         # Filenames with spaces are fine unless the first word is exactly
         # a file-command letter -- "w r.txt" is syntactically identical to
         # a sed write, so that one is refused. Irreducible ambiguity, and

@@ -280,14 +280,24 @@ SHELL_SED_EXEC_TOKENS = (
     # A command letter is preceded by a command separator (start, `;`, `{`,
     # newline) or by an address, which always ends in a digit, `/`, `%`, `+`,
     # `!`, `~`, `,` or a closing delimiter. So: any of those, then the letter.
-    (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*e(?:\s|$)", "e command"),
-    (r"s(.)[^\n;]*?\1[^\n;]*?\1[gip0-9]*e(?:\s|$|;)", "s///e execute flag"),
+    # `eid` runs `id`: the separator is optional in GNU sed, verified
+    # against 4.9, so requiring one was the same spelling rule as the file
+    # commands had.
+    (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*e\S*(?:\s|$)", "e command"),
+    # Flags may follow the e as well as precede it (`s/x/y/ep`), so do not
+    # require the e to be last.
+    (r"s(.)[^\n;]*?\1[^\n;]*?\1[gip0-9]*e[gip0-9]*(?:\s|$|;)", "s///e execute flag"),
     # The target must be space-separated or a path: `w out.txt`, `w/tmp/x`.
     # Letting any character follow made every filename containing r or w a
     # match -- README.md, requirements.txt, src/Reader.py were all blocked --
     # because a filename's letters run together while a command and its
     # operand do not. Verified against 14 script spellings and 14 filenames.
-    (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR](?:\s+\S|/)", "reads or writes a named file"),
+    # The operand runs straight on from the command letter in GNU sed --
+    # `wout1` writes `out1`, verified against GNU sed 4.9 -- so requiring a
+    # space or slash was another spelling rule and another bypass. Accept an
+    # attached operand; filenames are excluded by POSITION in the collector,
+    # since only the -i suffix slot can ever present one.
+    (r"(?:^|[;{\n]|[\d/%+!~,IM$])\s*[wWrR]\s*\S", "reads or writes a named file"),
     (r"s(.)[^\n;]*?\1[^\n;]*?\1[gip0-9]*w\s*[^\s;]", "s///w writes a named file"),
 )
 
@@ -761,7 +771,11 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     # the system() pattern alone left `awk 'BEGIN{print 1 | "echo X"}'`
     # running in both modes. `close()` and `printf ... |` are the same door.
     (r"awk\s+.*getline\s*[<|]", "awk getline file/pipe execution"),
-    (r"sed\s+.*s(.).*?\1.*?\1[gip]*e[gip]*", "sed execute flag"),
+    # NOTE: the legacy `sed ... s///e` regex was removed here. It read the s
+    # of "start" as a substitute command and the e of "end" as the execute
+    # flag, so `sed -n '/start/,/end/p'` -- an ordinary range print -- was
+    # refused. _sed_exec_construct covers s///e structurally, on a skeleton
+    # with the substitution bodies blanked, so nothing is lost.
     (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),
     (r"xargs\s+-I.*sh", "xargs shell execution"),
     (r"xargs\s+.*bash", "xargs bash execution"),
