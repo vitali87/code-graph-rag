@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,19 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.token_utils import count_tokens
 from evals.cgr_graph import _StatefulIngestor
+
+# The doc-section reasons come from DocumentTier, which builds its own markdown
+# parser and degrades to plain File nodes when the grammar is absent
+# (`document_tier._load_parser` returns None, `handles()` then False). The
+# grammar ships in the `treesitter-full` extra, so on a base install these two
+# tests would raise KeyError/ValueError on CONTEXT_WHY_DOC rather than skip --
+# which ci.yml's base-install job exists to prevent (issues #1371, #1410).
+# Scoped to the two tests that assert on a doc reason: the other three must
+# keep running there, so a module-level importorskip would hide them.
+_needs_markdown = pytest.mark.skipif(
+    importlib.util.find_spec("tree_sitter_markdown") is None,
+    reason="markdown grammar not installed (treesitter-full extra)",
+)
 
 PROJECT = "context_fixture"
 FIXTURE: dict[str, str] = {
@@ -85,6 +99,7 @@ def _by_why(slice_: dict) -> dict[str, list[dict]]:
     return out
 
 
+@_needs_markdown
 def test_four_thousand_token_budget_returns_the_neighbourhood_and_nothing_else(
     repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
@@ -145,6 +160,7 @@ def test_token_count_never_exceeds_the_budget(
     assert tiny["omitted"][0].startswith(_qn("pkg.util.helper"))
 
 
+@_needs_markdown
 def test_ranking_prefers_distance_then_trace_hotness(
     repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
