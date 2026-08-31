@@ -308,13 +308,27 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     can delete, turning a recoverable error into a permanent one. That is the
     opposite of this handler's purpose, and it bites on POSIX, where the
     read-only case it exists for cannot even occur.
+
+    A path that VANISHED between the walk and the removal has already reached
+    the state the teardown wanted, so it is not an error to recover from. Git
+    runs background maintenance after `git init` and deletes its own
+    `.git/objects/maintenance.lock` asynchronously, so `rmtree` can list the
+    entry and find it gone by the time it unlinks -- a TOCTOU that surfaced
+    only under `pytest-xdist` on a CI runner, never on a developer machine.
     """
     try:
         mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        return
     except OSError:
         mode = 0
-    os.chmod(path, mode | stat.S_IWRITE | (stat.S_IEXEC if os.path.isdir(path) else 0))
-    func(path)
+    try:
+        os.chmod(
+            path, mode | stat.S_IWRITE | (stat.S_IEXEC if os.path.isdir(path) else 0)
+        )
+        func(path)
+    except FileNotFoundError:
+        return
 
 
 @pytest.fixture

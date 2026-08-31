@@ -203,3 +203,33 @@ def test_the_handler_leaves_a_directory_traversable(tmp_path: Path) -> None:
         assert os.access(victim, os.W_OK), "the directory must be made writable"
     finally:
         victim.chmod(stat.S_IRWXU)
+
+
+def test_a_vanished_path_is_not_an_error(tmp_path: Path) -> None:
+    """A path removed by someone else between the walk and the unlink.
+
+    `git init` starts background maintenance, which deletes its own
+    `.git/objects/maintenance.lock` asynchronously. `shutil.rmtree` can list
+    that entry and find it gone by the time it unlinks, so the handler is
+    invoked for a path that no longer exists. The removal has already
+    achieved what it wanted, so this must not propagate.
+
+    Observed only under `pytest-xdist` on a CI runner (`popen-gw3`), never on
+    a developer machine -- the window is the few milliseconds git holds the
+    lock, so a serial run on a fast disk closes it before rmtree gets there.
+    """
+    ghost = tmp_path / "already-gone"
+
+    # No file is created: the handler must tolerate a path that is absent
+    # BEFORE it does anything, which is the state the race leaves behind.
+    _clear_readonly(lambda _p: None, ghost, FileNotFoundError(2, "No such file"))
+
+    # And when the path vanishes between the chmod and the retry, which is
+    # the same race one step later.
+    victim = tmp_path / "vanishes"
+    victim.write_text("x", encoding="utf-8")
+
+    def unlink_it(p: Path) -> None:
+        raise FileNotFoundError(2, "No such file or directory", str(p))
+
+    _clear_readonly(unlink_it, victim, FileNotFoundError(2, "No such file"))
