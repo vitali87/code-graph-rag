@@ -244,6 +244,30 @@ def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
     return None
 
 
+def _git_subcommand_index(cmd_parts: list[str]) -> int | None:
+    """Index of git's subcommand, stepping over global options.
+
+    git's own options precede the subcommand and several consume the token
+    after them, so the subcommand is neither at a fixed position nor simply
+    the first non-dash token: `git -C dir config ...` puts `dir` there.
+    Locating it wrongly has caused three separate bypasses, so every caller
+    uses this one implementation rather than repeating the rule.
+    """
+    index = 1
+    while index < len(cmd_parts):
+        arg = cmd_parts[index]
+        if not arg.startswith("-"):
+            return index
+        if (
+            arg in cs.SHELL_GIT_GLOBAL_VALUE_FLAGS
+            and arg not in cs.SHELL_GIT_OPTIONAL_ARG_FLAGS
+        ):
+            index += 2
+        else:
+            index += 1
+    return None
+
+
 def _git_config_exec_key(cmd_parts: list[str]) -> str | None:
     """Return the shell-executing git config key this command would write.
 
@@ -254,10 +278,11 @@ def _git_config_exec_key(cmd_parts: list[str]) -> str | None:
     """
     if len(cmd_parts) < 3 or cmd_parts[0] != cs.SHELL_CMD_GIT:
         return None
-    if cmd_parts[1] != cs.SHELL_GIT_SUBCMD_CONFIG:
+    index = _git_subcommand_index(cmd_parts)
+    if index is None or cmd_parts[index] != cs.SHELL_GIT_SUBCMD_CONFIG:
         return None
 
-    args = cmd_parts[2:]
+    args = cmd_parts[index + 1 :]
     flags = [_flag_name(arg) for arg in args if arg.startswith("-")]
     if any(flag in cs.SHELL_GIT_CONFIG_READ_ACTIONS for flag in flags):
         return None
@@ -413,23 +438,8 @@ def _git_exec_subcommand(cmd_parts: list[str]) -> str | None:
     if len(cmd_parts) < 3 or cmd_parts[0] != cs.SHELL_CMD_GIT:
         return None
 
-    # Step over global value flags, as _git_dash_c_exec_key does: `-C dir`
-    # made `dir` look like the subcommand, so `git -C dir filter-branch
-    # --tree-filter cmd` was read as a subcommand that runs nothing.
-    subcommand = None
-    index = 1
-    while index < len(cmd_parts):
-        arg = cmd_parts[index]
-        if not arg.startswith("-"):
-            subcommand = arg
-            break
-        if (
-            arg in cs.SHELL_GIT_GLOBAL_VALUE_FLAGS
-            and arg not in cs.SHELL_GIT_OPTIONAL_ARG_FLAGS
-        ):
-            index += 2
-        else:
-            index += 1
+    subcommand_index = _git_subcommand_index(cmd_parts)
+    subcommand = cmd_parts[subcommand_index] if subcommand_index is not None else None
     if subcommand not in cs.SHELL_GIT_EXEC_SUBCOMMANDS:
         return None
 

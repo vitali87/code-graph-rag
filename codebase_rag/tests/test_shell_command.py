@@ -1881,6 +1881,48 @@ def test_sed_ordinary_scripts_still_run(segment: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # `git config` writes an exec key. The guard hardcoded position 1 for
+        # the subcommand, so ANY global option before it shifted the check
+        # off. This is GHSA-2rr7-8xrw-gmhr's own guard, bypassed -- and the
+        # third time a positional subcommand lookup has been defeated by a
+        # preceding flag, which is why all three callers now share one helper.
+        "git config core.sshCommand id",
+        "git -C /tmp config core.sshCommand id",
+        "git -Cd config core.pager id",
+        "git --git-dir x config core.sshCommand id",
+        "git -c color.ui=x config core.pager id",
+        "git --no-pager config core.sshCommand id",
+    ),
+)
+def test_git_config_exec_key_found_behind_global_options(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"git config wrote an exec key: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Reading a key is fine, and --unset is how a victim recovers, so
+        # neither may be refused -- behind a global option either.
+        "git config --get core.pager",
+        "git config --unset core.sshCommand",
+        "git config --list",
+        "git config user.name x",
+        "git -C /tmp config --get core.pager",
+        "git -C /tmp config --unset core.pager",
+        "git -C /tmp config user.email x",
+    ),
+)
+def test_git_config_reads_and_unsets_still_allowed(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"a git config read or unset was blocked: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
