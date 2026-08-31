@@ -389,6 +389,32 @@ def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
     return cmd_parts[index]
 
 
+def _awk_program_skeleton(program: str) -> str:
+    """The awk program with string literals blanked out.
+
+    A `>` inside a printed string is text, not a redirect, and a filename or
+    message can contain one. sed's scanner already blanks its user-supplied
+    spans for the same reason; awk's did not, so `print "a>b"` was refused
+    while `printf("x") > "f"` slipped past a parenthesis exclusion.
+    """
+    out: list[str] = []
+    index = 0
+    while index < len(program):
+        char = program[index]
+        if char == '"':
+            end = index + 1
+            while end < len(program) and program[end] != '"':
+                if program[end] == "\\":
+                    end += 1
+                end += 1
+            out.append('""')
+            index = min(end + 1, len(program))
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
 def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
     """Return the construct through which this awk program reaches a command.
 
@@ -440,8 +466,9 @@ def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
             else:
                 index += 1
             continue
+        skeleton = _awk_program_skeleton(arg)
         for pattern, reason in cs.SHELL_AWK_EXEC_TOKENS:
-            if re.search(pattern, arg):
+            if re.search(pattern, skeleton):
                 return reason
         # Only the first non-flag argument is the program; the rest are files.
         break

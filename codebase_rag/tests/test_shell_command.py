@@ -1638,6 +1638,12 @@ def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
         # gawk's --exec is -f with the command line locked down: still a
         # program file this validator cannot read.
         "awk --exec p.awk",
+        # Parenthesised print/printf: the parentheses are part of the
+        # SPELLING, and excluding them missed the redirect entirely.
+        'awk \'BEGIN{printf("x") > "/tmp/p"}\'',
+        'awk \'BEGIN{print("y") > "/tmp/p"}\'',
+        "awk '{print > \"/tmp/p\"}'",
+        "awk '{print $1 > out}'",
         "awk --source '{system(1)}' f",
         "awk --include lib '{system(1)}' f",
         "awk --load lib '{system(1)}' f",
@@ -1679,6 +1685,13 @@ def test_awk_cannot_run_a_command(segment: str) -> None:
         "awk -l lib '{print $1}' f",
         "awk -F: '{print $1}' f",
         "awk -v OFS=, '{print $1,$2}' f",
+        # A > inside a printed STRING is text, not a redirect; string
+        # literals are blanked before the anchor runs, the same way
+        # sed blanks its s/// and address bodies.
+        "awk 'BEGIN{print \"a>b\"}'",
+        "awk '{print $1 \" > \" $2}'",
+        "awk 'BEGIN{print \"x -> y\"}'",
+        "awk 'length > 80' f",
         # `>` as a comparison must not read as a redirect.
         "awk '{if ($1 > 5) print}' f",
         "awk 'BEGIN{OFS=\",\"}{print $1,$2}' f",
