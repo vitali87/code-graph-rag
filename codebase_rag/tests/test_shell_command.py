@@ -2422,6 +2422,20 @@ def test_xargs_flag_cannot_hide_the_launched_program(flag: str, spelling: str) -
         "mv a b",
         "rmdir empty",
         "tee out.txt",
+        # Real one-liners, the kind that appear in READMEs and shell
+        # history. The 42-command list above covers each tool once in its
+        # simplest form; these are the shapes that actually stress the
+        # sed and awk scanners.
+        "sed -n '/BEGIN/,/END/p' f",
+        "sed '/^#/d;/^$/d' f",
+        "sed '1!G;h;$!d' f",
+        "sed -n '2~3p' f",
+        "sed 's/.*\\///' f",
+        "awk '!seen[$0]++' f",
+        "awk 'NF' f",
+        "awk '/start/,/end/' f",
+        "awk 'length>max{max=length;line=$0} END{print line}' f",
+        "awk '{print toupper($0)}' f",
     ),
 )
 def test_everyday_invocations_are_not_blocked(segment: str) -> None:
