@@ -294,14 +294,12 @@ def _xargs_short_cluster(arg: str) -> int | None:
     return 1
 
 
-def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
-    """Return the program `xargs` would launch, or None if it launches none.
+def _xargs_launched_index(cmd_parts: list[str]) -> int | None:
+    """Index of the program `xargs` would launch, or None if it launches none.
 
-    `_validate_segment` only ever checks a segment's own base command, so an
-    allowlisted launcher reaches interpreters the allowlist deliberately omits
-    (GHSA-wvxg-744g-6pcg). Scanning past xargs' own flags to the first operand
-    recovers the program it will actually run, so it can be validated the same
-    way. Bare `xargs` defaults to `echo` and launches nothing of its own.
+    Returns the position rather than the token so the caller can vet the whole
+    launched command -- program and arguments -- instead of only its name.
+    A sentinel value means the scan could not determine the program at all.
     """
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_XARGS:
         return None
@@ -311,21 +309,16 @@ def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
     while index < len(args):
         arg = args[index]
         if not arg.startswith("-"):
-            return arg
+            return index + 1
 
-        # `--` ends option parsing: the very next token is the program.
         if arg == "--":
-            return args[index + 1] if index + 1 < len(args) else None
+            return index + 2 if index + 1 < len(args) else None
 
         flag = _flag_name(arg)
-        # An optional-argument flag takes a value only when it is attached, so
-        # the following token is the program, never this flag's value.
         if flag in cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS:
             index += 1
             continue
         if flag in cs.SHELL_XARGS_VALUE_FLAGS:
-            # `-I{}` and `--replace=%` carry their value in the same token; the
-            # separated spellings (`-I {}`) consume the token that follows.
             if "=" in arg:
                 index += 1
             else:
@@ -336,23 +329,31 @@ def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
             index += 1
             continue
 
-        # Short flags bundle (`-0pt`, `-n1`, `-I{}`). Walk the cluster: a
-        # boolean keeps the scan going, while a value flag takes the rest of
-        # the token as its value, or the next token when it ends the cluster.
         if len(arg) > 2 and not arg.startswith("--"):
             consumed = _xargs_short_cluster(arg)
             if consumed is not None:
                 index += consumed
                 continue
 
-        # An unrecognised flag may or may not consume the next token, so the
-        # program xargs will launch cannot be identified. Skipping it is how
-        # `xargs -J cat python3 -c ...` slipped past the first version of this
-        # scan: `-J` was unknown, `cat` looked like the program, and `python3`
-        # ran unvetted. Refuse to guess (GHSA-wvxg-744g-6pcg).
-        return cs.SHELL_XARGS_UNKNOWN_LAUNCH
+        return -1
 
     return None
+
+
+def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
+    """Return the program `xargs` would launch, or None if it launches none.
+
+    `_validate_segment` only ever checks a segment's own base command, so an
+    allowlisted launcher reaches interpreters the allowlist deliberately omits
+    (GHSA-wvxg-744g-6pcg). Bare `xargs` defaults to `echo` and launches nothing
+    of its own.
+    """
+    index = _xargs_launched_index(cmd_parts)
+    if index is None:
+        return None
+    if index < 0:
+        return cs.SHELL_XARGS_UNKNOWN_LAUNCH
+    return cmd_parts[index]
 
 
 def _is_dangerous_command(
@@ -375,11 +376,27 @@ def _is_dangerous_command(
         # `find` launches a program only via a mutating action, so read-only
         # find stays usable under yolo -- the point of yolo is unattended work.
         if base_cmd == cs.SHELL_CMD_XARGS:
-            launched = _xargs_launched_command(cmd_parts)
-            confined = launched is None or (
-                launched != cs.SHELL_XARGS_UNKNOWN_LAUNCH
-                and launched in settings.SHELL_COMMAND_ALLOWLIST
-            )
+            index = _xargs_launched_index(cmd_parts)
+            if index is None:
+                # Bare xargs defaults to echo and launches nothing of its own.
+                confined = True
+            elif index < 0:
+                confined = False
+            else:
+                # Vet the launched command as a segment in its own right.
+                # Allowlist membership alone is not safety: every launcher is
+                # itself allowlisted, so `xargs uv run python -c ...` would
+                # otherwise pass the check that blocks `uv run python -c ...`.
+                launched_parts = cmd_parts[index:]
+                nested_dangerous, _ = _is_dangerous_command(
+                    launched_parts,
+                    " ".join(launched_parts),
+                    bypass_allowlist,
+                )
+                confined = (
+                    launched_parts[0] in settings.SHELL_COMMAND_ALLOWLIST
+                    and not nested_dangerous
+                )
         elif base_cmd == cs.SHELL_CMD_FIND:
             confined = not _find_requires_approval(cmd_parts)
         else:

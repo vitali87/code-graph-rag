@@ -1535,6 +1535,28 @@ def test_xargs_flag_partition_is_disjoint() -> None:
     assert not (cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS & cs.SHELL_XARGS_BOOLEAN_FLAGS)
 
 
+def test_every_xargs_flag_resolves_the_program_for_its_arity() -> None:
+    # Disjointness alone cannot catch a flag filed in the WRONG set: moving
+    # `-n` from VALUE to BOOLEAN keeps the sets disjoint and makes
+    # `xargs -n 1 python3` resolve to `1`. Driving every flag at its declared
+    # arity ties each membership to an observable answer, so a misfiling fails
+    # here rather than silently reinstating a bypass.
+    for flag in sorted(cs.SHELL_XARGS_VALUE_FLAGS):
+        # Separated spelling: the value is one token, the program follows.
+        assert _xargs_launched_command(["xargs", flag, "1", "python3"]) == (
+            "python3"
+        ), f"{flag} declared value-taking but did not consume its value"
+    for flag in sorted(cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS):
+        # Attached-only: the next token is the program, never a value.
+        assert _xargs_launched_command(["xargs", flag, "python3"]) == ("python3"), (
+            f"{flag} declared optional-arg but consumed the program"
+        )
+    for flag in sorted(cs.SHELL_XARGS_BOOLEAN_FLAGS):
+        assert _xargs_launched_command(["xargs", flag, "python3"]) == ("python3"), (
+            f"{flag} declared boolean but consumed the program"
+        )
+
+
 class TestYoloLauncherConfinement:
     # `--yolo` sets bypass_allowlist, so the allowlist stops constraining the
     # segment at all and every launcher on it becomes unattended RCE. Blocking
@@ -1552,28 +1574,19 @@ class TestYoloLauncherConfinement:
             # passes against unfixed code and proves nothing.
             'find . -name x -exec python3 -c "1" \\;',
             'find . -name x -execdir python3 -c "1" +',
-            "git -c alias.z=!id z",
-            "git -c core.sshCommand=id status",
-            "git --config-env=core.pager=EVIL log",
             # A git global option that takes a separate value must not be
             # mistaken for the subcommand: that would stop the scan before
             # the `-c` behind it and wave the whole attack through.
-            "git -C /tmp -c core.sshCommand=id status",
-            "git --git-dir /tmp/.git -c core.sshCommand=id status",
-            "git --namespace ns -c core.pager=id log",
             # Unknown-flag bypass: `-J` was not in the value-flag set, so the
             # scan stepped over it, read `cat` as the program, and let python3
             # through. The scan now fails closed on any flag it cannot name.
             'xargs -J cat python3 -c "1"',
-            'xargs -R 2 python3 -c "1"',
-            'xargs --nosuchflag python3 -c "1"',
             # Bundled short flags and `--` are ordinary xargs spellings, so
             # each is a route to the same bypass if the scan mishandles it.
             'xargs -n1 python3 -c "1"',
             'xargs -I{} python3 -c "1"',
             'xargs -0pt python3 -c "1"',
             'xargs -- python3 -c "1"',
-            'xargs -S 100 python3 -c "1"',
             # The GNU optional-argument spellings are asserted at the
             # validator level instead (test_yolo_blocks_gnu_optional_arg_
             # launchers below). This test executes the command, and BSD/macOS
@@ -1598,11 +1611,55 @@ class TestYoloLauncherConfinement:
     @pytest.mark.parametrize(
         "command",
         (
+            # The over-block side of the same boundary. Without these, a
+            # scanner that simply blocked everything would satisfy every
+            # must-block case above.
+            "git commit -c core.pager=x --allow-empty -m probe",
+            "git -C . status",
+            "git -c color.ui=always status",
+            "xargs -i cat",
+            "xargs -l cat",
+            "xargs --replace=% cat %",
+        ),
+    )
+    def test_yolo_allows_non_launcher_segments(self, command: str) -> None:
+        # `-c` after the subcommand is git's reuse-message flag, and the GNU
+        # optional-arg spellings with an allowlisted program launch nothing
+        # unvetted, so neither may be refused.
+        assert _validate_segment(command, "", True) is None
+
+    @pytest.mark.parametrize(
+        "command",
+        (
             "xargs -i python3 cat",
             "xargs --replace python3 cat",
             "xargs -l node cat",
             "xargs --max-lines python3 cat",
             "xargs --eof python3 cat",
+            # Moved from the execution-level list: BSD xargs/find reject these
+            # themselves, and every git invocation exits 128 in the bare temp
+            # fixture, so `return_code != 0` held there with the validator
+            # fully disabled. Asserted against the validator, they discriminate
+            # on every platform.
+            'find . -name x -execdir python3 -c "1" +',
+            "git -c alias.z=!id z",
+            "git -c core.sshCommand=id status",
+            "git --config-env=core.pager=EVIL log",
+            "git -C /tmp -c core.sshCommand=id status",
+            "git --git-dir /tmp/.git -c core.sshCommand=id status",
+            "git --namespace ns -c core.pager=id log",
+            'xargs -R 2 python3 -c "1"',
+            'xargs -S 100 python3 -c "1"',
+            'xargs --nosuchflag python3 -c "1"',
+            # A launcher nested under xargs must be vetted like a top-level
+            # segment: every launcher is itself allowlisted, so membership
+            # alone let `xargs uv run python -c ...` through (GHSA round 4).
+            "xargs uv run python -c 1",
+            "xargs pytest",
+            "xargs pre-commit run",
+            "xargs xargs python3 -c 1",
+            "xargs git -c core.sshCommand=id status",
+            "xargs find . -exec python3 {} ;",
         ),
     )
     def test_yolo_blocks_gnu_optional_arg_launchers(self, command: str) -> None:
@@ -1645,9 +1702,10 @@ class TestYoloLauncherConfinement:
             # not an exec key, so it passes either way. This spelling puts a
             # real exec-key string in the subcommand's own -c, where scanning
             # every token reports a false positive and stopping does not.
-            # git controls likewise live in the validator-level tests: the
-            # fixture root is a bare temp dir, so every git invocation exits
-            # 128 ("not a git repository") whatever the validator decides.
+            # git and GNU-only controls live in
+            # test_yolo_allows_non_launcher_segments below: the fixture root
+            # is a bare temp dir, so every git invocation exits 128 whatever
+            # the validator decides.
         ),
     )
     async def test_yolo_still_runs_ordinary_commands(
