@@ -30,6 +30,13 @@ handler-lock guard is (see `test_mcp_read_handler_lock.py`):
   one reordering whose fixture it owns. This catches any reordering of any
   pinned pair, including in code paths no fixture reaches.
 
+The table is NOT a complete census of `run`'s ordering constraints, and a
+green run here is not evidence that an unpinned reordering is safe. Two
+constraints are deliberately unpinnable (see the note above `_ORDER`), and
+a constraint whose prose sits above neither call site could not be pinned
+without weakening the drift check. Treat this as a ratchet: when you find
+a documented dependency that is not in the table, add it.
+
 Each pair below is a dependency stated in `graph_updater.py`'s own
 comments, quoted in the `reason`. This deliberately pins PAIRS rather than
 freezing the whole sequence: inserting a new phase, or reordering two steps
@@ -156,7 +163,10 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
     (
         "finalise_rust_mod_scope_uses",
         "resolve_deferred_inherits",
-        "full registry",
+        # Stated above the EARLIER call, and "inline-mod" is unique to it --
+        # the later call's comment is about registry completeness generally
+        # and would match a generic marker without being about this pair.
+        "earlier:inline-mod",
         "inline-mod import maps commit before the deferred inheritance pass, "
         "which re-resolves module-anchored trait guesses through them",
     ),
@@ -273,19 +283,33 @@ def test_every_pinned_dependency_is_still_explained_at_its_call_site() -> None:
     a real dependency decays into cargo that the next reader reorders or
     deletes because nothing says it matters.
 
-    This checks only that the `later` call site still carries SOME comment
-    naming its dependency, not that the wording matches: pinning exact
-    prose would fail on every copy-edit, and a guard that punishes
-    legitimate edits gets deleted rather than obeyed.
+    This checks only that the call site still carries SOME comment naming
+    its dependency, not that the wording matches: pinning exact prose would
+    fail on every copy-edit, and a guard that punishes legitimate edits gets
+    deleted rather than obeyed.
+
+    Which call site carries the justification is per pair. Most state it
+    above the LATER call ("After rehydration: ..."), but a constraint phrased
+    forwards states it above the EARLIER one ("Inline-mod import maps commit
+    BEFORE the deferred inheritance pass below"). A marker prefixed
+    `earlier:` is checked against the earlier call's comment instead.
+    Getting this wrong makes a pair VACUOUS rather than loud: checking the
+    wrong side matched a neighbouring comment about something else, so
+    deleting the only prose that justified the Rust pair left this test
+    green.
     """
     called = _call_lines()
     unexplained: list[str] = []
     for earlier, later, marker, _reason in _ORDER:
-        comment = _comment_above(called[later][0]).lower()
+        if marker.startswith("earlier:"):
+            marker, site, line = marker[len("earlier:") :], earlier, called[earlier][-1]
+        else:
+            site, line = later, called[later][0]
+        comment = _comment_above(line).lower()
         if marker not in comment:
             unexplained.append(
-                f"the call to {later} (line {called[later][0]}) depends on "
-                f"{earlier}, but the comment above it no longer says "
+                f"the {earlier} -> {later} dependency is stated above "
+                f"{site} (line {line}), but that comment no longer says "
                 f"{marker!r}: {comment[:110]!r}"
             )
     assert not unexplained, (
