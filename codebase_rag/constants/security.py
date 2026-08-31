@@ -375,6 +375,13 @@ SHELL_GIT_CONFIG_EXEC_KEYS = frozenset(
         "sequence.editor",
         "diff.external",
         "gpg.program",
+        # Program-valued keys git hands to a shell. core.gitProxy and
+        # protocol.<name>.command are documented executors; ssh.variant and
+        # init.templateDir steer which program runs or where hooks come from.
+        "core.gitproxy",
+        "uploadpack.packobjectshook",
+        "ssh.variant",
+        "init.templatedir",
     }
 )
 # (prefix, suffix) pairs matching sub-scoped keys like `credential.<url>.helper`,
@@ -387,6 +394,16 @@ SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS = (
     ("difftool.", ".cmd"),
     ("mergetool.", ".cmd"),
     ("alias.", ""),
+    # Verified executing in a scratch repo: `diff.<driver>.textconv` ran on a
+    # `git diff` with a matching .gitattributes, and `trailer.<token>.command`
+    # ran on `interpret-trailers`. The rest are documented program-valued keys
+    # of the same family, added on semantics rather than one probe each.
+    ("diff.", ".textconv"),
+    ("diff.", ".command"),
+    ("merge.", ".driver"),
+    ("trailer.", ".command"),
+    ("pager.", ""),
+    ("protocol.", ".command"),
 )
 
 # Dangerous commands, absolutely blocked

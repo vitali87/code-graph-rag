@@ -1718,6 +1718,56 @@ def test_git_ordinary_subcommands_still_run(segment: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "key",
+    (
+        # Program-valued config keys git hands to a shell. textconv and
+        # trailer.command were verified executing in a scratch repo; the rest
+        # are documented executors of the same family. Both the inline `-c`
+        # path and the `config` write path must refuse them.
+        "diff.probe.textconv",
+        "trailer.sign.command",
+        "merge.x.driver",
+        "protocol.ext.command",
+        "core.gitProxy",
+        "uploadpack.packObjectsHook",
+        "ssh.variant",
+        "init.templateDir",
+        "pager.log",
+        "core.pager",
+        "core.sshCommand",
+        "alias.z",
+    ),
+)
+def test_git_program_valued_config_keys_are_refused(key: str) -> None:
+    assert _validate_segment(f"git -c {key}=id log", "", True) is not None, (
+        f"git -c set a program-valued key: {key}"
+    )
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        # Ordinary settings must still be settable, or the guard has banned
+        # `git -c` rather than the executable keys.
+        "color.ui",
+        "user.name",
+        "user.email",
+        "core.autocrlf",
+        "diff.algorithm",
+        "merge.conflictstyle",
+        "push.default",
+        # Near-misses on the new prefixes: same namespace, no program.
+        "protocol.version",
+        "pack.threads",
+    ),
+)
+def test_git_ordinary_config_keys_still_settable(key: str) -> None:
+    assert _validate_segment(f"git -c {key}=x log", "", True) is None, (
+        f"ordinary config key was blocked: {key}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
