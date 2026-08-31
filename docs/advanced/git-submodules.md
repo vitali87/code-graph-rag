@@ -16,7 +16,7 @@ happens so you can decide.
 Indexing a repository whose `sub/` directory is a submodule produces module
 nodes for the submodule's files, qualified under the **parent** project:
 
-```
+```text
 MODULE nodes: testproj.parentmod
               testproj.sub.childmod
 ```
@@ -34,7 +34,7 @@ repository was measured over vendored code as well as your own.
 Only the **repository root's** `.gitignore` and `.cgrignore` are read. A
 `.gitignore` inside the submodule has no effect:
 
-```
+```text
 sub/.gitignore contains "artifacts/"
 walk sees: parentmod.py, sub/artifacts/gen.py, sub/childmod.py
 ```
@@ -53,7 +53,7 @@ from a `.gitignore`. It is the submodule-specific rules that are lost.
 Put the rule in the **parent** repository's `.cgrignore`. Root-level rules do
 reach into submodule directories:
 
-```
+```gitignore
 # .cgrignore in the parent repository root
 sub/
 ```
@@ -61,7 +61,7 @@ sub/
 To keep the submodule but drop its generated output, name the path from the
 parent root:
 
-```
+```gitignore
 sub/artifacts/
 ```
 
