@@ -2034,6 +2034,9 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed -i bak 'w../victim.txt' in.txt",
         "sed -i bak 'r../secret' f",
         "sed -i bak 'w~/x' f",
+        "sed -i bak 'w//etc/x' f",
+        "sed -i bak 'w.//../esc' f",
+        "sed -i bak 'w./sub/../../esc' f",
         "sed -i bak 'W../s' f",
         "sed -i bak 'w./../esc' f",
         "sed -l bak 'w../x' f",
@@ -2157,6 +2160,13 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed 's/warning/error/' f",
         "sed '/read/p' f",
         "sed 'y/wr/WR/' f",
+        # Not escapes, verified by running sed: it does not expand $HOME
+        # (no shell is involved -- the target became a literal path that
+        # did not exist), and `w..` fails because .. is a directory.
+        # Pinned so a future widening of the escaping anchor does not add
+        # them on suspicion.
+        "sed -i bak 'w$HOME/x' f",
+        "sed -i bak 'w..' f",
     ),
 )
 def test_sed_ordinary_scripts_still_run(segment: str) -> None:
