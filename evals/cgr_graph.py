@@ -96,10 +96,26 @@ _AFFECTED_CALLER_RELS = frozenset(
 _INBOUND_DEPENDENT_RELS = frozenset(
     {
         cs.RelationshipType.CALLS.value,
+        cs.RelationshipType.REFERENCES.value,
         cs.RelationshipType.INSTANTIATES.value,
         cs.RelationshipType.IMPORTS.value,
         cs.RelationshipType.INHERITS.value,
+        cs.RelationshipType.IMPLEMENTS.value,
         cs.RelationshipType.OVERRIDES.value,
+    }
+)
+# The dependency relations CYPHER_AFFECTED_CALLER_PATHS walks: a file holding
+# one of these into a re-indexed file is re-parsed rather than restored
+# verbatim (issue #1229 phase 4). REFERENCES is in, OVERRIDES is out, exactly
+# as in the production query; IMPLEMENTS joined both lists with issue #1565.
+_AFFECTED_CALLER_RELS = frozenset(
+    {
+        cs.RelationshipType.CALLS.value,
+        cs.RelationshipType.REFERENCES.value,
+        cs.RelationshipType.INSTANTIATES.value,
+        cs.RelationshipType.IMPORTS.value,
+        cs.RelationshipType.INHERITS.value,
+        cs.RelationshipType.IMPLEMENTS.value,
     }
 )
 _INHERITS_REL = cs.RelationshipType.INHERITS.value
@@ -407,6 +423,39 @@ class _StatefulIngestor:
                 return self._delta_rows(query, params or {})
             case cs.CYPHER_ALL_FOLDER_PATHS:
                 return self._path_rows(_FOLDER_LABEL)
+            case cs.CYPHER_AFFECTED_CALLER_PATHS:
+                # Without this case the updater saw no dependents and every
+                # cross-file edge into a re-indexed file relied on the verbatim
+                # restore, which production never does for a file that holds
+                # a dependency edge: it re-parses that file (issue #1560).
+                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+                reindexed: set[str] = (
+                    set(raw_paths) if isinstance(raw_paths, list) else set()
+                )
+                prefix = params.get(cs.KEY_PROJECT_PREFIX) if params else None
+                if not isinstance(prefix, str):
+                    return []
+                affected: set[str] = set()
+                for edge in self.edges:
+                    from_label, from_val, rel_type, to_label, to_val = edge
+                    if rel_type not in _AFFECTED_CALLER_RELS:
+                        continue
+                    target = self.nodes.get((to_label, to_val))
+                    caller = self.nodes.get((from_label, from_val))
+                    if target is None or caller is None:
+                        continue
+                    caller_path = caller.get(cs.KEY_PATH)
+                    if not isinstance(caller_path, str) or caller_path in reindexed:
+                        continue
+                    if target.get(cs.KEY_PATH) not in reindexed:
+                        continue
+                    if not (
+                        str(_text(from_val)).startswith(prefix)
+                        and str(_text(to_val)).startswith(prefix)
+                    ):
+                        continue
+                    affected.add(caller_path)
+                return [{cs.KEY_CALLER_PATH: path} for path in sorted(affected)]
             case cs.CYPHER_INBOUND_EDGES:
                 raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
                 changed: set[str] = (

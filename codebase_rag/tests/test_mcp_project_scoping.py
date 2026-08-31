@@ -88,6 +88,52 @@ class TestTheFilter:
 
         assert [r["qualified_name"] for r in kept] == [f"{base}.real.Thing"]
 
+    def test_a_project_named_after_another_projects_name_is_still_excluded(
+        self, tmp_path: Path
+    ) -> None:
+        """The pair above cannot fail if the separator is dropped.
+
+        `alpha` and `alpha_extra` derive to `alpha__<digest>` and
+        `alpha_extra__<digest>`, which diverge before the digest -- so a bare
+        `startswith` excludes the sibling anyway and the fixture proves
+        nothing about the separator. Deleting it leaves the whole suite
+        green.
+
+        A directory named after an EXISTING project's derived name does
+        produce a strict prefix, because the digest is appended to a base
+        that may itself already end in one:
+
+            alpha                    -> alpha__11912daa
+            alpha__11912daa_extra    -> alpha__11912daa_extra__f71503af
+
+        Both match the generator's own `<base>__<8 hex digits>` shape, and
+        the second starts with the first. Without the separator, that row
+        would be served to a caller scoped to the first project.
+        """
+        from codebase_rag.tools.codebase_query import scope_rows_to_project
+        from codebase_rag.utils.path_utils import derive_project_name
+
+        base_dir = tmp_path / "alpha"
+        base_dir.mkdir()
+        base = derive_project_name(base_dir)
+
+        nested_dir = tmp_path / f"{base}_extra"
+        nested_dir.mkdir()
+        nested = derive_project_name(nested_dir)
+
+        # The premise: without this the test could pass for the same
+        # non-reason the fixture above does.
+        assert nested.startswith(base), (base, nested)
+
+        rows = [
+            {"qualified_name": f"{base}.real.Thing"},
+            {"qualified_name": f"{nested}.other.Thing"},
+        ]
+
+        kept = scope_rows_to_project(rows, base)
+
+        assert [r["qualified_name"] for r in kept] == [f"{base}.real.Thing"]
+
     def test_a_row_keyed_on_something_other_than_qualified_name_is_scoped(
         self,
     ) -> None:
@@ -1011,8 +1057,10 @@ class TestPerRequestScope:
 
         Both calls hit the same handler on the same server object; only the
         argument differs. If the scope were per-process this could not pass.
+        Runs through the REAL query tool, because the scope is now bound
+        into a per-request tool rather than filtered in the handler.
         """
-        handler = _handler_returning(_ROWS)
+        handler = _registry_over_graph(_ROWS, cypher=_QN_CYPHER)
 
         alpha = await handler.query_code_graph("everything", project=ALPHA)
         beta = await handler.query_code_graph("everything", project=BETA)
@@ -1064,9 +1112,9 @@ class TestTheHandlerRefusesAnUnjudgeableScopedQuery:
     async def test_a_scoped_query_returning_no_qualified_name_is_refused(
         self,
     ) -> None:
-        handler = _handler_returning(
+        handler = _registry_over_graph(
             [{"name": "handler", "path": "a.py"}],
-            query_used="MATCH (n:Function) RETURN n.name AS name, n.path AS path",
+            cypher="MATCH (n:Function) RETURN n.name AS name, n.path AS path",
         )
 
         result = await handler.query_code_graph("names only", project=ALPHA)
@@ -1122,14 +1170,12 @@ class TestTheCliScopeIsChosenNotAssumed:
 class TestTheHandlerBindsTheAggregateToItsOwnProject:
     """The MCP call site must pass the project, not just possess one.
 
-    `requires_project_evidence` takes the project as a DEFAULTED parameter,
-    so a call site that forgets it still type-checks, still runs, and still
-    returns a well-formed answer -- the guard just stops binding. Every
-    other test here observes that function's return value, which is
-    identical whether or not the handler passed anything.
-
-    Verified by mutation: dropping `project` from the handler's call passed
-    all 56 other tests. This is the one that fails.
+    `create_query_tool` takes `project_name` as a DEFAULTED parameter, so a
+    handler that builds a per-request tool but forgets to bind the project
+    still type-checks, still runs, and still returns a well-formed answer --
+    the tool just never scopes anything. An aggregate is where that shows:
+    the row filter cannot judge `{"total": 99}`, so only a bound tool's
+    evidence guard stands between the caller and another project's count.
     """
 
     @pytest.mark.asyncio
@@ -1140,7 +1186,7 @@ class TestTheHandlerBindsTheAggregateToItsOwnProject:
             f'MATCH (n) WHERE n.qualified_name STARTS WITH "{BETA}." '
             "RETURN count(n) AS total"
         )
-        handler = _handler_returning([{"total": 99}], query_used=cypher)
+        handler = _registry_over_graph([{"total": 99}], cypher=cypher)
 
         result = await handler.query_code_graph("how many", project=ALPHA)
 
@@ -1156,7 +1202,7 @@ class TestTheHandlerBindsTheAggregateToItsOwnProject:
             f'MATCH (n) WHERE n.qualified_name STARTS WITH "{ALPHA}." '
             "RETURN count(n) AS total"
         )
-        handler = _handler_returning([{"total": 99}], query_used=cypher)
+        handler = _registry_over_graph([{"total": 99}], cypher=cypher)
 
         result = await handler.query_code_graph("how many", project=ALPHA)
 
@@ -1325,6 +1371,11 @@ def _handler_returning(
     )
     handler.ingestor = MagicMock()
     handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
+    # What a scoped request builds its per-request tool from. Left as bare
+    # mocks: a test that lets a scoped request reach a REAL tool should use
+    # `_registry_over_graph`, which stubs the graph, not the tool.
+    handler.cypher_gen = MagicMock()
+    handler._stderr_console = MagicMock()
     return handler
 
 
@@ -1334,6 +1385,186 @@ class _NullLock:
 
     async def __aexit__(self, *_: object) -> None:
         return None
+
+
+def _registry_over_graph(rows: list[dict], cypher: str):
+    """An MCPToolsRegistry whose scoped requests exercise the REAL query tool.
+
+    `_handler_returning` stubs `_query_tool`, which is right for tests about
+    the handler's own logic but blind to everything the tool does: the
+    evidence guard, the row filter, the row cap, the token truncation and the
+    summary. Issue #1508 is precisely about the ordering of those, so these
+    tests stub only the graph (`fetch_all`) and the translation (`generate`)
+    and let the real tool run.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+    from codebase_rag.tools.codebase_query import create_query_tool
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=list(rows))
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
+    handler.cypher_gen = MagicMock()
+    handler.cypher_gen.generate = AsyncMock(return_value=cypher)
+    handler._stderr_console = MagicMock()
+    handler._query_tool = create_query_tool(
+        ingestor=handler.ingestor,
+        cypher_gen=handler.cypher_gen,
+        console=handler._stderr_console,
+    )
+    return handler
+
+
+# Projects a qualified name, so the evidence guard accepts it for any scope
+# and the row filter does the narrowing (the shape line 901 relies on).
+_QN_CYPHER = "MATCH (n) RETURN n.qualified_name AS qualified_name"
+
+
+class TestScopedBudgetIsSpentOnInProjectRows:
+    """The row cap and token budget must apply AFTER the scope (issue #1508).
+
+    The pre-built `_query_tool` capped and truncated the unfiltered result,
+    and the handler filtered afterwards -- so with foreign rows sorting
+    first, a scoped caller could receive none of its own rows while its rows
+    existed beyond the cap, and the `summary` described the unfiltered set.
+    """
+
+    @pytest.mark.asyncio
+    async def test_in_project_rows_survive_foreign_rows_sorting_first(
+        self,
+    ) -> None:
+        """With a cap of 2 and both own rows beyond it, both must arrive."""
+        from unittest.mock import patch
+
+        foreign = [{"qualified_name": f"{BETA}.mod.f{i}"} for i in range(4)]
+        own = [{"qualified_name": f"{ALPHA}.mod.f{i}"} for i in range(2)]
+        handler = _registry_over_graph(foreign + own, cypher=_QN_CYPHER)
+
+        with patch("codebase_rag.tools.codebase_query.settings") as s:
+            s.QUERY_RESULT_ROW_CAP = 2
+            s.QUERY_RESULT_MAX_TOKENS = 16000
+            s.QUERY_TIMEOUT_S = 60.0
+            result = await handler.query_code_graph("functions", project=ALPHA)
+
+        assert not result.get("error"), result
+        assert _prefixes(result) == {ALPHA}
+        assert len(result["results"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_the_summary_counts_the_rows_actually_returned(self) -> None:
+        """The summary must describe the delivered rows, not the raw set.
+
+        Two own rows among six matches is a complete answer for the scoped
+        caller, so the summary is the success message for 2 -- not a
+        truncation report about rows the caller never receives.
+        """
+        from unittest.mock import patch
+
+        foreign = [{"qualified_name": f"{BETA}.mod.f{i}"} for i in range(4)]
+        own = [{"qualified_name": f"{ALPHA}.mod.f{i}"} for i in range(2)]
+        handler = _registry_over_graph(foreign + own, cypher=_QN_CYPHER)
+
+        with patch("codebase_rag.tools.codebase_query.settings") as s:
+            s.QUERY_RESULT_ROW_CAP = 2
+            s.QUERY_RESULT_MAX_TOKENS = 16000
+            s.QUERY_TIMEOUT_S = 60.0
+            result = await handler.query_code_graph("functions", project=ALPHA)
+
+        assert result["summary"] == cs.QUERY_SUMMARY_SUCCESS.format(count=2)
+
+    @pytest.mark.asyncio
+    async def test_the_project_reaches_the_query_tool(self) -> None:
+        """A scoped request must be served by a tool BOUND to its project.
+
+        Asserting on the constructed tool's `project_name` rather than on
+        filtered output: post-hoc filtering in the handler would satisfy any
+        output assertion while still spending the cap on foreign rows.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from codebase_rag.schemas import QueryGraphData
+
+        handler = _handler_returning(_ROWS)
+        scoped_tool = MagicMock()
+        scoped_tool.function = AsyncMock(
+            return_value=QueryGraphData(
+                query_used=_QN_CYPHER,
+                results=[_ROWS[0]],
+                summary="ok",
+            )
+        )
+        with patch(
+            "codebase_rag.mcp.tools.create_query_tool", return_value=scoped_tool
+        ) as factory:
+            result = await handler.query_code_graph("everything", project=ALPHA)
+
+        assert factory.call_args.kwargs["project_name"] == ALPHA
+        scoped_tool.function.assert_awaited_once()
+        assert result["results"] == [_ROWS[0]]
+
+    @pytest.mark.asyncio
+    async def test_an_unscoped_request_uses_the_prebuilt_tool(self) -> None:
+        """The control: no scope, no per-request construction.
+
+        Building a tool per unscoped request would be silent waste; using
+        the pre-built one for a SCOPED request is the bug itself. This pins
+        the boundary between the two.
+        """
+        from unittest.mock import patch
+
+        handler = _handler_returning(_ROWS)
+        with patch("codebase_rag.mcp.tools.create_query_tool") as factory:
+            result = await handler.query_code_graph("everything")
+
+        factory.assert_not_called()
+        handler._query_tool.function.assert_awaited_once()
+        assert len(result["results"]) == len(_ROWS)
+
+    @pytest.mark.asyncio
+    async def test_a_successful_response_carries_no_error_key_at_all(self) -> None:
+        """Absent, not present-and-null. A client tests `"error" in result`.
+
+        `QueryGraphData.error` defaults to None and `model_dump()` emits
+        every field, so a successful scoped response would ship
+        `{"error": None}` and read as a failure to any client checking for
+        the key. Found by mutation: deleting the handler's pop left all 190
+        tests in this file and its neighbour green.
+        """
+        handler = _registry_over_graph(_ROWS, cypher=_QN_CYPHER)
+
+        result = await handler.query_code_graph("everything", project=ALPHA)
+
+        assert cs.MCP_KEY_ERROR not in result, result
+
+    @pytest.mark.asyncio
+    async def test_an_unscoped_success_carries_no_error_key_either(self) -> None:
+        """The control: the unscoped path shares the same serialisation."""
+        handler = _registry_over_graph(_ROWS, cypher=_QN_CYPHER)
+
+        result = await handler.query_code_graph("everything")
+
+        assert cs.MCP_KEY_ERROR not in result, result
+
+    @pytest.mark.asyncio
+    async def test_a_scoped_refusal_still_reports_an_error(self) -> None:
+        """Delegating to the tool must not demote the refusal to a summary.
+
+        MCP callers distinguish "refused" from "matched nothing" by the
+        `error` key; the tool historically reported its refusal only in
+        `summary`. The contract survives the move.
+        """
+        handler = _registry_over_graph(
+            [{"name": "handler"}],
+            cypher="MATCH (n:Function) RETURN n.name AS name",
+        )
+
+        result = await handler.query_code_graph("names only", project=ALPHA)
+
+        assert result.get("error"), result
+        assert result["results"] == []
 
 
 class TestEnforcementSurvivesAnUnfilteredQuery:
@@ -2011,12 +2242,14 @@ class TestACommentedPredicateDoesNotRestrictAnything:
 class TestATranslationFailureIsNotReportedAsUnscopeable:
     """A query that was never generated cannot be judged unscopeable.
 
-    `QUERY_NOT_AVAILABLE` has no RETURN clause, so it fails the evidence
-    check like any other unjudgeable query -- and the handler replaced the
-    real translation error with "this query cannot be scoped". The caller
-    then sees a scoping complaint about a query that does not exist, and the
-    actual failure is discarded. Only reachable on a SCOPED request, which is
-    why the unscoped path never showed it (reported on #1494).
+    The #1494 shape of this bug lived in the handler, which read the tool's
+    OUTPUT: `QUERY_NOT_AVAILABLE` has no RETURN clause, so it failed the
+    evidence check and the real translation error was replaced with "this
+    query cannot be scoped". The guard now runs inside the per-request tool,
+    where generation either returns a validated query or RAISES -- so the
+    guard only ever judges a query that exists, and an empty or unavailable
+    query cannot reach it at all. What remains to pin is that the raised
+    error survives to the scoped caller unrelabelled.
     """
 
     @pytest.mark.asyncio
@@ -2025,28 +2258,26 @@ class TestATranslationFailureIsNotReportedAsUnscopeable:
 
         An absence assertion is satisfied by every other outcome, including
         a regression that replaces the translation failure with some third
-        error. So the fixture carries a representative message and the test
+        error. So the failure carries a representative message and the test
         requires it to arrive intact.
         """
+        from unittest.mock import AsyncMock
+
+        from codebase_rag import exceptions as ex
+
         translation_error = "Cypher generation failed: unparseable request"
-        handler = _handler_returning(
-            [], query_used=cs.QUERY_NOT_AVAILABLE, summary=translation_error
+        handler = _registry_over_graph([], cypher=_QN_CYPHER)
+        handler.cypher_gen.generate = AsyncMock(
+            side_effect=ex.LLMGenerationError(translation_error)
         )
 
         result = await handler.query_code_graph("something unparseable", project=ALPHA)
 
-        assert result.get("summary") == translation_error
+        assert result.get("summary") == cs.QUERY_SUMMARY_TRANSLATION_FAILED.format(
+            error=translation_error
+        )
         assert result.get("query_used") == cs.QUERY_NOT_AVAILABLE
-
-    @pytest.mark.asyncio
-    async def test_an_empty_query_is_also_not_a_scoping_complaint(self) -> None:
-        translation_error = "Cypher generation returned nothing"
-        handler = _handler_returning([], query_used="", summary=translation_error)
-
-        result = await handler.query_code_graph("something unparseable", project=ALPHA)
-
-        assert result.get("summary") == translation_error
-        assert result.get("query_used") == ""
+        assert not result.get("error")
 
 
 class TestPropertyAggregatesAreAttributed:
