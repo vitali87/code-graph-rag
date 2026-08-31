@@ -1763,6 +1763,24 @@ def test_git_ordinary_subcommands_still_run(segment: str) -> None:
         "core.pager",
         "core.sshCommand",
         "alias.z",
+        # From git's own config documentation, none of which any enumerated
+        # list here had. A list of NAMES cannot be complete, so the rule is
+        # the suffix git uses when a key's value is a program to run.
+        "browser.x.cmd",
+        "guitool.x.cmd",
+        "man.x.cmd",
+        "gpg.ssh.program",
+        "gpg.ssh.defaultKeyCommand",
+        "http.proxy",
+        "remote.o.proxy",
+        "diff.tool",
+        "merge.tool",
+        "core.hooksPath",
+        # camelCase within a section: lowercased these end in cmd/command
+        # with no separating dot, which an only-dotted suffix rule missed.
+        "sendemail.sendmailCmd",
+        "sendemail.toCmd",
+        "sendemail.ccCmd",
     ),
 )
 def test_git_program_valued_config_keys_are_refused(key: str) -> None:
@@ -1786,6 +1804,16 @@ def test_git_program_valued_config_keys_are_refused(key: str) -> None:
         # Near-misses on the new prefixes: same namespace, no program.
         "protocol.version",
         "pack.threads",
+        "core.bare",
+        "branch.main.remote",
+        "remote.origin.url",
+        "status.showUntrackedFiles",
+        "core.filemode",
+        "fetch.prune",
+        # A boolean, not a program, despite the name.
+        "commit.gpgsign",
+        "log.date",
+        "init.defaultBranch",
     ),
 )
 def test_git_ordinary_config_keys_still_settable(key: str) -> None:

@@ -424,16 +424,49 @@ SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS = (
     ("difftool.", ".cmd"),
     ("mergetool.", ".cmd"),
     ("alias.", ""),
-    # Verified executing in a scratch repo: `diff.<driver>.textconv` ran on a
-    # `git diff` with a matching .gitattributes, and `trailer.<token>.command`
-    # ran on `interpret-trailers`. The rest are documented program-valued keys
-    # of the same family, added on semantics rather than one probe each.
     ("diff.", ".textconv"),
     ("diff.", ".command"),
     ("merge.", ".driver"),
     ("trailer.", ".command"),
     ("pager.", ""),
     ("protocol.", ".command"),
+)
+
+# Enumerating key NAMES cannot be complete: git's own config documentation
+# lists browser.<tool>.cmd, guitool.<name>.cmd, man.<tool>.cmd,
+# gpg.<format>.program, gpg.ssh.defaultKeyCommand and the .path family, none
+# of which any list here had. So the rule is the SUFFIX, which is how git
+# names a key whose value is a program to run -- a naming convention the
+# author of a new key follows, rather than a set someone must remember to
+# extend. Kept alongside the explicit names above, which cover keys whose
+# suffix does not follow the convention (core.pager, core.editor).
+SHELL_GIT_CONFIG_EXEC_KEY_SUFFIXES = (
+    ".cmd",
+    ".command",
+    ".helper",
+    ".program",
+    ".driver",
+    ".textconv",
+    ".proxy",
+    ".hook",
+    ".editor",
+    ".pager",
+    ".tool",
+    ".variant",
+    ".clean",
+    ".smudge",
+    ".process",
+    # Bare (no dot) forms: git also names such keys in camelCase within a
+    # section, e.g. sendemail.sendmailCmd, sendemail.toCmd, core.sshCommand.
+    # Lowercased, those end in `cmd`/`command` with no separating dot.
+    "command",
+    "cmd",
+    "hook",
+    "helper",
+    "program",
+    "editor",
+    "pager",
+    "proxy",
 )
 
 # Dangerous commands, absolutely blocked

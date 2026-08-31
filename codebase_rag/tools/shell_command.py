@@ -189,12 +189,17 @@ def _is_git_config_exec_key(key: str) -> bool:
     key = key.lower()
     if key in cs.SHELL_GIT_CONFIG_EXEC_KEYS:
         return True
-    return any(
+    if any(
         key.startswith(prefix)
         and key.endswith(suffix)
         and len(key) > len(prefix) + len(suffix)
         for prefix, suffix in cs.SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS
-    )
+    ):
+        return True
+
+    # A suffix rule rather than another name: git names program-valued keys
+    # by convention, and a list of names cannot cover a key nobody enumerated.
+    return "." in key and key.endswith(cs.SHELL_GIT_CONFIG_EXEC_KEY_SUFFIXES)
 
 
 def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
