@@ -2392,8 +2392,16 @@ class GraphUpdater:
         # the cache remembers and the walk no longer finds; it joins the
         # dependents query now, while the subtrees still exist to match
         # against (issue #1567).
+        # `old_hashes` has already had the Delombok-stale keys popped (so a
+        # changed overlay forces those files through a reparse), which would
+        # otherwise hide a file that is BOTH stale and deleted: it would be
+        # absent from the cache set here and never join the dependents query.
+        # Union them back in; the walk-eligible subtraction below drops the
+        # ones that still exist (issue #1567).
         deleted_before_parse = sorted(
-            set(old_hashes) - eligible_by_key.keys() - unreadable_keys
+            (set(old_hashes) | self._delombok_stale_keys)
+            - eligible_by_key.keys()
+            - unreadable_keys
         )
         affected = 0
         for caller_key in self._affected_caller_keys(

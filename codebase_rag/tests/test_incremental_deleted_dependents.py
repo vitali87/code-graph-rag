@@ -119,3 +119,47 @@ def test_deleting_a_file_reparses_its_dependents(
     assert outgoing(clean), "fixture must leave the dependent with an edge to compare"
     assert outgoing(after) == outgoing(clean)
     assert after == clean
+
+
+def test_a_deleted_file_that_was_delombok_stale_still_joins_the_dependents_query(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `_process_files` pops every Delombok-stale key out of `old_hashes` before
+    # `deleted_before_parse` is derived from it. A file that is BOTH stale and
+    # deleted would therefore vanish from the cache set and never reach
+    # `_affected_caller_keys`, leaving its dependents with edges into a subtree
+    # that no longer exists -- the defect this PR exists to prevent, reachable
+    # only when a prior overlay covered the deleted file.
+    #
+    # The keys are injected rather than produced by a real delombok run, which
+    # needs java, a Lombok jar and a Maven layout to line up; what is under
+    # test is the derivation's treatment of a stale key, not overlay building.
+    root = temp_repo / "proj"
+    _materialise(root, JAVA)
+    store = _StatefulIngestor()
+    _index(store, root, cs.SupportedLanguage.JAVA, force=True)
+
+    real_process = GraphUpdater._process_files
+    seen: list[str] = []
+
+    def spy(self: GraphUpdater, force: bool = False) -> None:
+        # Stand in for "src/Base.java was in the previous overlay": the pop at
+        # the top of _process_files then removes it from old_hashes.
+        self._delombok_stale_keys = {"src/Base.java"}
+        real_keys = self._affected_caller_keys
+
+        def record(keys: list[str]) -> list[str]:
+            seen.extend(keys)
+            return real_keys(keys)
+
+        self._affected_caller_keys = record  # type: ignore[method-assign]
+        real_process(self, force)
+
+    monkeypatch.setattr(GraphUpdater, "_process_files", spy)
+    (root / "src/Base.java").unlink()
+    _index(store, root, cs.SupportedLanguage.JAVA, force=False)
+
+    assert "src/Base.java" in seen, (
+        "a deleted file that was in the prior Delombok overlay must still join "
+        "the dependents query; the stale-key pop must not hide it"
+    )
