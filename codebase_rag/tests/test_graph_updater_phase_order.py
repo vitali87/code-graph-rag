@@ -307,6 +307,13 @@ def test_every_pinned_dependency_is_still_explained_at_its_call_site() -> None:
     projection, but a comment is free prose that must stay editable, and a
     guard failing on every copy-edit gets deleted rather than obeyed.
 
+    Moving a pinned call is fine as long as its comment travels with it:
+    relocating `_resolve_hybrid_expansion_calls` together with its two
+    comment lines passes, while moving the call alone fails here naming that
+    call. That is deliberate, not a false alarm -- an ordering constraint
+    stranded from its explanation is the state this test exists to prevent,
+    and the remedy is to bring the comment along, not to relax the check.
+
     That limit is acceptable only because it is not the load-bearing guard.
     `test_resolution_phases_keep_their_documented_order` reads no prose at
     all, so the CODE-corrupting defect -- the reordering itself -- is caught
