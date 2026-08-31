@@ -2664,6 +2664,31 @@ def test_sed_payload_blocked_in_any_pipeline_segment(command: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # The two-reading operand structure that cost sed five attempts also
+        # exists in awk (-p/-D/-o) and xargs (-i/-l/-e): the token after the
+        # flag is its value under one implementation and the PROGRAM under
+        # another. Neither leaks, because the value resolves to something not
+        # on the allowlist -- but the decision is what is pinned here, not
+        # the scanner's intermediate answer, which is wrong for xargs and
+        # right anyway. Asserting the intermediate flagged three "gaps" that
+        # were not reachable.
+        "awk -p prof 'BEGIN{system(\"id\")}'",
+        "awk -D dbg 'BEGIN{system(\"id\")}'",
+        "awk -o out 'BEGIN{system(\"id\")}'",
+        "xargs -i {} python3 -c 1",
+        "xargs -l 5 python3 -c 1",
+        "xargs -e EOF python3 -c 1",
+    ),
+)
+def test_two_reading_operands_never_hide_the_payload(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a two-reading operand hid the payload: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
