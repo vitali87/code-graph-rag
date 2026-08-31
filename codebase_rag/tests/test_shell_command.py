@@ -2703,6 +2703,48 @@ def test_two_reading_operands_never_hide_the_payload(segment: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Division must not be read as a regex literal, or the blanker would
+        # swallow the rest of the program and hide the construct behind it.
+        "awk 'BEGIN{x=1/2; print 1 | \"id\"}'",
+        "awk '{n=$1/$2; system(\"id\")}'",
+        "awk 'BEGIN{a[1]=2; print a[1]/1 | \"id\"}'",
+        "awk 'function f(){return 1} BEGIN{x=f()/2; system(\"id\")}'",
+        "awk 'BEGIN{x=(1+2)/3; print 1 | \"id\"}'",
+        'awk \'BEGIN{print length("ab")/2 | "id"}\'',
+        'awk \'BEGIN{$0="a"; x=NF/1; system("id")}\'',
+    ),
+)
+def test_awk_division_does_not_hide_a_construct(segment: str) -> None:
+    # This classifier answers "is this / a regex or division" and HOLDS where
+    # five sed token-classifiers failed, because it keys on the preceding
+    # token's grammatical class -- which awk's syntax determines -- rather
+    # than guessing what the token itself is.
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a mis-read slash hid the construct: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        "awk '{print $1/$2}' f",
+        "awk '{print 10/2}' f",
+        "awk 'BEGIN{print 1/2/3}'",
+        "awk '{x=$1/$2; y=$3/$4; print x,y}' f",
+        "awk 'BEGIN{print length(\"ab\")/2}'",
+        "awk '{print (a+b)/2}' f",
+        "awk '{print NF/2}' f",
+    ),
+)
+def test_awk_division_still_runs(segment: str) -> None:
+    assert _validate_segment(segment, "", False) is None, (
+        f"division was blocked: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
