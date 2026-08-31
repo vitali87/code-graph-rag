@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -24,6 +25,7 @@ from codebase_rag.tools.shell_command import (
     _parse_command,
     _requires_approval,
     _validate_segment,
+    _xargs_launched_command,
     create_noninteractive_shell_command_tool,
     create_shell_command_tool,
 )
@@ -1470,6 +1472,39 @@ def test_xargs_cannot_launch_non_allowlisted_programs(segment: str) -> None:
     assert _validate(segment) is not None, (
         f"xargs launched a non-allowlisted program: {segment}"
     )
+
+
+@pytest.mark.parametrize(
+    ("segment", "expected"),
+    (
+        # GNU declares -i/-l/-e with getopt's double colon: the value is
+        # optional and accepted only when ATTACHED, so the following token is
+        # the utility. Reading them as separate-value flags makes the scan
+        # step over the program and return its argument instead.
+        ("xargs -i python3 cat", "python3"),
+        ("xargs -l node cat", "node"),
+        ("xargs -e python3 cat", "python3"),
+        ("xargs --replace python3 cat", "python3"),
+        ("xargs --max-lines python3 cat", "python3"),
+        ("xargs --eof python3 cat", "python3"),
+        # An attached value belongs to the flag, so the program is still next.
+        ("xargs -i{} cat {}", "cat"),
+        ("xargs --replace=% cat %", "cat"),
+        # The uppercase spellings take a REQUIRED argument and must keep
+        # consuming the following token. Asserting both directions is what
+        # stops the fix collapsing one case into the other.
+        ("xargs -I {} cat {}", "cat"),
+        ("xargs -L 1 cat", "cat"),
+        ("xargs -E EOF cat", "cat"),
+    ),
+)
+def test_xargs_scanner_names_the_launched_program(segment: str, expected: str) -> None:
+    # Asserts the RESOLVED PROGRAM, not merely that the segment was refused.
+    # `_validate_segment` rejects `xargs -i python3 cat` even when the scan
+    # wrongly returns `cat`, because python3 is not allowlisted either -- so a
+    # "was it blocked?" assertion holds against the broken scanner too and
+    # proves nothing. Only the identified program tells the versions apart.
+    assert _xargs_launched_command(shlex.split(segment)) == expected
 
 
 @pytest.mark.parametrize(
