@@ -686,4 +686,5 @@ def test_a_planted_symlink_at_the_temp_path_cannot_redirect_the_write(
     assert outside.read_bytes() == b"untouched\n"
     assert not (repo / "README.md").is_symlink()
     assert (repo / "README.md").read_bytes() == b"# edited\n"
-    assert not planted.exists() and not planted.is_symlink()
+    assert not planted.exists()
+    assert not planted.is_symlink()

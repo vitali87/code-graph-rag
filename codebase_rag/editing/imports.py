@@ -90,14 +90,30 @@ def _span_bytes(source: bytes, site: ImportSite) -> tuple[int, int]:
     return start, end
 
 
+def _split_on_as(entry: str) -> list[str]:
+    # `a as b as c` -> ["a", "b", "c"] without a regex: scanning a
+    # whitespace-delimited pattern over a long run is super-linear (S8786),
+    # a single whitespace tokenisation is not.
+    tokens = entry.split()
+    parts: list[str] = []
+    current: list[str] = []
+    for index, token in enumerate(tokens):
+        if token == "as" and current and index < len(tokens) - 1:
+            parts.append(" ".join(current))
+            current = []
+        else:
+            current.append(token)
+    parts.append(" ".join(current))
+    return parts
+
+
 def _local_name(entry: str) -> str:
     # `a as b` -> b, `a` -> a (Python/TS/Rust forms alike).
-    parts = re.split(r"\s+as\s+", entry.strip())
-    return parts[-1].strip()
+    return _split_on_as(entry)[-1]
 
 
 def _imported(entry: str) -> str:
-    return re.split(r"\s+as\s+", entry.strip())[0].strip()
+    return _split_on_as(entry)[0]
 
 
 def _rewrite_entry(entry: str, new_name: str | None, keep_local: bool) -> str:
@@ -150,10 +166,31 @@ def _relative_specifier(importer_path: str, target_path: str) -> str:
 
 # --- Python -------------------------------------------------------------------
 
-_PY_FROM = re.compile(
-    r"^(?P<lead>\s*from\s+)(?P<module>[\w.]+)(?P<mid>\s+import\s+)(?P<names>.+?)(?P<tail>\s*)$",
-    re.S,
-)
+# `from module import names` is matched in three anchored steps: each
+# sub-pattern is unambiguous at its own start position, so matching stays
+# linear where one statement-wide regex is super-linear (S8786), and the
+# names run to the end of the statement by construction.
+_PY_FROM_LEAD = re.compile(r"\s*from\s+")
+_PY_FROM_MODULE = re.compile(r"[\w.]+")
+_PY_FROM_MID = re.compile(r"\s+import\s+")
+
+
+def _match_py_from(statement: str) -> tuple[str, str, str, str] | None:
+    lead = _PY_FROM_LEAD.match(statement)
+    if lead is None:
+        return None
+    module = _PY_FROM_MODULE.match(statement, lead.end())
+    if module is None:
+        return None
+    mid = _PY_FROM_MID.match(statement, module.end())
+    if mid is None:
+        return None
+    names = statement[mid.end() :]
+    if not names:
+        return None
+    return lead.group(0), module.group(0), mid.group(0), names
+
+
 _PY_IMPORT = re.compile(
     r"^(?P<lead>\s*import\s+)(?P<module>[\w.]+)(?P<rest>(?:\s+as\s+\w+)?\s*)$", re.S
 )
@@ -174,36 +211,43 @@ def _split_names(names: str) -> tuple[list[str], str, str]:
 
 
 def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
-    if m := _PY_FROM.match(statement):
-        if not _module_matches(m.group("module"), move):
+    if parsed := _match_py_from(statement):
+        lead, module, mid, raw_names = parsed
+        # main's token parser (linear time) with rename-op's module test, so
+        # ANY_MODULE still widens the match to every module (issue #1530).
+        if not _module_matches(module, move):
             return None
-        entries, open_deco, close_deco = _split_names(m.group("names"))
+        names = raw_names.rstrip()
+        tail = raw_names[len(names) :]
+        entries, open_deco, close_deco = _split_names(names)
         moved = [e for e in entries if _imported(e) == move.symbol]
         if not moved:
             return None
         kept = [e for e in entries if _imported(e) != move.symbol]
-        moved_entry = _rewrite_entry(
-            moved[0], move.new_name, keep_local=not move.rebind
-        )
-        new_module = _target_module(m.group("module"), move)
-        if new_module == m.group("module"):
-            # Same module (a rename): keep one statement, entry rewritten in place.
-            rewritten = [
-                moved_entry if _imported(e) == move.symbol else e for e in entries
-            ]
+        # Every entry binding the symbol moves: `helper, helper as h` binds it
+        # twice, and keeping only the first would drop the `h` binding. The
+        # local name is kept unless the move rebinds it, in which case the use
+        # sites are renamed with it and the alias goes (issue #1530).
+        moved_entries = [
+            _rewrite_entry(entry, move.new_name, keep_local=not move.rebind)
+            for entry in moved
+        ]
+        new_module = _target_module(module, move)
+        if new_module == module:
+            # Same module (a rename): keep one statement, entries rewritten in
+            # place, so the surrounding parenthesis decoration is preserved.
+            by_entry = dict(zip(moved, moved_entries, strict=True))
+            rewritten = [by_entry.get(e, e) for e in entries]
             return (
-                f"{m.group('lead')}{m.group('module')}{m.group('mid')}"
-                f"{open_deco}{', '.join(rewritten)}{close_deco}{m.group('tail')}"
+                f"{lead}{module}{mid}"
+                f"{open_deco}{', '.join(rewritten)}{close_deco}{tail}"
             )
-        moved_stmt = f"{m.group('lead')}{new_module}{m.group('mid')}{moved_entry}"
+        moved_stmt = f"{lead}{new_module}{mid}{', '.join(moved_entries)}"
         if not kept:
-            return f"{moved_stmt}{m.group('tail')}"
-        kept_stmt = (
-            f"{m.group('lead')}{m.group('module')}{m.group('mid')}"
-            f"{open_deco}{', '.join(kept)}{close_deco}"
-        )
+            return f"{moved_stmt}{tail}"
+        kept_stmt = f"{lead}{module}{mid}{open_deco}{', '.join(kept)}{close_deco}"
         indent = re.match(r"\s*", statement.splitlines()[0]).group(0)  # type: ignore[union-attr]
-        return f"{kept_stmt}\n{indent}{moved_stmt.lstrip()}{m.group('tail')}"
+        return f"{kept_stmt}\n{indent}{moved_stmt.lstrip()}{tail}"
     if (
         (m := _PY_IMPORT.match(statement))
         and m.group("module") == move.old_module
@@ -217,6 +261,12 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
 
 _JS_SPEC = re.compile(r"""(?P<q>['"])(?P<spec>[^'"]+)(?P=q)""")
 _JS_NAMED = re.compile(r"\{(?P<names>[^}]*)\}")
+# The leading keyword and any type-only modifier ("import ", "export type "),
+# so a default clause after it can be separated from the moved statement.
+# `type` must be absorbed here: left as residue it reads as a default binding,
+# and `import type from './util'` is VALID TypeScript (a default import named
+# `type`), so the patcher's parse gate would pass corrupt output through.
+_JS_KEYWORD = re.compile(r"\s*(?:import|export)\s+(?:type\s+)?")
 
 
 def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | None:
@@ -245,18 +295,36 @@ def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | N
     if not moved:
         return None
     kept = [e for e in entries if _imported(e) != move.symbol]
-    moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=not move.rebind)
+    rewritten_moved = [
+        _rewrite_entry(entry, move.new_name, keep_local=not move.rebind)
+        for entry in moved
+    ]
+    moved_entries = ", ".join(rewritten_moved)
     head = statement[: named.start()]
     between = statement[named.end() : spec_match.start("spec")]
     tail = statement[spec_match.end("spec") :]
     if new_spec == spec_match.group("spec"):
-        rewritten = [moved_entry if _imported(e) == move.symbol else e for e in entries]
+        # Same specifier (a rename): one statement, entries rewritten in place.
+        by_entry = dict(zip(moved, rewritten_moved, strict=True))
+        rewritten = [by_entry.get(e, e) for e in entries]
         return f"{head}{{ {', '.join(rewritten)} }}{between}{new_spec}{tail}"
-    moved_stmt = f"{head}{{ {moved_entry} }}{between}{new_spec}{tail}"
-    if not kept:
-        return moved_stmt
-    kept_stmt = f"{head}{{ {', '.join(kept)} }}{between}{move.old_module}{tail}"
+    # `head` carries any default/namespace clause ("import def, "), which binds
+    # a name from the ORIGINAL module: it must stay there, never be redeclared
+    # in the moved statement nor follow the symbol to the new module.
+    keyword = _JS_KEYWORD.match(head)
+    moved_head = keyword.group(0) if keyword else head
+    moved_stmt = f"{moved_head}{{ {moved_entries} }}{between}{new_spec}{tail}"
     indent = re.match(r"\s*", statement).group(0)  # type: ignore[union-attr]
+    if not kept:
+        default_clause = head[len(moved_head) :].rstrip().rstrip(",").rstrip()
+        if not default_clause:
+            return moved_stmt
+        # The named list emptied but a default binding remains behind.
+        kept_stmt = (
+            f"{head[: len(moved_head)]}{default_clause}{between}{move.old_module}{tail}"
+        )
+        return f"{kept_stmt}\n{indent}{moved_stmt.lstrip()}"
+    kept_stmt = f"{head}{{ {', '.join(kept)} }}{between}{move.old_module}{tail}"
     return f"{kept_stmt}\n{indent}{moved_stmt.lstrip()}"
 
 
@@ -290,16 +358,35 @@ def _go_rewrite(statement: str, move: SymbolMove) -> str | None:
     return statement[: m.start("spec")] + move.new_module + statement[m.end("spec") :]
 
 
-_RS_USE = re.compile(
-    r"^(?P<lead>\s*(?:pub(?:\([^)]*\))?\s+)?use\s+)(?P<path>[\w:]+)(?P<group>::\{(?P<names>[^}]*)\})?(?P<alias>\s+as\s+\w+)?(?P<tail>\s*;\s*)$",
-    re.S,
+# The statement is taken apart in two steps (the `use` head, then the path
+# with its optional group and alias) rather than by one regex whose
+# alternation count trips the complexity bar.
+_RS_USE_HEAD = re.compile(r"^(?P<lead>\s*(?:pub(?:\([^)]*\))?\s+)?use\s+)")
+_RS_USE_BODY = re.compile(
+    r"^(?P<path>[\w:]+)(?P<group>::\{(?P<names>[^}]*)\})?(?P<alias>\s+as\s+\w+)?$"
 )
 
 
-def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
-    m = _RS_USE.match(statement)
-    if m is None:
+def _split_rs_use(statement: str) -> tuple[str, re.Match[str], str] | None:
+    """`(lead, body match, tail)` of a `use` statement, None if it is not one."""
+    head = _RS_USE_HEAD.match(statement)
+    if head is None:
         return None
+    rest = statement[head.end() :]
+    semicolon = rest.rfind(";")
+    if semicolon < 0 or rest[semicolon + 1 :].strip():
+        return None
+    body = _RS_USE_BODY.match(rest[:semicolon].rstrip())
+    if body is None:
+        return None
+    return head.group("lead"), body, rest[semicolon:]
+
+
+def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
+    parts = _split_rs_use(statement)
+    if parts is None:
+        return None
+    lead, m, tail = parts
     path = m.group("path")
     if m.group("group") is None:
         prefix, _sep, leaf = path.rpartition("::")
@@ -309,8 +396,10 @@ def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
         new_name = move.new_name or move.symbol
         if not alias and move.new_name and not move.rebind:
             alias = f" as {move.symbol}"
+        # _target_module keeps the spelled prefix under ANY_MODULE, so a
+        # wildcard rename touches the name without retargeting the path.
         new_prefix = _target_module(prefix, move)
-        return f"{m.group('lead')}{new_prefix}::{new_name}{alias}{m.group('tail')}"
+        return f"{lead}{new_prefix}::{new_name}{alias}{tail}"
     if not _module_matches(path, move):
         return None
     entries = [e.strip() for e in m.group("names").split(",") if e.strip()]
@@ -318,16 +407,26 @@ def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
     if not moved:
         return None
     kept = [e for e in entries if _imported(e) != move.symbol]
-    moved_entry = _rewrite_entry(moved[0], move.new_name, keep_local=not move.rebind)
+    moved_entries = [
+        _rewrite_entry(entry, move.new_name, keep_local=not move.rebind)
+        for entry in moved
+    ]
     new_path = _target_module(path, move)
     if new_path == path:
-        rewritten = [moved_entry if _imported(e) == move.symbol else e for e in entries]
-        return f"{m.group('lead')}{path}::{{{', '.join(rewritten)}}}{m.group('tail')}"
-    moved_stmt = f"{m.group('lead')}{new_path}::{moved_entry}{m.group('tail')}"
+        # Same path (a rename): one statement, entries rewritten in place.
+        by_entry = dict(zip(moved, moved_entries, strict=True))
+        rewritten = [by_entry.get(e, e) for e in entries]
+        return f"{lead}{path}::{{{', '.join(rewritten)}}}{tail}"
+    moved_body = (
+        moved_entries[0]
+        if len(moved_entries) == 1
+        else "{" + ", ".join(moved_entries) + "}"
+    )
+    moved_stmt = f"{lead}{new_path}::{moved_body}{tail}"
     if not kept:
         return moved_stmt
     kept_body = kept[0] if len(kept) == 1 else "{" + ", ".join(kept) + "}"
-    kept_stmt = f"{m.group('lead')}{path}::{kept_body}{m.group('tail')}"
+    kept_stmt = f"{lead}{path}::{kept_body}{tail}"
     indent = re.match(r"\s*", statement).group(0)  # type: ignore[union-attr]
     return f"{kept_stmt.rstrip()}\n{indent}{moved_stmt.lstrip()}"
 
