@@ -1713,6 +1713,9 @@ class TestYoloLauncherConfinement:
             "git commit -c core.pager=x --allow-empty -m probe",
             "git -C . status",
             "git -c color.ui=always status",
+            # ...and the bare forms must not be mistaken for an exec key.
+            "git --exec-path status",
+            "git --git-dir .git log",
             "xargs -i cat",
             "xargs -l cat",
             "xargs --replace=% cat %",
@@ -1744,6 +1747,15 @@ class TestYoloLauncherConfinement:
             "git -C /tmp -c core.sshCommand=id status",
             "git --git-dir /tmp/.git -c core.sshCommand=id status",
             "git --namespace ns -c core.pager=id log",
+            # git's --exec-path family takes an OPTIONAL attached argument:
+            # bare, it prints the path and exits rather than consuming the
+            # next token. Filing them as value-taking made the scan swallow
+            # the following -c and miss the key behind it -- the GNU xargs
+            # -i/-l/-e misfiling, in the git scanner.
+            "git --exec-path -c core.sshCommand=id status",
+            "git --html-path -c core.pager=id log",
+            "git --man-path -c core.sshCommand=id log",
+            "git --info-path -c alias.z=!id z",
             'xargs -R 2 python3 -c "1"',
             'xargs -S 100 python3 -c "1"',
             'xargs --nosuchflag python3 -c "1"',

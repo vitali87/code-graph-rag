@@ -233,7 +233,10 @@ def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
         if key and _is_git_config_exec_key(key.split("=", 1)[0]):
             return key.split("=", 1)[0]
 
-        if arg in cs.SHELL_GIT_GLOBAL_VALUE_FLAGS:
+        if (
+            arg in cs.SHELL_GIT_GLOBAL_VALUE_FLAGS
+            and arg not in cs.SHELL_GIT_OPTIONAL_ARG_FLAGS
+        ):
             index += 2
         else:
             index += 1

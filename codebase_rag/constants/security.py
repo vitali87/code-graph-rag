@@ -132,8 +132,22 @@ SHELL_GIT_GLOBAL_VALUE_FLAGS = frozenset(
         "--git-dir",
         "--work-tree",
         "--namespace",
-        "--exec-path",
         "--super-prefix",
+    }
+)
+
+# git globals whose argument is OPTIONAL and attached-only: bare `--exec-path`
+# prints the path and exits rather than consuming the next token, so treating
+# it as value-taking makes the scan swallow a following `-c` and miss the key
+# behind it. Verified against git itself: these four print and exit, while
+# -C/--git-dir/--work-tree/--namespace all error with "no ... given".
+# Same class as the GNU xargs -i/-l/-e misfiling.
+SHELL_GIT_OPTIONAL_ARG_FLAGS = frozenset(
+    {
+        "--exec-path",
+        "--html-path",
+        "--man-path",
+        "--info-path",
     }
 )
 
