@@ -2546,6 +2546,31 @@ def test_git_program_naming_flags_match_gits_own_semantics(
     )
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # A --no- flag disables a feature and cannot take a value at all --
+        # git says so itself: "option `no-gpg-sign' takes no value", and
+        # `--no-pager=cat` is rejected as an unknown option. So excluding
+        # them from the program-naming suffix rule is grammar, not a
+        # spelling guess, which is the standard every other exception on
+        # this branch failed before it was replaced.
+        "git send-email --no-sendmail-cmd=id p",
+        "git send-email --no-to-cmd=id p",
+        "git --no-pager log",
+        "git commit --no-gpg-sign -m x",
+        "git log --no-ext-diff",
+        "git --no-replace-objects log",
+        "git fetch --no-recurse-submodules",
+        "rg --no-config pat f",
+    ),
+)
+def test_negated_flags_never_name_a_program(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"a --no- flag was treated as naming a program: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
