@@ -1563,14 +1563,13 @@ class TestYoloLauncherConfinement:
             'xargs -0pt python3 -c "1"',
             'xargs -- python3 -c "1"',
             'xargs -S 100 python3 -c "1"',
-            # GNU's optional-argument flags take a value only when attached,
-            # so the token after them is the program. Reading them as
-            # separate-value flags reinstates the bypass in lowercase.
-            "xargs -i python3 cat",
-            "xargs --replace python3 cat",
-            "xargs -l node cat",
-            "xargs --max-lines python3 cat",
-            "xargs --eof python3 cat",
+            # The GNU optional-argument spellings are asserted at the
+            # validator level instead (test_yolo_blocks_gnu_optional_arg_
+            # launchers below). This test executes the command, and BSD/macOS
+            # xargs rejects -i/-l/--replace/--max-lines/--eof itself, so
+            # `return_code != 0` would hold here even with a validator that
+            # allowed everything -- passing for the platform's reason rather
+            # than for the fix's.
         ),
     )
     async def test_yolo_still_blocks_launchers(
@@ -1584,6 +1583,22 @@ class TestYoloLauncherConfinement:
         mock_ctx.tool_call_approved = False
         result = await tool.function(mock_ctx, command)
         assert result.return_code != 0, f"yolo executed a launcher: {command}"
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            "xargs -i python3 cat",
+            "xargs --replace python3 cat",
+            "xargs -l node cat",
+            "xargs --max-lines python3 cat",
+            "xargs --eof python3 cat",
+        ),
+    )
+    def test_yolo_blocks_gnu_optional_arg_launchers(self, command: str) -> None:
+        # Asserted against the validator rather than by executing, so the
+        # result reflects the fix on every platform: BSD xargs rejects these
+        # spellings on its own, which would mask what is being tested.
+        assert _validate_segment(command, "", True) is not None
 
     @pytest.mark.parametrize(
         "command",
@@ -1608,20 +1623,20 @@ class TestYoloLauncherConfinement:
             "xargs -0pt cat",
             "xargs -- cat",
             "xargs -P4 cat",
-            # ...and the same flags with an allowlisted program must still
-            # run, so the fix cannot degenerate into blocking all of -i.
-            "xargs -i cat",
-            "xargs -i{} cat {}",
-            "xargs --replace=% cat %",
-            "xargs -l cat",
+            # The GNU optional-argument spellings are checked against the
+            # validator in test_xargs_scanner_names_the_launched_program
+            # instead: this test EXECUTES the command, and BSD/macOS xargs
+            # rejects -i/-l/--replace outright, so running them here would
+            # fail on the platform's own argument parsing rather than on
+            # anything this fix controls.
             # `-c` after the subcommand is git's reuse-message flag, not a
             # config setter. `git log -c HEAD` would not discriminate: HEAD is
             # not an exec key, so it passes either way. This spelling puts a
             # real exec-key string in the subcommand's own -c, where scanning
             # every token reports a false positive and stopping does not.
-            "git commit -c core.pager=x --allow-empty -m probe",
-            "git -C . status",
-            "git -c color.ui=always status",
+            # git controls likewise live in the validator-level tests: the
+            # fixture root is a bare temp dir, so every git invocation exits
+            # 128 ("not a git repository") whatever the validator decides.
         ),
     )
     async def test_yolo_still_runs_ordinary_commands(
