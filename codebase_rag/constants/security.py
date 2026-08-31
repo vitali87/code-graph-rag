@@ -345,7 +345,6 @@ SHELL_SED_KNOWN_FLAGS = frozenset(
 # the script on the other implementation -- verified: BSD `sed -l 'w FILE'`
 # wrote the file while the scanner saw no script.
 SHELL_SED_OPTIONAL_ARG_FLAGS = frozenset({"-i", "--in-place", "-l", "--line-length"})
-SHELL_SED_VALUE_FLAGS: frozenset[str] = frozenset()
 
 SHELL_SED_SCRIPT_FILE_FLAGS = frozenset({"-f", "--file"})
 
