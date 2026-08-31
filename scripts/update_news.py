@@ -100,7 +100,9 @@ def existing_themes(news: str) -> set[str]:
     }
 
 
-def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
+def prepend_news(
+    news: str, fragment: str, fallback: str | None = None
+) -> tuple[str, list[str]]:
     """Insert fragment bullets with unseen themes above the newest NEWS entry.
 
     Returns the updated NEWS.md content and the bullets that were inserted.
@@ -110,6 +112,9 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
     the release's curated Highlights section, so all of it is news. The
     latest-release marker is moved below the inserted block so the README can
     render the whole block; when nothing is inserted the marker stays put.
+
+    If no feature-themed bullets are found and fallback is provided, the
+    fallback bullet is used instead (as an aggregated headline for the release).
     """
     themes = existing_themes(news)
     fresh: list[str] = []
@@ -122,6 +127,16 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
             continue
         fresh.append(bullet)
         themes.add(theme)
+
+    # If no feature bullets extracted but fallback provided, use it
+    if not fresh and fallback:
+        fallback_normalized = _normalize_dashes(fallback)
+        if fallback_normalized.startswith("* "):
+            fallback_normalized = f"- {fallback_normalized[2:]}"
+        match = BULLET_PATTERN.match(fallback_normalized)
+        if match and is_feature_theme(match.group("theme")):
+            fresh.append(fallback_normalized)
+
     if not fresh:
         return news, []
 
@@ -144,8 +159,11 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: update_news.py <bullets-file>", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print(
+            "usage: update_news.py <bullets-file> [--fallback <fallback-bullet>]",
+            file=sys.stderr,
+        )
         return 2
 
     fragment_path = Path(sys.argv[1])
@@ -153,9 +171,13 @@ def main() -> int:
         print(f"no bullets file at {fragment_path}, nothing to do")
         return 0
 
+    fallback = None
+    if len(sys.argv) >= 4 and sys.argv[2] == "--fallback":
+        fallback = sys.argv[3]
+
     news_path = PROJECT_ROOT / "NEWS.md"
     news = news_path.read_text(encoding="utf-8")
-    updated, inserted = prepend_news(news, fragment_path.read_text(encoding="utf-8"))
+    updated, inserted = prepend_news(news, fragment_path.read_text(encoding="utf-8"), fallback)
     if not inserted:
         print("no new themes to add, NEWS.md unchanged")
         return 0
