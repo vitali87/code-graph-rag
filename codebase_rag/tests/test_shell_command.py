@@ -2001,6 +2001,18 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         # a spelling rule and a bypass, the same class as the three
         # token-classification attempts before it.
         "sed 'wout1' f",
+        # BSD sed OPENS AND TRUNCATES a w target before it errors on stdin,
+        # so a write lands with no input file present -- verified, 14 bytes
+        # to 0. A bound that skipped this slot when nothing followed it
+        # reasoned from GNU semantics alone.
+        "sed -i bak 'w /tmp/x'",
+        "sed -i bak 'W /tmp/x'",
+        "sed -i bak 's/a/b/w /tmp/x'",
+        "sed -l bak 'w /tmp/x'",
+        "sed --in-place bak 'w /tmp/x'",
+        "sed -n -i bak 'w /tmp/x'",
+        "sed --line-length 5 'w /tmp/x'",
+        "sed -i bak 'eid'",
         "sed 'w-file' f",
         "sed 'w.bak' f",
         "sed '1,2wout3' f",
