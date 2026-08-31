@@ -35,7 +35,13 @@ from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
 from ..parsers.call_processor import _find_call_arguments_node, _split_call_arguments
 from .contract import Expectation, Reingest, Verdict, measure, verify
-from .imports import _JS_NAMED, _PY_FROM, ImportSite, _local_name, _split_names
+from .imports import (
+    _JS_NAMED,
+    ImportSite,
+    _local_name,
+    _match_py_from,
+    _split_names,
+)
 from .move import _cut_span, _definition_at, _statement_text, _text
 from .patcher import Patcher, line_col_to_byte
 from .rename import _name_token
@@ -842,12 +848,18 @@ def _substitute(
 
 def _without_entry(statement: str, name: str) -> str | None:
     """The import statement without `name`; None when nothing is left."""
-    if m := _PY_FROM.match(statement):
-        entries, _open, _close = _split_names(m.group("names"))
+    if parsed := _match_py_from(statement):
+        # main replaced the _PY_FROM regex with a token parser returning
+        # (lead, module, mid, names); the trailing whitespace the old `tail`
+        # group captured now splits off the names, as imports.py does.
+        lead, module, mid, raw_names = parsed
+        names = raw_names.rstrip()
+        tail = raw_names[len(names) :]
+        entries, _open, _close = _split_names(names)
         kept = [e for e in entries if _local_name(e) != name]
         if not kept:
             return None
-        return f"{m.group('lead')}{m.group('module')}{m.group('mid')}{', '.join(kept)}{m.group('tail')}"
+        return f"{lead}{module}{mid}{', '.join(kept)}{tail}"
     named = _JS_NAMED.search(statement)
     if named is not None:
         entries = [e.strip() for e in named.group("names").split(",") if e.strip()]
