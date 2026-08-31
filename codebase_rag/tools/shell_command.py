@@ -753,9 +753,15 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
                 # input filename is one unbroken token. That is a property of
                 # the write rather than of the token's identity.
                 #
-                # A bare relative target (`wout1`) is deliberately not caught
-                # there: it writes only inside the working directory, which
-                # `tee`, `cp` and redirection already permit.
+                # A bare single-token target with no slash (`wout1`) is
+                # still not caught there. The earlier justification -- "it
+                # writes only inside the working directory, which tee and cp
+                # already permit" -- was WRONG in general: the working
+                # directory contains `.git/`, and `w.git/hooks/pre-commit`
+                # installs a hook that git then executes. Verified. Any
+                # target containing a slash is now caught, which covers that
+                # and every dotdir case; what remains is a write to a plain
+                # filename in the CWD, with no path component at all.
                 add(index + 1)
                 ambiguous_slots.append(len(scripts))
                 add(index + 2)

@@ -2034,6 +2034,19 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed -i bak 'w../victim.txt' in.txt",
         "sed -i bak 'r../secret' f",
         "sed -i bak 'w~/x' f",
+        # Multi-component paths whose FIRST component is an ordinary name:
+        # the round-16 anchor required the separator near the front, so
+        # these escaped. Verified overwriting a file two levels up.
+        "sed -i bak 'wdir/../../victim.txt' in.txt",
+        "sed -i bak 'wlink/victim.txt' f",
+        "sed -l 5 'wdir/../../victim.txt' in.txt",
+        "sed -i bak 'Wa/b/c' f",
+        # And the case that disproved "CWD writes are harmless": a git
+        # hook written into .git/ is EXECUTED by git.
+        "sed -i bak 'w.git/hooks/pre-commit' f",
+        "sed -i bak 'w.git/config' f",
+        "sed -i bak 'w.ssh/authorized_keys' f",
+        "sed -i bak 'w$HOME/x' f",
         "sed -i bak 'w//etc/x' f",
         "sed -i bak 'w.//../esc' f",
         "sed -i bak 'w./sub/../../esc' f",
@@ -2160,19 +2173,21 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed 's/warning/error/' f",
         "sed '/read/p' f",
         "sed 'y/wr/WR/' f",
-        # Not escapes, verified by running sed: it does not expand $HOME
-        # (no shell is involved -- the target became a literal path that
-        # did not exist), and `w..` fails because .. is a directory.
-        # Pinned so a future widening of the escaping anchor does not add
-        # them on suspicion.
-        "sed -i bak 'w$HOME/x' f",
+        # `w..` is not an escape: it fails because .. is a directory.
+        # Pinned so a future widening does not add it on suspicion.
+        #
+        # `w$HOME/x` USED to be here on the same reasoning -- sed does not
+        # expand variables, so the target is a literal path that does not
+        # exist. It is now blocked, because the anchor matches a slash
+        # anywhere and that string contains one. A harmless over-block on an
+        # unusable path, and cheaper than another leading-form enumeration:
+        # that approach failed twice.
         "sed -i bak 'w..' f",
-        # CWD-relative writes, including into dotted directories, are not
-        # caught in the ambiguous slot -- and add no capability, because
-        # `tee .git/config`, `tee .env` and `cp x .git/hooks/pre-commit`
-        # are all already permitted. Measured rather than asserted, since
-        # the last "this costs nothing" claim was wrong about .. and ~.
-        "sed -i bak 'w.git/config' f",
+        # Only `w.env` and `wpyproject.toml` remain allowed here: a plain
+        # filename in the CWD with no path component. `w.git/config` moved
+        # to the blocked list once the anchor matched a slash anywhere --
+        # the "CWD writes are harmless" claim was wrong, because the CWD
+        # contains .git/ and a hook written there is executed.
         "sed -i bak 'w.env' f",
         "sed -i bak 'wpyproject.toml' f",
     ),
