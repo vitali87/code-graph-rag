@@ -1703,6 +1703,7 @@ def test_awk_ordinary_programs_still_run(segment: str) -> None:
         "git --git-dir x submodule foreach id",
         "git --work-tree w submodule foreach id",
         "git -C d bisect run id",
+        "git --attr-source HEAD filter-branch --tree-filter id",
         # Flags that name a program, independent of the subcommand. rebase
         # --exec and difftool --extcmd were verified running locally in a
         # scratch repo; the pack/smtp/gpg family names a program run at the
@@ -1730,6 +1731,9 @@ def test_git_subcommands_cannot_run_a_command(segment: str) -> None:
         # or the check has banned the subcommand rather than the capability.
         "git submodule status",
         "git -C dir status",
+        "git --attr-source HEAD status",
+        "git --no-pager log",
+        "git --bare log",
         "git --git-dir x log",
         "git -C . diff",
         "git submodule update --init",
@@ -1989,6 +1993,12 @@ def test_sed_ordinary_scripts_still_run(segment: str) -> None:
         "git --git-dir x config core.sshCommand id",
         "git -c color.ui=x config core.pager id",
         "git --no-pager config core.sshCommand id",
+        # From git's own synopsis, absent from the value-flag set until
+        # enumerated against it: `git --attr-source HEAD -c key=v status`
+        # runs and honours the -c, so treating HEAD as the subcommand stopped
+        # the scan before the key.
+        "git --attr-source HEAD config core.sshCommand id",
+        "git --list-cmds val config core.pager id",
     ),
 )
 def test_git_config_exec_key_found_behind_global_options(segment: str) -> None:
