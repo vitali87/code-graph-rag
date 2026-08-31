@@ -186,12 +186,20 @@ def test_the_handler_leaves_a_directory_traversable(tmp_path: Path) -> None:
     victim.mkdir()
     victim.chmod(stat.S_IREAD | stat.S_IEXEC)
 
-    retried: list[object] = []
-    _clear_readonly(retried.append, victim, OSError())
+    # `finally`, not a trailing statement: when this test FAILS -- which is
+    # exactly what it does against the defective handler -- the directory is
+    # left at `d-w-------` and pytest's later `rm_rf` of the tmp root cannot
+    # remove it, reporting `[Errno 66] Directory not empty` on an unrelated
+    # run days later. A test for cleanup that only cleans up when it passes
+    # strands the very state it exists to prevent.
+    try:
+        retried: list[object] = []
+        _clear_readonly(retried.append, victim, OSError())
 
-    assert retried == [victim], "the handler must retry the failed operation"
-    assert os.access(victim, os.X_OK), (
-        "the directory must stay traversable, or nothing can ever remove it"
-    )
-    assert os.access(victim, os.W_OK), "the directory must be made writable"
-    victim.chmod(stat.S_IRWXU)
+        assert retried == [victim], "the handler must retry the failed operation"
+        assert os.access(victim, os.X_OK), (
+            "the directory must stay traversable, or nothing can ever remove it"
+        )
+        assert os.access(victim, os.W_OK), "the directory must be made writable"
+    finally:
+        victim.chmod(stat.S_IRWXU)
