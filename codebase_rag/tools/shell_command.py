@@ -439,8 +439,9 @@ def _validate_segment(
             cmd=base_cmd, suggestion=suggestion, available=available_commands
         )
 
-    if launched := _xargs_launched_command(cmd_parts):
-        if launched == cs.SHELL_XARGS_UNKNOWN_LAUNCH:
+    launched_index = _xargs_launched_index(cmd_parts)
+    if launched_index is not None:
+        if launched_index < 0:
             return te.COMMAND_DANGEROUS_BLOCKED.format(
                 cmd=base_cmd,
                 reason=(
@@ -448,10 +449,17 @@ def _validate_segment(
                     "the program it would launch cannot be checked"
                 ),
             )
-        if not bypass_allowlist and launched not in settings.SHELL_COMMAND_ALLOWLIST:
-            return te.COMMAND_NOT_ALLOWED.format(
-                cmd=launched, suggestion="", available=available_commands
-            )
+        # Validate the launched command as a segment in its own right, in BOTH
+        # modes. Checking only its name lets a launcher through, since every
+        # launcher is itself allowlisted -- and nesting hides `git -c`, the
+        # unknown-flag sentinel, and a further xargs from every check below,
+        # because those all inspect cmd_parts[0] only (GHSA rounds 4 and 5).
+        if nested := _validate_segment(
+            " ".join(cmd_parts[launched_index:]),
+            available_commands,
+            bypass_allowlist,
+        ):
+            return nested
 
     is_dangerous, reason = _is_dangerous_command(cmd_parts, segment, bypass_allowlist)
     if is_dangerous:

@@ -118,11 +118,6 @@ SHELL_RETURN_CODE_ERROR = -1
 SHELL_PIPE_OPERATORS = ("|", "&&", "||", ";")
 SHELL_SUBSHELL_PATTERNS = ("$(", "`")
 SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
-# `find` actions that run a command, delete files, or write output files
-# (GNU -fprint/-fprint0/-fprintf/-fls create or truncate their file argument),
-# so they need approval even though `find` itself is a read tool. Kept here so
-# the security boundary is auditable in one place rather than inline in the
-# approval check.
 # git flags that set a config key inline for a single command. `--config-env`
 # reads the value from an environment variable but sets the same keys, so it
 # reaches the same executable keys as `-c` (GHSA-wvxg-744g-6pcg).
@@ -224,6 +219,11 @@ SHELL_XARGS_BOOLEAN_FLAGS = frozenset(
 # caller must block rather than fall through to a possibly-wrong answer.
 SHELL_XARGS_UNKNOWN_LAUNCH = "<unknown>"
 
+# `find` actions that run a command, delete files, or write output files
+# (GNU -fprint/-fprint0/-fprintf/-fls create or truncate their file argument),
+# so they need approval even though `find` itself is a read tool. Kept here so
+# the security boundary is auditable in one place rather than inline in the
+# approval check.
 SHELL_FIND_MUTATING_ACTIONS = frozenset(
     {
         "-delete",

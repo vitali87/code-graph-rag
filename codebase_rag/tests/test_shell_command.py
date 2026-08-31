@@ -1525,6 +1525,46 @@ def test_xargs_still_launches_allowlisted_programs(segment: str) -> None:
     assert _validate(segment) is None, f"fix over-blocked a safe xargs form: {segment}"
 
 
+@pytest.mark.parametrize(
+    "inner",
+    (
+        "uv run python -c 1",
+        "pytest",
+        "pre-commit run",
+        "python3 -c 1",
+        "node -e 1",
+        "git -c core.sshCommand=id status",
+        "git config core.pager x",
+        "find . -exec python3 {} ;",
+        "find . -name x",
+        "cat f",
+        "ls",
+        "echo hi",
+        "rm -rf /",
+        "xargs python3 -c 1",
+        "-J cat python3",
+    ),
+)
+@pytest.mark.parametrize("bypass", (False, True))
+def test_nesting_under_xargs_never_weakens_the_decision(
+    inner: str, bypass: bool
+) -> None:
+    # The invariant rounds 4 and 5 both broke, stated once and enforced for
+    # every mode: `xargs <cmd>` must be refused whenever `<cmd>` is, and gated
+    # behind approval whenever `<cmd>` is. Checking the launched program's
+    # NAME cannot provide this, because every launcher is itself allowlisted;
+    # only vetting the launched command as a segment does.
+    nested = f"xargs {inner}"
+    if _validate_segment(inner, "", bypass) is not None:
+        assert _validate_segment(nested, "", bypass) is not None, (
+            f"nesting weakened the block: {nested}"
+        )
+    if _requires_approval(inner):
+        assert _requires_approval(nested), (
+            f"nesting escaped the approval gate: {nested}"
+        )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
@@ -1555,6 +1595,53 @@ def test_every_xargs_flag_resolves_the_program_for_its_arity() -> None:
         assert _xargs_launched_command(["xargs", flag, "python3"]) == ("python3"), (
             f"{flag} declared boolean but consumed the program"
         )
+
+
+# Arities fixed from the GNU findutils and BSD xargs manuals, NOT read back
+# from the sets under test. A loop over a set cannot catch a flag that has
+# LEFT that set -- nothing then probes it -- which is how an earlier version
+# of this test let every OPTIONAL->BOOLEAN misfiling through.
+_XARGS_KNOWN_ARITIES = (
+    ("-I", "value"),
+    ("-L", "value"),
+    ("-E", "value"),
+    ("-n", "value"),
+    ("-P", "value"),
+    ("-s", "value"),
+    ("-d", "value"),
+    ("-a", "value"),
+    ("-J", "value"),
+    ("-R", "value"),
+    ("-S", "value"),
+    ("-i", "optional"),
+    ("-l", "optional"),
+    ("-e", "optional"),
+    ("-0", "boolean"),
+    ("-o", "boolean"),
+    ("-p", "boolean"),
+    ("-r", "boolean"),
+    ("-t", "boolean"),
+    ("-x", "boolean"),
+)
+
+
+@pytest.mark.parametrize(("flag", "arity"), _XARGS_KNOWN_ARITIES)
+def test_xargs_flag_arity_matches_the_manual(flag: str, arity: str) -> None:
+    # Drives each flag at the arity its manual documents, from a fixed table,
+    # so a flag moved between sets fails here whichever direction it moved.
+    if arity == "value":
+        assert _xargs_launched_command(["xargs", flag, "1", "python3"]) == "python3"
+    else:
+        assert _xargs_launched_command(["xargs", flag, "python3"]) == "python3"
+    if arity == "optional":
+        # Only an optional-arg flag absorbs the rest of its cluster; a boolean
+        # would read the trailing letter as another flag.
+        assert _xargs_launched_command(["xargs", f"{flag}X", "python3"]) == "python3"
+    if arity == "boolean":
+        # A boolean must not absorb a following value: with one supplied, the
+        # value itself becomes the program, which is how a misfiled VALUE flag
+        # shows up here.
+        assert _xargs_launched_command(["xargs", flag, "1", "python3"]) == "1"
 
 
 class TestYoloLauncherConfinement:
