@@ -1457,6 +1457,13 @@ def _validate(segment: str) -> str | None:
         "xargs -n1 -P4 node -e 1",
         "xargs --replace=% python3 -c 1",
         "xargs -0 python3 -c 1",
+        # GNU's optional-argument flags (-i/-l/-e and their long spellings)
+        # take a value only when attached, so the next token is the program.
+        "xargs -i python3 -c 1",
+        "xargs --replace python3 -c 1",
+        "xargs -l node -e 1",
+        "xargs --max-lines python3 -c 1",
+        "xargs --eof python3 -c 1",
     ),
 )
 def test_xargs_cannot_launch_non_allowlisted_programs(segment: str) -> None:
@@ -1521,6 +1528,14 @@ class TestYoloLauncherConfinement:
             'xargs -0pt python3 -c "1"',
             'xargs -- python3 -c "1"',
             'xargs -S 100 python3 -c "1"',
+            # GNU's optional-argument flags take a value only when attached,
+            # so the token after them is the program. Reading them as
+            # separate-value flags reinstates the bypass in lowercase.
+            "xargs -i python3 cat",
+            "xargs --replace python3 cat",
+            "xargs -l node cat",
+            "xargs --max-lines python3 cat",
+            "xargs --eof python3 cat",
         ),
     )
     async def test_yolo_still_blocks_launchers(
@@ -1558,6 +1573,12 @@ class TestYoloLauncherConfinement:
             "xargs -0pt cat",
             "xargs -- cat",
             "xargs -P4 cat",
+            # ...and the same flags with an allowlisted program must still
+            # run, so the fix cannot degenerate into blocking all of -i.
+            "xargs -i cat",
+            "xargs -i{} cat {}",
+            "xargs --replace=% cat %",
+            "xargs -l cat",
             # `-c` after the subcommand is git's reuse-message flag, not a
             # config setter. `git log -c HEAD` would not discriminate: HEAD is
             # not an exec key, so it passes either way. This spelling puts a

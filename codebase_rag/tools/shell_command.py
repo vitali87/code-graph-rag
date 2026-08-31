@@ -283,6 +283,9 @@ def _xargs_short_cluster(arg: str) -> int | None:
         short = f"-{letter}"
         if short in cs.SHELL_XARGS_BOOLEAN_FLAGS:
             continue
+        if short in cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS:
+            # Attached-only: the cluster remainder is its value, if any.
+            return 1
         if short in cs.SHELL_XARGS_VALUE_FLAGS:
             # A trailing value flag takes the next token; anything after it in
             # the cluster is its value and is consumed with it.
@@ -315,6 +318,11 @@ def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
             return args[index + 1] if index + 1 < len(args) else None
 
         flag = _flag_name(arg)
+        # An optional-argument flag takes a value only when it is attached, so
+        # the following token is the program, never this flag's value.
+        if flag in cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS:
+            index += 1
+            continue
         if flag in cs.SHELL_XARGS_VALUE_FLAGS:
             # `-I{}` and `--replace=%` carry their value in the same token; the
             # separated spellings (`-I {}`) consume the token that follows.

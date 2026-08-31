@@ -160,7 +160,6 @@ SHELL_LAUNCHER_COMMANDS = frozenset({"xargs", "uv", "pytest", "pre-commit", "fin
 SHELL_XARGS_VALUE_FLAGS = frozenset(
     {
         "-I",
-        "-i",
         "-L",
         "-l",
         "-n",
@@ -174,13 +173,10 @@ SHELL_XARGS_VALUE_FLAGS = frozenset(
         "-J",
         "-R",
         "-S",
-        "--replace",
-        "--max-lines",
         "--max-args",
         "--max-procs",
         "--max-chars",
         "--delimiter",
-        "--eof",
         "--arg-file",
         "--process-slot-var",
     }
@@ -190,6 +186,24 @@ SHELL_XARGS_VALUE_FLAGS = frozenset(
 # value-taking flags to know whether the next token is a value or the program;
 # any flag in NEITHER set is unknown, and the scan fails closed rather than
 # guessing (GHSA-wvxg-744g-6pcg).
+# GNU xargs declares -i/-l/-e with getopt's double colon (optional argument),
+# which accepts a value only when ATTACHED: `xargs -i python3 cat` parses as
+# -i with no value and python3 as the utility. Treating them as separate-value
+# flags makes the scan swallow the program token and name its argument
+# instead, which is the `-J cat python3` bypass again in lowercase. BSD xargs
+# has no -i/-l/-e at all, so attached-only is correct on both implementations.
+# The uppercase -I/-L/-E take a REQUIRED argument and stay in the value set.
+SHELL_XARGS_OPTIONAL_ARG_FLAGS = frozenset(
+    {
+        "-i",
+        "-l",
+        "-e",
+        "--replace",
+        "--max-lines",
+        "--eof",
+    }
+)
+
 SHELL_XARGS_BOOLEAN_FLAGS = frozenset(
     {
         "-0",
