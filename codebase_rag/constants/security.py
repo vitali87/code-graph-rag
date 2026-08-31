@@ -161,7 +161,6 @@ SHELL_XARGS_VALUE_FLAGS = frozenset(
     {
         "-I",
         "-L",
-        "-l",
         "-n",
         "-P",
         "-s",

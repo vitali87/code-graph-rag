@@ -12,6 +12,7 @@ from pydantic_ai import ApprovalRequired, Tool
 
 from codebase_rag.config import settings
 from codebase_rag.constants import SHELL_SYSTEM_DIRECTORIES
+from codebase_rag.constants import security as cs
 from codebase_rag.tools.shell_command import (
     ShellCommander,
     _check_pipeline_patterns,
@@ -1522,6 +1523,16 @@ def test_xargs_scanner_names_the_launched_program(segment: str, expected: str) -
 )
 def test_xargs_still_launches_allowlisted_programs(segment: str) -> None:
     assert _validate(segment) is None, f"fix over-blocked a safe xargs form: {segment}"
+
+
+def test_xargs_flag_partition_is_disjoint() -> None:
+    # The scan reads the three sets as a partition: a flag lands in exactly one
+    # and its arity follows. A flag in two sets makes the answer depend on
+    # which `if` runs first, so a reordering with no behavioural motive can
+    # silently restore a bypass. Enforced here rather than left to ordering.
+    assert not (cs.SHELL_XARGS_VALUE_FLAGS & cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS)
+    assert not (cs.SHELL_XARGS_VALUE_FLAGS & cs.SHELL_XARGS_BOOLEAN_FLAGS)
+    assert not (cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS & cs.SHELL_XARGS_BOOLEAN_FLAGS)
 
 
 class TestYoloLauncherConfinement:
