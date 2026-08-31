@@ -20,6 +20,7 @@ import os
 import shutil
 import stat
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,32 @@ def windows_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
     # would pass while proving nothing.
     monkeypatch.setattr(shutil, "_use_fd_functions", False, raising=False)
     monkeypatch.setattr(os, "unlink", _windows_unlink(os.unlink))
+
+    # Assert the simulation is IN FORCE, here in the fixture rather than in a
+    # separate test. With the check living elsewhere, removing either half
+    # above left the two behavioural tests green and meaningless -- the tree
+    # deletes cleanly on POSIX regardless of the handler, so they concluded
+    # from a green that proved nothing while only the positive control
+    # noticed. A precondition that every test depends on has to fail those
+    # tests, and setup is the only place that does.
+    probe = Path(tempfile.mkdtemp())
+    try:
+        victim = probe / "f"
+        victim.write_text("x", encoding="utf-8")
+        victim.chmod(stat.S_IREAD)
+        try:
+            shutil.rmtree(probe)
+        except PermissionError:
+            return
+        raise AssertionError(
+            "windows_semantics is not in force: a bare rmtree removed a "
+            "read-only file, so every test using this fixture would pass "
+            "without exercising the handler"
+        )
+    finally:
+        for p in sorted(probe.rglob("*"), reverse=True):
+            p.chmod(stat.S_IRWXU)
+        shutil.rmtree(probe, ignore_errors=True)
 
 
 def _readonly_tree(root: Path) -> Path:
