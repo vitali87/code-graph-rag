@@ -573,26 +573,6 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
     return _program_naming_flag(cmd_parts, cs.SHELL_GIT_EXEC_FLAGS)
 
 
-def _sed_operand_is_a_script(operand: list[str]) -> bool:
-    """Whether a -i operand is a sed script rather than a backup suffix.
-
-    Under GNU `-i` takes no separate argument, so this token is the script
-    and the next is an input file. Under BSD it is a backup suffix and the
-    next token is the script. A script carries a command with an operand, a
-    substitution, or an address; a suffix is a bare word like `bak` or
-    `.orig`.
-    """
-    if not operand:
-        return False
-    token = operand[0].strip()
-    return bool(
-        re.search(r"[;{}|$!]", token)
-        or re.search(r"[sy](.).*?\1.*?\1", token)
-        or re.match(r"[\d$][\d,~+$]*[a-zA-Z]", token)
-        or re.match(r"[\d$,~+!]*[wWrRe][\s/]", token)
-    )
-
-
 def _sed_awaits_operand(script: str) -> bool:
     """Whether a sed script ends in a file command still missing its operand.
 
@@ -689,6 +669,7 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     #  * The one exception is a script ending in a bare file command, where
     #    the operand is genuinely the next argv entry (`sed -ew /tmp/p`).
     scripts: list[str] = []
+    ambiguous_slots: list[int] = []
     # Every candidate is scanned, including the -i operand slots. Those slots
     # are genuinely ambiguous: `sed -i ext wout1 in.txt` treats `wout1` as a
     # SCRIPT under BSD -- verified, it wrote `out1` -- and as a FILENAME under
@@ -774,8 +755,20 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
                 # suffix is a bare word. Classifying slot ONE avoids the
                 # unanswerable question -- is slot two a filename or a
                 # command -- that four heuristics failed on.
-                if not _sed_operand_is_a_script(cmd_parts[index + 1 : index + 2]):
-                    add(index + 2)
+                # Scan the second slot too. Classifying the FIRST operand
+                # to pick a reading does not work either: BSD takes it as a
+                # suffix whatever it looks like, so a suffix named `1d`
+                # leaves the payload unscanned -- verified, it overwrote a
+                # file. Fifth failure of token classification here.
+                #
+                # Instead the slot carries a NARROWER anchor. A write that
+                # reaches outside the working directory needs a separator or
+                # a path before its target (`w /tmp/x`, `w/tmp/x`); an input
+                # filename is one unbroken token. A bare relative target
+                # (`wout1`) escapes this, but writes only into the CWD, which
+                # the tool already permits.
+                ambiguous_slots.append(len(scripts))
+                add(index + 2)
                 index += 1
             index += 1
             continue
@@ -810,7 +803,7 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
 
         index += 1
 
-    for arg in scripts:
+    for position, arg in enumerate(scripts):
         skeleton = _sed_script_skeleton(arg)
         for pattern, reason in cs.SHELL_SED_EXEC_TOKENS:
             # The s///e and s///w patterns need the real text; the command
@@ -819,6 +812,12 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # Only the s/// forms need the real text (the skeleton blanks
             # the very bodies they match inside); every other anchor runs on
             # the skeleton so user text cannot look like a command.
+            if position in ambiguous_slots and reason == cs.SHELL_SED_FILE_REASON:
+                # In this slot the token may be an input filename, so the
+                # file command must show a separated or path-like target.
+                if re.search(cs.SHELL_SED_FILE_ESCAPING, skeleton):
+                    return reason
+                continue
             target = arg if reason.startswith("s///") else skeleton
             if re.search(pattern, target):
                 return reason

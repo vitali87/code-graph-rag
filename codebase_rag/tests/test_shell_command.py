@@ -2013,6 +2013,18 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed -n -i bak 'w /tmp/x'",
         "sed --line-length 5 'w /tmp/x'",
         "sed -i bak 'eid'",
+        # A backup suffix that LOOKS like a script defeated the attempt to
+        # pick a reading from slot one: BSD takes slot one as the suffix
+        # whatever its shape, so `-i 1d` left the payload unscanned --
+        # verified, it overwrote a file. Fifth failure of classifying a
+        # token in this area; both slots are now scanned.
+        "sed -i '1d' 'w /tmp/x' in.txt",
+        "sed -i 's/a/b/' 'w /tmp/x' in.txt",
+        "sed -i '$d' 'w /tmp/x'",
+        "sed -i '2p' 'w /tmp/x'",
+        "sed -i '1,2d' 'w /tmp/x'",
+        "sed -i '1d' 'r /etc/passwd' f",
+        "sed -i bak 'w ../esc'",
         "sed 'w-file' f",
         "sed 'w.bak' f",
         "sed '1,2wout3' f",
