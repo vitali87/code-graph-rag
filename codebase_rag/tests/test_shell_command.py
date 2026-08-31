@@ -1553,6 +1553,10 @@ def test_xargs_still_launches_allowlisted_programs(segment: str) -> None:
         "git filter-branch --tree-filter id",
         "git bisect run id",
         "git submodule foreach id",
+        "sed 's/x/id/e' f",
+        "sed '1e id' f",
+        "sed 'w /etc/x' f",
+        "sed -f p.sed f",
     ),
 )
 @pytest.mark.parametrize("bypass", (False, True))
@@ -1812,6 +1816,21 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed '/x/w /etc/x' f",
         "sed 's/a/b/w /etc/x' f",
         "sed --expression='w /etc/x' f",
+        # Address forms that defeated an address-enumerating pattern. The
+        # letter is what the attacker cannot avoid; the address can be
+        # written seven ways, which is why the anchor moved to the letter.
+        "sed '0~3e id' f",
+        "sed '/re/Ie id' f",
+        r"sed '\%re%e id' f",
+        "sed '1,+2e id' f",
+        "sed '1!e id' f",
+        "sed 's/a/b/;e id' f",
+        "sed '{e id}' f",
+        "sed '1\ne id' f",
+        # W, r and R read or write a named file just as w does.
+        "sed 'W /etc/x' f",
+        "sed '1r /etc/passwd' f",
+        "sed '1R /etc/passwd' f",
         # A script file cannot be inspected, in any spelling.
         "sed -f p.sed f",
         "sed -fp.sed f",
@@ -1847,6 +1866,13 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed 's/.*//' f",
         "sed '/^$/d' f",
         "sed --expression='s/a/b/' f",
+        "sed '2,5p' f",
+        "sed 'y/ab/cd/' f",
+        "sed -n '$=' f",
+        "sed '/error/!d' f",
+        "sed 's/a/b/2' f",
+        "sed '$d' f",
+        "sed '$p' f",
     ),
 )
 def test_sed_ordinary_scripts_still_run(segment: str) -> None:

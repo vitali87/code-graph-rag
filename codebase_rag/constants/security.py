@@ -190,12 +190,18 @@ SHELL_CMD_SED = "sed"
 # GNU -- the policy must deny regardless of which binary is present, or the
 # gate passes locally and fails open in CI.
 SHELL_SED_EXEC_TOKENS = (
-    # Addresses precede the command and a /regex/ address can contain
-    # anything, so match a trailing `/` or a numeric/$ address rather than
-    # trying to enumerate address characters.
-    (r"(^|[;{\s/])[\d$~,!]*\s*e(\s|$)", "e command"),
+    # sed commands that reach a subprocess or a file. Anchored on the command
+    # LETTER, which the attacker cannot avoid, rather than on the address that
+    # precedes it -- addresses take many forms (`0~3`, `/re/I`, `\%re%`,
+    # `1,+2`, `!`, a leading newline) and enumerating them let seven spellings
+    # through, exactly as enumerating awk's spellings did.
+    #
+    # A command letter is preceded by a command separator (start, `;`, `{`,
+    # newline) or by an address, which always ends in a digit, `/`, `%`, `+`,
+    # `!`, `~`, `,` or a closing delimiter. So: any of those, then the letter.
+    (r"(?:^|[;{\n]|[\d/%+!~,I$])\s*e(?:\s|$)", "e command"),
     (r"s(.).*?\1.*?\1[gip0-9]*e", "s///e execute flag"),
-    (r"(^|[;{\s/])[\d$~,!]*\s*w\s+\S", "w writes a named file"),
+    (r"(?:^|[;{\n]|[\d/%+!~,I$])\s*[wWrR]\s+\S", "reads or writes a named file"),
     (r"s(.).*?\1.*?\1[gip0-9]*w\s+\S", "s///w writes a named file"),
 )
 
