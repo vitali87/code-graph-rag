@@ -1641,6 +1641,11 @@ def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
         "awk --source '{system(1)}' f",
         "awk --include lib '{system(1)}' f",
         "awk --load lib '{system(1)}' f",
+        # gawk gives -i/-l a required value, but an implementation lacking
+        # the flag reads the next token as the PROGRAM, so both readings
+        # are scanned -- class (f), the same split as sed -i and -l.
+        "awk -i 'BEGIN{system(1)}' f",
+        "awk -l 'BEGIN{system(1)}' f",
         "awk -f/tmp/prog.awk",
         "awk --file=/tmp/prog.awk",
         # A redirect target need not be quoted: with the filename in a
@@ -1670,6 +1675,8 @@ def test_awk_cannot_run_a_command(segment: str) -> None:
         # -v/-F consume their value, so the program is still found and
         # scanned; without that the value itself was read as the program.
         "awk -v n=1 '{print $n}' f",
+        "awk -i inc '{print $1}' f",
+        "awk -l lib '{print $1}' f",
         "awk -F: '{print $1}' f",
         "awk -v OFS=, '{print $1,$2}' f",
         # `>` as a comparison must not read as a redirect.
@@ -1926,6 +1933,12 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         "sed -nQ 's/a/b/' f",
         "sed -an 'w/tmp/x' f",
         "sed -nE 'e id' f",
+        # End-of-options: the token after -- is the script.
+        "sed -- 'w /tmp/x' f",
+        "sed -- '1e id' f",
+        "sed -n -- 'w /etc/x' f",
+        "sed -e 'w /tmp/x' -- README.md",
+        "sed -i -- 'e id' f",
         # GNU sed declares -i[SUFFIX] as an OPTIONAL, attached-only
         # argument while BSD takes it separately, so the two disagree on
         # which token is the script. Both readings are scanned; picking
@@ -2001,6 +2014,16 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed -sz 's/a/b/' f",
         "sed --follow-symlinks 's/a/b/' f",
         "sed -b 's/a/b/' f",
+        "sed -- 's/a/b/' f",
+        "sed -n -- 's/a/b/p' f",
+        "sed -- 's/a/b/' README.md",
+        # Input FILENAMES must never be scanned as script text: README.md
+        # would trip the [wWrR] anchor on "RE".
+        "sed -i 's/a/b/' README.md",
+        "sed -e 's/a/b/' README.md",
+        "sed -e p -e d README.md",
+        "sed 's/a/b/' w.txt",
+        "sed -n 'p' Reader.txt",
         "sed -i '' 's/a/b/' f",
         "sed -n -i.bak 's/a/b/p' f",
         "sed --in-place=.bak 's/a/b/' f",

@@ -427,6 +427,15 @@ def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
                 arg in cs.SHELL_AWK_VALUE_FLAGS
                 and arg not in cs.SHELL_AWK_OPTIONAL_ARG_FLAGS
             ):
+                # The operand is the flag's value under gawk, but a program
+                # under any implementation lacking the flag, so scan BOTH
+                # readings rather than pick one -- the same rule sed's -i and
+                # -l need. Picking gawk's alone stepped over the program.
+                candidate = cmd_parts[index + 1 : index + 2]
+                if candidate and not candidate[0].startswith("-"):
+                    for pattern, reason in cs.SHELL_AWK_EXEC_TOKENS:
+                        if re.search(pattern, candidate[0]):
+                            return reason
                 index += 2
             else:
                 index += 1
@@ -594,6 +603,13 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     index = 1
     while index < len(cmd_parts):
         arg = cmd_parts[index]
+
+        if arg == "--":
+            # End of options: the next token is the script (or an input file
+            # if one was already given), never a flag.
+            if not scripts:
+                add(index + 1)
+            break
 
         if not arg.startswith("-"):
             # Once -e or -f has supplied a script, every bare token is an
