@@ -198,6 +198,9 @@ SHELL_PROGRAM_NAMING_FLAG_SUFFIXES = (
     "exec",
     "bin",
     "program",
+    # git svn spells it --authors-prog; abbreviating "program" is common
+    # enough to be worth covering, and no ordinary flag ends in "prog".
+    "prog",
     "tool",
     "helper",
     "proxy",
@@ -256,9 +259,6 @@ SHELL_AWK_VALUE_FLAGS = frozenset(
         "-E",
         "--include",
         "--load",
-        "--pretty-print",
-        "--profile",
-        "--debug",
     }
 )
 
@@ -269,6 +269,15 @@ SHELL_CMD_SED = "sed"
 # write a named file. This host runs BSD sed, which rejects `e`, but CI runs
 # GNU -- the policy must deny regardless of which binary is present, or the
 # gate passes locally and fails open in CI.
+# Reasons whose pattern cannot match inside an ordinary filename, so they
+# stay trustworthy on a token that might be an input file rather than script
+# text. The bare command-letter anchors are excluded: "README.md" contains
+# "RE", which reads as an r command with an operand.
+SHELL_SED_FILENAME_SAFE = frozenset(
+    {"e command", "s///e execute flag", "s///w writes a named file"}
+)
+
+
 SHELL_SED_EXEC_TOKENS = (
     # sed commands that reach a subprocess or a file. Anchored on the command
     # LETTER, which the attacker cannot avoid, rather than on the address that
@@ -346,7 +355,6 @@ SHELL_SED_KNOWN_FLAGS = frozenset(
 # wrote the file while the scanner saw no script.
 SHELL_SED_OPTIONAL_ARG_FLAGS = frozenset({"-i", "--in-place", "-l", "--line-length"})
 
-SHELL_SED_SCRIPT_FILE_FLAGS = frozenset({"-f", "--file"})
 
 SHELL_AWK_EXEC_TOKENS = (
     (r"system\s*\(", "system() call"),

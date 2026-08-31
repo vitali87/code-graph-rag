@@ -2225,7 +2225,32 @@ _SED_KNOWN_ARITIES = (
     ("--line-length", "optional"),
     ("-i", "optional"),
     ("--in-place", "optional"),
+    # The remaining known flags. Without these the table was a hand-kept list
+    # auditing another hand-kept list -- nothing failed if a flag joined
+    # SHELL_SED_KNOWN_FLAGS and never got an arity, which is the class (e)
+    # shape the completeness assertion below now closes.
+    # -e/-f take an operand that IS the script (or a file holding it), not a
+    # value to step over -- a third category the two-way split cannot express.
+    ("-e", "script"),
+    ("--expression", "script"),
+    ("-f", "script"),
+    ("--file", "script"),
+    ("--quiet", "boolean"),
+    ("--silent", "boolean"),
+    ("--separate", "boolean"),
+    ("--unbuffered", "boolean"),
+    ("--null-data", "boolean"),
+    ("--regexp-extended", "boolean"),
+    ("--help", "boolean"),
+    ("--version", "boolean"),
 )
+
+
+def test_every_known_sed_flag_has_a_declared_arity() -> None:
+    # A flag added to SHELL_SED_KNOWN_FLAGS without an arity would be
+    # invisible to the arity test, which is exactly how a list-auditing-a-list
+    # fails open.
+    assert {flag for flag, _ in _SED_KNOWN_ARITIES} == set(cs.SHELL_SED_KNOWN_FLAGS)
 
 
 @pytest.mark.parametrize(("flag", "arity"), _SED_KNOWN_ARITIES)
@@ -2241,6 +2266,11 @@ def test_sed_flag_arity_keeps_the_script_visible(flag: str, arity: str) -> None:
     # the scanner see too little, not too much; over-scanning shows up as a
     # false positive in the ordinary-invocation tests instead.
     danger = "w /tmp/x"
+    if arity == "script":
+        # The operand is the script itself (or, for -f, a file this validator
+        # cannot read, which is refused outright).
+        assert _sed_exec_construct(["sed", flag, danger, "f"]) is not None
+        return
     if arity == "value":
         assert _sed_exec_construct(["sed", flag, "5", danger, "f"]) is not None
     else:
@@ -2397,6 +2427,50 @@ def test_git_data_filter_and_pack_flags_are_allowed(segment: str) -> None:
     # these was refused while "filter" and "pack" were in the suffix list.
     assert _validate_segment(segment, "", False) is None, (
         f"a data flag was blocked: {segment}"
+    )
+
+
+# Every git flag whose name ends in a program-naming word, taken from git's
+# own --help output across all 174 subcommands rather than from the sets in
+# the source. git is a single implementation, so it is an AUTHORITY: its
+# verdict settles what exists, where a modelled list only reflects what
+# someone remembered. The four "pack" entries are pack FILES, not programs,
+# which is why "pack" was removed from the suffix backstop.
+_GIT_PROGRAM_NAMING_FLAGS = (
+    ("send-email", "--cc-cmd", True),
+    ("send-email", "--header-cmd", True),
+    ("send-email", "--sendmail-cmd", True),
+    ("send-email", "--to-cmd", True),
+    ("send-email", "--no-header-cmd", False),
+    ("filter-branch", "--tree-filter", True),
+    ("filter-branch", "--index-filter", True),
+    ("filter-branch", "--env-filter", True),
+    ("filter-branch", "--setup", True),
+    ("difftool", "--extcmd", True),
+    ("mergetool", "--tool", True),
+    ("rebase", "--exec", True),
+    ("clone", "--upload-pack", True),
+    ("push", "--receive-pack", True),
+    ("daemon", "--access-hook", True),
+    ("svn", "--authors-prog", True),
+    # Pack FILES, not programs -- the ambiguity that made "pack" unusable as
+    # a suffix rule.
+    ("gc", "--keep-largest-pack", False),
+    ("repack", "--keep-pack", False),
+    ("pack-objects", "--keep-pack", False),
+    ("multi-pack-index", "--preferred-pack", False),
+)
+
+
+@pytest.mark.parametrize(
+    ("subcommand", "flag", "runs_a_program"), _GIT_PROGRAM_NAMING_FLAGS
+)
+def test_git_program_naming_flags_match_gits_own_semantics(
+    subcommand: str, flag: str, runs_a_program: bool
+) -> None:
+    blocked = _validate_segment(f"git {subcommand} {flag}=id x", "", True) is not None
+    assert blocked == runs_a_program, (
+        f"git {subcommand} {flag}: blocked={blocked}, runs_a_program={runs_a_program}"
     )
 
 

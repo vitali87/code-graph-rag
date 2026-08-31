@@ -495,6 +495,18 @@ def _sed_awaits_operand(script: str) -> bool:
     return bool(re.search(r"[wWrR]\s*$", script))
 
 
+def _sed_token_is_script(token: str) -> bool:
+    """Whether a token can be sed script text rather than a bare filename.
+
+    Every construct that reaches a subprocess or a file needs a command
+    letter and an operand (`w FILE`, `e CMD`, `s/a/b/w FILE`), so it contains
+    whitespace or a substitution delimiter. An input filename has neither.
+    """
+    return any(c in token for c in " \t;{}") or bool(
+        re.search(r"s(.).*?\1.*?\1", token)
+    )
+
+
 def _is_sed_suffix(token: str) -> bool:
     """Whether a token plausibly is BSD sed's -i backup suffix.
 
@@ -591,6 +603,11 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     #  * The one exception is a script ending in a bare file command, where
     #    the operand is genuinely the next argv entry (`sed -ew /tmp/p`).
     scripts: list[str] = []
+    # Indices into `scripts` for tokens that may be an input FILENAME rather
+    # than script text. A filename can contain any letter, so the anchors
+    # that merely spot a command letter are not applied to these -- only the
+    # ones whose shape cannot occur in a path.
+    ambiguous: list[int] = []
 
     def add(position: int) -> None:
         if not 0 < position < len(cmd_parts):
@@ -605,9 +622,10 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
         arg = cmd_parts[index]
 
         if arg == "--":
-            # End of options: the next token is the script (or an input file
-            # if one was already given), never a flag.
-            if not scripts:
+            # End of options: the next token is the script unless a -e/-f has
+            # already given one. A preceding -i contributes only AMBIGUOUS
+            # candidates, so it must not suppress this.
+            if len(scripts) == len(ambiguous):
                 add(index + 1)
             break
 
@@ -627,12 +645,23 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             continue
 
         if arg in cs.SHELL_SED_OPTIONAL_ARG_FLAGS:
+            # The operand is a suffix under one implementation and the script
+            # under the other, so scan BOTH -- unconditionally. Gating the
+            # second reading on the operand's SHAPE was a bypass: a suffix of
+            # nine characters, or one containing a slash, failed the guess and
+            # the real script was never looked at.
             operand = cmd_parts[index + 1 : index + 2]
-            add(index + 1)
-            if operand and _is_sed_suffix(operand[0]):
+            if operand and not operand[0].startswith("-"):
+                # Only a non-flag token can be the script or a suffix; `--`
+                # and a following flag belong to the branches below.
+                ambiguous.append(len(scripts))
+                add(index + 1)
+                # Under the BSD reading this is a suffix and the script
+                # follows it, so scan the next token too -- also flagged as
+                # possibly-a-filename, since under GNU it is an input file.
+                ambiguous.append(len(scripts))
                 add(index + 2)
-                index += 2
-                continue
+                index += 1
             index += 1
             continue
 
@@ -666,7 +695,7 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
 
         index += 1
 
-    for arg in scripts:
+    for position, arg in enumerate(scripts):
         skeleton = _sed_script_skeleton(arg)
         for pattern, reason in cs.SHELL_SED_EXEC_TOKENS:
             # The s///e and s///w patterns need the real text; the command
@@ -675,6 +704,14 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             # Only the s/// forms need the real text (the skeleton blanks
             # the very bodies they match inside); every other anchor runs on
             # the skeleton so user text cannot look like a command.
+            if position in ambiguous and not _sed_token_is_script(arg):
+                # This token may be an input FILENAME rather than script
+                # text. Every construct here needs a command letter AND an
+                # operand, so a real script contains whitespace; a path does
+                # not. That is a property of the capability rather than a
+                # guess about a suffix's shape -- the guess was a bypass,
+                # since a nine-character suffix failed it and hid the script.
+                continue
             target = arg if reason.startswith("s///") else skeleton
             if re.search(pattern, target):
                 return reason
