@@ -374,7 +374,13 @@ def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
 
     # A program given with -f lives in a file this validator cannot read, so
     # its contents are unknowable and it is refused outright.
-    if any(_flag_name(a) == "-f" for a in cmd_parts[1:] if a.startswith("-")):
+    # `-f x`, `-fx` (attached) and `--file=x` all name a program file. Matching
+    # only the exact token `-f` let the attached spellings through.
+    if any(
+        a == "-f" or (a.startswith("-f") and len(a) > 2) or _flag_name(a) == "--file"
+        for a in cmd_parts[1:]
+        if a.startswith("-")
+    ):
         return "a program file this validator cannot inspect"
 
     index = 1
@@ -407,10 +413,23 @@ def _git_exec_subcommand(cmd_parts: list[str]) -> str | None:
     if len(cmd_parts) < 3 or cmd_parts[0] != cs.SHELL_CMD_GIT:
         return None
 
-    subcommand = next(
-        (a for a in cmd_parts[1:] if not a.startswith("-")),
-        None,
-    )
+    # Step over global value flags, as _git_dash_c_exec_key does: `-C dir`
+    # made `dir` look like the subcommand, so `git -C dir filter-branch
+    # --tree-filter cmd` was read as a subcommand that runs nothing.
+    subcommand = None
+    index = 1
+    while index < len(cmd_parts):
+        arg = cmd_parts[index]
+        if not arg.startswith("-"):
+            subcommand = arg
+            break
+        if (
+            arg in cs.SHELL_GIT_GLOBAL_VALUE_FLAGS
+            and arg not in cs.SHELL_GIT_OPTIONAL_ARG_FLAGS
+        ):
+            index += 2
+        else:
+            index += 1
     if subcommand not in cs.SHELL_GIT_EXEC_SUBCOMMANDS:
         return None
 

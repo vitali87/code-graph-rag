@@ -188,7 +188,11 @@ SHELL_AWK_EXEC_TOKENS = (
     (r"\|", "pipe to or from a command"),
     (r"\bgetline\b", "getline"),
     (r"close\s*\(", "close() on a command stream"),
-    (r">>?\s*[\"']", "redirect to a named file"),
+    # The target need not be quoted -- `print 1 > f` with f a variable wrote
+    # outside the root. awk's output redirect always follows a print/printf
+    # output list, which is what distinguishes it from a `>` comparison
+    # (`NR>1`), so match the construct rather than the target's spelling.
+    (r"\b(print|printf)\b[^;}]*>>?\s*\S", "redirect to a file"),
 )
 
 SHELL_LAUNCHER_COMMANDS = frozenset({"xargs", "uv", "pytest", "pre-commit", "find"})

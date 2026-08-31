@@ -1622,8 +1622,17 @@ def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
         """awk 'BEGIN{"id" |& getline}'""",
         """awk 'END{close("id")}'""",
         """awk 'BEGIN{print 1 > "/etc/x"}'""",
-        # A program in a file cannot be inspected, so it is refused.
+        # A program in a file cannot be inspected, so it is refused -- in
+        # every spelling. Matching only the exact token `-f` let the attached
+        # and long forms through (review round seven).
         "awk -f prog.awk f",
+        "awk -f/tmp/prog.awk",
+        "awk --file=/tmp/prog.awk",
+        # A redirect target need not be quoted: with the filename in a
+        # variable, the quote-anchored token missed it entirely.
+        """awk 'BEGIN{f="/tmp/pwn"; print 1 > f}'""",
+        """awk 'BEGIN{f="/tmp/pwn"; print 1 >> f}'""",
+        """awk '{printf "x" > out}'""",
     ),
 )
 def test_awk_cannot_run_a_command(segment: str) -> None:
@@ -1648,6 +1657,8 @@ def test_awk_cannot_run_a_command(segment: str) -> None:
         "awk -v n=1 '{print $n}' f",
         "awk -F: '{print $1}' f",
         "awk -v OFS=, '{print $1,$2}' f",
+        # `>` as a comparison must not read as a redirect.
+        "awk '{if ($1 > 5) print}' f",
         "awk 'BEGIN{OFS=\",\"}{print $1,$2}' f",
     ),
 )
@@ -1670,6 +1681,14 @@ def test_awk_ordinary_programs_still_run(segment: str) -> None:
         "git filter-branch --tree-filter id",
         "git filter-branch --index-filter id",
         "git filter-branch --env-filter id HEAD",
+        # A global value flag shifted the "first non-dash token" heuristic:
+        # `-C dir` made `dir` look like the subcommand, so the real one was
+        # never examined. Same defect the -c scanner already had fixed; this
+        # function did not reuse the stepping logic (review round seven).
+        "git -C dir filter-branch --tree-filter id",
+        "git --git-dir x submodule foreach id",
+        "git --work-tree w submodule foreach id",
+        "git -C d bisect run id",
         # Flags that name a program, independent of the subcommand. rebase
         # --exec and difftool --extcmd were verified running locally in a
         # scratch repo; the pack/smtp/gpg family names a program run at the
@@ -1696,6 +1715,9 @@ def test_git_subcommands_cannot_run_a_command(segment: str) -> None:
         # The same subcommands in forms that launch nothing must still work,
         # or the check has banned the subcommand rather than the capability.
         "git submodule status",
+        "git -C dir status",
+        "git --git-dir x log",
+        "git -C . diff",
         "git submodule update --init",
         "git bisect start",
         "git bisect good",
