@@ -359,3 +359,55 @@ def test_definition_source_from_a_crlf_file_is_normalised(tmp_path: Path) -> Non
     assert (
         _normalise(raw or "").rstrip("\n") == "def test_run():\n    assert run() == 6"
     ), repr(raw)
+
+
+# The test above composes `extract_source_lines` and `_normalise` by hand, which
+# proves the pair folds correctly but never enters `_test_pieces` -- so deleting
+# that call site's `_normalise` left the file green. Drive the function itself,
+# with the graph reads stubbed, so the third call site is actually pinned.
+def test_test_pieces_normalises_the_source_it_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from codebase_rag import context_slice as cs_mod
+    from codebase_rag.utils.source_extraction import extract_source_lines
+
+    (tmp_path / "test_app.py").write_bytes(
+        b"def test_run():\r\n    assert run() == 6\r\n"
+    )
+
+    class _Reach:
+        @staticmethod
+        def build(_fetch: object, _project: str) -> _Reach:
+            return _Reach()
+
+        @staticmethod
+        def tests_reaching(_qn: str) -> list[dict[str, object]]:
+            return [
+                {
+                    "qualified_name": "p.test_app.test_run",
+                    "path": "test_app.py",
+                    "depth": 0,
+                    "through": "p.app.run",
+                }
+            ]
+
+    def _definition(
+        _fetch: object, _project: str, _qn: str, _root: Path | None
+    ) -> dict[str, object]:
+        return {
+            "qualified_name": "p.test_app.test_run",
+            "path": "test_app.py",
+            "start_line": 1,
+            "end_line": 2,
+            "source": extract_source_lines(tmp_path / "test_app.py", 1, 2),
+        }
+
+    monkeypatch.setattr(cs_mod, "ReachIndex", _Reach)
+    monkeypatch.setattr(cs_mod.graph_query, "definition", _definition)
+
+    pieces = cs_mod._test_pieces(lambda *a, **k: [], "p", "p.app.run", tmp_path)
+
+    assert len(pieces) == 1, repr(pieces)
+    assert pieces[0].source == "def test_run():\n    assert run() == 6", repr(
+        pieces[0].source
+    )
