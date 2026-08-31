@@ -499,7 +499,18 @@ PATCH_OK = "{path}: {count} edit(s) applied"
 # what turned an unverifiable write into an apparently verified one; the
 # write itself is still allowed, since refusing would make edits a silent
 # no-op on a base install where Rust and Go grammars are absent (#1580).
-PATCH_UNVERIFIED = "{path}: {count} edit(s) applied, unverified (no parser for it)"
+# The one wording for "checked by nothing", shared so the two messages that
+# carry it cannot drift apart and a caller can match on either.
+PATCH_UNVERIFIED_FRAGMENT = "unverified (no parser for it)"
+PATCH_UNVERIFIED = "{path}: {count} edit(s) applied, " + PATCH_UNVERIFIED_FRAGMENT
+# Both facts, because either alone is misleading here: drift on its own reads
+# as "parsed fine, just reformat it", and a language with no grammar is
+# exactly the case that also has a formatter installed (Rust, Go).
+PATCH_UNVERIFIED_DRIFT = (
+    "{path}: {count} edit(s) applied, "
+    + PATCH_UNVERIFIED_FRAGMENT
+    + "; {tool} would also reformat it"
+)
 # Edit transactions (issue #1528).
 EDIT_NOT_A_FILE = "Staged path is not a regular file: {path}"
 EDIT_RESERVED_PATH = "Path is cgr state, not part of the tree: {path}"

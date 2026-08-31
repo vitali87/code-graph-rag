@@ -272,6 +272,72 @@ def test_an_unverifiable_patch_is_staged_but_reported_as_unverified(
     assert result.message == cs.PATCH_UNVERIFIED.format(path="notes.txt", count=1)
 
 
+def test_a_supported_language_with_no_grammar_is_staged_and_unverified(
+    tmp_path: Path,
+) -> None:
+    """The Rust/Go base-install case, which the `.txt` test does not reach.
+
+    `notes.txt` has no SupportedLanguage at all, so `_parser` returns early
+    and the formatter is never consulted. A `.rs` file with `parsers={}`
+    takes the other branch: the language resolves, the grammar is missing,
+    and `formatter_check` runs for real. Same `parses is None`, different
+    path, and it is the path issue #1580 is actually about.
+    """
+    _write(tmp_path, "m.rs", "fn helper() -> i32 { 1 }\n")
+    patcher = Patcher(tmp_path, parsers={})
+    patcher.replace_identifier_at("m.rs", 1, 3, "helper", "assist")
+
+    staged: dict[str, bytes] = {}
+
+    class Stub:
+        def stage(self, rel_path: str | Path, content: str | bytes | None) -> None:
+            assert isinstance(content, bytes)
+            staged[str(rel_path)] = content
+
+    results = patcher.stage_into(Stub())
+    result = results["m.rs"]
+
+    assert result.parses is None
+    assert staged == {"m.rs": b"fn assist() -> i32 { 1 }\n"}
+    assert cs.PATCH_UNVERIFIED_FRAGMENT in result.message, result.message
+    assert result.message != cs.PATCH_OK.format(path="m.rs", count=1)
+
+
+def test_unverified_and_format_drift_are_both_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drift must not swallow "nothing checked this".
+
+    `formatted is False` was tested before `parses is None`, so a Rust or Go
+    file with no grammar and an installed formatter reported only
+    PATCH_FORMAT_DRIFT -- which reads as "it parsed, it just needs
+    reformatting" (CodeRabbit, PR #1595). The two conditions are
+    independent and this is the pair the issue is about, since a language
+    whose grammar is absent is one whose formatter is often present.
+
+    `formatter_check` is stubbed rather than relying on a real rustfmt, so
+    the branch is exercised on every machine instead of only where the tool
+    happens to be installed and happens to object.
+    """
+    monkeypatch.setattr(
+        "codebase_rag.editing.patcher.formatter_check",
+        lambda _language, _content, _suffix: (cs.PATCH_RUSTFMT, False),
+    )
+    _write(tmp_path, "m.rs", "fn helper() -> i32 { 1 }\n")
+    patcher = Patcher(tmp_path, parsers={})
+    patcher.replace_identifier_at("m.rs", 1, 3, "helper", "assist")
+
+    (result,) = patcher.apply().values()
+
+    assert result.parses is None
+    assert result.formatted is False
+    assert result.message == cs.PATCH_UNVERIFIED_DRIFT.format(
+        path="m.rs", count=1, tool=cs.PATCH_RUSTFMT
+    )
+    assert cs.PATCH_UNVERIFIED_FRAGMENT in result.message
+    assert cs.PATCH_RUSTFMT in result.message
+
+
 def test_a_verified_patch_still_reports_ok(tmp_path: Path) -> None:
     """The control: only the unverifiable case changes message.
 

@@ -324,6 +324,16 @@ class Patcher:
             tool, formatted = formatter_check(language, content, Path(key).suffix)
             if parses is False:
                 message = cs.PATCH_PARSE_FAILED.format(path=key)
+            elif parses is None and formatted is False:
+                # The two conditions are independent, so the message has to
+                # carry both. Reporting drift alone here would say the file
+                # merely needs reformatting while hiding that nothing checked
+                # it -- and this pair is not exotic: a language with no
+                # grammar loaded is precisely one whose formatter IS often
+                # installed (Rust, Go on a base install).
+                message = cs.PATCH_UNVERIFIED_DRIFT.format(
+                    path=key, count=len(edits), tool=tool
+                )
             elif formatted is False:
                 message = cs.PATCH_FORMAT_DRIFT.format(path=key, tool=tool)
             elif parses is None:
@@ -355,7 +365,8 @@ class Patcher:
 
         That is a decision about what to WRITE, and it is safe only because
         it is paired with a decision about what to SAY: `apply` reports
-        those files as `PATCH_UNVERIFIED`, not `PATCH_OK`. Staging a file
+        those files as `PATCH_UNVERIFIED`, or `PATCH_UNVERIFIED_DRIFT` when
+        a formatter also objects, never as `PATCH_OK`. Staging a file
         checked by nothing is defensible; telling the caller it was checked
         is not (issue #1580).
         """
