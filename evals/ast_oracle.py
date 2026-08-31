@@ -7,9 +7,11 @@ from pathlib import Path
 from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag.utils.path_utils import should_skip_path
 
 from . import constants as ec
 from . import logs as ls
+from .ignore_rules import ignore_rules
 from .types_defs import DefNode, EdgeKey, GraphData, NameEdge, NodeKey
 
 _MODULE = cs.NodeLabel.MODULE.value
@@ -206,11 +208,21 @@ def _base_name(expr: ast.expr) -> str | None:
 
 
 def _iter_py_files(target: Path) -> Iterator[Path]:
+    # `should_skip_path` is the SINGLE filter, not one of two. It is the
+    # indexer's own predicate, so the oracle grades the file set the graph
+    # would actually contain (issue #1520).
+    #
+    # The `ec.IGNORE_DIRS` and egg-info pre-filters that used to run above it
+    # are gone rather than kept alongside. They ran BEFORE it and so could not
+    # be rescued: `should_skip_path` applies the built-in ignores only after
+    # `unignore_paths` has had its say, so `!vendor/keep.py` under an ignored
+    # `vendor/` reaches the graph while a pre-filter dropped it from the
+    # oracle. Two filters that disagree on one file are the same
+    # oracle-versus-cgr divergence this issue exists to close, reintroduced
+    # one layer up (CodeRabbit, PR #1563).
+    exclude_paths, unignore_paths = ignore_rules(target)
     for path in target.rglob(f"*{ec.PY_SUFFIX}"):
-        parts = path.relative_to(target).parts
-        if set(parts) & ec.IGNORE_DIRS:
-            continue
-        if any(part.endswith(ec.EGG_INFO_SUFFIX) for part in parts):
+        if should_skip_path(path, target, exclude_paths, unignore_paths, is_file=True):
             continue
         yield path
 
