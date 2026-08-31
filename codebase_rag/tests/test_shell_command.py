@@ -2167,6 +2167,14 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         # them on suspicion.
         "sed -i bak 'w$HOME/x' f",
         "sed -i bak 'w..' f",
+        # CWD-relative writes, including into dotted directories, are not
+        # caught in the ambiguous slot -- and add no capability, because
+        # `tee .git/config`, `tee .env` and `cp x .git/hooks/pre-commit`
+        # are all already permitted. Measured rather than asserted, since
+        # the last "this costs nothing" claim was wrong about .. and ~.
+        "sed -i bak 'w.git/config' f",
+        "sed -i bak 'w.env' f",
+        "sed -i bak 'wpyproject.toml' f",
     ),
 )
 def test_sed_ordinary_scripts_still_run(segment: str) -> None:
