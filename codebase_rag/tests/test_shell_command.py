@@ -1565,6 +1565,27 @@ def test_nesting_under_xargs_never_weakens_the_decision(
         )
 
 
+def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
+    # The recursion re-quotes with shlex.join before re-parsing, so a pattern
+    # whose match depends on the ORIGINAL spelling would be silently lost.
+    # One such pattern exists (`__import__('os')` stops matching once the
+    # embedded quotes are re-escaped), but it is unreachable: the commands
+    # that could carry it are not allowlisted. This pins that, so adding an
+    # interpreter to the allowlist fails here rather than quietly reopening
+    # the hole.
+    for cmd in sorted(settings.SHELL_COMMAND_ALLOWLIST):
+        for spelling in (
+            f"{cmd} -c \"__import__('os')\"",
+            f"{cmd} 'a b'",
+            f'{cmd} "x\'y"',
+            f"{cmd} '*'",
+        ):
+            parts = shlex.split(spelling)
+            assert bool(_check_segment_patterns(spelling)) == bool(
+                _check_segment_patterns(shlex.join(parts))
+            ), f"shlex.join changed the pattern verdict for: {spelling}"
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
