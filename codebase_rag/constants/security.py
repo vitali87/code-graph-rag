@@ -373,7 +373,11 @@ SHELL_AWK_EXEC_TOKENS = (
     (r"system\s*\(", "system() call"),
     (r"\|&", "coprocess pipe"),
     (r"\|", "pipe to or from a command"),
-    (r"\bgetline\b", "getline"),
+    # NOTE: a bare `getline` anchor was removed here. getline reads a FILE
+    # (`getline l < "f"`) as readily as a command (`"cmd" | getline`), and
+    # only the piped form runs anything -- which the `|` anchor above already
+    # catches, verified on all four command spellings. Matching the bare word
+    # refused ordinary file reading.
     (r"close\s*\(", "close() on a command stream"),
     # The target need not be quoted -- `print 1 > f` with f a variable wrote
     # outside the root. awk's output redirect always follows a print/printf
@@ -770,7 +774,19 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     # reading one (`"cmd" | getline`). Verified executing on this platform:
     # the system() pattern alone left `awk 'BEGIN{print 1 | "echo X"}'`
     # running in both modes. `close()` and `printf ... |` are the same door.
-    (r"awk\s+.*getline\s*[<|]", "awk getline file/pipe execution"),
+    # `getline < file` READS a file; only `cmd | getline` runs anything, and
+    # the structural check catches that via the pipe. Matching `<` too
+    # refused ordinary file reading, so this legacy pattern now covers the
+    # pipe direction alone and exists only as a backstop for spellings the
+    # structural check declines to parse.
+    # `cmd | getline` runs a command; `getline < file` merely reads one, and
+    # the pipe direction is already caught structurally. What remains worth
+    # matching on the read side is an ABSOLUTE or parent-relative path, which
+    # escapes the project root -- the containment concern the original
+    # pattern was really covering. A relative read (`getline < "f"`) is
+    # ordinary awk and is no longer refused.
+    (r"awk\s+.*getline\s*\|", "awk getline pipe execution"),
+    (r"awk\s+.*getline\s*<\s*[\"']?(/|\.\.)", "awk getline reads outside the root"),
     # NOTE: the legacy `sed ... s///e` regex was removed here. It read the s
     # of "start" as a substitute command and the e of "end" as the execute
     # flag, so `sed -n '/start/,/end/p'` -- an ordinary range print -- was

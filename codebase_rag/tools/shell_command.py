@@ -573,6 +573,26 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
     return _program_naming_flag(cmd_parts, cs.SHELL_GIT_EXEC_FLAGS)
 
 
+def _sed_operand_is_a_script(operand: list[str]) -> bool:
+    """Whether a -i operand is a sed script rather than a backup suffix.
+
+    Under GNU `-i` takes no separate argument, so this token is the script
+    and the next is an input file. Under BSD it is a backup suffix and the
+    next token is the script. A script carries a command with an operand, a
+    substitution, or an address; a suffix is a bare word like `bak` or
+    `.orig`.
+    """
+    if not operand:
+        return False
+    token = operand[0].strip()
+    return bool(
+        re.search(r"[;{}|$!]", token)
+        or re.search(r"[sy](.).*?\1.*?\1", token)
+        or re.match(r"[\d$][\d,~+$]*[a-zA-Z]", token)
+        or re.match(r"[\d$,~+!]*[wWrRe][\s/]", token)
+    )
+
+
 def _sed_awaits_operand(script: str) -> bool:
     """Whether a sed script ends in a file command still missing its operand.
 
@@ -733,15 +753,28 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
                 # file; under BSD the first is a suffix and the second the
                 # script.
                 #
-                # The first is never dangerous to scan: under GNU it is the
-                # script, under BSD a backup suffix, and a suffix matches no
-                # anchor. The second is scanned only when a token FOLLOWS it,
-                # because sed needs an input file after a script -- if
-                # nothing follows, the second token IS the input file and
-                # scanning it refuses `sed -i 1d README.md`, the commonest
-                # in-place edit there is.
+                # Both are scanned unconditionally. The bound that used to
+                # skip the second when nothing followed it reasoned that sed
+                # needs an input file after a script -- true of GNU, false of
+                # BSD, which OPENS AND TRUNCATES a `w` target before it errors
+                # on stdin. Verified: `sed -i bak 'w victim.conf' < /dev/null`
+                # took the file from 14 bytes to 0 while the validator allowed
+                # it. Class (f) again, in the one place it had not been
+                # applied.
+                #
+                # The over-block that bound was protecting is not at risk:
+                # in `sed -i 1d README.md` the filename is the THIRD operand,
+                # so it is never the index+2 candidate.
                 add(index + 1)
-                if index + 3 <= len(cmd_parts) - 1:
+                # Scan the second operand only under the BSD reading, which
+                # is the only one where it is the script. The two readings
+                # are told apart by the FIRST operand, which is a question
+                # that has an answer: a GNU script carries a command with an
+                # operand, a substitution or an address, while a BSD backup
+                # suffix is a bare word. Classifying slot ONE avoids the
+                # unanswerable question -- is slot two a filename or a
+                # command -- that four heuristics failed on.
+                if not _sed_operand_is_a_script(cmd_parts[index + 1 : index + 2]):
                     add(index + 2)
                 index += 1
             index += 1
