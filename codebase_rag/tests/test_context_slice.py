@@ -441,3 +441,41 @@ def test_doc_lookup_key_is_posix_separated(tmp_path: Path) -> None:
     # writer's own form is what the reader must send.
     assert key == cached_resolve_posix(tmp_path / "pkg/mod.py"), repr(key)
     assert "\\" not in key, repr(key)
+
+
+# A broken skip guard is invisible: if `_markdown_unavailable` silently returned
+# a constant, the two tests it gates would SKIP or would run without the grammar,
+# and a skip reads as green in every summary while also being the legitimate
+# state on a base install. So there is no baseline that looks wrong.
+#
+# Reading whatever THIS machine has cannot catch it. Both grammars load here, so
+# `not (block and inline)` is False and a guard hard-wired to `return False`
+# agrees on every full install -- and that is the worse mutant, because it means
+# "never skip", so a base install runs the doc tests without the grammar and
+# they FAIL rather than skip, which is #1591 in its original form. Only the
+# stuck-True twin disagrees on this machine, so testing one mutant makes the
+# assertion look sound.
+#
+# Drive all four loader states instead. No environment assumption, both stuck
+# mutants fail at least one row, and the `and` is pinned: a guard using `or`
+# passes the both-load row and differs on the mixed ones.
+@pytest.mark.parametrize(
+    ("block_ok", "inline_ok"),
+    [(True, True), (True, False), (False, True), (False, False)],
+)
+def test_the_markdown_skip_guard_tracks_the_real_loaders(
+    monkeypatch: pytest.MonkeyPatch, block_ok: bool, inline_ok: bool
+) -> None:
+    from codebase_rag.parsers import document_tier
+
+    monkeypatch.setattr(
+        document_tier, "_load_parser", lambda: object() if block_ok else None
+    )
+    monkeypatch.setattr(
+        document_tier, "_load_inline_parser", lambda: object() if inline_ok else None
+    )
+
+    assert _markdown_unavailable() == (not (block_ok and inline_ok)), (
+        f"guard says unavailable={_markdown_unavailable()} with "
+        f"block={block_ok} inline={inline_ok}"
+    )
