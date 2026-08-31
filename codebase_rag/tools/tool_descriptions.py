@@ -255,8 +255,9 @@ MCP_QUERY_CODE_GRAPH = (
     "'Show me all classes that implement the Repository interface'. "
     "Pass `project` to restrict results to one indexed project; use "
     "list_projects for the available names. Omit it to search them all. "
-    "The scope is enforced on the results, so it holds regardless of the "
-    "query generated."
+    "The scope is enforced on the results before they are capped, so it "
+    "holds regardless of the query generated and the result limit is spent "
+    "on rows from the requested project."
 )
 
 MCP_GET_CODE_SNIPPET = (
