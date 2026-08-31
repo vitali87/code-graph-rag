@@ -421,7 +421,12 @@ def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
         if arg.startswith("-"):
             # A value flag consumes the following token, which is its value
             # and not the program; the attached spelling (-vc=id) carries it.
-            if arg in cs.SHELL_AWK_VALUE_FLAGS:
+            # An OPTIONAL-argument flag takes its value attached only, so the
+            # next token is still the program and must not be stepped over.
+            if (
+                arg in cs.SHELL_AWK_VALUE_FLAGS
+                and arg not in cs.SHELL_AWK_OPTIONAL_ARG_FLAGS
+            ):
                 index += 2
             else:
                 index += 1
@@ -469,6 +474,26 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
         return None
 
     return _program_naming_flag(cmd_parts, cs.SHELL_GIT_EXEC_FLAGS)
+
+
+def _sed_awaits_operand(script: str) -> bool:
+    """Whether a sed script ends in a file command still missing its operand.
+
+    `sed -ew /tmp/p` splits as ["-ew", "/tmp/p"], so the `w` and its target
+    live in different argv entries. Only that shape needs the next token
+    joined; joining always would scan input filenames as script text.
+    """
+    return bool(re.search(r"[wWrR]\s*$", script))
+
+
+def _is_sed_suffix(token: str) -> bool:
+    """Whether a token plausibly is BSD sed's -i backup suffix.
+
+    A suffix is short and inert (`.bak`, `ext`, ``); a script contains
+    whitespace or sed command punctuation. Distinguishing them keeps an
+    ordinary input filename from being scanned as script text.
+    """
+    return len(token) <= 8 and not any(c in token for c in " \t;{}/'\"")
 
 
 def _sed_script_skeleton(script: str) -> str:
@@ -544,82 +569,85 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     # `sed -ew /tmp/p` gives argv ["-ew", "/tmp/p"] and real sed writes the
     # file, so each token scanned alone never sees the `w` with its target.
     # Joining the remainder keeps them together.
+    # Collect every token that could be script text, under either
+    # implementation's reading. Rules, once, rather than a patch per case:
+    #
+    #  * `-e X` / `-eX` / `--expression=X` give script text directly.
+    #  * `-i`/`-l` are read differently by GNU and BSD, so BOTH readings are
+    #    collected: the operand, and the token after it when the operand
+    #    looks like a suffix rather than a script.
+    #  * The first bare token is the script; the tokens after it are INPUT
+    #    FILES and must not be scanned -- a filename like README.md would
+    #    otherwise trip the [wWrR] anchor on "RE".
+    #  * The one exception is a script ending in a bare file command, where
+    #    the operand is genuinely the next argv entry (`sed -ew /tmp/p`).
     scripts: list[str] = []
+
+    def add(position: int) -> None:
+        if not 0 < position < len(cmd_parts):
+            return
+        script = cmd_parts[position]
+        if _sed_awaits_operand(script) and position + 1 < len(cmd_parts):
+            script = f"{script} {cmd_parts[position + 1]}"
+        scripts.append(script)
+
     index = 1
     while index < len(cmd_parts):
         arg = cmd_parts[index]
+
         if not arg.startswith("-"):
-            # The first non-flag token is the script when no -e/-f gave one;
-            # the tokens after it are input files. Joining the remainder
-            # matters because a command can span two tokens (`sed -ew /tmp/p`
-            # is argv ["-ew", "/tmp/p"] and real sed writes the file).
-            scripts.append(" ".join(cmd_parts[index:]))
+            # Once -e or -f has supplied a script, every bare token is an
+            # input FILE. Treating one as a script scanned filenames, and
+            # `sed -e 's/a/b/' README.md` tripped the anchor on "RE".
+            if not scripts:
+                add(index)
             break
-        if arg in cs.SHELL_SED_VALUE_FLAGS:
-            # Its operand is a value, not a script; step over both.
-            index += 2
+
+        if _flag_name(arg) in cs.SHELL_SED_OPTIONAL_ARG_FLAGS and "=" in arg:
+            # `--in-place=.bak`: the attached value is a SUFFIX, not script
+            # text, so the script is the next token.
+            add(index + 1)
+            index += 1
             continue
+
+        if arg in cs.SHELL_SED_OPTIONAL_ARG_FLAGS:
+            operand = cmd_parts[index + 1 : index + 2]
+            add(index + 1)
+            if operand and _is_sed_suffix(operand[0]):
+                add(index + 2)
+                index += 2
+                continue
+            index += 1
+            continue
+
         if any(
             arg.startswith(flag) and len(arg) > len(flag)
             for flag in cs.SHELL_SED_OPTIONAL_ARG_FLAGS
             if not flag.startswith("--")
         ):
-            # `-i.bak`: the suffix is attached, so the NEXT token is the
-            # script and nothing else is consumed.
             index += 1
             continue
-        if arg in cs.SHELL_SED_OPTIONAL_ARG_FLAGS:
-            # The implementations disagree: GNU's -i takes an OPTIONAL
-            # attached-only suffix (so the next token is the SCRIPT), while
-            # BSD's takes a separate one (so the next token is a suffix and
-            # the script follows it). Scan both readings as candidate
-            # scripts, since a suffix like `.bak` or `ext` matches no command
-            # anchor while a real script does. Picking one reading is what
-            # let `sed -i 'w /tmp/evil'` through on GNU.
-            # Add the operands as candidates but do NOT consume them: a
-            # later `-e` may carry the real script, and stopping here missed
-            # `sed -i ext -e '<script>'`.
-            # Both operands are candidate scripts under one reading or the
-            # other, so scan both. Then step past the BSD suffix operand, or
-            # the non-flag branch below would treat it as the script and stop
-            # before a later -e carrying the real one.
-            for offset in (1, 2):
-                if index + offset < len(cmd_parts) and not cmd_parts[
-                    index + offset
-                ].startswith("-"):
-                    scripts.append(cmd_parts[index + offset])
-            following = cmd_parts[index + 1 : index + 2]
-            takes_separate_suffix = bool(following) and not following[0].startswith("-")
-            index += 2 if takes_separate_suffix else 1
-            continue
-        known = _flag_name(arg) in cs.SHELL_SED_KNOWN_FLAGS or any(
-            arg.startswith(flag) and len(arg) > len(flag)
-            for flag in cs.SHELL_SED_VALUE_FLAGS
-            if not flag.startswith("--")
-        )
+
+        known = _flag_name(arg) in cs.SHELL_SED_KNOWN_FLAGS
         if not known and not arg.startswith("--") and len(arg) > 2:
-            # Short flags bundle (`-an`, `-nE`), so a cluster is known when
-            # every letter in it is. Refusing the whole cluster because the
-            # combined token is absent from the list rejected ordinary sed.
+            # Short flags bundle (`-an`, `-nE`): known when every letter is.
             known = all(f"-{letter}" in cs.SHELL_SED_KNOWN_FLAGS for letter in arg[1:])
         if not known and "=" not in arg:
-            # An option this validator cannot classify may or may not consume
-            # the next token, so the script's position is unknown. Refuse
-            # rather than guess, the same rule the xargs scanner uses.
+            # An unclassifiable option may or may not consume the next token,
+            # so the script's position is unknown. Refuse rather than guess.
             return "an option this validator cannot interpret"
+
         if "=" in arg:
             scripts.append(arg.split("=", 1)[1])
         elif arg.startswith("-e") and len(arg) > 2:
-            # Attached script; its operand may be the next token.
-            scripts.append(" ".join([arg[2:], *cmd_parts[index + 1 : index + 2]]))
-        elif arg in ("-e", "--expression") and index + 1 < len(cmd_parts):
-            # EACH -e carries its own script. Joining the whole remainder
-            # instead swallowed later `-e` scripts into one string, where a
-            # command lost its position anchor: `sed -e p -e 'w /tmp/x'`
-            # became "p -e w /tmp/x f" and the w read as ordinary text, while
-            # real sed wrote the file.
-            scripts.append(" ".join(cmd_parts[index + 1 : index + 3]))
+            attached = arg[2:]
+            if _sed_awaits_operand(attached) and index + 1 < len(cmd_parts):
+                attached = f"{attached} {cmd_parts[index + 1]}"
+            scripts.append(attached)
+        elif arg in ("-e", "--expression"):
+            add(index + 1)
             index += 1
+
         index += 1
 
     for arg in scripts:

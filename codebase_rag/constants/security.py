@@ -185,18 +185,23 @@ SHELL_CMD_RG = "rg"
 # the config-key suffix rule backstops the key names. Checked against 13
 # program-naming flags (13 matched) and 13 ordinary ones (0 matched); `--pre`
 # and `--gpg-sign` follow no convention and stay named explicitly.
+# NOTE: "filter" and "pack" were tried and removed. git spells object
+# filters and pack files with the same words -- --diff-filter, --filter,
+# --keep-largest-pack, --keep-pack -- and none names a program. The
+# genuine command runners (--tree-filter and the rest of filter-branch,
+# --upload-pack, --receive-pack) are in the explicit lists, which is the
+# right place for a word that means a program in one flag and data in
+# another.
 SHELL_PROGRAM_NAMING_FLAG_SUFFIXES = (
     "cmd",
     "command",
     "exec",
-    "pack",
     "bin",
     "program",
     "tool",
     "helper",
     "proxy",
     "hook",
-    "filter",
     "editor",
     "pager",
     "server",
@@ -225,6 +230,14 @@ SHELL_CMD_AWK = "awk"
 # in this file.
 SHELL_AWK_PROGRAM_FILE_FLAGS = frozenset({"--file", "--exec", "--source", "-E"})
 
+# gawk flags whose argument is OPTIONAL and attached-only (-p[file],
+# --profile[=file] and friends). Filing them as value-taking steps over the
+# program text. Not execution-verified: this host has BSD awk only, so this
+# rests on gawk's documented arity.
+SHELL_AWK_OPTIONAL_ARG_FLAGS = frozenset(
+    {"-p", "-D", "-o", "--pretty-print", "--debug", "--profile"}
+)
+
 SHELL_AWK_VALUE_FLAGS = frozenset(
     {
         "-v",
@@ -240,10 +253,7 @@ SHELL_AWK_VALUE_FLAGS = frozenset(
         # VALUE as the program and stops, never reaching the real one.
         "-i",
         "-l",
-        "-o",
         "-E",
-        "-D",
-        "-p",
         "--include",
         "--load",
         "--pretty-print",
@@ -328,8 +338,14 @@ SHELL_SED_KNOWN_FLAGS = frozenset(
 # separate-value steps over the SCRIPT on GNU -- and CI runs GNU. The safe
 # reading is the one that still scans the script, so -i is attached-only here
 # and the BSD `sed -i ext SCRIPT` spelling is handled by scanning both tokens.
-SHELL_SED_OPTIONAL_ARG_FLAGS = frozenset({"-i", "--in-place"})
-SHELL_SED_VALUE_FLAGS = frozenset({"-l", "--line-length"})
+# Flags where the implementations disagree about the operand, so BOTH
+# readings are scanned rather than one picked. -i: GNU optional attached-only,
+# BSD separate. -l: BSD boolean (it is inside the [-EHalnru] cluster in BSD's
+# synopsis), GNU value-taking. Filing either by one manual alone steps over
+# the script on the other implementation -- verified: BSD `sed -l 'w FILE'`
+# wrote the file while the scanner saw no script.
+SHELL_SED_OPTIONAL_ARG_FLAGS = frozenset({"-i", "--in-place", "-l", "--line-length"})
+SHELL_SED_VALUE_FLAGS: frozenset[str] = frozenset()
 
 SHELL_SED_SCRIPT_FILE_FLAGS = frozenset({"-f", "--file"})
 
@@ -497,6 +513,10 @@ SHELL_GIT_EXEC_FLAGS = frozenset(
 SHELL_GIT_EXEC_SUBCOMMAND_ARGS = frozenset(
     {
         "foreach",
+        # --setup runs shell code once before the filters and is the one
+        # flag in the filter-branch family without a "filter" suffix, so
+        # the suffix backstop misses it too. Verified creating a file.
+        "--setup",
         "run",
         "--tree-filter",
         "--index-filter",

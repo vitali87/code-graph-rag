@@ -2191,8 +2191,15 @@ _SED_KNOWN_ARITIES = (
     ("--posix", "boolean"),
     ("--sandbox", "boolean"),
     ("--debug", "boolean"),
-    ("-l", "value"),
-    ("--line-length", "value"),
+    # -l is a BOOLEAN on BSD (it sits inside the [-EHalnru] cluster in BSD's
+    # synopsis) and value-taking on GNU. Filing it "value" from GNU's manual
+    # alone is what the previous version of this table did -- encoding the
+    # very bug it exists to catch, because the arities were fixed from one
+    # implementation while the other was the one running. Both -i and -l are
+    # "optional" here in the sense that matters: the operand may or may not
+    # be the script, so both readings must keep it visible.
+    ("-l", "optional"),
+    ("--line-length", "optional"),
     ("-i", "optional"),
     ("--in-place", "optional"),
 )
