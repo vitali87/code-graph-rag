@@ -2347,6 +2347,59 @@ def test_everyday_invocations_are_not_blocked(segment: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "segment",
+    (
+        "git filter-branch --tree-filter id H",
+        "git filter-branch --index-filter id H",
+        "git filter-branch --parent-filter id H",
+        "git filter-branch --msg-filter id H",
+        "git filter-branch --commit-filter id H",
+        "git filter-branch --tag-name-filter id H",
+        "git filter-branch --subdirectory-filter x H",
+        "git filter-branch --env-filter id H",
+        "git filter-branch --setup id H",
+        "git clone --upload-pack id x",
+        "git fetch --upload-pack id",
+        "git push --receive-pack id",
+        "git clone --upload-pack=id x",
+        "git push --receive-pack=id",
+    ),
+)
+def test_git_program_running_filter_and_pack_flags_still_block(
+    segment: str,
+) -> None:
+    # "filter" and "pack" were removed from the suffix backstop because git
+    # spells object filters and pack FILES with the same words. These are
+    # the flags where the word does mean a program, and they must still be
+    # refused -- by the explicit lists, since the suffix no longer reaches
+    # them.
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a command-running flag was allowed: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        "git log --diff-filter=A",
+        "git rev-list --filter=blob:none HEAD",
+        "git gc --keep-largest-pack",
+        "git repack --keep-pack=x",
+        "git log --filter=tree:0",
+        "git rev-list --filter-provided-objects HEAD",
+        "git repack -adk",
+        "git gc --prune=now",
+    ),
+)
+def test_git_data_filter_and_pack_flags_are_allowed(segment: str) -> None:
+    # ...and the same words naming DATA must not be blocked. Every one of
+    # these was refused while "filter" and "pack" were in the suffix list.
+    assert _validate_segment(segment, "", False) is None, (
+        f"a data flag was blocked: {segment}"
+    )
+
+
 def test_xargs_flag_partition_is_disjoint() -> None:
     # The scan reads the three sets as a partition: a flag lands in exactly one
     # and its arity follows. A flag in two sets makes the answer depend on
