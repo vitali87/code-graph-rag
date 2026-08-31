@@ -44,6 +44,41 @@ def _write(root: Path, name: str, body: str) -> None:
     (root / name).write_text(body, encoding="utf-8")
 
 
+def test_the_oracle_without_cgrignore_sees_both(tmp_path: Path) -> None:
+    """The control for the pair below.
+
+    Without it, the exclusion test passes on a fixture that produced no
+    rows at all: two empty sets are indistinguishable from a working
+    exclusion (issue #1520's own first attempt failed exactly that way).
+    """
+    _write(tmp_path, "visible.ts", "class Base {}\nclass Vis extends Base {}\n")
+    _write(tmp_path / "ignored", "hidden.ts", "class B3 {}\nclass Hid extends B3 {}\n")
+
+    inherits = ts_oracle_inheritance(tmp_path).inherits
+
+    assert ("visible.ts:2", "Base") in inherits, inherits
+    assert ("ignored/hidden.ts:2", "B3") in inherits, inherits
+
+
+def test_the_oracle_honours_cgrignore(tmp_path: Path) -> None:
+    """The oracle must grade the file set indexing covers.
+
+    `ts_cgr_inheritance` goes through `_capture`, which passes the merged
+    ignore rules to `GraphUpdater` (#1520). The oracle traverses the target
+    itself, so without this it graded a WIDER set than the graph contains
+    and a matching pair inside an excluded directory scored as a hit on
+    both sides (Greptile P1, PR #1519).
+    """
+    _write(tmp_path, "visible.ts", "class Base {}\nclass Vis extends Base {}\n")
+    _write(tmp_path / "ignored", "hidden.ts", "class B3 {}\nclass Hid extends B3 {}\n")
+    (tmp_path / ".cgrignore").write_text("ignored/\n", encoding="utf-8")
+
+    inherits = ts_oracle_inheritance(tmp_path).inherits
+
+    assert ("visible.ts:2", "Base") in inherits, "the fixture stopped producing rows"
+    assert ("ignored/hidden.ts:2", "B3") not in inherits, inherits
+
+
 def test_oracle_reports_extends_and_implements(tmp_path: Path) -> None:
     """A class's `extends` and `implements` both reach the graded set."""
     _write(

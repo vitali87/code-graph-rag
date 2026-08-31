@@ -14,11 +14,13 @@ import typer
 from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag.utils.path_utils import should_skip_path
 
 from . import constants as ec
 from . import logs as ls
 from .ast_oracle import _from_base_parts, _iter_py_files, _module_dotted
 from .cgr_graph import _capture
+from .ignore_rules import ignore_rules
 from .oracles.cpp_oracle import cpp_available, run_cpp_oracle
 
 if TYPE_CHECKING:
@@ -534,10 +536,30 @@ def ts_oracle_inheritance(target: Path) -> OracleResult:
     # test_ts_inheritance_eval.py pins it so a later oracle edit cannot
     # silently drop those rows from the graded set.
     graph = run_typescript_oracle(target)
+    # The oracle walks the target itself, so the configured exclusions have to
+    # be applied to its OUTPUT: `ts_cgr_inheritance` captures through
+    # `_capture`, which passes the merged ignore rules to `GraphUpdater`
+    # (issue #1520), and grading a wider set on the oracle side than the graph
+    # can contain scores an excluded directory as a hit on both sides
+    # (Greptile P1, PR #1519). Filtered through the indexer's own predicate
+    # rather than a second copy of the rule, for the same reason
+    # `_iter_py_files` is.
+    exclude_paths, unignore_paths = ignore_rules(target)
+    eligible: dict[str, bool] = {}
+
+    def _keep(rel_file: str) -> bool:
+        if rel_file not in eligible:
+            eligible[rel_file] = not should_skip_path(
+                target / rel_file, target, exclude_paths, unignore_paths, is_file=True
+            )
+        return eligible[rel_file]
+
     inherits: set[InheritEdge] = set()
     subclasses: set[str] = set()
     for edge in graph.name_edges:
         if edge.rel_type not in (_INHERITS, _IMPLEMENTS):
+            continue
+        if not _keep(edge.source.file):
             continue
         key = _location_key(edge.source.file, edge.source.start_line)
         subclasses.add(key)
