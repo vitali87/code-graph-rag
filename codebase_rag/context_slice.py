@@ -85,15 +85,20 @@ def _prefix(project: str) -> str:
 
 
 def _normalise(text: str) -> str:
-    """Excerpt text with the checkout's line endings folded to "\n".
+    r"""Excerpt text with the checkout's line endings folded to "\n".
 
     Excerpts are compared and displayed, never written back, so they must not
-    carry a b"\r". Both sources need this: the graph stores the source it was
-    indexed from, and `extract_source_lines` keeps the file's own endings.
-    Normalising only the disk path left the graph path -- the one `_target_piece`
-    PREFERS -- still emitting "def scale(a: int) -> int:\r", so every Windows
-    unit job failed. Deliberately not done in the shared reader, whose byte
-    fidelity other callers rely on.
+    carry a "\r". Both sources need this and for the SAME reason: the graph
+    stores no source, so `graph_query.definition` fills it by calling
+    `extract_source_lines` itself, reaching the same disk reader without going
+    through `_lines`. Normalising only `_lines` therefore left the path
+    `_target_piece` PREFERS still emitting "def scale(a: int) -> int:\r", and
+    every Windows unit job failed. Deliberately not done in the shared reader,
+    whose byte fidelity other callers rely on.
+
+    Order matters: fold "\r\n" BEFORE a lone "\r", or every CRLF break becomes
+    two newlines. Dropping the "\r" instead of folding it would join
+    CR-separated lines; both mistakes are pinned by tests.
     """
     return text.replace("\r\n", "\n").replace("\r", "\n")
 

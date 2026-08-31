@@ -286,15 +286,22 @@ def test_excerpts_carry_no_carriage_return(tmp_path: Path, newline: str) -> None
     many = _lines(tmp_path, "mod.py", 1, 2)
     head = _header(tmp_path, "mod.py", 1, 2)
 
+    # Positive equality, not `"\r" not in ...`: the weak form is satisfied by
+    # any implementation that removes the CR by any means, including the
+    # swapped ordering `.replace("\r", "\n").replace("\r\n", "\n")` -- which
+    # doubles every line break and is exactly the mistake `_normalise` had to
+    # avoid. Pin the whole text so a wrong fold is visible.
     assert one == "def scale(a: int) -> int:", repr(one)
-    assert "\r" not in many, repr(many)
+    assert many == "def scale(a: int) -> int:\n    return a * 2", repr(many)
+    assert head.startswith("m"), repr(head)
     assert "\r" not in head, repr(head)
 
 
-# The disk path above is the FALLBACK. `_target_piece` prefers the source the
-# graph stored at index time, which keeps the indexed file's endings and never
-# reaches `_lines`, so normalising only the disk read left the common path
-# broken -- CI still failed on Windows while this suite was green locally.
+# The disk path above is the FALLBACK. `_target_piece` prefers
+# `definition["source"]`, which `graph_query.definition` fills by calling
+# `extract_source_lines` itself -- the same disk reader, but reached without
+# going through `_lines`. Normalising only `_lines` therefore left the PREFERRED
+# path broken, and CI kept failing on Windows while this suite was green.
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
 def test_graph_stored_source_is_normalised(newline: str) -> None:
     from codebase_rag.context_slice import _target_piece
@@ -311,5 +318,42 @@ def test_graph_stored_source_is_normalised(newline: str) -> None:
         None,
     )
 
-    assert "\r" not in piece.source, repr(piece.source)
-    assert piece.source.startswith("def scale(a: int) -> int:")
+    assert piece.source == "def scale(a: int) -> int:\n    return a * 2", repr(
+        piece.source
+    )
+
+
+# A lone CR (old-Mac endings, and what a truncated CRLF write leaves behind) is
+# the only input that separates a correct fold from `.replace("\r", "")`. Both
+# satisfy every CRLF assertion above, because on CRLF input they are identical;
+# they differ only here, where dropping the CR joins two lines into one. Without
+# this case the second `.replace` in `_normalise` is untested.
+def test_a_lone_carriage_return_becomes_a_newline(tmp_path: Path) -> None:
+    from codebase_rag.context_slice import _lines
+
+    (tmp_path / "mac.py").write_bytes(b"def scale(a: int) -> int:\r    return a * 2\r")
+
+    assert (
+        _lines(tmp_path, "mac.py", 1, 2)
+        == "def scale(a: int) -> int:\n    return a * 2"
+    )
+
+
+# `_test_pieces` is the third `_normalise` call site and the only one no CRLF
+# test reached: the fixture writes via `Path.write_text`, which emits LF, so
+# reverting that one call left the suite green. Drive the contract it depends
+# on -- `graph_query.definition` reading a CRLF file off disk -- so the piece
+# built from it is pinned to the folded text.
+def test_definition_source_from_a_crlf_file_is_normalised(tmp_path: Path) -> None:
+    from codebase_rag.context_slice import _normalise
+    from codebase_rag.utils.source_extraction import extract_source_lines
+
+    (tmp_path / "t.py").write_bytes(b"def test_run():\r\n    assert run() == 6\r\n")
+    raw = extract_source_lines(tmp_path / "t.py", 1, 2)
+
+    # The reader deliberately preserves the file's bytes; the fold is the
+    # caller's job, which is precisely why every consumer needs `_normalise`.
+    assert "\r" in (raw or ""), repr(raw)
+    assert (
+        _normalise(raw or "").rstrip("\n") == "def test_run():\n    assert run() == 6"
+    ), repr(raw)
