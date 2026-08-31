@@ -293,8 +293,10 @@ def test_excerpts_carry_no_carriage_return(tmp_path: Path, newline: str) -> None
     # avoid. Pin the whole text so a wrong fold is visible.
     assert one == "def scale(a: int) -> int:", repr(one)
     assert many == "def scale(a: int) -> int:\n    return a * 2", repr(many)
-    assert head.startswith("m"), repr(head)
-    assert "\r" not in head, repr(head)
+    # `_header` returns the definition's first line, identical under either
+    # ending once the fold is correct. Pin it exactly, for the same reason as
+    # the two above: a presence check passes for any CR removal at all.
+    assert head == "def scale(a: int) -> int:", repr(head)
 
 
 # The disk path above is the FALLBACK. `_target_piece` prefers
