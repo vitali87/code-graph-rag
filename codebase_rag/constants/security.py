@@ -133,6 +133,12 @@ SHELL_GIT_GLOBAL_VALUE_FLAGS = frozenset(
         "--work-tree",
         "--namespace",
         "--super-prefix",
+        # From git's own synopsis, absent from this set until enumerated
+        # against it. `git --attr-source HEAD -c core.pager=x status` runs
+        # normally and honours the -c, so treating HEAD as the subcommand
+        # stopped the scan before the key.
+        "--attr-source",
+        "--list-cmds",
     }
 )
 
