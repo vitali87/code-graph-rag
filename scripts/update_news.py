@@ -8,8 +8,10 @@ a dedicated news generation once fed the previous NEWS entries to the model as
 dedup context, and the model paraphrased those old entries into fake "news"
 (v0.0.720 re-announced Ruby, structural search, and data-flow tracing), so news
 is now derived from the Highlights, whose prompt carries no old entries to
-anchor on. Bullets may use either `- ` or the Highlights' `* ` marker and are
-normalised to the NEWS.md entry format `- **Theme**: sentence`. Anything else
+anchor on. Bullets may use either `- ` or the Highlights' `* ` marker, and the colon
+may sit inside or outside the bold theme (`**Theme:**` or `**Theme**:`,
+both of which satisfy the generator's prompt); all are normalised to the
+NEWS.md entry format `- **Theme**: sentence`. Anything else
 in the fragment is ignored, so a malformed or empty AI response degrades
 to a no-op instead of corrupting the file. Exit code 0 always signals NEWS.md
 is in a valid state; the caller decides whether a no-op warrants skipping the
@@ -26,8 +28,24 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)\*\*: \S.*$")
-HIGHLIGHT_BULLET = re.compile(r"^[-*]\s+\*\*(?P<theme>[^*]+?)\*\*:\s*(?P<text>\S.*)$")
+# The generator is asked for "a short bold theme followed by a colon" and
+# satisfies that both ways: "**Theme**: body" and "**Theme:** body". Every
+# v0.0.820 highlight used the second form, so not one bullet parsed, the
+# release inserted no news, and the step still reported success (issue #1605).
+# Both placements are accepted and the theme group excludes a trailing colon,
+# so "**X:**" and "**X**:" produce the same dedup key and still match the
+# entries already in NEWS.md.
+#
+# The colon must sit on the FIRST bold, never merely somewhere after it. A
+# looser `:?\*\*:?` lets the theme group end at a LATER bold, so
+# "- **Improvements** to **CI automation**: ..." captures theme="Improvements"
+# and leaves "CI automation" in the body, where is_feature_theme never
+# inspects it - a CI entry then reaches Latest News, which is the one thing
+# this module exists to prevent.
+BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:) +(?P<text>\S.*)$")
+HIGHLIGHT_BULLET = re.compile(
+    r"^[-*]\s+\*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:)\s*(?P<text>\S.*)$"
+)
 
 # Placed directly below the block of entries the latest release inserted, so
 # the README's "Latest News" can render that whole block instead of a fixed
@@ -79,7 +97,9 @@ def extract_bullets(fragment: str) -> list[str]:
     A bullet must match the NEWS.md entry format AND name a product feature;
     non-feature themes (CI/devx/release/bug/etc.) are discarded here so neither
     the count cap nor the dedup downstream ever considers them. Highlights-style
-    `* ` bullets are accepted and normalised to the NEWS.md `- ` marker.
+    `* ` bullets are accepted and normalised to the NEWS.md `- ` marker, as
+    is a colon inside the bold theme (`**Theme:**`), which the generator
+    emits and which parsed to nothing before issue #1605.
     """
     bullets: list[str] = []
     for line in fragment.splitlines():
@@ -88,7 +108,8 @@ def extract_bullets(fragment: str) -> list[str]:
             stripped = f"- {stripped[2:]}"
         match = BULLET_PATTERN.match(stripped)
         if match and is_feature_theme(match.group("theme")):
-            bullets.append(stripped)
+            theme = match.group("theme").strip()
+            bullets.append(f"- **{theme}**: {match.group('text')}")
     return bullets
 
 

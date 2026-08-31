@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from scripts.update_news import (
+    BULLET_PATTERN,
+    HIGHLIGHT_BULLET,
     LATEST_RELEASE_MARKER,
     create_aggregated_bullet,
     existing_themes,
@@ -44,6 +46,130 @@ class TestExtractBullets:
         )
         assert extract_bullets(fragment) == [
             "- **Web Search**: The agent can now search the web."
+        ]
+
+    def test_accepts_a_colon_inside_the_bold_theme(self) -> None:
+        # The generator is asked for "a short bold theme followed by a colon",
+        # which it satisfies both ways: "**Theme**:" and "**Theme:**". Every
+        # v0.0.820 highlight used the second form, so no bullet parsed, the
+        # release inserted no news, and the run still reported success. Accept
+        # both placements rather than relying on the model's choice.
+        fragment = (
+            "## Highlights\n"
+            "* **Parsing Improvements:** PHP `use function` imports resolve.\n"
+            "* **Graph Enhancements:**  Call-site locations are stored on edges.\n"
+        )
+        assert extract_bullets(fragment) == [
+            "- **Parsing Improvements**: PHP `use function` imports resolve.",
+            "- **Graph Enhancements**: Call-site locations are stored on edges.",
+        ]
+
+    def test_both_patterns_accept_both_colon_placements(self) -> None:
+        # main carries TWO patterns: BULLET_PATTERN (NEWS "- " entries) and
+        # HIGHLIGHT_BULLET (release "* " highlights). Both required the colon
+        # OUTSIDE the bold while the generator emits it inside, so both need
+        # the alternation or the aggregation fallback stays blind (#1605).
+        for line in (
+            "- **Parsing Improvements:** body.",
+            "- **Parsing Improvements**: body.",
+        ):
+            match = BULLET_PATTERN.match(line)
+            assert match is not None, line
+            assert match.group("theme") == "Parsing Improvements", match.group("theme")
+        for line in (
+            "* **Parsing Improvements:** body.",
+            "* **Parsing Improvements**: body.",
+        ):
+            match = HIGHLIGHT_BULLET.match(line)
+            assert match is not None, line
+            assert match.group("theme") == "Parsing Improvements", match.group("theme")
+
+    def test_extract_bullets_consumes_the_named_group_end_to_end(self) -> None:
+        # The regex group feeding the f-string in extract_bullets is named
+        # `text`; main previously read `body`. Matching the pattern alone
+        # cannot catch that mismatch - only calling the function does, and it
+        # raises IndexError on every parsed bullet when the names disagree.
+        # A multi-line fragment mixing both spellings, so the loop is exercised
+        # rather than a single match.
+        fragment = (
+            "## Highlights\n"
+            "* **Parsing Improvements:** PHP imports resolve.\n"
+            "* **Web Search**: the agent searches.\n"
+            "* **CI Speedups:** builds are faster.\n"
+        )
+        assert extract_bullets(fragment) == [
+            "- **Parsing Improvements**: PHP imports resolve.",
+            "- **Web Search**: the agent searches.",
+        ]
+
+    def test_the_filter_inspects_the_theme_only_which_a_later_bold_exploits(
+        self,
+    ) -> None:
+        """Pins a PRE-EXISTING limit, widened but not created by this change.
+
+        `is_feature_theme` is passed the theme and nothing else, so a
+        non-feature word living in the BODY is never inspected. On main
+        (colon outside the bold only) this already admits
+        "- **Improvements**: to **CI automation**: ..."; accepting the
+        colon-inside spelling necessarily admits its twin. Anchoring the
+        colon to the FIRST bold is what stops the theme group itself from
+        running past a later bold, which is the part this change does fix.
+
+        The residual hole is the filter's input, not the pattern, and
+        closing it means inspecting the body too - a behaviour change to
+        what counts as a feature entry, out of scope here.
+        """
+        # Fixed by this change: the theme group cannot end at a LATER bold.
+        assert extract_bullets("- **Improvements** to **CI automation**: x.") == []
+        assert extract_bullets("* **Improvements** to **CI automation**: x.") == []
+        # Not fixed, and equally true before it: a colon directly after the
+        # first bold makes everything else a body the filter never reads.
+        leaked = extract_bullets("- **Improvements**: to **CI automation**: x.")
+        assert leaked == ["- **Improvements**: to **CI automation**: x."]
+        assert is_feature_theme("Improvements") is True
+        assert is_feature_theme("CI automation") is False
+
+    def test_a_missing_space_after_the_colon_is_pinned_not_undefined(self) -> None:
+        """The two extractors disagree here, and did so before this change.
+
+        `BULLET_PATTERN` requires at least one space after the colon;
+        `HIGHLIGHT_BULLET` uses `\\s*` and so accepts none. The generator is
+        not under our control, so a bullet with no space is possible: pinning
+        the split makes it a known, testable behaviour rather than an
+        undefined one, and any future unification has to change this test
+        deliberately. Verified identical on origin/main (35bc841f).
+        Tracked as issue #1609, which measures the user-visible symptom: the
+        bullet is demoted into the Release Summary aggregate when it is the
+        only feature bullet, and vanishes entirely when it is not.
+        """
+        for line in ("- **Theme:**No space here.", "- **Theme**:No space here."):
+            assert extract_bullets(line) == [], line
+        for line in ("* **Theme:**No space here.", "* **Theme**:No space here."):
+            assert extract_all_highlights(line) == [("Theme", "No space here.")], line
+
+    def test_the_theme_key_never_keeps_a_trailing_colon(self) -> None:
+        # existing_themes() dedupes NEW entries against NEWS.md using the
+        # captured theme. If "**X:**" yielded "X:" it would never equal the
+        # "X" already in NEWS.md, so every release would re-insert its own
+        # entries - the same defect class one step downstream.
+        # Asserted on the dedup KEY rather than on prepend_news's output:
+        # main's aggregation fallback synthesises a "Release Improvements"
+        # entry when nothing fresh survives, so a no-op is no longer the
+        # observable behaviour of a fully-deduped fragment.
+        news = "# Latest News\n\n- **Ruby Support**: already here.\n"
+        assert existing_themes(news) == {"ruby support"}
+        colon_inside = extract_bullets("- **Ruby Support:** duplicate attempt.")
+        assert colon_inside == ["- **Ruby Support**: duplicate attempt."]
+        # The captured theme must equal the key already in NEWS.md, or every
+        # release would re-insert its own entries.
+        assert existing_themes(colon_inside[0]) == existing_themes(news)
+
+    def test_the_aggregation_fallback_sees_colon_inside_highlights(self) -> None:
+        # extract_all_highlights feeds the no-features-passed aggregation, so
+        # a blind pattern there means an empty aggregated entry rather than a
+        # missing one - a different symptom of the same parse failure.
+        assert extract_all_highlights("* **CI Speedups:** faster builds.") == [
+            ("CI Speedups", "faster builds.")
         ]
 
     def test_empty_fragment_yields_nothing(self) -> None:
