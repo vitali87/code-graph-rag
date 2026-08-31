@@ -65,11 +65,6 @@ _SOURCE = Path(__file__).resolve().parents[1] / "graph_updater.py"
 #   line-number comparison can see.
 # * "The delombok state commits ONLY here, after every pass and the graph
 #   flush" -- `flush_all` is called twice, so it is a poor anchor.
-# * "The C# Roslyn frontend must run before Pass 2" and the Go equivalent --
-#   stated above the frontends, not above `_process_files`. A "before"
-#   constraint whose prose sits above the earlier call is expressible via
-#   the `earlier:` prefix below, but only when that prose sits directly
-#   above the call.
 # * "Before the partial join on an incremental run: rebuild the type
 #   locations for unchanged .cs files" (#1229) -- a genuine
 #   `_rehydrate_csharp_type_locations` -> `_join_csharp_partials`
@@ -87,6 +82,21 @@ _SOURCE = Path(__file__).resolve().parents[1] / "graph_updater.py"
 # `reason` is the dependency itself, quoted from that comment.
 _ORDER: tuple[tuple[str, str, str, str], ...] = (
     # -- around Pass 2 (`_process_files`) --
+    (
+        "_run_csharp_frontend",
+        "_process_files",
+        "earlier:must run before pass 2",
+        "the Roslyn frontend produces a base-classification oracle that "
+        "split_csharp_bases consults while ingesting each type's "
+        "INHERITS/IMPLEMENTS edges during Pass 2",
+    ),
+    (
+        "_run_go_frontend",
+        "_process_files",
+        "earlier:before pass 2",
+        "Go facts are read at Pass 3 and the name-alias target index is "
+        "filled during Pass 2, so they must load before it",
+    ),
     (
         "_rehydrate_go_type_locations",
         "_join_go_implements",
