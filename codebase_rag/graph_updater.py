@@ -2385,8 +2385,28 @@ class GraphUpdater:
         # file's (issue #1229 phase 4).
         present = {file_key for _fp, file_key, _new, _b in changed_entries}
         eligible_by_key = {file_key: fp for fp, file_key in eligible_files}
+        # A dependent of a DELETED file is in the same position: its edges
+        # into that file go with the subtree and cannot be restored, and a
+        # clean index would re-derive them from what remains (a phantom
+        # external parent, a fallback, or nothing). The deleted set is what
+        # the cache remembers and the walk no longer finds; it joins the
+        # dependents query now, while the subtrees still exist to match
+        # against (issue #1567).
+        # `old_hashes` has already had the Delombok-stale keys popped (so a
+        # changed overlay forces those files through a reparse), which would
+        # otherwise hide a file that is BOTH stale and deleted: it would be
+        # absent from the cache set here and never join the dependents query.
+        # Union them back in; the walk-eligible subtraction below drops the
+        # ones that still exist (issue #1567).
+        deleted_before_parse = sorted(
+            (set(old_hashes) | self._delombok_stale_keys)
+            - eligible_by_key.keys()
+            - unreadable_keys
+        )
         affected = 0
-        for caller_key in self._affected_caller_keys(reindexed_keys):
+        for caller_key in self._affected_caller_keys(
+            sorted({*reindexed_keys, *deleted_before_parse})
+        ):
             if caller_key in present:
                 continue
             caller_path = eligible_by_key.get(caller_key)
