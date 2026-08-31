@@ -573,42 +573,6 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
     return _program_naming_flag(cmd_parts, cs.SHELL_GIT_EXEC_FLAGS)
 
 
-def _sed_looks_like_a_command(token: str) -> bool:
-    """Whether a token in an ambiguous slot can be sed script text.
-
-    That slot holds a `-i` backup suffix or an input filename under one
-    reading and the script under the other. A suffix and a filename are plain
-    words; a script carries a separator, a delimiter or command punctuation.
-    This is a POSITIONAL exception -- it applies only where the grammar is
-    genuinely ambiguous, never to a token sed will certainly execute.
-    """
-    # `/` is deliberately absent: a path separator is the commonest thing in
-    # a filename (src/Reader.py) and says nothing about script-ness. A script
-    # that needs one also carries a separator or a delimiter pair, which the
-    # remaining characters catch.
-    token = token.strip()
-    if re.search(r"[;{}|$!]", token):
-        return True
-    # Whitespace alone does NOT imply script text -- a filename can contain a
-    # space ("raw data.txt"). A command followed by an operand does, but only
-    # when the first word is exactly a command letter, which is the shape
-    # `w out.txt` has and `raw data.txt` does not.
-    if re.match(r"[\d$,~+!]*[wWrRe]\s+\S", token):
-        return True
-    # A three-delimiter substitution is unmistakably script text even with no
-    # whitespace: `s/a/b/e`. A filename cannot present that shape.
-    if re.search(r"[sy](.).*?\1.*?\1", token):
-        return True
-    # An ADDRESS followed by a command letter is script text: `1w/tmp/x`,
-    # `$d`, `2,5p`. A filename does not begin with a numeric or `$` address.
-    if re.match(r"[\d$][\d,~+$]*[a-zA-Z]", token):
-        return True
-    # A command letter followed IMMEDIATELY by a path is script text
-    # (`w/tmp/x`), where a filename's path separator follows a word
-    # (`src/Reader.py`). The position of the slash is what separates them.
-    return bool(re.match(r"[\d$,~+!]*[wWrRe]/", token))
-
-
 def _sed_awaits_operand(script: str) -> bool:
     """Whether a sed script ends in a file command still missing its operand.
 
@@ -705,12 +669,15 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     #  * The one exception is a script ending in a bare file command, where
     #    the operand is genuinely the next argv entry (`sed -ew /tmp/p`).
     scripts: list[str] = []
-    # Indices into `scripts` for the -i suffix slot, the ONE position that can
-    # present an input filename as a candidate script. The anchors accept an
-    # attached operand (GNU sed's `wout1` writes `out1`), so they necessarily
-    # match filenames too; excluding by position is structural, where every
-    # attempt to tell them apart by inspecting the token was a bypass.
-    filename_slots: list[int] = []
+    # Every candidate is scanned, including the -i operand slots. Those slots
+    # are genuinely ambiguous: `sed -i ext wout1 in.txt` treats `wout1` as a
+    # SCRIPT under BSD -- verified, it wrote `out1` -- and as a FILENAME under
+    # GNU. Four attempts to tell them apart by inspecting the token were each
+    # bypassable, because a backup suffix and a file command are the same
+    # shape. The cost of scanning is a false positive on the BSD-only
+    # `sed -i SUFFIX FILE` spelling when the FILENAME contains r/w/e; GNU
+    # users write `sed -i.bak` or `sed -i`, which have no such slot. A rare
+    # over-block is the right side of a verified write primitive.
 
     def add(position: int) -> None:
         if not 0 < position < len(cmd_parts):
@@ -764,14 +731,18 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
                 # Both operands are ambiguous, and in opposite directions:
                 # under GNU the first is the script and the second an input
                 # file; under BSD the first is a suffix and the second the
-                # script. Scan both, but mark each as a slot that may hold a
-                # non-script (a filename or a suffix), so a single bare word
-                # there is not read as a command.
-                filename_slots.append(len(scripts))
+                # script.
+                #
+                # The first is never dangerous to scan: under GNU it is the
+                # script, under BSD a backup suffix, and a suffix matches no
+                # anchor. The second is scanned only when a token FOLLOWS it,
+                # because sed needs an input file after a script -- if
+                # nothing follows, the second token IS the input file and
+                # scanning it refuses `sed -i 1d README.md`, the commonest
+                # in-place edit there is.
                 add(index + 1)
-                if index + 2 <= len(cmd_parts) - 1:
-                    filename_slots.append(len(scripts))
-                add(index + 2)
+                if index + 3 <= len(cmd_parts) - 1:
+                    add(index + 2)
                 index += 1
             index += 1
             continue
@@ -806,13 +777,7 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
 
         index += 1
 
-    for position, arg in enumerate(scripts):
-        if position in filename_slots and not _sed_looks_like_a_command(arg):
-            # This slot can hold a suffix or an input filename rather than
-            # script text, and both are single bare words. A real script
-            # carries a separator, a delimiter or a command punctuation
-            # character, so a plain word here is not treated as one.
-            continue
+    for arg in scripts:
         skeleton = _sed_script_skeleton(arg)
         for pattern, reason in cs.SHELL_SED_EXEC_TOKENS:
             # The s///e and s///w patterns need the real text; the command

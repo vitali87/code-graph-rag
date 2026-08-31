@@ -1988,6 +1988,14 @@ def test_git_ordinary_config_keys_still_settable(key: str) -> None:
         # is LAST can only be a filename. Whitespace-based and
         # shape-based guesses were each a bypass in earlier rounds.
         "sed -i ext 'w/tmp/x' f",
+        # Known over-block, recorded rather than silently accepted: a BSD
+        # backup suffix beginning with e/w/r is indistinguishable from a
+        # GNU script, and GNU DOES execute `sed -i eid file`. Both readings
+        # must be scanned, so `sed -i ext 's/a/b/' f` is refused. Only the
+        # BSD-only `-i SUFFIX` spelling is affected; `sed -i.bak` and
+        # `sed -i` are unaffected and are the GNU forms.
+        "sed -i ext 's/a/b/' f",
+        "sed --in-place ext 's/a/b/' f",
         # GNU sed needs no separator OR slash: `wout1` writes `out1` and
         # `eid` runs `id`, verified against GNU sed 4.9. Requiring one was
         # a spelling rule and a bypass, the same class as the three
@@ -2068,8 +2076,6 @@ def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
         "sed '/[;]/d' f",
         "sed -e p -e d f",
         "sed 's/a/b/' notes.txt",
-        "sed -i ext 's/a/b/' f",
-        "sed --in-place ext 's/a/b/' f",
         "sed -l 5 's/a/b/' f",
         # Short flags bundle, and these are real GNU options. Refusing a
         # cluster because the combined token is absent from an enumerated
