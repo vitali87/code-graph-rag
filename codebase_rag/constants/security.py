@@ -126,6 +126,22 @@ SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
 # git flags that set a config key inline for a single command. `--config-env`
 # reads the value from an environment variable but sets the same keys, so it
 # reaches the same executable keys as `-c` (GHSA-wvxg-744g-6pcg).
+# git's own options, before the subcommand, that take a SEPARATE value. The
+# scan must step over the value: mistaking it for the subcommand stops the
+# scan early and misses a `-c` that follows (`git -C /tmp -c <key>=<v> ...`).
+SHELL_GIT_GLOBAL_VALUE_FLAGS = frozenset(
+    {
+        "-C",
+        "-c",
+        "--config-env",
+        "--git-dir",
+        "--work-tree",
+        "--namespace",
+        "--exec-path",
+        "--super-prefix",
+    }
+)
+
 SHELL_GIT_INLINE_CONFIG_FLAGS = frozenset({"-c", "--config-env"})
 
 SHELL_CMD_XARGS = "xargs"

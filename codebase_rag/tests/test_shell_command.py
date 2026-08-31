@@ -1502,6 +1502,12 @@ class TestYoloLauncherConfinement:
             "git -c alias.z=!id z",
             "git -c core.sshCommand=id status",
             "git --config-env=core.pager=EVIL log",
+            # A git global option that takes a separate value must not be
+            # mistaken for the subcommand: that would stop the scan before
+            # the `-c` behind it and wave the whole attack through.
+            "git -C /tmp -c core.sshCommand=id status",
+            "git --git-dir /tmp/.git -c core.sshCommand=id status",
+            "git --namespace ns -c core.pager=id log",
             # Unknown-flag bypass: `-J` was not in the value-flag set, so the
             # scan stepped over it, read `cat` as the program, and let python3
             # through. The scan now fails closed on any flag it cannot name.
@@ -1558,6 +1564,8 @@ class TestYoloLauncherConfinement:
             # real exec-key string in the subcommand's own -c, where scanning
             # every token reports a false positive and stopping does not.
             "git commit -c core.pager=x --allow-empty -m probe",
+            "git -C . status",
+            "git -c color.ui=always status",
         ),
     )
     async def test_yolo_still_runs_ordinary_commands(

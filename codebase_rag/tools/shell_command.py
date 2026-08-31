@@ -207,15 +207,23 @@ def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_GIT:
         return None
 
-    for index, arg in enumerate(cmd_parts[1:], start=1):
+    index = 1
+    while index < len(cmd_parts):
+        arg = cmd_parts[index]
+
         # git's own options end at the subcommand; `-c` after it belongs to the
         # subcommand and means something else entirely (`git commit -c <ref>`
-        # reuses a commit message and executes nothing).
+        # reuses a commit message and executes nothing). Reaching this on a
+        # value that belongs to a preceding flag would stop the scan early, so
+        # value-taking global flags consume their argument below.
         if not arg.startswith("-"):
             return None
 
         key: str | None = None
-        if arg in cs.SHELL_GIT_INLINE_CONFIG_FLAGS and index + 1 < len(cmd_parts):
+        separated = arg in cs.SHELL_GIT_INLINE_CONFIG_FLAGS and index + 1 < len(
+            cmd_parts
+        )
+        if separated:
             key = cmd_parts[index + 1]
         elif arg.startswith("-c") and len(arg) > 2:
             key = arg[2:]
@@ -224,6 +232,11 @@ def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
 
         if key and _is_git_config_exec_key(key.split("=", 1)[0]):
             return key.split("=", 1)[0]
+
+        if arg in cs.SHELL_GIT_GLOBAL_VALUE_FLAGS:
+            index += 2
+        else:
+            index += 1
 
     return None
 
