@@ -1446,12 +1446,12 @@ def _validate(segment: str) -> str | None:
     (
         # The reported vector: the existing `python -c` pattern only fires on
         # the literal token `os`, so any other module walks past it.
-        'xargs python3 -c "import subprocess;subprocess.call([\'id\'])"',
-        'xargs python3 -c "import pty;pty.spawn(\'/bin/sh\')"',
-        'xargs python3 -c "__import__(\'ctypes\')"',
+        "xargs python3 -c \"import subprocess;subprocess.call(['id'])\"",
+        "xargs python3 -c \"import pty;pty.spawn('/bin/sh')\"",
+        "xargs python3 -c \"__import__('ctypes')\"",
         # perl/ruby are blocked by their own blanket patterns, but node has no
         # equivalent, so it reaches execution through xargs unimpeded.
-        'xargs node -e "require(\'child_process\').execSync(\'id\')"',
+        "xargs node -e \"require('child_process').execSync('id')\"",
         # xargs' own flags must not hide the launched command from the parser.
         'xargs -I{} python3 -c "import subprocess"',
         "xargs -n1 -P4 node -e 1",
@@ -1460,7 +1460,9 @@ def _validate(segment: str) -> str | None:
     ),
 )
 def test_xargs_cannot_launch_non_allowlisted_programs(segment: str) -> None:
-    assert _validate(segment) is not None, f"xargs launched a non-allowlisted program: {segment}"
+    assert _validate(segment) is not None, (
+        f"xargs launched a non-allowlisted program: {segment}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1490,10 +1492,22 @@ class TestYoloLauncherConfinement:
     @pytest.mark.parametrize(
         "command",
         (
-            'xargs python3 -c "import subprocess;subprocess.call([\'id\'])"',
+            "xargs python3 -c \"import subprocess;subprocess.call(['id'])\"",
             "uv run python -c 1",
-            'find . -name x -exec python3 -c "1" ;',
+            # The `;` MUST be escaped. Unescaped, the shell parser consumes it
+            # as a separator and find fails on its own syntax, so the assertion
+            # passes against unfixed code and proves nothing.
+            'find . -name x -exec python3 -c "1" \\;',
+            'find . -name x -execdir python3 -c "1" +',
             "git -c alias.z=!id z",
+            "git -c core.sshCommand=id status",
+            "git --config-env=core.pager=EVIL log",
+            # Unknown-flag bypass: `-J` was not in the value-flag set, so the
+            # scan stepped over it, read `cat` as the program, and let python3
+            # through. The scan now fails closed on any flag it cannot name.
+            'xargs -J cat python3 -c "1"',
+            'xargs -R 2 python3 -c "1"',
+            'xargs --nosuchflag python3 -c "1"',
         ),
     )
     async def test_yolo_still_blocks_launchers(
@@ -1515,7 +1529,20 @@ class TestYoloLauncherConfinement:
             "echo hello",
             "ls",
             "xargs cat",
+            # Read-only find keeps working: it launches nothing without a
+            # mutating action, and yolo exists to run unattended work.
             "find . -name '*.py'",
+            "find . -type f",
+            # A KNOWN value flag still resolves to the real program, so the
+            # fail-closed rule has not collapsed into blocking all of xargs.
+            "xargs -n 1 cat",
+            "xargs -0 cat",
+            # `-c` after the subcommand is git's reuse-message flag, not a
+            # config setter. `git log -c HEAD` would not discriminate: HEAD is
+            # not an exec key, so it passes either way. This spelling puts a
+            # real exec-key string in the subcommand's own -c, where scanning
+            # every token reports a false positive and stopping does not.
+            "git commit -c core.pager=x --allow-empty -m probe",
         ),
     )
     async def test_yolo_still_runs_ordinary_commands(

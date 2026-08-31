@@ -123,14 +123,20 @@ SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
 # so they need approval even though `find` itself is a read tool. Kept here so
 # the security boundary is auditable in one place rather than inline in the
 # approval check.
+# git flags that set a config key inline for a single command. `--config-env`
+# reads the value from an environment variable but sets the same keys, so it
+# reaches the same executable keys as `-c` (GHSA-wvxg-744g-6pcg).
+SHELL_GIT_INLINE_CONFIG_FLAGS = frozenset({"-c", "--config-env"})
+
 SHELL_CMD_XARGS = "xargs"
+SHELL_CMD_FIND = "find"
 
 # Allowlisted commands that are general-purpose program launchers: each can be
 # steered into running a program the allowlist never vetted. Under `--yolo` the
 # allowlist is bypassed wholesale, so these are blocked outright there rather
 # than merely gated behind an approval nobody is present to give
 # (GHSA-wvxg-744g-6pcg).
-SHELL_LAUNCHER_COMMANDS = frozenset({"xargs", "uv", "pytest", "pre-commit"})
+SHELL_LAUNCHER_COMMANDS = frozenset({"xargs", "uv", "pytest", "pre-commit", "find"})
 
 
 # `xargs` flags that take a separate value argument; the value is not the
@@ -147,6 +153,11 @@ SHELL_XARGS_VALUE_FLAGS = frozenset(
         "-d",
         "-E",
         "-a",
+        # BSD/macOS xargs: -J replace-string, -R replace-count, -S replsize,
+        # -o is a bare toggle but listed under boolean flags below.
+        "-J",
+        "-R",
+        "-S",
         "--replace",
         "--max-lines",
         "--max-args",
@@ -158,6 +169,31 @@ SHELL_XARGS_VALUE_FLAGS = frozenset(
         "--process-slot-var",
     }
 )
+
+# `xargs` flags that take no value. The scanner must distinguish these from
+# value-taking flags to know whether the next token is a value or the program;
+# any flag in NEITHER set is unknown, and the scan fails closed rather than
+# guessing (GHSA-wvxg-744g-6pcg).
+SHELL_XARGS_BOOLEAN_FLAGS = frozenset(
+    {
+        "-0",
+        "-o",
+        "-p",
+        "-r",
+        "-t",
+        "-x",
+        "--null",
+        "--open-tty",
+        "--interactive",
+        "--no-run-if-empty",
+        "--verbose",
+        "--exit",
+    }
+)
+
+# Sentinel: the scan could not determine what `xargs` would launch, so the
+# caller must block rather than fall through to a possibly-wrong answer.
+SHELL_XARGS_UNKNOWN_LAUNCH = "<unknown>"
 
 SHELL_FIND_MUTATING_ACTIONS = frozenset(
     {

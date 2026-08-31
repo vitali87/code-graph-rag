@@ -208,11 +208,20 @@ def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
         return None
 
     for index, arg in enumerate(cmd_parts[1:], start=1):
+        # git's own options end at the subcommand; `-c` after it belongs to the
+        # subcommand and means something else entirely (`git commit -c <ref>`
+        # reuses a commit message and executes nothing).
+        if not arg.startswith("-"):
+            return None
+
         key: str | None = None
-        if arg == "-c" and index + 1 < len(cmd_parts):
+        if arg in cs.SHELL_GIT_INLINE_CONFIG_FLAGS and index + 1 < len(cmd_parts):
             key = cmd_parts[index + 1]
         elif arg.startswith("-c") and len(arg) > 2:
             key = arg[2:]
+        elif arg.startswith("--config-env="):
+            key = arg[len("--config-env=") :]
+
         if key and _is_git_config_exec_key(key.split("=", 1)[0]):
             return key.split("=", 1)[0]
 
@@ -267,13 +276,27 @@ def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
         arg = args[index]
         if not arg.startswith("-"):
             return arg
-        # `-I{}` and `--replace=%` carry their value in the same token; the
-        # separated spellings (`-I {}`) consume the token that follows.
-        if _flag_name(arg) in cs.SHELL_XARGS_VALUE_FLAGS and "=" not in arg:
-            bundled = len(arg) > 2 and not arg.startswith("--")
-            index += 1 if bundled else 2
+
+        flag = _flag_name(arg)
+        if flag in cs.SHELL_XARGS_VALUE_FLAGS:
+            # `-I{}` and `--replace=%` carry their value in the same token; the
+            # separated spellings (`-I {}`) consume the token that follows.
+            if "=" in arg:
+                index += 1
+            else:
+                bundled = len(arg) > 2 and not arg.startswith("--")
+                index += 1 if bundled else 2
             continue
-        index += 1
+        if flag in cs.SHELL_XARGS_BOOLEAN_FLAGS:
+            index += 1
+            continue
+
+        # An unrecognised flag may or may not consume the next token, so the
+        # program xargs will launch cannot be identified. Skipping it is how
+        # `xargs -J cat python3 -c ...` slipped past the first version of this
+        # scan: `-J` was unknown, `cat` looked like the program, and `python3`
+        # ran unvetted. Refuse to guess (GHSA-wvxg-744g-6pcg).
+        return cs.SHELL_XARGS_UNKNOWN_LAUNCH
 
     return None
 
@@ -293,12 +316,22 @@ def _is_dangerous_command(
         return True, "rm with dangerous flags"
 
     if bypass_allowlist and base_cmd in cs.SHELL_LAUNCHER_COMMANDS:
-        # xargs states the program it will run, so it can be vetted against the
-        # allowlist even here; the rest take no such inspectable argument.
-        launched = _xargs_launched_command(cmd_parts)
-        if base_cmd != cs.SHELL_CMD_XARGS or (
-            launched is not None and launched not in settings.SHELL_COMMAND_ALLOWLIST
-        ):
+        # Two launchers state what they will run and can be vetted even here;
+        # the rest take no inspectable argument and are blocked outright.
+        # `find` launches a program only via a mutating action, so read-only
+        # find stays usable under yolo -- the point of yolo is unattended work.
+        if base_cmd == cs.SHELL_CMD_XARGS:
+            launched = _xargs_launched_command(cmd_parts)
+            confined = launched is None or (
+                launched != cs.SHELL_XARGS_UNKNOWN_LAUNCH
+                and launched in settings.SHELL_COMMAND_ALLOWLIST
+            )
+        elif base_cmd == cs.SHELL_CMD_FIND:
+            confined = not _find_requires_approval(cmd_parts)
+        else:
+            confined = False
+
+        if not confined:
             return True, (
                 f"{base_cmd} launches arbitrary programs; blocked when the "
                 "allowlist is bypassed"
@@ -336,6 +369,14 @@ def _validate_segment(
         )
 
     if launched := _xargs_launched_command(cmd_parts):
+        if launched == cs.SHELL_XARGS_UNKNOWN_LAUNCH:
+            return te.COMMAND_DANGEROUS_BLOCKED.format(
+                cmd=base_cmd,
+                reason=(
+                    "xargs carries a flag this validator cannot interpret, so "
+                    "the program it would launch cannot be checked"
+                ),
+            )
         if not bypass_allowlist and launched not in settings.SHELL_COMMAND_ALLOWLIST:
             return te.COMMAND_NOT_ALLOWED.format(
                 cmd=launched, suggestion="", available=available_commands
