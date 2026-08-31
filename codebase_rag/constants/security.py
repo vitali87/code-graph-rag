@@ -166,6 +166,31 @@ SHELL_CMD_FIND = "find"
 # input from a runtime RecursionError into a validator refusal.
 SHELL_MAX_LAUNCHER_NESTING = 16
 
+SHELL_CMD_AWK = "awk"
+
+# Constructs through which an awk PROGRAM runs a command or writes a file:
+# system(), a pipe redirection (`print x | cmd`, gawk's `|&`), getline from a
+# command, close() on a command stream, and `>`/`>>` to a named file. Matching
+# the surrounding spelling instead was defeated by every indirection tried --
+# a variable holding the command, -v assignment, string concatenation, a
+# program read with -f, or a newline in the program text. These tokens cannot
+# be avoided: awk has no other way to reach a subprocess, so detecting them in
+# the program argument bans the capability rather than the spellings.
+# awk flags taking a separate value: the token after them is that value, not
+# the program. Skipping the flag but not its value made `awk -v c=id '...'`
+# treat `c=id` as the program text and never scan the real one -- the
+# optional-vs-required argument confusion again, fourth occurrence.
+SHELL_AWK_VALUE_FLAGS = frozenset({"-v", "-F", "-f"})
+
+SHELL_AWK_EXEC_TOKENS = (
+    (r"system\s*\(", "system() call"),
+    (r"\|&", "coprocess pipe"),
+    (r"\|", "pipe to or from a command"),
+    (r"\bgetline\b", "getline"),
+    (r"close\s*\(", "close() on a command stream"),
+    (r">>?\s*[\"']", "redirect to a named file"),
+)
+
 SHELL_LAUNCHER_COMMANDS = frozenset({"xargs", "uv", "pytest", "pre-commit", "find"})
 
 
@@ -432,12 +457,6 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
     # reading one (`"cmd" | getline`). Verified executing on this platform:
     # the system() pattern alone left `awk 'BEGIN{print 1 | "echo X"}'`
     # running in both modes. `close()` and `printf ... |` are the same door.
-    # The quote may arrive escaped (`| \"cmd\"`) or bare (`| "cmd"`) depending
-    # on how the caller quoted the program text, so allow an optional
-    # backslash; matching only the bare form left the escaped spelling running.
-    (r"awk\s+.*\|\s*\\?[\"']", "awk pipes to a command"),
-    (r"awk\s+.*\|\s*getline", "awk reads from a command"),
-    (r"awk\s+.*\\?[\"'][^\"']*\\?[\"']\s*\|\s*getline", "awk reads from a command"),
     (r"awk\s+.*getline\s*[<|]", "awk getline file/pipe execution"),
     (r"sed\s+.*s(.).*?\1.*?\1[gip]*e[gip]*", "sed execute flag"),
     (r"xargs\s+.*(rm|chmod|chown|mv|dd|mkfs)", "xargs with destructive command"),

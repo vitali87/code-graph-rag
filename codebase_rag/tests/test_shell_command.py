@@ -1601,10 +1601,23 @@ def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
         """awk 'BEGIN{print 1 | "id"}'""",
         """awk 'BEGIN{"id" | getline x}'""",
         """awk '{print | "sh"}'""",
+        # Every indirection that defeated a spelling-based pattern: the
+        # command name need never appear literally, so only the constructs
+        # awk must use to reach a subprocess can be detected.
+        """awk 'BEGIN{c="id"; print 1 | c}'""",
+        """awk -v c=id 'BEGIN{print 1 | c}'""",
+        """awk -vc=id 'BEGIN{print 1 | c}'""",
+        """awk -F, -v c=id 'BEGIN{print 1|c}'""",
+        """awk 'BEGIN{cmd="i" "d"; print 1 | cmd}'""",
+        """awk 'BEGIN{"id" |& getline}'""",
+        """awk 'END{close("id")}'""",
+        """awk 'BEGIN{print 1 > "/etc/x"}'""",
+        # A program in a file cannot be inspected, so it is refused.
+        "awk -f prog.awk f",
     ),
 )
 def test_awk_cannot_run_a_command(segment: str) -> None:
-    assert _check_segment_patterns(segment) is not None, (
+    assert _validate_segment(segment, "", True) is not None, (
         f"awk executed a command: {segment}"
     )
 
@@ -1620,10 +1633,16 @@ def test_awk_cannot_run_a_command(segment: str) -> None:
         "awk '{sum+=$1} END{print sum}' f",
         "awk '/x/{print}' f",
         "awk '{print $1, $2}' f",
+        # -v/-F consume their value, so the program is still found and
+        # scanned; without that the value itself was read as the program.
+        "awk -v n=1 '{print $n}' f",
+        "awk -F: '{print $1}' f",
+        "awk -v OFS=, '{print $1,$2}' f",
+        "awk 'BEGIN{OFS=\",\"}{print $1,$2}' f",
     ),
 )
 def test_awk_ordinary_programs_still_run(segment: str) -> None:
-    assert _check_segment_patterns(segment) is None, (
+    assert _validate_segment(segment, "", True) is None, (
         f"ordinary awk was blocked: {segment}"
     )
 

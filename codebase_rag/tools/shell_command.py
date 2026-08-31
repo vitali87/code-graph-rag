@@ -359,6 +359,44 @@ def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
     return cmd_parts[index]
 
 
+def _awk_exec_construct(cmd_parts: list[str]) -> str | None:
+    """Return the construct through which this awk program reaches a command.
+
+    awk can only launch a subprocess or write a file through a fixed set of
+    constructs, so they are detected in the program text itself. Matching the
+    surrounding spelling was defeated by every indirection tried -- a variable
+    holding the command name, a -v assignment, string concatenation, a program
+    supplied with -f, a newline in the program -- because the command name
+    need never appear literally. The constructs cannot be avoided.
+    """
+    if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_AWK:
+        return None
+
+    # A program given with -f lives in a file this validator cannot read, so
+    # its contents are unknowable and it is refused outright.
+    if any(_flag_name(a) == "-f" for a in cmd_parts[1:] if a.startswith("-")):
+        return "a program file this validator cannot inspect"
+
+    index = 1
+    while index < len(cmd_parts):
+        arg = cmd_parts[index]
+        if arg.startswith("-"):
+            # A value flag consumes the following token, which is its value
+            # and not the program; the attached spelling (-vc=id) carries it.
+            if arg in cs.SHELL_AWK_VALUE_FLAGS:
+                index += 2
+            else:
+                index += 1
+            continue
+        for pattern, reason in cs.SHELL_AWK_EXEC_TOKENS:
+            if re.search(pattern, arg):
+                return reason
+        # Only the first non-flag argument is the program; the rest are files.
+        break
+
+    return None
+
+
 def _is_dangerous_command(
     cmd_parts: list[str], full_segment: str, bypass_allowlist: bool = False
 ) -> tuple[bool, str]:
@@ -410,6 +448,9 @@ def _is_dangerous_command(
                 f"{base_cmd} launches arbitrary programs; blocked when the "
                 "allowlist is bypassed"
             )
+
+    if construct := _awk_exec_construct(cmd_parts):
+        return True, f"awk can run a command via {construct}"
 
     if key := _git_dash_c_exec_key(cmd_parts):
         return True, f"git -c sets '{key}', a key whose value git executes"
