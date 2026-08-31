@@ -156,6 +156,11 @@ def scope_rows_to_project(
     """
     if not project_name:
         return rows
+    # The separator makes this a COMPONENT-boundary match, so one project
+    # cannot swallow another whose name extends it. Reachable: a directory
+    # named after an existing project's derived name derives again, giving
+    # `alpha__11912daa` and `alpha__11912daa_extra__f71503af` -- a genuine
+    # strict prefix, both in the generator's own shape.
     prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     kept: list[ResultRow] = []
     for row in rows:
@@ -662,10 +667,14 @@ def create_query_tool(
             if project_name is not None and not requires_project_evidence(
                 cypher_query, project_name
             ):
+                message = QUERY_SUMMARY_UNSCOPEABLE.format(project=project_name)
+                # `error` as well as `summary`: MCP callers distinguish a
+                # refusal from a genuine empty result by the error key.
                 return QueryGraphData(
                     query_used=cypher_query,
                     results=[],
-                    summary=QUERY_SUMMARY_UNSCOPEABLE.format(project=project_name),
+                    summary=message,
+                    error=message,
                 )
 
             results = await asyncio.wait_for(
