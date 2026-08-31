@@ -2488,6 +2488,20 @@ def test_xargs_flag_cannot_hide_the_launched_program(flag: str, spelling: str) -
         "awk '/start/,/end/' f",
         "awk 'length>max{max=length;line=$0} END{print line}' f",
         "awk '{print toupper($0)}' f",
+        # Filenames and scripts containing the exact letters the sed and
+        # awk anchors key on. These are the shapes that look adversarial
+        # and are not: a writer module, a reader doc, substituting the
+        # words read and write, and a version bump with an empty -i suffix.
+        "sed -i '' 's/0.0.820/0.0.821/' pyproject.toml",
+        "sed -i '' 's/warn/error/' src/writer.py",
+        "sed -n '/^write/p' README.md",
+        "sed 's/read/write/g' docs/reader.md",
+        "sed 's|/usr/local|/opt|g' config.txt",
+        "awk '/error|warn/{print}' logs/run.log",
+        "awk '{a[$1]++} END{for(k in a) print k, a[k]}' f",
+        "git log --grep='rewrite' --oneline",
+        "rg --files-with-matches 'def _sed' codebase_rag",
+        "rg --replace '$1' 'x(y)' f",
     ),
 )
 def test_everyday_invocations_are_not_blocked(segment: str) -> None:
