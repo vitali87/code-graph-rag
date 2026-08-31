@@ -149,13 +149,6 @@ MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
 # Refused rather than answered with zero rows: an empty result for a
 # misspelled project name is indistinguishable from a genuine empty result.
 MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
-# Refused rather than answered unscoped: rows carrying no qualified name
-# cannot be attributed to a project, so honouring {project} is impossible.
-MCP_UNSCOPEABLE_QUERY = (
-    "Cannot scope this query to {project!r}: it returns no qualified name, "
-    "so results cannot be attributed to a project. Ask for the qualified "
-    "name in the query, or omit the project to search every one."
-)
 MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
 MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
 MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."
