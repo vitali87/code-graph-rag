@@ -1670,6 +1670,18 @@ def test_awk_ordinary_programs_still_run(segment: str) -> None:
         "git filter-branch --tree-filter id",
         "git filter-branch --index-filter id",
         "git filter-branch --env-filter id HEAD",
+        # Flags that name a program, independent of the subcommand. rebase
+        # --exec and difftool --extcmd were verified running locally in a
+        # scratch repo; the pack/smtp/gpg family names a program run at the
+        # far end of a connection.
+        "git rebase --exec id HEAD~2",
+        "git difftool --extcmd id",
+        "git mergetool --tool id",
+        "git send-email --smtp-server id x.patch",
+        "git commit --gpg-sign=id",
+        "git clone --upload-pack id x",
+        "git fetch --upload-pack id",
+        "git push --receive-pack id",
     ),
 )
 def test_git_subcommands_cannot_run_a_command(segment: str) -> None:
@@ -1690,6 +1702,14 @@ def test_git_subcommands_cannot_run_a_command(segment: str) -> None:
         "git status",
         "git log --oneline",
         "git diff",
+        "git rebase HEAD~2",
+        "git difftool",
+        "git clone https://x/y",
+        "git fetch origin",
+        "git push origin main",
+        "git send-email x.patch",
+        # -S is the short gpg-sign flag and names no program.
+        "git commit -S -m x",
     ),
 )
 def test_git_ordinary_subcommands_still_run(segment: str) -> None:

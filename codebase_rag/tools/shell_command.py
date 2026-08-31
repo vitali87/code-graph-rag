@@ -421,6 +421,27 @@ def _git_exec_subcommand(cmd_parts: list[str]) -> str | None:
     return None
 
 
+def _git_exec_flag(cmd_parts: list[str]) -> str | None:
+    """Return a git flag that names a program git will run.
+
+    These are independent of the subcommand: `rebase --exec`, `difftool
+    --extcmd` and `mergetool --tool` run locally (the first two verified in a
+    scratch repo), while `--upload-pack`/`--receive-pack`/`--smtp-server`/
+    `--gpg-sign` name a program run at the other end of a connection.
+    """
+    if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_GIT:
+        return None
+
+    return next(
+        (
+            _flag_name(arg)
+            for arg in cmd_parts[1:]
+            if arg.startswith("-") and _flag_name(arg) in cs.SHELL_GIT_EXEC_FLAGS
+        ),
+        None,
+    )
+
+
 def _is_dangerous_command(
     cmd_parts: list[str], full_segment: str, bypass_allowlist: bool = False
 ) -> tuple[bool, str]:
@@ -472,6 +493,9 @@ def _is_dangerous_command(
                 f"{base_cmd} launches arbitrary programs; blocked when the "
                 "allowlist is bypassed"
             )
+
+    if flag := _git_exec_flag(cmd_parts):
+        return True, f"git {flag} names a program git will run"
 
     if form := _git_exec_subcommand(cmd_parts):
         return True, f"git {form} runs a caller-supplied command"

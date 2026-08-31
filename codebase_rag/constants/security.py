@@ -316,6 +316,23 @@ SHELL_GIT_EXEC_SUBCOMMANDS = frozenset(
     }
 )
 
+# git FLAGS that take a command and run it, whatever the subcommand. Verified
+# executing locally in a scratch repo: `rebase --exec` ran twice, `difftool
+# --extcmd` once. The upload-pack/receive-pack family names a program run on
+# the REMOTE, so it is not local execution, but it is still a caller-chosen
+# program name reaching a git invocation and is refused on the same ground.
+SHELL_GIT_EXEC_FLAGS = frozenset(
+    {
+        "--exec",
+        "--extcmd",
+        "--tool",
+        "--upload-pack",
+        "--receive-pack",
+        "--smtp-server",
+        "--gpg-sign",
+    }
+)
+
 # The argument that turns one of those subcommands into a command runner.
 # `git submodule status` and `git bisect start` launch nothing.
 SHELL_GIT_EXEC_SUBCOMMAND_ARGS = frozenset(
