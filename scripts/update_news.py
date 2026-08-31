@@ -27,6 +27,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)\*\*: \S.*$")
+HIGHLIGHT_BULLET = re.compile(r"^\*\s+\*\*(?P<theme>[^*]+?)\*\*:\s*(?P<text>.*)$")
 
 # Placed directly below the block of entries the latest release inserted, so
 # the README's "Latest News" can render that whole block instead of a fixed
@@ -91,6 +92,26 @@ def extract_bullets(fragment: str) -> list[str]:
     return bullets
 
 
+def extract_all_highlights(fragment: str) -> list[tuple[str, str]]:
+    """Extract all highlights (theme, text) from the fragment, regardless of filtering.
+
+    Used as fallback source for aggregation when no feature themes pass the filter.
+    Returns list of (theme, text) tuples.
+    """
+    highlights: list[tuple[str, str]] = []
+    for line in fragment.splitlines():
+        stripped = _normalize_dashes(line.rstrip())
+        # Match both Highlights format (* **Theme**: text) and NEWS format (- **Theme**: text)
+        for pattern in [HIGHLIGHT_BULLET, BULLET_PATTERN]:
+            match = pattern.match(stripped)
+            if match:
+                theme = match.group("theme")
+                text = match.group("text") if "text" in match.groupdict() else ""
+                highlights.append((theme, text))
+                break
+    return highlights
+
+
 def existing_themes(news: str) -> set[str]:
     """Return the casefolded bold themes of every entry already in NEWS.md."""
     return {
@@ -100,9 +121,33 @@ def existing_themes(news: str) -> set[str]:
     }
 
 
-def prepend_news(
-    news: str, fragment: str, fallback: str | None = None
-) -> tuple[str, list[str]]:
+def create_aggregated_bullet(highlights: list[tuple[str, str]]) -> str:
+    """Create an aggregated feature bullet from all highlights.
+
+    Synthesizes a single summary bullet that captures the themes from all
+    highlights, suitable for insertion when no individual highlights pass
+    the feature filter.
+    """
+    if not highlights:
+        return ""
+
+    # Collect all themes
+    themes = [theme for theme, _ in highlights]
+
+    # Create a summary that mentions the key areas without repeating them
+    if len(themes) == 1:
+        summary = f"Comprehensive improvements in {themes[0].lower()}"
+    else:
+        # Group similar themes
+        key_areas = ", ".join(themes[:-1])
+        if len(themes) > 1:
+            key_areas = f"{key_areas} and {themes[-1]}"
+        summary = f"Enhancements across {key_areas}"
+
+    return f"- **Release Improvements**: {summary} with stability and reliability refinements across the codebase."
+
+
+def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
     """Insert fragment bullets with unseen themes above the newest NEWS entry.
 
     Returns the updated NEWS.md content and the bullets that were inserted.
@@ -113,8 +158,8 @@ def prepend_news(
     latest-release marker is moved below the inserted block so the README can
     render the whole block; when nothing is inserted the marker stays put.
 
-    If no feature-themed bullets are found and fallback is provided, the
-    fallback bullet is used instead (as an aggregated headline for the release).
+    If no feature-themed bullets are found, an aggregated bullet is created
+    from all highlights to ensure at least one news entry per release.
     """
     themes = existing_themes(news)
     fresh: list[str] = []
@@ -128,14 +173,13 @@ def prepend_news(
         fresh.append(bullet)
         themes.add(theme)
 
-    # If no feature bullets extracted but fallback provided, use it
-    if not fresh and fallback:
-        fallback_normalized = _normalize_dashes(fallback)
-        if fallback_normalized.startswith("* "):
-            fallback_normalized = f"- {fallback_normalized[2:]}"
-        match = BULLET_PATTERN.match(fallback_normalized)
-        if match and is_feature_theme(match.group("theme")):
-            fresh.append(fallback_normalized)
+    # If no feature bullets extracted, try to create an aggregated one from all highlights
+    if not fresh:
+        all_highlights = extract_all_highlights(fragment)
+        if all_highlights:
+            aggregated = create_aggregated_bullet(all_highlights)
+            if aggregated:
+                fresh.append(aggregated)
 
     if not fresh:
         return news, []
@@ -159,11 +203,8 @@ def prepend_news(
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print(
-            "usage: update_news.py <bullets-file> [--fallback <fallback-bullet>]",
-            file=sys.stderr,
-        )
+    if len(sys.argv) != 2:
+        print("usage: update_news.py <bullets-file>", file=sys.stderr)
         return 2
 
     fragment_path = Path(sys.argv[1])
@@ -171,13 +212,9 @@ def main() -> int:
         print(f"no bullets file at {fragment_path}, nothing to do")
         return 0
 
-    fallback = None
-    if len(sys.argv) >= 4 and sys.argv[2] == "--fallback":
-        fallback = sys.argv[3]
-
     news_path = PROJECT_ROOT / "NEWS.md"
     news = news_path.read_text(encoding="utf-8")
-    updated, inserted = prepend_news(news, fragment_path.read_text(encoding="utf-8"), fallback)
+    updated, inserted = prepend_news(news, fragment_path.read_text(encoding="utf-8"))
     if not inserted:
         print("no new themes to add, NEWS.md unchanged")
         return 0
