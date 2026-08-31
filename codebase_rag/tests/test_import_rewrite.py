@@ -453,3 +453,33 @@ def test_every_entry_binding_the_symbol_moves_not_just_the_first() -> None:
     assert _py_rewrite("from pkg.util import helper, helper as h, other", move) == (
         "from pkg.util import other\nfrom pkg.helpers import helper, helper as h"
     )
+
+
+def test_same_module_rename_keeps_each_binding_its_own_local_name() -> None:
+    from pathlib import Path as _Path
+
+    from codebase_rag.editing.imports import _js_rewrite, _py_rewrite, _rs_rewrite
+
+    # The SAME-module branches are the ones the cross-module tests never reach:
+    # a rename keeps one statement and rewrites entries in place, so each
+    # binding must keep its own local name. Mapping the moved entries
+    # positionally (`moved_entries[0]` for every match, as the pre-merge branch
+    # did) collapses `helper as h` onto `helper`, binding one name twice and
+    # losing the other -- and every other test in this file stays green.
+    move = SymbolMove("helper", "pkg.util", "pkg.util", new_name="renamed")
+    assert (
+        _py_rewrite("from pkg.util import helper, helper as h", move)
+        == "from pkg.util import renamed as helper, renamed as h"
+    )
+
+    js = SymbolMove("helper", "./m", "./m", new_name="renamed", new_module_path="m.ts")
+    assert (
+        _js_rewrite("import { helper, helper as h } from './m';", js, _Path("a.ts"))
+        == "import { renamed as helper, renamed as h } from './m';"
+    )
+
+    rs = SymbolMove("helper", "m", "m", new_name="renamed")
+    assert (
+        _rs_rewrite("use m::{helper, helper as h};", rs)
+        == "use m::{renamed as helper, renamed as h};"
+    )
