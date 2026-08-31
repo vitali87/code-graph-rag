@@ -174,7 +174,11 @@ def _hotness(fetch_all: QueryFn, project: str, qn: str) -> dict[str, int]:
 def _target_piece(
     definition: graph_query.DefinitionRow, repo_root: Path | None
 ) -> _Candidate:
-    start, end = definition["start_line"] or 1, definition["end_line"] or 1
+    # `or 0`, matching `_test_pieces`: a row the graph did not find carries
+    # start_line=None, and `_lines` rejects start < 1 and returns "". Defaulting
+    # to 1 instead made a missing symbol excerpt LINE 1 of the file and present
+    # it as the definition's body.
+    start, end = definition["start_line"] or 0, definition["end_line"] or 0
     source = _normalise(definition["source"] or "") or _lines(
         repo_root, definition["path"], start, end
     )

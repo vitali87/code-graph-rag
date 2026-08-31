@@ -487,3 +487,34 @@ def test_the_markdown_skip_guard_tracks_the_real_loaders(
         f"guard says unavailable={_markdown_unavailable()} with "
         f"block={block_ok} inline={inline_ok}"
     )
+
+
+# `graph_query.definition` returns a row with `start_line=None` when the symbol
+# is not in the graph (graph_query.py:213). `_target_piece` defaulted that to 1
+# while its sibling `_test_pieces` defaulted to 0, so the same missing value
+# produced an empty excerpt in one place and LINE 1 OF THE FILE in the other --
+# an unrelated import presented as the definition's body, with no error. The
+# sentinel one field up from the one the fix was about, unpinned because the
+# fix was about the other one.
+def test_a_target_missing_from_the_graph_yields_no_excerpt(tmp_path: Path) -> None:
+    from codebase_rag.context_slice import _target_piece
+
+    (tmp_path / "m.py").write_text("import os\ndef real():\n    return 1\n")
+
+    piece = _target_piece(
+        {  # type: ignore[arg-type]
+            "label": None,
+            "qualified_name": "p.m.missing",
+            "path": "m.py",
+            "start_line": None,
+            "end_line": None,
+            "name": None,
+            "docstring": None,
+            "source": None,
+            "found": False,
+        },
+        tmp_path,
+    )
+
+    assert piece.source == "", repr(piece.source)
+    assert "import os" not in piece.source, repr(piece.source)
