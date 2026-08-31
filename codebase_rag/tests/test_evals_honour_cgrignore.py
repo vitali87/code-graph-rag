@@ -93,3 +93,36 @@ def test_both_sides_agree_under_cgrignore(tmp_path: Path) -> None:
     assert _VISIBLE_EDGE in cgr, "cgr stopped producing any row"
     assert _HIDDEN_EDGE not in oracle, oracle
     assert _HIDDEN_EDGE not in cgr, cgr
+    assert oracle == cgr, oracle ^ cgr
+
+
+_RESCUED = "class B4:\n    pass\n\n\nclass Res(B4):\n    pass\n"
+_RESCUED_EDGE = ("proj.build.keep.Res", "proj.build.keep.B4")
+
+
+def test_an_unignored_file_under_a_built_in_ignored_dir_reaches_both(
+    tmp_path: Path,
+) -> None:
+    """The case a second filter cannot rescue.
+
+    `build/` is a built-in ignore, and `should_skip_path` applies those only
+    AFTER `unignore_paths` has had its say, so `!build/keep.py` reaches the
+    graph. A pre-filter running before it drops the file from the oracle
+    only, which is the oracle-versus-cgr divergence this issue closes,
+    reintroduced one layer up (CodeRabbit, PR #1563).
+
+    The visible edge is asserted alongside so a fixture that produced
+    nothing cannot satisfy this by emptiness.
+    """
+    src = tmp_path / "proj"
+    (src / "build").mkdir(parents=True)
+    (src / "visible.py").write_text(_VISIBLE, encoding="utf-8")
+    (src / "build" / "keep.py").write_text(_RESCUED, encoding="utf-8")
+    (src / ".cgrignore").write_text("!build/keep.py\n", encoding="utf-8")
+
+    oracle = oracle_inheritance(src, "proj").inherits
+    cgr = cgr_inheritance(src, "proj").inherits
+
+    assert _VISIBLE_EDGE in oracle, "the fixture stopped producing any row"
+    assert _RESCUED_EDGE in oracle, f"the oracle dropped the rescued file: {oracle}"
+    assert _RESCUED_EDGE in cgr, f"cgr dropped the rescued file: {cgr}"
