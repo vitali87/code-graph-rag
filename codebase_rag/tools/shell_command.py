@@ -197,6 +197,28 @@ def _is_git_config_exec_key(key: str) -> bool:
     )
 
 
+def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
+    """Return the shell-executing config key set inline via `git -c key=value`.
+
+    `git -c` applies a config key for one command without writing a file, so it
+    reaches the same executable keys `_git_config_exec_key` guards on the write
+    path (GHSA-wvxg-744g-6pcg).
+    """
+    if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_GIT:
+        return None
+
+    for index, arg in enumerate(cmd_parts[1:], start=1):
+        key: str | None = None
+        if arg == "-c" and index + 1 < len(cmd_parts):
+            key = cmd_parts[index + 1]
+        elif arg.startswith("-c") and len(arg) > 2:
+            key = arg[2:]
+        if key and _is_git_config_exec_key(key.split("=", 1)[0]):
+            return key.split("=", 1)[0]
+
+    return None
+
+
 def _git_config_exec_key(cmd_parts: list[str]) -> str | None:
     """Return the shell-executing git config key this command would write.
 
@@ -227,7 +249,38 @@ def _git_config_exec_key(cmd_parts: list[str]) -> str | None:
     )
 
 
-def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool, str]:
+def _xargs_launched_command(cmd_parts: list[str]) -> str | None:
+    """Return the program `xargs` would launch, or None if it launches none.
+
+    `_validate_segment` only ever checks a segment's own base command, so an
+    allowlisted launcher reaches interpreters the allowlist deliberately omits
+    (GHSA-wvxg-744g-6pcg). Scanning past xargs' own flags to the first operand
+    recovers the program it will actually run, so it can be validated the same
+    way. Bare `xargs` defaults to `echo` and launches nothing of its own.
+    """
+    if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_XARGS:
+        return None
+
+    args = cmd_parts[1:]
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if not arg.startswith("-"):
+            return arg
+        # `-I{}` and `--replace=%` carry their value in the same token; the
+        # separated spellings (`-I {}`) consume the token that follows.
+        if _flag_name(arg) in cs.SHELL_XARGS_VALUE_FLAGS and "=" not in arg:
+            bundled = len(arg) > 2 and not arg.startswith("--")
+            index += 1 if bundled else 2
+            continue
+        index += 1
+
+    return None
+
+
+def _is_dangerous_command(
+    cmd_parts: list[str], full_segment: str, bypass_allowlist: bool = False
+) -> tuple[bool, str]:
     if not cmd_parts:
         return False, ""
 
@@ -238,6 +291,21 @@ def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool
 
     if _is_dangerous_rm(cmd_parts):
         return True, "rm with dangerous flags"
+
+    if bypass_allowlist and base_cmd in cs.SHELL_LAUNCHER_COMMANDS:
+        # xargs states the program it will run, so it can be vetted against the
+        # allowlist even here; the rest take no such inspectable argument.
+        launched = _xargs_launched_command(cmd_parts)
+        if base_cmd != cs.SHELL_CMD_XARGS or (
+            launched is not None and launched not in settings.SHELL_COMMAND_ALLOWLIST
+        ):
+            return True, (
+                f"{base_cmd} launches arbitrary programs; blocked when the "
+                "allowlist is bypassed"
+            )
+
+    if key := _git_dash_c_exec_key(cmd_parts):
+        return True, f"git -c sets '{key}', a key whose value git executes"
 
     if key := _git_config_exec_key(cmd_parts):
         return True, f"git config write to '{key}' plants a command git will run"
@@ -267,7 +335,13 @@ def _validate_segment(
             cmd=base_cmd, suggestion=suggestion, available=available_commands
         )
 
-    is_dangerous, reason = _is_dangerous_command(cmd_parts, segment)
+    if launched := _xargs_launched_command(cmd_parts):
+        if not bypass_allowlist and launched not in settings.SHELL_COMMAND_ALLOWLIST:
+            return te.COMMAND_NOT_ALLOWED.format(
+                cmd=launched, suggestion="", available=available_commands
+            )
+
+    is_dangerous, reason = _is_dangerous_command(cmd_parts, segment, bypass_allowlist)
     if is_dangerous:
         return te.COMMAND_DANGEROUS_BLOCKED.format(cmd=base_cmd, reason=reason)
 

@@ -123,6 +123,42 @@ SHELL_REDIRECT_OPERATORS = frozenset({">", ">>", "<", "<<"})
 # so they need approval even though `find` itself is a read tool. Kept here so
 # the security boundary is auditable in one place rather than inline in the
 # approval check.
+SHELL_CMD_XARGS = "xargs"
+
+# Allowlisted commands that are general-purpose program launchers: each can be
+# steered into running a program the allowlist never vetted. Under `--yolo` the
+# allowlist is bypassed wholesale, so these are blocked outright there rather
+# than merely gated behind an approval nobody is present to give
+# (GHSA-wvxg-744g-6pcg).
+SHELL_LAUNCHER_COMMANDS = frozenset({"xargs", "uv", "pytest", "pre-commit"})
+
+
+# `xargs` flags that take a separate value argument; the value is not the
+# command xargs will launch, so the scan must step over both (GHSA-wvxg-744g-6pcg).
+SHELL_XARGS_VALUE_FLAGS = frozenset(
+    {
+        "-I",
+        "-i",
+        "-L",
+        "-l",
+        "-n",
+        "-P",
+        "-s",
+        "-d",
+        "-E",
+        "-a",
+        "--replace",
+        "--max-lines",
+        "--max-args",
+        "--max-procs",
+        "--max-chars",
+        "--delimiter",
+        "--eof",
+        "--arg-file",
+        "--process-slot-var",
+    }
+)
+
 SHELL_FIND_MUTATING_ACTIONS = frozenset(
     {
         "-delete",

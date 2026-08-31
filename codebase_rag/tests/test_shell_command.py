@@ -1426,3 +1426,106 @@ class TestSpawnFailureDiagnostics:
         assert "cat data.txt" not in result.stderr, result.stderr
         assert awk_executable in result.stderr, result.stderr
         assert "No such file or directory" in result.stderr, result.stderr
+
+
+# --- GHSA-wvxg-744g-6pcg: allowlisted launchers reach arbitrary programs ---
+#
+# `_validate_segment` checks only `cmd_parts[0]`, so an allowlisted command
+# that is itself a general-purpose program launcher runs interpreters that are
+# deliberately absent from the allowlist. Reported by Syed Anas Mohiuddin.
+
+
+def _validate(segment: str) -> str | None:
+    return _validate_segment(
+        segment, ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST)), False
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # The reported vector: the existing `python -c` pattern only fires on
+        # the literal token `os`, so any other module walks past it.
+        'xargs python3 -c "import subprocess;subprocess.call([\'id\'])"',
+        'xargs python3 -c "import pty;pty.spawn(\'/bin/sh\')"',
+        'xargs python3 -c "__import__(\'ctypes\')"',
+        # perl/ruby are blocked by their own blanket patterns, but node has no
+        # equivalent, so it reaches execution through xargs unimpeded.
+        'xargs node -e "require(\'child_process\').execSync(\'id\')"',
+        # xargs' own flags must not hide the launched command from the parser.
+        'xargs -I{} python3 -c "import subprocess"',
+        "xargs -n1 -P4 node -e 1",
+        "xargs --replace=% python3 -c 1",
+        "xargs -0 python3 -c 1",
+    ),
+)
+def test_xargs_cannot_launch_non_allowlisted_programs(segment: str) -> None:
+    assert _validate(segment) is not None, f"xargs launched a non-allowlisted program: {segment}"
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Bare xargs defaults to echo, which is allowlisted and safe.
+        "xargs",
+        "xargs -0",
+        # Launching an allowlisted program stays allowed: the fix validates
+        # what xargs runs, it does not ban xargs.
+        "xargs cat",
+        "xargs -I{} rg pattern {}",
+        "xargs -n1 wc -l",
+    ),
+)
+def test_xargs_still_launches_allowlisted_programs(segment: str) -> None:
+    assert _validate(segment) is None, f"fix over-blocked a safe xargs form: {segment}"
+
+
+class TestYoloLauncherConfinement:
+    # `--yolo` sets bypass_allowlist, so the allowlist stops constraining the
+    # segment at all and every launcher on it becomes unattended RCE. Blocking
+    # launchers outright is the same call already made for `rm -rf` and for
+    # `git config` exec keys (GHSA-2rr7-8xrw-gmhr): approval is not a control
+    # when nothing is there to approve.
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            'xargs python3 -c "import subprocess;subprocess.call([\'id\'])"',
+            "uv run python -c 1",
+            'find . -name x -exec python3 -c "1" ;',
+            "git -c alias.z=!id z",
+        ),
+    )
+    async def test_yolo_still_blocks_launchers(
+        self, temp_project_root: Path, command: str
+    ) -> None:
+        commander = ShellCommander(
+            str(temp_project_root), timeout=5, is_yolo=lambda: True
+        )
+        tool = create_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, command)
+        assert result.return_code != 0, f"yolo executed a launcher: {command}"
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            # Yolo's actual purpose stays intact: ordinary work is unattended.
+            "echo hello",
+            "ls",
+            "xargs cat",
+            "find . -name '*.py'",
+        ),
+    )
+    async def test_yolo_still_runs_ordinary_commands(
+        self, temp_project_root: Path, command: str
+    ) -> None:
+        commander = ShellCommander(
+            str(temp_project_root), timeout=5, is_yolo=lambda: True
+        )
+        tool = create_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, command)
+        assert result.return_code == 0, f"yolo over-blocked ordinary work: {command}"
