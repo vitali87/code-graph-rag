@@ -13,7 +13,6 @@ from codebase_rag import constants as cs
 from codebase_rag.context_slice import context
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.utils.path_utils import cached_resolve_posix
 from codebase_rag.utils.token_utils import count_tokens
 from evals.cgr_graph import _StatefulIngestor
 
@@ -415,32 +414,33 @@ def test_test_pieces_normalises_the_source_it_reads(
 
 
 # The indexer writes absolute_path through `cached_resolve_posix`, so the lookup
-# key must be POSIX too. Building it with `str(...resolve())` was identical on
-# Linux and macOS and emitted backslashes on Windows, so the doc query matched
-# nothing there and the CONTEXT_WHY_DOC grouping raised KeyError -- green on
-# every platform this suite normally runs on. Assert the key's SHAPE rather than
-# simulating Windows, so the guard holds wherever it runs.
-def test_doc_lookup_key_is_posix_separated(tmp_path: Path) -> None:
+# key must be POSIX too. Building it with `str(...resolve())` matched on Linux and
+# macOS and emitted backslashes on Windows, so the doc query found nothing there,
+# no CONTEXT_WHY_DOC candidate was built, and the grouping raised KeyError.
+#
+# This bug CANNOT be caught behaviourally on POSIX. `WindowsPath` cannot be
+# instantiated here, and for any `PosixPath` `str(p.resolve())` and
+# `p.resolve().as_posix()` are equal by construction -- so no input makes the two
+# implementations disagree, and any behavioural test is satisfied by both. Two
+# attempts at one (comparing the key against the helper; patching the helper the
+# old code never calls) both passed against the reverted implementation.
+#
+# So assert the SOURCE instead: `_doc_pieces` must build its key with the same
+# helper the writer uses. A static check is weaker than a behavioural one, but it
+# is the only form that can fail on the machines this suite actually runs on, and
+# it fails immediately if someone reintroduces a hand-built key.
+def test_doc_lookup_key_is_built_with_the_writers_helper() -> None:
+    import inspect
+
     from codebase_rag import context_slice as cs_mod
 
-    seen: list[object] = []
+    source = inspect.getsource(cs_mod._doc_pieces)
+    key_lines = [ln.strip() for ln in source.splitlines() if "absolute =" in ln]
 
-    def _fetch(_query: str, params: dict[str, object]) -> list[dict[str, object]]:
-        seen.append(params[cs.KEY_ABSOLUTE_PATH])
-        return []
-
-    (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "mod.py").write_text("x = 1\n", encoding="utf-8")
-
-    cs_mod._doc_pieces(_fetch, "proj", "pkg/mod.py", "mod", tmp_path)
-
-    assert len(seen) == 1, repr(seen)
-    key = seen[0]
-    assert isinstance(key, str), repr(key)
-    # The one assertion that fails on a Windows runner under the old code: the
-    # writer's own form is what the reader must send.
-    assert key == cached_resolve_posix(tmp_path / "pkg/mod.py"), repr(key)
-    assert "\\" not in key, repr(key)
+    assert key_lines == ["absolute = cached_resolve_posix(repo_root / path)"], (
+        f"_doc_pieces must build its lookup key with cached_resolve_posix, the "
+        f"helper the indexer writes absolute_path with; found {key_lines!r}"
+    )
 
 
 # A broken skip guard is invisible: if `_markdown_unavailable` silently returned
