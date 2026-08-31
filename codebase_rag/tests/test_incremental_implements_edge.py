@@ -167,4 +167,10 @@ def test_the_affected_caller_query_projects_the_key_its_reader_unpacks() -> None
     # affected-caller set. Measured 2026-08-31: that edit left this file and
     # test_graph_updater_incremental_rename.py green (9 passed) when the
     # assertion covered the alias alone.
-    assert f"caller.path AS {cs.KEY_CALLER_PATH}" in cs.CYPHER_AFFECTED_CALLER_PATHS
+    # Asserted as the WHOLE projection, not as a substring: `in` is satisfied by
+    # a query that also projects something else under the same alias, e.g.
+    # `RETURN DISTINCT caller.path AS caller_path, target.path AS caller_path`,
+    # which is a duplicate-column error against a real backend while leaving a
+    # substring assertion green (measured 2026-08-31: 7 passed).
+    projection = cs.CYPHER_AFFECTED_CALLER_PATHS.split("RETURN DISTINCT ", 1)[1]
+    assert projection.strip() == f"caller.path AS {cs.KEY_CALLER_PATH}"
