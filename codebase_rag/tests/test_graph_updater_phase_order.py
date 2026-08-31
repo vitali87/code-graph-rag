@@ -46,13 +46,63 @@ from pathlib import Path
 
 _SOURCE = Path(__file__).resolve().parents[1] / "graph_updater.py"
 
+# Two real constraints in `run` are deliberately NOT pinned, because the
+# phase is called more than once and a line-number comparison cannot express
+# "this particular call":
+#
+# * "LIBCLANG must run before Pass 2" / "HYBRID must run after Pass 2" --
+#   both are `_run_cpp_frontend`, called at two sites under opposite mode
+#   gates, so neither ordering holds of the name.
+# * "The delombok state commits ONLY here, after every pass and the graph
+#   flush" -- `flush_all` is called twice, so it is a poor anchor.
+#
+# Recorded rather than silently omitted: a reader who finds these comments
+# and no matching entry should know they were considered.
+#
 # (earlier, later, marker, reason). `earlier` must be called before `later`
 # in `GraphUpdater.run`. `marker` is the phrase the comment above the `later`
 # call uses to name that dependency -- the source states several of these in
 # prose ("After rehydration", "After artifact resolution") rather than by
 # attribute name, so the phrase is recorded per pair instead of guessed from
 # the identifier. `reason` is the dependency itself, quoted from that comment.
+# NOTE: "LIBCLANG/Roslyn/Go must run BEFORE Pass 2" is stated in comments
+# above those frontends, not above `_process_files`. This table's drift check
+# requires the justification above the LATER call, so a "before" constraint
+# whose prose sits above the EARLIER call cannot be expressed here without
+# weakening that check for every entry. Left unpinned rather than pinned
+# without its explanation; the "after Pass 2" constraints below are pinned
+# because their prose does sit above the later call.
 _ORDER: tuple[tuple[str, str, str, str], ...] = (
+    # -- around Pass 2 (`_process_files`) --
+    (
+        "_process_files",
+        "_join_csharp_partials",
+        "after pass 2",
+        "the Roslyn declaration locations resolve against the Class qns "
+        "Pass 2 just registered",
+    ),
+    (
+        "_process_files",
+        "_join_go_implements",
+        "after pass 2",
+        "both ends resolve against the go_type_locations index Pass 2 just registered",
+    ),
+    (
+        "_process_files",
+        "_run_python_frontend",
+        "after pass 2",
+        "the Jedi facts join Pass 3 calls against the function_locations "
+        "Pass 2 filled, and it needs the parsed-file list Pass 2 produced "
+        "(issue #1183)",
+    ),
+    (
+        "_process_files",
+        "_run_java_frontend",
+        "pass 2 registered",
+        "the Java facts resolve against the method name-token locations "
+        "Pass 2 registered (issue #1181)",
+    ),
+    # -- the deferred-resolution pipeline --
     (
         "_rehydrate_registry_from_graph",
         "resolve_deferred_cpp_methods",
@@ -130,6 +180,28 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
         "forward declarations",
         "every node-registering pass must finish before parent qns are "
         "verified against the registry",
+    ),
+    (
+        "_process_function_calls",
+        "_emit_csharp_query_calls",
+        "after pass 3",
+        "LINQ query-operator edges join after Pass 3 with the complete "
+        "function-location registry: both ends must be registered nodes",
+    ),
+    (
+        "_process_files",
+        "_emit_pending_endpoints",
+        "every module is parsed now",
+        "router mount prefixes may be cross-module, so every module must be "
+        "parsed before they can resolve (issue #877)",
+    ),
+    (
+        "_process_files",
+        "analyze",
+        "definition pass already emitted",
+        "the ast-grep findings post-pass links to the Modules the definition "
+        "pass already emitted, so it cannot run before them without leaving "
+        "dangling edges",
     ),
     (
         "_process_function_calls",
