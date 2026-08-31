@@ -139,3 +139,32 @@ def test_a_real_git_repo_is_removable_by_the_temp_repo_teardown(
 
     shutil.rmtree(repo, onexc=_clear_readonly)
     assert not repo.exists()
+
+
+def test_the_handler_leaves_a_directory_traversable(tmp_path: Path) -> None:
+    """Clearing read-only on a DIRECTORY must not strip its search bit.
+
+    `os.chmod(path, stat.S_IWRITE)` SETS the mode to exactly `0o200`, so a
+    directory becomes `d-w-------`: writable but not traversable. Nothing can
+    then list or delete its contents, and a removal that failed for some
+    other reason is converted from a recoverable error into a permanently
+    undeletable tree -- the opposite of what this handler exists to do, on
+    the platform where the read-only case cannot even arise.
+
+    Found in the wild: a peer's run reported `(rm_rf) ... [Errno 66] Directory
+    not empty` garbage-collecting a leftover from this very file, and the
+    stranded directory was mode `d-w-------`.
+    """
+    victim = tmp_path / "dir"
+    victim.mkdir()
+    victim.chmod(stat.S_IREAD | stat.S_IEXEC)
+
+    retried: list[object] = []
+    _clear_readonly(retried.append, victim, OSError())
+
+    assert retried == [victim], "the handler must retry the failed operation"
+    assert os.access(victim, os.X_OK), (
+        "the directory must stay traversable, or nothing can ever remove it"
+    )
+    assert os.access(victim, os.W_OK), "the directory must be made writable"
+    victim.chmod(stat.S_IRWXU)
