@@ -36,8 +36,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # so "**X:**" and "**X**:" produce the same dedup key and still match the
 # entries already in NEWS.md.
 #
-# The colon must sit on the FIRST bold, never merely somewhere after it. A
-# looser `:?\*\*:?` lets the theme group end at a LATER bold, so
+# The colon must sit on the FIRST bold, never merely somewhere after it. This
+# preserves main's behaviour rather than adding to it: main's `\*\*:` already
+# rejects a later-bold theme, and the alternation keeps that. A looser
+# `:?\*\*:?` would instead let the theme group end at a LATER bold, so
 # "- **Improvements** to **CI automation**: ..." captures theme="Improvements"
 # and leaves "CI automation" in the body, where is_feature_theme never
 # inspects it - a CI entry then reaches Latest News, which is the one thing

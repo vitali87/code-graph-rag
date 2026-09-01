@@ -113,13 +113,15 @@ class TestExtractBullets:
         "- **Improvements**: to **CI automation**: ..."; accepting the
         colon-inside spelling necessarily admits its twin. Anchoring the
         colon to the FIRST bold is what stops the theme group itself from
-        running past a later bold, which is the part this change does fix.
+        running past a later bold; main already does that and this change
+        preserves it, so the anchoring is load-bearing but not new here.
 
         The residual hole is the filter's input, not the pattern, and
         closing it means inspecting the body too - a behaviour change to
         what counts as a feature entry, out of scope here.
         """
-        # Fixed by this change: the theme group cannot end at a LATER bold.
+        # Preserved by this change, also [] on main: the theme group cannot
+        # end at a LATER bold.
         assert extract_bullets("- **Improvements** to **CI automation**: x.") == []
         assert extract_bullets("* **Improvements** to **CI automation**: x.") == []
         # Not fixed, and equally true before it: a colon directly after the
