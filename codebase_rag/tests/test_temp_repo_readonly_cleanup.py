@@ -282,21 +282,40 @@ def test_a_dangling_symlink_is_removed_rather_than_skipped(tmp_path: Path) -> No
     assertion satisfied by the broken code too.
 
     `os.lstat` alone does not fix the handler: `os.chmod` follows links too,
-    and `follow_symlinks=False` is unsupported for chmod on LINUX, where CI
-    runs. CPython is built without `lchmod` there (configure forces it off
-    because glibc's is a stub that fails on a link), and `os.py` gates chmod's
+    and `follow_symlinks=False` is unsupported for chmod on LINUX, one of the
+    three unit-matrix platforms. CPython is built without `lchmod` there
+    (configure.ac forces it off for every Linux build: "Linux disallows
+    changing the mode of symbolic links. Some libc implementations have a stub
+    lchmod implementation that always returns an error." -- the kernel
+    restriction is the reason, and no libc is named), and `os.py` gates chmod's
     entry into `os.supports_follow_symlinks` on HAVE_LCHMOD alone -- the
-    HAVE_FCHMODAT line is commented out -- so the capability is absent.
-    Measured on Linux/glibc 2.39, CPython 3.12.3 and 3.12.13: HAVE_LCHMOD 0,
-    `os.chmod not in os.supports_follow_symlinks`, and the call raises
-    NotImplementedError. macOS ships HAVE_LCHMOD 1 and the same call succeeds,
-    which is why a macOS-only reading gets this backwards.
+    HAVE_FCHMODAT line is commented out -- so the capability is absent from the
+    support set, which is advisory metadata about the build, not enforcement.
+    Absent from the SET is not refused at the CALL: HAVE_FCHMODAT *is* defined
+    on Linux, so posixmodule.c (v3.12.3) compiles out its early
+    `follow_symlinks_specified` guard at :3348 and the call reaches
+    `fchmodat(AT_SYMLINK_NOFOLLOW)` at :3400, which raises NotImplementedError
+    only when that returns ENOTSUP/EOPNOTSUPP (:3408) -- i.e. on a link.
 
-    The capability IS detectable at runtime, so the skip is a choice, not a
-    workaround for an undetectable gap. What makes it the right one is that
+    So the refusal is FILE-TYPE dependent, not platform dependent, and that is
+    what decides the handler's shape: the same Linux call succeeds on a regular
+    file and raises on a dangling link. Measured on Ubuntu/glibc 2.39, x86_64,
+    CPython 3.12.3 and 3.12.13 (musl not measured): HAVE_LCHMOD 0, `os.chmod
+    not in os.supports_follow_symlinks`, `follow_symlinks=False` SUCCEEDS on a
+    regular file and raises NotImplementedError on a dangling link. macOS 3.12.7
+    is the mirror image -- chmod IS in the set and both cases succeed -- which
+    is why a macOS-only reading gets this backwards. Set membership and
+    behaviour disagree on both platforms, in opposite directions, so neither
+    can be read off the other.
+
+    The support set IS readable at runtime, so the skip is a choice rather
+    than a workaround for an undetectable gap -- but branching on it would be
+    branching on the wrong thing, since it does not predict the call. What
+    makes skipping right is that
     NotImplementedError is a RuntimeError, NOT an OSError: the handler's
     `except FileNotFoundError` would not catch it, so the chmod route would
-    raise straight out of teardown on the very platform CI runs on.
+    raise straight out of teardown on the Linux CI runners (the unit matrix
+    also runs Windows and macOS, where it would not).
     """
     root = tmp_path / "tree"
     root.mkdir()

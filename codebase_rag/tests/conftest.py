@@ -323,23 +323,36 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     # the early return skips the retry, and `rmtree` then fails on a link it
     # could simply have unlinked ([Errno 66] Directory not empty). `os.lstat`
     # alone does not fix it -- `os.chmod` follows links too, and
-    # `follow_symlinks=False` is unsupported for chmod on LINUX, where CI runs.
-    # CPython is built without `lchmod` there (configure forces it off because
-    # glibc's is a stub that fails on a link), and `os.py` gates chmod's entry
-    # into `os.supports_follow_symlinks` on HAVE_LCHMOD alone -- the
-    # HAVE_FCHMODAT line is deliberately commented out -- so the capability is
-    # simply absent. Measured on Linux/glibc 2.39, CPython 3.12.3 and 3.12.13:
-    # HAVE_LCHMOD 0, `os.chmod not in os.supports_follow_symlinks`, and the
-    # call raises NotImplementedError("chmod: follow_symlinks unavailable on
-    # this platform"). macOS ships HAVE_LCHMOD 1 and the same call SUCCEEDS.
+    # `follow_symlinks=False` is unsupported for chmod on LINUX, one of the
+    # three unit-matrix platforms and the one this handler must survive.
+    # CPython is built without `lchmod` there (configure.ac forces it off for
+    # every Linux build: "Linux disallows changing the mode of symbolic links.
+    # Some libc implementations have a stub lchmod implementation that always
+    # returns an error." -- the kernel restriction is the reason; the stub is a
+    # secondary note and names no libc), and `os.py` gates chmod's entry into
+    # `os.supports_follow_symlinks` on HAVE_LCHMOD alone -- the HAVE_FCHMODAT
+    # line is deliberately commented out -- so the capability is absent from
+    # the support set -- advisory metadata about the build, not enforcement.
+    # Absent from the SET is not refused at the CALL: HAVE_FCHMODAT *is*
+    # defined on Linux, so posixmodule.c (v3.12.3) compiles out its early
+    # `follow_symlinks_specified` guard at :3348, the call reaches
+    # `fchmodat(AT_SYMLINK_NOFOLLOW)` at :3400, and NotImplementedError comes
+    # only from ENOTSUP/EOPNOTSUPP there (:3408) -- i.e. on a link. The refusal
+    # is FILE-TYPE dependent, not platform dependent. Measured on Ubuntu/glibc
+    # 2.39, x86_64, CPython 3.12.3 and 3.12.13 (musl not measured): HAVE_LCHMOD
+    # 0, `os.chmod not in os.supports_follow_symlinks`, `follow_symlinks=False`
+    # SUCCEEDS on a regular file and raises NotImplementedError("chmod:
+    # follow_symlinks unavailable on this platform") on a dangling link. macOS
+    # 3.12.7 is the mirror image: chmod IS in the set and both cases succeed.
     #
-    # It IS detectable at runtime, so the skip is a deliberate choice rather
-    # than a workaround for an undetectable gap: branching on the support set
-    # would only trade a platform-specific chmod for a platform-specific skip.
+    # The set IS readable at runtime, so the skip is a deliberate choice rather
+    # than a workaround for an undetectable gap -- but branching on it would be
+    # branching on the wrong thing, since it does not predict the call.
     # It also matters that NotImplementedError is a RuntimeError, NOT an
     # OSError -- the `except FileNotFoundError` below would not catch it, so
-    # taking the chmod route would raise straight out of teardown on the one
-    # platform CI actually runs. Skipping the mode work is the portable answer.
+    # taking the chmod route would raise straight out of teardown on the Linux
+    # CI runners (the unit matrix also runs Windows and macOS, where it would
+    # not). Skipping the mode work is the portable answer.
     # On Windows `os.path.islink` is true for both symlink kinds, so this keeps
     # the handler platform-independent rather than trading one for another.
     if os.path.islink(path):
