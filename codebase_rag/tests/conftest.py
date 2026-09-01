@@ -323,10 +323,14 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     # the early return skips the retry, and `rmtree` then fails on a link it
     # could simply have unlinked ([Errno 66] Directory not empty). `os.lstat`
     # alone does not fix it -- `os.chmod` follows links too, and
-    # `follow_symlinks=False` is unsupported for chmod on macOS
-    # (`os.supports_follow_symlinks`), so the only portable answer is to skip
-    # the mode work entirely and retry the removal directly. On Windows
-    # `os.path.islink` is true for both symlink kinds, so this keeps the
+    # `follow_symlinks=False` is unsupported for chmod on LINUX, where CI runs:
+    # glibc has no `lchmod` and `fchmodat(AT_SYMLINK_NOFOLLOW)` returns ENOTSUP,
+    # so CPython raises NotImplementedError. It cannot be feature-detected --
+    # `os.chmod` is listed in `os.supports_follow_symlinks` on Linux anyway.
+    # (macOS DOES support it: measured succeeding on a dangling link, 3.12.7.)
+    # So the only portable answer is to skip the mode work entirely and retry
+    # the removal directly. On Windows `os.path.islink` is true for both
+    # symlink kinds, so this keeps the
     # handler platform-independent rather than trading one platform for another.
     if os.path.islink(path):
         # Same vanished-path tolerance as the non-link path below: the link

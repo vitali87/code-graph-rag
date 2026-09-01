@@ -266,8 +266,13 @@ def test_a_dangling_symlink_is_removed_rather_than_skipped(tmp_path: Path) -> No
                                  rmtree still FAILS either way: the blocker is
                                  the PARENT's write bit and no chmod on the
                                  child can clear it. (The errno depends on the
-                                 removal path: 66 on the default fd-based one,
-                                 13 post-fix / 2 pre-fix without it.)
+                                 removal path: 66 on the default fd-based one
+                                 for every revision; without it, 13 post-fix
+                                 and 66 at 701c5036, whose early return leaves
+                                 the link so rmdir on the parent fails. The
+                                 merge-base handler 422d9916, which has no
+                                 vanished-path guard, gave 2 because its chmod
+                                 followed the dangling link.)
 
     So the rescued case is Windows, where `os.unlink` refuses outright and the
     handler is the only path to removal -- the same platform asymmetry as the
@@ -277,8 +282,14 @@ def test_a_dangling_symlink_is_removed_rather_than_skipped(tmp_path: Path) -> No
     assertion satisfied by the broken code too.
 
     `os.lstat` alone does not fix the handler: `os.chmod` follows links too,
-    and `follow_symlinks=False` is unsupported for chmod on macOS. Skipping
-    the mode work for links is the only portable answer.
+    and `follow_symlinks=False` is unsupported for chmod on LINUX, where CI
+    runs -- glibc has no `lchmod` and `fchmodat(AT_SYMLINK_NOFOLLOW)` returns
+    ENOTSUP, so CPython raises NotImplementedError, and it cannot be
+    feature-detected because `os.chmod` is listed in
+    `os.supports_follow_symlinks` there regardless. macOS DOES support it
+    (measured on a dangling link, 3.12.7), so the conclusion holds for the
+    opposite reason to the obvious one. Skipping the mode work for links is
+    the only portable answer.
     """
     root = tmp_path / "tree"
     root.mkdir()
