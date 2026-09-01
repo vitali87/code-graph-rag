@@ -683,6 +683,64 @@ class TestFastPathInSync:
         )
         assert updater3._is_already_in_sync() is False
 
+    def test_crash_before_flush_still_removes_the_excluded_subtree(
+        self, excludable_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The re-run a lost stamp forces must also DELETE, not just re-parse.
+
+        Declining to stamp only buys the next run a chance to reconcile; it
+        cannot take that chance on its own. The hash cache is saved inside
+        `_process_files`, before the flush, so the crashed run already
+        committed a cache with no `module_a.py` in it, and on the successor
+        `deleted_keys` is computed from that cache and comes out empty. The
+        graph's own module paths have to join the reconciliation, or the
+        subtree survives, the successor stamps a matching exclusion set, and
+        every run after that fast-paths over it. The general case, an ordinary
+        deletion lost in the same window, is #1615 and is not closed here.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        exclusions = frozenset({"module_a.py"})
+        mock_ingestor.flush_all.side_effect = RuntimeError("died before the flush")
+        with pytest.raises(RuntimeError):
+            GraphUpdater(
+                ingestor=mock_ingestor,
+                repo_path=excludable_project,
+                parsers=parsers,
+                queries=queries,
+                exclude_paths=exclusions,
+            ).run()
+        mock_ingestor.flush_all.side_effect = None
+
+        # After the crash the graph is the ONLY place `module_a.py` still
+        # exists: the hash cache the crashed run committed has already dropped
+        # it. So the sink has to be able to answer for it, or the test would
+        # pass or fail on the fake's silence rather than on the reconciliation.
+        mock_ingestor.reset_mock()
+        mock_ingestor.fetch_all.side_effect = lambda query, _params=None: (
+            [{cs.KEY_PATH: "module_a.py"}, {cs.KEY_PATH: "module_b.py"}]
+            if query == cs.CYPHER_PROJECT_MODULE_PATHS
+            else []
+        )
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=exclusions,
+        ).run()
+        assert "module_a.py" in _deleted_module_paths(mock_ingestor), (
+            "the excluded module survived the crash and the run after it, so "
+            "its Module, Class and Method nodes are now permanent: every "
+            "later run matches the stamp and never looks again"
+        )
+
     def test_force_bypasses_fast_path(
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:
