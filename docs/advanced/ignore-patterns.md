@@ -31,10 +31,12 @@ fixtures/**
 ## Changing the Exclusion Set
 
 The exclusion set is part of what an index is built against, so changing it is
-treated as a change to the repository. Editing `.cgrignore` or passing a
-different set of `--exclude` / `--unignore` flags re-runs the sync even when no
-file on disk has changed: newly excluded files have their `Module`, `Class` and
-`Method` nodes removed from the graph, and newly included ones are indexed.
+treated as a change to the repository. Passing a different set of `--exclude`
+flags, editing the patterns in `.cgrignore` or `.gitignore` (including `!`
+negations), or changing the unignore choices made in interactive setup all
+re-run the sync even when no file on disk has changed: newly excluded files
+have their `Module`, `Class` and `Method` nodes removed from the graph, and
+newly included ones are indexed.
 
 The set each index was built under is recorded in `.cgr-exclusion-state.json`
 in the repository root, alongside the hash cache. An index built before that
