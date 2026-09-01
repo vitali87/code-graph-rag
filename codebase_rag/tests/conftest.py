@@ -323,15 +323,25 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     # the early return skips the retry, and `rmtree` then fails on a link it
     # could simply have unlinked ([Errno 66] Directory not empty). `os.lstat`
     # alone does not fix it -- `os.chmod` follows links too, and
-    # `follow_symlinks=False` is unsupported for chmod on LINUX, where CI runs:
-    # glibc has no `lchmod` and `fchmodat(AT_SYMLINK_NOFOLLOW)` returns ENOTSUP,
-    # so CPython raises NotImplementedError. It cannot be feature-detected --
-    # `os.chmod` is listed in `os.supports_follow_symlinks` on Linux anyway.
-    # (macOS DOES support it: measured succeeding on a dangling link, 3.12.7.)
-    # So the only portable answer is to skip the mode work entirely and retry
-    # the removal directly. On Windows `os.path.islink` is true for both
-    # symlink kinds, so this keeps the
-    # handler platform-independent rather than trading one platform for another.
+    # `follow_symlinks=False` is unsupported for chmod on LINUX, where CI runs.
+    # CPython is built without `lchmod` there (configure forces it off because
+    # glibc's is a stub that fails on a link), and `os.py` gates chmod's entry
+    # into `os.supports_follow_symlinks` on HAVE_LCHMOD alone -- the
+    # HAVE_FCHMODAT line is deliberately commented out -- so the capability is
+    # simply absent. Measured on Linux/glibc 2.39, CPython 3.12.3 and 3.12.13:
+    # HAVE_LCHMOD 0, `os.chmod not in os.supports_follow_symlinks`, and the
+    # call raises NotImplementedError("chmod: follow_symlinks unavailable on
+    # this platform"). macOS ships HAVE_LCHMOD 1 and the same call SUCCEEDS.
+    #
+    # It IS detectable at runtime, so the skip is a deliberate choice rather
+    # than a workaround for an undetectable gap: branching on the support set
+    # would only trade a platform-specific chmod for a platform-specific skip.
+    # It also matters that NotImplementedError is a RuntimeError, NOT an
+    # OSError -- the `except FileNotFoundError` below would not catch it, so
+    # taking the chmod route would raise straight out of teardown on the one
+    # platform CI actually runs. Skipping the mode work is the portable answer.
+    # On Windows `os.path.islink` is true for both symlink kinds, so this keeps
+    # the handler platform-independent rather than trading one for another.
     if os.path.islink(path):
         # Same vanished-path tolerance as the non-link path below: the link
         # can be gone by the time this retry runs, and that is the state the
