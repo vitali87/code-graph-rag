@@ -14,6 +14,7 @@ from scripts.update_news import (
     existing_themes,
     extract_all_highlights,
     extract_bullets,
+    has_unparsable_bullets,
     is_feature_theme,
     prepend_news,
 )
@@ -519,3 +520,49 @@ class TestParseFailureIsReported:
         assert "- **Release Summary**:" in news
         out = capsys.readouterr().out
         assert "parsed 0, deduped 0, inserted 1 (aggregated fallback)" in out
+
+    def test_a_rerun_of_an_all_nonfeature_release_is_not_a_parse_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Filtered out is not the same as failed to parse.
+
+        When every theme is non-feature, extract_bullets is empty because
+        is_feature_theme dropped them, not because the patterns failed. The
+        first run is masked: the aggregation fallback inserts a summary, so the
+        guard is never reached. On a rerun that summary is already in NEWS.md,
+        nothing is inserted, and a guard keyed on extract_bullets fires with
+        "the format has diverged" about bullets that parsed perfectly. The
+        parse-success question is what extract_all_highlights answers.
+        """
+        fragment = (
+            "* **CI Automation**: pipelines are faster.\n"
+            "* **Docs**: the readme was rewritten.\n"
+        )
+        first_code, after_first = self._run(tmp_path, monkeypatch, fragment)
+        assert first_code == 0
+        assert "- **Release Summary**:" in after_first
+
+        # Rerun against the NEWS.md the first run produced.
+        (tmp_path / "NEWS.md").write_text(after_first, encoding="utf-8")
+        fragment_path = tmp_path / "highlights.md"
+        fragment_path.write_text(fragment, encoding="utf-8")
+        monkeypatch.setattr(update_news, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(sys, "argv", ["update_news.py", str(fragment_path)])
+        assert update_news.main() == 0
+
+    def test_unparsable_and_merely_filtered_are_distinguished(self) -> None:
+        """The guard must separate the two ways extract_bullets returns [].
+
+        A direct unit check on the discrimination itself, so a future change
+        that reintroduces the conflation fails here rather than only in the
+        end-to-end rerun above.
+        """
+        parses_but_filtered = (
+            "* **CI Automation**: pipelines are faster.\n* **Docs**: rewritten.\n"
+        )
+        does_not_parse = "- **Web Search**  no colon at all.\n"
+
+        assert extract_bullets(parses_but_filtered) == []
+        assert extract_bullets(does_not_parse) == []
+        assert has_unparsable_bullets(parses_but_filtered) is False
+        assert has_unparsable_bullets(does_not_parse) is True

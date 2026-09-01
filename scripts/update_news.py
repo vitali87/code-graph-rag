@@ -125,6 +125,21 @@ def extract_bullets(fragment: str) -> list[str]:
     return bullets
 
 
+def extract_all_highlights(fragment: str) -> list[tuple[str, str]]:
+    """Extract every well-formed highlight, regardless of feature filtering.
+
+    Used as fallback source for aggregation when no feature themes pass the filter.
+    Returns list of (theme, text) tuples.
+    """
+    highlights: list[tuple[str, str]] = []
+    for line in fragment.splitlines():
+        stripped = _normalize_dashes(line.rstrip())
+        match = HIGHLIGHT_BULLET.match(stripped)
+        if match:
+            highlights.append((match.group("theme"), match.group("text")))
+    return highlights
+
+
 def has_unparsable_bullets(fragment: str) -> bool:
     """True when the fragment offers bullets but none of them parse.
 
@@ -140,25 +155,17 @@ def has_unparsable_bullets(fragment: str) -> bool:
     to be a bullet, so a shape the real patterns reject still counts as one.
     A stricter test here would return False on precisely the malformed input
     this exists to detect.
+
+    Parse success is measured with extract_all_highlights, never with
+    extract_bullets. extract_bullets both parses AND drops non-feature themes,
+    so it returns [] for two unrelated reasons, and using it here reported a
+    parse failure for an all-CI release whose bullets parsed perfectly. That
+    misfires only on a RERUN: the first run inserts the aggregated summary, so
+    the guard is never reached.
     """
     return any(
         BULLET_SHAPED.match(line.strip()) for line in fragment.splitlines()
-    ) and not extract_bullets(fragment)
-
-
-def extract_all_highlights(fragment: str) -> list[tuple[str, str]]:
-    """Extract every well-formed highlight, regardless of feature filtering.
-
-    Used as fallback source for aggregation when no feature themes pass the filter.
-    Returns list of (theme, text) tuples.
-    """
-    highlights: list[tuple[str, str]] = []
-    for line in fragment.splitlines():
-        stripped = _normalize_dashes(line.rstrip())
-        match = HIGHLIGHT_BULLET.match(stripped)
-        if match:
-            highlights.append((match.group("theme"), match.group("text")))
-    return highlights
+    ) and not extract_all_highlights(fragment)
 
 
 def existing_themes(news: str) -> set[str]:
@@ -282,7 +289,7 @@ def main() -> int:
         if has_unparsable_bullets(fragment):
             print(
                 f"{fragment_path} contains bullet-shaped lines but none parsed; "
-                "the highlights format and BULLET_PATTERN have diverged",
+                "the highlights format and HIGHLIGHT_BULLET have diverged",
                 file=sys.stderr,
             )
             return 1
