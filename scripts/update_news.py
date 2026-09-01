@@ -27,7 +27,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)\*\*: \S.*$")
-HIGHLIGHT_BULLET = re.compile(r"^\*\s+\*\*(?P<theme>[^*]+?)\*\*:\s*(?P<text>.*)$")
+HIGHLIGHT_BULLET = re.compile(r"^[-*]\s+\*\*(?P<theme>[^*]+?)\*\*:\s*(?P<text>\S.*)$")
 
 # Placed directly below the block of entries the latest release inserted, so
 # the README's "Latest News" can render that whole block instead of a fixed
@@ -93,7 +93,7 @@ def extract_bullets(fragment: str) -> list[str]:
 
 
 def extract_all_highlights(fragment: str) -> list[tuple[str, str]]:
-    """Extract all highlights (theme, text) from the fragment, regardless of filtering.
+    """Extract every well-formed highlight, regardless of feature filtering.
 
     Used as fallback source for aggregation when no feature themes pass the filter.
     Returns list of (theme, text) tuples.
@@ -101,14 +101,9 @@ def extract_all_highlights(fragment: str) -> list[tuple[str, str]]:
     highlights: list[tuple[str, str]] = []
     for line in fragment.splitlines():
         stripped = _normalize_dashes(line.rstrip())
-        # Match both Highlights format (* **Theme**: text) and NEWS format (- **Theme**: text)
-        for pattern in [HIGHLIGHT_BULLET, BULLET_PATTERN]:
-            match = pattern.match(stripped)
-            if match:
-                theme = match.group("theme")
-                text = match.group("text") if "text" in match.groupdict() else ""
-                highlights.append((theme, text))
-                break
+        match = HIGHLIGHT_BULLET.match(stripped)
+        if match:
+            highlights.append((match.group("theme"), match.group("text")))
     return highlights
 
 
@@ -122,29 +117,22 @@ def existing_themes(news: str) -> set[str]:
 
 
 def create_aggregated_bullet(highlights: list[tuple[str, str]]) -> str:
-    """Create an aggregated feature bullet from all highlights.
+    """Combine all release highlights into one fallback news bullet.
 
-    Synthesizes a single summary bullet that captures the themes from all
-    highlights, suitable for insertion when no individual highlights pass
-    the feature filter.
+    This preserves the substance of every highlight instead of reducing the
+    release to a list of theme names. It is only used when every individual
+    highlight is rejected by the feature-theme filter.
     """
-    if not highlights:
+    summaries = [f"{theme}: {text.rstrip('.')}" for theme, text in highlights]
+    if not summaries:
         return ""
 
-    # Collect all themes
-    themes = [theme for theme, _ in highlights]
-
-    # Create a summary that mentions the key areas without repeating them
-    if len(themes) == 1:
-        summary = f"Comprehensive improvements in {themes[0].lower()}"
+    if len(summaries) == 1:
+        summary = summaries[0]
     else:
-        # Group similar themes
-        key_areas = ", ".join(themes[:-1])
-        if len(themes) > 1:
-            key_areas = f"{key_areas} and {themes[-1]}"
-        summary = f"Enhancements across {key_areas}"
+        summary = f"{'; '.join(summaries[:-1])}; and {summaries[-1]}"
 
-    return f"- **Release Improvements**: {summary} with stability and reliability refinements across the codebase."
+    return f"- **Release Summary**: {summary}."
 
 
 def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
@@ -163,7 +151,8 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
     """
     themes = existing_themes(news)
     fresh: list[str] = []
-    for bullet in extract_bullets(fragment):
+    feature_bullets = extract_bullets(fragment)
+    for bullet in feature_bullets:
         match = BULLET_PATTERN.match(bullet)
         if match is None:
             continue
@@ -173,13 +162,14 @@ def prepend_news(news: str, fragment: str) -> tuple[str, list[str]]:
         fresh.append(bullet)
         themes.add(theme)
 
-    # If no feature bullets extracted, try to create an aggregated one from all highlights
-    if not fresh:
+    # Preserve at least one substantive entry when every highlight is filtered.
+    # Compare the whole fallback bullet rather than its generic theme so a
+    # workflow rerun is idempotent while a later release can add its own summary.
+    if not feature_bullets:
         all_highlights = extract_all_highlights(fragment)
-        if all_highlights:
-            aggregated = create_aggregated_bullet(all_highlights)
-            if aggregated:
-                fresh.append(aggregated)
+        aggregated = create_aggregated_bullet(all_highlights)
+        if aggregated and aggregated not in news.splitlines():
+            fresh.append(aggregated)
 
     if not fresh:
         return news, []
