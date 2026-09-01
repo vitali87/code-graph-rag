@@ -111,6 +111,7 @@ nav:
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
     - Ignore Patterns: advanced/ignore-patterns.md
+    - Git Submodules: advanced/git-submodules.md
     - Building Binaries: advanced/building-binaries.md
     - Troubleshooting: advanced/troubleshooting.md
   - Roadmap: roadmap.md
