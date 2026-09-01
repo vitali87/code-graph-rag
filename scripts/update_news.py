@@ -12,11 +12,15 @@ anchor on. Bullets may use either `- ` or the Highlights' `* ` marker, and the c
 may sit inside or outside the bold theme (`**Theme:**` or `**Theme**:`,
 both of which satisfy the generator's prompt); all are normalised to the
 NEWS.md entry format `- **Theme**: sentence`. Anything else
-in the fragment is ignored, so a malformed or empty AI response degrades
-to a no-op instead of corrupting the file. Exit code 0 always signals NEWS.md
-is in a valid state; the caller decides whether a no-op warrants skipping the
-follow-up README regeneration. Standard library only, so the release workflow
-can run it before the project environment is synced (issue #1146).
+in the fragment is ignored, so a malformed or empty AI response never corrupts
+the file. Exit code 0 signals NEWS.md is in a valid state, which includes a
+no-op: an empty or prose-only fragment offered nothing, so nothing is missing.
+Exit code 1 is reserved for the one case that used to be silent: the fragment
+carries bullet-shaped lines and none of them parsed, meaning the generator's
+format and the patterns here have diverged (issue #1605). The caller decides
+whether a no-op warrants skipping the follow-up README regeneration. Standard
+library only, so the release workflow can run it before the project environment
+is synced (issue #1146).
 """
 
 # ruff: noqa: T201
@@ -48,6 +52,12 @@ BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:) +(?P<text>
 HIGHLIGHT_BULLET = re.compile(
     r"^[-*]\s+\*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:)\s*(?P<text>\S.*)$"
 )
+
+# Any line a human would call a bullet, however malformed. Used only to tell
+# "nothing was offered" apart from "what was offered did not parse"; it must
+# stay looser than BULLET_PATTERN or it would reject the broken input it is
+# meant to catch.
+BULLET_SHAPED = re.compile(r"^[-*]\s+\S")
 
 # Placed directly below the block of entries the latest release inserted, so
 # the README's "Latest News" can render that whole block instead of a fixed
@@ -113,6 +123,27 @@ def extract_bullets(fragment: str) -> list[str]:
             theme = match.group("theme").strip()
             bullets.append(f"- **{theme}**: {match.group('text')}")
     return bullets
+
+
+def has_unparsable_bullets(fragment: str) -> bool:
+    """True when the fragment offers bullets but none of them parse.
+
+    Distinguishes the two ways a release inserts no news. An empty or
+    prose-only highlights section is a legitimate no-op: nothing was offered,
+    so nothing is missing. A section full of bullets that yields no entries
+    means the generator's format and this module's patterns have diverged,
+    which is a failure that must be loud - it is the exact shape of the
+    v0.0.820 outage, where every bullet used ``**Theme:**`` and the parser
+    accepted only ``**Theme**:``.
+
+    Deliberately looser than BULLET_PATTERN: it asks whether a line was MEANT
+    to be a bullet, so a shape the real patterns reject still counts as one.
+    A stricter test here would return False on precisely the malformed input
+    this exists to detect.
+    """
+    return any(
+        BULLET_SHAPED.match(line.strip()) for line in fragment.splitlines()
+    ) and not extract_bullets(fragment)
 
 
 def extract_all_highlights(fragment: str) -> list[tuple[str, str]]:
@@ -227,8 +258,34 @@ def main() -> int:
 
     news_path = PROJECT_ROOT / "NEWS.md"
     news = news_path.read_text(encoding="utf-8")
-    updated, inserted = prepend_news(news, fragment_path.read_text(encoding="utf-8"))
+    fragment = fragment_path.read_text(encoding="utf-8")
+    updated, inserted = prepend_news(news, fragment)
+
+    # Reported separately because they fail for different reasons and only the
+    # first distinguishes a broken parser from a quiet release: parsed counts
+    # what the patterns understood, deduped what was already in NEWS.md, and
+    # inserted what actually reached the file. Collapsing them into "nothing
+    # added" is what hid issue #1605 for roughly fifty releases.
+    feature_bullets = extract_bullets(fragment)
+    inserted_count = len(inserted)
+    # When every theme is filtered out, prepend_news falls back to a single
+    # aggregated "Release Summary" (added by #1600) that extract_bullets never
+    # produced, so inserted can exceed parsed. Counting that as a negative
+    # dedup would be nonsense; report the aggregate for what it is instead.
+    aggregated = inserted_count and not feature_bullets
+    parsed = len(feature_bullets)
+    deduped = 0 if aggregated else parsed - inserted_count
+    summary = f"parsed {parsed}, deduped {deduped}, inserted {inserted_count}"
+    print(f"{summary} (aggregated fallback)" if aggregated else summary)
+
     if not inserted:
+        if has_unparsable_bullets(fragment):
+            print(
+                f"{fragment_path} contains bullet-shaped lines but none parsed; "
+                "the highlights format and BULLET_PATTERN have diverged",
+                file=sys.stderr,
+            )
+            return 1
         print("no new themes to add, NEWS.md unchanged")
         return 0
 
