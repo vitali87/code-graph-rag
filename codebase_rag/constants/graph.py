@@ -443,6 +443,7 @@ CYPHER_DELETE_MODULE = (
 # projects, and a path-only delete would take the sibling's node (issue #897).
 CYPHER_DELETE_FILE = "MATCH (f:File {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_FOLDER = "MATCH (f:Folder {absolute_path: $path}) DETACH DELETE f"
+CYPHER_DELETE_PACKAGE = "MATCH (p:Package {absolute_path: $path}) DETACH DELETE p"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 # Removes external import-target Module nodes that no module imports anymore
 # (e.g. an imported name that was renamed/removed on an incremental rebuild).
@@ -486,6 +487,13 @@ CYPHER_ALL_MODULE_PATHS_INTERNAL = (
 )
 CYPHER_ALL_FOLDER_PATHS = (
     "MATCH (f:Folder) RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+# Package nodes are pruned against the CURRENT structure, not the disk: a
+# directory whose indicator file (__init__.py, Cargo.toml, ...) went away
+# still exists, as a Folder (issue #1570).
+CYPHER_ALL_PACKAGE_PATHS = (
+    "MATCH (p:Package) RETURN p.path AS path, p.absolute_path AS absolute_path, "
+    "p.qualified_name AS qualified_name"
 )
 
 # Rehydrate the in-memory function registry on an incremental run: returns

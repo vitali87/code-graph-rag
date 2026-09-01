@@ -360,6 +360,9 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
+        # Package paths read from the graph before Pass 1 of an incremental
+        # run; None on a full build or when the graph could not be read.
+        self._packages_before_run: set[str] | None = None
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
@@ -934,6 +937,10 @@ class GraphUpdater:
         self._frontend_owned_qns.clear()
 
         logger.info(ls.PASS_1_STRUCTURE)
+        # Read BEFORE Pass 1: identify_structure emits this run's Package
+        # nodes, so a read after it could not tell a new package from an old
+        # one (issue #1570).
+        self._packages_before_run = None if force else self._package_paths()
         self.factory.structure_processor.identify_structure()
 
         # Cleared here, not only in _run_cpp_frontend: in HYBRID that method
@@ -1767,6 +1774,38 @@ class GraphUpdater:
             }
         )
 
+    def _package_paths(self) -> set[str] | None:
+        """Relative paths of this project's Package nodes, None if unreadable."""
+        if not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_PACKAGE_PATHS)
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="Package")
+            return None
+        prefix = self.project_name + cs.SEPARATOR_DOT
+        paths: set[str] = set()
+        for row in rows:
+            path = row.get(cs.KEY_PATH)
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not isinstance(path, str) or not isinstance(qn, str):
+                continue
+            if qn == self.project_name or qn.startswith(prefix):
+                paths.add(path)
+        return paths
+
+    def _package_flip_dirs(self) -> set[str]:
+        """Directories that are a package now and were not, or the reverse."""
+        was = self._packages_before_run
+        if was is None:
+            return set()
+        now = {
+            rel.as_posix()
+            for rel, qn in self.factory.structure_processor.structural_elements.items()
+            if qn
+        }
+        return was ^ now
+
     def _capture_inbound_edges(self, reindexed_keys: list[str]) -> list[ResultRow]:
         # Record the reference edges unchanged files point at the re-indexed
         # files, BEFORE those files' subtrees (and thus the inbound edges) are
@@ -2403,9 +2442,26 @@ class GraphUpdater:
             - eligible_by_key.keys()
             - unreadable_keys
         )
+        # A directory whose package-ness flipped since the last run (an
+        # __init__.py or Cargo.toml added or deleted) changes the container
+        # every module directly under it hangs off; that edge is emitted only
+        # when the module is parsed, so the siblings re-parse too. The stale
+        # Package or Folder node itself is pruned at the end of the run
+        # (issue #1570).
+        flipped_dirs = self._package_flip_dirs() if not is_full_build else set()
+        siblings = {
+            key
+            for key in eligible_by_key
+            if flipped_dirs and Path(key).parent.as_posix() in flipped_dirs
+        }
         affected = 0
-        for caller_key in self._affected_caller_keys(
-            sorted({*reindexed_keys, *deleted_before_parse})
+        for caller_key in sorted(
+            {
+                *self._affected_caller_keys(
+                    sorted({*reindexed_keys, *deleted_before_parse})
+                ),
+                *siblings,
+            }
         ):
             if caller_key in present:
                 continue
@@ -2724,7 +2780,16 @@ class GraphUpdater:
                 "Module",
             ),
             (cs.CYPHER_ALL_FOLDER_PATHS, cs.CYPHER_DELETE_FOLDER, "Folder"),
+            (cs.CYPHER_ALL_PACKAGE_PATHS, cs.CYPHER_DELETE_PACKAGE, "Package"),
         ]
+        # A directory is represented by exactly one of Folder and Package,
+        # decided by identify_structure this run; the node of the other kind
+        # is stale even though the directory exists (issue #1570).
+        packages_now = {
+            rel.as_posix()
+            for rel, qn in self.factory.structure_processor.structural_elements.items()
+            if qn
+        }
 
         read_failed = False
         legacy_file_keys: list[tuple[str, str]] = []
@@ -2763,9 +2828,22 @@ class GraphUpdater:
                     ):
                         legacy_file_keys.append((path, abs_path))
                     continue
-                if isinstance(qn, str) and qn and not qn.startswith(project_prefix):
+                # The root directory's own node is qualified as exactly the
+                # project name, with no dot: testing only the dotted prefix
+                # dropped it here and let a stale root Package survive beside
+                # the Folder that replaced it. `_package_paths` reads these
+                # same rows and admits both forms; the two must agree.
+                if (
+                    isinstance(qn, str)
+                    and qn
+                    and qn != self.project_name
+                    and not qn.startswith(project_prefix)
+                ):
                     continue
-                if not (self.repo_path / path).exists():
+                stale_kind = (label == "Folder" and path in packages_now) or (
+                    label == "Package" and path not in packages_now
+                )
+                if stale_kind or not (self.repo_path / path).exists():
                     # File/Folder deletes key on the absolute path: a sibling
                     # project's node can share the relative path (issue #897).
                     key = (

@@ -56,6 +56,7 @@ _MODULE_LABEL = cs.NodeLabel.MODULE.value
 _EXTERNAL_MODULE_LABEL = cs.NodeLabel.EXTERNAL_MODULE.value
 _FILE_LABEL = cs.NodeLabel.FILE.value
 _FOLDER_LABEL = cs.NodeLabel.FOLDER.value
+_PACKAGE_LABEL = cs.NodeLabel.PACKAGE.value
 _DEFINES_RELS = frozenset(
     {
         cs.RelationshipType.DEFINES.value,
@@ -164,6 +165,8 @@ class _StatefulIngestor:
                 return self._path_rows(_FILE_LABEL)
             case cs.CYPHER_ALL_FOLDER_PATHS:
                 return self._path_rows(_FOLDER_LABEL)
+            case cs.CYPHER_ALL_PACKAGE_PATHS:
+                return self._path_rows(_PACKAGE_LABEL)
             case cs.CYPHER_AFFECTED_CALLER_PATHS:
                 # Without this case the updater saw no dependents and every
                 # cross-file edge into a re-indexed file relied on the verbatim
@@ -303,6 +306,10 @@ class _StatefulIngestor:
                 self._detach_delete(
                     self._nodes_at_path(_FOLDER_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
                 )
+            case cs.CYPHER_DELETE_PACKAGE:
+                self._detach_delete(
+                    self._nodes_at_path(_PACKAGE_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
+                )
             case cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES:
                 self._delete_orphan_external_modules()
             case _:
@@ -316,6 +323,7 @@ class _StatefulIngestor:
             row: ResultRow = {
                 cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                 cs.KEY_ABSOLUTE_PATH: _text(props.get(cs.KEY_ABSOLUTE_PATH)),
+                cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
             }
             rows.append(row)
         return rows
