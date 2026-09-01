@@ -236,6 +236,15 @@ def test_a_vanished_path_is_not_an_error(tmp_path: Path) -> None:
 
     _clear_readonly(unlink_it, victim, FileNotFoundError(2, "No such file"))
 
+    # And on the SYMLINK branch, which skips the mode work and so does not
+    # pass through the try/except that gives the two cases above their
+    # tolerance. A link is reached here only when the first unlink failed for
+    # some other reason and the link vanished before the retry -- narrow, but
+    # every other branch tolerates it and this one must not be the exception.
+    link = tmp_path / "link-that-vanishes"
+    link.symlink_to(tmp_path / "no-such-target")
+    _clear_readonly(unlink_it, link, OSError(13, "Permission denied"))
+
 
 def test_a_dangling_symlink_is_removed_rather_than_skipped(tmp_path: Path) -> None:
     """A dangling link must be retried, not silently abandoned.
@@ -254,9 +263,11 @@ def test_a_dangling_symlink_is_removed_rather_than_skipped(tmp_path: Path) -> No
                                  invoked ZERO times, so the tree comes down
                                  identically with and without this fix.
       link in a 0o500 dir     -- the handler IS reached and now retries, but
-                                 rmtree still fails `[Errno 66]` either way:
-                                 the blocker is the PARENT's write bit and no
-                                 chmod on the child can clear it.
+                                 rmtree still FAILS either way: the blocker is
+                                 the PARENT's write bit and no chmod on the
+                                 child can clear it. (The errno depends on the
+                                 removal path: 66 on the default fd-based one,
+                                 13 post-fix / 2 pre-fix without it.)
 
     So the rescued case is Windows, where `os.unlink` refuses outright and the
     handler is the only path to removal -- the same platform asymmetry as the

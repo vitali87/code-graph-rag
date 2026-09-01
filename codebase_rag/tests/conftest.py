@@ -329,7 +329,14 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     # `os.path.islink` is true for both symlink kinds, so this keeps the
     # handler platform-independent rather than trading one platform for another.
     if os.path.islink(path):
-        func(path)
+        # Same vanished-path tolerance as the non-link path below: the link
+        # can be gone by the time this retry runs, and that is the state the
+        # teardown wanted. Without this the link branch would raise out of
+        # teardown for a case every other branch tolerates.
+        try:
+            func(path)
+        except FileNotFoundError:
+            pass
         return
     try:
         mode = os.stat(path).st_mode
