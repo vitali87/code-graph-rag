@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from scripts.update_news import (
     LATEST_RELEASE_MARKER,
+    create_aggregated_bullet,
     existing_themes,
+    extract_all_highlights,
     extract_bullets,
     is_feature_theme,
     prepend_news,
@@ -67,6 +69,32 @@ class TestExtractBullets:
         assert extract_bullets(fragment) == [
             "- **Web Search**: the agent can now search the web."
         ]
+
+
+class TestAggregateHighlights:
+    def test_extracts_both_highlight_markers_without_filtering(self) -> None:
+        fragment = (
+            "## Highlights\n"
+            "* **CI Speedups**: builds now finish faster.\n"
+            "- **Bug Fixes**: assorted crashes resolved.\n"
+            "* **Empty Body**: \n"
+        )
+        assert extract_all_highlights(fragment) == [
+            ("CI Speedups", "builds now finish faster."),
+            ("Bug Fixes", "assorted crashes resolved."),
+        ]
+
+    def test_combines_every_highlight_into_one_bullet(self) -> None:
+        highlights = [
+            ("CI Speedups", "builds now finish faster."),
+            ("Bug Fixes", "assorted crashes resolved."),
+            ("Documentation", "the deployment guide is clearer."),
+        ]
+        assert create_aggregated_bullet(highlights) == (
+            "- **Release Summary**: CI Speedups: builds now finish faster; "
+            "Bug Fixes: assorted crashes resolved; and Documentation: the "
+            "deployment guide is clearer."
+        )
 
 
 class TestIsFeatureTheme:
@@ -215,3 +243,27 @@ class TestPrependNews:
             "- **Static Binaries**: Intel macOS builds link OpenSSL statically.",
         ]
         assert "already covered" not in updated
+
+    def test_all_rejected_highlights_become_one_summary(self) -> None:
+        fragment = (
+            "* **CI Speedups**: builds now finish faster.\n"
+            "* **Bug Fixes**: assorted crashes resolved.\n"
+            "* **Documentation**: the deployment guide is clearer.\n"
+        )
+        updated, inserted = prepend_news(NEWS, fragment)
+        assert inserted == [
+            "- **Release Summary**: CI Speedups: builds now finish faster; "
+            "Bug Fixes: assorted crashes resolved; and Documentation: the "
+            "deployment guide is clearer."
+        ]
+        assert updated.count("- **Release Summary**:") == 1
+
+    def test_rejected_highlight_summary_is_idempotent(self) -> None:
+        fragment = (
+            "* **CI Speedups**: builds now finish faster.\n"
+            "* **Bug Fixes**: assorted crashes resolved.\n"
+        )
+        once, _ = prepend_news(NEWS, fragment)
+        twice, inserted = prepend_news(once, fragment)
+        assert inserted == []
+        assert twice == once
