@@ -27,9 +27,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)\*\*: \S.*$")
-HIGHLIGHT_BULLET = re.compile(
-    r"^[-*]\s+\*\*(?P<theme>[^*]+?)\*\*:\s*(?P<text>\S.*)$"
-)
+HIGHLIGHT_BULLET = re.compile(r"^[-*]\s+\*\*(?P<theme>[^*]+?)\*\*:\s*(?P<text>\S.*)$")
 
 # Placed directly below the block of entries the latest release inserted, so
 # the README's "Latest News" can render that whole block instead of a fixed
