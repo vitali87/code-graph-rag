@@ -316,6 +316,19 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     entry and find it gone by the time it unlinks -- a TOCTOU that surfaced
     only under `pytest-xdist` on a CI runner, never on a developer machine.
     """
+    # A symlink has no mode of its own worth clearing, and every stat/chmod
+    # here FOLLOWS it: on a DANGLING link `os.stat` raises FileNotFoundError,
+    # the early return skips the retry, and `rmtree` then fails on a link it
+    # could simply have unlinked ([Errno 66] Directory not empty). `os.lstat`
+    # alone does not fix it -- `os.chmod` follows links too, and
+    # `follow_symlinks=False` is unsupported for chmod on macOS
+    # (`os.supports_follow_symlinks`), so the only portable answer is to skip
+    # the mode work entirely and retry the removal directly. On Windows
+    # `os.path.islink` is true for both symlink kinds, so this keeps the
+    # handler platform-independent rather than trading one platform for another.
+    if os.path.islink(path):
+        func(path)
+        return
     try:
         mode = os.stat(path).st_mode
     except FileNotFoundError:

@@ -233,3 +233,42 @@ def test_a_vanished_path_is_not_an_error(tmp_path: Path) -> None:
         raise FileNotFoundError(2, "No such file or directory", str(p))
 
     _clear_readonly(unlink_it, victim, FileNotFoundError(2, "No such file"))
+
+
+def test_a_dangling_symlink_is_removed_rather_than_skipped(tmp_path: Path) -> None:
+    """A dangling link must be retried, not silently abandoned.
+
+    Every stat/chmod in the handler FOLLOWS a symlink. On a dangling link
+    `os.stat` raises FileNotFoundError, which the vanished-path guard treats
+    as "already gone" and returns -- but the LINK itself is still there, so
+    `rmtree` fails with `[Errno 66] Directory not empty` on an entry it could
+    have unlinked. The link is exactly the thing the handler was asked to
+    remove, and the target's absence says nothing about it.
+
+    `os.lstat` alone does not fix this: `os.chmod` follows links too, and
+    `follow_symlinks=False` is unsupported for chmod on macOS. Skipping the
+    mode work for links is the only portable answer.
+    """
+    root = tmp_path / "tree"
+    root.mkdir()
+    link = root / "dangling"
+    link.symlink_to(root / "nonexistent-target")
+
+    # Precondition: the link is present but its target is not, which is what
+    # makes os.stat raise. Without this the test could pass on a live link.
+    assert link.is_symlink(), "the fixture must create a real symlink"
+    assert not link.exists(), "the link must dangle, or os.stat would not raise"
+
+    # The handler must RETRY on the link, not return early. Asserting the
+    # retry directly, rather than only that the tree vanished, so a handler
+    # that got lucky through some other path cannot pass this.
+    retried: list[object] = []
+    _clear_readonly(retried.append, link, FileNotFoundError(2, "No such file"))
+    assert retried == [link], (
+        "the handler must invoke the removal on a dangling link; returning "
+        "early leaves it in place and rmtree fails on the parent"
+    )
+
+    # And end to end: the tree comes down with the link inside it.
+    shutil.rmtree(root, onexc=_clear_readonly)
+    assert not root.exists()
