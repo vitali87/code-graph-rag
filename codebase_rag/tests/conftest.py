@@ -311,7 +311,9 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
 
     A path that VANISHED between the walk and the removal has already reached
     the state the teardown wanted, so it is not an error to recover from. Git
-    runs background maintenance after `git init` and deletes its own
+    runs background maintenance after `git commit` -- `git commit` spawns
+    `git maintenance run --auto --quiet --detach`, `git init` spawns nothing
+    (verified under `GIT_TRACE=1`, git 2.47.1) -- and that deletes its own
     `.git/objects/maintenance.lock` asynchronously, so `rmtree` can list the
     entry and find it gone by the time it unlinks -- a TOCTOU that surfaced
     only under `pytest-xdist` on a CI runner, never on a developer machine.

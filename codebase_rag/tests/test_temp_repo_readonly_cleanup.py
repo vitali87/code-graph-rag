@@ -208,7 +208,9 @@ def test_the_handler_leaves_a_directory_traversable(tmp_path: Path) -> None:
 def test_a_vanished_path_is_not_an_error(tmp_path: Path) -> None:
     """A path removed by someone else between the walk and the unlink.
 
-    `git init` starts background maintenance, which deletes its own
+    `git commit` starts background maintenance -- it spawns `git maintenance
+    run --auto --quiet --detach`, while `git init` spawns nothing (verified
+    under `GIT_TRACE=1`, git 2.47.1) -- which deletes its own
     `.git/objects/maintenance.lock` asynchronously. `shutil.rmtree` can list
     that entry and find it gone by the time it unlinks, so the handler is
     invoked for a path that no longer exists. The removal has already
@@ -240,14 +242,32 @@ def test_a_dangling_symlink_is_removed_rather_than_skipped(tmp_path: Path) -> No
 
     Every stat/chmod in the handler FOLLOWS a symlink. On a dangling link
     `os.stat` raises FileNotFoundError, which the vanished-path guard treats
-    as "already gone" and returns -- but the LINK itself is still there, so
-    `rmtree` fails with `[Errno 66] Directory not empty` on an entry it could
-    have unlinked. The link is exactly the thing the handler was asked to
-    remove, and the target's absence says nothing about it.
+    as "already gone" and returns without calling `func` -- but the LINK
+    itself is still there. The link is exactly the thing the handler was
+    asked to remove, and the target's absence says nothing about it.
 
-    `os.lstat` alone does not fix this: `os.chmod` follows links too, and
-    `follow_symlinks=False` is unsupported for chmod on macOS. Skipping the
-    mode work for links is the only portable answer.
+    SCOPE, measured rather than assumed. This test asserts the HANDLER's
+    behaviour, not an end-to-end `rmtree` outcome, because end to end the fix
+    changes nothing on POSIX:
+
+      link in a writable dir  -- rmtree unlinks it unaided; the handler is
+                                 invoked ZERO times, so the tree comes down
+                                 identically with and without this fix.
+      link in a 0o500 dir     -- the handler IS reached and now retries, but
+                                 rmtree still fails `[Errno 66]` either way:
+                                 the blocker is the PARENT's write bit and no
+                                 chmod on the child can clear it.
+
+    So the rescued case is Windows, where `os.unlink` refuses outright and the
+    handler is the only path to removal -- the same platform asymmetry as the
+    read-only case above. On POSIX this is a correctness fix to the handler
+    (it no longer abandons a link it was asked to remove) with no reachable
+    end-to-end consequence. Asserting `rmtree` succeeded here would be an
+    assertion satisfied by the broken code too.
+
+    `os.lstat` alone does not fix the handler: `os.chmod` follows links too,
+    and `follow_symlinks=False` is unsupported for chmod on macOS. Skipping
+    the mode work for links is the only portable answer.
     """
     root = tmp_path / "tree"
     root.mkdir()
@@ -269,6 +289,7 @@ def test_a_dangling_symlink_is_removed_rather_than_skipped(tmp_path: Path) -> No
         "early leaves it in place and rmtree fails on the parent"
     )
 
-    # And end to end: the tree comes down with the link inside it.
-    shutil.rmtree(root, onexc=_clear_readonly)
-    assert not root.exists()
+    # No end-to-end rmtree assertion here on purpose: see SCOPE above. In a
+    # writable dir rmtree removes the link without ever invoking the handler,
+    # so `assert not root.exists()` passes against the BROKEN handler too and
+    # would be evidence of nothing.
