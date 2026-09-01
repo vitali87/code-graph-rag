@@ -180,6 +180,30 @@ python-version = "3.12"
 [tool.ty.src]
 exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py", "benchmarks/", "optimize/"]
 
+[tool.coverage.run]
+# `codebase_rag/constants/` is excluded because coverage cannot say anything
+# useful about it, not because it is untested (issue #1599).
+#
+# Those 31 modules are almost entirely module-level assignments. A constant
+# definition executes exactly once, at import, and cannot fail to execute if
+# the module is imported at all -- so the measurement is 100% or 0% depending
+# on whether tracing had started by then, never on whether anything is tested.
+# Measured under pytest it is 0/2858 lines, because conftest imports
+# `graph_updater` (which alone pulls all 31) during collection, before
+# pytest-cov begins tracing. Importing the same package after starting
+# coverage manually records the lines normally.
+#
+# Keeping it in the denominator understated source coverage by ~2856 lines and
+# made `constants/` read as the largest gap in the tree while carrying no
+# signal in either direction. Excluding it makes the remaining figure mean
+# something; it does not hide dead code, since an unused constant executes at
+# import exactly like a used one and coverage could never have flagged it.
+#
+# This is not a new judgement: `sonar-project.properties` already carries
+# `sonar.coverage.exclusions=...,codebase_rag/constants/**`. The two tools
+# disagreed, and this makes Codecov match the call the project had made.
+omit = ["codebase_rag/constants/*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # loadgroup honors the xdist_group marker that pins the integration dir to
