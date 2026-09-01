@@ -28,6 +28,19 @@ fixtures/**
 - Lines starting with `#` are comments; blank lines are ignored
 - Patterns from `.cgrignore` are merged with `--exclude` flags (which use the same syntax) and auto-detected directories
 
+## Changing the Exclusion Set
+
+The exclusion set is part of what an index is built against, so changing it is
+treated as a change to the repository. Editing `.cgrignore` or passing a
+different set of `--exclude` / `--unignore` flags re-runs the sync even when no
+file on disk has changed: newly excluded files have their `Module`, `Class` and
+`Method` nodes removed from the graph, and newly included ones are indexed.
+
+The set each index was built under is recorded in `.cgr-exclusion-state.json`
+in the repository root, alongside the hash cache. An index built before that
+file existed has no recorded set, so the first run after upgrading re-runs once
+to establish it and logs why.
+
 ## Default Exclusions
 
 Code-Graph-RAG automatically excludes common non-source directories such as `.git`, `node_modules`, `__pycache__`, `dist`, `build`, and similar.

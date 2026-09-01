@@ -101,6 +101,16 @@ GO_FRONTEND_NO_FACTS = (
 GRAPH_ALREADY_IN_SYNC = (
     "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
 )
+EXCLUSION_SET_CHANGED = (
+    "Exclusion set changed since the last sync ({previous} -> {current}); "
+    "re-running so newly excluded files leave the graph and newly included "
+    "ones enter it."
+)
+EXCLUSION_STATE_MISSING = (
+    "No recorded exclusion set for this graph, so it cannot be shown "
+    "unchanged; re-running once to establish it. Expect this exactly once "
+    "per existing index."
+)
 
 # Analysis logs
 FOUND_FUNCTIONS = "\n--- Found {count} functions/methods in codebase ---"

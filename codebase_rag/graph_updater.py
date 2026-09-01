@@ -214,6 +214,47 @@ def _save_delombok_state(state_path: Path, state: dict) -> None:
         return None
 
 
+def _exclusion_state(
+    exclude_paths: frozenset[str] | None,
+    unignore_paths: frozenset[str] | None,
+) -> dict[str, list[str]]:
+    return {
+        "exclude": sorted(exclude_paths or ()),
+        "unignore": sorted(unignore_paths or ()),
+    }
+
+
+def _load_exclusion_state(state_path: Path) -> dict[str, list[str]] | None:
+    """The exclusion set the last completed run indexed under, or None.
+
+    None means "cannot be established" and must be read as changed by the
+    caller: an index written before this stamp existed carries an unknown
+    exclusion set, exactly like a missing parser fingerprint.
+    """
+    try:
+        loaded = json.loads(state_path.read_text(encoding=cs.ENCODING_UTF8))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    result: dict[str, list[str]] = {}
+    for key in ("exclude", "unignore"):
+        values = loaded.get(key)
+        if not isinstance(values, list):
+            return None
+        result[key] = sorted(v for v in values if isinstance(v, str))
+    return result
+
+
+def _save_exclusion_state(state_path: Path, state: dict[str, list[str]]) -> None:
+    try:
+        state_path.write_text(
+            json.dumps(state, sort_keys=True), encoding=cs.ENCODING_UTF8
+        )
+    except OSError:
+        return None
+
+
 def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1162,6 +1203,22 @@ class GraphUpdater:
             _save_delombok_state(
                 self.repo_path / cs.DELOMBOK_STATE_FILENAME,
                 self._delombok_state_candidate,
+            )
+
+        # Same commit point, for the same reason. The module deletions a newly
+        # excluded file triggers are execute_write calls that only become
+        # durable at the flush above; stamping back in _process_files would let
+        # a run that died in between tell its successor the exclusion was
+        # already reconciled, and the successor would then fast-path over a
+        # subtree still in the graph -- a leak that outlasts the one #1606
+        # describes. Recorded on EVERY completed project run, not full builds
+        # only: an incremental run that narrowed the set must record it, or the
+        # next run reads that run's own result as a change. A single-file run
+        # walks one file and cannot speak for the project's exclusion set.
+        if self._single_file is None:
+            _save_exclusion_state(
+                self.repo_path / cs.EXCLUSION_STATE_FILENAME,
+                _exclusion_state(self.exclude_paths, self.unignore_paths),
             )
 
     def _emit_pending_endpoints(self) -> None:
@@ -2183,6 +2240,24 @@ class GraphUpdater:
         ):
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
 
+    def _exclusions_match_last_run(self) -> bool:
+        stored = _load_exclusion_state(self.repo_path / cs.EXCLUSION_STATE_FILENAME)
+        current = _exclusion_state(self.exclude_paths, self.unignore_paths)
+        if stored == current:
+            return True
+        # A missing stamp means an index built before it existed, whose
+        # exclusion set is unknown rather than known-equal -- the posture
+        # `_warn_if_parser_changed` takes for a missing fingerprint. Reported
+        # apart from a real change so a user seeing an unexpected full pass
+        # can tell which of the two they are looking at.
+        if stored is None:
+            logger.info(ls.EXCLUSION_STATE_MISSING)
+        else:
+            logger.info(
+                ls.EXCLUSION_SET_CHANGED.format(previous=stored, current=current)
+            )
+        return False
+
     def _is_already_in_sync(self) -> bool:
         if self._delombok_state_changed:
             # The overlay's effect changed while the checked-in bytes did
@@ -2192,6 +2267,13 @@ class GraphUpdater:
             return False
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
+            return False
+        # Nothing on disk changes when only the exclusion set does, so no
+        # hash or directory mtime below can see it: a file excluded by a CLI
+        # flag alone would keep the Module, Class and Method nodes the last
+        # run gave it (issue #1606). `.cgrignore` was covered only
+        # incidentally, by being an indexed and hashed file itself.
+        if not self._exclusions_match_last_run():
             return False
         cache_mtime = cache_path.stat().st_mtime
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME

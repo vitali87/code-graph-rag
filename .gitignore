@@ -50,6 +50,7 @@ evals/oracles/scala_oracle/.bsp/
 .cgr-hash-cache.json
 .cgr-dir-mtimes.json
 .cgr-parser-fingerprint
+.cgr-exclusion-state.json
 .cgr-delombok-state.json
 .cgr-edit-history.json
 .cgr-edit-lock
@@ -62,3 +63,4 @@ evals/results/corpora/
 evals/results/**/agentic_qa*records*.jsonl
 evals/results/logs/
 .cgr-parser-fingerprint
+.cgr-exclusion-state.json

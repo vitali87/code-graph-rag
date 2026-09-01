@@ -28,6 +28,48 @@ def updater(temp_repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:
     )
 
 
+_EXCLUDED_QNS = frozenset(
+    {
+        "excludable.module_a",
+        "excludable.module_a.Alpha",
+        "excludable.module_a.Alpha.greet",
+    }
+)
+
+
+def _emitted_qns(mock_ingestor: MagicMock) -> set[str]:
+    return {
+        call.args[1]["qualified_name"]
+        for call in mock_ingestor.ensure_node_batch.call_args_list
+        if len(call.args) > 1 and "qualified_name" in call.args[1]
+    }
+
+
+def _deleted_module_paths(mock_ingestor: MagicMock) -> set[str]:
+    return {
+        call.args[1][cs.KEY_PATH]
+        for call in mock_ingestor.execute_write.call_args_list
+        if call.args and call.args[0] == cs.CYPHER_DELETE_MODULE
+    }
+
+
+@pytest.fixture
+def excludable_project(tmp_path: Path) -> Path:
+    """A project whose module_a carries a Module, a Class and a Method.
+
+    Named apart from `temp_repo` so the project name (and therefore every
+    qualified name asserted above) is stable.
+    """
+    repo = tmp_path / "excludable"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "module_a.py").write_text(
+        "class Alpha:\n    def greet(self):\n        return 1\n"
+    )
+    (repo / "module_b.py").write_text("def func_b():\n    pass\n")
+    return repo
+
+
 @pytest.fixture
 def py_project(temp_repo: Path) -> Path:
     (temp_repo / "__init__.py").touch()
@@ -419,6 +461,227 @@ class TestFastPathInSync:
             queries=queries,
         )
         assert updater._is_already_in_sync() is False
+
+    def test_changed_cli_exclusion_disables_fast_path(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=frozenset({"module_a.py"}),
+        )
+        assert updater2._is_already_in_sync() is False
+
+    def test_changed_unignore_disables_fast_path(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+            unignore_paths=frozenset({"vendor/**"}),
+        )
+        assert updater2._is_already_in_sync() is False
+
+    def test_unchanged_exclusion_keeps_fast_path(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        exclusions = frozenset({"module_a.py"})
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=exclusions,
+        )
+        updater.run()
+
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=exclusions,
+        )
+        assert updater2._is_already_in_sync() is True
+
+    def test_newly_excluded_file_leaves_the_index(
+        self, excludable_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        assert _EXCLUDED_QNS <= _emitted_qns(mock_ingestor)
+
+        mock_ingestor.reset_mock()
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=frozenset({"module_a.py"}),
+        )
+        with patch.object(
+            updater2, "_process_files", wraps=updater2._process_files
+        ) as spy_files:
+            updater2.run()
+
+        assert spy_files.call_count == 1
+        assert "module_a.py" in _deleted_module_paths(mock_ingestor)
+        # Deleting is not enough: a run that deleted and then re-parsed the
+        # file would put every node straight back.
+        assert not (_EXCLUDED_QNS & _emitted_qns(mock_ingestor))
+        with (excludable_project / cs.HASH_CACHE_FILENAME).open() as f:
+            assert "module_a.py" not in json.load(f)
+
+    def test_cgrignore_exclusion_leaves_the_index(
+        self, excludable_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """Control for #1606: the path that already worked must keep working.
+
+        A `.cgrignore` edit is caught even without an exclusion stamp,
+        because that file is itself indexed and hashed, so its own hash
+        turns the sync check over. The CLI merges both sources before
+        constructing the updater, so the exclusion set is passed either way
+        and only the on-disk change distinguishes them.
+        """
+        parsers, queries = load_parsers()
+        ignore_file = excludable_project / ".cgrignore"
+        ignore_file.write_text("\n")
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        assert _EXCLUDED_QNS <= _emitted_qns(mock_ingestor)
+
+        ignore_file.write_text("module_a.py\n")
+        mock_ingestor.reset_mock()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=frozenset({"module_a.py"}),
+        ).run()
+
+        assert "module_a.py" in _deleted_module_paths(mock_ingestor)
+        assert not (_EXCLUDED_QNS & _emitted_qns(mock_ingestor))
+
+    def test_exclusion_state_file_is_never_indexed(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The stamp must not be a file the hash loop watches.
+
+        A state file that indexed itself would be written by every run and so
+        differ from its own cached hash on the next one, leaving the fast path
+        permanently dead. That is what its CGR_STATE_FILENAMES entry prevents.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        assert (py_project / cs.EXCLUSION_STATE_FILENAME).is_file()
+        with (py_project / cs.HASH_CACHE_FILENAME).open() as f:
+            assert cs.EXCLUSION_STATE_FILENAME not in json.load(f)
+
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert updater2._is_already_in_sync() is True
+
+    def test_crash_before_flush_leaves_no_exclusion_stamp(
+        self, excludable_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """A run that dies after Pass 2 must not claim the exclusion is done.
+
+        The module deletions a newly excluded file triggers are only durable
+        once the ingestor flushes. Stamping earlier would tell the next run
+        the exclusion was already reconciled, and it would fast-path over a
+        subtree still in the graph.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        stamp = excludable_project / cs.EXCLUSION_STATE_FILENAME
+        before = stamp.read_text()
+
+        exclusions = frozenset({"module_a.py"})
+        updater2 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=exclusions,
+        )
+        processed = False
+
+        def _fail_after_pass_2(*_args: object, **_kwargs: object) -> None:
+            if processed:
+                raise RuntimeError("ingestor died before the deletions landed")
+
+        real_process_files = updater2._process_files
+
+        def _tracked(*args: object, **kwargs: object) -> None:
+            nonlocal processed
+            real_process_files(*args, **kwargs)  # type: ignore[arg-type]
+            processed = True
+
+        mock_ingestor.flush_all.side_effect = _fail_after_pass_2
+        with patch.object(updater2, "_process_files", side_effect=_tracked):
+            with pytest.raises(RuntimeError):
+                updater2.run()
+
+        mock_ingestor.flush_all.side_effect = None
+        assert stamp.read_text() == before
+
+        updater3 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=exclusions,
+        )
+        assert updater3._is_already_in_sync() is False
 
     def test_force_bypasses_fast_path(
         self, py_project: Path, mock_ingestor: MagicMock
