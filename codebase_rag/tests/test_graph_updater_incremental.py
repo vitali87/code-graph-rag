@@ -717,14 +717,15 @@ class TestFastPathInSync:
 
         exclusions = frozenset({"module_a.py"})
         mock_ingestor.flush_all.side_effect = RuntimeError("died before the flush")
+        crashing = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=exclusions,
+        )
         with pytest.raises(RuntimeError):
-            GraphUpdater(
-                ingestor=mock_ingestor,
-                repo_path=excludable_project,
-                parsers=parsers,
-                queries=queries,
-                exclude_paths=exclusions,
-            ).run()
+            crashing.run()
         mock_ingestor.flush_all.side_effect = None
 
         # After the crash the graph is the ONLY place `module_a.py` still
@@ -773,14 +774,15 @@ class TestFastPathInSync:
 
         exclusions = frozenset({"module_a.py"})
         mock_ingestor.flush_all.side_effect = RuntimeError("died before the flush")
+        crashing = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=exclusions,
+        )
         with pytest.raises(RuntimeError):
-            GraphUpdater(
-                ingestor=mock_ingestor,
-                repo_path=excludable_project,
-                parsers=parsers,
-                queries=queries,
-                exclude_paths=exclusions,
-            ).run()
+            crashing.run()
         mock_ingestor.flush_all.side_effect = None
 
         def _graph_unreachable(query: str, _params: object = None) -> list[object]:
