@@ -199,11 +199,14 @@ def _git_escapes_project(cmd_parts: list[str], project_root: Path) -> tuple[bool
 
         if not target:
             continue
+        # Joining onto the root is the platform's own absoluteness test: an
+        # absolute target replaces the root outright, a relative one lands
+        # under it. A `startswith("/")` check is POSIX-only: on Windows a
+        # rooted, drive-less target such as `/x` would resolve on the Python
+        # process's drive rather than the root's, which is the drive git
+        # itself runs on (its cwd is the root).
         try:
-            if target.startswith("/"):
-                resolved = Path(target).resolve()
-            else:
-                resolved = (project_root / target).resolve()
+            resolved = (project_root / target).resolve()
         except (OSError, ValueError):
             return True, f"git pointed at an unresolvable path: {target}"
 
