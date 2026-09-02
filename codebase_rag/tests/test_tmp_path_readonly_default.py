@@ -46,6 +46,8 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
+
 # Planted by the inner session so the outer test can find the tree afterwards.
 _INNER_TEST = """
 import os
@@ -776,6 +778,10 @@ def test_the_loose_object_filter_accepts_a_sha256_repo(
         check=True,
         capture_output=True,
         text=True,
+        # Explicit, never the locale: `text=True` alone decodes with the
+        # locale encoding (cp1252 on the Windows runners), which #1454 made a
+        # suite-wide gate against. git writes UTF-8.
+        encoding=cs.ENCODING_UTF8,
         env=env,
     ).stdout.strip()
     if fmt != "sha256":
