@@ -18,7 +18,9 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.frontends import go as go_fe
+from codebase_rag.parsers.frontends import java as java_fe
 from codebase_rag.parsers.go_frontend import GoCallSite, GoSemanticFacts
+from codebase_rag.parsers.java_frontend import JavaCallSite, JavaSemanticFacts
 from evals.cgr_graph import _StatefulIngestor
 
 _ABSOLUTE = {cs.NodeLabel.FOLDER.value, cs.NodeLabel.PACKAGE.value}
@@ -399,3 +401,89 @@ def test_a_reused_updater_joins_a_go_fact_against_the_renamed_module(
     # heuristic binds Run to A.Handle instead.
     assert ("proj.iface.Run", "proj.c.B.Handle") in after, after
     assert after == _calls(_clean(temp_repo, GO_FACT_AFTER, cs.SupportedLanguage.GO))
+
+
+# Java twin of the Go test above: same declared_location join, same
+# rel-path memo on the Java engine. The fact is built after Pass 2 from the
+# registered span of B.handle in whichever file currently holds it.
+JAVA_HANDLER = "public interface Handler {\n    String handle();\n}\n"
+JAVA_A = (
+    "public class A implements Handler {\n"
+    '    public String handle() { return "a"; }\n}\n'
+)
+JAVA_B = (
+    "public class B implements Handler {\n"
+    '    public String handle() { return "b"; }\n}\n'
+)
+JAVA_RUN = (
+    "public class Run {\n    public static void run(Handler h) {\n"
+    "        h.handle();\n    }\n}\n"
+)
+JAVA_FACT_BEFORE = {
+    "Handler.java": JAVA_HANDLER,
+    "A.java": JAVA_A,
+    "B.java": JAVA_B,
+    "Run.java": JAVA_RUN,
+}
+JAVA_FACT_AFTER = {
+    "Handler.java": JAVA_HANDLER,
+    "A.java": JAVA_A,
+    "C.java": JAVA_B,
+    "Run.java": JAVA_RUN,
+}
+JAVA_CALL_KEY = ("Run.java", 3, len("        h."), "handle")
+
+
+def test_a_reused_updater_joins_a_java_fact_against_the_renamed_module(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = temp_repo / "proj"
+    holder: dict[str, object] = {"target_file": "B.java"}
+
+    def facts(repo_path: Path) -> JavaSemanticFacts:
+        updater = holder["updater"]
+        assert isinstance(updater, GraphUpdater)
+        target_file = str(holder["target_file"])
+        dp = updater.factory.definition_processor
+        target_path = root / target_file
+        modules = {
+            qn for qn, path in dp.module_qn_to_file_path.items() if path == target_path
+        }
+        spans = sorted(
+            (line, col)
+            for (mod, line, col), loc in dp.function_locations.items()
+            if mod in modules and ".B.handle" in loc.qualified_name
+        )
+        assert spans, (modules, sorted(dp.function_locations))
+        line, col = spans[0]
+        return JavaSemanticFacts(
+            call_sites={JAVA_CALL_KEY: JavaCallSite("handle", target_file, line, col)},
+            external_sites=set(),
+        )
+
+    monkeypatch.setattr(gu.settings, "JAVA_FRONTEND", cs.JavaFrontend.JAVAC)
+    monkeypatch.setattr(java_fe, "java_frontend_available", lambda: True)
+    monkeypatch.setattr(java_fe, "run_java_frontend", facts)
+
+    _materialise(root, JAVA_FACT_BEFORE)
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.JAVA)
+    holder["updater"] = updater
+    updater.run(force=True)
+    first = _calls(_snapshot(store, root))
+    # Positive control: the fact binds the call to B.handle on the first run.
+    assert any(t.startswith("proj.B.B.handle") for _, t in first), first
+
+    (root / "B.java").rename(root / "C.java")
+    _bump(root, "C.java")
+    holder["target_file"] = "C.java"
+    updater.run(force=False)
+    after = _calls(_snapshot(store, root))
+
+    assert any(
+        s.startswith("proj.Run.Run.run") and t.startswith("proj.C.B.handle")
+        for s, t in after
+    ), after
+    assert after == _calls(
+        _clean(temp_repo, JAVA_FACT_AFTER, cs.SupportedLanguage.JAVA)
+    )
