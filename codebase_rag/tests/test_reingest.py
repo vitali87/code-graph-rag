@@ -16,7 +16,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.capture import resolve_capture
+from codebase_rag.graph_updater import (
+    CYPHER_PROJECT_MODULES,
+    CYPHER_PROJECT_PY_MODULES,
+    CYPHER_PROJECT_ROUTE_HANDLERS,
+    GraphUpdater,
+)
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater
 from evals.cgr_graph import _StatefulIngestor
@@ -738,3 +744,112 @@ def test_reingest_skips_paths_the_ignore_rules_exclude(
     assert _snapshot(store) == before
     cache = json.loads((fixture_root / cs.HASH_CACHE_FILENAME).read_text())
     assert rel not in cache
+
+
+def test_a_warm_updater_aborts_when_the_inbound_capture_fails(
+    fixture_root: Path,
+) -> None:
+    # reingest must not inherit the previous run's full-build flag: with it
+    # set, a failed inbound-edge capture is swallowed and the cross-file
+    # edges into the re-parsed files are dropped under a success log.
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    _write(
+        fixture_root, "pkg/util.py", FIXTURE["pkg/util.py"] + "\n\ndef f():\n    pass\n"
+    )
+    real_fetch_all = store.fetch_all
+
+    def failing(query: str, params: object = None) -> list:
+        if query == cs.CYPHER_INBOUND_EDGES:
+            raise RuntimeError("inbound-edge query outage")
+        return real_fetch_all(query, params)  # type: ignore[arg-type]
+
+    store.fetch_all = failing  # type: ignore[method-assign]
+    before = _snapshot(store)
+    with pytest.raises(RuntimeError, match="inbound-edge query outage"):
+        updater.reingest(["pkg/util.py"])
+    assert _snapshot(store) == before
+
+
+ROUTES_PY = (
+    "from fastapi import APIRouter\n\nrouter = APIRouter(prefix='/users')\n\n\n"
+    "@router.get('/{user_id}')\ndef get_user(user_id: int):\n    return {}\n"
+)
+MAIN_PY = (
+    "from fastapi import FastAPI\n\nimport routes\n\napp = FastAPI()\n"
+    "app.include_router(routes.router, prefix='{prefix}')\n"
+)
+
+
+class _QueryableSink:
+    """Answers the graph read-backs the endpoint pass makes; nothing else."""
+
+    def __init__(self, project: str) -> None:
+        self.project = project
+        self.ensure_node_batch = MagicMock()
+        self.ensure_relationship_batch = MagicMock()
+        self.flush_all = MagicMock()
+        self.execute_write = MagicMock()
+        self.fetch_all = MagicMock(side_effect=self._fetch)
+
+    def _fetch(self, query: str, params: object = None) -> list:
+        if query in (CYPHER_PROJECT_MODULES, CYPHER_PROJECT_PY_MODULES):
+            return [
+                {"qualified_name": f"{self.project}.routes", "path": "routes.py"},
+                {"qualified_name": f"{self.project}.main", "path": "main.py"},
+            ]
+        if query == CYPHER_PROJECT_ROUTE_HANDLERS:
+            return [
+                {
+                    "labels": ["Function"],
+                    "qualified_name": f"{self.project}.routes.get_user",
+                    "decorators": ["@router.get('/{user_id}')"],
+                }
+            ]
+        return []
+
+    def exposes(self) -> set[tuple[str, str]]:
+        rel = cs.RelationshipType.EXPOSES.value
+        return {
+            (c.args[0][2].split(".", 1)[1], c.args[2][2].split("::")[-1])
+            for c in self.ensure_relationship_batch.call_args_list
+            if str(c.args[1]) == rel
+        }
+
+
+def test_reingest_re_emits_handlers_under_an_edited_mount_prefix(
+    temp_repo: Path,
+) -> None:
+    # A mount-only edit re-parses main.py alone; the unchanged handler in
+    # routes.py must still come back from the graph and re-emit under the
+    # new prefix, as the batch incremental run does.
+    root = temp_repo / "mounts"
+    root.mkdir()
+    _write(root, "routes.py", ROUTES_PY)
+    _write(root, "main.py", MAIN_PY.format(prefix="/api"))
+    sink = _QueryableSink("mounts")
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=sink,  # type: ignore[arg-type]
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture([cs.CaptureGroup.IO.value]),
+        project_name="mounts",
+    )
+    updater.run()
+    assert sink.exposes() == {("routes.get_user", "GET /api/users/{user_id}")}
+    sink.ensure_relationship_batch.reset_mock()
+    sink.execute_write.reset_mock()
+    _write(root, "main.py", MAIN_PY.format(prefix="/v2"))
+
+    updater.reingest(["main.py"])
+
+    assert sink.exposes() == {("routes.get_user", "GET /v2/users/{user_id}")}
+    stale_deletes = [
+        c.args[0]
+        for c in sink.execute_write.call_args_list
+        if c.args and "EXPOSES" in c.args[0]
+    ]
+    assert stale_deletes, "the stale EXPOSES delete was not issued"

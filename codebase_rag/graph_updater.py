@@ -1366,19 +1366,33 @@ class GraphUpdater:
         dp = self.factory.definition_processor
         module_files = self._python_module_files()
         if only is not None:
-            module_files = {qn: p for qn, p in module_files.items() if qn in only}
+            # The router modules a mounting module's mounts need are the
+            # ones it imports; they load through the cache, and their
+            # handlers rehydrate below so a mount-prefix edit re-emits them.
+            scoped = {qn: p for qn, p in module_files.items() if qn in only}
+            for qn in only:
+                for target in self._imported_module_qns(qn, module_files):
+                    scoped[target] = module_files[target]
+            module_files = scoped
         module_asts = self._python_module_asts(module_files)
         entries = list(dp.pending_endpoints)
         # A mount-only incremental change re-parses just the mounting module;
         # the unchanged handlers must still re-emit under the new prefix, so
         # they come back from the graph. A full build queued them all already.
-        if not self._is_full_build and only is None:
-            entries.extend(
-                self._rehydrated_route_handlers(
-                    {qn for _label, qn, _decorators, _module in entries},
-                    set(module_asts),
-                )
+        if not self._is_full_build:
+            rehydrated = self._rehydrated_route_handlers(
+                {qn for _label, qn, _decorators, _module in entries},
+                set(module_asts),
             )
+            if only is not None:
+                # Scoped: only the handlers of the router modules pulled in
+                # above; a module in `only` re-parsed and queued its own.
+                rehydrated = [
+                    entry
+                    for entry in rehydrated
+                    if entry[3] in module_asts and entry[3] not in only
+                ]
+            entries.extend(rehydrated)
         if not entries:
             return
         self._drop_stale_handler_exposes(
@@ -1407,6 +1421,23 @@ class GraphUpdater:
                 prefix_resolver=registry.mount_prefixes,
             )
         dp.pending_endpoints.clear()
+
+    def _imported_module_qns(
+        self, module_qn: str, known: Mapping[str, Path]
+    ) -> set[str]:
+        # Every module the import map of `module_qn` binds, directly or as
+        # the owner of an imported symbol (`routes.router` binds
+        # `proj.routes.router`, whose module is `proj.routes`).
+        bindings = self.factory.import_processor.import_mapping.get(module_qn, {})
+        found: set[str] = set()
+        for full_name in bindings.values():
+            parts = full_name.split(cs.SEPARATOR_DOT)
+            for end in range(len(parts), 0, -1):
+                candidate = cs.SEPARATOR_DOT.join(parts[:end])
+                if candidate in known:
+                    found.add(candidate)
+                    break
+        return found
 
     def _drop_stale_handler_exposes(self, handler_qns: list[str]) -> None:
         # Re-emitted handlers drop their previous EXPOSES first, so a
@@ -3445,6 +3476,11 @@ class GraphUpdater:
         left out of the graph, as the walk would leave them.
         """
         started = time.perf_counter()
+        # A scoped re-ingest is never a full build, whatever the previous
+        # run() was: the flag decides whether a failed inbound-edge capture
+        # aborts (it must, or the run drops cross-file edges under a
+        # success log) and whether unchanged handlers rehydrate.
+        self._is_full_build = False
         present, gone, skipped = self._reingest_split(paths, deleted)
         if skipped:
             logger.warning(ls.REINGEST_SKIPPED_IGNORED, paths=sorted(skipped))

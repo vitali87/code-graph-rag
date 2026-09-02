@@ -7,7 +7,7 @@ description: "Measured latency of a one-file scoped re-ingest (GraphUpdater.rein
 Issue #1524 asks for a graph that reflects an agent's edit in hundreds of
 milliseconds. `GraphUpdater.reingest(paths)` re-parses only the named files
 and the files that depend on them (one level, found through the graph's own
-`CALLS`/`REFERENCES`/`INSTANTIATES`/`IMPORTS`/`INHERITS` edges), resolves
+`CALLS`/`REFERENCES`/`INSTANTIATES`/`IMPORTS`/`INHERITS`/`IMPLEMENTS` edges), resolves
 calls within that set only, and restores every other inbound edge verbatim.
 The watcher (`realtime_updater.py`) and the MCP `reingest` tool both run
 through it.
