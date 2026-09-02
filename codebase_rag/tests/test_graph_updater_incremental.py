@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import graph_updater as graph_updater_module
 from codebase_rag.graph_updater import (
     BoundedASTCache,
     FunctionRegistryTrie,
@@ -371,6 +372,88 @@ class TestCrashBetweenCacheSaveAndFlush:
     `_process_files`, so a crash in between left a cache already claiming the
     file was gone. The fix closes the window by committing the cache after the
     flush, so what these tests pin is that no such cache is left behind."""
+
+    def test_edit_during_the_deferred_window_is_not_skipped(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An edit racing the deferred save must still be re-parsed.
+
+        `_is_already_in_sync` skips rehashing any file whose mtime is at or
+        below the CACHE FILE's own mtime. Deferring the write to the post-flush
+        commit point moved that stamp later, so a file edited after
+        `_process_files` hashed it but before the save would be stamped newer
+        than its own edit and skipped for good. The recorded mtime has to be
+        the one observed at hash time, not one implied by when the write
+        happened.
+        """
+        parsers, queries = load_parsers()
+        target = py_project / "module_b.py"
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        # Edit in the true window: after `_process_files` hashed the file,
+        # before the deferred write stamps the cache. Wrapping the save is the
+        # only way to land there; `flush_all` fires BEFORE the commit point, so
+        # an edit there precedes the cache write and cannot reproduce this.
+        # Give run 2 real work, or it takes the in-sync fast path and returns
+        # above the commit point, so the save never fires and the wrapper below
+        # never lands its edit.
+        (py_project / "module_c.py").write_text(
+            "def c():\n    return 1\n", encoding="utf-8"
+        )
+
+        edited = "def b():\n    return 999\n"
+        real_save = graph_updater_module._save_hash_cache
+
+        reached_write_site = False
+
+        def _edit_then_save(path: Path, hashes: dict[str, str]) -> None:
+            nonlocal reached_write_site
+            reached_write_site = True
+            target.write_text(edited, encoding="utf-8")
+            real_save(path, hashes)
+
+        monkeypatch.setattr(graph_updater_module, "_save_hash_cache", _edit_then_save)
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        monkeypatch.setattr(graph_updater_module, "_save_hash_cache", real_save)
+
+        # Three guards, each catching a different lie. The first two are what
+        # caught two wrong versions of this test: an edit placed in `flush_all`
+        # (which fires BEFORE the commit point, so it could not reach the
+        # window at all), and a second run that took the in-sync fast path and
+        # returned above the write site, so the wrapper never fired.
+        assert reached_write_site, (
+            "the run never reached the deferred write, so it cannot have "
+            "raced anything; the assertion below would pass on an unfixed "
+            "tree for a reason unrelated to the window"
+        )
+        assert target.read_text(encoding="utf-8") == edited, (
+            "fixture guard: the racing edit did not land, so nothing below "
+            "measures the window it claims to"
+        )
+        successor = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert successor._is_already_in_sync() is False, (
+            "the edit made during the deferred window is invisible: its mtime "
+            "is at or below the cache file's own stamp, so the successor skips "
+            "rehashing it and the graph keeps the pre-edit contents"
+        )
 
     def test_successor_run_still_deletes_the_module(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -943,7 +1026,8 @@ class TestFastPathInSync:
         before = stamp.read_text()
 
         mock_ingestor.reset_mock()
-        mock_ingestor.fetch_all.side_effect = lambda _query, _params=None: []
+        mock_ingestor.fetch_all.side_effect = None
+        mock_ingestor.fetch_all.return_value = []
         GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=excludable_project,

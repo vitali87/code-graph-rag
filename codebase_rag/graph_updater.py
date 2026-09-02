@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -410,6 +411,7 @@ class GraphUpdater:
         # `_process_files` (issue #1615).
         self._pending_hash_cache: tuple[Path, FileHashCache] | None = None
         self._pending_dir_mtimes: tuple[Path, DirMtimesCache] | None = None
+        self._pending_cache_observed_at: float | None = None
         # Package paths read from the graph before Pass 1 of an incremental
         # run; None on a full build or when the graph could not be read.
         self._packages_before_run: set[str] | None = None
@@ -1002,6 +1004,7 @@ class GraphUpdater:
         # the first early `return` added to either one silently ends it.
         self._pending_hash_cache = None
         self._pending_dir_mtimes = None
+        self._pending_cache_observed_at = None
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
@@ -1266,12 +1269,26 @@ class GraphUpdater:
         # hashes, which stays true; the withheld exclusion stamp is what tells
         # the next run that deletions were not reconciled, and that alone both
         # fails the sync check and turns graph-backed reconciliation on.
+        observed_at = self._pending_cache_observed_at
+        written: list[Path] = []
         if self._pending_hash_cache is not None:
             _save_hash_cache(*self._pending_hash_cache)
+            written.append(self._pending_hash_cache[0])
             self._pending_hash_cache = None
         if self._pending_dir_mtimes is not None:
             _save_dir_mtimes(*self._pending_dir_mtimes)
+            written.append(self._pending_dir_mtimes[0])
             self._pending_dir_mtimes = None
+        # Stamp both files with the instant the hashes describe, not with the
+        # time the write happened, so the deferral cannot swallow an edit made
+        # while passes 3 and later were still running.
+        if observed_at is not None:
+            for path in written:
+                try:
+                    os.utime(path, (observed_at, observed_at))
+                except OSError:
+                    pass
+        self._pending_cache_observed_at = None
 
         if self._single_file is None:
             if self._graph_state_unknown:
@@ -2738,6 +2755,13 @@ class GraphUpdater:
         # delete. The subtree then stays in the graph until a full rebuild.
         self._pending_hash_cache = (cache_path, new_hashes)
         self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
+        # The instant the hashes above describe. `_is_already_in_sync` skips
+        # rehashing any file whose mtime is at or below the CACHE FILE's own
+        # mtime, so deferring the write must not defer that stamp: a file
+        # edited after its hash was taken but before the commit point would be
+        # stamped newer than its own edit and skipped for good (issue #1615
+        # review). Stamped back onto both files after the write.
+        self._pending_cache_observed_at = time.time()
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry
         # the old parser's edges.
