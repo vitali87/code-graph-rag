@@ -861,6 +861,10 @@ HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"
 HASH_CACHE_LOAD_FAILED = "Failed to load hash cache from {path}: {error}"
 HASH_CACHE_SAVED = "Saved hash cache with {count} entries to {path}"
 HASH_CACHE_SAVE_FAILED = "Failed to save hash cache to {path}: {error}"
+CACHE_STAMP_FAILED = (
+    "Could not backdate {path} to the observed instant ({error}); removing it so "
+    "the next run rebuilds rather than trusting a stamp that can hide edits"
+)
 PERIODIC_FLUSH = "Periodic flush after {count} files processed"
 INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"

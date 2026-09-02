@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -542,6 +543,62 @@ class TestCrashBetweenCacheSaveAndFlush:
             "an edit made after its own file's hash but before the loop ended "
             "is invisible: its mtime is at or below the cache stamp, so the "
             "successor skips rehashing it and the edit is lost for good"
+        )
+
+    def test_cache_is_removed_when_it_cannot_be_backdated(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cache that cannot be stamped back must not survive the run.
+
+        Keeping it would leave the file carrying its own write time, which is
+        later than an edit made while the run was still hashing, so the
+        successor would skip that file and the graph would keep pre-edit
+        content. Absent costs a rebuild; present-and-mis-stamped hides an edit.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        cache = py_project / cs.HASH_CACHE_FILENAME
+        assert cache.is_file(), "fixture guard: run 1 wrote no cache to remove"
+
+        (py_project / "module_c.py").write_text(
+            "def c():\n    return 1\n", encoding="utf-8"
+        )
+
+        real_utime = os.utime
+        refused: list[Path] = []
+
+        def _refuse_cache_stamp(path, times=None, **kwargs):  # type: ignore[no-untyped-def]
+            if Path(path).name == cs.HASH_CACHE_FILENAME:
+                refused.append(Path(path))
+                raise OSError("read-only file system")
+            return real_utime(path, times, **kwargs)
+
+        monkeypatch.setattr(graph_updater_module.os, "utime", _refuse_cache_stamp)
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        monkeypatch.setattr(graph_updater_module.os, "utime", real_utime)
+
+        assert refused, (
+            "the run never tried to stamp the hash cache, so the assertion "
+            "below would pass without exercising the failure path at all"
+        )
+        assert not cache.is_file(), (
+            "the cache survived a failed backdate: it now carries its own "
+            "write time, which is later than an edit made during the run, so "
+            "the successor skips that file and keeps stale graph content"
         )
 
     def test_successor_run_still_deletes_the_module(

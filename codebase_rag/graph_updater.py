@@ -1287,8 +1287,16 @@ class GraphUpdater:
             for path in written:
                 try:
                     os.utime(path, (observed_at, observed_at))
-                except OSError:
-                    pass
+                except OSError as e:
+                    # Fail CLOSED. Leaving the file with its own write time is
+                    # exactly the defect this stamping exists to prevent: that
+                    # time is later than an edit made while the run was still
+                    # hashing, so the successor's `mtime <= cache_mtime` check
+                    # skips the edited file and the graph keeps stale content.
+                    # A missing cache only costs a rebuild, which is why every
+                    # writer here already degrades to absent rather than wrong.
+                    logger.warning(ls.CACHE_STAMP_FAILED, path=path, error=e)
+                    path.unlink(missing_ok=True)
         self._pending_cache_observed_at = None
 
         if self._single_file is None:
