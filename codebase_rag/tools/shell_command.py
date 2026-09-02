@@ -570,6 +570,16 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_GIT:
         return None
 
+    # `--exec-path=DIR` moves the directory git resolves subcommands in, so
+    # any non-builtin name execs `DIR/git-<name>`. Verified: a planted
+    # `git-pwn` ran with rc=0 through `git --exec-path=DIR pwn`. Only the
+    # VALUED form redirects; bare `--exec-path` prints the path and exits,
+    # which is why it is filed as optional-arg for arity and must keep its
+    # pass.
+    for arg in cmd_parts[1:]:
+        if arg.startswith(f"{cs.SHELL_GIT_EXEC_PATH_FLAG}="):
+            return cs.SHELL_GIT_EXEC_PATH_FLAG
+
     return _program_naming_flag(cmd_parts, cs.SHELL_GIT_EXEC_FLAGS)
 
 
@@ -664,8 +674,23 @@ def _sed_cluster_tail(arg: str) -> str | None:
             # along was never scanned -- `sed -ni bak 'w FILE' in.txt` wrote
             # outside the project root with rc=0 while `sed -n -i bak ...`,
             # the same command unbundled, was correctly refused.
-            # Mid-cluster it is attached-only and the remainder is its value.
-            return short if position == len(arg) - 1 else ""
+            if position == len(arg) - 1:
+                return short
+            if short in ("-l", "--line-length"):
+                # Mid-cluster `-l` reads two ways and only one of them ends
+                # the cluster. GNU takes the remainder as its line length;
+                # BSD treats `-l` as a pure boolean (it sits inside the
+                # [-EHalnru] cluster in BSD's own synopsis) and keeps
+                # parsing, so a trailing `i` is a real `-i` that consumes the
+                # next token as its suffix and puts the script two slots on.
+                # Stopping here took the GNU half alone and missed the BSD
+                # reading entirely: `sed -li bak 'w FILE' in.txt` wrote
+                # outside the project root with rc=0. Keep scanning, which is
+                # the reading that can still find a script.
+                continue
+            # Any other optional-arg flag is attached-only mid-cluster, so the
+            # remainder is its value.
+            return ""
         if short not in cs.SHELL_SED_KNOWN_FLAGS:
             return None
     return ""

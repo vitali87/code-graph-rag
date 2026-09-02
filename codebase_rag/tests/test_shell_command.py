@@ -25,6 +25,7 @@ from codebase_rag.tools.shell_command import (
     _is_dangerous_rm_path,
     _parse_command,
     _requires_approval,
+    _sed_cluster_tail,
     _sed_exec_construct,
     _validate_segment,
     _xargs_launched_command,
@@ -3360,7 +3361,25 @@ def test_sed_cluster_f_does_not_overreach() -> None:
 
 # A cluster ending in an optional-argument flag takes its operand exactly as
 # the standalone spelling does, which pushes the script one slot further along.
-_SED_I_CLUSTERS = ("-ni", "-ani", "-uni", "-Eni", "-rni", "-Hni", "-nl", "-anl")
+_SED_I_CLUSTERS = (
+    "-ni",
+    "-ani",
+    "-uni",
+    "-Eni",
+    "-rni",
+    "-Hni",
+    "-nl",
+    "-anl",
+    # An `l` BEFORE the terminal `i`: GNU reads the remainder as -l's line
+    # length, BSD reads -l as a boolean and the trailing `i` as a real -i.
+    # Taking the GNU half alone stopped the scan dead and `sed -li bak
+    # 'w FILE' in.txt` wrote outside the project root with rc=0.
+    "-li",
+    "-lni",
+    "-nli",
+    "-lEi",
+    "-Hli",
+)
 
 
 @pytest.mark.parametrize("cluster", _SED_I_CLUSTERS)
@@ -3380,3 +3399,34 @@ def test_sed_optional_arg_cluster_still_scans_the_script_slot(cluster: str) -> N
 def test_sed_optional_arg_cluster_still_runs_ordinary_edits(cluster: str) -> None:
     # The guard must not cost the everyday in-place edit its pass.
     assert _sed_exec_construct(["sed", cluster, "s/a/b/", "README.md"]) is None
+
+
+def test_sed_mid_cluster_line_length_keeps_scanning() -> None:
+    # `-l` mid-cluster is value-taking under GNU and boolean under BSD. Only
+    # the BSD reading leaves a trailing `-i` to be found, so the scan must
+    # take it: stopping at the `-l` is what let `-li bak 'w FILE'` through.
+    assert _sed_cluster_tail("-li") == "-i"
+    assert _sed_cluster_tail("-lni") == "-i"
+
+    # `-l` in tail position is still the flag itself.
+    assert _sed_cluster_tail("-nl") == "-l"
+
+    # An ordinary line-length edit keeps its pass.
+    assert _sed_exec_construct(["sed", "-l", "80", "s/a/b/", "f"]) is None
+
+
+def test_git_exec_path_with_a_value_is_refused() -> None:
+    # `--exec-path=DIR` moves where git resolves subcommands, so any
+    # non-builtin name execs `DIR/git-<name>`. Verified: a planted `git-pwn`
+    # ran with rc=0 before this guard.
+    reason = _validate_segment("git --exec-path=/tmp/evil pwn", "git", True)
+    assert reason is not None
+    assert "--exec-path" in reason
+
+
+def test_git_bare_exec_path_still_passes() -> None:
+    # Bare, and with a SEPARATED operand, git prints the path and exits --
+    # verified against git itself, which ignored the separated argument and
+    # printed its own libexec dir. Neither redirects, so neither is refused.
+    assert _validate_segment("git --exec-path", "git", True) is None
+    assert _validate_segment("git --exec-path /tmp/evil pwn", "git", True) is None

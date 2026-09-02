@@ -157,6 +157,11 @@ SHELL_GIT_OPTIONAL_ARG_FLAGS = frozenset(
     }
 )
 
+# Where git looks for its subcommand binaries. Bare, it prints and exits; with
+# an attached value it redirects the search, so `git --exec-path=DIR anything`
+# execs `DIR/git-anything`. Only the valued form is refused.
+SHELL_GIT_EXEC_PATH_FLAG = "--exec-path"
+
 SHELL_GIT_INLINE_CONFIG_FLAGS = frozenset({"-c", "--config-env"})
 
 SHELL_CMD_XARGS = "xargs"
