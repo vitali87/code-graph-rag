@@ -1325,6 +1325,8 @@ class GraphUpdater:
         # and the parent contributes nothing. Measured both shapes by
         # refreshing one entry at a time: refreshing the containing entry
         # alone hides the addition, refreshing any other leaves it visible.
+        # Checked on all three shapes: a new subdirectory, a file added to a
+        # directory already recorded, and a file added at the repo root.
         # A stale map holds every entry's old mtime, so the addition surfaces
         # either way. A FRESH map records them all as current, nothing is
         # compared, and the file loop only walks keys the hash cache already
