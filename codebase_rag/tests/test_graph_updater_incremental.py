@@ -455,6 +455,78 @@ class TestCrashBetweenCacheSaveAndFlush:
             "rehashing it and the graph keeps the pre-edit contents"
         )
 
+    def test_edit_between_a_files_hash_and_the_end_of_the_loop_is_not_skipped(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An edit landing after a file's own hash but before the loop ends.
+
+        The observation instant is captured before the hashing loop rather
+        than after it, so it is at or earlier than every hash it describes.
+        Captured after the loop it would be an upper bound, and this edit
+        would be stamped newer than its own change and skipped for good.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        # Real work for run 2, so it cannot take the in-sync fast path and
+        # return above the hashing loop this test needs it to enter.
+        (py_project / "module_c.py").write_text(
+            "def c():\n    return 1\n", encoding="utf-8"
+        )
+        target = py_project / "module_b.py"
+        target.write_text("def b():\n    return 2\n", encoding="utf-8")
+
+        real_hash = graph_updater_module._hash_file_with_bytes
+        raced = "def b():\n    return 999\n"
+        fired = False
+
+        def _hash_then_edit(path: Path, *args: object, **kwargs: object) -> object:
+            nonlocal fired
+            result = real_hash(path, *args, **kwargs)
+            if path.name == "module_b.py" and not fired:
+                fired = True
+                # After this file's own hash is taken, still inside the loop.
+                path.write_text(raced, encoding="utf-8")
+            return result
+
+        monkeypatch.setattr(
+            graph_updater_module, "_hash_file_with_bytes", _hash_then_edit
+        )
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        monkeypatch.setattr(graph_updater_module, "_hash_file_with_bytes", real_hash)
+
+        assert fired, (
+            "the wrapper never fired, so no edit raced the loop and the "
+            "assertion below would pass for a reason unrelated to the window"
+        )
+        assert target.read_text(encoding="utf-8") == raced, (
+            "fixture guard: the racing edit did not land"
+        )
+        successor = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert successor._is_already_in_sync() is False, (
+            "an edit made after its own file's hash but before the loop ended "
+            "is invisible: its mtime is at or below the cache stamp, so the "
+            "successor skips rehashing it and the edit is lost for good"
+        )
+
     def test_successor_run_still_deletes_the_module(
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:

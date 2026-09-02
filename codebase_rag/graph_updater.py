@@ -1279,9 +1279,10 @@ class GraphUpdater:
             _save_dir_mtimes(*self._pending_dir_mtimes)
             written.append(self._pending_dir_mtimes[0])
             self._pending_dir_mtimes = None
-        # Stamp both files with the instant the hashes describe, not with the
-        # time the write happened, so the deferral cannot swallow an edit made
-        # while passes 3 and later were still running.
+        # Stamp both files with the instant captured before hashing, not with
+        # the time the write happened, so the deferral cannot swallow an edit
+        # made while the hashing loop and passes 3 and later were still
+        # running.
         if observed_at is not None:
             for path in written:
                 try:
@@ -2540,6 +2541,17 @@ class GraphUpdater:
 
         processed_since_flush = 0
 
+        # Taken BEFORE the loop below, so it is at or earlier than every hash
+        # it describes. `_is_already_in_sync` skips rehashing any file whose
+        # mtime is at or below the CACHE FILE's own mtime, so deferring the
+        # write must not defer that stamp: a file edited after its hash was
+        # taken but before the commit point would otherwise be stamped newer
+        # than its own edit and skipped for good (issue #1615 review).
+        # Capturing here rather than after the loop also covers a file edited
+        # between its own hash and the end of the loop. Erring early only ever
+        # costs a redundant rehash; erring late loses an edit.
+        self._pending_cache_observed_at = time.time()
+
         changed_entries: list[tuple[Path, str, bool, bytes]] = []
         for filepath, file_key in eligible_files:
             if not force and file_key in old_hashes:
@@ -2755,13 +2767,6 @@ class GraphUpdater:
         # delete. The subtree then stays in the graph until a full rebuild.
         self._pending_hash_cache = (cache_path, new_hashes)
         self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
-        # The instant the hashes above describe. `_is_already_in_sync` skips
-        # rehashing any file whose mtime is at or below the CACHE FILE's own
-        # mtime, so deferring the write must not defer that stamp: a file
-        # edited after its hash was taken but before the commit point would be
-        # stamped newer than its own edit and skipped for good (issue #1615
-        # review). Stamped back onto both files after the write.
-        self._pending_cache_observed_at = time.time()
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry
         # the old parser's edges.
