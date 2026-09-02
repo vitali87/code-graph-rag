@@ -995,11 +995,11 @@ class GraphUpdater:
         # reachable, and the argument is structural rather than a survey of
         # paths: `_process_files` contains no `return` and no `raise`, and
         # `run` returns only at the in-sync fast path below, which is above the
-        # commit point. So every path that reaches the commit point ran
-        # `_process_files` to its last statement, and that statement
-        # unconditionally re-stashes both fields. Reset anyway: the guarantee
-        # is a property of those two functions' control flow, and the first
-        # early `return` added to either one silently ends it.
+        # commit point. Both stashes are unconditional top-level statements of
+        # `_process_files`, so every path that reaches the commit point has
+        # re-stashed both fields before getting there. Reset anyway: the
+        # guarantee is a property of those two functions' control flow, and
+        # the first early `return` added to either one silently ends it.
         self._pending_hash_cache = None
         self._pending_dir_mtimes = None
         if not force and self._is_already_in_sync():
