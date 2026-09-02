@@ -11,6 +11,13 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Index Consistency**: Ensure incremental deletes match clean index states.
+- **Patch Reporting**: Distinguish between unverifiable and verified patches in reports.
+- **Windows Teardown**: Clear the read-only bit when removing a temp repo for successful Windows teardown.
+- **TypeScript Grading**: Grade TypeScript inheritance against the tsc oracle for improved accuracy.
+- **Exclude Set Handling**: Record the exclusion set to ensure `--exclude` flags are correctly applied across runs.
+- **MCP Indexing**: Honour `.cgrignore` and `.gitignore` in MCP index and update processes, matching the CLI.
+<!-- latest-release-end -->
 - **Transactional Multi-File Edits**: Multi-file edits now run as a transaction with staged verification and undo, alongside concrete-syntax-preserving patchers per language and import rewriting for renames and moves.
 - **Scala Inheritance and Markdown Front-Matter**: Scala `INHERITS` edges are read from `extends`/`with` clauses, and declared Markdown front-matter is read onto the `Module` node.
 - **Graph Retrieval**: MCP and CLI graph retrieval is scoped to one project, and call-site and import-site locations are now stored on graph edges.
@@ -18,7 +25,6 @@ inserted; hand edits remain welcome between releases and render too.
 - **Graph Indexing**: The name property is now indexed for improved graph read-path lookups. SQL routines are also indexed to resolve calls that name their target in a string.
 - **Duplicate Code Detection**: An AST-based duplicate code detection system has been introduced, alongside fixes for duplicate detection across multiple repositories.
 - **Agentic QA**: A new agentic QA benchmark harness and indexing-time benchmark have been added.
-<!-- latest-release-end -->
 - **Java Taint Improvements**: Enhanced taint tracking in Java, including handling JDK shims, chained call receivers, literal arguments, and type-test patterns.
 - **C# Taint Propagation**: Improved taint propagation in C# with refinements to argument binding, tuple deconstruction, and await plumbing methods.
 - **Semantic Frontend Enhancements**: Added in-process Jedi semantic frontend for Python and re-run semantic frontends on the watch path for more accurate analysis.
