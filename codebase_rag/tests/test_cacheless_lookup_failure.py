@@ -23,10 +23,11 @@ def _force_mtime_after_cache(repo: Path, source: Path) -> None:
     greater than the cache file's own (`if file_mtime <= cache_mtime`), so a
     rewrite that lands on the same filesystem tick as the cache written by the
     preceding run is SKIPPED and the run under test never reaches the code the
-    test is about. On a fine-grained clock the two differ by the incidental
-    cost of the previous run's teardown; on a coarse one they collide, which
-    is why this failed on Windows py3.12. Stating the precondition removes the
-    dependency on clock resolution entirely.
+    test is about. Since #1615 the cache file is restamped back to the instant
+    observed before the previous run's hashing loop, so on a fine-grained clock
+    the two differ by that run's own hashing and later passes; on a coarse one
+    they can still collide, which is why this failed on Windows py3.12.
+    Stating the precondition removes the dependency on clock resolution.
     """
     cache_mtime = (repo / cs.HASH_CACHE_FILENAME).stat().st_mtime
     stamp = cache_mtime + 1.0
