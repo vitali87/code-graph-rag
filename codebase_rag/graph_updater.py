@@ -989,6 +989,15 @@ class GraphUpdater:
         # is always computed against the effective unignore set.
         self._exclusion_match = None
         self._graph_state_unknown = False
+        # Per-run for the same reason (issue #1620's shape): a run that raised
+        # between `_process_files` and the commit point leaves its cache
+        # stashed on the instance. No test covers this because no such write is
+        # reachable today: a reused instance either re-parses and overwrites
+        # the stash, or takes the in-sync fast path and returns above the
+        # commit point. Reset anyway, so the stash cannot outlive its run if a
+        # future path does reach the commit point without re-parsing.
+        self._pending_hash_cache = None
+        self._pending_dir_mtimes = None
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
