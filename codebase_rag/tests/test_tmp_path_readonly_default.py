@@ -159,8 +159,9 @@ def test_windows_semantics_stub_is_in_force(tmp_path: Path) -> None:
     root.mkdir()
     _plant_readonly_object(root)
 
+    semantics = _WindowsRemovalSemantics()
     with pytest.raises(PermissionError):
-        _remove_tree_windows_style(root, _WindowsRemovalSemantics())
+        _remove_tree_windows_style(root, semantics)
 
 
 def test_default_teardown_clears_readonly_left_by_another_test(
@@ -318,7 +319,9 @@ def test_teardown_reaches_a_subtree_under_a_restrictive_root(
             root.chmod(0o700)
 
 
-def test_teardown_tolerates_a_path_that_vanishes(tmp_path: Path) -> None:
+def test_teardown_tolerates_a_path_that_vanishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Git's background maintenance deletes its own lock asynchronously.
 
     `_clear_readonly` documents this TOCTOU (it surfaced only under xdist on
@@ -341,12 +344,12 @@ def test_teardown_tolerates_a_path_that_vanishes(tmp_path: Path) -> None:
             raise FileNotFoundError(2, "No such file or directory", str(path))
         real_chmod(path, mode, **kwargs)  # type: ignore[arg-type]
 
-    original = os.chmod
-    os.chmod = chmod_after_vanishing  # type: ignore[assignment]
-    try:
-        _make_tmp_path_removable(tmp_path)
-    finally:
-        os.chmod = original  # type: ignore[assignment]
+    # `monkeypatch`, not a hand-rolled save/restore: it undoes the patch even
+    # if the call below raises, and it cannot leak a patched `os.chmod` into
+    # another test in the same worker.
+    monkeypatch.setattr(os, "chmod", chmod_after_vanishing)
+
+    _make_tmp_path_removable(tmp_path)
 
     assert not doomed.exists()
 
@@ -577,13 +580,38 @@ def test_git_repo_fixture_tears_down_its_own_readonly_objects(
         check=True,
         env=env,
     )
-    loose = [
-        Path(dirpath) / name
-        for dirpath, _dirs, files in os.walk(git_repo / ".git" / "objects")
-        for name in files
-    ]
-    assert loose, "git wrote no loose objects, so the fixture proves nothing"
-    assert any(not os.stat(p).st_mode & stat.S_IWUSR for p in loose), (
-        "no loose object is read-only: the condition this fixture exists to "
-        "survive was never created"
+    # Mode read AT LISTING TIME, one `lstat` per entry, never a second pass.
+    # `git commit` spawns `git maintenance run --auto --quiet --detach`, which
+    # deletes its own `.git/objects/maintenance.lock` asynchronously, so a
+    # list-then-stat pair races it: the entry is listed and gone by the time
+    # the stat runs. That is the TOCTOU `_clear_readonly` documents, and it
+    # failed exactly once, on macos/3.13 under xdist (#1622).
+    #
+    # A vanished entry is skipped rather than tolerated after the fact: it
+    # cannot be the read-only loose object this asserts on, because a loose
+    # object is permanent for the life of the repo while the lock is
+    # transient. `maintenance.lock` is excluded by name for the same reason --
+    # it is not an object at all, so counting it would let a run where git
+    # wrote NO objects satisfy the guard below.
+    readonly_modes: list[int] = []
+    listed: list[str] = []
+    for dirpath, _dirs, _files in os.walk(git_repo / ".git" / "objects"):
+        with os.scandir(dirpath) as entries:
+            for entry in entries:
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                if entry.name.endswith(".lock"):
+                    continue
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                except FileNotFoundError:
+                    continue
+                listed.append(entry.name)
+                if not mode & stat.S_IWUSR:
+                    readonly_modes.append(mode)
+
+    assert listed, "git wrote no loose objects, so the fixture proves nothing"
+    assert readonly_modes, (
+        f"no loose object is read-only ({len(listed)} listed): the condition "
+        "this fixture exists to survive was never created"
     )
