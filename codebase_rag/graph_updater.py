@@ -2263,7 +2263,7 @@ class GraphUpdater:
         # unknown (pre-fingerprint) parser: treat it as stale too, without
         # paying for a fingerprint computation that cannot match.
         if stored is None or stored != compute_parser_fingerprint(
-            repo_path=self.repo_path
+            repo_path=self.repo_path, capture=self.capture
         ):
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
 
@@ -2708,7 +2708,9 @@ class GraphUpdater:
         if is_full_build:
             _save_parser_fingerprint(
                 self.repo_path / cs.PARSER_FINGERPRINT_FILENAME,
-                compute_parser_fingerprint(repo_path=self.repo_path),
+                compute_parser_fingerprint(
+                    repo_path=self.repo_path, capture=self.capture
+                ),
             )
 
     def _pre_parse_changed_files(

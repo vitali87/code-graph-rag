@@ -14,6 +14,7 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as ls
+from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_fingerprint import compute_parser_fingerprint
@@ -38,13 +39,18 @@ def warnings_sink() -> Iterator[list[str]]:
     logger.remove(handler_id)
 
 
-def _make_updater(repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:
+def _make_updater(
+    repo: Path,
+    mock_ingestor: MagicMock,
+    capture: "CaptureSelection | None" = None,
+) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=repo,
         parsers=parsers,
         queries=queries,
+        capture=capture,
     )
 
 
@@ -299,6 +305,33 @@ class TestStalenessWarning:
 
         assert any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
 
+    def test_enabling_a_capture_group_warns(
+        self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
+    ) -> None:
+        # The defect in #1630, end to end through the updater rather than
+        # against compute_parser_fingerprint directly: the stamp is written
+        # with the selection that built the graph and compared against the
+        # one running now, so dropping `capture=self.capture` at either call
+        # site brings the silent no-op back.
+        _make_updater(py_project, mock_ingestor).run()
+
+        _make_updater(py_project, mock_ingestor, resolve_capture(["io"])).run()
+
+        assert any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
+
+    def test_same_capture_group_twice_does_not_warn(
+        self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
+    ) -> None:
+        # Control for the test above: it must warn because the selection
+        # CHANGED, not because a non-default selection warns unconditionally
+        # or because the entries hash differently each run. Without this, an
+        # unstable digest would look like a working fix.
+        _make_updater(py_project, mock_ingestor, resolve_capture(["io"])).run()
+
+        _make_updater(py_project, mock_ingestor, resolve_capture(["io"])).run()
+
+        assert not any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
+
     def test_missing_stamp_with_existing_cache_warns(
         self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
     ) -> None:
@@ -425,3 +458,62 @@ def test_changes_when_compile_database_content_changes(
     before = compute_parser_fingerprint(repo_path=repo)
     db.write_text('[{"arguments": ["c++", "-DFEATURE"]}]', encoding="utf-8")
     assert compute_parser_fingerprint(repo_path=repo) != before
+
+
+class TestCaptureSelectionIsParserIdentity:
+    # The capture selection decides which edges are produced for unchanged
+    # sources -- the same criterion the frontend selection is hashed under --
+    # so it belongs to the parser identity. Without it, enabling a capture
+    # group on an indexed project reports "already in sync" and emits
+    # nothing, and the only documented remedy wipes every project in the
+    # shared graph (issue #1630).
+
+    def test_changes_when_capture_env_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from codebase_rag.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "CGR_CAPTURE", "")
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(cfg, "CGR_CAPTURE", "io")
+        assert compute_parser_fingerprint() != before
+
+    def test_changes_when_capture_passed_explicitly(self) -> None:
+        # The CLI resolves CGR_CAPTURE and --capture together and hands the
+        # GraphUpdater a CaptureSelection, so a fingerprint that consulted
+        # only the environment would stay blind to `--capture io`.
+        from codebase_rag.capture import resolve_capture
+
+        before = compute_parser_fingerprint(capture=resolve_capture([]))
+        after = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        assert after != before
+
+    def test_same_selection_same_fingerprint(self) -> None:
+        from codebase_rag.capture import resolve_capture
+
+        first = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        second = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        assert first == second
+
+    def test_repeated_token_is_the_same_identity(self) -> None:
+        # The RESOLVED selection is hashed, not the raw spec, so `io,io` and
+        # `io` are one identity and do not force a spurious rebuild.
+        from codebase_rag.capture import resolve_capture
+
+        once = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        twice = compute_parser_fingerprint(capture=resolve_capture(["io", "io"]))
+        assert once == twice
+
+    def test_changes_when_function_local_definitions_toggled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # CAPTURE_FUNCTION_LOCAL_DEFINITIONS picks between two predicates for
+        # whether a nested definition is ingested as a method, so flipping it
+        # changes which Method nodes exist for unchanged sources -- the same
+        # criterion as the frontend mode, and it was not hashed either.
+        from codebase_rag.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "CAPTURE_FUNCTION_LOCAL_DEFINITIONS", True)
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(cfg, "CAPTURE_FUNCTION_LOCAL_DEFINITIONS", False)
+        assert compute_parser_fingerprint() != before

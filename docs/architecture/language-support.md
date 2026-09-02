@@ -122,6 +122,18 @@ that the wipe clears **every** project in the shared graph, so run it only
 when that graph holds just this repository.
 Requires the `treesitter-full` extra.
 
+The wipe is needed there because that case *renames* existing nodes: the old
+unsuffixed document modules have to go, and re-parsing alone would not remove
+them. A change that only *adds* edges does not need it. Enabling a capture
+group is the common example -- `CGR_CAPTURE=io` on an indexed project reports
+"already in sync" and emits nothing, because the hash cache keys file
+contents and every file is unchanged. Deleting that one repository's
+`.cgr-hash-cache.json`, `.cgr-dir-mtimes.json` and `.cgr-parser-fingerprint`
+makes the next `--update-graph` treat every file as new and emit the newly
+enabled edges, leaving every other project in the shared graph untouched.
+The capture selection is part of the parser fingerprint, so a run that would
+skip in this way warns first rather than silently doing nothing (issue #1630).
+
 ## Language-Agnostic Design
 
 All languages share a unified graph schema, meaning queries work the same way regardless of language. You can query across languages in the same knowledge graph when analysing polyglot repositories.
