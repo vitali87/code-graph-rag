@@ -138,23 +138,61 @@ class TestExtractBullets:
         assert is_feature_theme("Improvements") is True
         assert is_feature_theme("CI automation") is False
 
-    def test_a_missing_space_after_the_colon_is_pinned_not_undefined(self) -> None:
-        """The two extractors disagree here, and did so before this change.
+    def test_both_extractors_accept_a_missing_space_after_the_colon(self) -> None:
+        """The unification issue #1609 asked for, in the permissive direction.
 
-        `BULLET_PATTERN` requires at least one space after the colon;
-        `HIGHLIGHT_BULLET` uses `\\s*` and so accepts none. The generator is
-        not under our control, so a bullet with no space is possible: pinning
-        the split makes it a known, testable behaviour rather than an
-        undefined one, and any future unification has to change this test
-        deliberately. Verified identical on origin/main (35bc841f).
-        Tracked as issue #1609, which measures the user-visible symptom: the
-        bullet is demoted into the Release Summary aggregate when it is the
-        only feature bullet, and vanishes entirely when it is not.
+        This test previously PINNED the disagreement: `BULLET_PATTERN`
+        required a space, `HIGHLIGHT_BULLET` accepted none, and it said any
+        future unification had to change it deliberately. This is that
+        deliberate change.
+
+        The direction was chosen by measuring both, not by symmetry. Making
+        both STRICT is worse than the bug: a lone no-space bullet currently
+        survives demoted into the Release Summary aggregate, and under a
+        strict rule `prepend_news` inserts NOTHING at all, so the feature is
+        lost completely rather than misfiled. Permissive is the only rule
+        that preserves the content in both arrangements, and the module's
+        own docstring notes the generator is not under our control, so
+        tolerating its whitespace is the fail-safe direction.
         """
         for line in ("- **Theme:**No space here.", "- **Theme**:No space here."):
-            assert extract_bullets(line) == [], line
+            assert extract_bullets(line) == ["- **Theme**: No space here."], line
         for line in ("* **Theme:**No space here.", "* **Theme**:No space here."):
             assert extract_all_highlights(line) == [("Theme", "No space here.")], line
+
+    def test_a_no_space_bullet_reaches_latest_news_as_its_own_entry(self) -> None:
+        """The user-visible half of #1609, in both arrangements it measured.
+
+        Before: alone it was demoted to `Release Summary`; beside a
+        well-formed sibling it vanished entirely, because `extract_bullets`
+        returned non-empty and the aggregate fallback never fired.
+        """
+        news = "# News\n\n## Latest News\n\n"
+
+        _alone, added_alone = prepend_news(
+            news, "## Highlights\n* **Voice Input**:Speak to the agent.\n"
+        )
+        _pair, added_pair = prepend_news(
+            news,
+            "## Highlights\n"
+            "* **Voice Input**:Speak to the agent.\n"
+            "* **Web Search**: Search the web.\n",
+        )
+
+        assert added_alone == ["- **Voice Input**: Speak to the agent."]
+        assert "- **Voice Input**: Speak to the agent." in added_pair, added_pair
+        assert "- **Web Search**: Search the web." in added_pair, added_pair
+
+    def test_a_space_after_the_colon_is_still_normalised_away(self) -> None:
+        """The control: loosening must not change the well-formed case.
+
+        Without this, a change that simply stopped normalising whitespace
+        would satisfy the assertions above while altering every existing
+        bullet.
+        """
+        assert extract_bullets("- **Theme**:   Lots of space.") == [
+            "- **Theme**: Lots of space."
+        ]
 
     def test_the_theme_key_never_keeps_a_trailing_colon(self) -> None:
         # existing_themes() dedupes NEW entries against NEWS.md using the
