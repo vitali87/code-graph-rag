@@ -108,6 +108,29 @@ class TestContextName:
         assert "name" not in REAL_STATUS_CONTEXT
         assert context_name(REAL_STATUS_CONTEXT) == "CodeRabbit"
 
+    def test_the_entry_a_name_only_scan_drops_is_the_review_bot(self) -> None:
+        """The drop is not random: it lands on the review evidence.
+
+        Verified independently on PR #1624, whose rollup is 28 `CheckRun`
+        entries and exactly one `StatusContext` -- and that one is
+        CodeRabbit. So a scan keyed on `name` reports the review bot ABSENT
+        on a PR where it reviewed cleanly and anchored to the head, which
+        fails in the safe-looking direction.
+
+        The control is the naive scan itself, so the assertion below means
+        something rather than restating the implementation.
+        """
+        rollup = [
+            {"__typename": "CheckRun", "name": "Unit Tests (ubuntu-latest, py3.12)"},
+            REAL_STATUS_CONTEXT,
+        ]
+
+        naive = [e.get("name") for e in rollup if e.get("name")]
+        resolved = [context_name(e) for e in rollup]
+
+        assert "CodeRabbit" not in naive, "fixture no longer shows the drop"
+        assert "CodeRabbit" in resolved
+
     def test_an_unknown_shape_yields_empty_rather_than_raising(self) -> None:
         """A silent skip is wrong, but so is dying mid-scan.
 
