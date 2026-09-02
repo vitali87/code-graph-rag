@@ -750,6 +750,115 @@ class TestFastPathInSync:
             "later run matches the stamp and never looks again"
         )
 
+    def test_failed_module_query_leaves_no_exclusion_stamp(
+        self, excludable_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """A run whose graph query failed must not claim the exclusion is done.
+
+        When the module-path query raises, the reconciliation falls back to
+        the hash cache alone, and after a pre-flush crash that cache no longer
+        names the excluded file. The run completes with the subtree still in
+        the graph; stamping would make every later run fast-path over it.
+        Withholding the stamp is what makes the next run look again.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        stamp = excludable_project / cs.EXCLUSION_STATE_FILENAME
+        before = stamp.read_text()
+
+        exclusions = frozenset({"module_a.py"})
+        mock_ingestor.flush_all.side_effect = RuntimeError("died before the flush")
+        with pytest.raises(RuntimeError):
+            GraphUpdater(
+                ingestor=mock_ingestor,
+                repo_path=excludable_project,
+                parsers=parsers,
+                queries=queries,
+                exclude_paths=exclusions,
+            ).run()
+        mock_ingestor.flush_all.side_effect = None
+
+        def _graph_unreachable(query: str, _params: object = None) -> list[object]:
+            if query == cs.CYPHER_PROJECT_MODULE_PATHS:
+                raise RuntimeError("graph unreachable")
+            return []
+
+        mock_ingestor.reset_mock()
+        mock_ingestor.fetch_all.side_effect = _graph_unreachable
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=exclusions,
+        )
+        updater.run()
+        assert _module_path_queries(mock_ingestor) == 1
+        assert "module_a.py" not in _deleted_module_paths(mock_ingestor), (
+            "the fake raised on the module-path query, so nothing could have "
+            "named module_a.py for deletion; the fixture is not exercising the "
+            "failure it claims to"
+        )
+        assert stamp.read_text() == before, (
+            "the run stamped the new exclusion set although it never learned "
+            "what the graph holds, so the surviving subtree is now permanent"
+        )
+
+        mock_ingestor.fetch_all.side_effect = lambda query, _params=None: (
+            [{cs.KEY_PATH: "module_a.py"}, {cs.KEY_PATH: "module_b.py"}]
+            if query == cs.CYPHER_PROJECT_MODULE_PATHS
+            else []
+        )
+        mock_ingestor.reset_mock()
+        updater3 = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=exclusions,
+        )
+        assert updater3._is_already_in_sync() is False
+        updater3.run()
+        assert "module_a.py" in _deleted_module_paths(mock_ingestor)
+        assert stamp.read_text() != before
+
+    def test_empty_module_query_still_records_the_exclusion_set(
+        self, excludable_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """A query that answers "no modules" is an answer, and the run stamps.
+
+        The withheld stamp above is for a query that RAISED. A readable sink
+        that returns no rows has told the run what the graph holds, so the
+        reconciliation is complete and the stamp must be written; otherwise
+        every run on an empty graph would re-query and warn forever.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        stamp = excludable_project / cs.EXCLUSION_STATE_FILENAME
+        before = stamp.read_text()
+
+        mock_ingestor.reset_mock()
+        mock_ingestor.fetch_all.side_effect = lambda _query, _params=None: []
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+            exclude_paths=frozenset({"module_a.py"}),
+        ).run()
+        assert _module_path_queries(mock_ingestor) == 1
+        assert stamp.read_text() != before
+
     def test_memo_is_per_run_not_per_instance(
         self, excludable_project: Path, mock_ingestor: MagicMock
     ) -> None:

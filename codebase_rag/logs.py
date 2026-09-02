@@ -111,6 +111,11 @@ EXCLUSION_STATE_MISSING = (
     "unchanged; re-running once to establish it. Expect this exactly once "
     "per existing index."
 )
+EXCLUSION_STATE_NOT_RECORDED = (
+    "The graph could not be asked for its module paths, so newly excluded "
+    "files may still be indexed; the exclusion set is not recorded and the "
+    "next run will reconcile again."
+)
 
 # Analysis logs
 FOUND_FUNCTIONS = "\n--- Found {count} functions/methods in codebase ---"

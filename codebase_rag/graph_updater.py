@@ -402,6 +402,10 @@ class GraphUpdater:
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
         self._exclusion_match: bool | None = None
+        # Set when a run that needed the graph's module paths could not read
+        # them: the reconciliation it was meant to do may not have happened,
+        # so that run must not stamp its exclusion set as reconciled.
+        self._graph_state_unknown: bool = False
         # Package paths read from the graph before Pass 1 of an incremental
         # run; None on a full build or when the graph could not be read.
         self._packages_before_run: set[str] | None = None
@@ -974,6 +978,7 @@ class GraphUpdater:
         # run replaced. Reset after _register_generated_sources so the answer
         # is always computed against the effective unignore set.
         self._exclusion_match = None
+        self._graph_state_unknown = False
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
@@ -1229,10 +1234,13 @@ class GraphUpdater:
         # reads that run's own result as a change. A single-file run walks one
         # file and cannot speak for the project's exclusion set.
         if self._single_file is None:
-            _save_exclusion_state(
-                self.repo_path / cs.EXCLUSION_STATE_FILENAME,
-                _exclusion_state(self.exclude_paths, self.unignore_paths),
-            )
+            if self._graph_state_unknown:
+                logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
+            else:
+                _save_exclusion_state(
+                    self.repo_path / cs.EXCLUSION_STATE_FILENAME,
+                    _exclusion_state(self.exclude_paths, self.unignore_paths),
+                )
 
     def _emit_pending_endpoints(self) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -2462,6 +2470,13 @@ class GraphUpdater:
             if is_full_build or not self._exclusions_match_last_run()
             else frozenset()
         )
+        # None is "the sink claims readability and the query failed", not
+        # "nothing there": below it falls back to the hash cache alone, which
+        # after a pre-flush crash no longer names the excluded file. That run
+        # completes and would stamp, and every later run would fast-path over
+        # the surviving subtree. Remembering the failure keeps the stamp back.
+        if preexisting_paths is None:
+            self._graph_state_unknown = True
         new_hashes: FileHashCache = {}
         skipped_count = 0
         changed_count = 0
