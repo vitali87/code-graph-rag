@@ -449,24 +449,69 @@ def test_clear_readonly_survives_an_unremovable_entry(tmp_path: Path) -> None:
     ["close", "islink", "scandir", "open", "lstat"],
 )
 def test_clear_readonly_never_calls_a_non_removal_func(
-    tmp_path: Path, listing_func: str
+    tmp_path: Path, listing_func: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only `os.unlink`/`os.rmdir` may be retried by calling `func(path)`.
+    """A non-removal callable must be SKIPPED, not called with a bare path.
 
-    `rmtree` passes several other callables, and each is wrong to call with a
-    single path: `os.open` wants `flags` and `os.close` wants a descriptor
-    (both raise TypeError out of teardown), while `os.path.islink` is a pure
-    query that removes nothing while looking like a successful retry. The
-    discriminator is a whitelist for that reason, so a callable nobody
-    anticipated is skipped rather than mis-called.
+    `rmtree` passes `os.scandir`, `os.open`, `os.lstat`, `os.close` and
+    `os.path.islink` besides the removals, and each is wrong to re-call
+    differently: `os.open` wants `flags` and `os.close` wants a descriptor
+    (both raise TypeError out of teardown), while `os.path.islink`,
+    `os.lstat` and `os.scandir` are pure queries that remove nothing while
+    looking like a successful retry. Unanticipated callables are retried --
+    callers legitimately pass their own removal function -- so only the five
+    named queries are excluded.
+
+    Asserts the callable was NOT INVOKED rather than that nothing raised.
+    Three of the five return silently, so an exception-only check passes
+    whether or not they are in the exclusion set: dropping islink, lstat and
+    scandir from `_NON_REMOVAL_FUNCS` left all five parametrisations green.
     """
-    from codebase_rag.tests.conftest import _clear_readonly
+    import codebase_rag.tests.conftest as conftest_module
 
     func = getattr(os, listing_func, None) or getattr(os.path, listing_func)
+    calls: list[object] = []
+
+    def spy(*args: object, **kwargs: object) -> object:
+        calls.append(args)
+        return func(*args, **kwargs)
+
+    # The spy stands in for the real callable on BOTH sides -- the exclusion
+    # set and the argument -- so membership is what decides, not identity of
+    # some other object.
+    monkeypatch.setattr(
+        conftest_module,
+        "_NON_REMOVAL_FUNCS",
+        frozenset(conftest_module._NON_REMOVAL_FUNCS - {func} | {spy}),
+    )
     target = tmp_path / "subject"
     target.mkdir()
 
-    _clear_readonly(func, str(target), OSError(13, "boom"))
+    conftest_module._clear_readonly(spy, str(target), OSError(13, "boom"))
+
+    assert not calls, (
+        f"os.{listing_func} was re-called with a bare path: it removes "
+        "nothing, so the handler abandons the subtree while appearing to "
+        "have retried"
+    )
+
+
+def test_non_removal_funcs_lists_every_callable_rmtree_passes() -> None:
+    """Pin the exclusion set's membership, which no behavioural test can.
+
+    The behavioural test above proves a listed callable is skipped; it cannot
+    prove the list is COMPLETE, because a missing entry is only visible as a
+    silent no-op. Enumerated from CPython 3.12's `shutil`: `_rmtree_safe_fd`
+    binds `os.lstat`, `os.open`, `os.path.islink`, `os.scandir`, `os.rmdir`
+    and `os.close`, and `_rmtree_unsafe` adds nothing beyond those.
+    """
+    from codebase_rag.tests.conftest import _NON_REMOVAL_FUNCS
+
+    assert _NON_REMOVAL_FUNCS == frozenset(
+        {os.scandir, os.open, os.lstat, os.close, os.path.islink}
+    )
+    assert os.unlink not in _NON_REMOVAL_FUNCS
+    assert os.rmdir not in _NON_REMOVAL_FUNCS
 
 
 def test_git_repo_fixture_tears_down_its_own_readonly_objects(
