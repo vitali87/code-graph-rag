@@ -5,6 +5,7 @@ import functools
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 from collections.abc import Generator
@@ -383,6 +384,104 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
         func(path)
     except FileNotFoundError:
         return
+
+
+def _make_tmp_path_removable(root: Path) -> None:
+    """Add the owner write bit to everything under `root`, bottom-up.
+
+    `_clear_readonly` rescues fixtures that tear themselves down through it.
+    Nothing rescues a test that runs `git init` under a bare `tmp_path` and
+    leaves the tree to pytest's own retention cleanup, which is what the
+    sweep on issue #1622 found in five places. Git writes loose objects
+    read-only, so on Windows that tree cannot be removed; pytest keeps the
+    last few basetemps and collects them in a LATER session with errors
+    ignored, so the failure never lands on the test that created it.
+
+    This runs for every test, so it must be cheap and total: it walks only
+    the test's own `tmp_path` (usually absent or tiny) and never raises.
+
+    Three constraints inherited from `_clear_readonly`, each load-bearing:
+
+    * The bit is ADDED to the existing mode, never assigned. `chmod(p, 0o200)`
+      sets a DIRECTORY untraversable for good, turning a recoverable state
+      into a permanent one.
+    * Symlinks are skipped. `os.chmod` follows links and `follow_symlinks`
+      is unsupported for chmod on Linux, one of the three matrix platforms.
+    * A path that vanishes mid-walk is already in the state teardown wanted;
+      git's background maintenance deletes its own lock asynchronously.
+    """
+    if not root.exists():
+        return
+
+    def widen(target: str) -> None:
+        if os.path.islink(target):
+            return
+        try:
+            mode = os.stat(target).st_mode
+            os.chmod(
+                target,
+                mode | stat.S_IWRITE | (stat.S_IEXEC if os.path.isdir(target) else 0),
+            )
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        except OSError:
+            # A mode we cannot widen is not worth failing teardown over: the
+            # removal that follows reports the real problem.
+            return
+
+    # Bottom-up so a directory's own mode is widened only after its children
+    # have been visited through it.
+    for dirpath, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
+        for name in (*filenames, *dirnames):
+            widen(os.path.join(dirpath, name))
+    # The root last, and only after the walk: `os.walk` yields the entries
+    # UNDER a directory, never the directory it was given, so without this a
+    # restrictive mode on `tmp_path` itself would still block the removal.
+    widen(str(root))
+
+
+@pytest.fixture(autouse=True)
+def _tmp_path_stays_removable(request: pytest.FixtureRequest) -> Generator[None]:
+    """Leave no read-only object behind for pytest's cleanup to trip over.
+
+    Autouse and keyed on whether the test actually asked for `tmp_path`, so a
+    test that never used one does no work. This is the DEFAULT the issue asks
+    for: `git_repo` covers the fixtures that opt in, and this covers the ones
+    that build a repository by hand, including ones not yet written.
+    """
+    # Resolved BEFORE the yield: after the test, `tmp_path` may already be
+    # torn down and `getfixturevalue` then raises rather than returning it.
+    # Requesting it here does not create one for a test that never asked --
+    # the membership check gates that -- so an unrelated test still does no
+    # filesystem work.
+    root = (
+        request.getfixturevalue("tmp_path")
+        if "tmp_path" in request.fixturenames
+        else None
+    )
+    yield
+    if root is not None:
+        _make_tmp_path_removable(root)
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> Generator[Path, None, None]:
+    """A real git repository under `tmp_path`, torn down safely.
+
+    Prefer this over calling `git init` by hand: teardown goes through
+    `_clear_readonly`, so the read-only loose objects git writes cannot
+    strand the tree on Windows (issue #1622).
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": str(tmp_path / "gitconfig-absent"),
+        "GIT_CONFIG_SYSTEM": str(tmp_path / "gitconfig-absent"),
+    }
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=env)
+    yield repo
+    shutil.rmtree(repo, onexc=_clear_readonly, ignore_errors=False)
 
 
 @pytest.fixture
