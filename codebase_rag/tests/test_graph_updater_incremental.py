@@ -2,6 +2,7 @@ import errno
 import json
 import os
 import time
+from collections import Counter
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -58,12 +59,41 @@ def _module_path_queries(mock_ingestor: MagicMock) -> int:
     )
 
 
-def _deleted_module_paths(mock_ingestor: MagicMock) -> set[str]:
-    return {
+def _deleted_module_counts(mock_ingestor: MagicMock) -> Counter[str]:
+    return Counter(
         call.args[1][cs.KEY_PATH]
         for call in mock_ingestor.execute_write.call_args_list
         if call.args and call.args[0] == cs.CYPHER_DELETE_MODULE
-    }
+    )
+
+
+def _deleted_module_paths(mock_ingestor: MagicMock) -> set[str]:
+    return set(_deleted_module_counts(mock_ingestor))
+
+
+def test_an_edited_file_is_deleted_exactly_once(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # The up-front stale-subtree loop is the only delete on the re-parse
+    # path; a second per-file delete inside the parse loop is a wasted
+    # write per re-indexed file, and a set-typed check cannot see it.
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+    module_a = py_project / "module_a.py"
+    module_a.write_text(module_a.read_text() + "\n")
+    cache_mtime = (py_project / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    os.utime(module_a, (cache_mtime + 1, cache_mtime + 1))
+
+    mock_ingestor.reset_mock()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+
+    counts = _deleted_module_counts(mock_ingestor)
+    assert "module_a.py" in counts
+    assert all(n == 1 for n in counts.values()), dict(counts)
 
 
 @pytest.fixture
