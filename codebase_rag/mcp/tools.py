@@ -11,6 +11,7 @@ from rich.console import Console
 from codebase_rag import constants as cs
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
+from codebase_rag.config import load_ignore_patterns
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
@@ -707,6 +708,22 @@ class MCPToolsRegistry:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
             return cs.MCP_WIPE_ERROR.format(error=e)
 
+    def _ignore_sets(self) -> tuple[frozenset[str] | None, frozenset[str] | None]:
+        # The CLI resolves `.cgrignore` and the root `.gitignore` through
+        # `load_ignore_patterns` before every ingest; MCP omitted it entirely,
+        # so an MCP-driven run parsed what the ignore files exclude and built a
+        # different graph from the CLI for the same repo (#1616). MCP has no
+        # `--exclude` flag and no interactive setup, so that loader is the whole
+        # contract here -- the CLI's extra `cli_excludes` union and
+        # `prompt_for_unignored_directories` branch have no MCP counterpart.
+        # `or None` mirrors the CLI's own `... or None` idiom and the
+        # parameters' default. It is call-shape parity, not behaviour: every
+        # consumer gates on truthiness (`if exclude_paths and ...` in
+        # should_skip_path/should_skip_rel_file/should_keep_dir), so an empty
+        # frozenset and None are indistinguishable downstream.
+        patterns = load_ignore_patterns(Path(self.project_root))
+        return patterns.exclude or None, patterns.unignore or None
+
     def _index_repository_sync(self) -> str:
         # Same collision-resistant derivation as the CLI: a bare directory
         # name would let two repos named alike delete each other's graphs.
@@ -718,11 +735,14 @@ class MCPToolsRegistry:
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
 
+        exclude_paths, unignore_paths = self._ignore_sets()
         updater = GraphUpdater(
             ingestor=self.ingestor,
             repo_path=Path(self.project_root),
             parsers=self.parsers,
             queries=self.queries,
+            unignore_paths=unignore_paths,
+            exclude_paths=exclude_paths,
             project_name=project_name,
         )
         updater.run()
@@ -763,11 +783,14 @@ class MCPToolsRegistry:
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
 
+        exclude_paths, unignore_paths = self._ignore_sets()
         updater = GraphUpdater(
             ingestor=self.ingestor,
             repo_path=Path(self.project_root),
             parsers=self.parsers,
             queries=self.queries,
+            unignore_paths=unignore_paths,
+            exclude_paths=exclude_paths,
             project_name=project_name,
         )
         updater.run()
