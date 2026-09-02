@@ -13,7 +13,7 @@ inserted; hand edits remain welcome between releases and render too.
 
 - **Transactional Multi-File Edits**: Multi-file edits now run as a transaction with staged verification and undo, alongside concrete-syntax-preserving patchers per language and import rewriting for renames and moves.
 - **Scala Inheritance and Markdown Front-Matter**: Scala `INHERITS` edges are read from `extends`/`with` clauses, and declared Markdown front-matter is read onto the `Module` node.
-- **Graph Retrieval**: A graph-proximity reranking prototype was added, MCP and CLI graph retrieval is scoped to one project, and call-site and import-site locations are now stored on graph edges.
+- **Graph Retrieval**: MCP and CLI graph retrieval is scoped to one project, and call-site and import-site locations are now stored on graph edges.
 - **Direct MCP Tools**: `find_duplicate_code` and `get_function_source` are exposed as direct MCP tools, and PHP `use function` imports resolve through declared namespaces.
 - **Graph Indexing**: The name property is now indexed for improved graph read-path lookups. SQL routines are also indexed to resolve calls that name their target in a string.
 - **Duplicate Code Detection**: An AST-based duplicate code detection system has been introduced, alongside fixes for duplicate detection across multiple repositories.
