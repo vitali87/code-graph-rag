@@ -2182,6 +2182,14 @@ class GraphUpdater:
         qn_to_path = self.factory.definition_processor.module_qn_to_file_path
         for qn in [qn for qn, path in qn_to_path.items() if path == file_path]:
             del qn_to_path[qn]
+        # The paths read back from the graph for an earlier incremental run
+        # go with the registry entries: `_module_language` falls through to
+        # them for a definition qn, and a replacement in another language
+        # (util.rs -> util.py) would otherwise still answer RUST for the qn
+        # its new file re-registers (issue #1575).
+        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        for qn in qns_to_remove:
+            rehydrated.pop(qn, None)
 
     def _existing_module_paths(self) -> frozenset[str] | None:
         """Paths of this project's Module nodes already in the graph.

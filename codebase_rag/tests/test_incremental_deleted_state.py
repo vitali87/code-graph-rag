@@ -177,3 +177,91 @@ def test_a_reused_updater_forgets_a_deleted_module_language(
     calls = {(e[1], e[4]) for e in after[1] if e[2] == cs.RelationshipType.CALLS.value}
     assert ("proj.main.go", "proj.util.helper") in calls
     assert after == _clean(temp_repo, RS_PY_AFTER, cs.SupportedLanguage.PYTHON)
+
+
+def test_a_rehydrated_updater_forgets_a_deleted_definitions_language(
+    temp_repo: Path,
+) -> None:
+    # The watcher's shape: a fresh updater whose FIRST run is incremental,
+    # so the untouched util.rs definitions are read back from the graph and
+    # `rehydrated_definition_paths` records them. `_module_language` falls
+    # through to those paths for a definition qn, so removing the file's
+    # state must drop them too, or the replacement util.py still answers
+    # RUST for `proj.util.helper` and the call it now provides is refused.
+    root = temp_repo / "proj"
+    before = {**RS_PY_BEFORE, "other.py": "def x():\n    return 1\n"}
+    after = {**RS_PY_AFTER, "other.py": "def x():\n    return 2\n"}
+    _materialise(root, before)
+    store = _StatefulIngestor()
+    first = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    if cs.SupportedLanguage.RUST not in first.parsers:
+        pytest.skip("rust parser not available")
+    first.run(force=True)
+
+    updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    (root / "other.py").write_text(after["other.py"], encoding="utf-8")
+    _bump(root, "other.py")
+    updater.run(force=False)
+    rehydrated = updater.factory.definition_processor.rehydrated_definition_paths
+    assert "proj.util.helper" in rehydrated, "the shape did not rehydrate"
+
+    (root / "util.rs").unlink()
+    (root / "util.py").write_text(after["util.py"], encoding="utf-8")
+    (root / "main.py").write_text(after["main.py"], encoding="utf-8")
+    _bump(root, "util.py")
+    _bump(root, "main.py")
+    updater.run(force=False)
+    after_snapshot = _snapshot(store, root)
+
+    calls = {
+        (e[1], e[4])
+        for e in after_snapshot[1]
+        if e[2] == cs.RelationshipType.CALLS.value
+    }
+    assert ("proj.main.go", "proj.util.helper") in calls
+    assert after_snapshot == _clean(temp_repo, after, cs.SupportedLanguage.PYTHON)
+
+
+JEDI_CORE = (
+    "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
+    "    return Base()\n"
+)
+JEDI_MAIN = (
+    "from {module} import build\n\nhandlers = {{'a': build}}\n\n\ndef go():\n"
+    "    return handlers['a']().run()\n"
+)
+
+
+def test_a_reused_updater_relearns_a_renamed_module_under_jedi(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The rel-path -> module qn memo the JEDI join reads rebuilds only when
+    # its size differs from `module_qn_to_file_path`. A rename removes one
+    # entry and adds one, so without an explicit reset the memo keeps
+    # `base.py`, never learns `core.py`, and every fact targeting the
+    # renamed file loses its declared location.
+    pytest.importorskip("jedi")
+    from codebase_rag.config import settings
+
+    monkeypatch.setattr(settings, "PYTHON_FRONTEND", cs.PythonFrontend.JEDI)
+    root = temp_repo / "proj"
+    _materialise(
+        root, {"base.py": JEDI_CORE, "main.py": JEDI_MAIN.format(module="base")}
+    )
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    updater.run(force=True)
+    (root / "base.py").rename(root / "core.py")
+    (root / "main.py").write_text(JEDI_MAIN.format(module="core"), encoding="utf-8")
+    _bump(root, "core.py")
+    _bump(root, "main.py")
+    updater.run(force=False)
+    after = _snapshot(store, root)
+
+    calls = {(e[1], e[4]) for e in after[1] if e[2] == cs.RelationshipType.CALLS.value}
+    assert ("proj.main.go", "proj.core.Base.run") in calls
+    assert after == _clean(
+        temp_repo,
+        {"core.py": JEDI_CORE, "main.py": JEDI_MAIN.format(module="core")},
+        cs.SupportedLanguage.PYTHON,
+    )
