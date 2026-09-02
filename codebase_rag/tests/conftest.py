@@ -572,7 +572,8 @@ def git_repo(tmp_path: Path) -> Generator[Path, None, None]:
         "GIT_CONFIG_SYSTEM": str(tmp_path / "gitconfig-absent"),
         # Pinned for the same reason the config files are neutralised: the
         # env is inherited, and an ambient GIT_DEFAULT_HASH=sha256 would give
-        # 62-hex object names instead of 40-hex, changing what callers see.
+        # 62-hex loose-object basenames instead of 38-hex, changing what
+        # callers see.
         "GIT_DEFAULT_HASH": "sha1",
     }
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=env)

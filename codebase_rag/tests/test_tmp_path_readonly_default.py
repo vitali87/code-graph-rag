@@ -567,14 +567,18 @@ _LOOSE_OBJECT = re.compile(r"[0-9a-f]{38}|[0-9a-f]{62}")
 def _collect_loose_objects(repo: Path) -> tuple[list[str], list[int]]:
     """Return the loose objects under `repo`, and which of them are read-only.
 
-    Counts ONLY `objects/<2 hex>/<38 hex>`. Everything else under `objects/`
-    is a different kind of file, and several are mode 444: `pack/*.pack`,
-    `*.idx`, `*.rev`, `commit-graph`. Walking all of `objects/` would let those
-    satisfy a "git wrote read-only loose objects" assertion with zero loose
-    objects present -- the exact state such an assertion exists to reject.
-    Git only packs at `gc.auto` (6700) loose objects, so the fixture cannot
-    reach that today, but the guard must not depend on that staying true.
-    `test_the_loose_object_filter_rejects_a_packed_repo` pins the difference.
+    Counts ONLY `objects/<2 hex>/<38 or 62 hex>` (sha1 or sha256 basenames).
+    Everything else under `objects/` is a different kind of file, and several
+    are mode 444: `pack/*.pack`, `*.idx`, `*.rev`, `commit-graph`. Walking all
+    of `objects/` would let those satisfy a "git wrote read-only loose
+    objects" assertion with zero loose objects present -- the exact state such
+    an assertion exists to reject. Git only packs at `gc.auto` (6700) loose
+    objects, so the fixture cannot reach that today, but the guard must not
+    depend on that staying true.
+    `test_the_loose_object_filter_rejects_a_packed_repo` pins the packed
+    difference; `test_the_loose_object_filter_accepts_a_sha256_repo` pins the
+    62-hex branch, which the sha1 pins in every other fixture would otherwise
+    leave uncovered.
 
     Modes are read AT LISTING TIME, one `lstat` per entry, never a second
     pass. `git commit` spawns `git maintenance run --auto --quiet --detach`,
@@ -633,7 +637,8 @@ def test_git_repo_fixture_tears_down_its_own_readonly_objects(
         check=True,
         env=env,
     )
-    # Count ONLY loose objects: `objects/<2 hex>/<38 hex>`. Everything else
+    # Count ONLY loose objects: `objects/<2 hex>/<38 or 62 hex>` (sha1 or
+    # sha256 basenames). Everything else
     # under `objects/` is a different kind of file, and several of them are
     # mode 444 -- `pack/*.pack`, `*.idx`, `*.rev`, `commit-graph`. Walking all
     # of `objects/` would let those satisfy both guards below with zero loose
@@ -712,3 +717,60 @@ def test_the_loose_object_filter_rejects_a_packed_repo(
         "no longer discriminates and the fixture guard is satisfied by packs"
     )
     assert readonly_modes == []
+
+
+def test_the_loose_object_filter_accepts_a_sha256_repo(
+    tmp_path: Path,
+) -> None:
+    """The 62-hex half of the predicate must be observable from the suite.
+
+    Every other test here pins `GIT_DEFAULT_HASH=sha1`, so nothing else can
+    tell `[0-9a-f]{38}` from `[0-9a-f]{38}|[0-9a-f]{62}`: reverting the regex
+    to sha1-only leaves the whole file green. This test builds the one repo
+    the pins deliberately exclude, so the sha256 branch is pinned behaviour
+    rather than uncovered code that can be dropped silently.
+    """
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": str(tmp_path / "absent"),
+        "GIT_CONFIG_SYSTEM": str(tmp_path / "absent"),
+        "GIT_DEFAULT_HASH": "sha256",
+    }
+    repo = tmp_path / "sha256"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=env)
+
+    # Not every git builds with sha256. Assert the repo really is sha256
+    # rather than skipping on a falsy check: an empty `listed` below would
+    # otherwise read identically whether the branch is broken or the repo was
+    # never sha256 in the first place.
+    fmt = subprocess.run(
+        ["git", "rev-parse", "--show-object-format"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    ).stdout.strip()
+    if fmt != "sha256":
+        pytest.skip(f"git does not support sha256 object format (got {fmt!r})")
+
+    (repo / "a.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "a.py"], cwd=repo, check=True, env=env)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c"],
+        cwd=repo,
+        check=True,
+        env=env,
+    )
+
+    listed, _readonly_modes = _collect_loose_objects(repo)
+    assert listed, (
+        "a sha256 repo's loose objects were all discarded: the 62-hex half of "
+        "`_LOOSE_OBJECT` no longer matches, so the helper silently reports an "
+        "empty repo instead of the objects git wrote"
+    )
+    assert all(len(name) == 62 for name in listed), (
+        f"expected 62-hex sha256 basenames, got lengths "
+        f"{sorted({len(n) for n in listed})}"
+    )
