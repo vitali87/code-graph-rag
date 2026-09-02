@@ -274,9 +274,24 @@ def test_reingest_refuses_a_directory(fixture_root: Path) -> None:
     before = _snapshot(store)
     with pytest.raises(ValueError, match="a directory"):
         updater.reingest(["pkg"])
-    with pytest.raises(ValueError, match="a directory"):
-        updater.reingest([], deleted=["pkg"])
     assert _snapshot(store) == before
+
+
+def test_reingest_deletes_a_file_a_directory_has_replaced(fixture_root: Path) -> None:
+    # The watcher's DELETE event can arrive after a directory of the same
+    # name has been created; the deletion is an instruction, so the stale
+    # Module still goes even though the name is now a directory.
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    util = fixture_root / "pkg" / "util.py"
+    util.unlink()
+    util.mkdir()
+
+    report = updater.reingest([], deleted=["pkg/util.py"])
+
+    assert report.removed == ("pkg/util.py",)
+    assert (cs.NodeLabel.MODULE.value, f"{PROJECT}.pkg.util") not in store.nodes
 
 
 def test_reingest_with_nothing_to_do_is_a_no_op(fixture_root: Path) -> None:

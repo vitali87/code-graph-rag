@@ -3213,9 +3213,12 @@ class GraphUpdater:
         # (present, gone, skipped): a listed path missing on disk counts as
         # gone, an explicit deletion wins over a same-named file that
         # reappeared, and a path the ignore rules exclude is reported back
-        # rather than indexed. A directory is refused: the delete queries
-        # match nothing for it, so it would be reported as removed while the
-        # graph stayed untouched.
+        # rather than indexed. A directory in `paths` is refused: present or
+        # gone is inferred from disk there, and the delete queries match
+        # nothing for a directory, so it would be reported as removed while
+        # the graph stayed untouched. `deleted` is an instruction, not an
+        # inference, and a directory may now sit where the deleted file was
+        # (the watcher sees exactly that race), so its delete goes ahead.
         present: dict[str, Path] = {}
         gone: dict[str, Path] = {}
         skipped: set[str] = set()
@@ -3226,7 +3229,7 @@ class GraphUpdater:
                 continue
             (present if path.is_file() else gone)[key] = path
         for raw in deleted:
-            key, path = self._reingest_file_target(raw)
+            key, path = self._reingest_target(raw)
             present.pop(key, None)
             if self._reingest_ignored(path):
                 skipped.add(key)
