@@ -440,9 +440,16 @@ class TestParseFailureIsReported:
             "- **Graph Export**  the graph exports to GraphML.\n"
         )
         exit_code, news = self._run(tmp_path, monkeypatch, fragment)
+        captured = capsys.readouterr()
         assert exit_code != 0
         assert "Web Search" not in news
-        assert "parsed 0" in capsys.readouterr().out
+        assert "parsed 0" in captured.out
+        # The diagnostic must name the regex an operator has to inspect, and the
+        # file to inspect it against. An earlier review found this message naming
+        # BULLET_PATTERN after the guard had moved to HIGHLIGHT_BULLET, which would
+        # send someone to the wrong regex mid-incident; nothing asserted it then.
+        assert "HIGHLIGHT_BULLET" in captured.err
+        assert str(tmp_path / "highlights.md") in captured.err
 
     def test_an_empty_highlights_file_stays_a_clean_noop(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
