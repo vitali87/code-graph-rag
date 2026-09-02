@@ -265,3 +265,75 @@ def test_a_reused_updater_relearns_a_renamed_module_under_jedi(
         {"core.py": JEDI_CORE, "main.py": JEDI_MAIN.format(module="core")},
         cs.SupportedLanguage.PYTHON,
     )
+
+
+# Two resolver indexes are derived from module_qn_to_file_path and rebuilt
+# lazily: the Go package index only when the map's size changes, the
+# path-to-module index never. Removing a deleted module from the map (rather
+# than leaving it, as before) means a rename keeps the size constant, so both
+# must be reset with the other memos at the start of Pass 3.
+GO_BEFORE = {
+    "pkg/types.go": "package pkg\n\ntype T struct{}\n",
+    "pkg/methods.go": "package pkg\n\nfunc (t T) M() int { return helper() }\n",
+    "pkg/util.go": "package pkg\n\nfunc helper() int { return 1 }\n",
+}
+GO_AFTER = {
+    "pkg/types.go": GO_BEFORE["pkg/types.go"],
+    "pkg/methods.go": GO_BEFORE["pkg/methods.go"],
+    "pkg/helpers.go": GO_BEFORE["pkg/util.go"],
+}
+
+
+def _calls(snapshot: Snapshot) -> set[tuple[str, str]]:
+    return {
+        (e[1], e[4]) for e in snapshot[1] if e[2] == cs.RelationshipType.CALLS.value
+    }
+
+
+def test_a_reused_updater_resolves_a_go_call_after_a_same_package_rename(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / "proj"
+    _materialise(root, GO_BEFORE)
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.GO)
+    updater.run(force=True)
+    (root / "pkg" / "util.go").rename(root / "pkg" / "helpers.go")
+    _bump(root, "pkg/helpers.go")
+    updater.run(force=False)
+    after = _snapshot(store, root)
+
+    # A stale package index lists the deleted `proj.pkg.util`, the receiver
+    # lookup raises on it, and methods.go then contributes no CALLS at all.
+    calls = _calls(after)
+    assert ("proj.pkg.types.T.M", "proj.pkg.helpers.helper") in calls
+    assert calls == _calls(_clean(temp_repo, GO_AFTER, cs.SupportedLanguage.GO))
+
+
+JS_ADD_AFTER = {
+    **JS_BEFORE,
+    "util.ts": (
+        "export function helper2(): number { return 1; }\n"
+        "export function helper2b(): number { return helper2(); }\n"
+    ),
+}
+
+
+def test_a_reused_updater_keys_a_new_same_stem_module_by_its_own_qn(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / "proj"
+    _materialise(root, JS_BEFORE)
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.JS)
+    updater.run(force=True)
+    (root / "util.ts").write_text(JS_ADD_AFTER["util.ts"], encoding="utf-8")
+    _bump(root, "util.ts")
+    updater.run(force=False)
+    after = _snapshot(store, root)
+
+    # A path index built on the first run has no entry for util.ts, so its
+    # calls were attributed to the JS module's qn (`proj.util.helper`).
+    calls = _calls(after)
+    assert ("proj.util.ts.helper2b", "proj.util.ts.helper2") in calls
+    assert after == _clean(temp_repo, JS_ADD_AFTER, cs.SupportedLanguage.JS)

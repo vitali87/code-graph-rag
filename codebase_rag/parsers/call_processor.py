@@ -1556,6 +1556,14 @@ class CallProcessor:
 
     def reset_resolution_caches(self) -> None:
         self._resolver.reset_resolution_caches()
+        # Both indexes are derived from module_qn_to_file_path and rebuilt
+        # lazily: the package index only when the map's SIZE changes, the
+        # path index never. A deleted module removed from the map and a new
+        # one added in the same run leave the size unchanged, so a stale
+        # entry would survive into Pass 3 and raise on lookup.
+        self._package_index = {}
+        self._package_index_size = -1
+        self._path_to_module_qn = None
 
     def process_calls_in_file(
         self,
