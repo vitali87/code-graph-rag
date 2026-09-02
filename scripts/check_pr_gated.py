@@ -24,6 +24,13 @@ It is ADVISORY. It reads GitHub through the ambient `gh` auth and writes
 nothing. Closing the gap for real means widening the ruleset's
 `ref_name.include`, which is repository settings and the owner's decision.
 
+Intended for an OPEN pull request, immediately before merging. Run against
+an already-merged one it will usually report the CI run as unresolvable:
+GitHub leaves `pull_requests: []` on runs belonging to closed PRs, and this
+script treats an unanswerable ownership question as unverified rather than
+clean. That is the deliberate direction -- an empty answer is not a pass --
+but it makes the tool noisy after the fact, which is not what it is for.
+
 Usage:  uv run python scripts/check_pr_gated.py <pr-number>
 Exit 0 when every check passes, 1 otherwise, printing EVERY reason found.
 """
@@ -62,8 +69,26 @@ REVIEW_VERDICT_MARKERS = (
     "confidence score",
 )
 
+# A verdict is only evidence if the account that wrote it is the one whose
+# review the gate is asking about. Without this the check is spoofable by
+# the author it is meant to constrain: writing "confidence score" in an
+# ordinary comment satisfies a marker-only test (CWE-345, Greptile on
+# PR #1625). Bot logins carry the `[bot]` suffix on some payloads and not
+# others, so both spellings are accepted.
+TRUSTED_REVIEWERS = frozenset(
+    {
+        "coderabbitai",
+        "coderabbitai[bot]",
+        "greptile-apps",
+        "greptile-apps[bot]",
+        "greptileai",
+        "gemini-code-assist",
+        "gemini-code-assist[bot]",
+    }
+)
 
-def _gh(*args: str) -> str:
+
+def _gh_stdout_or_empty(*args: str) -> str:
     """`gh` stdout, or "" when the call fails.
 
     Failures are returned as empty rather than raised so one unavailable
@@ -146,17 +171,42 @@ def required_contexts_present(
     return [name for name in required if name not in present]
 
 
-def is_real_review(body: str) -> bool:
-    """Whether a comment body is a review rather than a notice about one.
+def is_real_review(body: str, author: str) -> bool:
+    """Whether this is a review artifact from an account that reviews.
 
-    Positive detection, so an unrecognised notice fails closed. A review
-    that found nothing still counts -- it ran -- which is why emptiness of
-    findings cannot be the test either.
+    Both halves are required. A marker alone is forgeable: the PR author
+    can write "confidence score" in an ordinary comment and satisfy a
+    marker-only test, which makes the gate assert something the author
+    controls (CWE-345, Greptile on PR #1625). An author alone is not
+    enough either, because a skip notice is posted by the same bot.
+
+    Positive on both axes, so an unrecognised notice or an unexpected
+    account fails closed. A review that found nothing still counts -- it
+    ran -- which is why emptiness of findings cannot be the test.
     """
+    if author.strip().lower() not in TRUSTED_REVIEWERS:
+        return False
     lowered = body.strip().lower()
     if not lowered:
         return False
     return any(marker in lowered for marker in REVIEW_VERDICT_MARKERS)
+
+
+def _author_login(artifact: dict[str, Any]) -> str:
+    """The login that wrote a comment or review, across both payload shapes.
+
+    `gh pr view --json comments` nests it as `author.login`; the REST
+    comment payload uses `user.login`. Returning "" for an unrecognised
+    shape makes the artifact fail the trusted-author test rather than
+    silently pass it.
+    """
+    for key in ("author", "user"):
+        holder = artifact.get(key)
+        if isinstance(holder, dict):
+            login = holder.get("login")
+            if isinstance(login, str):
+                return login
+    return ""
 
 
 def _json_dict(text: str) -> dict[str, Any]:
@@ -181,12 +231,66 @@ def _json_list(text: str) -> list[Any]:
     return parsed if isinstance(parsed, list) else []
 
 
+def unresolved_in_page(page: dict[str, Any]) -> tuple[int, bool, str]:
+    """`(unresolved on this page, has another page, end cursor)`.
+
+    Split out so the pagination arithmetic is testable without the network,
+    which is what makes the two-page fixture below a real test rather than
+    a mock of the code under test.
+    """
+    threads = page["data"]["repository"]["pullRequest"]["reviewThreads"]
+    nodes = threads["nodes"]
+    unresolved = sum(1 for n in nodes if n.get("isResolved") is False)
+    info = threads.get("pageInfo", {})
+    return unresolved, bool(info.get("hasNextPage")), str(info.get("endCursor") or "")
+
+
+def _unresolved_thread_count(pr: str) -> tuple[int, str]:
+    """`(count, error)`. A non-empty error means the count is unverified.
+
+    Paginated because `first: 100` silently truncates: an unresolved 101st
+    thread is invisible, and PR #1503 carried 53, so the ceiling is within
+    reach rather than theoretical. A page that cannot be read is reported
+    rather than counted as zero.
+    """
+    total = 0
+    cursor = ""
+    for _ in range(20):
+        after = f', after: "{cursor}"' if cursor else ""
+        page = _json_dict(
+            _gh_stdout_or_empty(
+                "api",
+                "graphql",
+                "-f",
+                "query="
+                '{repository(owner:"vitali87",name:"code-graph-rag")'
+                f"{{pullRequest(number:{pr})"
+                f"{{reviewThreads(first: 100{after})"
+                "{nodes{isResolved} pageInfo{hasNextPage endCursor}}}}}",
+            )
+        )
+        try:
+            unresolved, has_next, cursor = unresolved_in_page(page)
+        except (KeyError, TypeError, AttributeError):
+            return (
+                0,
+                "could not read a page of review threads, so resolution is unverified",
+            )
+        total += unresolved
+        if not has_next:
+            return total, ""
+    return (
+        total,
+        "review threads did not terminate after 20 pages; treating as unverified",
+    )
+
+
 def check(pr: str) -> list[str]:
     """Every reason `pr` is not verifiably gated, in order. Empty means gated."""
     reasons: list[str] = []
 
     view = _json_dict(
-        _gh(
+        _gh_stdout_or_empty(
             "pr",
             "view",
             pr,
@@ -203,7 +307,9 @@ def check(pr: str) -> list[str]:
     base = str(view.get("baseRefName", ""))
     rollup = [e for e in view.get("statusCheckRollup", []) if isinstance(e, dict)]
 
-    rules = _json_list(_gh("api", f"repos/{REPO}/rules/branches/{base}"))
+    rules = _json_list(
+        _gh_stdout_or_empty("api", f"repos/{REPO}/rules/branches/{base}")
+    )
     rule_types = {r.get("type") for r in rules if isinstance(r, dict)}
     if "required_status_checks" not in rule_types:
         reasons.append(
@@ -212,7 +318,7 @@ def check(pr: str) -> list[str]:
         )
 
     runs = _json_list(
-        _gh(
+        _gh_stdout_or_empty(
             "run",
             "list",
             "--repo",
@@ -234,17 +340,25 @@ def check(pr: str) -> list[str]:
         owners: set[str] = set()
         for run in at_head:
             detail = _json_dict(
-                _gh("api", f"repos/{REPO}/actions/runs/{run.get('databaseId')}")
+                _gh_stdout_or_empty(
+                    "api", f"repos/{REPO}/actions/runs/{run.get('databaseId')}"
+                )
             )
             owners.update(
                 str(p.get("number"))
                 for p in detail.get("pull_requests", [])
                 if isinstance(p, dict)
             )
-        if owners and pr not in owners:
+        if pr not in owners:
+            # Empty is UNVERIFIED, not clean. A run whose detail fetch failed,
+            # or one reporting `pull_requests: []`, leaves `owners` empty; the
+            # earlier `if owners and ...` guard then never fired and scored the
+            # absence of an answer as a pass (Greptile on PR #1625) -- the same
+            # fail-open shape this checker exists to catch.
+            found = sorted(owners) if owners else "none (could not be determined)"
             reasons.append(
-                f"the CI run at {head[:8]} belongs to PR(s) {sorted(owners)}, not #{pr}; "
-                "branches sharing a head SHA after a rebase report each other's runs"
+                f"the CI run at {head[:8]} does not resolve to #{pr}; owners: {found}. "
+                "Branches sharing a head SHA after a rebase report each other's runs"
             )
 
     missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
@@ -269,33 +383,24 @@ def check(pr: str) -> list[str]:
             "reports on nothing"
         )
 
-    bodies = [
-        str(c.get("body", "")) for c in view.get("comments", []) if isinstance(c, dict)
-    ] + [str(r.get("body", "")) for r in view.get("reviews", []) if isinstance(r, dict)]
-    if not any(is_real_review(b) for b in bodies):
+    artifacts = [
+        (str(a.get("body", "")), _author_login(a))
+        for key in ("comments", "reviews")
+        for a in view.get(key, [])
+        if isinstance(a, dict)
+    ]
+    if not any(is_real_review(body, author) for body, author in artifacts):
         reasons.append(
-            f"no review artifact carries a verdict ({len(bodies)} comment(s)/review(s) "
-            "present, none of which is a review)"
+            f"no review artifact carries a verdict from a reviewing account "
+            f"({len(artifacts)} comment(s)/review(s) present, none of which is a "
+            "review by one of "
+            f"{sorted(a for a in TRUSTED_REVIEWERS if not a.endswith('[bot]'))})"
         )
 
-    threads = _json_dict(
-        _gh(
-            "api",
-            "graphql",
-            "-f",
-            "query="
-            '{repository(owner:"vitali87",name:"code-graph-rag")'
-            f"{{pullRequest(number:{pr})"
-            "{reviewThreads(first:100){nodes{isResolved}}}}}",
-        )
-    )
-    try:
-        nodes = threads["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
-        unresolved = sum(1 for n in nodes if n.get("isResolved") is False)
-    except (KeyError, TypeError, AttributeError):
-        unresolved = 0
-        reasons.append("could not read review threads, so resolution is unverified")
-    if unresolved:
+    unresolved, thread_error = _unresolved_thread_count(pr)
+    if thread_error:
+        reasons.append(thread_error)
+    elif unresolved:
         reasons.append(f"{unresolved} unresolved review thread(s)")
 
     return reasons

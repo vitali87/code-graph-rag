@@ -34,6 +34,7 @@ from scripts.check_pr_gated import (
     missing_aggregated_jobs,
     required_contexts_present,
     unit_test_contexts,
+    unresolved_in_page,
 )
 
 # Captured from PR #1611's statusCheckRollup. The CodeRabbit entry is a
@@ -225,6 +226,88 @@ class TestMissingAggregatedJobs:
         assert missing_aggregated_jobs(rollup) == list(AGGREGATED_JOBS)
 
 
+class TestReviewEvidenceIsNotForgeable:
+    """A verdict marker written by anyone must not satisfy the gate.
+
+    Greptile's P1 on PR #1625: bodies were pooled without author, so the
+    PR author could write "confidence score" in an ordinary comment and
+    the gate would report the PR reviewed. The check then asserted
+    something the author controls (CWE-345).
+    """
+
+    def test_the_pr_author_cannot_forge_a_verdict(self) -> None:
+        forged = "Looks good. confidence score is fine here."
+
+        assert is_real_review(forged, "vitali87") is False
+
+    def test_the_same_body_from_the_bot_does_count(self) -> None:
+        """The control: it is the AUTHOR that makes the difference, not the text.
+
+        Without this the test above would also pass if `is_real_review`
+        rejected the body for some unrelated reason.
+        """
+        forged = "Looks good. confidence score is fine here."
+
+        assert is_real_review(forged, "coderabbitai") is True
+
+    def test_a_trusted_author_alone_is_not_enough(self) -> None:
+        """The bot posts the skip notices too, so author alone cannot decide."""
+        assert is_real_review(REAL_RATE_LIMIT_NOTICE, "coderabbitai") is False
+
+    def test_the_bot_suffix_spelling_is_accepted(self) -> None:
+        """`author.login` and `user.login` differ on the `[bot]` suffix."""
+        assert is_real_review(REAL_EMPTY_BUT_COMPLETED_REVIEW, "coderabbitai[bot]")
+
+    def test_an_unknown_author_fails_closed(self) -> None:
+        assert is_real_review(REAL_EMPTY_BUT_COMPLETED_REVIEW, "") is False
+
+
+class TestUnresolvedInPage:
+    """An unresolved thread on page two must not be invisible.
+
+    `reviewThreads(first: 100)` without `pageInfo` silently truncates, and
+    PR #1503 carried 53 threads, so the ceiling is reachable rather than
+    theoretical (Greptile P1 on PR #1625).
+    """
+
+    @staticmethod
+    def _page(unresolved: int, has_next: bool, cursor: str) -> dict[str, object]:
+        nodes = [{"isResolved": False}] * unresolved
+        return {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": nodes,
+                            "pageInfo": {
+                                "hasNextPage": has_next,
+                                "endCursor": cursor,
+                            },
+                        }
+                    }
+                }
+            }
+        }
+
+    def test_page_one_reports_that_another_page_exists(self) -> None:
+        count, has_next, cursor = unresolved_in_page(self._page(0, True, "Y3Vyc29y"))
+
+        assert count == 0
+        assert has_next is True, "a single-page read would stop here and report clean"
+        assert cursor == "Y3Vyc29y"
+
+    def test_the_blocker_on_page_two_is_counted(self) -> None:
+        count, has_next, _ = unresolved_in_page(self._page(1, False, ""))
+
+        assert count == 1
+        assert has_next is False
+
+    def test_a_malformed_page_raises_rather_than_reporting_zero(self) -> None:
+        """The caller turns this into "unverified", never into a clean count."""
+        with pytest.raises((KeyError, TypeError)):
+            unresolved_in_page({"data": {}})
+
+
 class TestIsRealReview:
     @pytest.mark.parametrize(
         ("label", "body"),
@@ -235,7 +318,7 @@ class TestIsRealReview:
     )
     def test_a_skip_notice_is_not_a_review(self, label: str, body: str) -> None:
         assert body.strip(), f"{label}: fixture is empty, so it proves nothing"
-        assert is_real_review(body) is False, label
+        assert is_real_review(body, "coderabbitai") is False, label
 
     def test_a_completed_review_that_found_nothing_still_counts(self) -> None:
         """The case that makes "non-empty body" and "no findings" both wrong.
@@ -243,11 +326,11 @@ class TestIsRealReview:
         A review reporting zero actionable comments DID run. Treating it as
         skipped would refuse a properly reviewed PR.
         """
-        assert is_real_review(REAL_EMPTY_BUT_COMPLETED_REVIEW) is True
+        assert is_real_review(REAL_EMPTY_BUT_COMPLETED_REVIEW, "coderabbitai") is True
 
     def test_an_empty_body_is_not_a_review(self) -> None:
-        assert is_real_review("") is False
-        assert is_real_review("   \n  ") is False
+        assert is_real_review("", "coderabbitai") is False
+        assert is_real_review("   \n  ", "coderabbitai") is False
 
     def test_an_unrecognised_notice_shape_is_refused_not_admitted(self) -> None:
         """Fails closed on wording nobody has seen yet.
@@ -263,4 +346,4 @@ class TestIsRealReview:
             "has written down yet.\n"
         )
 
-        assert is_real_review(invented_future_notice) is False
+        assert is_real_review(invented_future_notice, "coderabbitai") is False
