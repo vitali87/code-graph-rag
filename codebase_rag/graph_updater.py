@@ -1277,12 +1277,15 @@ class GraphUpdater:
             self._pending_hash_cache = None
         if self._pending_dir_mtimes is not None:
             _save_dir_mtimes(*self._pending_dir_mtimes)
-            written.append(self._pending_dir_mtimes[0])
             self._pending_dir_mtimes = None
-        # Stamp both files with the instant captured before hashing, not with
-        # the time the write happened, so the deferral cannot swallow an edit
-        # made while the hashing loop and passes 3 and later were still
-        # running.
+        # Stamp the hash cache with the instant captured before hashing, not
+        # with the time the write happened, so the deferral cannot swallow an
+        # edit made while the hashing loop and passes 3 and later were still
+        # running. Only this file: `_is_already_in_sync` derives `cache_mtime`
+        # from the hash cache alone, and nothing anywhere stats the dir-mtimes
+        # file, whose entries are compared against the values stored INSIDE it.
+        # Backdating that one would be inert, and warning about it on failure
+        # would name a skipped file that cannot happen.
         if observed_at is not None:
             for path in written:
                 try:
