@@ -256,14 +256,24 @@ def test_teardown_reaches_a_subtree_under_any_directory_mode(
     buried.chmod(stat.S_IRUSR)
     inner.chmod(dir_mode)
 
-    _make_tmp_path_removable(tmp_path)
+    # `finally`, not a trailing statement: when an assertion below FAILS the
+    # tree keeps its restrictive modes, and pytest's later `rm_rf` of the
+    # basetemp then cannot remove it -- reporting `[Errno 66] Directory not
+    # empty` on an unrelated run days later. A test for cleanup that only
+    # cleans up when it passes strands exactly the state it exists to
+    # prevent, which is the harm this whole change is about.
+    try:
+        _make_tmp_path_removable(tmp_path)
 
-    assert os.stat(buried).st_mode & stat.S_IWUSR, (
-        f"a file under a {dir_mode:#o} directory was never reached, so the "
-        "subtree stays read-only and strands pytest's later cleanup"
-    )
-    _remove_tree_windows_style(root, _WindowsRemovalSemantics())
-    assert not root.exists()
+        assert os.stat(buried).st_mode & stat.S_IWUSR, (
+            f"a file under a {dir_mode:#o} directory was never reached, so "
+            "the subtree stays read-only and strands pytest's later cleanup"
+        )
+        _remove_tree_windows_style(root, _WindowsRemovalSemantics())
+        assert not root.exists()
+    finally:
+        if inner.exists():
+            inner.chmod(0o700)
 
 
 @pytest.mark.parametrize("root_mode", [0o000, 0o100, 0o200, 0o300, 0o400], ids=oct)
@@ -291,14 +301,21 @@ def test_teardown_reaches_a_subtree_under_a_restrictive_root(
     buried.chmod(stat.S_IRUSR)
     root.chmod(root_mode)
 
-    _make_tmp_path_removable(root)
+    # See the `finally` on the directory-mode test above: a failing assertion
+    # here would otherwise leave `root` at its restrictive mode for pytest's
+    # cleanup to trip over.
+    try:
+        _make_tmp_path_removable(root)
 
-    assert os.stat(buried).st_mode & stat.S_IWUSR, (
-        f"a file under a {root_mode:#o} ROOT was never reached: every walk "
-        "must list the root, so widening it after them is too late"
-    )
-    _remove_tree_windows_style(root, _WindowsRemovalSemantics())
-    assert not root.exists()
+        assert os.stat(buried).st_mode & stat.S_IWUSR, (
+            f"a file under a {root_mode:#o} ROOT was never reached: every "
+            "walk must list the root, so widening it after them is too late"
+        )
+        _remove_tree_windows_style(root, _WindowsRemovalSemantics())
+        assert not root.exists()
+    finally:
+        if root.exists():
+            root.chmod(0o700)
 
 
 def test_teardown_tolerates_a_path_that_vanishes(tmp_path: Path) -> None:
@@ -360,13 +377,19 @@ def test_clear_readonly_makes_a_zero_mode_directory_listable(tmp_path: Path) -> 
     buried.chmod(stat.S_IRUSR)
     inner.chmod(0o000)
 
-    shutil.rmtree(root, onexc=_clear_readonly)
+    try:
+        shutil.rmtree(root, onexc=_clear_readonly)
 
-    assert not root.exists(), (
-        "rmtree could not remove a tree containing a 0o000 directory: the "
-        "handler made it traversable but not listable, so the retry failed "
-        "on the same directory"
-    )
+        assert not root.exists(), (
+            "rmtree could not remove a tree containing a 0o000 directory: "
+            "the handler made it traversable but not listable, so the retry "
+            "failed on the same directory"
+        )
+    finally:
+        # A failure here leaves a 0o000 directory for pytest's cleanup, which
+        # is the very state this change exists to prevent.
+        if inner.exists():
+            inner.chmod(0o700)
 
 
 def test_clear_readonly_removes_nested_zero_mode_directories(tmp_path: Path) -> None:
@@ -394,13 +417,19 @@ def test_clear_readonly_removes_nested_zero_mode_directories(tmp_path: Path) -> 
     inner.chmod(0o000)
     outer.chmod(0o000)
 
-    shutil.rmtree(root, onexc=_clear_readonly)
+    try:
+        shutil.rmtree(root, onexc=_clear_readonly)
 
-    assert not root.exists(), (
-        "a 0o000 directory nested inside another survived teardown: rmtree "
-        "abandons the outer subtree on a listing failure, so the handler has "
-        "to remove it rather than expecting a retry"
-    )
+        assert not root.exists(), (
+            "a 0o000 directory nested inside another survived teardown: "
+            "rmtree abandons the outer subtree on a listing failure, so the "
+            "handler has to remove it rather than expecting a retry"
+        )
+    finally:
+        # Outermost first: the inner chmod needs a traversable parent.
+        for directory in (outer, inner):
+            if directory.exists():
+                directory.chmod(0o700)
 
 
 def test_clear_readonly_survives_an_unremovable_entry(tmp_path: Path) -> None:
