@@ -2682,6 +2682,14 @@ class GraphUpdater:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
+        # Snapshot before the stale-key pop: a single-file run merges over the
+        # cache it found, and this run does not commit the delombok state
+        # (see `run`), so it must not act on the stale-key pop either. Merging
+        # over the popped dict would DROP every Lombok-affected sibling, which
+        # then takes the `is_new` path next run and skips delete-before-
+        # reingest, leaving the previous parse's entities beside the fresh
+        # ones (#1619 review).
+        pristine_hashes = dict(old_hashes)
         for stale_key in self._delombok_stale_keys:
             old_hashes.pop(stale_key, None)
         is_full_build = (force or not old_hashes) and self._single_file is None
@@ -3059,7 +3067,24 @@ class GraphUpdater:
             # (`_collect_eligible_files` returns above the walk that populates
             # them), so there is nothing to merge and writing the empty
             # collection would wipe the previous walk's record wholesale.
-            self._pending_hash_cache = (cache_path, {**old_hashes, **new_hashes})
+            self._pending_hash_cache = (
+                cache_path,
+                {**pristine_hashes, **new_hashes},
+            )
+            # And it must carry the PREVIOUS cache's mtime forward rather
+            # than stamping this run's instant. The merged entries are mostly
+            # the previous run's hashes, so stamping now would assert every
+            # sibling was observed just now: a sibling edited before this run
+            # then satisfies `file_mtime <= cache_mtime` with a hash that
+            # still matches, and the next project run reports "already in
+            # sync" and never indexes the edit (#1619 review).
+            #
+            # Note this must be the previous mtime, NOT None. None skips the
+            # `os.utime` in `run` altogether, which leaves the file its own
+            # write time -- LATER than this run's instant, so it makes the
+            # trap worse rather than closing it. `cache_mtime` was read at the
+            # top of this method, before anything wrote to the cache.
+            self._pending_cache_observed_at = cache_mtime or None
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry
         # the old parser's edges.

@@ -277,3 +277,103 @@ class TestSingleFileRunScope:
             "a single-file run records no directory mtimes, so writing its "
             "empty collection wipes the project's record wholesale"
         )
+
+    def test_single_file_run_does_not_hide_a_sibling_edit_from_the_next_run(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The merged cache must not be stamped with this run's instant.
+
+        The merge keeps the previous run's hashes for siblings. Restamping the
+        cache to now would assert those hashes were observed now, so a sibling
+        edited BEFORE the single-file run satisfies `file_mtime <=
+        cache_mtime` while its cached hash still matches -- and the next
+        project run reports "already in sync" and never indexes the edit.
+
+        Ordering matters: the edit must precede the single-file run. An edit
+        made afterwards is newer than any stamp and is safe either way, so a
+        test written that way passes on the broken code too.
+        """
+        repo = self._three_module_project(tmp_path)
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        (repo / "module_b.py").write_text(
+            "def renamed_b():\n    pass\n", encoding="utf-8"
+        )
+        GraphUpdater(
+            ingestor=_MockIngestor(),
+            repo_path=repo / "module_a.py",
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        third = _MockIngestor()
+        GraphUpdater(
+            ingestor=third,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        assert "scoped.module_b.renamed_b" in get_node_names(third, "Function"), (
+            "the sibling's edit never reached the graph: the single-file run "
+            "stamped the merged cache with its own instant, so the project "
+            "run treated the edited file as already in sync"
+        )
+
+    def test_single_file_run_keeps_lombok_stale_siblings_in_the_cache(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The merge must read the cache as found, not after the stale pop.
+
+        `_process_files` pops `_delombok_stale_keys` from `old_hashes` before
+        the merge sees it. A single-file run does not commit the delombok
+        state, so it must not act on that pop either: merging over the popped
+        dict DROPS those siblings from the cache, and a dropped key takes the
+        `is_new` path next run, skipping delete-before-reingest.
+
+        The stale set is DERIVED, not assigned: `_collect_delombok_state`
+        recomputes both delombok fields from the on-disk state file during
+        `run`, so setting the attributes on the updater beforehand is
+        overwritten and the test would pass on broken code too. Planting a
+        state file that names a key the current (empty) overlay lacks is what
+        genuinely makes `_delombok_state_changed` true and puts that key in
+        `_delombok_stale_keys`.
+        """
+        repo = self._three_module_project(tmp_path)
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        (repo / cs.DELOMBOK_STATE_FILENAME).write_text(
+            json.dumps({"identity": "stale", "keys": ["module_b.py"], "lombok": "x"}),
+            encoding="utf-8",
+        )
+
+        second = GraphUpdater(
+            ingestor=_MockIngestor(),
+            repo_path=repo / "module_a.py",
+            parsers=parsers,
+            queries=queries,
+        )
+        second.run()
+        assert second._delombok_stale_keys == {"module_b.py"}, (
+            "fixture guard: the planted state file must make module_b.py "
+            "stale, or this test cannot see the defect it exists for"
+        )
+
+        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        assert "module_b.py" in cache, (
+            "a Lombok-stale sibling was dropped from the cache by a run that "
+            "does not commit the delombok state; the next run then treats it "
+            "as new and skips delete-before-reingest"
+        )
