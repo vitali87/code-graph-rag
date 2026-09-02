@@ -378,10 +378,31 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     except OSError:
         mode = 0
     try:
-        os.chmod(
-            path, mode | stat.S_IWRITE | (stat.S_IEXEC if os.path.isdir(path) else 0)
-        )
-        func(path)
+        # S_IREAD as well as S_IEXEC on a directory: EXECUTE makes it
+        # traversable, READ makes it listable, and a removal needs both.
+        # Without READ a 0o000 directory becomes 0o300, which `rmtree` can
+        # enter but not enumerate, so the retry fails on the same directory
+        # this handler just "fixed" (#1622). Pytest's own `chmod_rw` adds
+        # S_IRUSR|S_IWUSR and no S_IXUSR, so it cannot repair that either.
+        extra = stat.S_IREAD | stat.S_IEXEC if os.path.isdir(path) else 0
+        os.chmod(path, mode | stat.S_IWRITE | extra)
+        # `func` is not always a one-argument removal, and the two cases need
+        # different handling (#1622).
+        #
+        # A REMOVAL that failed (`os.unlink`, `os.rmdir`) is retried directly:
+        # the mode is fixed now, so the same call succeeds.
+        #
+        # A LISTING that failed (`os.scandir`, `os.open`, `os.lstat`) is not.
+        # `os.open` requires `flags`, so a bare `func(path)` raises TypeError
+        # out of teardown; and `rmtree` does NOT retry the directory after
+        # this handler returns -- it abandons that subtree and moves on, so
+        # the parent's `rmdir` then fails with "Directory not empty" and
+        # nothing ever revisits the children. Recursing here is what removes
+        # them, and it is why widening the mode alone is not enough.
+        if func in (os.scandir, os.open, os.lstat):
+            shutil.rmtree(path, onexc=_clear_readonly)
+        else:
+            func(path)
     except FileNotFoundError:
         return
 
@@ -430,26 +451,22 @@ def _make_tmp_path_removable(root: Path) -> None:
             # removal that follows reports the real problem.
             return
 
-    # Two passes, and the first is not optional. `os.walk` has to traverse
-    # INTO a directory to list it, so a directory missing the search bit
-    # yields no entries at all and everything beneath it is never visited --
-    # the same stranded-subtree defect this helper exists to prevent. Widening
-    # directories top-down on the way in restores that reachability; doing it
-    # bottom-up only fixes the ORDER of widening, never the reachability the
-    # listing itself needs.
-    # `widen(dirpath)` BEFORE reading `dirnames`, not the children afterwards:
-    # `os.walk` lists a directory when it yields it, so widening its children
-    # is already one level too late for a directory that cannot be listed at
-    # all (mode 0o000). Widening each directory as it arrives -- the root
-    # included, hence `widen(str(root))` also running here -- means the
-    # listing for the level below happens after the mode is fixed. `os.walk`
-    # swallows the listing error silently, so `onerror` is set to make a
-    # genuine failure visible rather than an empty subtree.
-    # Both `dirpath` and its `dirnames`: a directory at mode 0o000 is never
-    # YIELDED by `os.walk` at all (it raises while listing and is skipped
-    # silently), so widening only `dirpath` never reaches it. Its name is
-    # still visible in its PARENT's `dirnames`, which is the only handle on
-    # it, and widening it there means the walk can descend on the retry.
+    # The root FIRST: every walk below has to list it, so a restrictive mode
+    # on `tmp_path` itself blocks all of them and the retry re-walks a root
+    # that is still unreadable. Fixing it last cannot help the passes that
+    # already failed.
+    widen(str(root))
+    # Then top-down, widening each directory as it ARRIVES rather than its
+    # children afterwards. `os.walk` is lazy and lists a directory when it
+    # yields it, so fixing a mode on arrival fixes it before the listing for
+    # the level below. Bottom-up would fix only the ORDER of widening, never
+    # the reachability the listing itself needs.
+    #
+    # `dirnames` as well as `dirpath`, because a directory at mode 0o000 is
+    # never YIELDED at all -- `os.walk` raises while listing it and skips it
+    # silently -- so its name in its PARENT's listing is the only handle on
+    # it. `onerror` collects what would otherwise be swallowed, turning a
+    # silently empty subtree into a signal.
     walk_errors: list[OSError] = []
     for dirpath, dirnames, _filenames in os.walk(
         root, topdown=True, followlinks=False, onerror=walk_errors.append
@@ -468,15 +485,11 @@ def _make_tmp_path_removable(root: Path) -> None:
             widen(dirpath)
             for name in dirnames:
                 widen(os.path.join(dirpath, name))
-    # Then the full bottom-up pass for the files, now that every directory
-    # holding them can actually be listed.
+    # Finally the files, bottom-up, now that every directory holding one can
+    # actually be listed.
     for dirpath, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
         for name in (*filenames, *dirnames):
             widen(os.path.join(dirpath, name))
-    # The root last, and only after the walk: `os.walk` yields the entries
-    # UNDER a directory, never the directory it was given, so without this a
-    # restrictive mode on `tmp_path` itself would still block the removal.
-    widen(str(root))
 
 
 @pytest.fixture(autouse=True)

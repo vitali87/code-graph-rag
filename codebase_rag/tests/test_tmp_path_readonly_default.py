@@ -265,6 +265,41 @@ def test_teardown_reaches_a_subtree_under_any_directory_mode(
     assert not root.exists()
 
 
+@pytest.mark.parametrize("root_mode", [0o000, 0o100, 0o200, 0o300, 0o400], ids=oct)
+def test_teardown_reaches_a_subtree_under_a_restrictive_root(
+    tmp_path: Path, root_mode: int
+) -> None:
+    """The mode of the ROOT the helper is handed, not of a directory inside it.
+
+    A separate axis from the one above: every walk has to list the root, so a
+    root missing `S_IREAD` blocks all of them and a retry re-walks a root that
+    is still unreadable. Widening it last cannot help the passes that already
+    failed, which is why the root is widened before the walks rather than
+    after them.
+
+    The root here is a subdirectory standing in for `tmp_path`, since chmod-ing
+    the real `tmp_path` would obstruct pytest's own cleanup of it.
+    """
+    from codebase_rag.tests.conftest import _make_tmp_path_removable
+
+    root = tmp_path / f"root-{root_mode:o}"
+    inner = root / "repo"
+    inner.mkdir(parents=True)
+    buried = inner / "loose-object"
+    buried.write_text("object", encoding="utf-8")
+    buried.chmod(stat.S_IRUSR)
+    root.chmod(root_mode)
+
+    _make_tmp_path_removable(root)
+
+    assert os.stat(buried).st_mode & stat.S_IWUSR, (
+        f"a file under a {root_mode:#o} ROOT was never reached: every walk "
+        "must list the root, so widening it after them is too late"
+    )
+    _remove_tree_windows_style(root, _WindowsRemovalSemantics())
+    assert not root.exists()
+
+
 def test_teardown_tolerates_a_path_that_vanishes(tmp_path: Path) -> None:
     """Git's background maintenance deletes its own lock asynchronously.
 
@@ -296,6 +331,75 @@ def test_teardown_tolerates_a_path_that_vanishes(tmp_path: Path) -> None:
         os.chmod = original  # type: ignore[assignment]
 
     assert not doomed.exists()
+
+
+def test_clear_readonly_makes_a_zero_mode_directory_listable(tmp_path: Path) -> None:
+    """`_clear_readonly` must leave a directory ENUMERABLE, not just enterable.
+
+    Drives the handler directly through `shutil.rmtree(onexc=...)` rather than
+    through `_make_tmp_path_removable`, so the two cannot cover for each
+    other: this is the #1586 handler's own contract, and every `git_repo`
+    teardown depends on it.
+
+    Without `S_IREAD` the handler turns a `0o000` directory into `0o300` --
+    traversable but not listable -- so `rmtree` fails again on the directory
+    the handler just claimed to fix, and pytest's own `chmod_rw` (which adds
+    `S_IRUSR|S_IWUSR` and no `S_IXUSR`) cannot repair it either. That residue
+    was found in the shared temp area during review of this change.
+    """
+    import shutil
+
+    from codebase_rag.tests.conftest import _clear_readonly
+
+    root = tmp_path / "sealed"
+    inner = root / "objects"
+    inner.mkdir(parents=True)
+    buried = inner / "loose-object"
+    buried.write_text("object", encoding="utf-8")
+    buried.chmod(stat.S_IRUSR)
+    inner.chmod(0o000)
+
+    shutil.rmtree(root, onexc=_clear_readonly)
+
+    assert not root.exists(), (
+        "rmtree could not remove a tree containing a 0o000 directory: the "
+        "handler made it traversable but not listable, so the retry failed "
+        "on the same directory"
+    )
+
+
+def test_clear_readonly_removes_nested_zero_mode_directories(tmp_path: Path) -> None:
+    """A `0o000` directory INSIDE another `0o000` directory.
+
+    Where "abandon and move on" bites twice: `rmtree` gives up on the outer
+    directory when its listing fails, so nothing revisits the inner one
+    either. A handler that recurses only one level deep, or that merely
+    widens modes, leaves the inner tree behind and the outer `rmdir` fails
+    with "Directory not empty".
+    """
+    import shutil
+
+    from codebase_rag.tests.conftest import _clear_readonly
+
+    root = tmp_path / "nested"
+    outer = root / "outer"
+    inner = outer / "inner"
+    inner.mkdir(parents=True)
+    for depth, directory in ((0, outer), (1, inner)):
+        buried = directory / f"loose-{depth}"
+        buried.write_text("object", encoding="utf-8")
+        buried.chmod(stat.S_IRUSR)
+    # Innermost first: chmod-ing the outer one first would block the inner.
+    inner.chmod(0o000)
+    outer.chmod(0o000)
+
+    shutil.rmtree(root, onexc=_clear_readonly)
+
+    assert not root.exists(), (
+        "a 0o000 directory nested inside another survived teardown: rmtree "
+        "abandons the outer subtree on a listing failure, so the handler has "
+        "to remove it rather than expecting a retry"
+    )
 
 
 def test_git_repo_fixture_tears_down_its_own_readonly_objects(
