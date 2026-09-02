@@ -968,6 +968,41 @@ class TestFastPathInSync:
             updater2.run(force=True)
             spy_calls.assert_called_once()
 
+    def test_skipped_flag_is_per_run_not_per_instance(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """A reused instance must not carry a previous run's skip into this one.
+
+        `skipped_because_in_sync` is set on the in-sync early return and was
+        only ever cleared in `__init__`, so once an instance skipped it kept
+        reporting True for every later `run()` however much work that run did.
+        `cli.py` reads the flag to decide what to tell the user, so a stale
+        True reports "already in sync" for a run that re-parsed the repo.
+
+        The order matters: the flag must be observed True first, or a run that
+        never set it would satisfy the second assertion on its own and the
+        test would pass against the unfixed code (#1620).
+        """
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+        updater.run()
+        assert updater.skipped_because_in_sync is True, (
+            "second run on an unchanged repo must take the in-sync fast path, "
+            "otherwise the reset below is never exercised"
+        )
+
+        updater.run(force=True)
+        assert updater.skipped_because_in_sync is False, (
+            "a forced run does real work, so the flag must reflect THIS run "
+            "rather than the skip recorded by the previous one"
+        )
+
 
 class TestSlots:
     def test_function_registry_trie_has_slots(self) -> None:

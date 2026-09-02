@@ -954,6 +954,12 @@ class GraphUpdater:
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
         self._parsed_files.clear()
+        # Per-run for the same reason: set on the in-sync early return below
+        # and previously cleared only in `__init__`, so a reused instance kept
+        # reporting a previous run's skip. `cli.py` reads it to decide what to
+        # report, so a stale True describes a run that did real work as
+        # already in sync (#1620).
+        self.skipped_because_in_sync = False
         self._sink.ensure_node_batch(
             cs.NODE_PROJECT,
             {
