@@ -1277,12 +1277,15 @@ class GraphUpdater:
             self._pending_hash_cache = None
         if self._pending_dir_mtimes is not None:
             _save_dir_mtimes(*self._pending_dir_mtimes)
-            written.append(self._pending_dir_mtimes[0])
             self._pending_dir_mtimes = None
-        # Stamp both files with the instant captured before hashing, not with
-        # the time the write happened, so the deferral cannot swallow an edit
-        # made while the hashing loop and passes 3 and later were still
-        # running.
+        # Stamp the hash cache with the instant captured before hashing, not
+        # with the time the write happened, so the deferral cannot swallow an
+        # edit made while the hashing loop and passes 3 and later were still
+        # running. Only this file: `_is_already_in_sync` derives `cache_mtime`
+        # from the hash cache alone, and nothing anywhere stats the dir-mtimes
+        # file, whose entries are compared against the values stored INSIDE it.
+        # Backdating that one would be inert, and warning about it on failure
+        # would name a skipped file that cannot happen.
         if observed_at is not None:
             for path in written:
                 try:
@@ -1296,7 +1299,23 @@ class GraphUpdater:
                     # A missing cache only costs a rebuild, which is why every
                     # writer here already degrades to absent rather than wrong.
                     logger.warning(ls.CACHE_STAMP_FAILED, path=path, error=e)
-                    path.unlink(missing_ok=True)
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError as unlink_error:
+                        # The canonical reason `utime` fails is a read-only
+                        # filesystem, and that same condition fails the unlink,
+                        # so this is the expected pairing rather than a remote
+                        # one. A run that cannot clean up must still finish:
+                        # every other filesystem writer on this path swallows
+                        # OSError, and crashing here would turn a degraded run
+                        # into no run at all. The cache is left mis-stamped and
+                        # the warning says so, because a silent pass would
+                        # leave the next run to discover it by skipping a file.
+                        logger.warning(
+                            ls.CACHE_STAMP_CLEANUP_FAILED,
+                            path=path,
+                            error=unlink_error,
+                        )
         self._pending_cache_observed_at = None
 
         if self._single_file is None:

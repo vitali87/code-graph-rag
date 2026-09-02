@@ -865,6 +865,11 @@ CACHE_STAMP_FAILED = (
     "Could not backdate {path} to the observed instant ({error}); removing it so "
     "the next run rebuilds rather than trusting a stamp that can hide edits"
 )
+CACHE_STAMP_CLEANUP_FAILED = (
+    "Could not remove {path} after its backdate failed ({error}); it keeps a write "
+    "time later than any edit made during this run, so the next run may skip that "
+    "file. Delete it by hand, or re-run once the path is writable"
+)
 PERIODIC_FLUSH = "Periodic flush after {count} files processed"
 INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
