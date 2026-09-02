@@ -28,6 +28,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.constants import NodeLabel, RelationshipType
+from codebase_rag.function_registry import FunctionRegistryTrie
+from codebase_rag.parsers.call_resolver import CallResolver
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_nodes,
@@ -45,6 +47,18 @@ def _targets(mock_ingestor: MagicMock, rel: RelationshipType) -> set[tuple[str, 
 
 def _instantiations(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
     return _targets(mock_ingestor, RelationshipType.INSTANTIATES)
+
+
+def _resolver_with_class(class_qn: str) -> CallResolver:
+    """A resolver holding one registered class and nothing else."""
+    registry = FunctionRegistryTrie()
+    registry[class_qn] = NodeLabel.CLASS
+    return CallResolver(
+        function_registry=registry,
+        import_processor=MagicMock(import_mapping={}),
+        type_inference=MagicMock(),
+        class_inheritance={},
+    )
 
 
 @pytest.fixture
@@ -232,6 +246,116 @@ class TestPython:
         create_and_run_updater(python_project, mock_ingestor)
         edges = _instantiations(mock_ingestor)
         assert ("pyvalue.mod_c.build_nested", "pyvalue.mod_a.Outer.Inner") in edges
+
+
+class TestSelfAndTypedReceiversStillConstruct:
+    """`self.Inner()` is spelled like a value but really does construct.
+
+    The receiver-aware paths upstream resolve these correctly, so rejecting them
+    deletes edges main gets right. A guard judging the receiver by NAME alone
+    drops all three, and the class-name-spelled `Outer.Inner()` control does not
+    notice, because that one passes either way.
+    """
+
+    @pytest.fixture
+    def nested_project(self, temp_repo: Path) -> Path:
+        project = temp_repo / "nested"
+        project.mkdir()
+        (project / "m.py").write_text(
+            encoding="utf-8",
+            # Deliberately WITHOUT a `self.Inner()` method: that shape also
+            # emits a pre-existing `(Method)-[:CALLS]->(Class)` edge which the
+            # conftest audit rejects, and it would fail this fixture for a
+            # reason unrelated to the receiver rule. The predicate test above
+            # covers the self/cls branch instead.
+            data="""
+class Outer:
+    class Inner:
+        def __init__(self, v):
+            self.v = v
+
+
+def via_instance():
+    o = Outer()
+    return o.Inner(3)
+""",
+        )
+        return project
+
+    @pytest.mark.parametrize("keyword", ["self", "cls", "this"])
+    def test_a_self_receiver_is_accepted_by_the_guard(self, keyword: str) -> None:
+        """Asserted on the predicate, not end to end, and deliberately.
+
+        `self.Inner()` reaches the graph with the right INSTANTIATES and
+        CALLS -> `__init__` edges, but ALSO a spurious `(Method)-[:CALLS]->(Class)`
+        that the conftest audit rejects as undocumented. That extra edge is
+        pre-existing on main and unrelated to this fix -- an end-to-end
+        assertion here would fail on it and entangle the two. The predicate is
+        what this change owns; the sibling test below covers a receiver whose
+        end-to-end path is clean.
+        """
+        resolver = _resolver_with_class("proj.m.Outer")
+        assert resolver._receiver_names_a_type_or_module(
+            keyword, "proj.m", class_context="proj.m.Outer"
+        )
+        # Without a class context the same keyword is just a name, so the
+        # acceptance is the CONTEXT's doing rather than the spelling's.
+        assert not resolver._receiver_names_a_type_or_module(
+            keyword, "proj.m", class_context=None
+        )
+
+    def test_a_typed_local_receiver_constructs_a_nested_class(
+        self, nested_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `o` is an ordinary local, so only its INFERRED TYPE distinguishes it
+        # from the `err` of the defect case.
+        create_and_run_updater(nested_project, mock_ingestor)
+        edges = _instantiations(mock_ingestor)
+        assert ("nested.m.via_instance", "nested.m.Outer.Inner") in edges
+
+
+class TestReceiverExpressionsContainingAColon:
+    """A bare `:` inside the receiver is a slice or dict key, not a static path.
+
+    Exempting any call name containing `:` let the defect through untouched in
+    Python, where `xs[1:2].Error()` is ordinary code.
+    """
+
+    @pytest.fixture
+    def colon_project(self, temp_repo: Path) -> Path:
+        project = temp_repo / "colon"
+        project.mkdir()
+        (project / "mod_a.py").write_text(
+            encoding="utf-8",
+            data="""
+class Error:
+    def __init__(self, msg):
+        self.msg = msg
+
+    def Error(self):
+        return self.msg
+""",
+        )
+        (project / "mod_b.py").write_text(
+            encoding="utf-8",
+            data="""
+def sliced(xs):
+    return xs[1:2].Error()
+
+
+def dicted(d):
+    return d["a:b"].Error()
+""",
+        )
+        return project
+
+    @pytest.mark.parametrize("caller", ["sliced", "dicted"])
+    def test_a_colon_in_the_receiver_does_not_exempt_it(
+        self, colon_project: Path, mock_ingestor: MagicMock, caller: str
+    ) -> None:
+        create_and_run_updater(colon_project, mock_ingestor)
+        edges = _instantiations(mock_ingestor)
+        assert (f"colon.mod_b.{caller}", "colon.mod_a.Error") not in edges
 
 
 class TestImportedReceiverKind:

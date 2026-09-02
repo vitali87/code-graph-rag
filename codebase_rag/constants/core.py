@@ -123,6 +123,11 @@ OPERATOR_PREFIX = "operator"
 KEYWORD_SUPER = "super"
 KEYWORD_SELF = "self"
 KEYWORD_CONSTRUCTOR = "constructor"
+# Receivers that name the enclosing type rather than an ordinary value, so
+# `self.Inner()` and `cls.Inner()` are real nested-class constructions. Go's
+# receiver is user-named and cannot be listed here; it is covered by the
+# local/receiver type lookup instead (issue #1641).
+SELF_RECEIVER_KEYWORDS = frozenset({"self", "cls", "this"})
 
 # Incremental update hash cache
 HASH_CACHE_FILENAME = ".cgr-hash-cache.json"

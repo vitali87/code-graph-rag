@@ -358,6 +358,8 @@ class CallResolver:
             ),
             call_name,
             module_qn,
+            class_context,
+            local_var_types,
         )
 
     def _reject_class_via_value_receiver(
@@ -365,6 +367,8 @@ class CallResolver:
         result: tuple[str, str] | None,
         call_name: str,
         module_qn: str,
+        class_context: str | None = None,
+        local_var_types: dict[str, str] | None = None,
     ) -> tuple[str, str] | None:
         """Drop a CLASS answer for `value.Name()` -- a value never constructs.
 
@@ -392,29 +396,50 @@ class CallResolver:
             return result
         # `::` and `:` are static paths (`Type::new`, `Class::method`), where a
         # type receiver is the normal spelling; only a `.` receiver can be a value.
-        if cs.SEPARATOR_DOT not in call_name or self._has_static_path_separator(
-            call_name
-        ):
+        if cs.SEPARATOR_DOT not in call_name:
             return result
         receiver = call_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        if self._receiver_names_a_type_or_module(receiver, module_qn):
+        # `::` is a static path (`Type::new`), where a type receiver is the
+        # normal spelling. A BARE `:` is not: in Python it is a slice or a dict
+        # key inside the receiver expression (`xs[1:2].Error()`), and exempting
+        # on it let the defect straight through.
+        if cs.SEPARATOR_DOUBLE_COLON in receiver:
+            return result
+        if self._receiver_names_a_type_or_module(
+            receiver, module_qn, class_context, local_var_types
+        ):
             return result
         logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
         return None
 
-    def _has_static_path_separator(self, call_name: str) -> bool:
-        return cs.SEPARATOR_DOUBLE_COLON in call_name or cs.CHAR_COLON in call_name
-
-    def _receiver_names_a_type_or_module(self, receiver: str, module_qn: str) -> bool:
+    def _receiver_names_a_type_or_module(
+        self,
+        receiver: str,
+        module_qn: str,
+        class_context: str | None = None,
+        local_var_types: dict[str, str] | None = None,
+    ) -> bool:
         """Whether a receiver expression names something constructible-through.
 
         A class (nested-class construction), or a module/package the caller
-        imported or that sits beside it. Anything else -- a local, a parameter,
-        a field, a chained call -- holds a VALUE at runtime.
+        imported. Anything else -- a parameter, a field, a chained call -- holds
+        a VALUE at runtime.
+
+        `self`/`cls`/`this` and a local typed to a class are the awkward cases:
+        the receiver is spelled as a value but `self.Inner()` and `o.Inner()`
+        really do construct a nested class, and the receiver-aware paths upstream
+        resolve them correctly. Dropping them would delete edges `origin/main`
+        gets right, so both are consulted here rather than judged by name.
         """
         head = receiver.split(cs.SEPARATOR_DOT, 1)[0]
         if not head or not head.isidentifier():
             return False
+        if head in cs.SELF_RECEIVER_KEYWORDS and class_context:
+            return True
+        if local_var_types and (var_type := local_var_types.get(head)):
+            typed_qn = self._resolve_class_name(var_type, module_qn)
+            if typed_qn and self.function_registry.get(typed_qn) == cs.NodeLabel.CLASS:
+                return True
         # `_resolve_class_name` follows the import map without checking what it
         # landed on, so it answers `mod_a.helper` for an imported FUNCTION named
         # `helper`. Confirm the qn it returns really is a Class before trusting
@@ -427,11 +452,13 @@ class CallResolver:
             # Being imported says nothing about KIND: `from m import instance`
             # and `import m` both land here, and only the second is a namespace.
             return self._import_target_is_a_namespace(import_map[head])
-        # A sibling module addressed without an import statement (a package
-        # `__init__` re-export, Go's same-package files): the receiver names a
-        # real module node rather than a variable.
-        parent = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        return f"{parent}{cs.SEPARATOR_DOT}{head}" in self.function_registry
+        # No sibling-module branch here. Modules are not members of
+        # `function_registry`, so testing `parent.head` in it could never match
+        # the module it was meant to admit -- it matched only a sibling
+        # FUNCTION or CLASS, which made the guard fail open for a local sharing
+        # a name with one. An unimported sibling module is not addressable as a
+        # bare receiver in the languages this guard runs for.
+        return False
 
     def _import_target_is_a_namespace(self, target: str) -> bool:
         """Whether an imported name refers to something you construct THROUGH.
