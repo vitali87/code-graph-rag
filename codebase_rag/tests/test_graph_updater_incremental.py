@@ -750,12 +750,19 @@ class TestFastPathInSync:
         """The re-run a lost stamp forces must also DELETE, not just re-parse.
 
         Declining to stamp only buys the next run a chance to reconcile; it
-        cannot take that chance on its own. Since #1615 the cache commits only
-        after the flush, so the crashed run leaves no cache naming anything it
-        parsed, and nothing on disk records `module_a.py` as excluded. The
-        graph's own module paths have to join the reconciliation, or the
-        subtree survives, the successor stamps a matching exclusion set, and
-        every run after that fast-paths over it.
+        cannot take that chance on its own. The cache reaches the state that
+        matters through a COMPLETED excluding run, which drops `module_a.py`
+        from it; after that no on-disk hash names the file and the graph's own
+        module paths are the only thing that can, so they have to join the
+        reconciliation or the subtree survives, the successor stamps a matching
+        exclusion set, and every run after that fast-paths over it.
+
+        Reached this way rather than through a pre-flush crash: since #1615 a
+        crashed run commits no cache at all, so it leaves the PREVIOUS run's
+        cache intact and that one still names `module_a.py`. A crash-based
+        fixture would let `old_hashes` supply the deletion on its own and the
+        test would pass with the graph query neutered, which is what it is
+        here to rule out. The control at the end pins exactly that.
         """
         parsers, queries = load_parsers()
         GraphUpdater(
@@ -766,22 +773,26 @@ class TestFastPathInSync:
         ).run()
 
         exclusions = frozenset({"module_a.py"})
-        mock_ingestor.flush_all.side_effect = RuntimeError("died before the flush")
-        crashing = GraphUpdater(
+        # A COMPLETED excluding run is what drops module_a.py from the cache.
+        GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=excludable_project,
             parsers=parsers,
             queries=queries,
             exclude_paths=exclusions,
+        ).run()
+        cache = json.loads((excludable_project / cs.HASH_CACHE_FILENAME).read_text())
+        assert "module_a.py" not in cache, (
+            "fixture guard: the cache still names module_a.py, so old_hashes "
+            "could supply the deletion and the graph query would not be "
+            "measured by anything below"
         )
-        with pytest.raises(RuntimeError):
-            crashing.run()
-        mock_ingestor.flush_all.side_effect = None
+        # The stamp is what would let the next run fast-path over the subtree.
+        (excludable_project / cs.EXCLUSION_STATE_FILENAME).unlink()
 
-        # After the crash the graph is the ONLY place `module_a.py` still
-        # exists: the hash cache the crashed run committed has already dropped
-        # it. So the sink has to be able to answer for it, or the test would
-        # pass or fail on the fake's silence rather than on the reconciliation.
+        # The graph is now the ONLY place module_a.py still exists, so the sink
+        # has to be able to answer for it or the test would turn on the fake's
+        # silence rather than on the reconciliation.
         mock_ingestor.reset_mock()
         mock_ingestor.fetch_all.side_effect = lambda query, _params=None: (
             [{cs.KEY_PATH: "module_a.py"}, {cs.KEY_PATH: "module_b.py"}]
@@ -796,9 +807,32 @@ class TestFastPathInSync:
             exclude_paths=exclusions,
         ).run()
         assert "module_a.py" in _deleted_module_paths(mock_ingestor), (
-            "the excluded module survived the crash and the run after it, so "
-            "its Module, Class and Method nodes are now permanent: every "
-            "later run matches the stamp and never looks again"
+            "the excluded module survived the run after it, so its Module, "
+            "Class and Method nodes are now permanent: every later run "
+            "matches the stamp and never looks again"
+        )
+
+        # Control: with the graph unable to name it, the delete must VANISH.
+        # Without this the assertion above passes whether or not the graph
+        # query contributes anything, which is what happened when #1615
+        # changed where the cache commits and left this test measuring
+        # `old_hashes` instead.
+        (excludable_project / cs.EXCLUSION_STATE_FILENAME).unlink()
+        mock_ingestor.reset_mock()
+        with patch.object(
+            GraphUpdater, "_existing_module_paths", lambda self: frozenset()
+        ):
+            GraphUpdater(
+                ingestor=mock_ingestor,
+                repo_path=excludable_project,
+                parsers=parsers,
+                queries=queries,
+                exclude_paths=exclusions,
+            ).run()
+        assert "module_a.py" not in _deleted_module_paths(mock_ingestor), (
+            "the delete fired with the graph contributing nothing, so this "
+            "test no longer measures the graph-backed reconciliation it "
+            "claims to and would pass with that reconciliation removed"
         )
 
     def test_failed_module_query_leaves_no_exclusion_stamp(
