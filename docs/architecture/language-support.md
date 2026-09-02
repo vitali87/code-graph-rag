@@ -120,8 +120,9 @@ and because the wipe drops the hash cache, the re-index treats every file as
 new, which is what re-emits the documents under their suffixed names. Note
 that the wipe clears **every** project in the shared graph, so run it only
 when that graph holds just this repository.
+Requires the `treesitter-full` extra.
 
-The wipe is needed here because this case *renames* existing nodes: the old
+The wipe is needed there because that case *renames* existing nodes: the old
 unsuffixed document modules have to go, and re-parsing alone would not remove
 them. A change that only *adds* edges does not need it. Enabling a capture
 group is the common example -- `CGR_CAPTURE=io` on an indexed project reports
@@ -132,7 +133,6 @@ makes the next `--update-graph` treat every file as new and emit the newly
 enabled edges, leaving every other project in the shared graph untouched.
 The capture selection is part of the parser fingerprint, so a run that would
 skip in this way warns first rather than silently doing nothing (issue #1630).
-Requires the `treesitter-full` extra.
 
 ## Language-Agnostic Design
 

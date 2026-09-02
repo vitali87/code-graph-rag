@@ -14,6 +14,7 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as ls
+from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_fingerprint import compute_parser_fingerprint
@@ -38,13 +39,18 @@ def warnings_sink() -> Iterator[list[str]]:
     logger.remove(handler_id)
 
 
-def _make_updater(repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:
+def _make_updater(
+    repo: Path,
+    mock_ingestor: MagicMock,
+    capture: "CaptureSelection | None" = None,
+) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=repo,
         parsers=parsers,
         queries=queries,
+        capture=capture,
     )
 
 
@@ -298,6 +304,33 @@ class TestStalenessWarning:
         updater.run()
 
         assert any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
+
+    def test_enabling_a_capture_group_warns(
+        self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
+    ) -> None:
+        # The defect in #1630, end to end through the updater rather than
+        # against compute_parser_fingerprint directly: the stamp is written
+        # with the selection that built the graph and compared against the
+        # one running now, so dropping `capture=self.capture` at either call
+        # site brings the silent no-op back.
+        _make_updater(py_project, mock_ingestor).run()
+
+        _make_updater(py_project, mock_ingestor, resolve_capture(["io"])).run()
+
+        assert any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
+
+    def test_same_capture_group_twice_does_not_warn(
+        self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
+    ) -> None:
+        # Control for the test above: it must warn because the selection
+        # CHANGED, not because a non-default selection warns unconditionally
+        # or because the entries hash differently each run. Without this, an
+        # unstable digest would look like a working fix.
+        _make_updater(py_project, mock_ingestor, resolve_capture(["io"])).run()
+
+        _make_updater(py_project, mock_ingestor, resolve_capture(["io"])).run()
+
+        assert not any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
 
     def test_missing_stamp_with_existing_cache_warns(
         self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
