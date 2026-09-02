@@ -166,9 +166,7 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
     return False, ""
 
 
-def _git_escapes_project(
-    cmd_parts: list[str], project_root: Path
-) -> tuple[bool, str]:
+def _git_escapes_project(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
     """Whether git is pointed at a repository outside the project root.
 
     Git reads the target's config and EXECUTES what it finds -- an
@@ -1118,6 +1116,7 @@ def _validate_segment(
     available_commands: str,
     bypass_allowlist: bool = False,
     _depth: int = 0,
+    project_root: Path | None = None,
 ) -> str | None:
     try:
         cmd_parts = shlex.split(segment)
@@ -1187,12 +1186,24 @@ def _validate_segment(
             available_commands,
             bypass_allowlist,
             _depth + 1,
+            project_root,
         ):
             return nested
 
     is_dangerous, reason = _is_dangerous_command(cmd_parts, segment, bypass_allowlist)
     if is_dangerous:
         return te.COMMAND_DANGEROUS_BLOCKED.format(cmd=base_cmd, reason=reason)
+
+    # Inside the recursion, so `xargs git --git-dir=EVIL pwn` is caught too.
+    # Running it only from execute() checked the top-level segment alone, and
+    # the nested spelling executed the planted alias with rc=0 -- nesting
+    # weakening the decision, which is exactly what this recursion exists to
+    # prevent. Skipped when no root is supplied, as the direct unit tests of
+    # other guards do.
+    if project_root is not None:
+        is_dangerous, reason = _git_escapes_project(cmd_parts, project_root)
+        if is_dangerous:
+            return te.COMMAND_DANGEROUS_BLOCKED.format(cmd=base_cmd, reason=reason)
 
     return None
 
@@ -1360,7 +1371,10 @@ class ShellCommander:
             for group in groups:
                 for segment in group.commands:
                     if err_msg := _validate_segment(
-                        segment, available_commands, bypass_allowlist=bypass_allowlist
+                        segment,
+                        available_commands,
+                        bypass_allowlist=bypass_allowlist,
+                        project_root=self.project_root,
                     ):
                         logger.error(err_msg)
                         return ShellCommandResult(
@@ -1372,13 +1386,9 @@ class ShellCommander:
                         cmd_parts = shlex.split(segment)
                     except ValueError:
                         continue
-                    is_dangerous, reason = _git_escapes_project(
+                    is_dangerous, reason = _is_dangerous_rm_path(
                         cmd_parts, self.project_root
                     )
-                    if not is_dangerous:
-                        is_dangerous, reason = _is_dangerous_rm_path(
-                            cmd_parts, self.project_root
-                        )
                     if is_dangerous:
                         err_msg = te.COMMAND_DANGEROUS_BLOCKED.format(
                             cmd=cmd_parts[0], reason=reason

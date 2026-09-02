@@ -3479,3 +3479,47 @@ class TestGitRepoLocationEscape:
 
     def test_a_non_git_command_is_not_examined(self) -> None:
         assert _git_escapes_project(["rm", "-C", "/tmp/evil"], self.ROOT) == (False, "")
+
+
+@pytest.mark.parametrize(
+    "inner",
+    (
+        "git --git-dir=/tmp/evil/.git pwn",
+        "git --git-dir /tmp/evil/.git pwn",
+        "git -C /tmp/evil pwn",
+        "git --work-tree=/tmp/evil status",
+        "git -C ../other log",
+    ),
+)
+@pytest.mark.parametrize("bypass", (False, True))
+def test_git_repo_escape_survives_nesting_under_xargs(inner: str, bypass: bool) -> None:
+    # The same nesting invariant as
+    # test_nesting_under_xargs_never_weakens_the_decision, for the guard that
+    # needs a project root and so cannot join that parametrisation.
+    #
+    # This is the gap the first version of the guard had: it ran only from
+    # execute() on the top-level segment, so `xargs git --git-dir=EVIL pwn`
+    # executed the planted alias with rc=0 while the direct spelling was
+    # refused. Placing it inside _validate_segment puts it on the recursion.
+    root = Path("/project/root")
+    assert _validate_segment(inner, "", bypass, 0, root) is not None, inner
+    nested = f"xargs {inner}"
+    assert _validate_segment(nested, "", bypass, 0, root) is not None, (
+        f"nesting weakened the block: {nested}"
+    )
+
+
+@pytest.mark.parametrize(
+    "inner",
+    (
+        "git -C . status",
+        "git --git-dir .git log",
+        "git -C sub diff",
+        "git status",
+    ),
+)
+def test_in_root_git_still_passes_nested(inner: str) -> None:
+    # The guard must not cost the everyday nested spelling its pass either.
+    root = Path("/project/root")
+    assert _validate_segment(inner, "", True, 0, root) is None, inner
+    assert _validate_segment(f"xargs {inner}", "", True, 0, root) is None, inner
