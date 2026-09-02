@@ -344,17 +344,114 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
     ) -> tuple[str, str] | None:
-        return self._redirect_protocol_method(
-            self._resolve_function_call(
-                call_name,
-                module_qn,
-                local_var_types,
-                class_context,
-                caller_qn,
-                language,
-                call_point,
-            )
+        return self._reject_class_via_value_receiver(
+            self._redirect_protocol_method(
+                self._resolve_function_call(
+                    call_name,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    caller_qn,
+                    language,
+                    call_point,
+                )
+            ),
+            call_name,
+            module_qn,
         )
+
+    def _reject_class_via_value_receiver(
+        self,
+        result: tuple[str, str] | None,
+        call_name: str,
+        module_qn: str,
+    ) -> tuple[str, str] | None:
+        """Drop a CLASS answer for `value.Name()` -- a value never constructs.
+
+        Two independent paths reach a class by discarding the receiver and
+        looking the trailing name up on its own: `_try_resolve_module_method`
+        (same module) and `_try_resolve_via_trie` (cross module). Both then look
+        like construction to the emit site, which records INSTANTIATES for any
+        callee that resolved to a Class.
+
+        So `err.Error()` on a stdlib error became "constructs the first-party
+        `Error` struct", and `buf.String()` on a `bytes.Buffer` became
+        "constructs `render.text.String`". Go is worst hit because `Error()` and
+        `String()` are its two most idiomatic interface methods, but Python
+        reproduces it identically (issue #1641).
+
+        The receiver decides. `Outer.Inner()` IS a genuine instantiation whose
+        receiver is a class, and `pkg.Thing()` one whose receiver is a module,
+        so this rejects only a receiver that resolves to neither -- an ordinary
+        identifier holding a value. Guarding here rather than at either lookup
+        keeps one rule for both paths; JS/TS and Dart already carry their own
+        version of it further down (`_resolve_two_part_call`, the unique-member
+        gate), which is why neither reproduced.
+        """
+        if result is None or result[0] != cs.NodeLabel.CLASS:
+            return result
+        # `::` and `:` are static paths (`Type::new`, `Class::method`), where a
+        # type receiver is the normal spelling; only a `.` receiver can be a value.
+        if cs.SEPARATOR_DOT not in call_name or self._has_static_path_separator(
+            call_name
+        ):
+            return result
+        receiver = call_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        if self._receiver_names_a_type_or_module(receiver, module_qn):
+            return result
+        logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
+        return None
+
+    def _has_static_path_separator(self, call_name: str) -> bool:
+        return cs.SEPARATOR_DOUBLE_COLON in call_name or cs.CHAR_COLON in call_name
+
+    def _receiver_names_a_type_or_module(self, receiver: str, module_qn: str) -> bool:
+        """Whether a receiver expression names something constructible-through.
+
+        A class (nested-class construction), or a module/package the caller
+        imported or that sits beside it. Anything else -- a local, a parameter,
+        a field, a chained call -- holds a VALUE at runtime.
+        """
+        head = receiver.split(cs.SEPARATOR_DOT, 1)[0]
+        if not head or not head.isidentifier():
+            return False
+        # `_resolve_class_name` follows the import map without checking what it
+        # landed on, so it answers `mod_a.helper` for an imported FUNCTION named
+        # `helper`. Confirm the qn it returns really is a Class before trusting
+        # it as a receiver; the name alone is not evidence of classness.
+        class_qn = self._resolve_class_name(head, module_qn)
+        if class_qn and self.function_registry.get(class_qn) == cs.NodeLabel.CLASS:
+            return True
+        import_map = self.import_processor.import_mapping.get(module_qn) or {}
+        if head in import_map:
+            # Being imported says nothing about KIND: `from m import instance`
+            # and `import m` both land here, and only the second is a namespace.
+            return self._import_target_is_a_namespace(import_map[head])
+        # A sibling module addressed without an import statement (a package
+        # `__init__` re-export, Go's same-package files): the receiver names a
+        # real module node rather than a variable.
+        parent = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        return f"{parent}{cs.SEPARATOR_DOT}{head}" in self.function_registry
+
+    def _import_target_is_a_namespace(self, target: str) -> bool:
+        """Whether an imported name refers to something you construct THROUGH.
+
+        A class (`from m import Outer` then `Outer.Inner()`) or a module
+        (`import m` then `m.Thing()`). A function, a method or a module-level
+        instance is a VALUE, and `value.Name()` is a method call however it
+        arrived in scope.
+        """
+        kind = self.function_registry.get(target)
+        if kind is not None:
+            return kind == cs.NodeLabel.CLASS
+        # Unregistered, so it is a module IFF the registry holds anything under
+        # its qn. A module node itself is not in the function registry, but its
+        # contents are; an imported instance has an empty subtree.
+        #
+        # The label check above must stay FIRST: `find_with_prefix` returns the
+        # subtree INCLUDING the target, so an imported function reports one
+        # descendant (itself) and a prefix-only test would call it a namespace.
+        return bool(self.function_registry.find_with_prefix(target))
 
     def _resolve_js_prototype_sibling(
         self,
