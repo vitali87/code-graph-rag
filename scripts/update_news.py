@@ -48,9 +48,32 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # and leaves "CI automation" in the body, where is_feature_theme never
 # inspects it - a CI entry then reaches Latest News, which is the one thing
 # this module exists to prevent.
-BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:) +(?P<text>\S.*)$")
+# The separator is ` *`, not ` +`, so a bullet with no space after the colon
+# parses here exactly as it does in HIGHLIGHT_BULLET below. The two disagreed
+# until #1609: this pattern rejected it while HIGHLIGHT_BULLET accepted it, so
+# the same line got two answers and `prepend_news` silently demoted the bullet
+# into the Release Summary aggregate, or dropped it entirely when a
+# well-formed sibling kept `extract_bullets` non-empty.
+#
+# Unified toward the LOOSER rule after measuring both. Requiring the space in
+# both places is worse than the bug it fixes: a lone no-space bullet is
+# currently misfiled but survives, whereas under a strict rule `prepend_news`
+# inserts nothing at all and the feature is lost. This generator's input is
+# not under our control, so tolerating its whitespace is the direction that
+# fails safe. Normalisation is unaffected: `text` still starts at the first
+# non-space, so the emitted bullet carries exactly one space either way.
+# The one separator both extractors use, so they cannot disagree about what
+# follows the colon. #1609 unified the QUANTIFIER, leaving this pattern with a
+# literal space and HIGHLIGHT_BULLET with `\s`; a tab then still parsed in one
+# and not the other, reproducing the same defect on a different character
+# (CodeRabbit, PR #1627). Sharing the fragment means a future divergence has
+# to be written deliberately in one place rather than drifting.
+_AFTER_COLON = r"\s*"
+BULLET_PATTERN = re.compile(
+    rf"^- \*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:){_AFTER_COLON}(?P<text>\S.*)$"
+)
 HIGHLIGHT_BULLET = re.compile(
-    r"^[-*]\s+\*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:)\s*(?P<text>\S.*)$"
+    rf"^[-*]\s+\*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:){_AFTER_COLON}(?P<text>\S.*)$"
 )
 
 # Any line a human would call a bullet, however malformed. Used only to tell
