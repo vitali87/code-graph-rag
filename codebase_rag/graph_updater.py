@@ -2682,14 +2682,27 @@ class GraphUpdater:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
-        # Snapshot before the stale-key pop: a single-file run merges over the
-        # cache it found, and this run does not commit the delombok state
-        # (see `run`), so it must not act on the stale-key pop either. Merging
-        # over the popped dict would DROP every Lombok-affected sibling, which
-        # then takes the `is_new` path next run and skips delete-before-
-        # reingest, leaving the previous parse's entities beside the fresh
-        # ones (#1619 review).
-        pristine_hashes = dict(old_hashes)
+        # Snapshot for the single-file merge, read from DISK and independently
+        # of `force`. Two distinct reasons it cannot reuse `old_hashes`:
+        #
+        # 1. the stale-key pop below -- a single-file run does not commit the
+        #    delombok state (see `run`), so it must not act on that pop
+        #    either. Merging over the popped dict would DROP every
+        #    Lombok-affected sibling, which then takes the `is_new` path next
+        #    run and skips delete-before-reingest, leaving the previous
+        #    parse's entities beside the fresh ones (#1619 review).
+        # 2. `force` -- which empties `old_hashes` to make this run RE-PARSE
+        #    what it walked. A single-file run walked one file, so `force`
+        #    says nothing about the siblings it never looked at. Reusing the
+        #    emptied dict would persist a cache holding only the target and
+        #    erase every sibling's hash, which is the same data loss the
+        #    unforced path already guards (#1619 review, round 2).
+        #
+        # Only the single-file commit reads this; a project run replaces the
+        # cache wholesale from its own complete walk, as it always has.
+        pristine_hashes = (
+            _load_hash_cache(cache_path) if self._single_file is not None else {}
+        )
         for stale_key in self._delombok_stale_keys:
             old_hashes.pop(stale_key, None)
         is_full_build = (force or not old_hashes) and self._single_file is None

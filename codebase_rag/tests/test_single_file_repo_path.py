@@ -377,3 +377,53 @@ class TestSingleFileRunScope:
             "does not commit the delombok state; the next run then treats it "
             "as new and skips delete-before-reingest"
         )
+
+    @pytest.mark.parametrize("force", [False, True])
+    def test_single_file_run_keeps_sibling_hashes_whatever_force_says(
+        self, tmp_path: Path, mock_ingestor: MagicMock, force: bool
+    ) -> None:
+        """`force` must not empty the snapshot the single-file merge reads.
+
+        `force=True` sets `old_hashes = {}` so the run RE-PARSES what it
+        walked. A single-file run walked one file, so that says nothing about
+        the siblings it never looked at -- but the merge snapshot was taken
+        from `old_hashes`, so the commit persisted a cache holding only the
+        target and erased every sibling's hash.
+
+        Parametrised rather than written for `force=True` alone: the unforced
+        case is the control. It passed before this fix and must keep passing,
+        which is what shows the repair is about `force` specifically and not a
+        blanket change to how the merge reads the cache.
+        """
+        repo = self._three_module_project(tmp_path)
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        before = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        assert "module_b.py" in before, (
+            "fixture guard: the project run must have cached the sibling, or "
+            "this test cannot observe it being erased"
+        )
+
+        GraphUpdater(
+            ingestor=_MockIngestor(),
+            repo_path=repo / "module_a.py",
+            parsers=parsers,
+            queries=queries,
+        ).run(force=force)
+
+        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        assert "module_b.py" in cache, (
+            f"run(force={force}) on a single file erased the sibling's hash: "
+            "the next project run then treats every sibling as new, skipping "
+            "delete-before-reingest and duplicating their entities"
+        )
+        assert "module_a.py" in cache, (
+            "the run's own file must still be recorded; the merge must add to "
+            "the previous cache, not be replaced by it"
+        )
