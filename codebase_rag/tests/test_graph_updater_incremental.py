@@ -1049,7 +1049,7 @@ class TestFastPathInSync:
         (excludable_project / cs.EXCLUSION_STATE_FILENAME).unlink()
         mock_ingestor.reset_mock()
         with patch.object(
-            GraphUpdater, "_existing_module_paths", lambda self: frozenset()
+            GraphUpdater, "_existing_module_paths", return_value=frozenset()
         ):
             GraphUpdater(
                 ingestor=mock_ingestor,
