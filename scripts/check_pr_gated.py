@@ -241,7 +241,14 @@ def unresolved_in_page(page: dict[str, Any]) -> tuple[int, bool, str]:
     threads = page["data"]["repository"]["pullRequest"]["reviewThreads"]
     nodes = threads["nodes"]
     unresolved = sum(1 for n in nodes if n.get("isResolved") is False)
-    info = threads.get("pageInfo", {})
+    # Subscripted, not `.get(..., {})`. A page carrying `nodes` but no
+    # `pageInfo` key would default to `hasNextPage: False` and be read as the
+    # FINAL page, so the count came back complete with no error -- while every
+    # other unreadable shape here routes to "unverified". That inconsistency
+    # is the class this script exists to close: a missing key answered as a
+    # clean result (CodeRabbit on PR #1625). The KeyError now takes the same
+    # branch as the rest.
+    info = threads["pageInfo"]
     return unresolved, bool(info.get("hasNextPage")), str(info.get("endCursor") or "")
 
 

@@ -307,6 +307,31 @@ class TestUnresolvedInPage:
         with pytest.raises((KeyError, TypeError)):
             unresolved_in_page({"data": {}})
 
+    def test_a_page_with_nodes_but_no_pageinfo_is_unverified_not_final(self) -> None:
+        """The one shape that used to answer "complete" instead of "unverified".
+
+        `info = threads.get("pageInfo", {})` defaulted `hasNextPage` to
+        False, so a page carrying `nodes` and no `pageInfo` key read as the
+        FINAL page and returned its count with no error -- while every other
+        unreadable shape here routes to unverified. A missing key answered
+        as a clean result is the class this script exists to close, so the
+        inconsistency mattered more than its likelihood (CodeRabbit on
+        PR #1625).
+
+        The two-page fixtures above are the control: they must stay green,
+        or this would have been "fixed" by making every page unverified.
+        """
+        no_page_info = {
+            "data": {
+                "repository": {
+                    "pullRequest": {"reviewThreads": {"nodes": [{"isResolved": False}]}}
+                }
+            }
+        }
+
+        with pytest.raises(KeyError):
+            unresolved_in_page(no_page_info)
+
 
 class TestIsRealReview:
     @pytest.mark.parametrize(
