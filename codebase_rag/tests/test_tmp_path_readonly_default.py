@@ -674,6 +674,18 @@ def test_the_loose_object_filter_rejects_a_packed_repo(
     fixture never packs -- so without this test the filter can regress
     silently. `git gc` here creates the state the fixture cannot reach on its
     own: pack/commit-graph files present, mode 444, and zero loose objects.
+
+    The packed state alone does NOT exercise `_LOOSE_OBJECT`: packs live in
+    `objects/pack/` and `objects/info/`, which `_FANOUT_DIR` rejects on its
+    own, so the basename filter could be deleted with this test still green.
+    The planted `tmp_obj_*` decoy below closes that -- it sits INSIDE a fanout
+    directory, so only `_LOOSE_OBJECT` rejects it, and dropping the basename
+    filter turns this test red (measured).
+
+    The converse does not hold and is not claimed: dropping `_FANOUT_DIR`
+    alone leaves this green (measured, 27 passed), because the basename filter
+    already rejects packs, `*.idx`, `commit-graph` and the decoy by name.
+    `_FANOUT_DIR` is a narrowing optimisation here, not independently pinned.
     """
     env = {
         **os.environ,
@@ -711,10 +723,24 @@ def test_the_loose_object_filter_rejects_a_packed_repo(
     ]
     assert packed, "gc produced no read-only artefacts: bad control"
 
+    # `_FANOUT_DIR` alone already rejects everything gc leaves behind, because
+    # packs live in `objects/pack/` and `objects/info/`. So the packed state
+    # tests only that half of the filter, and `_LOOSE_OBJECT` could be dropped
+    # entirely with this test still green. Plant a read-only NON-object file
+    # inside a real fanout directory -- `tmp_obj_*` is git's own name for a
+    # partially written object -- so the basename filter is the only thing
+    # standing between it and the assertions below.
+    fanout = repo / ".git" / "objects" / "00"
+    fanout.mkdir(parents=True, exist_ok=True)
+    decoy = fanout / "tmp_obj_A1b2C3"
+    decoy.write_bytes(b"not an object")
+    decoy.chmod(0o444)
+
     listed, readonly_modes = _collect_loose_objects(repo)
     assert listed == [], (
-        f"packed artefacts counted as loose objects: {listed} -- the filter "
-        "no longer discriminates and the fixture guard is satisfied by packs"
+        f"packed artefacts or temp files counted as loose objects: {listed} "
+        "-- the filter no longer discriminates and the fixture guard is "
+        "satisfied with zero loose objects present"
     )
     assert readonly_modes == []
 
