@@ -425,3 +425,62 @@ def test_changes_when_compile_database_content_changes(
     before = compute_parser_fingerprint(repo_path=repo)
     db.write_text('[{"arguments": ["c++", "-DFEATURE"]}]', encoding="utf-8")
     assert compute_parser_fingerprint(repo_path=repo) != before
+
+
+class TestCaptureSelectionIsParserIdentity:
+    # The capture selection decides which edges are produced for unchanged
+    # sources -- the same criterion the frontend selection is hashed under --
+    # so it belongs to the parser identity. Without it, enabling a capture
+    # group on an indexed project reports "already in sync" and emits
+    # nothing, and the only documented remedy wipes every project in the
+    # shared graph (issue #1630).
+
+    def test_changes_when_capture_env_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from codebase_rag.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "CGR_CAPTURE", "")
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(cfg, "CGR_CAPTURE", "io")
+        assert compute_parser_fingerprint() != before
+
+    def test_changes_when_capture_passed_explicitly(self) -> None:
+        # The CLI resolves CGR_CAPTURE and --capture together and hands the
+        # GraphUpdater a CaptureSelection, so a fingerprint that consulted
+        # only the environment would stay blind to `--capture io`.
+        from codebase_rag.capture import resolve_capture
+
+        before = compute_parser_fingerprint(capture=resolve_capture([]))
+        after = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        assert after != before
+
+    def test_same_selection_same_fingerprint(self) -> None:
+        from codebase_rag.capture import resolve_capture
+
+        first = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        second = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        assert first == second
+
+    def test_repeated_token_is_the_same_identity(self) -> None:
+        # The RESOLVED selection is hashed, not the raw spec, so `io,io` and
+        # `io` are one identity and do not force a spurious rebuild.
+        from codebase_rag.capture import resolve_capture
+
+        once = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        twice = compute_parser_fingerprint(capture=resolve_capture(["io", "io"]))
+        assert once == twice
+
+    def test_changes_when_function_local_definitions_toggled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # CAPTURE_FUNCTION_LOCAL_DEFINITIONS picks between two predicates for
+        # whether a nested definition is ingested as a method, so flipping it
+        # changes which Method nodes exist for unchanged sources -- the same
+        # criterion as the frontend mode, and it was not hashed either.
+        from codebase_rag.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "CAPTURE_FUNCTION_LOCAL_DEFINITIONS", True)
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(cfg, "CAPTURE_FUNCTION_LOCAL_DEFINITIONS", False)
+        assert compute_parser_fingerprint() != before
