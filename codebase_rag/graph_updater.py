@@ -266,6 +266,45 @@ def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
         logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
 
 
+def _publish_hash_cache(
+    cache_path: Path, hashes: FileHashCache, observed_at: float | None
+) -> None:
+    """Write the hash cache and its timestamp as one visible step.
+
+    `_is_already_in_sync` skips any file whose mtime is at or below this
+    file's, so a cache carrying its own write time hides every edit made
+    while the run was hashing. Writing then stamping leaves that exact state
+    on disk between the two calls, and a run that stops there hands it to its
+    successor. Building the whole thing on a temporary path and renaming it
+    into place closes that window: `os.replace` is atomic within a
+    filesystem, so a successor sees either the previous cache or a fully
+    stamped new one, never an unstamped new one.
+
+    On any failure the temporary file is removed and the PREVIOUS cache is
+    left untouched, which is the safe direction: a cache that is one run out
+    of date costs a rescan, while a mis-stamped one loses an edit.
+    """
+    tmp_path = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with tmp_path.open("w", encoding="utf-8") as f:
+            json.dump(hashes, f, indent=2)
+        if observed_at is not None:
+            os.utime(tmp_path, (observed_at, observed_at))
+        os.replace(tmp_path, cache_path)
+        logger.info(ls.HASH_CACHE_SAVED, count=len(hashes), path=cache_path)
+    except OSError as e:
+        logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            # A filesystem too read-only to write the cache is too read-only
+            # to have created the temporary, so there is normally nothing to
+            # remove; if there is and it cannot go, the stale temporary is
+            # inert (no reader looks for `.tmp`) and must not end the run.
+            logger.warning(ls.CACHE_STAMP_CLEANUP_FAILED, path=tmp_path, error=e)
+
+
 def _load_parser_fingerprint(stamp_path: Path) -> str | None:
     try:
         return stamp_path.read_text(encoding="utf-8").strip() or None
@@ -1270,52 +1309,25 @@ class GraphUpdater:
         # the next run that deletions were not reconciled, and that alone both
         # fails the sync check and turns graph-backed reconciliation on.
         observed_at = self._pending_cache_observed_at
-        written: list[Path] = []
+        # Hash cache FIRST, directory mtimes LAST. The pair is trusted in
+        # only one direction, and it is the reverse of what the reading
+        # suggests, so it was measured rather than reasoned: a stop leaving a
+        # FRESH dir-mtimes map beside a STALE hash cache is trusted, and the
+        # file added in the gap is never indexed. `_is_already_in_sync` walks
+        # the directories the dir-mtimes map records, so a fresh map lists the
+        # new directory as current and the scan finds nothing to look at,
+        # while the file loop only walks keys the hash cache already names.
+        # The opposite pairing is caught: a stale map has no entry for the new
+        # directory, so the walk reaches it and the mismatch surfaces. The
+        # dir-mtimes file is therefore the one whose arrival must mean "both
+        # are current".
         if self._pending_hash_cache is not None:
-            _save_hash_cache(*self._pending_hash_cache)
-            written.append(self._pending_hash_cache[0])
+            cache_path, new_hashes = self._pending_hash_cache
+            _publish_hash_cache(cache_path, new_hashes, observed_at)
             self._pending_hash_cache = None
         if self._pending_dir_mtimes is not None:
             _save_dir_mtimes(*self._pending_dir_mtimes)
             self._pending_dir_mtimes = None
-        # Stamp the hash cache with the instant captured before hashing, not
-        # with the time the write happened, so the deferral cannot swallow an
-        # edit made while the hashing loop and passes 3 and later were still
-        # running. Only this file: `_is_already_in_sync` derives `cache_mtime`
-        # from the hash cache alone, and nothing anywhere stats the dir-mtimes
-        # file, whose entries are compared against the values stored INSIDE it.
-        # Backdating that one would be inert, and warning about it on failure
-        # would name a skipped file that cannot happen.
-        if observed_at is not None:
-            for path in written:
-                try:
-                    os.utime(path, (observed_at, observed_at))
-                except OSError as e:
-                    # Fail CLOSED. Leaving the file with its own write time is
-                    # exactly the defect this stamping exists to prevent: that
-                    # time is later than an edit made while the run was still
-                    # hashing, so the successor's `mtime <= cache_mtime` check
-                    # skips the edited file and the graph keeps stale content.
-                    # A missing cache only costs a rebuild, which is why every
-                    # writer here already degrades to absent rather than wrong.
-                    logger.warning(ls.CACHE_STAMP_FAILED, path=path, error=e)
-                    try:
-                        path.unlink(missing_ok=True)
-                    except OSError as unlink_error:
-                        # The canonical reason `utime` fails is a read-only
-                        # filesystem, and that same condition fails the unlink,
-                        # so this is the expected pairing rather than a remote
-                        # one. A run that cannot clean up must still finish:
-                        # every other filesystem writer on this path swallows
-                        # OSError, and crashing here would turn a degraded run
-                        # into no run at all. The cache is left mis-stamped and
-                        # the warning says so, because a silent pass would
-                        # leave the next run to discover it by skipping a file.
-                        logger.warning(
-                            ls.CACHE_STAMP_CLEANUP_FAILED,
-                            path=path,
-                            error=unlink_error,
-                        )
         self._pending_cache_observed_at = None
 
         if self._single_file is None:

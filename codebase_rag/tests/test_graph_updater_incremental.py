@@ -413,11 +413,13 @@ class TestCrashBetweenCacheSaveAndFlush:
         )
 
         edited = "def b():\n    return 999\n"
-        real_save = graph_updater_module._save_hash_cache
+        real_save = graph_updater_module._publish_hash_cache
 
         reached_write_site = False
 
-        def _edit_then_save(path: Path, hashes: dict[str, str]) -> None:
+        def _edit_then_save(
+            path: Path, hashes: dict[str, str], observed_at: float | None
+        ) -> None:
             nonlocal reached_write_site
             reached_write_site = True
             # The observation instant is already captured by now, and this
@@ -430,16 +432,18 @@ class TestCrashBetweenCacheSaveAndFlush:
             # is still the newer of the two and the successor still skips.
             time.sleep(0.2)
             target.write_text(edited, encoding="utf-8")
-            real_save(path, hashes)
+            real_save(path, hashes, observed_at)
 
-        monkeypatch.setattr(graph_updater_module, "_save_hash_cache", _edit_then_save)
+        monkeypatch.setattr(
+            graph_updater_module, "_publish_hash_cache", _edit_then_save
+        )
         GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=py_project,
             parsers=parsers,
             queries=queries,
         ).run()
-        monkeypatch.setattr(graph_updater_module, "_save_hash_cache", real_save)
+        monkeypatch.setattr(graph_updater_module, "_publish_hash_cache", real_save)
 
         # Three guards, each catching a different lie. The first two are what
         # caught two wrong versions of this test: an edit placed in `flush_all`
@@ -546,18 +550,21 @@ class TestCrashBetweenCacheSaveAndFlush:
             "successor skips rehashing it and the edit is lost for good"
         )
 
-    def test_cache_is_removed_when_it_cannot_be_backdated(
+    def test_a_read_only_tree_still_completes_the_run(
         self,
         py_project: Path,
         mock_ingestor: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A cache that cannot be stamped back must not survive the run.
+        """A filesystem that refuses every publish step must not end the run.
 
-        Keeping it would leave the file carrying its own write time, which is
-        later than an edit made while the run was still hashing, so the
-        successor would skip that file and the graph would keep pre-edit
-        content. Absent costs a rebuild; present-and-mis-stamped hides an edit.
+        Replaces the two tests that pinned the previous fail-closed handler
+        (a live cache stamped in place, removed when the stamp failed). That
+        code path is gone: the cache is built on a temporary path and renamed,
+        so the live file is never mutated and never needs removing. The OUTER
+        contract those tests existed for survives and is what this asserts -
+        indexing work must not be forfeited because a cache could not be
+        written - so all three steps that can now refuse are refused at once.
         """
         parsers, queries = load_parsers()
         GraphUpdater(
@@ -568,53 +575,89 @@ class TestCrashBetweenCacheSaveAndFlush:
         ).run()
 
         cache = py_project / cs.HASH_CACHE_FILENAME
-        assert cache.is_file(), "fixture guard: run 1 wrote no cache to remove"
+        before = cache.read_text(encoding="utf-8")
+        assert "module_b.py" in before, (
+            "fixture guard: run 1 wrote no usable cache, so leaving it intact "
+            "below would prove nothing"
+        )
 
         (py_project / "module_c.py").write_text(
             "def c():\n    return 1\n", encoding="utf-8"
         )
 
+        real_open = Path.open
         real_utime = os.utime
-        refused: list[Path] = []
+        real_replace = os.replace
+        refused: set[str] = set()
 
-        def _refuse_cache_stamp(path, times=None, **kwargs):  # type: ignore[no-untyped-def]
-            if Path(path).name == cs.HASH_CACHE_FILENAME:
-                refused.append(Path(path))
-                raise OSError("read-only file system")
+        def _is_cache_temp(path: Path) -> bool:
+            return path.name.startswith(cs.HASH_CACHE_FILENAME) and path.name.endswith(
+                ".tmp"
+            )
+
+        def _refuse_open(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if _is_cache_temp(self):
+                refused.add("write")
+                raise OSError(errno.EROFS, "Read-only file system")
+            return real_open(self, *args, **kwargs)
+
+        def _refuse_utime(path, times=None, **kwargs):  # type: ignore[no-untyped-def]
+            if _is_cache_temp(Path(path)):
+                refused.add("utime")
+                raise OSError(errno.EROFS, "Read-only file system")
             return real_utime(path, times, **kwargs)
 
-        monkeypatch.setattr(graph_updater_module.os, "utime", _refuse_cache_stamp)
+        def _refuse_replace(src, dst, **kwargs):  # type: ignore[no-untyped-def]
+            if Path(dst).name == cs.HASH_CACHE_FILENAME:
+                refused.add("replace")
+                raise OSError(errno.EROFS, "Read-only file system")
+            return real_replace(src, dst, **kwargs)
+
+        monkeypatch.setattr(Path, "open", _refuse_open)
+        monkeypatch.setattr(graph_updater_module.os, "utime", _refuse_utime)
+        monkeypatch.setattr(graph_updater_module.os, "replace", _refuse_replace)
+        # Must COMPLETE: a cache that cannot be written is not a failed run.
         GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=py_project,
             parsers=parsers,
             queries=queries,
         ).run()
+        monkeypatch.setattr(graph_updater_module.os, "replace", real_replace)
         monkeypatch.setattr(graph_updater_module.os, "utime", real_utime)
+        monkeypatch.setattr(Path, "open", real_open)
 
-        assert refused, (
-            "the run never tried to stamp the hash cache, so the assertion "
-            "below would pass without exercising the failure path at all"
+        assert "write" in refused, (
+            "the run never attempted the temporary cache write, so completing "
+            f"says nothing about a read-only tree; refused={sorted(refused)}"
         )
-        assert not cache.is_file(), (
-            "the cache survived a failed backdate: it now carries its own "
-            "write time, which is later than an edit made during the run, so "
-            "the successor skips that file and keeps stale graph content"
+        assert cache.read_text(encoding="utf-8") == before, (
+            "the refused publish damaged the previous cache; it must be left "
+            "exactly as the last successful run wrote it"
         )
+        leftovers = sorted(q.name for q in py_project.glob("*.tmp"))
+        assert not leftovers, f"temporary cache files were left behind: {leftovers}"
 
-    def test_run_survives_a_cache_that_can_be_neither_stamped_nor_removed(
+    def test_a_stop_between_the_two_cache_publishes_is_still_detected(
         self,
         py_project: Path,
         mock_ingestor: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A read-only filesystem fails the stamp AND the cleanup.
+        """The two caches are published in the only safe order.
 
-        `os.utime` failing with EROFS is the canonical reason to reach the
-        fail-closed path, and the same condition fails the `unlink` that path
-        performs, so the pairing is expected rather than remote. Every other
-        filesystem writer on this path swallows `OSError`; crashing here would
-        turn a run that merely could not tidy up into no run at all.
+        They are separate files, so a run stopping between them leaves a
+        mismatched pair, and the pair is trusted in only ONE direction. A
+        FRESH dir-mtimes map beside a STALE hash cache is trusted: the sync
+        check walks the directories that map records, finds the new one listed
+        as current, and the file loop only walks keys the hash cache already
+        names, so a file added in the gap is never indexed. Publishing the
+        hash cache first makes the surviving window the harmless one, where a
+        stale map has no entry for the new directory and the mismatch shows.
+
+        The stop is keyed on whichever publish happens SECOND rather than on
+        either by name, so reversing the two calls still constructs a real
+        mismatched pair and this measures the ordering rather than the fixture.
         """
         parsers, queries = load_parsers()
         GraphUpdater(
@@ -624,42 +667,56 @@ class TestCrashBetweenCacheSaveAndFlush:
             queries=queries,
         ).run()
 
-        (py_project / "module_c.py").write_text(
-            "def c():\n    return 1\n", encoding="utf-8"
+        package = py_project / "pkg"
+        package.mkdir()
+        (package / "added.py").write_text(
+            "def added():\n    return 1\n", encoding="utf-8"
         )
 
-        real_utime = os.utime
-        real_unlink = Path.unlink
-        refused: list[str] = []
+        real_publish = graph_updater_module._publish_hash_cache
+        real_dir_mtimes = graph_updater_module._save_dir_mtimes
+        order: list[str] = []
 
-        def _refuse_stamp(path, times=None, **kwargs):  # type: ignore[no-untyped-def]
-            if Path(path).name == cs.HASH_CACHE_FILENAME:
-                refused.append("utime")
-                raise OSError(errno.EROFS, "Read-only file system")
-            return real_utime(path, times, **kwargs)
+        def _publish_unless_second(
+            path: Path, hashes: dict[str, str], observed_at: float | None
+        ) -> None:
+            order.append("hash_cache")
+            if len(order) == 1:
+                real_publish(path, hashes, observed_at)
 
-        def _refuse_unlink(self, missing_ok=False):  # type: ignore[no-untyped-def]
-            if self.name == cs.HASH_CACHE_FILENAME:
-                refused.append("unlink")
-                raise OSError(errno.EROFS, "Read-only file system")
-            return real_unlink(self, missing_ok=missing_ok)
+        def _dir_mtimes_unless_second(path: Path, mtimes: dict[str, float]) -> None:
+            order.append("dir_mtimes")
+            if len(order) == 1:
+                real_dir_mtimes(path, mtimes)
 
-        monkeypatch.setattr(graph_updater_module.os, "utime", _refuse_stamp)
-        monkeypatch.setattr(Path, "unlink", _refuse_unlink)
-        # The run must COMPLETE. Before the unlink was guarded this raised
-        # OSError out of `run()` on exactly this pairing.
+        monkeypatch.setattr(
+            graph_updater_module, "_publish_hash_cache", _publish_unless_second
+        )
+        monkeypatch.setattr(
+            graph_updater_module, "_save_dir_mtimes", _dir_mtimes_unless_second
+        )
         GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=py_project,
             parsers=parsers,
             queries=queries,
         ).run()
-        monkeypatch.setattr(Path, "unlink", real_unlink)
-        monkeypatch.setattr(graph_updater_module.os, "utime", real_utime)
+        monkeypatch.setattr(graph_updater_module, "_publish_hash_cache", real_publish)
+        monkeypatch.setattr(graph_updater_module, "_save_dir_mtimes", real_dir_mtimes)
 
-        assert refused == ["utime", "unlink"], (
-            "the run did not reach both refusals, so completing proves "
-            f"nothing about the pairing under test; saw {refused}"
+        assert order == ["hash_cache", "dir_mtimes"], (
+            "the commit point did not publish the hash cache first, so the "
+            f"surviving window is the trusted one; saw {order}"
+        )
+        successor = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert successor._is_already_in_sync() is False, (
+            "the successor trusts the mismatched pair this stop left, so the "
+            "file added in the gap is never indexed"
         )
 
     def test_successor_run_still_deletes_the_module(

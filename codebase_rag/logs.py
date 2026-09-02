@@ -861,14 +861,9 @@ HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"
 HASH_CACHE_LOAD_FAILED = "Failed to load hash cache from {path}: {error}"
 HASH_CACHE_SAVED = "Saved hash cache with {count} entries to {path}"
 HASH_CACHE_SAVE_FAILED = "Failed to save hash cache to {path}: {error}"
-CACHE_STAMP_FAILED = (
-    "Could not backdate {path} to the observed instant ({error}); removing it so "
-    "the next run rebuilds rather than trusting a stamp that can hide edits"
-)
 CACHE_STAMP_CLEANUP_FAILED = (
-    "Could not remove {path} after its backdate failed ({error}); it keeps a write "
-    "time later than any edit made during this run, so the next run may skip that "
-    "file. Delete it by hand, or re-run once the path is writable"
+    "Could not remove the temporary cache file {path} ({error}); it is inert, since "
+    "nothing reads a .tmp path, but it can be deleted by hand"
 )
 PERIODIC_FLUSH = "Periodic flush after {count} files processed"
 INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
