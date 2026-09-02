@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -400,6 +401,72 @@ def test_clear_readonly_removes_nested_zero_mode_directories(tmp_path: Path) -> 
         "abandons the outer subtree on a listing failure, so the handler has "
         "to remove it rather than expecting a retry"
     )
+
+
+def test_clear_readonly_survives_an_unremovable_entry(tmp_path: Path) -> None:
+    """An entry that can never be removed must report its error, not recurse.
+
+    The recursive branch re-enters the handler for the SAME directory when a
+    child cannot be removed, so without a progress guard this is unbounded
+    recursion ending in `RecursionError` raised from inside teardown -- which
+    is strictly harder to attribute than the underlying `OSError`, and worse
+    than the loud failure the handler had before recursing was introduced.
+
+    Uses `chflags uchg` (macOS) to make a file genuinely unremovable rather
+    than monkeypatching, so the shape is the real one: an immutable file
+    inside a `0o000` directory is exactly a `.git/objects` tree that some
+    other process has locked.
+    """
+    import shutil
+    import subprocess
+
+    if not sys.platform.startswith("darwin"):
+        pytest.skip("chflags is macOS-only; the guard itself is portable")
+
+    from codebase_rag.tests.conftest import _clear_readonly
+
+    root = tmp_path / "immovable"
+    inner = root / "inner"
+    inner.mkdir(parents=True)
+    stuck = inner / "loose-object"
+    stuck.write_text("object", encoding="utf-8")
+    subprocess.run(["chflags", "uchg", str(stuck)], check=True)
+    inner.chmod(0o000)
+    try:
+        with pytest.raises(OSError) as caught:
+            shutil.rmtree(root, onexc=_clear_readonly)
+        assert not isinstance(caught.value, RecursionError), (
+            "the handler recursed without bound instead of surfacing the "
+            "real error for a path it cannot remove"
+        )
+    finally:
+        subprocess.run(["chflags", "nouchg", str(stuck)], check=False)
+        inner.chmod(0o700)
+
+
+@pytest.mark.parametrize(
+    "listing_func",
+    ["close", "islink", "scandir", "open", "lstat"],
+)
+def test_clear_readonly_never_calls_a_non_removal_func(
+    tmp_path: Path, listing_func: str
+) -> None:
+    """Only `os.unlink`/`os.rmdir` may be retried by calling `func(path)`.
+
+    `rmtree` passes several other callables, and each is wrong to call with a
+    single path: `os.open` wants `flags` and `os.close` wants a descriptor
+    (both raise TypeError out of teardown), while `os.path.islink` is a pure
+    query that removes nothing while looking like a successful retry. The
+    discriminator is a whitelist for that reason, so a callable nobody
+    anticipated is skipped rather than mis-called.
+    """
+    from codebase_rag.tests.conftest import _clear_readonly
+
+    func = getattr(os, listing_func, None) or getattr(os.path, listing_func)
+    target = tmp_path / "subject"
+    target.mkdir()
+
+    _clear_readonly(func, str(target), OSError(13, "boom"))
 
 
 def test_git_repo_fixture_tears_down_its_own_readonly_objects(

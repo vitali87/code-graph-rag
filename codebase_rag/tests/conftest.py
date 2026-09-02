@@ -292,7 +292,18 @@ def _isolate_cgr_home(
     yield home
 
 
-def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
+# What `shutil.rmtree` passes to `onexc` besides the removals. None of these
+# can be re-called with a single path argument: `os.open` needs `flags`,
+# `os.close` needs a descriptor, and `os.path.islink`/`os.scandir`/`os.lstat`
+# are queries that remove nothing (#1622).
+_NON_REMOVAL_FUNCS = frozenset(
+    {os.scandir, os.open, os.lstat, os.close, os.path.islink}
+)
+
+
+def _clear_readonly(
+    func: Any, path: Any, _exc: BaseException, _attempted: set[str] | None = None
+) -> None:
     """Retry a failed removal after clearing the read-only bit.
 
     On Windows `os.unlink` refuses a read-only file outright, so a tree
@@ -361,6 +372,14 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     # not). Skipping the mode work is the portable answer.
     # On Windows `os.path.islink` is true for both symlink kinds, so this keeps
     # the handler platform-independent rather than trading one for another.
+    # Scoped to one top-level `rmtree`, not module-level: a module-level set
+    # would never be cleared and would suppress a legitimate second attempt on
+    # the same path in a later test. `functools.partial` carries it into the
+    # recursive call below.
+    if _attempted is None:
+        _attempted = set()
+    path_key = os.fspath(path)
+
     if os.path.islink(path):
         # Same vanished-path tolerance as the non-link path below: the link
         # can be gone by the time this retry runs, and that is the state the
@@ -386,23 +405,44 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
         # S_IRUSR|S_IWUSR and no S_IXUSR, so it cannot repair that either.
         extra = stat.S_IREAD | stat.S_IEXEC if os.path.isdir(path) else 0
         os.chmod(path, mode | stat.S_IWRITE | extra)
-        # `func` is not always a one-argument removal, and the two cases need
+        # `func` is not always a one-argument removal, and the cases need
         # different handling (#1622).
         #
-        # A REMOVAL that failed (`os.unlink`, `os.rmdir`) is retried directly:
-        # the mode is fixed now, so the same call succeeds.
+        # The discriminator names the callables that must NOT be re-called
+        # with a bare path, and retries everything else. `rmtree` passes
+        # `os.scandir`, `os.open`, `os.lstat`, `os.close` and
+        # `os.path.islink` besides the removals, and each is wrong to call
+        # differently: `os.open` wants `flags` and `os.close` wants a
+        # descriptor (both raise TypeError out of teardown), while
+        # `os.path.islink` is a pure query that removes nothing while looking
+        # like a successful retry.
         #
-        # A LISTING that failed (`os.scandir`, `os.open`, `os.lstat`) is not.
-        # `os.open` requires `flags`, so a bare `func(path)` raises TypeError
-        # out of teardown; and `rmtree` does NOT retry the directory after
-        # this handler returns -- it abandons that subtree and moves on, so
-        # the parent's `rmdir` then fails with "Directory not empty" and
-        # nothing ever revisits the children. Recursing here is what removes
-        # them, and it is why widening the mode alone is not enough.
-        if func in (os.scandir, os.open, os.lstat):
-            shutil.rmtree(path, onexc=_clear_readonly)
-        else:
+        # Named exclusions rather than an `(os.unlink, os.rmdir)` whitelist
+        # because callers legitimately pass their own removal callable -- the
+        # handler's own tests pass `retried.append` and bare lambdas, and a
+        # whitelist silently skips the retry for every one of them, which is
+        # the same "looks like a retry, removes nothing" failure this branch
+        # exists to stop.
+        if func not in _NON_REMOVAL_FUNCS:
             func(path)
+        elif os.path.isdir(path) and path_key not in _attempted:
+            # A LISTING failed. `rmtree` does NOT retry this directory after
+            # the handler returns -- it abandons the subtree, so the parent's
+            # `rmdir` then fails "Directory not empty" and nothing revisits
+            # the children. Recursing is what removes them.
+            #
+            # Guarded by `_attempted`: the recursive call re-enters this
+            # handler for the SAME path whenever a child cannot be removed
+            # (an immutable file, a read-only mount), and without the guard
+            # that is unbounded recursion ending in `RecursionError` raised
+            # from inside teardown -- strictly harder to attribute than the
+            # underlying `PermissionError`. Seen once, the path is left to
+            # report its own error.
+            _attempted.add(path_key)
+            shutil.rmtree(
+                path,
+                onexc=functools.partial(_clear_readonly, _attempted=_attempted),
+            )
     except FileNotFoundError:
         return
 
