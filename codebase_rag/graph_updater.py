@@ -958,6 +958,130 @@ class GraphUpdater:
             or filepath.suffix.lower() == cs.CSPROJ_SUFFIX
         )
 
+    def _resolve_deferred_definitions(self, rehydrate: bool) -> dict[str, str]:
+        """Every deferred definition-level resolution that must follow Pass 2.
+
+        Shared by run() and reingest() (issue #1524): a scoped re-ingest
+        deletes a file's Module subtree like an incremental run does, so the
+        C/C++ macro, containment, forward-declaration, inheritance and
+        module-implementation relationships it held have to be rebuilt by
+        the same stages, or they vanish until a full update. Returns the
+        module qn -> path map the IMPORTS flush verifies against.
+        """
+        # HYBRID must run after Pass 2: an incremental run deletes each
+        # changed file's Module subtree before re-parsing it, so macro
+        # nodes and include IMPORTS emitted earlier would be deleted with
+        # it and vanish until a forced rebuild.
+        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
+            self._run_cpp_frontend()
+        self._run_emitting_frontends(FrontendPhase.AFTER_DEFINITIONS)
+
+        go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
+        if go_methods:
+            logger.info("Resolved {} Go receiver methods", go_methods)
+
+        if rehydrate:
+            self._rehydrate_registry_from_graph()
+
+        # After rehydration: an incremental run re-parses the `.cpp` holding
+        # an out-of-class method while its class stays in an unchanged
+        # header, and the class is only known once the registry is read back
+        # from the graph. Resolving earlier bound such a method to a
+        # module-anchored fallback qn beside its class-anchored node, in a
+        # parse-order-dependent way (issue #1552).
+        corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
+        if corrected:
+            logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
+
+        contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
+        if contained:
+            logger.info("Resolved {} deferred C++ nested containments", contained)
+
+        # After resolve_deferred_cpp_methods: an out-of-class method's span
+        # is recorded only once its class binding resolves, and a macro use
+        # inside such a method must attribute to it, not the Module.
+        self._resolve_hybrid_macro_calls()
+
+        # After rehydration: an expansion call's callee join needs spans
+        # for unchanged files too.
+        self._resolve_hybrid_expansion_calls()
+
+        # After rehydration so the "does a real definition exist?" check sees
+        # definitions in files an incremental run did not re-parse; otherwise a
+        # forward declaration whose definition lives in an unchanged file is
+        # kept as a phantom and re-fragments the class.
+        kept_forwards = (
+            self.factory.definition_processor.resolve_deferred_forward_declarations()
+        )
+        if kept_forwards:
+            logger.info(
+                "Registered {} forward-declared C/C++ types with no definition",
+                kept_forwards,
+            )
+
+        # After rehydration (an incremental run's class may live in an
+        # unchanged header) and after forward declarations (a kept
+        # forward-declared TYPE also proves the name is a class, not a
+        # macro).
+        orphan_ctors = (
+            self.factory.definition_processor.resolve_deferred_cpp_artifacts()
+        )
+        if orphan_ctors:
+            logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
+
+        # After artifact resolution so a recovery-registered definition also
+        # counts; a prototype duplicating any bodied definition is dropped.
+        kept_prototypes = (
+            self.factory.definition_processor.resolve_deferred_cpp_prototypes()
+        )
+        if kept_prototypes:
+            logger.info(
+                "Registered {} C/C++ function prototypes with no definition",
+                kept_prototypes,
+            )
+
+        # After forward declarations so a base whose only representation is
+        # a kept forward declaration still resolves to a real node.
+        inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()
+        if inherits:
+            logger.info("Resolved {} deferred C++ inheritance bases", inherits)
+
+        # IMPORTS edges and the Rust sub-scope arbitration verify against
+        # every module qn this run produced (files, inline modules,
+        # rehydrated unchanged files); an internal target that resolves
+        # nowhere emits no edge.
+        known_module_paths = self.known_module_paths()
+
+        # Inline-mod import maps commit BEFORE the deferred inheritance
+        # pass below: it re-resolves module-anchored trait guesses through
+        # them.
+        self.factory.import_processor.finalise_rust_mod_scope_uses(known_module_paths)
+
+        # Same reasoning for every other language: parents resolve against
+        # the full registry (including rehydrated definitions), and an
+        # unresolvable parent emits no edge instead of a phantom.
+        generic_inherits = self.factory.definition_processor.resolve_deferred_inherits()
+        if generic_inherits:
+            logger.info(
+                "Resolved {} deferred inheritance/implements parents",
+                generic_inherits,
+            )
+
+        module_impls = (
+            self.factory.definition_processor.resolve_deferred_cpp_module_impls()
+        )
+        if module_impls:
+            logger.info("Resolved {} C++20 module implementation links", module_impls)
+
+        # Last containment step: every node-registering pass above (deferred
+        # C++ methods, Go receivers, kept forward declarations) must finish
+        # before parent qns are verified against the registry.
+        linked = self.factory.definition_processor.resolve_deferred_parent_links()
+        if linked:
+            logger.info("Resolved {} deferred containment parents", linked)
+
+        return known_module_paths
+
     def run(self, force: bool = False) -> None:
         """Ingest the repository; ``force`` rebuilds instead of updating incrementally."""
         py_engine = self.factory.type_inference._python_type_inference
@@ -1088,117 +1212,7 @@ class GraphUpdater:
         # method name-token locations Pass 2 registered.
         self._run_java_frontend()
 
-        # HYBRID must run after Pass 2: an incremental run deletes each
-        # changed file's Module subtree before re-parsing it, so macro
-        # nodes and include IMPORTS emitted earlier would be deleted with
-        # it and vanish until a forced rebuild.
-        if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
-            self._run_cpp_frontend()
-        self._run_emitting_frontends(FrontendPhase.AFTER_DEFINITIONS)
-
-        go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
-        if go_methods:
-            logger.info("Resolved {} Go receiver methods", go_methods)
-
-        if not force:
-            self._rehydrate_registry_from_graph()
-
-        # After rehydration: an incremental run re-parses the `.cpp` holding
-        # an out-of-class method while its class stays in an unchanged
-        # header, and the class is only known once the registry is read back
-        # from the graph. Resolving earlier bound such a method to a
-        # module-anchored fallback qn beside its class-anchored node, in a
-        # parse-order-dependent way (issue #1552).
-        corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
-        if corrected:
-            logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
-
-        contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
-        if contained:
-            logger.info("Resolved {} deferred C++ nested containments", contained)
-
-        # After resolve_deferred_cpp_methods: an out-of-class method's span
-        # is recorded only once its class binding resolves, and a macro use
-        # inside such a method must attribute to it, not the Module.
-        self._resolve_hybrid_macro_calls()
-
-        # After rehydration: an expansion call's callee join needs spans
-        # for unchanged files too.
-        self._resolve_hybrid_expansion_calls()
-
-        # After rehydration so the "does a real definition exist?" check sees
-        # definitions in files an incremental run did not re-parse; otherwise a
-        # forward declaration whose definition lives in an unchanged file is
-        # kept as a phantom and re-fragments the class.
-        kept_forwards = (
-            self.factory.definition_processor.resolve_deferred_forward_declarations()
-        )
-        if kept_forwards:
-            logger.info(
-                "Registered {} forward-declared C/C++ types with no definition",
-                kept_forwards,
-            )
-
-        # After rehydration (an incremental run's class may live in an
-        # unchanged header) and after forward declarations (a kept
-        # forward-declared TYPE also proves the name is a class, not a
-        # macro).
-        orphan_ctors = (
-            self.factory.definition_processor.resolve_deferred_cpp_artifacts()
-        )
-        if orphan_ctors:
-            logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
-
-        # After artifact resolution so a recovery-registered definition also
-        # counts; a prototype duplicating any bodied definition is dropped.
-        kept_prototypes = (
-            self.factory.definition_processor.resolve_deferred_cpp_prototypes()
-        )
-        if kept_prototypes:
-            logger.info(
-                "Registered {} C/C++ function prototypes with no definition",
-                kept_prototypes,
-            )
-
-        # After forward declarations so a base whose only representation is
-        # a kept forward declaration still resolves to a real node.
-        inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()
-        if inherits:
-            logger.info("Resolved {} deferred C++ inheritance bases", inherits)
-
-        # IMPORTS edges and the Rust sub-scope arbitration verify against
-        # every module qn this run produced (files, inline modules,
-        # rehydrated unchanged files); an internal target that resolves
-        # nowhere emits no edge.
-        known_module_paths = self.known_module_paths()
-
-        # Inline-mod import maps commit BEFORE the deferred inheritance
-        # pass below: it re-resolves module-anchored trait guesses through
-        # them.
-        self.factory.import_processor.finalise_rust_mod_scope_uses(known_module_paths)
-
-        # Same reasoning for every other language: parents resolve against
-        # the full registry (including rehydrated definitions), and an
-        # unresolvable parent emits no edge instead of a phantom.
-        generic_inherits = self.factory.definition_processor.resolve_deferred_inherits()
-        if generic_inherits:
-            logger.info(
-                "Resolved {} deferred inheritance/implements parents",
-                generic_inherits,
-            )
-
-        module_impls = (
-            self.factory.definition_processor.resolve_deferred_cpp_module_impls()
-        )
-        if module_impls:
-            logger.info("Resolved {} C++20 module implementation links", module_impls)
-
-        # Last containment step: every node-registering pass above (deferred
-        # C++ methods, Go receivers, kept forward declarations) must finish
-        # before parent qns are verified against the registry.
-        linked = self.factory.definition_processor.resolve_deferred_parent_links()
-        if linked:
-            logger.info("Resolved {} deferred containment parents", linked)
+        known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         # The resolver memoises name -> qn answers and module languages
@@ -3263,10 +3277,12 @@ class GraphUpdater:
                 touched_languages.add(spec.language)
         self._rerun_frontends_for(touched_languages)
 
-        # Rust inline-mod import maps retract at the end of every parse and
-        # only re-commit through arbitration; run() is not on this path.
-        import_processor.finalise_rust_mod_scope_uses(self.known_module_paths())
-        self.factory.definition_processor.resolve_deferred_parent_links()
+        # The deferred definition-level stages run() applies after Pass 2
+        # (C/C++ macros and includes, containment, forward declarations,
+        # inheritance, Rust inline-mod arbitration): the deleted subtrees
+        # held those relationships too. The registry is already live or was
+        # hydrated above, so no graph read-back here.
+        known_module_paths = self._resolve_deferred_definitions(rehydrate=False)
 
         # The re-parsed files' own CALLS edges went with their Module
         # subtrees; a moved use must not serve last pass's cached answer.
@@ -3276,8 +3292,12 @@ class GraphUpdater:
         # Editing a PROVIDER recreated its Module node and severed the
         # unchanged C# importers' edges (issue #1347).
         import_processor.requeue_csharp_import_edges()
-        import_processor.flush_deferred_import_edges(self.known_module_paths())
+        import_processor.flush_deferred_import_edges(known_module_paths)
+        self._emit_csharp_query_calls()
         self.factory.definition_processor.process_all_method_overrides()
+        # Endpoints and route registrations the re-parsed files queued.
+        self._emit_pending_endpoints()
+        self._emit_route_call_endpoints()
         self._restore_inbound_edges(captured)
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
