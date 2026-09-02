@@ -129,6 +129,12 @@ HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
+# The exclusion set the last run indexed under, covering both the excludes and
+# the unignores (which come from `!` lines in .cgrignore/.gitignore and from
+# interactive setup; there is no --unignore flag). Nothing on disk changes when
+# only the CLI --exclude flags do, so without this the sync check cannot tell
+# that the eligible set moved (issue #1606).
+EXCLUSION_STATE_FILENAME = ".cgr-exclusion-state.json"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"
@@ -144,6 +150,7 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         DIR_MTIMES_FILENAME,
         PARSER_FINGERPRINT_FILENAME,
         DELOMBOK_STATE_FILENAME,
+        EXCLUSION_STATE_FILENAME,
         EDIT_HISTORY_FILENAME,
         EDIT_LOCK_FILENAME,
     }

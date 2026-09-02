@@ -406,6 +406,7 @@ def _delete_hash_cache(repo_path: Path) -> None:
         cache_path.unlink(missing_ok=True)
     (repo_path / cs.DIR_MTIMES_FILENAME).unlink(missing_ok=True)
     (repo_path / cs.PARSER_FINGERPRINT_FILENAME).unlink(missing_ok=True)
+    (repo_path / cs.EXCLUSION_STATE_FILENAME).unlink(missing_ok=True)
 
 
 def _resolve_and_validate_repo(repo_path: str | None) -> Path:

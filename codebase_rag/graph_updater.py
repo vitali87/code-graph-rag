@@ -214,6 +214,47 @@ def _save_delombok_state(state_path: Path, state: dict) -> None:
         return None
 
 
+def _exclusion_state(
+    exclude_paths: frozenset[str] | None,
+    unignore_paths: frozenset[str] | None,
+) -> dict[str, list[str]]:
+    return {
+        "exclude": sorted(exclude_paths or ()),
+        "unignore": sorted(unignore_paths or ()),
+    }
+
+
+def _load_exclusion_state(state_path: Path) -> dict[str, list[str]] | None:
+    """The exclusion set the last completed run indexed under, or None.
+
+    None means "cannot be established" and must be read as changed by the
+    caller: an index written before this stamp existed carries an unknown
+    exclusion set, exactly like a missing parser fingerprint.
+    """
+    try:
+        loaded = json.loads(state_path.read_text(encoding=cs.ENCODING_UTF8))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    result: dict[str, list[str]] = {}
+    for key in ("exclude", "unignore"):
+        values = loaded.get(key)
+        if not isinstance(values, list):
+            return None
+        result[key] = sorted(v for v in values if isinstance(v, str))
+    return result
+
+
+def _save_exclusion_state(state_path: Path, state: dict[str, list[str]]) -> None:
+    try:
+        state_path.write_text(
+            json.dumps(state, sort_keys=True), encoding=cs.ENCODING_UTF8
+        )
+    except OSError:
+        return None
+
+
 def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -360,6 +401,11 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
+        self._exclusion_match: bool | None = None
+        # Set when a run that needed the graph's module paths could not read
+        # them: the reconciliation it was meant to do may not have happened,
+        # so that run must not stamp its exclusion set as reconciled.
+        self._graph_state_unknown: bool = False
         # Package paths read from the graph before Pass 1 of an incremental
         # run; None on a full build or when the graph could not be read.
         self._packages_before_run: set[str] | None = None
@@ -925,6 +971,14 @@ class GraphUpdater:
         # since the cached run changes the eligible set, and the check walks
         # with the same unignore patterns the indexing pass will use.
         self._register_generated_sources()
+        # Per-run, and reset here rather than in __init__: the memo answers
+        # "did the set move since the last COMPLETED run", and this run writes
+        # a new stamp at the end, so an instance used for a second run must
+        # re-read rather than reuse an answer about the stamp its own previous
+        # run replaced. Reset after _register_generated_sources so the answer
+        # is always computed against the effective unignore set.
+        self._exclusion_match = None
+        self._graph_state_unknown = False
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
@@ -1163,6 +1217,30 @@ class GraphUpdater:
                 self.repo_path / cs.DELOMBOK_STATE_FILENAME,
                 self._delombok_state_candidate,
             )
+
+        # Same commit point, for the same reason. The module deletions a newly
+        # excluded file triggers are execute_write calls that only become
+        # durable at the flush above; stamping back in _process_files would let
+        # a run that died in between tell its successor the exclusion was
+        # already reconciled, and the successor would fast-path over a subtree
+        # still in the graph. Deferring the stamp buys only that: the successor
+        # RUNS. It does not on its own make the successor delete anything,
+        # because the hash cache was already saved inside _process_files before
+        # this flush and no longer names the excluded file. What closes the
+        # gap is the graph-backed reconciliation in _process_files, which the
+        # changed exclusion set turns on; the two are needed together.
+        # Recorded on EVERY completed project run, not full builds only: an
+        # incremental run that narrowed the set must record it, or the next run
+        # reads that run's own result as a change. A single-file run walks one
+        # file and cannot speak for the project's exclusion set.
+        if self._single_file is None:
+            if self._graph_state_unknown:
+                logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
+            else:
+                _save_exclusion_state(
+                    self.repo_path / cs.EXCLUSION_STATE_FILENAME,
+                    _exclusion_state(self.exclude_paths, self.unignore_paths),
+                )
 
     def _emit_pending_endpoints(self) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -2183,6 +2261,31 @@ class GraphUpdater:
         ):
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
 
+    def _exclusions_match_last_run(self) -> bool:
+        # Memoised: `_process_files` asks again to decide whether the graph's
+        # own module paths must join reconciliation, and the answer must be
+        # the same one the sync check acted on, logged once.
+        if self._exclusion_match is not None:
+            return self._exclusion_match
+        stored = _load_exclusion_state(self.repo_path / cs.EXCLUSION_STATE_FILENAME)
+        current = _exclusion_state(self.exclude_paths, self.unignore_paths)
+        if stored == current:
+            self._exclusion_match = True
+            return True
+        # A missing stamp means an index built before it existed, whose
+        # exclusion set is unknown rather than known-equal -- the posture
+        # `_warn_if_parser_changed` takes for a missing fingerprint. Reported
+        # apart from a real change so a user seeing an unexpected full pass
+        # can tell which of the two they are looking at.
+        if stored is None:
+            logger.info(ls.EXCLUSION_STATE_MISSING)
+        else:
+            logger.info(
+                ls.EXCLUSION_SET_CHANGED.format(previous=stored, current=current)
+            )
+        self._exclusion_match = False
+        return False
+
     def _is_already_in_sync(self) -> bool:
         if self._delombok_state_changed:
             # The overlay's effect changed while the checked-in bytes did
@@ -2192,6 +2295,13 @@ class GraphUpdater:
             return False
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
+            return False
+        # Nothing on disk changes when only the exclusion set does, so no
+        # hash or directory mtime below can see it: a file excluded by a CLI
+        # flag alone would keep the Module, Class and Method nodes the last
+        # run gave it (issue #1606). `.cgrignore` was covered only
+        # incidentally, by being an indexed and hashed file itself.
+        if not self._exclusions_match_last_run():
             return False
         cache_mtime = cache_path.stat().st_mtime
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
@@ -2345,9 +2455,28 @@ class GraphUpdater:
         # there. A file whose Module already exists must take the
         # delete-before-reingest path or renamed-away symbols and their
         # CALLS/REFERENCES edges accumulate alongside the fresh parse.
+        # A changed exclusion set has to reconcile against the GRAPH, not just
+        # against the hash cache. The cache is saved inside this method, before
+        # the final flush, so a run that died in that window already committed
+        # a cache with the newly excluded file removed; its successor would
+        # compute an empty `deleted_keys` and leave the subtree behind for
+        # good, since the stamp it then writes matches. Asking the graph for
+        # its module paths is what closes that, and it costs a query only on
+        # the runs where the set actually moved. The general case, where an
+        # ordinary deletion is lost the same way, is #1615 and is not closed
+        # here.
         preexisting_paths = (
-            self._existing_module_paths() if is_full_build else frozenset()
+            self._existing_module_paths()
+            if is_full_build or not self._exclusions_match_last_run()
+            else frozenset()
         )
+        # None is "the sink claims readability and the query failed", not
+        # "nothing there": below it falls back to the hash cache alone, which
+        # after a pre-flush crash no longer names the excluded file. That run
+        # completes and would stamp, and every later run would fast-path over
+        # the surviving subtree. Remembering the failure keeps the stamp back.
+        if preexisting_paths is None:
+            self._graph_state_unknown = True
         new_hashes: FileHashCache = {}
         skipped_count = 0
         changed_count = 0
