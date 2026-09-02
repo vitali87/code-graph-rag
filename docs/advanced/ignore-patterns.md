@@ -58,7 +58,9 @@ project's own source, under names the minifier chose (`v`, `y`, `ce`).
 Only the exact ending is matched, so `app.min.js` is skipped while `admin.js`
 and `min.js` are indexed normally. A non-minified vendored file (say
 `docs/js/typeahead.jquery.js`) is not covered by this rule; exclude it with a
-`.cgrignore` pattern such as `docs/**` if you do not want it in the graph.
+`.cgrignore` pattern naming the file, or `docs/**/js/**` for a whole vendored
+directory. Prefer either to a blanket `docs/**`, which also drops the
+first-party Markdown under `docs/` that the document tier indexes on purpose.
 
 Unlike the directory exclusions above, this rule takes precedence over `!`
 lines and **cannot be un-ignored**: a generated artefact is not source in any
