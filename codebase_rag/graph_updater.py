@@ -2757,8 +2757,9 @@ class GraphUpdater:
         # earlier claims the survivor's old module qn, the MERGE lands on the
         # old node and rewrites its path, and the per-file delete by path
         # then finds nothing, leaving the old definitions beside the new
-        # ones (issue #1569). The per-file delete below stays as a no-op
-        # guard for the cacheless full build.
+        # ones (issue #1569). This loop is the only graph delete on the
+        # re-parse path: every non-new entry is in reindexed_keys, so the
+        # per-file loop below only clears local state.
         for stale_key in (*reindexed_keys, *deleted_before_parse):
             self._delete_module_entities(stale_key)
 
@@ -2783,7 +2784,6 @@ class GraphUpdater:
                         and cached_relative_path(filepath, self.repo_path).as_posix()
                         in self._cpp_frontend_covered,
                     )
-                    self._delete_module_entities(file_key)
 
                 changed_count += 1
                 self._process_single_file(
