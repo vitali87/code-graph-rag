@@ -2873,10 +2873,13 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_DELETED, count=len(deleted_keys))
             for deleted_key in deleted_keys:
                 deleted_path = self.repo_path / deleted_key
-                self.remove_file_from_state(deleted_path)
-                # A key the up-front loop already cleared gets no second
-                # module delete; only the File node is still to go.
+                # A key cleared before the parse gets neither a second state
+                # drop nor a second module delete: the state drop keys on the
+                # module qn, which a same-stem replacement parsed since has
+                # taken over (its CommonJS export entry would go with it).
+                # Only the File node is still to go.
                 if deleted_key not in deleted_set:
+                    self.remove_file_from_state(deleted_path)
                     self._delete_module_entities(deleted_key)
                 if isinstance(self.ingestor, QueryProtocol):
                     # Keyed on the absolute path: a sibling project's File

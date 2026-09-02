@@ -487,3 +487,38 @@ def test_a_reused_updater_joins_a_java_fact_against_the_renamed_module(
     assert after == _calls(
         _clean(temp_repo, JAVA_FACT_AFTER, cs.SupportedLanguage.JAVA)
     )
+
+
+# A same-stem replacement takes over the deleted file's module qn, and the
+# CommonJS export registry keys on that qn: dropping the deleted file's state
+# a second time after the parse would strip the replacement's entry and the
+# whole-module alias call below would lose its edge.
+CJS_BEFORE = {
+    "util.js": "module.exports = function helper() { return 1; };\n",
+    "main.js": "const f = require('./util');\nfunction go() { return f(); }\n",
+}
+CJS_AFTER = {
+    "util.ts": CJS_BEFORE["util.js"],
+    "main.js": CJS_BEFORE["main.js"],
+}
+
+
+def test_a_reused_updater_keeps_a_same_stem_replacements_commonjs_export(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / "proj"
+    _materialise(root, CJS_BEFORE)
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.JS)
+    updater.run(force=True)
+    first = _calls(_snapshot(store, root))
+    assert ("proj.main.go", "proj.util.helper") in first, first
+
+    (root / "util.js").unlink()
+    (root / "util.ts").write_text(CJS_AFTER["util.ts"], encoding="utf-8")
+    _bump(root, "util.ts")
+    updater.run(force=False)
+    after = _snapshot(store, root)
+
+    assert ("proj.main.go", "proj.util.helper") in _calls(after), _calls(after)
+    assert after == _clean(temp_repo, CJS_AFTER, cs.SupportedLanguage.JS)
