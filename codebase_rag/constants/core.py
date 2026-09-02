@@ -124,9 +124,11 @@ KEYWORD_SUPER = "super"
 KEYWORD_SELF = "self"
 KEYWORD_CONSTRUCTOR = "constructor"
 # Receivers that name the enclosing type rather than an ordinary value, so
-# `self.Inner()` and `cls.Inner()` are real nested-class constructions. Go's
-# receiver is user-named and cannot be listed here; it is covered by the
-# local/receiver type lookup instead (issue #1641).
+# `self.Inner()` and `cls.Inner()` are real nested-class constructions.
+# Membership is not sufficient on its own: `self` is also a legal Go receiver
+# name, and a spelling test alone accepted `self.Error()` for a module-level
+# `Error`. The caller pairs this with a nesting check against the enclosing
+# type, which is what actually distinguishes the two (issue #1641).
 SELF_RECEIVER_KEYWORDS = frozenset({"self", "cls", "this"})
 
 # Incremental update hash cache

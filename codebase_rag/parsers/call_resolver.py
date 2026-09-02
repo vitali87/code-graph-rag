@@ -406,7 +406,7 @@ class CallResolver:
         if cs.SEPARATOR_DOUBLE_COLON in receiver:
             return result
         if self._receiver_names_a_type_or_module(
-            receiver, module_qn, class_context, local_var_types
+            receiver, module_qn, result[1], class_context, local_var_types
         ):
             return result
         logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
@@ -416,6 +416,7 @@ class CallResolver:
         self,
         receiver: str,
         module_qn: str,
+        resolved_qn: str = "",
         class_context: str | None = None,
         local_var_types: dict[str, str] | None = None,
     ) -> bool:
@@ -434,11 +435,22 @@ class CallResolver:
         head = receiver.split(cs.SEPARATOR_DOT, 1)[0]
         if not head or not head.isidentifier():
             return False
+        # Both branches below ask a NARROWER question than the ones after them.
+        # A class or module receiver admits any name it holds, but `self` and a
+        # typed local admit only a class NESTED IN that type: `self.Inner()`
+        # constructs, while `self.Error()` naming a module-level `Error` is the
+        # #1641 defect wearing a different receiver. Answering "is the receiver
+        # constructible-through" and stopping there re-opened it.
         if head in cs.SELF_RECEIVER_KEYWORDS and class_context:
-            return True
+            if self._class_is_nested_in(resolved_qn, class_context):
+                return True
         if local_var_types and (var_type := local_var_types.get(head)):
             typed_qn = self._resolve_class_name(var_type, module_qn)
-            if typed_qn and self.function_registry.get(typed_qn) == cs.NodeLabel.CLASS:
+            if (
+                typed_qn
+                and self.function_registry.get(typed_qn) == cs.NodeLabel.CLASS
+                and self._class_is_nested_in(resolved_qn, typed_qn)
+            ):
                 return True
         # `_resolve_class_name` follows the import map without checking what it
         # landed on, so it answers `mod_a.helper` for an imported FUNCTION named
@@ -459,6 +471,11 @@ class CallResolver:
         # a name with one. An unimported sibling module is not addressable as a
         # bare receiver in the languages this guard runs for.
         return False
+
+    @staticmethod
+    def _class_is_nested_in(class_qn: str, owner_qn: str) -> bool:
+        """Whether `class_qn` is declared inside `owner_qn`."""
+        return bool(class_qn) and class_qn.startswith(f"{owner_qn}{cs.SEPARATOR_DOT}")
 
     def _import_target_is_a_namespace(self, target: str) -> bool:
         """Whether an imported name refers to something you construct THROUGH.

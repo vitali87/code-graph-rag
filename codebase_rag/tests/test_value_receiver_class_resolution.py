@@ -282,6 +282,46 @@ def via_instance():
         )
         return project
 
+    @pytest.fixture
+    def defect_project(self, temp_repo: Path) -> Path:
+        """The same receivers, naming a class that is NOT nested in their type."""
+        project = temp_repo / "notnested"
+        project.mkdir()
+        (project / "m.py").write_text(
+            encoding="utf-8",
+            data="""
+class Error:
+    def __init__(self, msg):
+        self.msg = msg
+
+
+class Box:
+    def describe(self):
+        # `Error` is module level, not a member of Box: this is a method call
+        # on self, not a construction, and must not instantiate.
+        return self.Error()
+
+
+def via_typed_local():
+    b = Box()
+    return b.Error()
+""",
+        )
+        return project
+
+    @pytest.mark.parametrize(
+        "caller", ["notnested.m.Box.describe", "notnested.m.via_typed_local"]
+    )
+    def test_a_self_or_typed_receiver_does_not_construct_an_unrelated_class(
+        self, defect_project: Path, mock_ingestor: MagicMock, caller: str
+    ) -> None:
+        # The negative half. Accepting a receiver because it is `self` or is
+        # typed to a class, without asking whether the resolved class is
+        # actually nested in that type, re-opens #1641 through a new door.
+        create_and_run_updater(defect_project, mock_ingestor)
+        edges = _instantiations(mock_ingestor)
+        assert (caller, "notnested.m.Error") not in edges
+
     @pytest.mark.parametrize("keyword", ["self", "cls", "this"])
     def test_a_self_receiver_is_accepted_by_the_guard(self, keyword: str) -> None:
         """Asserted on the predicate, not end to end, and deliberately.
@@ -296,12 +336,18 @@ def via_instance():
         """
         resolver = _resolver_with_class("proj.m.Outer")
         assert resolver._receiver_names_a_type_or_module(
-            keyword, "proj.m", class_context="proj.m.Outer"
+            keyword, "proj.m", "proj.m.Outer.Inner", class_context="proj.m.Outer"
         )
         # Without a class context the same keyword is just a name, so the
         # acceptance is the CONTEXT's doing rather than the spelling's.
         assert not resolver._receiver_names_a_type_or_module(
-            keyword, "proj.m", class_context=None
+            keyword, "proj.m", "proj.m.Outer.Inner", class_context=None
+        )
+        # And the CALLEE must vary too: the same receiver, in the same context,
+        # naming a class that is not nested in it is a method call. Varying only
+        # the context left this branch accepting every name in the module.
+        assert not resolver._receiver_names_a_type_or_module(
+            keyword, "proj.m", "proj.m.Unrelated", class_context="proj.m.Outer"
         )
 
     def test_a_typed_local_receiver_constructs_a_nested_class(
