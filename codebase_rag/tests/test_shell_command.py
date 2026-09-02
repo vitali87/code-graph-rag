@@ -17,6 +17,7 @@ from codebase_rag.tools.shell_command import (
     ShellCommander,
     _check_pipeline_patterns,
     _check_segment_patterns,
+    _git_escapes_project,
     _has_redirect_operators,
     _has_subshell,
     _is_blocked_command,
@@ -3430,3 +3431,51 @@ def test_git_bare_exec_path_still_passes() -> None:
     # printed its own libexec dir. Neither redirects, so neither is refused.
     assert _validate_segment("git --exec-path", "git", True) is None
     assert _validate_segment("git --exec-path /tmp/evil pwn", "git", True) is None
+
+
+class TestGitRepoLocationEscape:
+    """`--git-dir`/`-C`/`--work-tree` pointed outside the project root.
+
+    Git reads the target's config and EXECUTES what it finds there, so a repo
+    the caller can write is arbitrary execution, not merely a read escape.
+    Verified before this guard: a planted `alias.pwn = "!touch FILE"` ran with
+    rc=0 through `git --git-dir=SCRATCH/.git pwn`.
+    """
+
+    ROOT = Path("/project/root")
+
+    @pytest.mark.parametrize(
+        "argv",
+        (
+            ["git", "--git-dir=/tmp/evil/.git", "pwn"],
+            ["git", "--git-dir", "/tmp/evil/.git", "pwn"],
+            ["git", "-C", "/tmp/evil", "pwn"],
+            ["git", "-C", "../other", "log"],
+            ["git", "--work-tree=/tmp/evil", "status"],
+            ["git", "--git-dir=/project/root/../escape/.git", "pwn"],
+        ),
+    )
+    def test_a_target_outside_the_root_is_refused(self, argv: list[str]) -> None:
+        blocked, reason = _git_escapes_project(argv, self.ROOT)
+        assert blocked, argv
+        assert "outside the project" in reason
+
+    @pytest.mark.parametrize(
+        "argv",
+        (
+            ["git", "-C", ".", "diff"],
+            ["git", "--git-dir", "x", "log"],
+            ["git", "--git-dir", ".git", "log"],
+            ["git", "-C", "dir", "status"],
+            ["git", "--work-tree", "sub", "status"],
+            ["git", "log"],
+            ["git", "status"],
+        ),
+    )
+    def test_a_target_inside_the_root_still_passes(self, argv: list[str]) -> None:
+        # Pointing git within the project is ordinary use and must keep its
+        # pass; the guard keys on where the value resolves, not on the flag.
+        assert _git_escapes_project(argv, self.ROOT) == (False, "")
+
+    def test_a_non_git_command_is_not_examined(self) -> None:
+        assert _git_escapes_project(["rm", "-C", "/tmp/evil"], self.ROOT) == (False, "")

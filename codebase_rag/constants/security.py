@@ -162,6 +162,16 @@ SHELL_GIT_OPTIONAL_ARG_FLAGS = frozenset(
 # execs `DIR/git-anything`. Only the valued form is refused.
 SHELL_GIT_EXEC_PATH_FLAG = "--exec-path"
 
+# Flags that point git at a DIFFERENT repository or tree. Git reads that
+# location's config and executes what it finds there -- `alias.* = !cmd`,
+# `core.fsmonitor`, `core.pager` -- so a repo the caller can write is
+# arbitrary execution. Verified: an `alias.pwn = "!touch FILE"` planted in a
+# scratch repo ran with rc=0 via `git --git-dir=SCRATCH/.git pwn`.
+# The flag alone is not the problem: pointing git INSIDE the project root is
+# ordinary use, and `git -C . diff` and `git --git-dir x log` must keep their
+# pass. The guard keys on where the value RESOLVES to, not on the flag.
+SHELL_GIT_REPO_LOCATION_FLAGS = frozenset({"-C", "--git-dir", "--work-tree"})
+
 SHELL_GIT_INLINE_CONFIG_FLAGS = frozenset({"-c", "--config-env"})
 
 SHELL_CMD_XARGS = "xargs"

@@ -166,6 +166,59 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
     return False, ""
 
 
+def _git_escapes_project(
+    cmd_parts: list[str], project_root: Path
+) -> tuple[bool, str]:
+    """Whether git is pointed at a repository outside the project root.
+
+    Git reads the target's config and EXECUTES what it finds -- an
+    `alias.x = !cmd`, `core.fsmonitor`, `core.pager` -- so any writable
+    directory becomes arbitrary execution. Verified: a planted
+    `alias.pwn = "!touch FILE"` ran with rc=0 through
+    `git --git-dir=SCRATCH/.git pwn`.
+
+    Keyed on the resolved TARGET rather than the flag, because pointing git
+    inside the project is ordinary use: `git -C . diff` and
+    `git --git-dir x log` stay allowed.
+    """
+    if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_GIT:
+        return False, ""
+
+    index = 1
+    while index < len(cmd_parts):
+        arg = cmd_parts[index]
+        target = None
+        if arg in cs.SHELL_GIT_REPO_LOCATION_FLAGS:
+            if index + 1 < len(cmd_parts):
+                target = cmd_parts[index + 1]
+            index += 2
+        elif "=" in arg and _flag_name(arg) in cs.SHELL_GIT_REPO_LOCATION_FLAGS:
+            target = arg.split("=", 1)[1]
+            index += 1
+        else:
+            index += 1
+            continue
+
+        if not target:
+            continue
+        try:
+            if target.startswith("/"):
+                resolved = Path(target).resolve()
+            else:
+                resolved = (project_root / target).resolve()
+        except (OSError, ValueError):
+            return True, f"git pointed at an unresolvable path: {target}"
+
+        try:
+            resolved.relative_to(project_root)
+        except ValueError:
+            return True, (
+                f"git pointed outside the project at {resolved}, whose config "
+                "git would execute"
+            )
+    return False, ""
+
+
 def _check_pipeline_patterns(full_command: str) -> str | None:
     for pattern, reason in PIPELINE_PATTERNS_COMPILED:
         if pattern.search(full_command):
@@ -1319,9 +1372,13 @@ class ShellCommander:
                         cmd_parts = shlex.split(segment)
                     except ValueError:
                         continue
-                    is_dangerous, reason = _is_dangerous_rm_path(
+                    is_dangerous, reason = _git_escapes_project(
                         cmd_parts, self.project_root
                     )
+                    if not is_dangerous:
+                        is_dangerous, reason = _is_dangerous_rm_path(
+                            cmd_parts, self.project_root
+                        )
                     if is_dangerous:
                         err_msg = te.COMMAND_DANGEROUS_BLOCKED.format(
                             cmd=cmd_parts[0], reason=reason
