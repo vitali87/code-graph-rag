@@ -418,10 +418,11 @@ def _make_tmp_path_removable(root: Path) -> None:
             return
         try:
             mode = os.stat(target).st_mode
-            os.chmod(
-                target,
-                mode | stat.S_IWRITE | (stat.S_IEXEC if os.path.isdir(target) else 0),
-            )
+            # A directory needs READ to be listed as well as EXECUTE to be
+            # entered: at 0o300 it is traversable but `os.walk` still cannot
+            # enumerate it, so its children stay unreachable and unremovable.
+            extra = stat.S_IREAD | stat.S_IEXEC if os.path.isdir(target) else 0
+            os.chmod(target, mode | stat.S_IWRITE | extra)
         except (FileNotFoundError, NotADirectoryError):
             return
         except OSError:
@@ -429,8 +430,46 @@ def _make_tmp_path_removable(root: Path) -> None:
             # removal that follows reports the real problem.
             return
 
-    # Bottom-up so a directory's own mode is widened only after its children
-    # have been visited through it.
+    # Two passes, and the first is not optional. `os.walk` has to traverse
+    # INTO a directory to list it, so a directory missing the search bit
+    # yields no entries at all and everything beneath it is never visited --
+    # the same stranded-subtree defect this helper exists to prevent. Widening
+    # directories top-down on the way in restores that reachability; doing it
+    # bottom-up only fixes the ORDER of widening, never the reachability the
+    # listing itself needs.
+    # `widen(dirpath)` BEFORE reading `dirnames`, not the children afterwards:
+    # `os.walk` lists a directory when it yields it, so widening its children
+    # is already one level too late for a directory that cannot be listed at
+    # all (mode 0o000). Widening each directory as it arrives -- the root
+    # included, hence `widen(str(root))` also running here -- means the
+    # listing for the level below happens after the mode is fixed. `os.walk`
+    # swallows the listing error silently, so `onerror` is set to make a
+    # genuine failure visible rather than an empty subtree.
+    # Both `dirpath` and its `dirnames`: a directory at mode 0o000 is never
+    # YIELDED by `os.walk` at all (it raises while listing and is skipped
+    # silently), so widening only `dirpath` never reaches it. Its name is
+    # still visible in its PARENT's `dirnames`, which is the only handle on
+    # it, and widening it there means the walk can descend on the retry.
+    walk_errors: list[OSError] = []
+    for dirpath, dirnames, _filenames in os.walk(
+        root, topdown=True, followlinks=False, onerror=walk_errors.append
+    ):
+        widen(dirpath)
+        for name in dirnames:
+            widen(os.path.join(dirpath, name))
+    if walk_errors:
+        # A listing failed before its mode was fixed; the modes are fixed now,
+        # so a second walk reaches what the first could not. Bounded at one
+        # retry: anything still unlistable is a genuine failure, and the
+        # removal that follows reports it rather than this helper looping.
+        for dirpath, dirnames, _filenames in os.walk(
+            root, topdown=True, followlinks=False
+        ):
+            widen(dirpath)
+            for name in dirnames:
+                widen(os.path.join(dirpath, name))
+    # Then the full bottom-up pass for the files, now that every directory
+    # holding them can actually be listed.
     for dirpath, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
         for name in (*filenames, *dirnames):
             widen(os.path.join(dirpath, name))

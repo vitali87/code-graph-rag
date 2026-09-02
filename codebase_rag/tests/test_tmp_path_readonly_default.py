@@ -228,6 +228,43 @@ def test_teardown_preserves_content_and_traversability(tmp_path: Path) -> None:
     )
 
 
+# `ids` in octal: pytest's default renders these decimal, so a failing case
+# reads as `[256]` and a reader grepping the log for `0o400` finds nothing.
+@pytest.mark.parametrize("dir_mode", [0o000, 0o400, 0o444, 0o500, 0o600], ids=oct)
+def test_teardown_reaches_a_subtree_under_any_directory_mode(
+    tmp_path: Path, dir_mode: int
+) -> None:
+    """Every restrictive directory mode, not just the one that happens to work.
+
+    Parametrised because a single mode cannot cover this: `0o500` keeps the
+    search bit and descends normally, `0o400` blocks traversal, and `0o000`
+    is never YIELDED by `os.walk` at all -- it raises while listing and is
+    skipped silently, so it is only reachable through its parent's
+    `dirnames`. A directory also needs READ to be enumerated, not just
+    EXECUTE to be entered: widened to `0o300` it is traversable and still
+    unlistable. Each of those is a different way for the subtree to strand,
+    and picking any one mode hides the other two.
+    """
+    from codebase_rag.tests.conftest import _make_tmp_path_removable
+
+    root = tmp_path / f"mode-{dir_mode:o}"
+    inner = root / "inner"
+    inner.mkdir(parents=True)
+    buried = inner / "loose-object"
+    buried.write_text("object", encoding="utf-8")
+    buried.chmod(stat.S_IRUSR)
+    inner.chmod(dir_mode)
+
+    _make_tmp_path_removable(tmp_path)
+
+    assert os.stat(buried).st_mode & stat.S_IWUSR, (
+        f"a file under a {dir_mode:#o} directory was never reached, so the "
+        "subtree stays read-only and strands pytest's later cleanup"
+    )
+    _remove_tree_windows_style(root, _WindowsRemovalSemantics())
+    assert not root.exists()
+
+
 def test_teardown_tolerates_a_path_that_vanishes(tmp_path: Path) -> None:
     """Git's background maintenance deletes its own lock asynchronously.
 
