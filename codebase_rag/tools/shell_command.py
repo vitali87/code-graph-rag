@@ -139,11 +139,23 @@ def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
     return "r" in flags and "f" in flags
 
 
+def _rm_operands(args: list[str]) -> list[str]:
+    """The tokens rm would treat as paths.
+
+    `--` ends option parsing, so everything after it is an operand even when
+    it starts with a dash. Dropping every dash-prefixed token let
+    `rm -r -- -x/../../outside/victim` skip the containment check entirely.
+    """
+    if "--" in args:
+        end = args.index("--")
+        return [p for p in args[:end] if not p.startswith("-")] + args[end + 1 :]
+    return [p for p in args if not p.startswith("-")]
+
+
 def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False, ""
-    path_args = [p for p in cmd_parts[1:] if not p.startswith("-")]
-    for path_arg in path_args:
+    for path_arg in _rm_operands(cmd_parts[1:]):
         if path_arg in ("*", ".", ".."):
             return True, f"rm targeting dangerous path: {path_arg}"
         # Joining onto the root is the platform's own absoluteness test: an
