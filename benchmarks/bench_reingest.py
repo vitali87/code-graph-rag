@@ -97,11 +97,18 @@ def measure_reingest(
     from codebase_rag.parser_loader import load_parsers
     from evals.cgr_graph import _StatefulIngestor
 
+    if iterations <= 0:
+        raise ValueError(f"iterations must be positive, got {iterations}")
     corpus = corpus.resolve()
     target = (corpus / target).resolve() if not target.is_absolute() else target
+    try:
+        target.relative_to(corpus)
+    except ValueError as error:
+        raise ValueError(f"target file must be inside the corpus: {target}") from error
     if not target.is_file():
         raise ValueError(f"target file does not exist: {target}")
     original = target.read_bytes()
+    original_stat = target.stat()
 
     # The MCP server and the CLI log at INFO; debug-level formatting alone
     # is a measurable share of a sub-second budget.
@@ -145,6 +152,9 @@ def measure_reingest(
             full_samples.append((time.perf_counter() - started) * 1000.0)
     finally:
         target.write_bytes(original)
+        # Bytes AND timestamps: a changed mtime would wake a watcher or skew
+        # the next mtime-gated update.
+        os.utime(target, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
         for name in (cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME):
             stale = corpus / name
             if stale.is_file():

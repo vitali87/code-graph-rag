@@ -1355,17 +1355,24 @@ class GraphUpdater:
                     _exclusion_state(self.exclude_paths, self.unignore_paths),
                 )
 
-    def _emit_pending_endpoints(self) -> None:
+    def _emit_pending_endpoints(self, only: set[str] | None = None) -> None:
+        # `only` (a scoped re-ingest, issue #1524) limits the AST loads to
+        # those modules plus the router modules their mounts need; the
+        # mount-prefix registry is still built from every Python module the
+        # graph knows, but through the disk-backed cache only for the
+        # scoped set.
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
             return
         dp = self.factory.definition_processor
         module_files = self._python_module_files()
+        if only is not None:
+            module_files = {qn: p for qn, p in module_files.items() if qn in only}
         module_asts = self._python_module_asts(module_files)
         entries = list(dp.pending_endpoints)
         # A mount-only incremental change re-parses just the mounting module;
         # the unchanged handlers must still re-emit under the new prefix, so
         # they come back from the graph. A full build queued them all already.
-        if not self._is_full_build:
+        if not self._is_full_build and only is None:
             entries.extend(
                 self._rehydrated_route_handlers(
                     {qn for _label, qn, _decorators, _module in entries},
@@ -1414,10 +1421,10 @@ class GraphUpdater:
         except Exception:
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
-    def _emit_route_call_endpoints(self) -> None:
+    def _emit_route_call_endpoints(self, only: set[str] | None = None) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
             return
-        modules = self._route_module_asts()
+        modules = self._route_module_asts(only=only)
         if not modules:
             return
         # Cleanup keyed on every scanned module, BEFORE emission:
@@ -1472,12 +1479,15 @@ class GraphUpdater:
         return cs.NodeLabel.MODULE, module_qn
 
     def _route_module_asts(
-        self,
+        self, only: set[str] | None = None
     ) -> dict[str, tuple[Node, cs.SupportedLanguage, Path]]:
         dp = self.factory.definition_processor
         files: dict[str, Path] = dict(dp.module_qn_to_file_path)
-        for qn, path in self._graph_route_module_paths():
-            files.setdefault(qn, path)
+        if only is None:
+            for qn, path in self._graph_route_module_paths():
+                files.setdefault(qn, path)
+        else:
+            files = {qn: p for qn, p in files.items() if qn in only}
         out: dict[str, tuple[Node, cs.SupportedLanguage, Path]] = {}
         for qn, path in files.items():
             entry = self.ast_cache.load(path)
@@ -3166,8 +3176,12 @@ class GraphUpdater:
             self._reingest_hydrated = True
             return
         # Pass 1 of run(): without the package map a re-parsed module hangs
-        # off a Folder instead of its Package.
+        # off a Folder instead of its Package. Generated-source roots and the
+        # delombok overlay are per-run inputs run() computes before Pass 2;
+        # a fresh updater must compute them too or a Lombok class re-parses
+        # without its generated members.
         self.factory.structure_processor.identify_structure()
+        self._register_generated_sources()
         self._rehydrate_registry_from_graph()
         self._rehydrate_function_locations()
         self._reingest_hydrated = True
@@ -3267,8 +3281,10 @@ class GraphUpdater:
                 self.ingestor.execute_write(
                     cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: path.resolve().as_posix()}
                 )
-        for path in reparse.values():
-            self._process_single_file(path)
+        for key, path in reparse.items():
+            # The delombok overlay stands in for the checked-in bytes exactly
+            # as the batch path does (issue #1140).
+            self._process_single_file(path, file_bytes=self._delombok_overlay.get(key))
 
         touched_languages: set[cs.SupportedLanguage] = set()
         for path in (*reparse.values(), *gone.values()):
@@ -3295,9 +3311,16 @@ class GraphUpdater:
         import_processor.flush_deferred_import_edges(known_module_paths)
         self._emit_csharp_query_calls()
         self.factory.definition_processor.process_all_method_overrides()
-        # Endpoints and route registrations the re-parsed files queued.
-        self._emit_pending_endpoints()
-        self._emit_route_call_endpoints()
+        # Endpoints and route registrations, scoped to the re-parsed modules:
+        # the project-wide passes would load every route-capable module's
+        # AST, which on a fresh updater means re-parsing most of the repo.
+        touched_modules = {
+            qn
+            for qn, module_path in self.factory.definition_processor.module_qn_to_file_path.items()
+            if module_path in reparse.values()
+        }
+        self._emit_pending_endpoints(only=touched_modules)
+        self._emit_route_call_endpoints(only=touched_modules)
         self._restore_inbound_edges(captured)
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
