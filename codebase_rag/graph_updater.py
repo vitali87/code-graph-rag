@@ -2702,11 +2702,15 @@ class GraphUpdater:
             if (flipped_dirs and Path(key).parent.as_posix() in flipped_dirs)
             or (flux_stems and _stem_key(key) in flux_stems)
         }
+        # The siblings join the dependents query: a flux-stem survivor's
+        # module qn changes on this run, so a file that includes or calls it
+        # must re-parse too, or its captured inbound edges are restored
+        # against the old qn (a wrong IMPORTS edge, a dropped CALLS edge).
         affected = 0
         for caller_key in sorted(
             {
                 *self._affected_caller_keys(
-                    sorted({*reindexed_keys, *deleted_before_parse})
+                    sorted({*reindexed_keys, *deleted_before_parse, *siblings})
                 ),
                 *siblings,
             }
