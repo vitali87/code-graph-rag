@@ -558,7 +558,10 @@ def test_non_removal_funcs_lists_every_callable_rmtree_passes() -> None:
 
 
 _FANOUT_DIR = re.compile(r"[0-9a-f]{2}")
-_LOOSE_OBJECT = re.compile(r"[0-9a-f]{38}")
+# 38 hex for sha1 object names, 62 for sha256; the leading two hex chars are
+# the fanout directory, so a basename is the remaining 38 or 62. Fixtures
+# here pin sha1, but the helper must not silently discard a sha256 repo.
+_LOOSE_OBJECT = re.compile(r"[0-9a-f]{38}|[0-9a-f]{62}")
 
 
 def _collect_loose_objects(repo: Path) -> tuple[list[str], list[int]]:
@@ -621,6 +624,7 @@ def test_git_repo_fixture_tears_down_its_own_readonly_objects(
         **os.environ,
         "GIT_CONFIG_GLOBAL": str(git_repo / "absent"),
         "GIT_CONFIG_SYSTEM": str(git_repo / "absent"),
+        "GIT_DEFAULT_HASH": "sha1",
     }
     subprocess.run(["git", "add", "a.py"], cwd=git_repo, check=True, env=env)
     subprocess.run(
@@ -670,6 +674,7 @@ def test_the_loose_object_filter_rejects_a_packed_repo(
         **os.environ,
         "GIT_CONFIG_GLOBAL": str(tmp_path / "absent"),
         "GIT_CONFIG_SYSTEM": str(tmp_path / "absent"),
+        "GIT_DEFAULT_HASH": "sha1",
     }
     repo = tmp_path / "packed"
     repo.mkdir()
