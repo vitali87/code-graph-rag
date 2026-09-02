@@ -633,6 +633,32 @@ class TestReingest:
             await mcp_registry.reingest(["a.py"])
             assert mock_updater_cls.call_count == 2
 
+    async def test_a_failed_reindex_drops_the_retained_updater(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        # index_repository deletes the project first; if the rebuild then
+        # fails, the updater retained from the deleted graph must not serve
+        # a later reingest, which would resolve against dead definitions.
+        _mark_indexed(mcp_registry)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            mock_updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
+            )
+            await mcp_registry.reingest(["a.py"])
+            assert mock_updater_cls.call_count == 1
+
+            mcp_registry.ingestor.ensure_constraints.side_effect = RuntimeError(
+                "database gone"
+            )
+            outcome = await mcp_registry.index_repository()
+            assert "database gone" in outcome
+            mcp_registry.ingestor.ensure_constraints.side_effect = None
+
+            mcp_registry.ingestor.list_projects.return_value = []
+            result = await mcp_registry.reingest(["a.py"])
+            assert "not indexed" in result["error"]
+            assert mock_updater_cls.call_count == 1
+
     async def test_wipe_database_drops_the_retained_updater(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:

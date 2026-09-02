@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import random
 from collections.abc import Callable
 from pathlib import Path
@@ -674,6 +675,10 @@ def test_reingest_does_not_hide_an_edit_it_was_not_told_about(
         "pkg/unrelated.py",
         FIXTURE["pkg/unrelated.py"] + "\n\ndef newly_added():\n    return 5\n",
     )
+    # A coarse filesystem clock could stamp the edits no later than the cache;
+    # the incremental skip compares mtimes, so both are pushed past it.
+    for rel in ("pkg/util.py", "pkg/unrelated.py"):
+        os.utime(fixture_root / rel, (stamped_before + 1, stamped_before + 1))
     updater.reingest(["pkg/util.py"])
     assert cache.stat().st_mtime == stamped_before, "reingest moved the cache mtime"
 

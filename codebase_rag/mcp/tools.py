@@ -765,6 +765,10 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
+        # The retained updater described the graph just deleted; if the
+        # rebuild fails from here on, a later reingest must hit the
+        # not-indexed guard rather than resolve against those definitions.
+        self._live_updater = None
 
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()

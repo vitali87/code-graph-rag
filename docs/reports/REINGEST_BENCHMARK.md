@@ -77,3 +77,13 @@ now resolve into) the changed file, instead of re-parsing whole dependents,
 would cut the hub case to the cost of the changed file plus a fraction of
 each dependent. That needs the per-site edge properties from #1522 to find
 those sites cheaply and is left for a follow-up.
+
+## What a scoped re-ingest does not rebuild
+
+Two passes are repository-wide by construction and are left to
+`update_repository`: the code-quality finding analysis (`HAS_SMELL`,
+`HAS_VULNERABILITY`, `IMPLEMENTS_PATTERN`) and the URL-to-endpoint link pass
+(`RESOLVES_TO`), which drops every network link and rebuilds it from all live
+resources. A re-parsed file's finding edges are detached with its old subtree
+and come back on the next full update; endpoint links for a changed route are
+refreshed the same way. Scoping those two passes is tracked separately.

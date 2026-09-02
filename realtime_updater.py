@@ -244,10 +244,17 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         logger.warning(
             logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
-        if event.event_type == EventType.DELETED:
-            self.updater.reingest((), deleted=(path,))
-        else:
-            self.updater.reingest((path,))
+        try:
+            if event.event_type == EventType.DELETED:
+                self.updater.reingest((), deleted=(path,))
+            else:
+                self.updater.reingest((path,))
+        except ValueError as exc:
+            # A path reingest refuses (a symlink resolving outside the repo,
+            # a directory where a file was expected) must not end the
+            # callback: the refusal is logged and later events still run.
+            logger.warning(logs.WATCHER_REINGEST_REFUSED.format(path=path, error=exc))
+            return
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))
 
 
