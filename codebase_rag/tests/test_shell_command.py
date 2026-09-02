@@ -1202,6 +1202,28 @@ class TestDangerousRmPath:
         argv = ["rm", "-r", "--", "-in-root-file"]
         assert _is_dangerous_rm_path(argv, project_root) == (False, "")
 
+    def test_dash_prefixed_operand_after_first_operand_is_checked(
+        self, tmp_path: Path
+    ) -> None:
+        # POSIX option parsing ends at the first operand, so BSD rm (macOS)
+        # reads the second token here as a path and deletes it. Filtering on
+        # the leading dash alone let this escape the containment check.
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir(exist_ok=True)
+        argv = ["rm", "a", "-x/../../outside/victim"]
+        is_dangerous, reason = _is_dangerous_rm_path(argv, project_root)
+        assert is_dangerous
+        assert "outside project" in reason or "system directory" in reason
+
+    def test_operand_text_is_not_read_as_rf_flags(self, tmp_path: Path) -> None:
+        # `-in-root-file` carries both an `r` and an `f`, so scanning every
+        # dash-prefixed token for flags blocked this as if it were `rm -rf`.
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir(exist_ok=True)
+        assert _is_dangerous_rm(["rm", "-r", "--", "-in-root-file"]) is False
+        assert _is_dangerous_rm(["rm", "-rf", "sub/file.txt"]) is True
+        assert _is_dangerous_rm(["rm", "-r", "-f", "sub/file.txt"]) is True
+
     def test_options_before_end_of_options_are_still_options(
         self, tmp_path: Path
     ) -> None:

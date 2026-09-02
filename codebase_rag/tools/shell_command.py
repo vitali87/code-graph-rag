@@ -135,21 +135,41 @@ def _is_blocked_command(cmd: str) -> bool:
 def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False
-    flags = "".join(part for part in cmd_parts[1:] if part.startswith("-"))
+    flags = "".join(_rm_options(cmd_parts[1:]))
     return "r" in flags and "f" in flags
+
+
+def _rm_options(args: list[str]) -> list[str]:
+    """The tokens rm would parse as options, the complement of the operands.
+
+    Reading the operand text as flags made `rm -r -- -in-root-file` look like
+    `rm -rf`, because the operand happens to contain an `r` and an `f`.
+    """
+    operands = _rm_operands(args)
+    end = len(args) - len(operands)
+    return [part for part in args[:end] if part.startswith("-")]
 
 
 def _rm_operands(args: list[str]) -> list[str]:
     """The tokens rm would treat as paths.
 
-    `--` ends option parsing, so everything after it is an operand even when
-    it starts with a dash. Dropping every dash-prefixed token let
-    `rm -r -- -x/../../outside/victim` skip the containment check entirely.
+    POSIX option parsing ends at the first operand or at `--`, whichever comes
+    first, and everything from there on is a path even when it starts with a
+    dash. BSD rm (macOS) follows that literally, so `rm a -x/../../outside/x`
+    deletes the second token; GNU rm instead permutes and rejects `-x/` as a
+    bad option. Taking the POSIX reading treats more tokens as paths than GNU
+    would, so the containment check only ever errs towards refusing.
+
+    Dropping every dash-prefixed token, as this used to, let both
+    `rm -r -- -x/../../outside/victim` and `rm a -x/../../outside/victim`
+    skip the containment check entirely.
     """
-    if "--" in args:
-        end = args.index("--")
-        return [p for p in args[:end] if not p.startswith("-")] + args[end + 1 :]
-    return [p for p in args if not p.startswith("-")]
+    for index, token in enumerate(args):
+        if token == "--":
+            return args[index + 1 :]
+        if token == "-" or not token.startswith("-"):
+            return args[index:]
+    return []
 
 
 def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
