@@ -632,6 +632,63 @@ def _sed_script_skeleton(script: str) -> str:
     return "".join(out)
 
 
+def _sed_cluster_tail(arg: str) -> str | None:
+    """The script-bearing flag a bundled short-flag cluster ends in, if any.
+
+    `-ne` is `-n` and `-e`, and the `-e` claims the NEXT token as its script.
+    Prefix-matching the raw token instead read the cluster's own tail letter
+    as the script -- `arg[2:]` of `-ne` is the single character `e` -- so the
+    real script was never collected and a following `-e 'w FILE'` was never
+    reached. Verified: `sed -ne p -e 'w FILE'` wrote outside the working
+    directory with rc=0 while the validator saw only `e`.
+
+    Returns the trailing flag (`-e` or `-f`) when the cluster ends in one and
+    carries no attached value, `""` when the cluster is script-free, and None
+    when a letter is unrecognised so the caller can fail closed.
+    """
+    if not arg.startswith("-") or arg.startswith("--") or len(arg) < 3:
+        return None
+
+    for position, letter in enumerate(arg[1:], start=1):
+        short = f"-{letter}"
+        if short in ("-e", "-f"):
+            # A trailing -e/-f takes the next token; anything after it in the
+            # cluster is its attached value and belongs to it either way.
+            return short if position == len(arg) - 1 else ""
+        if short in cs.SHELL_SED_OPTIONAL_ARG_FLAGS:
+            # Attached-only: the cluster remainder is its value, if any.
+            return ""
+        if short not in cs.SHELL_SED_KNOWN_FLAGS:
+            return None
+    return ""
+
+
+def _sed_names_script_file(cmd_parts: list[str]) -> bool:
+    """Whether any argument hands sed a script FILE this validator cannot read.
+
+    `-f x`, `-fx`, `--file=x` and a bundled `-nf x` all name one. Matching
+    only tokens that START with `-f` missed every cluster: `sed -nf s.sed in`
+    ran an arbitrary script file, verified writing its target with rc=0.
+    """
+    for arg in cmd_parts[1:]:
+        if not arg.startswith("-"):
+            continue
+        if arg == "-f" or (arg.startswith("-f") and len(arg) > 2):
+            return True
+        if _flag_name(arg) == "--file":
+            return True
+        if not arg.startswith("--") and len(arg) > 2:
+            for letter in arg[1:]:
+                short = f"-{letter}"
+                if short == "-f":
+                    return True
+                if short in cs.SHELL_SED_OPTIONAL_ARG_FLAGS or short == "-e":
+                    # These consume the cluster remainder, so a later `f` in
+                    # it is their value rather than a flag of its own.
+                    break
+    return False
+
+
 def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     """Return the sed construct that would run a command or write a file.
 
@@ -644,11 +701,7 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_SED:
         return None
 
-    if any(
-        a == "-f" or (a.startswith("-f") and len(a) > 2) or _flag_name(a) == "--file"
-        for a in cmd_parts[1:]
-        if a.startswith("-")
-    ):
+    if _sed_names_script_file(cmd_parts):
         return "a script file this validator cannot inspect"
 
     # Script text arrives as the token after `-e`, attached as `-eSCRIPT`, or
@@ -788,14 +841,23 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
 
         if "=" in arg:
             scripts.append(arg.split("=", 1)[1])
+        elif arg in ("-e", "--expression"):
+            add(index + 1)
+            index += 1
+        elif _sed_cluster_tail(arg) == "-e":
+            # A bundled cluster ending in a bare `-e` (`-ne`, `-nEe`): the
+            # script is the NEXT token, exactly as for a standalone `-e`.
+            # Reading the cluster's own tail letter as the script -- `arg[2:]`
+            # of `-ne` is `e` -- left the following `-e 'w FILE'` uncollected.
+            add(index + 1)
+            index += 1
         elif arg.startswith("-e") and len(arg) > 2:
+            # `-eSCRIPT`, and the bundled `-neSCRIPT` where the `-e` is not
+            # the cluster's last letter so the remainder is its script.
             attached = arg[2:]
             if _sed_awaits_operand(attached) and index + 1 < len(cmd_parts):
                 attached = f"{attached} {cmd_parts[index + 1]}"
             scripts.append(attached)
-        elif arg in ("-e", "--expression"):
-            add(index + 1)
-            index += 1
 
         index += 1
 

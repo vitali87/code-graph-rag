@@ -3263,3 +3263,96 @@ def test_e_command_blocked_where_reachable() -> None:
         "sed 'e id' f",
     ):
         assert _validate_segment(command, allowlist, False), command
+
+
+# A bundled short-flag cluster ending in `-e` claims the NEXT token as its
+# script, exactly as a standalone `-e` does. The collector instead matched the
+# raw token's `-e` prefix and read the cluster's own tail letter as the script
+# -- `arg[2:]` of `-ne` is the single character `e` -- so the real script was
+# never collected and a following `-e` carrying the payload was never reached.
+# Verified before the fix: `sed -ne p -e 'w FILE'` ran through ShellCommander
+# under --yolo with rc=0 and wrote FILE outside the working directory.
+_SED_E_CLUSTERS = ("-ne", "-nEe", "-ane", "-se", "-ue", "-be", "-re", "-ze")
+
+
+@pytest.mark.parametrize("cluster", _SED_E_CLUSTERS)
+def test_sed_e_cluster_does_not_hide_a_later_script(cluster: str) -> None:
+    # The payload sits in the SECOND -e, which is the position the misparse
+    # skipped. Asserting only that the segment was refused would hold against
+    # the broken collector too, since `sed -ne 'w /tmp/x'` was already blocked
+    # for an unrelated reason -- so pin the construct the scan actually names.
+    assert (
+        _sed_exec_construct(["sed", cluster, "p", "-e", "w /tmp/x", "f"]) is not None
+    ), cluster
+    assert _sed_exec_construct(["sed", cluster, "p", "-e", "1e id", "f"]) is not None
+    assert _sed_exec_construct(["sed", cluster, "p", "-e", "s/a/b/e", "f"]) is not None
+
+
+@pytest.mark.parametrize("cluster", _SED_E_CLUSTERS)
+def test_sed_e_cluster_still_runs_ordinary_scripts(cluster: str) -> None:
+    # The fix must not refuse the everyday spelling it parses correctly now:
+    # the next token is the script, and an ordinary one carries no construct.
+    assert _sed_exec_construct(["sed", cluster, "p", "README.md"]) is None, cluster
+    assert _sed_exec_construct(["sed", cluster, "1,5p", "f"]) is None
+
+
+def test_sed_e_cluster_with_attached_script_still_scanned() -> None:
+    # `-eSCRIPT` must never come back clean. In practice the known-flags check
+    # refuses first -- a script's leading character (`w`, `s`, `p`) is not a
+    # flag letter -- so the attached-script branch is a second line rather than
+    # the first. Either way the answer is a refusal, which is what matters; the
+    # cluster branch must not turn one of these into a pass by swallowing the
+    # token and leaving the script uncollected.
+    for argv in (
+        ["sed", "-ew", "/tmp/x", "f"],
+        ["sed", "-es/a/b/w /tmp/x", "in.txt"],
+    ):
+        assert _sed_exec_construct(argv) is not None, argv
+
+    # The ordinary separated spelling of the same edit still passes.
+    assert _sed_exec_construct(["sed", "-e", "s/a/b/", "in.txt"]) is None
+
+
+def test_sed_mid_cluster_attached_script_fails_closed() -> None:
+    # `-new /tmp/x` is `-n -e 'w /tmp/x'` to real sed, but `w` is not a known
+    # flag letter, so the cluster is unclassifiable and the scan refuses
+    # rather than guessing the script's position. Recorded as the CURRENT
+    # behaviour, which is the safe direction and is unchanged by the cluster
+    # fix -- these refuse identically before and after it.
+    for argv in (
+        ["sed", "-new /tmp/x", "f"],
+        ["sed", "-anew /tmp/x", "f"],
+        ["sed", "-nee id", "f"],
+    ):
+        construct = _sed_exec_construct(argv)
+        assert construct is not None, argv
+        assert "cannot interpret" in construct
+
+
+# `-f` names a script FILE this validator cannot read. The guard matched only
+# tokens STARTING with `-f`, so every bundled spelling evaded it: `sed -nf
+# s.sed in.txt` ran an arbitrary script file, verified writing its target with
+# rc=0 through ShellCommander under --yolo.
+@pytest.mark.parametrize(
+    "argv",
+    (
+        ["sed", "-nf", "script.sed", "f"],
+        ["sed", "-anf", "script.sed", "f"],
+        ["sed", "-nEf", "script.sed", "f"],
+        ["sed", "-f", "script.sed", "f"],
+        ["sed", "-fscript.sed", "f"],
+        ["sed", "--file=script.sed", "f"],
+    ),
+)
+def test_sed_script_file_refused_in_every_spelling(argv: list[str]) -> None:
+    construct = _sed_exec_construct(argv)
+    assert construct is not None, argv
+    assert "script file" in construct
+
+
+def test_sed_cluster_f_does_not_overreach() -> None:
+    # An `f` that is the VALUE of a preceding operand-taking flag is not the
+    # -f flag: `-ef` is `-e` with the attached script `f`, and `-if` is `-i`
+    # with the suffix `f`. Refusing those would block ordinary invocations.
+    assert _sed_exec_construct(["sed", "-ef", "README.md"]) is None
+    assert _sed_exec_construct(["sed", "-if", "s/a/b/", "f"]) is None
