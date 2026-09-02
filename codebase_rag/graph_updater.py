@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -406,6 +407,11 @@ class GraphUpdater:
         # them: the reconciliation it was meant to do may not have happened,
         # so that run must not stamp its exclusion set as reconciled.
         self._graph_state_unknown: bool = False
+        # Written at the post-flush commit point in `run`, never inside
+        # `_process_files` (issue #1615).
+        self._pending_hash_cache: tuple[Path, FileHashCache] | None = None
+        self._pending_dir_mtimes: tuple[Path, DirMtimesCache] | None = None
+        self._pending_cache_observed_at: float | None = None
         # Package paths read from the graph before Pass 1 of an incremental
         # run; None on a full build or when the graph could not be read.
         self._packages_before_run: set[str] | None = None
@@ -985,6 +991,20 @@ class GraphUpdater:
         # is always computed against the effective unignore set.
         self._exclusion_match = None
         self._graph_state_unknown = False
+        # Per-run for the same reason (issue #1620's shape): a run that raised
+        # between `_process_files` and the commit point leaves its cache
+        # stashed on the instance. No test covers this because no such write is
+        # reachable, and the argument is structural rather than a survey of
+        # paths: `_process_files` contains no `return` and no `raise`, and
+        # `run` returns only at the in-sync fast path below, which is above the
+        # commit point. All three stashes are unconditional top-level
+        # statements of `_process_files`, so every path that reaches the commit
+        # point has re-stashed all three before getting there. Reset anyway: the
+        # guarantee is a property of those two functions' control flow, and
+        # the first early `return` added to either one silently ends it.
+        self._pending_hash_cache = None
+        self._pending_dir_mtimes = None
+        self._pending_cache_observed_at = None
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
@@ -1230,15 +1250,55 @@ class GraphUpdater:
         # a run that died in between tell its successor the exclusion was
         # already reconciled, and the successor would fast-path over a subtree
         # still in the graph. Deferring the stamp buys only that: the successor
-        # RUNS. It does not on its own make the successor delete anything,
-        # because the hash cache was already saved inside _process_files before
-        # this flush and no longer names the excluded file. What closes the
-        # gap is the graph-backed reconciliation in _process_files, which the
+        # RUNS. It does not on its own make the successor delete anything:
+        # the cache commits below, after this flush (issue #1615), so a run
+        # that died earlier leaves no cache at all and its successor re-hashes
+        # from scratch. What names a file whose exclusion predates the cache
+        # is the graph-backed reconciliation in _process_files, which the
         # changed exclusion set turns on; the two are needed together.
         # Recorded on EVERY completed project run, not full builds only: an
         # incremental run that narrowed the set must record it, or the next run
         # reads that run's own result as a change. A single-file run walks one
         # file and cannot speak for the project's exclusion set.
+        # Committed here, not in `_process_files` (issue #1615), so a run that
+        # dies before the flush leaves a cache that still names the deleted
+        # file and its successor re-issues the delete. Deliberately NOT inside
+        # the single-file guard below: a single-file run writes the cache today
+        # and must keep doing so. Written even when `_graph_state_unknown` is
+        # set, because the cache only claims which files were parsed at which
+        # hashes, which stays true; the withheld exclusion stamp is what tells
+        # the next run that deletions were not reconciled, and that alone both
+        # fails the sync check and turns graph-backed reconciliation on.
+        observed_at = self._pending_cache_observed_at
+        written: list[Path] = []
+        if self._pending_hash_cache is not None:
+            _save_hash_cache(*self._pending_hash_cache)
+            written.append(self._pending_hash_cache[0])
+            self._pending_hash_cache = None
+        if self._pending_dir_mtimes is not None:
+            _save_dir_mtimes(*self._pending_dir_mtimes)
+            written.append(self._pending_dir_mtimes[0])
+            self._pending_dir_mtimes = None
+        # Stamp both files with the instant captured before hashing, not with
+        # the time the write happened, so the deferral cannot swallow an edit
+        # made while the hashing loop and passes 3 and later were still
+        # running.
+        if observed_at is not None:
+            for path in written:
+                try:
+                    os.utime(path, (observed_at, observed_at))
+                except OSError as e:
+                    # Fail CLOSED. Leaving the file with its own write time is
+                    # exactly the defect this stamping exists to prevent: that
+                    # time is later than an edit made while the run was still
+                    # hashing, so the successor's `mtime <= cache_mtime` check
+                    # skips the edited file and the graph keeps stale content.
+                    # A missing cache only costs a rebuild, which is why every
+                    # writer here already degrades to absent rather than wrong.
+                    logger.warning(ls.CACHE_STAMP_FAILED, path=path, error=e)
+                    path.unlink(missing_ok=True)
+        self._pending_cache_observed_at = None
+
         if self._single_file is None:
             if self._graph_state_unknown:
                 logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
@@ -2459,15 +2519,14 @@ class GraphUpdater:
         # delete-before-reingest path or renamed-away symbols and their
         # CALLS/REFERENCES edges accumulate alongside the fresh parse.
         # A changed exclusion set has to reconcile against the GRAPH, not just
-        # against the hash cache. The cache is saved inside this method, before
-        # the final flush, so a run that died in that window already committed
-        # a cache with the newly excluded file removed; its successor would
-        # compute an empty `deleted_keys` and leave the subtree behind for
-        # good, since the stamp it then writes matches. Asking the graph for
-        # its module paths is what closes that, and it costs a query only on
-        # the runs where the set actually moved. The general case, where an
-        # ordinary deletion is lost the same way, is #1615 and is not closed
-        # here.
+        # against the hash cache. Since #1615 the cache commits only after the
+        # flush, so a crashed run cannot leave one that has already forgotten
+        # the file. The graph query is still required for a different reason:
+        # the cache records only the files eligible on the run that wrote it,
+        # so a file excluded by an EARLIER completed run was already dropped
+        # from it and no on-disk hash names it any more. Only the graph still
+        # does. It costs a query only on the runs where the set actually
+        # moved.
         preexisting_paths = (
             self._existing_module_paths()
             if is_full_build or not self._exclusions_match_last_run()
@@ -2475,9 +2534,9 @@ class GraphUpdater:
         )
         # None is "the sink claims readability and the query failed", not
         # "nothing there": below it falls back to the hash cache alone, which
-        # after a pre-flush crash no longer names the excluded file. That run
-        # completes and would stamp, and every later run would fast-path over
-        # the surviving subtree. Remembering the failure keeps the stamp back.
+        # cannot name a file whose exclusion predates it. That run completes
+        # and would stamp, and every later run would fast-path over the
+        # surviving subtree. Remembering the failure keeps the stamp back.
         if preexisting_paths is None:
             self._graph_state_unknown = True
         new_hashes: FileHashCache = {}
@@ -2489,6 +2548,17 @@ class GraphUpdater:
         current_file_keys: set[str] = set()
 
         processed_since_flush = 0
+
+        # Taken BEFORE the loop below, so it is at or earlier than every hash
+        # it describes. `_is_already_in_sync` skips rehashing any file whose
+        # mtime is at or below the CACHE FILE's own mtime, so deferring the
+        # write must not defer that stamp: a file edited after its hash was
+        # taken but before the commit point would otherwise be stamped newer
+        # than its own edit and skipped for good (issue #1615 review).
+        # Capturing here rather than after the loop also covers a file edited
+        # between its own hash and the end of the loop. Erring early only ever
+        # costs a redundant rehash; erring late loses an edit.
+        self._pending_cache_observed_at = time.time()
 
         changed_entries: list[tuple[Path, str, bool, bytes]] = []
         for filepath, file_key in eligible_files:
@@ -2697,8 +2767,14 @@ class GraphUpdater:
         if unreadable_count > 0:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=unreadable_count)
 
-        _save_hash_cache(cache_path, new_hashes)
-        _save_dir_mtimes(dir_mtimes_path, self._collected_dir_mtimes)
+        # Deferred to the post-flush commit point in `run` (issue #1615). The
+        # deletions above are execute_write calls that only become durable at
+        # that flush; committing the cache here would let a run that died in
+        # between tell its successor the file was already reconciled, and the
+        # successor computes an empty `deleted_keys` and never re-issues the
+        # delete. The subtree then stays in the graph until a full rebuild.
+        self._pending_hash_cache = (cache_path, new_hashes)
+        self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry
         # the old parser's edges.

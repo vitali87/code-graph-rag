@@ -6,6 +6,7 @@
 # reingest every current file (deleting an absent module is a no-op).
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -13,6 +14,24 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.tests.conftest import create_and_run_updater
+
+
+def _force_mtime_after_cache(repo: Path, source: Path) -> None:
+    """Put `source` on a strictly later tick than the hash cache file.
+
+    An incremental run only re-hashes a cached file whose mtime is strictly
+    greater than the cache file's own (`if file_mtime <= cache_mtime`), so a
+    rewrite that lands on the same filesystem tick as the cache written by the
+    preceding run is SKIPPED and the run under test never reaches the code the
+    test is about. Since #1615 the cache file is restamped back to the instant
+    observed before the previous run's hashing loop, so on a fine-grained clock
+    the two differ by that run's own hashing and later passes; on a coarse one
+    they can still collide, which is why this failed on Windows py3.12.
+    Stating the precondition removes the dependency on clock resolution.
+    """
+    cache_mtime = (repo / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    stamp = cache_mtime + 1.0
+    os.utime(source, (stamp, stamp))
 
 
 def test_module_path_lookup_failure_forces_delete_before_reingest(
@@ -79,6 +98,7 @@ def test_incremental_rehydration_failure_aborts(
     create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
 
     source.write_text("def f():\n    return 2\n", encoding="utf-8")
+    _force_mtime_after_cache(temp_repo, source)
 
     def unavailable(query: str, params: dict | None = None) -> list:
         if query == cs.CYPHER_ALL_DEFINITION_QNS:
@@ -183,6 +203,7 @@ def test_incremental_run_aborts_when_inbound_capture_fails(
     create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
 
     source.write_text("def f():\n    return 2\n", encoding="utf-8")
+    _force_mtime_after_cache(temp_repo, source)
 
     def unavailable(query: str, params: dict | None = None) -> list:
         if query == cs.CYPHER_INBOUND_EDGES:

@@ -1,10 +1,13 @@
 import json
+import os
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import graph_updater as graph_updater_module
 from codebase_rag.graph_updater import (
     BoundedASTCache,
     FunctionRegistryTrie,
@@ -363,6 +366,284 @@ class TestIncrementalUpdates:
         assert "module_b.py" not in new_data
 
 
+class TestCrashBetweenCacheSaveAndFlush:
+    """Issue #1615: a run that dies before the graph flush must not convince
+    its successor the deletion was reconciled.
+
+    Named for the window as it WAS: the cache used to commit inside
+    `_process_files`, so a crash in between left a cache already claiming the
+    file was gone. The fix closes the window by committing the cache after the
+    flush, so what these tests pin is that no such cache is left behind."""
+
+    def test_edit_during_the_deferred_window_is_not_skipped(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An edit racing the deferred save must still be re-parsed.
+
+        `_is_already_in_sync` skips rehashing any file whose mtime is at or
+        below the CACHE FILE's own mtime. Deferring the write to the post-flush
+        commit point moved that stamp later, so a file edited after
+        `_process_files` hashed it but before the save would be stamped newer
+        than its own edit and skipped for good. The recorded mtime has to be
+        the one observed at hash time, not one implied by when the write
+        happened.
+        """
+        parsers, queries = load_parsers()
+        target = py_project / "module_b.py"
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        # Edit in the true window: after `_process_files` hashed the file,
+        # before the deferred write stamps the cache. Wrapping the save is the
+        # only way to land there; `flush_all` fires BEFORE the commit point, so
+        # an edit there precedes the cache write and cannot reproduce this.
+        # Give run 2 real work, or it takes the in-sync fast path and returns
+        # above the commit point, so the save never fires and the wrapper below
+        # never lands its edit.
+        (py_project / "module_c.py").write_text(
+            "def c():\n    return 1\n", encoding="utf-8"
+        )
+
+        edited = "def b():\n    return 999\n"
+        real_save = graph_updater_module._save_hash_cache
+
+        reached_write_site = False
+
+        def _edit_then_save(path: Path, hashes: dict[str, str]) -> None:
+            nonlocal reached_write_site
+            reached_write_site = True
+            # The observation instant is already captured by now, and this
+            # edit must be measurably later than it rather than landing on the
+            # same filesystem tick; 200 ms clears every CI platform's mtime
+            # granularity, the coarsest being Windows at 15.6 ms.
+            # The pause moves nothing, it only waits, which is why it cannot
+            # pin the assertion below: break the fix and the cache is stamped
+            # after this point regardless of how long the edit waited, so it
+            # is still the newer of the two and the successor still skips.
+            time.sleep(0.2)
+            target.write_text(edited, encoding="utf-8")
+            real_save(path, hashes)
+
+        monkeypatch.setattr(graph_updater_module, "_save_hash_cache", _edit_then_save)
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        monkeypatch.setattr(graph_updater_module, "_save_hash_cache", real_save)
+
+        # Three guards, each catching a different lie. The first two are what
+        # caught two wrong versions of this test: an edit placed in `flush_all`
+        # (which fires BEFORE the commit point, so it could not reach the
+        # window at all), and a second run that took the in-sync fast path and
+        # returned above the write site, so the wrapper never fired.
+        assert reached_write_site, (
+            "the run never reached the deferred write, so it cannot have "
+            "raced anything; the assertion below would pass on an unfixed "
+            "tree for a reason unrelated to the window"
+        )
+        assert target.read_text(encoding="utf-8") == edited, (
+            "fixture guard: the racing edit did not land, so nothing below "
+            "measures the window it claims to"
+        )
+        successor = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert successor._is_already_in_sync() is False, (
+            "the edit made during the deferred window is invisible: its mtime "
+            "is at or below the cache file's own stamp, so the successor skips "
+            "rehashing it and the graph keeps the pre-edit contents"
+        )
+
+    def test_edit_between_a_files_hash_and_the_end_of_the_loop_is_not_skipped(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An edit landing after a file's own hash but before the loop ends.
+
+        The observation instant is captured before the hashing loop rather
+        than after it, so it is at or earlier than every hash it describes.
+        Captured after the loop it would be an upper bound, and this edit
+        would be stamped newer than its own change and skipped for good.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        # Real work for run 2, so it cannot take the in-sync fast path and
+        # return above the hashing loop this test needs it to enter.
+        (py_project / "module_c.py").write_text(
+            "def c():\n    return 1\n", encoding="utf-8"
+        )
+        target = py_project / "module_b.py"
+        target.write_text("def b():\n    return 2\n", encoding="utf-8")
+
+        real_hash = graph_updater_module._hash_file_with_bytes
+        raced = "def b():\n    return 999\n"
+        fired = False
+
+        def _hash_then_edit(path: Path, *args: object, **kwargs: object) -> object:
+            nonlocal fired
+            result = real_hash(path, *args, **kwargs)
+            if path.name == "module_b.py" and not fired:
+                fired = True
+                # After this file's own hash is taken, still inside the loop.
+                # As in the test above, the pause makes this edit measurably
+                # later than the captured instant instead of trusting the
+                # filesystem to separate two writes made in the same moment.
+                # It moves nothing, it only waits: it widens a gap the fix
+                # creates and the unfixed placement reverses, so it cannot
+                # decide the assertion either way.
+                time.sleep(0.2)
+                path.write_text(raced, encoding="utf-8")
+            return result
+
+        monkeypatch.setattr(
+            graph_updater_module, "_hash_file_with_bytes", _hash_then_edit
+        )
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        monkeypatch.setattr(graph_updater_module, "_hash_file_with_bytes", real_hash)
+
+        assert fired, (
+            "the wrapper never fired, so no edit raced the loop and the "
+            "assertion below would pass for a reason unrelated to the window"
+        )
+        assert target.read_text(encoding="utf-8") == raced, (
+            "fixture guard: the racing edit did not land"
+        )
+        successor = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert successor._is_already_in_sync() is False, (
+            "an edit made after its own file's hash but before the loop ended "
+            "is invisible: its mtime is at or below the cache stamp, so the "
+            "successor skips rehashing it and the edit is lost for good"
+        )
+
+    def test_cache_is_removed_when_it_cannot_be_backdated(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cache that cannot be stamped back must not survive the run.
+
+        Keeping it would leave the file carrying its own write time, which is
+        later than an edit made while the run was still hashing, so the
+        successor would skip that file and the graph would keep pre-edit
+        content. Absent costs a rebuild; present-and-mis-stamped hides an edit.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        cache = py_project / cs.HASH_CACHE_FILENAME
+        assert cache.is_file(), "fixture guard: run 1 wrote no cache to remove"
+
+        (py_project / "module_c.py").write_text(
+            "def c():\n    return 1\n", encoding="utf-8"
+        )
+
+        real_utime = os.utime
+        refused: list[Path] = []
+
+        def _refuse_cache_stamp(path, times=None, **kwargs):  # type: ignore[no-untyped-def]
+            if Path(path).name == cs.HASH_CACHE_FILENAME:
+                refused.append(Path(path))
+                raise OSError("read-only file system")
+            return real_utime(path, times, **kwargs)
+
+        monkeypatch.setattr(graph_updater_module.os, "utime", _refuse_cache_stamp)
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        monkeypatch.setattr(graph_updater_module.os, "utime", real_utime)
+
+        assert refused, (
+            "the run never tried to stamp the hash cache, so the assertion "
+            "below would pass without exercising the failure path at all"
+        )
+        assert not cache.is_file(), (
+            "the cache survived a failed backdate: it now carries its own "
+            "write time, which is later than an edit made during the run, so "
+            "the successor skips that file and keeps stale graph content"
+        )
+
+    def test_successor_run_still_deletes_the_module(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        (py_project / "module_b.py").unlink()
+
+        # Run 2 dies at the commit point: the deletes are queued but never
+        # flushed. Whatever this run wrote to disk is all its successor has.
+        crashed = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        with (
+            patch.object(
+                mock_ingestor, "flush_all", side_effect=RuntimeError("database gone")
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            crashed.run()
+
+        # Run 3 is the one under test: it must re-issue the delete the crashed
+        # run only queued. Asserting on the delete itself, not on the sync
+        # check, because a stale-cache no-op also leaves the fast path off.
+        mock_ingestor.reset_mock()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        assert "module_b.py" in _deleted_module_paths(mock_ingestor)
+
+
 class TestFastPathInSync:
     def test_second_run_skips_all_passes(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -698,14 +979,19 @@ class TestFastPathInSync:
         """The re-run a lost stamp forces must also DELETE, not just re-parse.
 
         Declining to stamp only buys the next run a chance to reconcile; it
-        cannot take that chance on its own. The hash cache is saved inside
-        `_process_files`, before the flush, so the crashed run already
-        committed a cache with no `module_a.py` in it, and on the successor
-        `deleted_keys` is computed from that cache and comes out empty. The
-        graph's own module paths have to join the reconciliation, or the
-        subtree survives, the successor stamps a matching exclusion set, and
-        every run after that fast-paths over it. The general case, an ordinary
-        deletion lost in the same window, is #1615 and is not closed here.
+        cannot take that chance on its own. The cache reaches the state that
+        matters through a COMPLETED excluding run, which drops `module_a.py`
+        from it; after that no on-disk hash names the file and the graph's own
+        module paths are the only thing that can, so they have to join the
+        reconciliation or the subtree survives, the successor stamps a matching
+        exclusion set, and every run after that fast-paths over it.
+
+        Reached this way rather than through a pre-flush crash: since #1615 a
+        crashed run commits no cache at all, so it leaves the PREVIOUS run's
+        cache intact and that one still names `module_a.py`. A crash-based
+        fixture would let `old_hashes` supply the deletion on its own and the
+        test would pass with the graph query neutered, which is what it is
+        here to rule out. The control at the end pins exactly that.
         """
         parsers, queries = load_parsers()
         GraphUpdater(
@@ -716,22 +1002,26 @@ class TestFastPathInSync:
         ).run()
 
         exclusions = frozenset({"module_a.py"})
-        mock_ingestor.flush_all.side_effect = RuntimeError("died before the flush")
-        crashing = GraphUpdater(
+        # A COMPLETED excluding run is what drops module_a.py from the cache.
+        GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=excludable_project,
             parsers=parsers,
             queries=queries,
             exclude_paths=exclusions,
+        ).run()
+        cache = json.loads((excludable_project / cs.HASH_CACHE_FILENAME).read_text())
+        assert "module_a.py" not in cache, (
+            "fixture guard: the cache still names module_a.py, so old_hashes "
+            "could supply the deletion and the graph query would not be "
+            "measured by anything below"
         )
-        with pytest.raises(RuntimeError):
-            crashing.run()
-        mock_ingestor.flush_all.side_effect = None
+        # The stamp is what would let the next run fast-path over the subtree.
+        (excludable_project / cs.EXCLUSION_STATE_FILENAME).unlink()
 
-        # After the crash the graph is the ONLY place `module_a.py` still
-        # exists: the hash cache the crashed run committed has already dropped
-        # it. So the sink has to be able to answer for it, or the test would
-        # pass or fail on the fake's silence rather than on the reconciliation.
+        # The graph is now the ONLY place module_a.py still exists, so the sink
+        # has to be able to answer for it or the test would turn on the fake's
+        # silence rather than on the reconciliation.
         mock_ingestor.reset_mock()
         mock_ingestor.fetch_all.side_effect = lambda query, _params=None: (
             [{cs.KEY_PATH: "module_a.py"}, {cs.KEY_PATH: "module_b.py"}]
@@ -746,9 +1036,32 @@ class TestFastPathInSync:
             exclude_paths=exclusions,
         ).run()
         assert "module_a.py" in _deleted_module_paths(mock_ingestor), (
-            "the excluded module survived the crash and the run after it, so "
-            "its Module, Class and Method nodes are now permanent: every "
-            "later run matches the stamp and never looks again"
+            "the excluded module survived the run after it, so its Module, "
+            "Class and Method nodes are now permanent: every later run "
+            "matches the stamp and never looks again"
+        )
+
+        # Control: with the graph unable to name it, the delete must VANISH.
+        # Without this the assertion above passes whether or not the graph
+        # query contributes anything, which is what happened when #1615
+        # changed where the cache commits and left this test measuring
+        # `old_hashes` instead.
+        (excludable_project / cs.EXCLUSION_STATE_FILENAME).unlink()
+        mock_ingestor.reset_mock()
+        with patch.object(
+            GraphUpdater, "_existing_module_paths", return_value=frozenset()
+        ):
+            GraphUpdater(
+                ingestor=mock_ingestor,
+                repo_path=excludable_project,
+                parsers=parsers,
+                queries=queries,
+                exclude_paths=exclusions,
+            ).run()
+        assert "module_a.py" not in _deleted_module_paths(mock_ingestor), (
+            "the delete fired with the graph contributing nothing, so this "
+            "test no longer measures the graph-backed reconciliation it "
+            "claims to and would pass with that reconciliation removed"
         )
 
     def test_failed_module_query_leaves_no_exclusion_stamp(
@@ -757,10 +1070,17 @@ class TestFastPathInSync:
         """A run whose graph query failed must not claim the exclusion is done.
 
         When the module-path query raises, the reconciliation falls back to
-        the hash cache alone, and after a pre-flush crash that cache no longer
-        names the excluded file. The run completes with the subtree still in
-        the graph; stamping would make every later run fast-path over it.
+        the hash cache alone, and that cache no longer names a file excluded
+        by an EARLIER completed run. The run completes with the subtree still
+        in the graph; stamping would make every later run fast-path over it.
         Withholding the stamp is what makes the next run look again.
+
+        The stale cache is reached here through a completed run rather than a
+        pre-flush crash: since #1615 the cache commits only after the flush,
+        so a crashed run leaves no cache to be stale. Removing the stamp
+        afterwards is the "no readable record" case, an index predating the
+        stamp or a corrupt file, which is what puts run 3 back into
+        reconciliation with a cache that has already forgotten module_a.py.
         """
         parsers, queries = load_parsers()
         GraphUpdater(
@@ -773,17 +1093,16 @@ class TestFastPathInSync:
         before = stamp.read_text()
 
         exclusions = frozenset({"module_a.py"})
-        mock_ingestor.flush_all.side_effect = RuntimeError("died before the flush")
-        crashing = GraphUpdater(
+        GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=excludable_project,
             parsers=parsers,
             queries=queries,
             exclude_paths=exclusions,
-        )
-        with pytest.raises(RuntimeError):
-            crashing.run()
-        mock_ingestor.flush_all.side_effect = None
+        ).run()
+        # The committed cache no longer names module_a.py, so the cache-based
+        # deletion set is empty from here on; only the graph could name it.
+        stamp.unlink()
 
         def _graph_unreachable(query: str, _params: object = None) -> list[object]:
             if query == cs.CYPHER_PROJECT_MODULE_PATHS:
@@ -806,7 +1125,7 @@ class TestFastPathInSync:
             "named module_a.py for deletion; the fixture is not exercising the "
             "failure it claims to"
         )
-        assert stamp.read_text() == before, (
+        assert not stamp.exists(), (
             "the run stamped the new exclusion set although it never learned "
             "what the graph holds, so the surviving subtree is now permanent"
         )
@@ -827,6 +1146,9 @@ class TestFastPathInSync:
         assert updater3._is_already_in_sync() is False
         updater3.run()
         assert "module_a.py" in _deleted_module_paths(mock_ingestor)
+        # The recovered run learned what the graph holds, so it records the
+        # exclusion set again: a stamp exists once more, and for this set.
+        assert stamp.exists()
         assert stamp.read_text() != before
 
     def test_empty_module_query_still_records_the_exclusion_set(
@@ -850,7 +1172,8 @@ class TestFastPathInSync:
         before = stamp.read_text()
 
         mock_ingestor.reset_mock()
-        mock_ingestor.fetch_all.side_effect = lambda _query, _params=None: []
+        mock_ingestor.fetch_all.side_effect = None
+        mock_ingestor.fetch_all.return_value = []
         GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=excludable_project,
