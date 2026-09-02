@@ -530,9 +530,18 @@ def test_non_removal_funcs_lists_every_callable_rmtree_passes() -> None:
 
     The behavioural test above proves a listed callable is skipped; it cannot
     prove the list is COMPLETE, because a missing entry is only visible as a
-    silent no-op. Enumerated from CPython 3.12's `shutil`: `_rmtree_safe_fd`
-    binds `os.lstat`, `os.open`, `os.path.islink`, `os.scandir`, `os.rmdir`
-    and `os.close`, and `_rmtree_unsafe` adds nothing beyond those.
+    silent no-op.
+
+    Enumerated from `shutil` on BOTH matrix versions rather than one and
+    extrapolated -- `_rmtree_safe_fd` binds `func` indirectly, so a naive
+    scan for `onexc(<name>)` misses `os.open` and `os.scandir`. Resolving the
+    `func = ...` bindings too, the union across `_rmtree_safe_fd`,
+    `_rmtree_unsafe` and `rmtree` on 3.12 and 3.13 is exactly:
+
+        os.close, os.lstat, os.open, os.path.islink, os.scandir  (excluded)
+        os.rmdir, os.unlink                                      (retried)
+
+    Nothing else reaches the handler on either version.
     """
     from codebase_rag.tests.conftest import _NON_REMOVAL_FUNCS
 
