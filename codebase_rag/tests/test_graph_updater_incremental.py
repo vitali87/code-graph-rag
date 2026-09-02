@@ -689,9 +689,11 @@ class TestCrashBetweenCacheSaveAndFlush:
         def _refuse_unlink(self, missing_ok=False):  # type: ignore[no-untyped-def]
             if self.name.endswith(".tmp"):
                 reached.add("cleanup")
-                raise OSError(errno.EROFS, "Read-only file system")
+                raise OSError(errno.EACCES, "Permission denied")
             return real_unlink(self, missing_ok=missing_ok)
 
+        messages: list[str] = []
+        sink_id = graph_updater_module.logger.add(messages.append, level="WARNING")
         monkeypatch.setattr(graph_updater_module.os, "replace", _refuse_replace)
         monkeypatch.setattr(Path, "unlink", _refuse_unlink)
         GraphUpdater(
@@ -702,7 +704,21 @@ class TestCrashBetweenCacheSaveAndFlush:
         ).run()
         monkeypatch.setattr(Path, "unlink", real_unlink)
         monkeypatch.setattr(graph_updater_module.os, "replace", real_replace)
+        # Removed here rather than left to the session: a sink that outlives
+        # this test appends to `messages` for every later test that warns.
+        graph_updater_module.logger.remove(sink_id)
 
+        cleanup_warnings = [m for m in messages if "temporary cache file" in m]
+        assert cleanup_warnings, (
+            "the cleanup failure was never logged, so its reported reason "
+            "cannot be checked"
+        )
+        # The publish failed EROFS and the removal EACCES; reporting the
+        # publish reason here would name a cause unrelated to the removal.
+        assert "Permission denied" in cleanup_warnings[0], (
+            "the cleanup warning reports the publish failure rather than why "
+            f"the removal failed: {cleanup_warnings[0]}"
+        )
         assert reached == {"replace", "cleanup"}, (
             "the run did not reach both the failed rename and the failed "
             f"cleanup, so finishing proves nothing about the pairing; {reached}"
@@ -723,13 +739,14 @@ class TestCrashBetweenCacheSaveAndFlush:
         mismatched pair, and the pair is trusted in only ONE direction. The
         sync check iterates the entries the map RECORDS and so never reaches a
         directory the map omits; what catches an addition is the recorded
-        PARENT whose stored mtime no longer matches disk, which sends
-        `_diff_dir_against_cache` into that parent to find the new child. A
-        FRESH map records the parent as current, nothing is compared, and the
-        file loop only walks keys the hash cache already names, so a file
-        added in the gap is never indexed. Publishing the hash cache first
-        leaves the harmless window, where a stale map still holds the parent's
-        old mtime and the addition surfaces.
+        entry for the directory that DIRECTLY CONTAINS it, whose stored mtime
+        no longer matches disk. For a new subdirectory that is the parent; for
+        a file added to a directory already in the map it is that directory's
+        own entry. A FRESH map records them all as current, nothing is
+        compared, and the file loop only walks keys the hash cache already
+        names, so a file added in the gap is never indexed. Publishing the
+        hash cache first leaves the harmless window, where a stale map still
+        holds the old mtimes and the addition surfaces.
 
         The stop is keyed on whichever publish happens SECOND rather than on
         either by name, so reversing the two calls still constructs a real

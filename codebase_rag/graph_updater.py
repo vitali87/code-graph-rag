@@ -297,12 +297,16 @@ def _publish_hash_cache(
         logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
         try:
             tmp_path.unlink(missing_ok=True)
-        except OSError:
+        except OSError as cleanup_error:
+            # Bound separately: `e` is why the PUBLISH failed, and reporting
+            # that here would name a reason unrelated to the removal.
             # A filesystem too read-only to write the cache is too read-only
             # to have created the temporary, so there is normally nothing to
             # remove; if there is and it cannot go, the stale temporary is
             # inert (no reader looks for `.tmp`) and must not end the run.
-            logger.warning(ls.CACHE_STAMP_CLEANUP_FAILED, path=tmp_path, error=e)
+            logger.warning(
+                ls.CACHE_STAMP_CLEANUP_FAILED, path=tmp_path, error=cleanup_error
+            )
 
 
 def _load_parser_fingerprint(stamp_path: Path) -> str | None:
@@ -1312,17 +1316,20 @@ class GraphUpdater:
         # Hash cache FIRST, directory mtimes LAST, because a stop between the
         # two leaves a mismatched pair that is only detected in one direction.
         # `_is_already_in_sync` iterates the entries the map RECORDS, so it
-        # never reaches a directory the map has no entry for; what catches an
-        # addition is the recorded PARENT whose stored mtime no longer matches
-        # the directory on disk, which sends `_diff_dir_against_cache` into
-        # that parent to find the new child. A stale map still holds the
-        # parent's old mtime, so the addition surfaces. A FRESH map records
-        # the parent as current, nothing is compared, and the file loop only
-        # walks keys the hash cache already names, so a file added in the gap
-        # is never indexed. Publishing the hash cache first leaves the
-        # harmless window. Measured both directions, and the mechanism was
-        # confirmed by refreshing only the root entry: the addition then goes
-        # undetected even though its own directory is still absent.
+        # never reaches a directory the map has no entry for. What catches an
+        # addition is the recorded entry for the directory that DIRECTLY
+        # CONTAINS it, whose stored mtime no longer matches disk: that sends
+        # `_diff_dir_against_cache` into it to find the new child. For a new
+        # subdirectory that containing entry is the parent; for a file added
+        # to a directory already in the map it is that directory's own entry,
+        # and the parent contributes nothing. Measured both shapes by
+        # refreshing one entry at a time: refreshing the containing entry
+        # alone hides the addition, refreshing any other leaves it visible.
+        # A stale map holds every entry's old mtime, so the addition surfaces
+        # either way. A FRESH map records them all as current, nothing is
+        # compared, and the file loop only walks keys the hash cache already
+        # names, so a file added in the gap is never indexed. Publishing the
+        # hash cache first leaves the harmless window.
         if self._pending_hash_cache is not None:
             cache_path, new_hashes = self._pending_hash_cache
             _publish_hash_cache(cache_path, new_hashes, observed_at)
