@@ -1243,10 +1243,11 @@ class GraphUpdater:
         # a run that died in between tell its successor the exclusion was
         # already reconciled, and the successor would fast-path over a subtree
         # still in the graph. Deferring the stamp buys only that: the successor
-        # RUNS. It does not on its own make the successor delete anything,
-        # because the hash cache was already saved inside _process_files before
-        # this flush and no longer names the excluded file. What closes the
-        # gap is the graph-backed reconciliation in _process_files, which the
+        # RUNS. It does not on its own make the successor delete anything:
+        # the cache commits below, after this flush (issue #1615), so a run
+        # that died earlier leaves no cache at all and its successor re-hashes
+        # from scratch. What names a file whose exclusion predates the cache
+        # is the graph-backed reconciliation in _process_files, which the
         # changed exclusion set turns on; the two are needed together.
         # Recorded on EVERY completed project run, not full builds only: an
         # incremental run that narrowed the set must record it, or the next run
@@ -2488,15 +2489,13 @@ class GraphUpdater:
         # delete-before-reingest path or renamed-away symbols and their
         # CALLS/REFERENCES edges accumulate alongside the fresh parse.
         # A changed exclusion set has to reconcile against the GRAPH, not just
-        # against the hash cache. The cache is saved inside this method, before
-        # the final flush, so a run that died in that window already committed
-        # a cache with the newly excluded file removed; its successor would
-        # compute an empty `deleted_keys` and leave the subtree behind for
-        # good, since the stamp it then writes matches. Asking the graph for
-        # its module paths is what closes that, and it costs a query only on
-        # the runs where the set actually moved. The general case, where an
-        # ordinary deletion is lost the same way, is #1615 and is not closed
-        # here.
+        # against the hash cache. Since #1615 the cache commits only after the
+        # flush, so a crashed run cannot leave one that has already forgotten
+        # the file. The graph query is still required for a different reason:
+        # `preexisting_paths` is empty on an incremental run, so nothing else
+        # can name a file whose exclusion predates the current cache, and no
+        # on-disk hash ever recorded it as present. It costs a query only on
+        # the runs where the set actually moved.
         preexisting_paths = (
             self._existing_module_paths()
             if is_full_build or not self._exclusions_match_last_run()
@@ -2504,9 +2503,9 @@ class GraphUpdater:
         )
         # None is "the sink claims readability and the query failed", not
         # "nothing there": below it falls back to the hash cache alone, which
-        # after a pre-flush crash no longer names the excluded file. That run
-        # completes and would stamp, and every later run would fast-path over
-        # the surviving subtree. Remembering the failure keeps the stamp back.
+        # cannot name a file whose exclusion predates it. That run completes
+        # and would stamp, and every later run would fast-path over the
+        # surviving subtree. Remembering the failure keeps the stamp back.
         if preexisting_paths is None:
             self._graph_state_unknown = True
         new_hashes: FileHashCache = {}
