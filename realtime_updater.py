@@ -15,9 +15,6 @@ from codebase_rag import logs
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.constants import (
-    CYPHER_DELETE_CALLS,
-    CYPHER_DELETE_FILE,
-    CYPHER_DELETE_MODULE,
     DEFAULT_DEBOUNCE_SECONDS,
     DEFAULT_MAX_WAIT_SECONDS,
     IGNORE_PATTERNS,
@@ -28,12 +25,9 @@ from codebase_rag.constants import (
     REALTIME_LOGGER_FORMAT,
     WATCHER_SLEEP_INTERVAL,
     EventType,
-    SupportedLanguage,
 )
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.language_spec import get_language_spec
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.utils.path_utils import is_ignored_filename
 
@@ -230,21 +224,14 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def _process_change_locked(self, event: FileSystemEvent) -> None:
         """Re-ingest one changed file, holding the updater lock.
 
-        Deletes what the file previously contributed to the graph, then
-        re-parses it. The delete comes first, so every path that can reach
-        this must re-parse through some tier or the file is left empty.
+        The whole recipe (delete what the file contributed, re-parse it and
+        its dependents, resolve calls in that set only, restore the rest of
+        the inbound edges) lives in GraphUpdater.reingest, shared with the
+        MCP ``reingest`` tool (issue #1524).
         """
         src_path = event.src_path
         if isinstance(src_path, bytes):
             src_path = src_path.decode()
-
-        ingestor = self.updater.ingestor
-        if not isinstance(ingestor, QueryProtocol):
-            logger.warning(logs.WATCHER_SKIP_NO_QUERY)
-            return
-
-        path = Path(src_path)
-        relative_path_str = str(path.relative_to(self.updater.repo_path))
 
         # Only process events that change file content; skip read-only events
         # like "opened" or "closed_no_write" that don't modify the file
@@ -256,137 +243,14 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         if event.event_type not in relevant_events:
             return
 
+        path = Path(src_path)
         logger.warning(
             logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
-
-        # Step 1: Delete existing nodes for this file path
-        # Delete Module node and its children (for code files); the delete is
-        # project-scoped, so the sibling project sharing this relative path
-        # in the shared graph keeps its module.
-        ingestor.execute_write(
-            CYPHER_DELETE_MODULE,
-            {
-                KEY_PATH: relative_path_str,
-                KEY_PROJECT_NAME: self.updater.project_name,
-                KEY_PROJECT_PREFIX: f"{self.updater.project_name}.",
-            },
-        )
-        # Delete File node (for all files including non-code like .md, .json)
-        ingestor.execute_write(
-            CYPHER_DELETE_FILE, {KEY_PATH: path.resolve().as_posix()}
-        )
-        logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
-
-        # Step 2: Clear in-memory state
-        self.updater.remove_file_from_state(path)
-
-        # The Rust path caches (exact-case directory listings, entry-file
-        # mod declarations, explicit targets) were filled during the last
-        # run; a CREATE or MODIFY re-observes what this event can have
-        # changed before any re-parse resolves crate::/super::/self::
-        # against them. DELETEs keep the stale view so an atomic-save or
-        # checkout storm cannot bake a transient absence into a sibling's
-        # import map.
-        if event.event_type != EventType.DELETED:
-            self.updater.factory.import_processor.refresh_rust_path_caches_for(
-                path, created=event.event_type == EventType.CREATED
-            )
-
-        # Step 3: Re-parse code files and create File nodes for ALL files
-        if event.event_type in (EventType.MODIFIED, EventType.CREATED):
-            lang_config = get_language_spec(path.suffix)
-            if (
-                lang_config
-                and isinstance(lang_config.language, SupportedLanguage)
-                and lang_config.language in self.updater.parsers
-            ):
-                if result := self.updater.factory.definition_processor.process_file(
-                    path,
-                    lang_config.language,
-                    self.updater.queries,
-                    self.updater.factory.structure_processor.structural_elements,
-                ):
-                    root_node, language = result
-                    self.updater.ast_cache[path] = (root_node, language)
-                    self.updater.register_parsed_file(path, language)
-            else:
-                # Step 1 deleted this file's Module and everything hanging
-                # off it. Without this the ast-grep and document tiers never
-                # re-parse, so an edit EMPTIES a Ruby file's definitions or a
-                # Markdown file's sections from the graph instead of
-                # refreshing them (issue #1427).
-                self.updater.process_with_secondary_tier(path)
-
-            # Create File node for ALL files (code and non-code like .md, .json, etc.)
-            self.updater.factory.structure_processor.process_generic_file(
-                path, path.name
-            )
-
-        # Semantic facts are location-keyed against the compiler's view of
-        # the WHOLE module, so this change can rebind calls in UNCHANGED
-        # files; the applicable frontend re-runs (each resets its own facts)
-        # and its joins re-emit before the call recompute (issue #1229
-        # phase 3). Deletions count too: removing a file changes the
-        # module's bindings just as an edit does.
-        changed_spec = get_language_spec(path.suffix)
-        changed_language = changed_spec.language if changed_spec else None
-        if changed_language == SupportedLanguage.GO:
-            self.updater._run_go_frontend()
-            # A watch process that did not perform the full build itself has
-            # no in-memory locations for unchanged files; restoring them from
-            # the persisted graph matches the incremental flow and costs
-            # nothing when live state already holds them (fresh entries win).
-            self.updater._rehydrate_go_type_locations()
-            self.updater._rehydrate_function_locations()
-            self.updater._join_go_implements()
-        elif changed_language == SupportedLanguage.CSHARP:
-            self.updater._run_csharp_frontend()
-            self.updater._rehydrate_csharp_type_locations()
-            self.updater._rehydrate_function_locations()
-            self.updater._join_csharp_partials()
-        elif changed_language == SupportedLanguage.JAVA:
-            # The javac facts (issue #1181) are keyed by (file, line, byte
-            # col), so an edit that shifts a call by even one byte would
-            # otherwise keep binding it through the previous run's positions,
-            # and a stale external proof would keep suppressing a live edge.
-            self.updater._run_java_frontend()
-            self.updater._rehydrate_function_locations()
-        elif changed_language == SupportedLanguage.PYTHON:
-            # The Jedi facts (issue #1183) are position-keyed against the
-            # repo-wide import graph, so an edit can rebind call sites in
-            # unchanged files; same rerun-then-rehydrate posture as Go/C#.
-            self.updater._run_python_frontend()
-            self.updater._rehydrate_function_locations()
-
-        # Rust inline-mod import maps retract at the end of every parse
-        # and only re-commit through arbitration; run() is not on this
-        # path, so arbitrate here before calls recompute through the maps.
-        self.updater.factory.import_processor.finalise_rust_mod_scope_uses(
-            self.updater.known_module_paths()
-        )
-
-        # Step 4: every CALLS edge is deleted and recomputed, so the
-        # resolution caches reset with them; a re-parsed file's moved use
-        # must not serve last pass's cached answer.
-        logger.info(logs.RECALC_CALLS)
-        self.updater.factory.call_processor.reset_resolution_caches()
-        ingestor.execute_write(CYPHER_DELETE_CALLS)
-        self.updater._process_function_calls()
-
-        # The re-parsed file queued deferred IMPORTS edges, and C# namespace
-        # imports additionally pin to the cross-module uses the call pass
-        # just recorded, so the flush must run on this path too or a watched
-        # edit leaves the live graph without its import edges. Unchanged C#
-        # importers are requeued as well: editing a PROVIDER recreated its
-        # Module node and severed their edges (issue #1347).
-        self.updater.factory.import_processor.requeue_csharp_import_edges()
-        self.updater.factory.import_processor.flush_deferred_import_edges(
-            self.updater.known_module_paths()
-        )
-
-        # Step 5: Flush changes to database
-        self.updater.ingestor.flush_all()
+        if event.event_type == EventType.DELETED:
+            self.updater.reingest((), deleted=(path,))
+        else:
+            self.updater.reingest((path,))
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))
 
 

@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -500,3 +500,70 @@ class TestMCPClient:
             mock_asyncio.run.return_value = {"output": "result"}
             query_mcp_server("test")
             mock_open.assert_called_once()
+
+
+class TestReingest:
+    async def test_reingest_registered(self, mcp_registry: MCPToolsRegistry) -> None:
+        meta = mcp_registry._tools[cs.MCPToolName.REINGEST]
+        assert meta.returns_json is True
+        schema = meta.input_schema
+        assert schema["required"] == [cs.MCPParamName.PATHS]
+        assert schema["properties"][cs.MCPParamName.PATHS]["type"] == "array"
+        assert schema["properties"][cs.MCPParamName.PATHS]["items"] == {
+            "type": "string"
+        }
+
+    async def test_reingest_builds_one_updater_and_reuses_it(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        # The registry must stay warm across calls: a fresh updater per call
+        # would read every definition back from the graph each time.
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            mock_updater = MagicMock()
+            mock_updater.reingest.return_value = MagicMock(
+                reparsed=("a.py",), affected=("b.py",), removed=(), elapsed_ms=12.34
+            )
+            mock_updater_cls.return_value = mock_updater
+
+            first = await mcp_registry.reingest(["a.py"])
+            second = await mcp_registry.reingest(["a.py"], deleted=["c.py"])
+
+            mock_updater_cls.assert_called_once()
+            assert mock_updater.reingest.call_args_list == [
+                call(["a.py"], deleted=[]),
+                call(["a.py"], deleted=["c.py"]),
+            ]
+            assert first == {
+                "reparsed": ["a.py"],
+                "affected": ["b.py"],
+                "removed": [],
+                "elapsed_ms": 12.3,
+            }
+            assert second == first
+
+    async def test_reingest_reuses_the_updater_update_repository_built(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            mock_updater = MagicMock()
+            mock_updater.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), elapsed_ms=0.5
+            )
+            mock_updater_cls.return_value = mock_updater
+
+            await mcp_registry.update_repository()
+            await mcp_registry.reingest(["a.py"])
+
+            mock_updater_cls.assert_called_once()
+            mock_updater.reingest.assert_called_once_with(["a.py"], deleted=[])
+
+    async def test_reingest_error_is_reported_not_raised(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            mock_updater_cls.return_value.reingest.side_effect = ValueError(
+                "Path is outside the repository: ../x"
+            )
+            result = await mcp_registry.reingest(["../x"])
+        assert "outside the repository" in result["error"]
+        assert result["reparsed"] == []

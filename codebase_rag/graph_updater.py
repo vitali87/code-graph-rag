@@ -6,7 +6,7 @@ import os
 import sys
 import time
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -91,6 +91,7 @@ from .types_defs import (
     PendingExpansionCall,
     PendingMacroCall,
     PropertyDict,
+    ReingestReport,
     ResultRow,
     SimpleNameLookup,
 )
@@ -420,6 +421,9 @@ class GraphUpdater:
         # Package paths read from the graph before Pass 1 of an incremental
         # run; None on a full build or when the graph could not be read.
         self._packages_before_run: set[str] | None = None
+        # reingest() reads the registry back from the graph once on a fresh
+        # updater; a reused one already holds live state (issue #1524).
+        self._reingest_hydrated = False
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
@@ -3061,7 +3065,9 @@ class GraphUpdater:
         if all(existing != file_path for existing, _ in self._parsed_files):
             self._parsed_files.append((file_path, language))
 
-    def _process_function_calls(self) -> None:
+    def _process_function_calls(self, only: Collection[Path] | None = None) -> None:
+        # `only` scopes the pass to a re-ingested subset (issue #1524); every
+        # other file keeps the edges it already has.
         # A reused updater (watch mode, a second run) re-parses files; the
         # JS receiver-binding index holds nodes from the PREVIOUS parse,
         # whose spans would resolve against the refreshed registry onto
@@ -3071,7 +3077,12 @@ class GraphUpdater:
         # Iterate every file parsed this run, not the bounded AST cache: on a
         # large repo the cache evicts most files, and iterating it drops their
         # calls (a whole module ends up with zero CALLS edges).
-        for file_path, language in self._parsed_files:
+        files = (
+            self._parsed_files
+            if only is None
+            else [(fp, lang) for fp, lang in self._parsed_files if fp in only]
+        )
+        for file_path, language in files:
             root_node = self._ast_for(file_path)
             if root_node is None:
                 continue
@@ -3092,7 +3103,7 @@ class GraphUpdater:
         # defining kX.
         self.factory.call_processor.finalize_callable_field_bindings()
         self.factory.call_processor.finalize_js_symbol_bindings()
-        for file_path, language in self._parsed_files:
+        for file_path, language in files:
             root_node = self._ast_for(file_path)
             if root_node is None:
                 continue
@@ -3112,6 +3123,192 @@ class GraphUpdater:
         self.factory.call_processor.finalize_callable_param_flow()
         self.factory.call_processor.finalize_flow()
         self.factory.call_processor.finalize_dispatch()
+
+    # --- Scoped re-ingest (issue #1524) --------------------------------------
+
+    def _reingest_target(self, raw: Path | str) -> tuple[str, Path]:
+        """(relative posix key, absolute path) for a file inside the repo.
+
+        Relative inputs resolve against the repo root; anything escaping it
+        (``..`` segments, symlinks out) is refused rather than silently
+        clamped, since the caller is an agent naming files it just wrote.
+        """
+        path = Path(raw)
+        if not path.is_absolute():
+            path = self.repo_path / path
+        resolved = path.resolve()
+        root = self.repo_path.resolve()
+        if not resolved.is_relative_to(root):
+            raise ValueError(cs.REINGEST_OUTSIDE_REPO.format(path=raw))
+        key = resolved.relative_to(root).as_posix()
+        return key, self.repo_path / key
+
+    def _hydrate_for_reingest(self) -> None:
+        # A fresh updater (the MCP tool builds one per project) holds no
+        # registry, so every cross-file call from the re-parsed files would
+        # go unresolved; read the definitions back once, the way an
+        # incremental run() does. A reused updater already has live state.
+        if self._reingest_hydrated or self._parsed_files:
+            self._reingest_hydrated = True
+            return
+        # Pass 1 of run(): without the package map a re-parsed module hangs
+        # off a Folder instead of its Package.
+        self.factory.structure_processor.identify_structure()
+        self._rehydrate_registry_from_graph()
+        self._rehydrate_function_locations()
+        self._reingest_hydrated = True
+
+    def _rerun_frontends_for(self, languages: set[cs.SupportedLanguage]) -> None:
+        # Semantic facts are location-keyed against the compiler's view of
+        # the whole module, so a change in one file can rebind calls in
+        # unchanged files (issue #1229 phase 3): the applicable frontend
+        # re-runs and its joins re-emit before the scoped call pass.
+        if cs.SupportedLanguage.GO in languages:
+            self._run_go_frontend()
+            self._rehydrate_go_type_locations()
+            self._rehydrate_function_locations()
+            self._join_go_implements()
+        if cs.SupportedLanguage.CSHARP in languages:
+            self._run_csharp_frontend()
+            self._rehydrate_csharp_type_locations()
+            self._rehydrate_function_locations()
+            self._join_csharp_partials()
+        if cs.SupportedLanguage.JAVA in languages:
+            self._run_java_frontend()
+            self._rehydrate_function_locations()
+        if cs.SupportedLanguage.PYTHON in languages:
+            self._run_python_frontend()
+            self._rehydrate_function_locations()
+
+    def reingest(
+        self,
+        paths: Iterable[Path | str],
+        deleted: Iterable[Path | str] = (),
+    ) -> ReingestReport:
+        """Re-ingest the given files with file-scoped call resolution.
+
+        The batch incremental path already knows how to do this for the
+        files a hash walk finds changed: re-parse them plus the files that
+        depend on them (one level, via the graph's edges), restore every
+        other inbound edge verbatim, and resolve calls only in the re-parsed
+        set. This is the same recipe cut down to an explicit file list, so
+        an agent's edit reaches the graph in the time it takes to parse
+        those files rather than to walk and re-resolve the project (issue
+        #1524). The watcher and the MCP ``reingest`` tool both run through
+        here.
+
+        ``paths`` that no longer exist on disk are treated as deleted;
+        ``deleted`` names files whose removal should be applied even if a
+        same-named file has since reappeared (a watch DELETE event).
+        """
+        started = time.perf_counter()
+        present: dict[str, Path] = {}
+        gone: dict[str, Path] = {}
+        for raw in paths:
+            key, path = self._reingest_target(raw)
+            if path.is_file():
+                present[key] = path
+            else:
+                gone[key] = path
+        for raw in deleted:
+            key, path = self._reingest_target(raw)
+            present.pop(key, None)
+            gone[key] = path
+        if not present and not gone:
+            return ReingestReport((), (), (), 0.0)
+
+        self._hydrate_for_reingest()
+        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+        hashes = _load_hash_cache(cache_path)
+
+        keys = sorted({*present, *gone})
+        affected: dict[str, Path] = {}
+        for caller_key in self._affected_caller_keys(keys):
+            if caller_key in present or caller_key in gone:
+                continue
+            caller_path = self.repo_path / caller_key
+            if caller_path.is_file():
+                affected[caller_key] = caller_path
+        all_keys = sorted({*keys, *affected})
+        captured = self._capture_inbound_edges(all_keys)
+        self._reparsed_file_keys = set(all_keys)
+
+        import_processor = self.factory.import_processor
+        reparse = {**present, **affected}
+        for key, path in reparse.items():
+            self.remove_file_from_state(path)
+            self._delete_module_entities(key)
+            # The Rust path caches were filled by the last run; a created or
+            # modified file must be re-observed before crate::/super:: paths
+            # resolve against them.
+            import_processor.refresh_rust_path_caches_for(
+                path, created=key not in hashes
+            )
+        for key, path in gone.items():
+            self.remove_file_from_state(path)
+            self._delete_module_entities(key)
+            if isinstance(self.ingestor, QueryProtocol):
+                # Keyed on the absolute path: a sibling project's File node
+                # can share the relative path (issue #897).
+                self.ingestor.execute_write(
+                    cs.CYPHER_DELETE_FILE, {cs.KEY_PATH: path.resolve().as_posix()}
+                )
+        for path in reparse.values():
+            self._process_single_file(path)
+
+        touched_languages: set[cs.SupportedLanguage] = set()
+        for path in (*reparse.values(), *gone.values()):
+            spec = get_language_spec(path.suffix)
+            if spec is not None and isinstance(spec.language, cs.SupportedLanguage):
+                touched_languages.add(spec.language)
+        self._rerun_frontends_for(touched_languages)
+
+        # Rust inline-mod import maps retract at the end of every parse and
+        # only re-commit through arbitration; run() is not on this path.
+        import_processor.finalise_rust_mod_scope_uses(self.known_module_paths())
+        self.factory.definition_processor.resolve_deferred_parent_links()
+
+        # The re-parsed files' own CALLS edges went with their Module
+        # subtrees; a moved use must not serve last pass's cached answer.
+        self.factory.call_processor.reset_resolution_caches()
+        self._process_function_calls(only=set(reparse.values()))
+
+        # Editing a PROVIDER recreated its Module node and severed the
+        # unchanged C# importers' edges (issue #1347).
+        import_processor.requeue_csharp_import_edges()
+        import_processor.flush_deferred_import_edges(self.known_module_paths())
+        self.factory.definition_processor.process_all_method_overrides()
+        self._restore_inbound_edges(captured)
+        if isinstance(self.ingestor, QueryProtocol):
+            self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+        self.ingestor.flush_all()
+
+        # Keep the hash cache honest so the next update_repository does not
+        # re-parse what this call already applied.
+        if cache_path.is_file():
+            for key, path in reparse.items():
+                try:
+                    hashes[key] = _hash_file(path)
+                except OSError:
+                    hashes.pop(key, None)
+            for key in gone:
+                hashes.pop(key, None)
+            _save_hash_cache(cache_path, hashes)
+
+        report = ReingestReport(
+            reparsed=tuple(sorted(present)),
+            affected=tuple(sorted(affected)),
+            removed=tuple(sorted(gone)),
+            elapsed_ms=(time.perf_counter() - started) * 1000.0,
+        )
+        logger.info(
+            ls.REINGEST_DONE,
+            reparsed=len(report.reparsed),
+            affected=len(report.affected),
+            removed=len(report.removed),
+            ms=round(report.elapsed_ms, 1),
+        )
+        return report
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""

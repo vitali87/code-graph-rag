@@ -10,7 +10,7 @@ For active development, keep your knowledge graph automatically synchronised wit
 
 - Watches your repository for file changes (create, modify, delete)
 - Automatically updates the knowledge graph in real-time
-- Maintains consistency by recalculating all function call relationships
+- Re-parses only the changed file and the files that depend on it, and re-resolves calls in that set only (the same `GraphUpdater.reingest` path the MCP `reingest` tool uses)
 - Filters out irrelevant files (`.git`, `node_modules`, etc.)
 
 ## Usage
@@ -59,4 +59,14 @@ cgr start --repo-path ~/my-project
 
 ## Performance Note
 
-The updater batches rapid saves with a debounce window and recalculates all CALLS relationships on every processed change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes. Optimisation of this behaviour is a work in progress.
+The updater batches rapid saves with a debounce window. Each processed change
+runs `GraphUpdater.reingest`, which deletes what the file previously
+contributed, re-parses it together with the files that import or call into it
+(one level deep, found through the graph's own edges), resolves calls within
+that set only, and restores every other inbound edge verbatim. A change in one
+file therefore costs the parse of a handful of files rather than a re-resolution
+of the project; see [Scoped re-ingest latency](../reports/REINGEST_BENCHMARK.md)
+for measured numbers.
+
+Agents that edit files directly can call the MCP `reingest` tool with the paths
+they touched instead of waiting for the watcher or running `update_repository`.
