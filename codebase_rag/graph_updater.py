@@ -992,10 +992,14 @@ class GraphUpdater:
         # Per-run for the same reason (issue #1620's shape): a run that raised
         # between `_process_files` and the commit point leaves its cache
         # stashed on the instance. No test covers this because no such write is
-        # reachable today: a reused instance either re-parses and overwrites
-        # the stash, or takes the in-sync fast path and returns above the
-        # commit point. Reset anyway, so the stash cannot outlive its run if a
-        # future path does reach the commit point without re-parsing.
+        # reachable, and the argument is structural rather than a survey of
+        # paths: `_process_files` contains no `return` and no `raise`, and
+        # `run` returns only at the in-sync fast path below, which is above the
+        # commit point. So every path that reaches the commit point ran
+        # `_process_files` to its last statement, and that statement
+        # unconditionally re-stashes both fields. Reset anyway: the guarantee
+        # is a property of those two functions' control flow, and the first
+        # early `return` added to either one silently ends it.
         self._pending_hash_cache = None
         self._pending_dir_mtimes = None
         if not force and self._is_already_in_sync():
