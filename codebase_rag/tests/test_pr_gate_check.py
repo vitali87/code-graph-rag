@@ -332,6 +332,52 @@ class TestUnresolvedInPage:
         with pytest.raises(KeyError):
             unresolved_in_page(no_page_info)
 
+    def test_a_pageinfo_without_hasnextpage_is_unverified_not_final(self) -> None:
+        """The same defect one level down, which the first fix missed.
+
+        `bool(info.get("hasNextPage"))` is False for a `pageInfo` that exists
+        but omits the field, so pagination ended as if complete. Fixing the
+        missing-`pageInfo` case without this one repaired the named instance
+        rather than the class (CodeRabbit on PR #1625).
+        """
+        missing_flag = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [{"isResolved": False}],
+                            "pageInfo": {"endCursor": "Y3Vyc29y"},
+                        }
+                    }
+                }
+            }
+        }
+
+        with pytest.raises(KeyError):
+            unresolved_in_page(missing_flag)
+
+    def test_a_string_hasnextpage_is_refused_rather_than_trusted(self) -> None:
+        """A wrong type must not be read as an answer.
+
+        `"false"` is a truthy string, so a shape change turning the flag into
+        a string would invert this check while looking like it worked.
+        """
+        wrong_type = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [],
+                            "pageInfo": {"hasNextPage": "false", "endCursor": ""},
+                        }
+                    }
+                }
+            }
+        }
+
+        with pytest.raises(TypeError):
+            unresolved_in_page(wrong_type)
+
 
 class TestIsRealReview:
     @pytest.mark.parametrize(

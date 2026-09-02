@@ -249,7 +249,18 @@ def unresolved_in_page(page: dict[str, Any]) -> tuple[int, bool, str]:
     # clean result (CodeRabbit on PR #1625). The KeyError now takes the same
     # branch as the rest.
     info = threads["pageInfo"]
-    return unresolved, bool(info.get("hasNextPage")), str(info.get("endCursor") or "")
+    # Required keys with type checks, not `.get`. `bool(info.get("hasNextPage"))`
+    # is False for a `pageInfo` that exists but omits the field, so pagination
+    # ended as if complete -- the same defect as the missing `pageInfo` above,
+    # one level down, and I fixed the outer one without fixing the class
+    # (CodeRabbit on PR #1625). A wrong TYPE is refused too: a string
+    # "false" is truthy, so a shape change that turned the flag into a string
+    # would silently invert this.
+    has_next = info["hasNextPage"]
+    cursor = info["endCursor"]
+    if not isinstance(has_next, bool) or not isinstance(cursor, str | None):
+        raise TypeError(f"unexpected pageInfo types: {type(has_next)}, {type(cursor)}")
+    return unresolved, has_next, cursor or ""
 
 
 def _unresolved_thread_count(pr: str) -> tuple[int, str]:
