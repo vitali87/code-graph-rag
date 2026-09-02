@@ -3052,9 +3052,22 @@ class TestYoloLauncherConfinement:
             "ls",
             "xargs cat",
             # Read-only find keeps working: it launches nothing without a
-            # mutating action, and yolo exists to run unattended work.
-            "find . -name '*.py'",
-            "find . -type f",
+            # mutating action, and yolo exists to run unattended work. On
+            # Windows `find` is find.exe, an unrelated string-search program
+            # that exits 2 on these arguments, so the cases run only where
+            # the POSIX utility exists.
+            pytest.param(
+                "find . -name '*.py'",
+                marks=pytest.mark.skipif(
+                    sys.platform == "win32", reason="Unix find not on Windows"
+                ),
+            ),
+            pytest.param(
+                "find . -type f",
+                marks=pytest.mark.skipif(
+                    sys.platform == "win32", reason="Unix find not on Windows"
+                ),
+            ),
             # A KNOWN value flag still resolves to the real program, so the
             # fail-closed rule has not collapsed into blocking all of xargs.
             "xargs -n 1 cat",
@@ -3064,7 +3077,6 @@ class TestYoloLauncherConfinement:
             # above while having simply stopped allowing anything.
             "xargs -n1 cat",
             "xargs -I{} cat {}",
-            "xargs -0pt cat",
             "xargs -- cat",
             "xargs -P4 cat",
             # The GNU optional-argument spellings are checked against the
@@ -3072,7 +3084,11 @@ class TestYoloLauncherConfinement:
             # instead: this test EXECUTES the command, and BSD/macOS xargs
             # rejects -i/-l/--replace outright, so running them here would
             # fail on the platform's own argument parsing rather than on
-            # anything this fix controls.
+            # anything this fix controls. `xargs -0pt cat` is out for the
+            # mirror-image reason: GNU xargs -p prompts on /dev/tty, which
+            # CI does not have, so it exits 1 there while BSD xargs exits 0.
+            # The validator allows it either way (test_xargs_p_cluster
+            # below); only its execution is platform-bound.
             # `-c` after the subcommand is git's reuse-message flag, not a
             # config setter. `git log -c HEAD` would not discriminate: HEAD is
             # not an exec key, so it passes either way. This spelling puts a
@@ -3095,6 +3111,14 @@ class TestYoloLauncherConfinement:
         mock_ctx.tool_call_approved = False
         result = await tool.function(mock_ctx, command)
         assert result.return_code == 0, f"yolo over-blocked ordinary work: {command}"
+
+    def test_xargs_p_cluster(self) -> None:
+        # The `-0pt` cluster used to sit in the executing list above. It is
+        # asserted against the validator now, and on the resolved program
+        # rather than only the verdict, so that clustering value-less flags
+        # ahead of the utility keeps naming `cat` on every platform.
+        assert _xargs_launched_command(["xargs", "-0pt", "cat"]) == "cat"
+        assert _validate_segment("xargs -0pt cat", "", True) is None
 
 
 def test_symlink_write_target_keeps_the_slash_anchor_broad() -> None:
@@ -3433,6 +3457,13 @@ def test_git_bare_exec_path_still_passes() -> None:
     assert _validate_segment("git --exec-path /tmp/evil pwn", "git", True) is None
 
 
+# Resolved so the root is drive-qualified on Windows. The bare literal is NOT
+# absolute there (no drive letter), while the helper's resolve() gives the
+# target the CWD's drive, so relative_to() failed on every in-root target and
+# these tests could not tell a correct guard from the over-blocking one.
+GIT_GUARD_ROOT = Path("/project/root").resolve()
+
+
 class TestGitRepoLocationEscape:
     """`--git-dir`/`-C`/`--work-tree` pointed outside the project root.
 
@@ -3442,7 +3473,7 @@ class TestGitRepoLocationEscape:
     rc=0 through `git --git-dir=SCRATCH/.git pwn`.
     """
 
-    ROOT = Path("/project/root")
+    ROOT = GIT_GUARD_ROOT
 
     @pytest.mark.parametrize(
         "argv",
@@ -3501,7 +3532,7 @@ def test_git_repo_escape_survives_nesting_under_xargs(inner: str, bypass: bool) 
     # execute() on the top-level segment, so `xargs git --git-dir=EVIL pwn`
     # executed the planted alias with rc=0 while the direct spelling was
     # refused. Placing it inside _validate_segment puts it on the recursion.
-    root = Path("/project/root")
+    root = GIT_GUARD_ROOT
     assert _validate_segment(inner, "", bypass, 0, root) is not None, inner
     nested = f"xargs {inner}"
     assert _validate_segment(nested, "", bypass, 0, root) is not None, (
@@ -3520,6 +3551,6 @@ def test_git_repo_escape_survives_nesting_under_xargs(inner: str, bypass: bool) 
 )
 def test_in_root_git_still_passes_nested(inner: str) -> None:
     # The guard must not cost the everyday nested spelling its pass either.
-    root = Path("/project/root")
+    root = GIT_GUARD_ROOT
     assert _validate_segment(inner, "", True, 0, root) is None, inner
     assert _validate_segment(f"xargs {inner}", "", True, 0, root) is None, inner
