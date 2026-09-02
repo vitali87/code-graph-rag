@@ -1309,18 +1309,20 @@ class GraphUpdater:
         # the next run that deletions were not reconciled, and that alone both
         # fails the sync check and turns graph-backed reconciliation on.
         observed_at = self._pending_cache_observed_at
-        # Hash cache FIRST, directory mtimes LAST. The pair is trusted in
-        # only one direction, and it is the reverse of what the reading
-        # suggests, so it was measured rather than reasoned: a stop leaving a
-        # FRESH dir-mtimes map beside a STALE hash cache is trusted, and the
-        # file added in the gap is never indexed. `_is_already_in_sync` walks
-        # the directories the dir-mtimes map records, so a fresh map lists the
-        # new directory as current and the scan finds nothing to look at,
-        # while the file loop only walks keys the hash cache already names.
-        # The opposite pairing is caught: a stale map has no entry for the new
-        # directory, so the walk reaches it and the mismatch surfaces. The
-        # dir-mtimes file is therefore the one whose arrival must mean "both
-        # are current".
+        # Hash cache FIRST, directory mtimes LAST, because a stop between the
+        # two leaves a mismatched pair that is only detected in one direction.
+        # `_is_already_in_sync` iterates the entries the map RECORDS, so it
+        # never reaches a directory the map has no entry for; what catches an
+        # addition is the recorded PARENT whose stored mtime no longer matches
+        # the directory on disk, which sends `_diff_dir_against_cache` into
+        # that parent to find the new child. A stale map still holds the
+        # parent's old mtime, so the addition surfaces. A FRESH map records
+        # the parent as current, nothing is compared, and the file loop only
+        # walks keys the hash cache already names, so a file added in the gap
+        # is never indexed. Publishing the hash cache first leaves the
+        # harmless window. Measured both directions, and the mechanism was
+        # confirmed by refreshing only the root entry: the addition then goes
+        # undetected even though its own directory is still absent.
         if self._pending_hash_cache is not None:
             cache_path, new_hashes = self._pending_hash_cache
             _publish_hash_cache(cache_path, new_hashes, observed_at)

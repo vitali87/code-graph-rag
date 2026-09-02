@@ -562,9 +562,14 @@ class TestCrashBetweenCacheSaveAndFlush:
         (a live cache stamped in place, removed when the stamp failed). That
         code path is gone: the cache is built on a temporary path and renamed,
         so the live file is never mutated and never needs removing. The OUTER
-        contract those tests existed for survives and is what this asserts -
+        contract those tests existed for survives and is what this asserts:
         indexing work must not be forfeited because a cache could not be
-        written - so all three steps that can now refuse are refused at once.
+        written. All three publish steps are refused, but the write is the one
+        that fires - it short-circuits `_publish_hash_cache` before the stamp
+        or the rename is reached - so the `utime` and `replace` refusals stand
+        as guards against a future reordering rather than as live assertions.
+        The cleanup branch they leave unexercised is covered by the test
+        below.
         """
         parsers, queries = load_parsers()
         GraphUpdater(
@@ -638,6 +643,74 @@ class TestCrashBetweenCacheSaveAndFlush:
         leftovers = sorted(q.name for q in py_project.glob("*.tmp"))
         assert not leftovers, f"temporary cache files were left behind: {leftovers}"
 
+    def test_a_temp_that_cannot_be_cleaned_up_does_not_end_the_run(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The publish fails after the temp exists, and the temp cannot go.
+
+        Restores the pairing the #1644 tests pinned before the publish became
+        atomic: one failure the handler expects, plus a second failure in the
+        handler's own cleanup. The test above cannot reach this, because its
+        write refusal short-circuits before any temp file exists. A leftover
+        temp is inert, since nothing reads a `.tmp` path, so the run must
+        finish and the previous cache must survive untouched.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        cache = py_project / cs.HASH_CACHE_FILENAME
+        before = cache.read_text(encoding="utf-8")
+        assert "module_b.py" in before, (
+            "fixture guard: run 1 wrote no usable cache to preserve"
+        )
+
+        (py_project / "module_c.py").write_text(
+            "def c():\n    return 1\n", encoding="utf-8"
+        )
+
+        real_replace = os.replace
+        real_unlink = Path.unlink
+        reached: set[str] = set()
+
+        def _refuse_replace(src, dst, **kwargs):  # type: ignore[no-untyped-def]
+            if Path(dst).name == cs.HASH_CACHE_FILENAME:
+                reached.add("replace")
+                raise OSError(errno.EROFS, "Read-only file system")
+            return real_replace(src, dst, **kwargs)
+
+        def _refuse_unlink(self, missing_ok=False):  # type: ignore[no-untyped-def]
+            if self.name.endswith(".tmp"):
+                reached.add("cleanup")
+                raise OSError(errno.EROFS, "Read-only file system")
+            return real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(graph_updater_module.os, "replace", _refuse_replace)
+        monkeypatch.setattr(Path, "unlink", _refuse_unlink)
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        monkeypatch.setattr(Path, "unlink", real_unlink)
+        monkeypatch.setattr(graph_updater_module.os, "replace", real_replace)
+
+        assert reached == {"replace", "cleanup"}, (
+            "the run did not reach both the failed rename and the failed "
+            f"cleanup, so finishing proves nothing about the pairing; {reached}"
+        )
+        assert cache.read_text(encoding="utf-8") == before, (
+            "the failed publish damaged the previous cache"
+        )
+
     def test_a_stop_between_the_two_cache_publishes_is_still_detected(
         self,
         py_project: Path,
@@ -647,13 +720,16 @@ class TestCrashBetweenCacheSaveAndFlush:
         """The two caches are published in the only safe order.
 
         They are separate files, so a run stopping between them leaves a
-        mismatched pair, and the pair is trusted in only ONE direction. A
-        FRESH dir-mtimes map beside a STALE hash cache is trusted: the sync
-        check walks the directories that map records, finds the new one listed
-        as current, and the file loop only walks keys the hash cache already
-        names, so a file added in the gap is never indexed. Publishing the
-        hash cache first makes the surviving window the harmless one, where a
-        stale map has no entry for the new directory and the mismatch shows.
+        mismatched pair, and the pair is trusted in only ONE direction. The
+        sync check iterates the entries the map RECORDS and so never reaches a
+        directory the map omits; what catches an addition is the recorded
+        PARENT whose stored mtime no longer matches disk, which sends
+        `_diff_dir_against_cache` into that parent to find the new child. A
+        FRESH map records the parent as current, nothing is compared, and the
+        file loop only walks keys the hash cache already names, so a file
+        added in the gap is never indexed. Publishing the hash cache first
+        leaves the harmless window, where a stale map still holds the parent's
+        old mtime and the addition surfaces.
 
         The stop is keyed on whichever publish happens SECOND rather than on
         either by name, so reversing the two calls still constructs a real
