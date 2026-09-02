@@ -45,6 +45,15 @@ def _emitted_qns(mock_ingestor: MagicMock) -> set[str]:
     }
 
 
+def _module_path_queries(mock_ingestor: MagicMock) -> int:
+    """How many times this run asked the graph for its project module paths."""
+    return sum(
+        1
+        for call in mock_ingestor.fetch_all.call_args_list
+        if call.args and call.args[0] == cs.CYPHER_PROJECT_MODULE_PATHS
+    )
+
+
 def _deleted_module_paths(mock_ingestor: MagicMock) -> set[str]:
     return {
         call.args[1][cs.KEY_PATH]
@@ -740,6 +749,91 @@ class TestFastPathInSync:
             "its Module, Class and Method nodes are now permanent: every "
             "later run matches the stamp and never looks again"
         )
+
+    def test_memo_is_per_run_not_per_instance(
+        self, excludable_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """One instance run twice must re-read the stamp its own run wrote.
+
+        The memo answers "did the set move since the last COMPLETED run", and
+        a run invalidates that answer by stamping at the end. Held across
+        `run()` calls it would keep reporting the pre-stamp answer, so the
+        instance would never fast-path again and would re-query the graph
+        every time. No production caller reuses an instance, which is exactly
+        why nothing else would catch this.
+
+        The stamp is removed after the build so the reused instance starts
+        from a MISSING one: a full build short-circuits the `or` and leaves
+        the memo unset, and an unset memo is recomputed with or without the
+        reset, so it could not tell the two apart.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        (excludable_project / cs.EXCLUSION_STATE_FILENAME).unlink()
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        mock_ingestor.reset_mock()
+        updater.run()
+        assert updater._exclusion_match is False, (
+            "an index with no stamp carries an unknown set, not a matching one"
+        )
+        assert updater.skipped_because_in_sync is False
+        assert _module_path_queries(mock_ingestor) == 1, (
+            "an unknown set must reconcile against the graph exactly once"
+        )
+
+        mock_ingestor.reset_mock()
+        updater.run()
+        assert updater._exclusion_match is True, (
+            "the stamp this instance wrote at the end of its own previous run "
+            "must be re-read, not answered from the memo it invalidated"
+        )
+        assert updater.skipped_because_in_sync is True
+        assert _module_path_queries(mock_ingestor) == 0, (
+            "a matching set costs no graph round-trip"
+        )
+
+    def test_memo_reconciles_again_when_the_stamp_changes_underneath(
+        self, excludable_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The reset has to work in the other direction too.
+
+        Re-reading is only correct if it can turn a match back into a
+        mismatch; a memo that refreshed to True once and stuck would pass the
+        test above and still be wrong.
+        """
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=excludable_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+        mock_ingestor.reset_mock()
+        updater.run()
+        assert updater._exclusion_match is True
+
+        (excludable_project / cs.EXCLUSION_STATE_FILENAME).write_text(
+            json.dumps({"exclude": ["module_a.py"], "unignore": []})
+        )
+        mock_ingestor.reset_mock()
+        updater.run()
+        assert updater._exclusion_match is False, (
+            "the stamp on disk no longer matches this run's set, so the "
+            "instance must reconcile rather than reuse its own True"
+        )
+        assert _module_path_queries(mock_ingestor) == 1
 
     def test_force_bypasses_fast_path(
         self, py_project: Path, mock_ingestor: MagicMock
