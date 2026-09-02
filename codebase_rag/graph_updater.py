@@ -406,6 +406,10 @@ class GraphUpdater:
         # them: the reconciliation it was meant to do may not have happened,
         # so that run must not stamp its exclusion set as reconciled.
         self._graph_state_unknown: bool = False
+        # Written at the post-flush commit point in `run`, never inside
+        # `_process_files` (issue #1615).
+        self._pending_hash_cache: tuple[Path, FileHashCache] | None = None
+        self._pending_dir_mtimes: tuple[Path, DirMtimesCache] | None = None
         # Package paths read from the graph before Pass 1 of an incremental
         # run; None on a full build or when the graph could not be read.
         self._packages_before_run: set[str] | None = None
@@ -1239,6 +1243,22 @@ class GraphUpdater:
         # incremental run that narrowed the set must record it, or the next run
         # reads that run's own result as a change. A single-file run walks one
         # file and cannot speak for the project's exclusion set.
+        # Committed here, not in `_process_files` (issue #1615), so a run that
+        # dies before the flush leaves a cache that still names the deleted
+        # file and its successor re-issues the delete. Deliberately NOT inside
+        # the single-file guard below: a single-file run writes the cache today
+        # and must keep doing so. Written even when `_graph_state_unknown` is
+        # set, because the cache only claims which files were parsed at which
+        # hashes, which stays true; the withheld exclusion stamp is what tells
+        # the next run that deletions were not reconciled, and that alone both
+        # fails the sync check and turns graph-backed reconciliation on.
+        if self._pending_hash_cache is not None:
+            _save_hash_cache(*self._pending_hash_cache)
+            self._pending_hash_cache = None
+        if self._pending_dir_mtimes is not None:
+            _save_dir_mtimes(*self._pending_dir_mtimes)
+            self._pending_dir_mtimes = None
+
         if self._single_file is None:
             if self._graph_state_unknown:
                 logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
@@ -2697,8 +2717,14 @@ class GraphUpdater:
         if unreadable_count > 0:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=unreadable_count)
 
-        _save_hash_cache(cache_path, new_hashes)
-        _save_dir_mtimes(dir_mtimes_path, self._collected_dir_mtimes)
+        # Deferred to the post-flush commit point in `run` (issue #1615). The
+        # deletions above are execute_write calls that only become durable at
+        # that flush; committing the cache here would let a run that died in
+        # between tell its successor the file was already reconciled, and the
+        # successor computes an empty `deleted_keys` and never re-issues the
+        # delete. The subtree then stays in the graph until a full rebuild.
+        self._pending_hash_cache = (cache_path, new_hashes)
+        self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry
         # the old parser's edges.

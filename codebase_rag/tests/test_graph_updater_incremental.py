@@ -363,6 +363,53 @@ class TestIncrementalUpdates:
         assert "module_b.py" not in new_data
 
 
+class TestCrashBetweenCacheSaveAndFlush:
+    """Issue #1615: a run that dies after the hash cache commits but before the
+    graph flush must not convince its successor the deletion was reconciled."""
+
+    def test_successor_run_still_deletes_the_module(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        (py_project / "module_b.py").unlink()
+
+        # Run 2 dies at the commit point: the deletes are queued but never
+        # flushed. Whatever this run wrote to disk is all its successor has.
+        crashed = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        with (
+            patch.object(
+                mock_ingestor, "flush_all", side_effect=RuntimeError("database gone")
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            crashed.run()
+
+        # Run 3 is the one under test: it must re-issue the delete the crashed
+        # run only queued. Asserting on the delete itself, not on the sync
+        # check, because a stale-cache no-op also leaves the fast path off.
+        mock_ingestor.reset_mock()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        assert "module_b.py" in _deleted_module_paths(mock_ingestor)
+
+
 class TestFastPathInSync:
     def test_second_run_skips_all_passes(
         self, py_project: Path, mock_ingestor: MagicMock
