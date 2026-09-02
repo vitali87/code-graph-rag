@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -417,6 +418,15 @@ class TestCrashBetweenCacheSaveAndFlush:
         def _edit_then_save(path: Path, hashes: dict[str, str]) -> None:
             nonlocal reached_write_site
             reached_write_site = True
+            # The observation instant is already captured by now, and this
+            # edit must be measurably later than it rather than landing on the
+            # same filesystem tick; 200 ms clears every CI platform's mtime
+            # granularity, the coarsest being Windows at 15.6 ms.
+            # The pause moves nothing, it only waits, which is why it cannot
+            # pin the assertion below: break the fix and the cache is stamped
+            # after this point regardless of how long the edit waited, so it
+            # is still the newer of the two and the successor still skips.
+            time.sleep(0.2)
             target.write_text(edited, encoding="utf-8")
             real_save(path, hashes)
 
@@ -494,6 +504,13 @@ class TestCrashBetweenCacheSaveAndFlush:
             if path.name == "module_b.py" and not fired:
                 fired = True
                 # After this file's own hash is taken, still inside the loop.
+                # As in the test above, the pause makes this edit measurably
+                # later than the captured instant instead of trusting the
+                # filesystem to separate two writes made in the same moment.
+                # It moves nothing, it only waits: it widens a gap the fix
+                # creates and the unfixed placement reverses, so it cannot
+                # decide the assertion either way.
+                time.sleep(0.2)
                 path.write_text(raced, encoding="utf-8")
             return result
 
