@@ -176,12 +176,28 @@ class TestSingleFileRunScope:
         return repo
 
     @staticmethod
-    def _deleted_module_keys(ingestor: MagicMock) -> set[str]:
-        return {
+    def _swept_module_keys(ingestor: MagicMock) -> set[str]:
+        """Modules deleted and NOT re-added -- i.e. genuinely swept.
+
+        `CYPHER_DELETE_MODULE` serves two different purposes, so counting the
+        query alone would flag correct behaviour. The reconciliation path
+        issues it to sweep a file that is gone; the changed-file path issues
+        it for a file that still exists, to clear the previous parse's
+        entities immediately before `_process_single_file` re-adds them
+        (graph_updater.py:2731). Only the first is a deletion, and the
+        difference is visible in whether a Module node is written afterwards.
+        """
+        deleted = {
             call.args[1][cs.KEY_PATH]
             for call in ingestor.execute_write.call_args_list
             if call.args and call.args[0] == cs.CYPHER_DELETE_MODULE
         }
+        readded = {
+            call[0][1][cs.KEY_PATH]
+            for call in ingestor.ensure_node_batch.call_args_list
+            if call[0][0] == cs.NodeLabel.MODULE and cs.KEY_PATH in call[0][1]
+        }
+        return deleted - readded
 
     def _build_then_single_file(
         self, tmp_path: Path, mock_ingestor: MagicMock
@@ -214,7 +230,7 @@ class TestSingleFileRunScope:
         self, tmp_path: Path, mock_ingestor: MagicMock
     ) -> None:
         _repo, second = self._build_then_single_file(tmp_path, mock_ingestor)
-        assert self._deleted_module_keys(second) == set(), (
+        assert self._swept_module_keys(second) == set(), (
             "a single-file run reconciled the whole project and swept every "
             "module the cache named, including the one it was asked to index"
         )

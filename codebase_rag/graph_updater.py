@@ -3001,8 +3001,14 @@ class GraphUpdater:
         graph_paths = (
             preexisting_paths if preexisting_paths is not None else frozenset()
         )
+        # A single-file run walked exactly one file, so `current_file_keys`
+        # names only that file and every sibling looks deleted. It cannot
+        # speak for the project's file set, for the same reason `run` guards
+        # the exclusion stamp with `self._single_file is None` (#1619).
         deleted_keys = (
             (set(old_hashes.keys()) | graph_paths) - current_file_keys - unreadable_keys
+            if self._single_file is None
+            else set()
         )
         if deleted_keys:
             logger.info(ls.INCREMENTAL_DELETED, count=len(deleted_keys))
@@ -3041,8 +3047,19 @@ class GraphUpdater:
         # between tell its successor the file was already reconciled, and the
         # successor computes an empty `deleted_keys` and never re-issues the
         # delete. The subtree then stays in the graph until a full rebuild.
-        self._pending_hash_cache = (cache_path, new_hashes)
-        self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
+        if self._single_file is None:
+            self._pending_hash_cache = (cache_path, new_hashes)
+            self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
+        else:
+            # Two different remedies, because the run has different standing
+            # on each (#1619). It DID hash its one file, so that hash is worth
+            # recording -- merged over the previous run's entries, never
+            # replacing them, or the next full run treats every sibling as
+            # new. It collected NO directory mtimes at all
+            # (`_collect_eligible_files` returns above the walk that populates
+            # them), so there is nothing to merge and writing the empty
+            # collection would wipe the previous walk's record wholesale.
+            self._pending_hash_cache = (cache_path, {**old_hashes, **new_hashes})
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry
         # the old parser's edges.
