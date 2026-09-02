@@ -1296,7 +1296,23 @@ class GraphUpdater:
                     # A missing cache only costs a rebuild, which is why every
                     # writer here already degrades to absent rather than wrong.
                     logger.warning(ls.CACHE_STAMP_FAILED, path=path, error=e)
-                    path.unlink(missing_ok=True)
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError as unlink_error:
+                        # The canonical reason `utime` fails is a read-only
+                        # filesystem, and that same condition fails the unlink,
+                        # so this is the expected pairing rather than a remote
+                        # one. A run that cannot clean up must still finish:
+                        # every other filesystem writer on this path swallows
+                        # OSError, and crashing here would turn a degraded run
+                        # into no run at all. The cache is left mis-stamped and
+                        # the warning says so, because a silent pass would
+                        # leave the next run to discover it by skipping a file.
+                        logger.warning(
+                            ls.CACHE_STAMP_CLEANUP_FAILED,
+                            path=path,
+                            error=unlink_error,
+                        )
         self._pending_cache_observed_at = None
 
         if self._single_file is None:

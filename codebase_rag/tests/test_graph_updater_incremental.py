@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import time
@@ -599,6 +600,66 @@ class TestCrashBetweenCacheSaveAndFlush:
             "the cache survived a failed backdate: it now carries its own "
             "write time, which is later than an edit made during the run, so "
             "the successor skips that file and keeps stale graph content"
+        )
+
+    def test_run_survives_a_cache_that_can_be_neither_stamped_nor_removed(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A read-only filesystem fails the stamp AND the cleanup.
+
+        `os.utime` failing with EROFS is the canonical reason to reach the
+        fail-closed path, and the same condition fails the `unlink` that path
+        performs, so the pairing is expected rather than remote. Every other
+        filesystem writer on this path swallows `OSError`; crashing here would
+        turn a run that merely could not tidy up into no run at all.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        (py_project / "module_c.py").write_text(
+            "def c():\n    return 1\n", encoding="utf-8"
+        )
+
+        real_utime = os.utime
+        real_unlink = Path.unlink
+        refused: list[str] = []
+
+        def _refuse_stamp(path, times=None, **kwargs):  # type: ignore[no-untyped-def]
+            if Path(path).name == cs.HASH_CACHE_FILENAME:
+                refused.append("utime")
+                raise OSError(errno.EROFS, "Read-only file system")
+            return real_utime(path, times, **kwargs)
+
+        def _refuse_unlink(self, missing_ok=False):  # type: ignore[no-untyped-def]
+            if self.name == cs.HASH_CACHE_FILENAME:
+                refused.append("unlink")
+                raise OSError(errno.EROFS, "Read-only file system")
+            return real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(graph_updater_module.os, "utime", _refuse_stamp)
+        monkeypatch.setattr(Path, "unlink", _refuse_unlink)
+        # The run must COMPLETE. Before the unlink was guarded this raised
+        # OSError out of `run()` on exactly this pairing.
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        monkeypatch.setattr(Path, "unlink", real_unlink)
+        monkeypatch.setattr(graph_updater_module.os, "utime", real_utime)
+
+        assert refused == ["utime", "unlink"], (
+            "the run did not reach both refusals, so completing proves "
+            f"nothing about the pairing under test; saw {refused}"
         )
 
     def test_successor_run_still_deletes_the_module(
