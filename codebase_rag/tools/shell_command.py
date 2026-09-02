@@ -146,11 +146,13 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
     for path_arg in path_args:
         if path_arg in ("*", ".", ".."):
             return True, f"rm targeting dangerous path: {path_arg}"
+        # Joining onto the root is the platform's own absoluteness test: an
+        # absolute target replaces the root outright, a relative one lands
+        # under it. A `startswith("/")` check is POSIX-only: on Windows a
+        # rooted, drive-less target such as `/x` would resolve on the Python
+        # process's drive rather than the root's, the drive rm runs on.
         try:
-            if path_arg.startswith("/"):
-                resolved = Path(path_arg).resolve()
-            else:
-                resolved = (project_root / path_arg).resolve()
+            resolved = (project_root / path_arg).resolve()
         except (OSError, ValueError):
             return True, f"rm with invalid path: {path_arg}"
         resolved_str = str(resolved)

@@ -1169,6 +1169,16 @@ class TestDangerousRmPath:
         )
         assert not is_dangerous
 
+    def test_absolute_path_inside_project(self, tmp_path: Path) -> None:
+        # An absolute target is judged as itself, not as a name under the
+        # root: joining it onto the root must replace the root, on every
+        # platform, so an in-root absolute spelling keeps its pass.
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir(exist_ok=True)
+        target = str(project_root / "subdir" / "file.txt")
+        is_dangerous, _ = _is_dangerous_rm_path(["rm", "-rf", target], project_root)
+        assert not is_dangerous
+
     def test_wildcard_dangerous(self, tmp_path: Path) -> None:
         is_dangerous, reason = _is_dangerous_rm_path(["rm", "-rf", "*"], tmp_path)
         assert is_dangerous
