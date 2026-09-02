@@ -2823,7 +2823,10 @@ class GraphUpdater:
             for deleted_key in deleted_keys:
                 deleted_path = self.repo_path / deleted_key
                 self.remove_file_from_state(deleted_path)
-                self._delete_module_entities(deleted_key)
+                # A key the up-front loop already cleared gets no second
+                # module delete; only the File node is still to go.
+                if deleted_key not in deleted_set:
+                    self._delete_module_entities(deleted_key)
                 if isinstance(self.ingestor, QueryProtocol):
                     # Keyed on the absolute path: a sibling project's File
                     # node can share the relative path (issue #897).

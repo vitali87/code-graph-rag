@@ -96,6 +96,27 @@ def test_an_edited_file_is_deleted_exactly_once(
     assert all(n == 1 for n in counts.values()), dict(counts)
 
 
+def test_a_deleted_file_is_deleted_exactly_once(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # The up-front loop clears a deleted file's subtree before the parse;
+    # the post-parse reconciliation must not issue the same delete again.
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+    (py_project / "module_a.py").unlink()
+
+    mock_ingestor.reset_mock()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+
+    counts = _deleted_module_counts(mock_ingestor)
+    assert counts["module_a.py"] == 1, dict(counts)
+    assert all(n == 1 for n in counts.values()), dict(counts)
+
+
 @pytest.fixture
 def excludable_project(tmp_path: Path) -> Path:
     """A project whose module_a carries a Module, a Class and a Method.
