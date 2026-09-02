@@ -166,8 +166,10 @@ MCP_REINGEST = (
     "for a typical file, seconds for a hub imported by dozens) instead of a "
     "full update_repository pass. "
     "Paths are relative to the project root; files that no longer exist are "
-    "removed from the graph. Returns the files re-parsed, the dependents "
-    "re-parsed with them, the files removed, and the elapsed milliseconds."
+    "removed from the graph; paths the project's ignore rules exclude are "
+    "skipped and reported rather than indexed. Returns the files re-parsed, "
+    "the dependents re-parsed with them, the files removed, the paths "
+    "skipped, and the elapsed milliseconds."
 )
 MCP_PARAM_REINGEST_PATHS = (
     "Files to re-ingest, relative to the project root (created, modified, or deleted)."

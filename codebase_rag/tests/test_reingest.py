@@ -267,7 +267,7 @@ def test_reingest_refuses_paths_outside_the_repo(fixture_root: Path) -> None:
 def test_reingest_with_nothing_to_do_is_a_no_op(fixture_root: Path) -> None:
     store = MagicMock()
     report = _updater(store, fixture_root).reingest([])
-    assert report == (tuple(), tuple(), tuple(), 0.0)
+    assert report == (tuple(), tuple(), tuple(), tuple(), 0.0)
     store.flush_all.assert_not_called()
 
 
@@ -615,3 +615,86 @@ def test_reingest_of_a_python_file_does_not_run_the_cpp_frontend(
     updater._run_cpp_frontend = run_cpp  # type: ignore[method-assign]
     updater.reingest([path])
     run_cpp.assert_not_called()
+
+
+def test_reingest_does_not_hide_an_edit_it_was_not_told_about(
+    fixture_root: Path,
+) -> None:
+    """The cache's mtime must not move past edits reingest never saw.
+
+    An agent edits two files and reports one. The hash cache written by the
+    reingest must not be stamped later than the other edit, or the next
+    update_repository reads that file as no newer than the cache and keeps
+    its stale hash for good.
+    """
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    cache = fixture_root / cs.HASH_CACHE_FILENAME
+    stamped_before = cache.stat().st_mtime
+
+    # Both edits land after the cache was stamped; only one is reported.
+    _write(
+        fixture_root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"] + "\n\ndef fresh():\n    return 4\n",
+    )
+    _write(
+        fixture_root,
+        "pkg/unrelated.py",
+        FIXTURE["pkg/unrelated.py"] + "\n\ndef newly_added():\n    return 5\n",
+    )
+    updater.reingest(["pkg/util.py"])
+    assert cache.stat().st_mtime == stamped_before, "reingest moved the cache mtime"
+
+    # The next update, on a fresh updater over the same graph, re-parses the
+    # unreported file (its new definition lands) and nothing else: the
+    # reported file's hash is already current. The graph then equals a
+    # clean index.
+    later_updater = _updater(store, fixture_root)
+    parsed: list[str] = []
+    real_parse = later_updater._process_single_file
+
+    def spy(path: Path, *args: object, **kwargs: object) -> None:
+        parsed.append(path.relative_to(fixture_root).as_posix())
+        real_parse(path, *args, **kwargs)
+
+    later_updater._process_single_file = spy  # type: ignore[method-assign]
+    later_updater.run(force=False)
+    assert parsed == ["pkg/unrelated.py"]
+    assert _diff(_snapshot(store), _clean_index(fixture_root)) == ""
+
+
+@pytest.mark.parametrize(
+    ("rel", "exclude"),
+    [
+        ("node_modules/leak.py", None),
+        ("pkg/bundle.min.js", None),
+        ("vendor/v.py", frozenset({"vendor"})),
+    ],
+    ids=["ignored_dir", "ignored_suffix", "cli_exclude"],
+)
+def test_reingest_skips_paths_the_ignore_rules_exclude(
+    fixture_root: Path, rel: str, exclude: frozenset[str] | None
+) -> None:
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=fixture_root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+        exclude_paths=exclude,
+    )
+    updater.run(force=True)
+    before = _snapshot(store)
+    _write(fixture_root, rel, "def leaked():\n    return 1\n")
+
+    report = updater.reingest([rel])
+
+    assert report.skipped == (rel,)
+    assert report.reparsed == () and report.affected == () and report.removed == ()
+    assert _snapshot(store) == before
+    cache = json.loads((fixture_root / cs.HASH_CACHE_FILENAME).read_text())
+    assert rel not in cache

@@ -114,15 +114,15 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # ┌─────────────────────────────────────────────────────────────────────┐
         # │                      Real-Time Graph Update Steps                   │
         # ├─────────────────────────────────────────────────────────────────────┤
-        # │ Step 1: Delete all old data from the graph for this file           │
-        # │         Provides a clean slate for the updated information         │
-        # │ Step 2: Clear the specific in-memory state for the file            │
-        # │         Prevents stale in-memory representations                   │
-        # │ Step 3: Re-parse the file if it was modified or created            │
-        # │         Rebuilds in-memory state (AST, function registry)          │
-        # │ Step 4: Re-process all function calls across the entire codebase   │
-        # │         Fixes "island" problem; changes reflect in all relations   │
-        # │ Step 5: Flush all collected changes to the database                │
+        # │ Step 1: Drop events for directories and ignored or irrelevant      │
+        # │         paths before they cost anything                            │
+        # │ Step 2: Debounce, so a burst of saves to one file becomes one job  │
+        # │ Step 3: Hand the changed and deleted paths to                      │
+        # │         GraphUpdater.reingest, which deletes the old subtrees,     │
+        # │         re-parses the files plus their one-level dependents,       │
+        # │         resolves calls in that set only and flushes (#1524)        │
+        # │ Step 4: Log what was re-parsed, what depended on it, what was      │
+        # │         removed, and how long it took                              │
         # └─────────────────────────────────────────────────────────────────────┘
         src_path = event.src_path
         if isinstance(src_path, bytes):

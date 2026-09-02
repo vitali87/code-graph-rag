@@ -848,11 +848,17 @@ class MCPToolsRegistry:
                     cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
                 )
             self.ingestor.ensure_constraints()
+            # The same exclusion set the index and update paths use, or an
+            # agent-named path under a CLI-excluded directory would be
+            # indexed here and kept by every later update.
+            exclude_paths, unignore_paths = self._ignore_sets()
             updater = GraphUpdater(
                 ingestor=self.ingestor,
                 repo_path=Path(self.project_root),
                 parsers=self.parsers,
                 queries=self.queries,
+                unignore_paths=unignore_paths,
+                exclude_paths=exclude_paths,
                 project_name=project_name,
             )
             self._live_updater = updater
@@ -861,6 +867,7 @@ class MCPToolsRegistry:
             reparsed=list(report.reparsed),
             affected=list(report.affected),
             removed=list(report.removed),
+            skipped=list(report.skipped),
             elapsed_ms=round(report.elapsed_ms, 1),
         )
 

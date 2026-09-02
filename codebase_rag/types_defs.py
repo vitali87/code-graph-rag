@@ -554,6 +554,7 @@ class ReingestToolResult(TypedDict, total=False):
     reparsed: list[str]
     affected: list[str]
     removed: list[str]
+    skipped: list[str]
     elapsed_ms: float
     error: str
 
@@ -841,6 +842,7 @@ class ReingestReport(NamedTuple):
     reparsed: tuple[str, ...]
     affected: tuple[str, ...]
     removed: tuple[str, ...]
+    skipped: tuple[str, ...]
     elapsed_ms: float
 
 

@@ -3209,19 +3209,42 @@ class GraphUpdater:
 
     def _reingest_split(
         self, paths: Iterable[Path | str], deleted: Iterable[Path | str]
-    ) -> tuple[dict[str, Path], dict[str, Path]]:
-        # (present, gone): a listed path missing on disk counts as gone, and
-        # an explicit deletion wins over a same-named file that reappeared.
+    ) -> tuple[dict[str, Path], dict[str, Path], set[str]]:
+        # (present, gone, skipped): a listed path missing on disk counts as
+        # gone, an explicit deletion wins over a same-named file that
+        # reappeared, and a path the ignore rules exclude is reported back
+        # rather than indexed.
         present: dict[str, Path] = {}
         gone: dict[str, Path] = {}
+        skipped: set[str] = set()
         for raw in paths:
             key, path = self._reingest_target(raw)
+            if self._reingest_ignored(path):
+                skipped.add(key)
+                continue
             (present if path.is_file() else gone)[key] = path
         for raw in deleted:
             key, path = self._reingest_target(raw)
             present.pop(key, None)
+            if self._reingest_ignored(path):
+                skipped.add(key)
+                continue
             gone[key] = path
-        return present, gone
+        return present, gone, skipped
+
+    def _reingest_ignored(self, path: Path) -> bool:
+        # The caller is an agent naming files it wrote, so the project's
+        # ignore rules apply here exactly as they do to the walk: a path
+        # under `node_modules`, a generated `.min.js`, or a CLI-excluded
+        # directory must not become a Module the next update then keeps,
+        # because its hash matches and the walk never revisits it.
+        return should_skip_path(
+            path,
+            self.repo_path,
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
+            is_file=True,
+        )
 
     def _reingest_dependents(
         self, present: dict[str, Path], gone: dict[str, Path]
@@ -3272,7 +3295,7 @@ class GraphUpdater:
 
     def _reingest_reparse(
         self, reparse: dict[str, Path], gone: dict[str, Path]
-    ) -> None:
+    ) -> dict[str, bytes]:
         touched_languages: set[cs.SupportedLanguage] = set()
         for path in (*reparse.values(), *gone.values()):
             spec = get_language_spec(path.suffix)
@@ -3287,11 +3310,22 @@ class GraphUpdater:
             # runs after Pass 2, inside the deferred stages.)
             self._cpp_frontend_covered = frozenset()
             self._run_cpp_frontend()
+        parsed: dict[str, bytes] = {}
         for key, path in reparse.items():
+            # Read once and hash those same bytes later: an edit landing
+            # between the parse and a second read would otherwise be
+            # recorded in the cache as already indexed.
+            try:
+                parsed[key] = path.read_bytes()
+            except OSError:
+                continue
             # The delombok overlay stands in for the checked-in bytes exactly
             # as the batch path does (issue #1140).
-            self._process_single_file(path, file_bytes=self._delombok_overlay.get(key))
+            self._process_single_file(
+                path, file_bytes=self._delombok_overlay.get(key, parsed[key])
+            )
         self._rerun_frontends_for(touched_languages)
+        return parsed
 
     def _reingest_resolve(
         self, reparse: dict[str, Path], captured: list[ResultRow]
@@ -3334,20 +3368,47 @@ class GraphUpdater:
         cache_path: Path,
         hashes: FileHashCache,
         reparse: dict[str, Path],
+        parsed: dict[str, bytes],
         gone: dict[str, Path],
     ) -> None:
         # Keep the hash cache honest so the next update_repository does not
         # re-parse what this call already applied.
         if not cache_path.is_file():
             return
-        for key, path in reparse.items():
-            try:
-                hashes[key] = _hash_file(path)
-            except OSError:
+        try:
+            observed_at = cache_path.stat().st_mtime
+        except OSError:
+            return
+        for key in reparse:
+            data = parsed.get(key)
+            if data is None:
                 hashes.pop(key, None)
+            else:
+                hashes[key] = hashlib.md5(data, usedforsecurity=False).hexdigest()
         for key in gone:
             hashes.pop(key, None)
         _save_hash_cache(cache_path, hashes)
+        # The cache's mtime is the instant every file NOT in it was last
+        # judged (`_is_already_in_sync` and the walk skip files no newer
+        # than it). Writing moves it to now, which would hide an edit made
+        # before this call to a file this call was not told about: the next
+        # update would read it as older than the cache and keep the stale
+        # hash. Put the previous instant back; the files re-ingested here
+        # are newer than it, so the next run re-hashes them and finds them
+        # already current. Fail closed like `run()`: a cache stamped with
+        # the wrong time is worse than no cache.
+        try:
+            os.utime(cache_path, (observed_at, observed_at))
+        except OSError as e:
+            logger.warning(ls.CACHE_STAMP_FAILED, path=cache_path, error=e)
+            try:
+                cache_path.unlink(missing_ok=True)
+            except OSError as unlink_error:
+                logger.warning(
+                    ls.CACHE_STAMP_CLEANUP_FAILED,
+                    path=cache_path,
+                    error=unlink_error,
+                )
 
     def reingest(
         self,
@@ -3368,12 +3429,16 @@ class GraphUpdater:
 
         ``paths`` that no longer exist on disk are treated as deleted;
         ``deleted`` names files whose removal should be applied even if a
-        same-named file has since reappeared (a watch DELETE event).
+        same-named file has since reappeared (a watch DELETE event). Paths
+        the project's ignore rules exclude are reported as ``skipped`` and
+        left out of the graph, as the walk would leave them.
         """
         started = time.perf_counter()
-        present, gone = self._reingest_split(paths, deleted)
+        present, gone, skipped = self._reingest_split(paths, deleted)
+        if skipped:
+            logger.warning(ls.REINGEST_SKIPPED_IGNORED, paths=sorted(skipped))
         if not present and not gone:
-            return ReingestReport((), (), (), 0.0)
+            return ReingestReport((), (), (), tuple(sorted(skipped)), 0.0)
 
         self._hydrate_for_reingest()
         # Generated-source roots and the delombok overlay are per-run inputs;
@@ -3390,14 +3455,15 @@ class GraphUpdater:
 
         reparse = {**present, **affected}
         self._reingest_delete(reparse, gone, hashes)
-        self._reingest_reparse(reparse, gone)
+        parsed = self._reingest_reparse(reparse, gone)
         self._reingest_resolve(reparse, captured)
-        self._reingest_update_hashes(cache_path, hashes, reparse, gone)
+        self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
 
         report = ReingestReport(
             reparsed=tuple(sorted(present)),
             affected=tuple(sorted(affected)),
             removed=tuple(sorted(gone)),
+            skipped=tuple(sorted(skipped)),
             elapsed_ms=(time.perf_counter() - started) * 1000.0,
         )
         logger.info(

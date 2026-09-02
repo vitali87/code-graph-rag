@@ -279,11 +279,11 @@ DEBOUNCE_MAX_WAIT_ADJUSTED = (
     "Setting max_wait to debounce value."
 )
 DELETION_QUERY = "Ran deletion query for path: {path}"
-RECALC_CALLS = "Recalculating all function call relationships for consistency..."
 EDIT_TX_REJECTED = "Edit transaction {tx} rejected by verification: {why}"
 EDIT_TX_APPLIED = "Edit transaction {tx} applied {count} file(s)"
 EDIT_TX_RESTORE_FAILED = "Edit transaction could not restore {path}: {error}"
 REINGEST_DONE = "Re-ingested {reparsed} file(s) (+{affected} dependent, -{removed} removed) in {ms} ms"
+REINGEST_SKIPPED_IGNORED = "Re-ingest skipped path(s) the ignore rules exclude: {paths}"
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."

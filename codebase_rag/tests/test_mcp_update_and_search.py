@@ -530,7 +530,11 @@ class TestReingest:
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             mock_updater = MagicMock()
             mock_updater.reingest.return_value = MagicMock(
-                reparsed=("a.py",), affected=("b.py",), removed=(), elapsed_ms=12.34
+                reparsed=("a.py",),
+                affected=("b.py",),
+                removed=(),
+                skipped=(),
+                elapsed_ms=12.34,
             )
             mock_updater_cls.return_value = mock_updater
 
@@ -546,9 +550,33 @@ class TestReingest:
                 "reparsed": ["a.py"],
                 "affected": ["b.py"],
                 "removed": [],
+                "skipped": [],
                 "elapsed_ms": 12.3,
             }
             assert second == first
+
+    async def test_reingest_builds_its_updater_with_the_ignore_sets(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        # index_repository and update_repository hand the resolved ignore
+        # files to the updater; reingest's fresh updater must get the same
+        # set, or an agent-named path under an excluded directory is indexed
+        # here and kept by every later update.
+        _mark_indexed(mcp_registry)
+        exclude, unignore = frozenset({"vendor"}), frozenset({"vendor/keep"})
+        with (
+            patch.object(
+                mcp_registry, "_ignore_sets", return_value=(exclude, unignore)
+            ),
+            patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls,
+        ):
+            mock_updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.5
+            )
+            await mcp_registry.reingest(["a.py"])
+            kwargs = mock_updater_cls.call_args.kwargs
+            assert kwargs["exclude_paths"] == exclude
+            assert kwargs["unignore_paths"] == unignore
 
     async def test_reingest_reuses_the_updater_update_repository_built(
         self, mcp_registry: MCPToolsRegistry
@@ -556,7 +584,7 @@ class TestReingest:
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
             mock_updater = MagicMock()
             mock_updater.reingest.return_value = MagicMock(
-                reparsed=(), affected=(), removed=(), elapsed_ms=0.5
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.5
             )
             mock_updater_cls.return_value = mock_updater
 

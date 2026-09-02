@@ -444,7 +444,6 @@ CYPHER_DELETE_MODULE = (
 CYPHER_DELETE_FILE = "MATCH (f:File {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_FOLDER = "MATCH (f:Folder {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_PACKAGE = "MATCH (p:Package {absolute_path: $path}) DETACH DELETE p"
-CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
 # Removes external import-target Module nodes that no module imports anymore
 # (e.g. an imported name that was renamed/removed on an incremental rebuild).
 # OPTIONAL MATCH + count instead of `WHERE NOT (m)<--()`: Memgraph 3.x
