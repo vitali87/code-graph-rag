@@ -265,14 +265,18 @@ def test_a_dangling_symlink_is_removed_rather_than_skipped(tmp_path: Path) -> No
       link in a 0o500 dir     -- the handler IS reached and now retries, but
                                  rmtree still FAILS either way: the blocker is
                                  the PARENT's write bit and no chmod on the
-                                 child can clear it. (The errno depends on the
-                                 removal path: 66 on the default fd-based one
-                                 for every revision; without it, 13 post-fix
-                                 and 66 at 701c5036, whose early return leaves
-                                 the link so rmdir on the parent fails. The
-                                 merge-base handler 422d9916, which has no
-                                 vanished-path guard, gave 2 because its chmod
-                                 followed the dangling link.)
+                                 child can clear it. (Errnos below are NAMES
+                                 because the numbers are platform-specific:
+                                 ENOTEMPTY is 66 on Darwin and 39 on Linux.
+                                 Measured on macOS 3.12.7. The errno depends on
+                                 the removal path: ENOTEMPTY on the default
+                                 fd-based one for every revision; without it,
+                                 EACCES post-fix and ENOTEMPTY at 701c5036,
+                                 whose early return leaves the link so rmdir on
+                                 the parent fails. The merge-base handler
+                                 422d9916, which has no vanished-path guard,
+                                 gave ENOENT because its chmod followed the
+                                 dangling link.)
 
     So the rescued case is Windows, where `os.unlink` refuses outright and the
     handler is the only path to removal -- the same platform asymmetry as the

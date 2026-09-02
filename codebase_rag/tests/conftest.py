@@ -319,9 +319,14 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     only under `pytest-xdist` on a CI runner, never on a developer machine.
     """
     # A symlink has no mode of its own worth clearing, and every stat/chmod
-    # here FOLLOWS it: on a DANGLING link `os.stat` raises FileNotFoundError,
-    # the early return skips the retry, and `rmtree` then fails on a link it
-    # could simply have unlinked ([Errno 66] Directory not empty). `os.lstat`
+    # here FOLLOWS it: on a DANGLING link `os.stat` raises FileNotFoundError
+    # and the early return leaves the link in place, abandoning a removal the
+    # handler was asked to perform. On POSIX that costs nothing end-to-end
+    # (rmtree unlinks a dangling link unaided in a writable parent, and where
+    # it cannot the blocker is the parent's mode, not the link); the rescued
+    # platform is WINDOWS, where `os.unlink` refuses the link outright and the
+    # handler is the only removal path, so rmtree then fails on the parent.
+    # See the SCOPE block in test_temp_repo_readonly_cleanup.py. `os.lstat`
     # alone does not fix it -- `os.chmod` follows links too, and
     # `follow_symlinks=False` is unsupported for chmod on LINUX, one of the
     # three unit-matrix platforms and the one this handler must survive.
