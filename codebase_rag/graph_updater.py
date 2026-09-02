@@ -2684,8 +2684,18 @@ class GraphUpdater:
         # absent from the cache set here and never join the dependents query.
         # Union them back in; the walk-eligible subtraction below drops the
         # ones that still exist (issue #1567).
+        # A file the graph still holds but neither the cache nor the walk
+        # names (a cacheless or forced rebuild over an existing graph) must
+        # go before the parse too, for the same-stem reason as above: a
+        # surviving sibling parsed first would otherwise claim its qn and
+        # the post-parse delete by path would find nothing.
+        graph_only_gone = (
+            preexisting_paths - eligible_by_key.keys() - unreadable_keys
+            if preexisting_paths
+            else frozenset()
+        )
         deleted_before_parse = sorted(
-            (set(old_hashes) | self._delombok_stale_keys)
+            (set(old_hashes) | self._delombok_stale_keys | graph_only_gone)
             - eligible_by_key.keys()
             - unreadable_keys
         )
@@ -2759,11 +2769,12 @@ class GraphUpdater:
         # then finds nothing, leaving the old definitions beside the new
         # ones (issue #1569). This loop is the only graph delete on the
         # re-parse path: every non-new entry is in reindexed_keys, so the
-        # per-file loop below only clears local state.
+        # per-file loop below only clears local state. It runs only once
+        # every changed file has pre-parsed: a parse failure then leaves
+        # the old subtrees in place instead of an emptied graph.
+        pre_parsed = self._pre_parse_changed_files(changed_entries)
         for stale_key in (*reindexed_keys, *deleted_before_parse):
             self._delete_module_entities(stale_key)
-
-        pre_parsed = self._pre_parse_changed_files(changed_entries)
 
         with Progress(
             SpinnerColumn(),

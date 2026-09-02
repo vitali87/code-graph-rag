@@ -1451,3 +1451,70 @@ class TestSlots:
         cache = BoundedASTCache()
         with pytest.raises(AttributeError):
             cache.nonexistent_attr = "value"  # type: ignore[attr-defined]
+
+
+def test_a_graph_only_module_is_deleted_before_the_first_parse(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Cacheless rebuild over an existing graph: module_c.py is gone from
+    # disk and was never in a cache, only the graph names it. Its subtree
+    # must go before any file is parsed, or a same-stem survivor parsed
+    # first claims its qn and the later delete by path finds nothing.
+    parsers, queries = load_parsers()
+
+    def module_paths(query: str, params: dict | None = None) -> list:
+        if query == cs.CYPHER_PROJECT_MODULE_PATHS:
+            return [
+                {cs.KEY_PATH: "module_a.py"},
+                {cs.KEY_PATH: "module_b.py"},
+                {cs.KEY_PATH: "module_c.py"},
+            ]
+        return []
+
+    mock_ingestor.fetch_all.side_effect = module_paths
+    updater = GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    )
+    deleted_at_first_parse: list[set[str]] = []
+    real_parse = updater._process_single_file
+
+    def spy(*args: object, **kwargs: object) -> None:
+        if not deleted_at_first_parse:
+            deleted_at_first_parse.append(_deleted_module_paths(mock_ingestor))
+        real_parse(*args, **kwargs)
+
+    updater._process_single_file = spy  # type: ignore[method-assign]
+    updater.run()
+
+    assert deleted_at_first_parse, "no file was parsed"
+    assert "module_c.py" in deleted_at_first_parse[0]
+    assert _deleted_module_counts(mock_ingestor)["module_c.py"] == 1
+
+
+def test_a_pre_parse_failure_leaves_the_old_subtrees_in_place(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # The stale-subtree deletes run only once every changed file has
+    # pre-parsed; a failure there must not leave an emptied graph behind.
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+    module_a = py_project / "module_a.py"
+    module_a.write_text(module_a.read_text() + "\n")
+    cache_mtime = (py_project / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    os.utime(module_a, (cache_mtime + 1, cache_mtime + 1))
+
+    mock_ingestor.reset_mock()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    )
+    with (
+        patch.object(
+            updater, "_pre_parse_changed_files", side_effect=RuntimeError("parse died")
+        ),
+        pytest.raises(RuntimeError, match="parse died"),
+    ):
+        updater.run()
+
+    assert _deleted_module_paths(mock_ingestor) == set()
