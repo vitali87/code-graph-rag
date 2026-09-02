@@ -3511,6 +3511,27 @@ class TestGitRepoLocationEscape:
     def test_a_non_git_command_is_not_examined(self) -> None:
         assert _git_escapes_project(["rm", "-C", "/tmp/evil"], self.ROOT) == (False, "")
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="drive letters are Windows")
+    def test_a_rooted_target_is_judged_on_the_root_drive(self) -> None:
+        # A rooted, drive-less target such as `/project/root/inside` takes the
+        # drive of whatever it is joined onto. The root's drive is git's own,
+        # since git runs with the root as its cwd, so that is where the target
+        # must be judged. The old `startswith("/")` branch resolved the target
+        # alone, which put it on the Python process's drive and refused an
+        # in-root target whenever the two drives differ. The root is placed on
+        # a drive the process is not on so that the two readings disagree.
+        process_drive = Path.cwd().drive.upper()
+        other_drive = "C:" if process_drive != "C:" else "D:"
+        root = Path(f"{other_drive}/project/root")
+        assert Path("/project/root/inside").resolve().drive.upper() == process_drive
+        inside = ["git", "-C", "/project/root/inside", "status"]
+        assert _git_escapes_project(inside, root) == (False, "")
+        # The same drive-taking must not turn an escape into a pass.
+        outside = ["git", "-C", "/tmp/evil", "pwn"]
+        blocked, reason = _git_escapes_project(outside, root)
+        assert blocked
+        assert "outside the project" in reason
+
 
 @pytest.mark.parametrize(
     "inner",
