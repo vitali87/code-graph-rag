@@ -24,17 +24,22 @@ CPP: dict[str, str] = {
         '#include "shape.h"\nnamespace geo {\nint Shape::area() { return 0; }\n}\n'
         "int use() { geo::Shape s; return s.area(); }\n"
     ),
-    # A third file that depends on the pair: its IMPORTS and CALLS edges name
-    # the survivor's module qn, which changes when the sibling is added or
-    # deleted, so it must be re-parsed with the pair rather than restored.
-    "main.cpp": '#include "shape.h"\nint main() { geo::Shape s; return s.area(); }\n',
+    # A dependent whose only edges reach the survivor: `all.h` includes the
+    # header, and `main.cpp` reaches the pair through it. A direct includer
+    # that calls `area()` would already be found through the DELETED file
+    # (the out-of-line definition owns the method's path), so it pins the
+    # add direction only; this shape pins both.
+    "all.h": '#include "shape.h"\n',
+    "main.cpp": '#include "all.h"\nint main() { geo::Shape s; return s.area(); }\n',
 }
 C: dict[str, str] = {
-    "util.h": "int add(int a, int b);\n",
+    "util.h": (
+        "int add(int a, int b);\nstatic inline int twice(int a) { return a * 2; }\n"
+    ),
     "util.c": '#include "util.h"\nint add(int a, int b) { return a + b; }\n',
-    # Include-only dependent: no CALLS edge reaches the pair, so only the
-    # IMPORTS edge to the survivor's changing qn ties this file to the run.
-    "main.c": '#include "util.h"\nint main(void) { return 0; }\n',
+    # A `.c` includer emits no IMPORTS edge, so only a CALLS edge into the
+    # header's inline function ties this file to the survivor's changing qn.
+    "main.c": '#include "util.h"\nint main(void) { return twice(1); }\n',
 }
 _ABSOLUTE = {cs.NodeLabel.FOLDER.value, cs.NodeLabel.PACKAGE.value}
 
@@ -122,7 +127,8 @@ def test_deleting_the_bare_qn_holder_hands_the_qn_to_the_surviving_sibling(
 
     header_only = {rel: text for rel, text in fixture.items() if rel != source}
     clean = _clean(temp_repo, "clean", header_only, language)
-    assert _modules(after) == {bare_qn, "proj.main"}
+    assert bare_qn in _modules(after)
+    assert _modules(after) == _modules(clean)
     assert after == clean
 
 
@@ -139,9 +145,7 @@ def test_adding_a_sibling_that_wins_the_bare_qn_renames_the_existing_one(
     _materialise(root, header_only)
     store = _StatefulIngestor()
     _index(store, root, language, force=True)
-    assert _modules(_snapshot(store, root)) == {bare_qn, "proj.main"}, (
-        "alone, the header owns it"
-    )
+    assert bare_qn in _modules(_snapshot(store, root)), "alone, the header owns it"
     added = root / source
     added.write_text(fixture[source], encoding="utf-8")
     cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
