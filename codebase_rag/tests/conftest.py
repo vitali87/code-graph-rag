@@ -308,13 +308,81 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     can delete, turning a recoverable error into a permanent one. That is the
     opposite of this handler's purpose, and it bites on POSIX, where the
     read-only case it exists for cannot even occur.
+
+    A path that VANISHED between the walk and the removal has already reached
+    the state the teardown wanted, so it is not an error to recover from. Git
+    runs background maintenance after `git commit` -- `git commit` spawns
+    `git maintenance run --auto --quiet --detach`, `git init` spawns nothing
+    (verified under `GIT_TRACE=1`, git 2.47.1) -- and that deletes its own
+    `.git/objects/maintenance.lock` asynchronously, so `rmtree` can list the
+    entry and find it gone by the time it unlinks -- a TOCTOU that surfaced
+    only under `pytest-xdist` on a CI runner, never on a developer machine.
     """
+    # A symlink has no mode of its own worth clearing, and every stat/chmod
+    # here FOLLOWS it: on a DANGLING link `os.stat` raises FileNotFoundError
+    # and the early return leaves the link in place, abandoning a removal the
+    # handler was asked to perform. On POSIX that costs nothing end-to-end
+    # (rmtree unlinks a dangling link unaided in a writable parent, and where
+    # it cannot the blocker is the parent's mode, not the link); the rescued
+    # platform is WINDOWS, where `os.unlink` refuses the link outright and the
+    # handler is the only removal path, so rmtree then fails on the parent.
+    # See the SCOPE block in test_temp_repo_readonly_cleanup.py. `os.lstat`
+    # alone does not fix it -- `os.chmod` follows links too, and
+    # `follow_symlinks=False` is unsupported for chmod on LINUX, one of the
+    # three unit-matrix platforms and the one this handler must survive.
+    # CPython is built without `lchmod` there (configure.ac forces it off for
+    # every Linux build: "Linux disallows changing the mode of symbolic links.
+    # Some libc implementations have a stub lchmod implementation that always
+    # returns an error." -- the kernel restriction is the reason; the stub is a
+    # secondary note and names no libc), and `os.py` gates chmod's entry into
+    # `os.supports_follow_symlinks` on HAVE_LCHMOD alone -- the HAVE_FCHMODAT
+    # line is deliberately commented out -- so the capability is absent from
+    # the support set -- advisory metadata about the build, not enforcement.
+    # Absent from the SET is not refused at the CALL: HAVE_FCHMODAT *is*
+    # defined on Linux, so posixmodule.c (v3.12.3) compiles out its early
+    # `follow_symlinks_specified` guard at :3348, the call reaches
+    # `fchmodat(AT_SYMLINK_NOFOLLOW)` at :3400, and NotImplementedError comes
+    # only from ENOTSUP/EOPNOTSUPP there (:3408) -- i.e. on a link. The refusal
+    # is FILE-TYPE dependent, not platform dependent. Measured on Ubuntu/glibc
+    # 2.39, x86_64, CPython 3.12.3 and 3.12.13 (musl not measured): HAVE_LCHMOD
+    # 0, `os.chmod not in os.supports_follow_symlinks`, `follow_symlinks=False`
+    # SUCCEEDS on a regular file and raises NotImplementedError("chmod:
+    # follow_symlinks unavailable on this platform") on a dangling link. macOS
+    # 3.12.7 is the mirror image: chmod IS in the set and both cases succeed.
+    #
+    # The set IS readable at runtime, so the skip is a deliberate choice rather
+    # than a workaround for an undetectable gap -- but branching on it would be
+    # branching on the wrong thing, since it does not predict the call.
+    # It also matters that NotImplementedError is a RuntimeError, NOT an
+    # OSError -- the `except FileNotFoundError` below would not catch it, so
+    # taking the chmod route would raise straight out of teardown on the Linux
+    # CI runners (the unit matrix also runs Windows and macOS, where it would
+    # not). Skipping the mode work is the portable answer.
+    # On Windows `os.path.islink` is true for both symlink kinds, so this keeps
+    # the handler platform-independent rather than trading one for another.
+    if os.path.islink(path):
+        # Same vanished-path tolerance as the non-link path below: the link
+        # can be gone by the time this retry runs, and that is the state the
+        # teardown wanted. Without this the link branch would raise out of
+        # teardown for a case every other branch tolerates.
+        try:
+            func(path)
+        except FileNotFoundError:
+            pass
+        return
     try:
         mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        return
     except OSError:
         mode = 0
-    os.chmod(path, mode | stat.S_IWRITE | (stat.S_IEXEC if os.path.isdir(path) else 0))
-    func(path)
+    try:
+        os.chmod(
+            path, mode | stat.S_IWRITE | (stat.S_IEXEC if os.path.isdir(path) else 0)
+        )
+        func(path)
+    except FileNotFoundError:
+        return
 
 
 @pytest.fixture

@@ -203,3 +203,145 @@ def test_the_handler_leaves_a_directory_traversable(tmp_path: Path) -> None:
         assert os.access(victim, os.W_OK), "the directory must be made writable"
     finally:
         victim.chmod(stat.S_IRWXU)
+
+
+def test_a_vanished_path_is_not_an_error(tmp_path: Path) -> None:
+    """A path removed by someone else between the walk and the unlink.
+
+    `git commit` starts background maintenance -- it spawns `git maintenance
+    run --auto --quiet --detach`, while `git init` spawns nothing (verified
+    under `GIT_TRACE=1`, git 2.47.1) -- which deletes its own
+    `.git/objects/maintenance.lock` asynchronously. `shutil.rmtree` can list
+    that entry and find it gone by the time it unlinks, so the handler is
+    invoked for a path that no longer exists. The removal has already
+    achieved what it wanted, so this must not propagate.
+
+    Observed only under `pytest-xdist` on a CI runner (`popen-gw3`), never on
+    a developer machine -- the window is the few milliseconds git holds the
+    lock, so a serial run on a fast disk closes it before rmtree gets there.
+    """
+    ghost = tmp_path / "already-gone"
+
+    # No file is created: the handler must tolerate a path that is absent
+    # BEFORE it does anything, which is the state the race leaves behind.
+    _clear_readonly(lambda _p: None, ghost, FileNotFoundError(2, "No such file"))
+
+    # And when the path vanishes between the chmod and the retry, which is
+    # the same race one step later.
+    victim = tmp_path / "vanishes"
+    victim.write_text("x", encoding="utf-8")
+
+    def unlink_it(p: Path) -> None:
+        raise FileNotFoundError(2, "No such file or directory", str(p))
+
+    _clear_readonly(unlink_it, victim, FileNotFoundError(2, "No such file"))
+
+    # And on the SYMLINK branch, which skips the mode work and so does not
+    # pass through the try/except that gives the two cases above their
+    # tolerance. A link is reached here only when the first unlink failed for
+    # some other reason and the link vanished before the retry -- narrow, but
+    # every other branch tolerates it and this one must not be the exception.
+    link = tmp_path / "link-that-vanishes"
+    link.symlink_to(tmp_path / "no-such-target")
+    _clear_readonly(unlink_it, link, OSError(13, "Permission denied"))
+
+
+def test_a_dangling_symlink_is_removed_rather_than_skipped(tmp_path: Path) -> None:
+    """A dangling link must be retried, not silently abandoned.
+
+    Every stat/chmod in the handler FOLLOWS a symlink. On a dangling link
+    `os.stat` raises FileNotFoundError, which the vanished-path guard treats
+    as "already gone" and returns without calling `func` -- but the LINK
+    itself is still there. The link is exactly the thing the handler was
+    asked to remove, and the target's absence says nothing about it.
+
+    SCOPE, measured rather than assumed. This test asserts the HANDLER's
+    behaviour, not an end-to-end `rmtree` outcome, because end to end the fix
+    changes nothing on POSIX:
+
+      link in a writable dir  -- rmtree unlinks it unaided; the handler is
+                                 invoked ZERO times, so the tree comes down
+                                 identically with and without this fix.
+      link in a 0o500 dir     -- the handler IS reached and now retries, but
+                                 rmtree still FAILS either way: the blocker is
+                                 the PARENT's write bit and no chmod on the
+                                 child can clear it. (Errnos below are NAMES
+                                 because the numbers are platform-specific:
+                                 ENOTEMPTY is 66 on Darwin and 39 on Linux.
+                                 Measured on macOS 3.12.7. The errno depends on
+                                 the removal path: ENOTEMPTY on the default
+                                 fd-based one for every revision; without it,
+                                 EACCES post-fix and ENOTEMPTY at 701c5036,
+                                 whose early return leaves the link so rmdir on
+                                 the parent fails. The merge-base handler
+                                 422d9916, which has no vanished-path guard,
+                                 gave ENOENT because its chmod followed the
+                                 dangling link.)
+
+    So the rescued case is Windows, where `os.unlink` refuses outright and the
+    handler is the only path to removal -- the same platform asymmetry as the
+    read-only case above. On POSIX this is a correctness fix to the handler
+    (it no longer abandons a link it was asked to remove) with no reachable
+    end-to-end consequence. Asserting `rmtree` succeeded here would be an
+    assertion satisfied by the broken code too.
+
+    `os.lstat` alone does not fix the handler: `os.chmod` follows links too,
+    and `follow_symlinks=False` is unsupported for chmod on LINUX, one of the
+    three unit-matrix platforms. CPython is built without `lchmod` there
+    (configure.ac forces it off for every Linux build: "Linux disallows
+    changing the mode of symbolic links. Some libc implementations have a stub
+    lchmod implementation that always returns an error." -- the kernel
+    restriction is the reason, and no libc is named), and `os.py` gates chmod's
+    entry into `os.supports_follow_symlinks` on HAVE_LCHMOD alone -- the
+    HAVE_FCHMODAT line is commented out -- so the capability is absent from the
+    support set, which is advisory metadata about the build, not enforcement.
+    Absent from the SET is not refused at the CALL: HAVE_FCHMODAT *is* defined
+    on Linux, so posixmodule.c (v3.12.3) compiles out its early
+    `follow_symlinks_specified` guard at :3348 and the call reaches
+    `fchmodat(AT_SYMLINK_NOFOLLOW)` at :3400, which raises NotImplementedError
+    only when that returns ENOTSUP/EOPNOTSUPP (:3408) -- i.e. on a link.
+
+    So the refusal is FILE-TYPE dependent, not platform dependent, and that is
+    what decides the handler's shape: the same Linux call succeeds on a regular
+    file and raises on a dangling link. Measured on Ubuntu/glibc 2.39, x86_64,
+    CPython 3.12.3 and 3.12.13 (musl not measured): HAVE_LCHMOD 0, `os.chmod
+    not in os.supports_follow_symlinks`, `follow_symlinks=False` SUCCEEDS on a
+    regular file and raises NotImplementedError on a dangling link. macOS 3.12.7
+    is the mirror image -- chmod IS in the set and both cases succeed -- which
+    is why a macOS-only reading gets this backwards. Set membership and
+    behaviour disagree on both platforms, in opposite directions, so neither
+    can be read off the other.
+
+    The support set IS readable at runtime, so the skip is a choice rather
+    than a workaround for an undetectable gap -- but branching on it would be
+    branching on the wrong thing, since it does not predict the call. What
+    makes skipping right is that
+    NotImplementedError is a RuntimeError, NOT an OSError: the handler's
+    `except FileNotFoundError` would not catch it, so the chmod route would
+    raise straight out of teardown on the Linux CI runners (the unit matrix
+    also runs Windows and macOS, where it would not).
+    """
+    root = tmp_path / "tree"
+    root.mkdir()
+    link = root / "dangling"
+    link.symlink_to(root / "nonexistent-target")
+
+    # Precondition: the link is present but its target is not, which is what
+    # makes os.stat raise. Without this the test could pass on a live link.
+    assert link.is_symlink(), "the fixture must create a real symlink"
+    assert not link.exists(), "the link must dangle, or os.stat would not raise"
+
+    # The handler must RETRY on the link, not return early. Asserting the
+    # retry directly, rather than only that the tree vanished, so a handler
+    # that got lucky through some other path cannot pass this.
+    retried: list[object] = []
+    _clear_readonly(retried.append, link, FileNotFoundError(2, "No such file"))
+    assert retried == [link], (
+        "the handler must invoke the removal on a dangling link; returning "
+        "early leaves it in place and rmtree fails on the parent"
+    )
+
+    # No end-to-end rmtree assertion here on purpose: see SCOPE above. In a
+    # writable dir rmtree removes the link without ever invoking the handler,
+    # so `assert not root.exists()` passes against the BROKEN handler too and
+    # would be evidence of nothing.
