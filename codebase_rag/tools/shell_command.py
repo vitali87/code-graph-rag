@@ -642,9 +642,10 @@ def _sed_cluster_tail(arg: str) -> str | None:
     reached. Verified: `sed -ne p -e 'w FILE'` wrote outside the working
     directory with rc=0 while the validator saw only `e`.
 
-    Returns the trailing flag (`-e` or `-f`) when the cluster ends in one and
-    carries no attached value, `""` when the cluster is script-free, and None
-    when a letter is unrecognised so the caller can fail closed.
+    Returns the trailing flag (`-e`, `-f`, or an optional-arg flag such as
+    `-i`) when the cluster ends in one and carries no attached value, `""`
+    when the cluster is script-free, and None when a letter is unrecognised so
+    the caller can fail closed.
     """
     if not arg.startswith("-") or arg.startswith("--") or len(arg) < 3:
         return None
@@ -656,8 +657,15 @@ def _sed_cluster_tail(arg: str) -> str | None:
             # cluster is its attached value and belongs to it either way.
             return short if position == len(arg) - 1 else ""
         if short in cs.SHELL_SED_OPTIONAL_ARG_FLAGS:
-            # Attached-only: the cluster remainder is its value, if any.
-            return ""
+            # In TAIL position this behaves like a standalone `-i`: BSD sed
+            # takes the next token as the suffix, which pushes the script into
+            # the slot after it. Returning "" here read the cluster as
+            # script-free, so nothing was collected and the payload two slots
+            # along was never scanned -- `sed -ni bak 'w FILE' in.txt` wrote
+            # outside the project root with rc=0 while `sed -n -i bak ...`,
+            # the same command unbundled, was correctly refused.
+            # Mid-cluster it is attached-only and the remainder is its value.
+            return short if position == len(arg) - 1 else ""
         if short not in cs.SHELL_SED_KNOWN_FLAGS:
             return None
     return ""
@@ -768,7 +776,15 @@ def _sed_exec_construct(cmd_parts: list[str]) -> str | None:
             index += 1
             continue
 
-        if arg in cs.SHELL_SED_OPTIONAL_ARG_FLAGS:
+        if (
+            arg in cs.SHELL_SED_OPTIONAL_ARG_FLAGS
+            or _sed_cluster_tail(arg) in cs.SHELL_SED_OPTIONAL_ARG_FLAGS
+        ):
+            # A bundled cluster ending in one of these (`-ni`, `-anl`) takes
+            # its operand exactly as the standalone spelling does, so it needs
+            # the same both-readings scan. Matching only the standalone form
+            # let `sed -ni bak 'w FILE' in.txt` through while refusing the
+            # identical `sed -n -i bak 'w FILE' in.txt`.
             # The operand is a suffix under one implementation and the script
             # under the other, so scan BOTH -- unconditionally. Gating the
             # second reading on the operand's SHAPE was a bypass: a suffix of

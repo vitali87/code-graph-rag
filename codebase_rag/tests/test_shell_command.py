@@ -3356,3 +3356,27 @@ def test_sed_cluster_f_does_not_overreach() -> None:
     # with the suffix `f`. Refusing those would block ordinary invocations.
     assert _sed_exec_construct(["sed", "-ef", "README.md"]) is None
     assert _sed_exec_construct(["sed", "-if", "s/a/b/", "f"]) is None
+
+
+# A cluster ending in an optional-argument flag takes its operand exactly as
+# the standalone spelling does, which pushes the script one slot further along.
+_SED_I_CLUSTERS = ("-ni", "-ani", "-uni", "-Eni", "-rni", "-Hni", "-nl", "-anl")
+
+
+@pytest.mark.parametrize("cluster", _SED_I_CLUSTERS)
+def test_sed_optional_arg_cluster_still_scans_the_script_slot(cluster: str) -> None:
+    # `sed -ni bak 'w FILE' in.txt` is `-n -i bak` with the script two slots
+    # along. Reading the cluster as script-free collected nothing and never
+    # scanned the payload: this executed with rc=0 and wrote outside the
+    # project root, while the unbundled `sed -n -i bak ...` was refused.
+    construct = _sed_exec_construct(["sed", cluster, "bak", "w /tmp/x", "in.txt"])
+    assert construct is not None, cluster
+
+    # The unbundled spelling of the same command must agree.
+    assert _sed_exec_construct(["sed", "-n", "-i", "bak", "w /tmp/x", "in.txt"])
+
+
+@pytest.mark.parametrize("cluster", _SED_I_CLUSTERS)
+def test_sed_optional_arg_cluster_still_runs_ordinary_edits(cluster: str) -> None:
+    # The guard must not cost the everyday in-place edit its pass.
+    assert _sed_exec_construct(["sed", cluster, "s/a/b/", "README.md"]) is None
