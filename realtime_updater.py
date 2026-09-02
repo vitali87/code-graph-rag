@@ -21,7 +21,6 @@ from codebase_rag.constants import (
     DEFAULT_DEBOUNCE_SECONDS,
     DEFAULT_MAX_WAIT_SECONDS,
     IGNORE_PATTERNS,
-    IGNORE_SUFFIXES,
     KEY_PATH,
     KEY_PROJECT_NAME,
     KEY_PROJECT_PREFIX,
@@ -36,6 +35,7 @@ from codebase_rag.language_spec import get_language_spec
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.utils.path_utils import is_ignored_filename
 
 
 class PendingTimer(Protocol):
@@ -85,7 +85,6 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # loaded runners (issue #1005). Production always uses threading.Timer.
         self._timer_factory = timer_factory
         self.ignore_patterns = IGNORE_PATTERNS
-        self.ignore_suffixes = IGNORE_SUFFIXES
 
         self.debounce_seconds = debounce_seconds
         self.max_wait_seconds = max_wait_seconds
@@ -114,7 +113,9 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
     def _is_relevant(self, path_str: str) -> bool:
         path = Path(path_str)
-        if any(path.name.endswith(suffix) for suffix in self.ignore_suffixes):
+        # Shared with the repository walk. These two predicates answer the same
+        # question and drifted apart once already (issue #1636).
+        if is_ignored_filename(path.name):
             return False
         return all(part not in self.ignore_patterns for part in path.parts)
 

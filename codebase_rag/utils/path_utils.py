@@ -124,6 +124,21 @@ def should_keep_dir(
     )
 
 
+def is_ignored_filename(name: str) -> bool:
+    """Whether a filename is a machine-generated artefact, by its ending.
+
+    The single definition of the `IGNORE_SUFFIXES` rule, shared by the
+    repository walk and the real-time watcher. It tests the whole filename
+    rather than `Path.suffix` because the list holds endings that are not
+    pathlib suffixes: `Path("jquery.min.js").suffix` is ".js" and
+    `Path("notes.py~").suffix` is ".py~", so a `Path.suffix` membership test
+    matched neither, and the two consumers disagreed about which files belong
+    in the graph -- `~` was live for the watcher and dead for the indexer
+    (issue #1636).
+    """
+    return name.endswith(cs.IGNORE_FILENAME_ENDINGS)
+
+
 def should_skip_path(
     path: Path,
     repo_path: Path,
@@ -132,7 +147,12 @@ def should_skip_path(
     is_file: bool | None = None,
 ) -> bool:
     _is_file = path.is_file() if is_file is None else is_file
-    if _is_file and path.suffix in cs.IGNORE_SUFFIXES:
+    # Ahead of every exclude/unignore check, and deliberately so: a generated
+    # artefact is not source in any configuration, so rescuing the DIRECTORY it
+    # sits in must not drag it back in. Pinned by
+    # TestIgnoreSuffixesInteraction in test_exclude_patterns.py; the docs state
+    # the precedence for the reader (#1636).
+    if _is_file and is_ignored_filename(path.name):
         return True
     # Containment below is lexical, so a symlink whose target escapes the root
     # would pass it and let a repo-scoped sweep read or overwrite outside files
@@ -180,11 +200,15 @@ def has_ignored_dir_part(dir_parts: tuple[str, ...]) -> bool:
 def should_skip_rel_file(
     rel_path_str: str,
     dir_parts: tuple[str, ...],
-    suffix: str,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
 ) -> bool:
-    if suffix in cs.IGNORE_SUFFIXES:
+    # The filename comes from `rel_path_str` rather than a caller-supplied
+    # suffix: every caller derived that suffix with a last-dot split, which
+    # cannot see a compound ending like ".min.js" no matter what this function
+    # then does with it (issue #1636). First, matching `should_skip_path`; the
+    # two must agree on precedence as well as on the rule.
+    if is_ignored_filename(rel_path_str.rsplit(cs.SEPARATOR_SLASH, 1)[-1]):
         return True
     if exclude_paths and matches_ignore_patterns(rel_path_str, exclude_paths):
         return True
@@ -276,13 +300,10 @@ def walk_eligible_files(
         for fname in sorted(filenames):
             if fname in state_filenames:
                 continue
-            dot = fname.rfind(".")
-            suffix = fname[dot:] if dot != -1 else ""
             rel_path_str = f"{dir_prefix}{fname}"
             if not should_skip_rel_file(
                 rel_path_str,
                 dir_parts,
-                suffix,
                 exclude_paths=exclude_paths,
                 unignore_paths=unignore_paths,
             ):

@@ -24,7 +24,7 @@ fixtures/**
 - A bare name (`vendor`) matches a file or directory with that name at any depth
 - A pattern containing a slash (`docs/*.md`, `/generated`) is anchored to the repository root
 - A trailing slash (`build/`) matches directories only
-- Lines starting with `!` un-ignore matching paths that a **default** exclusion would skip (explicit excludes always win)
+- Lines starting with `!` un-ignore matching paths that a **default** exclusion would skip (explicit excludes always win; the name-ending rule under [Default Exclusions](#default-exclusions) cannot be un-ignored)
 - Lines starting with `#` are comments; blank lines are ignored
 - Patterns from `.cgrignore` are merged with `--exclude` flags (which use the same syntax) and auto-detected directories
 
@@ -46,6 +46,25 @@ to establish it and logs why.
 ## Default Exclusions
 
 Code-Graph-RAG automatically excludes common non-source directories such as `.git`, `node_modules`, `__pycache__`, `dist`, `build`, and similar.
+
+Individual files are also skipped by how their **name ends**, covering build
+output and editor leftovers (`.pyc`, `.pyo`, `.o`, `.a`, `.so`, `.dll`,
+`.class`, `.tmp`, `~`) as well as minified bundles (`.min.js`, `.min.css`).
+Minified bundles matter more than their count suggests: a project that commits
+generated API documentation (jazzy, YARD, JSDoc, Sphinx) ships a vendored
+jQuery or Lunr with it, and those files can contribute more functions than the
+project's own source, under names the minifier chose (`v`, `y`, `ce`).
+
+Only the exact ending is matched, so `app.min.js` is skipped while `admin.js`
+and `min.js` are indexed normally. A non-minified vendored file (say
+`docs/js/typeahead.jquery.js`) is not covered by this rule; exclude it with a
+`.cgrignore` pattern such as `docs/**` if you do not want it in the graph.
+
+Unlike the directory exclusions above, this rule takes precedence over `!`
+lines and **cannot be un-ignored**: a generated artefact is not source in any
+configuration, so un-ignoring the directory it sits in does not bring it back.
+The trade-off is that there is currently no way to index a file whose name ends
+this way, even deliberately.
 
 ## Scope
 

@@ -1645,13 +1645,9 @@ class ImportProcessor:
         """
         if not rel_parts:
             return False
-        filename = rel_parts[-1]
-        dot = filename.rfind(cs.SEPARATOR_DOT)
-        suffix = filename[dot:] if dot != -1 else ""
         return not should_skip_rel_file(
             cs.SEPARATOR_SLASH.join(rel_parts),
             tuple(rel_parts[:-1]),
-            suffix,
             exclude_paths=self.exclude_paths,
             unignore_paths=self.unignore_paths,
         )
@@ -2552,7 +2548,6 @@ class ImportProcessor:
             if should_skip_rel_file(
                 f"{dir_prefix}{filename}",
                 here,
-                cs.EXT_RS,
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
             ):

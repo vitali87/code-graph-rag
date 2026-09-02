@@ -445,9 +445,33 @@ IGNORE_PATTERNS = frozenset(
         "venv",
     }
 )
+# Machine-generated artefacts: never hand-edited, never first-party. Matched
+# against the whole FILENAME with `str.endswith`, not against `Path.suffix`,
+# because two entries here are not suffixes in pathlib's sense:
+# `Path("jquery.min.js").suffix` is ".js" and `Path("notes.py~").suffix` is
+# ".py~", so a `Path.suffix` test silently matched neither (issue #1636).
+# Use `path_utils.is_ignored_filename`; do not re-derive the rule.
 IGNORE_SUFFIXES = frozenset(
-    {".tmp", "~", ".pyc", ".pyo", ".o", ".a", ".so", ".dll", ".class"}
+    {
+        ".tmp",
+        "~",
+        ".pyc",
+        ".pyo",
+        ".o",
+        ".a",
+        ".so",
+        ".dll",
+        ".class",
+        # Vendored bundles that generated API docs (jazzy, YARD, JSDoc,
+        # Sphinx) ship alongside the source they document. Their symbols are
+        # whatever the minifier emitted, and they outnumber the real ones.
+        ".min.js",
+        ".min.css",
+    }
 )
+# `str.endswith` takes a tuple, and the repository walk tests every filename,
+# so build it once rather than per file. Derived, never edited separately.
+IGNORE_FILENAME_ENDINGS = tuple(sorted(IGNORE_SUFFIXES))
 
 # pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"
