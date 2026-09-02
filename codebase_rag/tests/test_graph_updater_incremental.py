@@ -804,10 +804,17 @@ class TestFastPathInSync:
         """A run whose graph query failed must not claim the exclusion is done.
 
         When the module-path query raises, the reconciliation falls back to
-        the hash cache alone, and after a pre-flush crash that cache no longer
-        names the excluded file. The run completes with the subtree still in
-        the graph; stamping would make every later run fast-path over it.
+        the hash cache alone, and that cache no longer names a file excluded
+        by an EARLIER completed run. The run completes with the subtree still
+        in the graph; stamping would make every later run fast-path over it.
         Withholding the stamp is what makes the next run look again.
+
+        The stale cache is reached here through a completed run rather than a
+        pre-flush crash: since #1615 the cache commits only after the flush,
+        so a crashed run leaves no cache to be stale. Removing the stamp
+        afterwards is the "no readable record" case, an index predating the
+        stamp or a corrupt file, which is what puts run 3 back into
+        reconciliation with a cache that has already forgotten module_a.py.
         """
         parsers, queries = load_parsers()
         GraphUpdater(
@@ -820,17 +827,16 @@ class TestFastPathInSync:
         before = stamp.read_text()
 
         exclusions = frozenset({"module_a.py"})
-        mock_ingestor.flush_all.side_effect = RuntimeError("died before the flush")
-        crashing = GraphUpdater(
+        GraphUpdater(
             ingestor=mock_ingestor,
             repo_path=excludable_project,
             parsers=parsers,
             queries=queries,
             exclude_paths=exclusions,
-        )
-        with pytest.raises(RuntimeError):
-            crashing.run()
-        mock_ingestor.flush_all.side_effect = None
+        ).run()
+        # The committed cache no longer names module_a.py, so the cache-based
+        # deletion set is empty from here on; only the graph could name it.
+        stamp.unlink()
 
         def _graph_unreachable(query: str, _params: object = None) -> list[object]:
             if query == cs.CYPHER_PROJECT_MODULE_PATHS:
@@ -853,7 +859,7 @@ class TestFastPathInSync:
             "named module_a.py for deletion; the fixture is not exercising the "
             "failure it claims to"
         )
-        assert stamp.read_text() == before, (
+        assert not stamp.exists(), (
             "the run stamped the new exclusion set although it never learned "
             "what the graph holds, so the surviving subtree is now permanent"
         )
@@ -874,6 +880,9 @@ class TestFastPathInSync:
         assert updater3._is_already_in_sync() is False
         updater3.run()
         assert "module_a.py" in _deleted_module_paths(mock_ingestor)
+        # The recovered run learned what the graph holds, so it records the
+        # exclusion set again: a stamp exists once more, and for this set.
+        assert stamp.exists()
         assert stamp.read_text() != before
 
     def test_empty_module_query_still_records_the_exclusion_set(
