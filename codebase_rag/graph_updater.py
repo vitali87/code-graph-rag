@@ -2496,10 +2496,11 @@ class GraphUpdater:
         # against the hash cache. Since #1615 the cache commits only after the
         # flush, so a crashed run cannot leave one that has already forgotten
         # the file. The graph query is still required for a different reason:
-        # `preexisting_paths` is empty on an incremental run, so nothing else
-        # can name a file whose exclusion predates the current cache, and no
-        # on-disk hash ever recorded it as present. It costs a query only on
-        # the runs where the set actually moved.
+        # the cache records only the files eligible on the run that wrote it,
+        # so a file excluded by an EARLIER completed run was already dropped
+        # from it and no on-disk hash names it any more. Only the graph still
+        # does. It costs a query only on the runs where the set actually
+        # moved.
         preexisting_paths = (
             self._existing_module_paths()
             if is_full_build or not self._exclusions_match_last_run()

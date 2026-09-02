@@ -364,8 +364,13 @@ class TestIncrementalUpdates:
 
 
 class TestCrashBetweenCacheSaveAndFlush:
-    """Issue #1615: a run that dies after the hash cache commits but before the
-    graph flush must not convince its successor the deletion was reconciled."""
+    """Issue #1615: a run that dies before the graph flush must not convince
+    its successor the deletion was reconciled.
+
+    Named for the window as it WAS: the cache used to commit inside
+    `_process_files`, so a crash in between left a cache already claiming the
+    file was gone. The fix closes the window by committing the cache after the
+    flush, so what these tests pin is that no such cache is left behind."""
 
     def test_successor_run_still_deletes_the_module(
         self, py_project: Path, mock_ingestor: MagicMock
@@ -745,14 +750,12 @@ class TestFastPathInSync:
         """The re-run a lost stamp forces must also DELETE, not just re-parse.
 
         Declining to stamp only buys the next run a chance to reconcile; it
-        cannot take that chance on its own. The hash cache is saved inside
-        `_process_files`, before the flush, so the crashed run already
-        committed a cache with no `module_a.py` in it, and on the successor
-        `deleted_keys` is computed from that cache and comes out empty. The
+        cannot take that chance on its own. Since #1615 the cache commits only
+        after the flush, so the crashed run leaves no cache naming anything it
+        parsed, and nothing on disk records `module_a.py` as excluded. The
         graph's own module paths have to join the reconciliation, or the
         subtree survives, the successor stamps a matching exclusion set, and
-        every run after that fast-paths over it. The general case, an ordinary
-        deletion lost in the same window, is #1615 and is not closed here.
+        every run after that fast-paths over it.
         """
         parsers, queries = load_parsers()
         GraphUpdater(
