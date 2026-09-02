@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -11,10 +12,12 @@ from pydantic_ai import ApprovalRequired, Tool
 
 from codebase_rag.config import settings
 from codebase_rag.constants import SHELL_SYSTEM_DIRECTORIES
+from codebase_rag.constants import security as cs
 from codebase_rag.tools.shell_command import (
     ShellCommander,
     _check_pipeline_patterns,
     _check_segment_patterns,
+    _git_escapes_project,
     _has_redirect_operators,
     _has_subshell,
     _is_blocked_command,
@@ -23,7 +26,10 @@ from codebase_rag.tools.shell_command import (
     _is_dangerous_rm_path,
     _parse_command,
     _requires_approval,
+    _sed_cluster_tail,
+    _sed_exec_construct,
     _validate_segment,
+    _xargs_launched_command,
     create_noninteractive_shell_command_tool,
     create_shell_command_tool,
 )
@@ -1279,21 +1285,26 @@ class TestAwkSedXargsPatterns:
         assert reason is not None
         assert "getline" in reason.lower()
 
+    # These assert through the VALIDATOR rather than _check_segment_patterns.
+    # The legacy `sed ... s///e` regex they used to call was retired: it read
+    # the s of "start" and the e of "end" as a substitute-execute, so
+    # `sed -n '/start/,/end/p'` was refused. _sed_exec_construct covers the
+    # same ground structurally, on a skeleton with substitution bodies
+    # blanked, so the behaviour is unchanged where it matters and the false
+    # positive is gone.
     def test_sed_execute_flag_detected(self) -> None:
-        reason = _check_segment_patterns("sed 's/foo/bar/e'")
-        assert reason is not None
-        assert "sed" in reason.lower()
+        assert _validate_segment("sed 's/foo/bar/e' f", "", True) is not None
 
     def test_sed_execute_alternate_delimiters(self) -> None:
-        assert _check_segment_patterns("sed 's#foo#bar#e'") is not None
-        assert _check_segment_patterns("sed 's|foo|bar|e'") is not None
-        assert _check_segment_patterns("sed 's@foo@bar@ge'") is not None
+        assert _validate_segment("sed 's#foo#bar#e' f", "", True) is not None
+        assert _validate_segment("sed 's|foo|bar|e' f", "", True) is not None
+        assert _validate_segment("sed 's@foo@bar@ge' f", "", True) is not None
 
     def test_sed_execute_flag_any_position(self) -> None:
-        assert _check_segment_patterns("sed 's/foo/bar/eg'") is not None
-        assert _check_segment_patterns("sed 's/foo/bar/egi'") is not None
-        assert _check_segment_patterns("sed 's/foo/bar/gei'") is not None
-        assert _check_segment_patterns("sed 's/foo/bar/ige'") is not None
+        assert _validate_segment("sed 's/foo/bar/eg' f", "", True) is not None
+        assert _validate_segment("sed 's/foo/bar/egi' f", "", True) is not None
+        assert _validate_segment("sed 's/foo/bar/gei' f", "", True) is not None
+        assert _validate_segment("sed 's/foo/bar/ige' f", "", True) is not None
 
     def test_xargs_rm_detected(self) -> None:
         reason = _check_segment_patterns("xargs rm")
@@ -1426,3 +1437,2089 @@ class TestSpawnFailureDiagnostics:
         assert "cat data.txt" not in result.stderr, result.stderr
         assert awk_executable in result.stderr, result.stderr
         assert "No such file or directory" in result.stderr, result.stderr
+
+
+# --- GHSA-wvxg-744g-6pcg: allowlisted launchers reach arbitrary programs ---
+#
+# `_validate_segment` checks only `cmd_parts[0]`, so an allowlisted command
+# that is itself a general-purpose program launcher runs interpreters that are
+# deliberately absent from the allowlist. Reported by Syed Anas Mohiuddin.
+
+
+def _validate(segment: str) -> str | None:
+    return _validate_segment(
+        segment, ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST)), False
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # The reported vector: the existing `python -c` pattern only fires on
+        # the literal token `os`, so any other module walks past it.
+        "xargs python3 -c \"import subprocess;subprocess.call(['id'])\"",
+        "xargs python3 -c \"import pty;pty.spawn('/bin/sh')\"",
+        "xargs python3 -c \"__import__('ctypes')\"",
+        # perl/ruby are blocked by their own blanket patterns, but node has no
+        # equivalent, so it reaches execution through xargs unimpeded.
+        "xargs node -e \"require('child_process').execSync('id')\"",
+        # xargs' own flags must not hide the launched command from the parser.
+        'xargs -I{} python3 -c "import subprocess"',
+        "xargs -n1 -P4 node -e 1",
+        "xargs --replace=% python3 -c 1",
+        "xargs -0 python3 -c 1",
+        # GNU's optional-argument flags (-i/-l/-e and their long spellings)
+        # take a value only when attached, so the next token is the program.
+        "xargs -i python3 -c 1",
+        "xargs --replace python3 -c 1",
+        "xargs -l node -e 1",
+        "xargs --max-lines python3 -c 1",
+        "xargs --eof python3 -c 1",
+    ),
+)
+def test_xargs_cannot_launch_non_allowlisted_programs(segment: str) -> None:
+    assert _validate(segment) is not None, (
+        f"xargs launched a non-allowlisted program: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("segment", "expected"),
+    (
+        # GNU declares -i/-l/-e with getopt's double colon: the value is
+        # optional and accepted only when ATTACHED, so the following token is
+        # the utility. Reading them as separate-value flags makes the scan
+        # step over the program and return its argument instead.
+        ("xargs -i python3 cat", "python3"),
+        ("xargs -l node cat", "node"),
+        ("xargs -e python3 cat", "python3"),
+        ("xargs --replace python3 cat", "python3"),
+        ("xargs --max-lines python3 cat", "python3"),
+        ("xargs --eof python3 cat", "python3"),
+        # An attached value belongs to the flag, so the program is still next.
+        ("xargs -i{} cat {}", "cat"),
+        ("xargs --replace=% cat %", "cat"),
+        # The uppercase spellings take a REQUIRED argument and must keep
+        # consuming the following token. Asserting both directions is what
+        # stops the fix collapsing one case into the other.
+        ("xargs -I {} cat {}", "cat"),
+        ("xargs -L 1 cat", "cat"),
+        ("xargs -E EOF cat", "cat"),
+    ),
+)
+def test_xargs_scanner_names_the_launched_program(segment: str, expected: str) -> None:
+    # Asserts the RESOLVED PROGRAM, not merely that the segment was refused.
+    # `_validate_segment` rejects `xargs -i python3 cat` even when the scan
+    # wrongly returns `cat`, because python3 is not allowlisted either -- so a
+    # "was it blocked?" assertion holds against the broken scanner too and
+    # proves nothing. Only the identified program tells the versions apart.
+    assert _xargs_launched_command(shlex.split(segment)) == expected
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Bare xargs defaults to echo, which is allowlisted and safe.
+        "xargs",
+        "xargs -0",
+        # Launching an allowlisted program stays allowed: the fix validates
+        # what xargs runs, it does not ban xargs.
+        "xargs cat",
+        "xargs -I{} rg pattern {}",
+        "xargs -n1 wc -l",
+    ),
+)
+def test_xargs_still_launches_allowlisted_programs(segment: str) -> None:
+    assert _validate(segment) is None, f"fix over-blocked a safe xargs form: {segment}"
+
+
+@pytest.mark.parametrize(
+    "inner",
+    (
+        "uv run python -c 1",
+        "pytest",
+        "pre-commit run",
+        "python3 -c 1",
+        "node -e 1",
+        "git -c core.sshCommand=id status",
+        "git config core.pager x",
+        "find . -exec python3 {} ;",
+        "find . -name x",
+        "cat f",
+        "ls",
+        "echo hi",
+        "rm -rf /",
+        "xargs python3 -c 1",
+        "-J cat python3",
+        # The launcher checks added after this test was written must be
+        # covered by the same invariant, or each new check reopens the gap
+        # for its own command.
+        """awk 'BEGIN{system("id")}'""",
+        """awk 'BEGIN{print 1 | "id"}'""",
+        """awk -v c=id 'BEGIN{print 1|c}'""",
+        "awk -f p.awk f",
+        "git filter-branch --tree-filter id",
+        "git bisect run id",
+        "git submodule foreach id",
+        "sed 's/x/id/e' f",
+        "sed '1e id' f",
+        "sed 'w /etc/x' f",
+        "sed -f p.sed f",
+    ),
+)
+@pytest.mark.parametrize("bypass", (False, True))
+def test_nesting_under_xargs_never_weakens_the_decision(
+    inner: str, bypass: bool
+) -> None:
+    # The invariant rounds 4 and 5 both broke, stated once and enforced for
+    # every mode: `xargs <cmd>` must be refused whenever `<cmd>` is, and gated
+    # behind approval whenever `<cmd>` is. Checking the launched program's
+    # NAME cannot provide this, because every launcher is itself allowlisted;
+    # only vetting the launched command as a segment does.
+    nested = f"xargs {inner}"
+    if _validate_segment(inner, "", bypass) is not None:
+        assert _validate_segment(nested, "", bypass) is not None, (
+            f"nesting weakened the block: {nested}"
+        )
+    if _requires_approval(inner):
+        assert _requires_approval(nested), (
+            f"nesting escaped the approval gate: {nested}"
+        )
+
+
+def test_shlex_join_roundtrip_preserves_every_allowlisted_verdict() -> None:
+    # The recursion re-quotes with shlex.join before re-parsing, so a pattern
+    # whose match depends on the ORIGINAL spelling would be silently lost.
+    # One such pattern exists (`__import__('os')` stops matching once the
+    # embedded quotes are re-escaped), but it is unreachable: the commands
+    # that could carry it are not allowlisted. This pins that, so adding an
+    # interpreter to the allowlist fails here rather than quietly reopening
+    # the hole.
+    for cmd in sorted(settings.SHELL_COMMAND_ALLOWLIST):
+        for spelling in (
+            f"{cmd} -c \"__import__('os')\"",
+            f"{cmd} 'a b'",
+            f'{cmd} "x\'y"',
+            f"{cmd} '*'",
+        ):
+            parts = shlex.split(spelling)
+            assert bool(_check_segment_patterns(spelling)) == bool(
+                _check_segment_patterns(shlex.join(parts))
+            ), f"shlex.join changed the pattern verdict for: {spelling}"
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # awk runs a command three ways. Only system() was caught; the pipe
+        # forms executed in BOTH modes, verified end-to-end. Both quoting
+        # spellings are covered because the escaped form (`| \"cmd\"`) and the
+        # bare form (`| "cmd"`) reach the pattern differently.
+        'awk "BEGIN{system(\\"id\\")}"',
+        'awk "BEGIN{print 1 | \\"id\\"}"',
+        'awk "BEGIN{printf 1 | \\"id\\"}"',
+        'awk "{print | \\"sh\\"}"',
+        'awk "BEGIN{\\"id\\" | getline x}"',
+        """awk 'BEGIN{print 1 | "id"}'""",
+        """awk 'BEGIN{"id" | getline x}'""",
+        """awk '{print | "sh"}'""",
+        # Every indirection that defeated a spelling-based pattern: the
+        # command name need never appear literally, so only the constructs
+        # awk must use to reach a subprocess can be detected.
+        """awk 'BEGIN{c="id"; print 1 | c}'""",
+        """awk -v c=id 'BEGIN{print 1 | c}'""",
+        """awk -vc=id 'BEGIN{print 1 | c}'""",
+        """awk -F, -v c=id 'BEGIN{print 1|c}'""",
+        """awk 'BEGIN{cmd="i" "d"; print 1 | cmd}'""",
+        """awk 'BEGIN{"id" |& getline}'""",
+        """awk 'END{close("id")}'""",
+        """awk 'BEGIN{print 1 > "/etc/x"}'""",
+        # A program in a file cannot be inspected, so it is refused -- in
+        # every spelling. Matching only the exact token `-f` let the attached
+        # and long forms through (review round seven).
+        "awk -f prog.awk f",
+        # gawk's long option spellings: without them the loop reads the
+        # flag's VALUE as the program and never scans the real one.
+        "awk --assign c=id '{system(c)}'",
+        "awk --field-separator : '{system(1)}'",
+        # gawk's --exec is -f with the command line locked down: still a
+        # program file this validator cannot read.
+        "awk --exec p.awk",
+        # Parenthesised print/printf: the parentheses are part of the
+        # SPELLING, and excluding them missed the redirect entirely.
+        'awk \'BEGIN{printf("x") > "/tmp/p"}\'',
+        # A redirect TARGET can be a $field -- verified writing a file --
+        # so excluding "$" to protect the comparison was itself a write
+        # primitive. Depth tracking separates them by awk's grammar.
+        "awk '{print > $1}'",
+        "awk '{print $2 > $1}'",
+        "awk '{print > $0}'",
+        # An UNTERMINATED literal swallows the rest of the program when
+        # blanked, which can hide a construct behind it -- the pipe in the
+        # first case was invisible. Such a program is not valid awk, so
+        # refusing it loses nothing.
+        "awk '/x{print 1 | \"id\"}'",
+        "awk '/unclosed system(\"id\")'",
+        "awk 'BEGIN{print \"unterminated'",
+        'awk \'BEGIN{print("y") > "/tmp/p"}\'',
+        "awk '{print > \"/tmp/p\"}'",
+        "awk '{print $1 > out}'",
+        "awk --source '{system(1)}' f",
+        "awk --include lib '{system(1)}' f",
+        "awk --load lib '{system(1)}' f",
+        # gawk gives -i/-l a required value, but an implementation lacking
+        # the flag reads the next token as the PROGRAM, so both readings
+        # are scanned -- class (f), the same split as sed -i and -l.
+        "awk -i 'BEGIN{system(1)}' f",
+        "awk -l 'BEGIN{system(1)}' f",
+        "awk -f/tmp/prog.awk",
+        "awk --file=/tmp/prog.awk",
+        # A redirect target need not be quoted: with the filename in a
+        # variable, the quote-anchored token missed it entirely.
+        """awk 'BEGIN{f="/tmp/pwn"; print 1 > f}'""",
+        """awk 'BEGIN{f="/tmp/pwn"; print 1 >> f}'""",
+        """awk '{printf "x" > out}'""",
+    ),
+)
+def test_awk_cannot_run_a_command(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"awk executed a command: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # ...and ordinary awk must keep working, or the pattern has simply
+        # banned the tool rather than the capability.
+        "awk '{print $1}' f",
+        "awk -F, '{print $2}' f",
+        "awk 'NR>1' f",
+        "awk '{sum+=$1} END{print sum}' f",
+        "awk '/x/{print}' f",
+        "awk '{print $1, $2}' f",
+        # -v/-F consume their value, so the program is still found and
+        # scanned; without that the value itself was read as the program.
+        "awk -v n=1 '{print $n}' f",
+        "awk -i inc '{print $1}' f",
+        "awk -l lib '{print $1}' f",
+        "awk -F: '{print $1}' f",
+        "awk -v OFS=, '{print $1,$2}' f",
+        # A > inside a printed STRING is text, not a redirect; string
+        # literals are blanked before the anchor runs, the same way
+        # sed blanks its s/// and address bodies.
+        "awk 'BEGIN{print \"a>b\"}'",
+        "awk '{print $1 \" > \" $2}'",
+        "awk 'BEGIN{print \"x -> y\"}'",
+        "awk 'length > 80' f",
+        # A | inside a REGEX LITERAL is alternation, not a pipe to a
+        # command. sed's skeleton has blanked regex bodies since round
+        # eight; awk's blanked only strings, so ordinary matching was
+        # refused. Division must still be told apart from a regex.
+        "awk '/a|b/{print}' f",
+        "awk '{gsub(/x|y/,\"z\"); print}' f",
+        "awk '$1 ~ /^a|b$/{print}' f",
+        "awk '{print $1/$2}' f",
+        "awk '{print 10/2}' f",
+        "awk '/error/{print}' f",
+        "awk '{if ($1 > $2) print}' f",
+        # `>` as a comparison must not read as a redirect.
+        "awk '{if ($1 > 5) print}' f",
+        "awk 'BEGIN{OFS=\",\"}{print $1,$2}' f",
+    ),
+)
+def test_awk_ordinary_programs_still_run(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"ordinary awk was blocked: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # git subcommands that run a caller-supplied command. git is
+        # allowlisted and only its -c/config exec keys were guarded, so these
+        # reached a subprocess without meeting the allowlist at all.
+        # filter-branch --tree-filter was verified executing in a scratch repo.
+        "git submodule foreach id",
+        "git submodule foreach --recursive id",
+        "git bisect run id",
+        "git filter-branch --tree-filter id",
+        "git filter-branch --index-filter id",
+        "git filter-branch --env-filter id HEAD",
+        # A global value flag shifted the "first non-dash token" heuristic:
+        # `-C dir` made `dir` look like the subcommand, so the real one was
+        # never examined. Same defect the -c scanner already had fixed; this
+        # function did not reuse the stepping logic (review round seven).
+        "git -C dir filter-branch --tree-filter id",
+        "git --git-dir x submodule foreach id",
+        "git --work-tree w submodule foreach id",
+        "git -C d bisect run id",
+        "git --attr-source HEAD filter-branch --tree-filter id",
+        # Flags that name a program, independent of the subcommand. rebase
+        # --exec and difftool --extcmd were verified running locally in a
+        # scratch repo; the pack/smtp/gpg family names a program run at the
+        # far end of a connection.
+        "git rebase --exec id HEAD~2",
+        "git difftool --extcmd id",
+        "git mergetool --tool id",
+        "git send-email --smtp-server id x.patch",
+        "git commit --gpg-sign=id",
+        "git clone --upload-pack id x",
+        "git fetch --upload-pack id",
+        "git push --receive-pack id",
+    ),
+)
+def test_git_subcommands_cannot_run_a_command(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"git ran a caller-supplied command: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # The same subcommands in forms that launch nothing must still work,
+        # or the check has banned the subcommand rather than the capability.
+        "git submodule status",
+        "git -C dir status",
+        "git --attr-source HEAD status",
+        "git --no-pager log",
+        "git --bare log",
+        "git --git-dir x log",
+        "git -C . diff",
+        "git submodule update --init",
+        "git bisect start",
+        "git bisect good",
+        "git status",
+        "git log --oneline",
+        "git diff",
+        "git rebase HEAD~2",
+        "git difftool",
+        "git clone https://x/y",
+        "git fetch origin",
+        "git push origin main",
+        "git send-email x.patch",
+        # -S is the short gpg-sign flag and names no program.
+        "git commit -S -m x",
+        # ...but on log/diff the same letter is the pickaxe search and names
+        # no program, so history searching must keep working.
+        "git log -S pattern",
+        "git diff -Sfoo",
+    ),
+)
+def test_git_ordinary_subcommands_still_run(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"ordinary git was blocked: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        # Program-valued config keys git hands to a shell. textconv and
+        # trailer.command were verified executing in a scratch repo; the rest
+        # are documented executors of the same family. Both the inline `-c`
+        # path and the `config` write path must refuse them.
+        "diff.probe.textconv",
+        "trailer.sign.command",
+        "merge.x.driver",
+        "protocol.ext.command",
+        "core.gitProxy",
+        "uploadpack.packObjectsHook",
+        "ssh.variant",
+        "init.templateDir",
+        "pager.log",
+        "core.pager",
+        "core.sshCommand",
+        "alias.z",
+        # From git's own config documentation, none of which any enumerated
+        # list here had. A list of NAMES cannot be complete, so the rule is
+        # the suffix git uses when a key's value is a program to run.
+        "browser.x.cmd",
+        "guitool.x.cmd",
+        "man.x.cmd",
+        "gpg.ssh.program",
+        "gpg.ssh.defaultKeyCommand",
+        "http.proxy",
+        "remote.o.proxy",
+        "diff.tool",
+        "merge.tool",
+        "core.hooksPath",
+        # camelCase within a section: lowercased these end in cmd/command
+        # with no separating dot, which an only-dotted suffix rule missed.
+        "sendemail.sendmailCmd",
+        "sendemail.toCmd",
+        "sendemail.ccCmd",
+        # Program-valued keys whose names follow no suffix convention, so no
+        # rule reaches them and only naming them works. core.askPass was
+        # verified executing against a local 401 server.
+        "core.askPass",
+        "man.viewer",
+        "web.browser",
+        "instaweb.httpd",
+    ),
+)
+def test_git_program_valued_config_keys_are_refused(key: str) -> None:
+    assert _validate_segment(f"git -c {key}=id log", "", True) is not None, (
+        f"git -c set a program-valued key: {key}"
+    )
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        # Ordinary settings must still be settable, or the guard has banned
+        # `git -c` rather than the executable keys.
+        "color.ui",
+        "user.name",
+        "user.email",
+        "core.autocrlf",
+        "diff.algorithm",
+        "merge.conflictstyle",
+        "push.default",
+        # Near-misses on the new prefixes: same namespace, no program.
+        "protocol.version",
+        "pack.threads",
+        "core.bare",
+        "branch.main.remote",
+        "remote.origin.url",
+        "status.showUntrackedFiles",
+        "core.filemode",
+        "fetch.prune",
+        # A boolean, not a program, despite the name.
+        "commit.gpgsign",
+        "log.date",
+        "init.defaultBranch",
+    ),
+)
+def test_git_ordinary_config_keys_still_settable(key: str) -> None:
+    assert _validate_segment(f"git -c {key}=x log", "", True) is None, (
+        f"ordinary config key was blocked: {key}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # GNU sed executes via the s///e flag AND a standalone `e` command,
+        # and writes a named file via `w` and `s///w`. Only s///e was caught.
+        # This host runs BSD sed, which rejects `e`, so a local probe calls
+        # these harmless -- CI runs GNU, where they work. A policy that
+        # depends on which binary is installed fails open where it matters.
+        "sed 's/x/id/e' f",
+        "sed -e 's/x/id/e' f",
+        "sed '1e id' f",
+        "sed 'e id' f",
+        "sed '$e id' f",
+        "sed '/x/e id' f",
+        "sed -e '1e id' f",
+        "sed --expression='1e id' f",
+        "sed 'w /etc/x' f",
+        "sed '1w /etc/x' f",
+        "sed '$w /etc/x' f",
+        "sed '/x/w /etc/x' f",
+        "sed 's/a/b/w /etc/x' f",
+        "sed --expression='w /etc/x' f",
+        # Address forms that defeated an address-enumerating pattern. The
+        # letter is what the attacker cannot avoid; the address can be
+        # written seven ways, which is why the anchor moved to the letter.
+        "sed '0~3e id' f",
+        "sed '/re/Ie id' f",
+        r"sed '\%re%e id' f",
+        "sed '1,+2e id' f",
+        "sed '1!e id' f",
+        "sed 's/a/b/;e id' f",
+        "sed '{e id}' f",
+        "sed '1\ne id' f",
+        # W, r and R read or write a named file just as w does.
+        # `-e` attached, and a command split across two tokens: real sed
+        # writes the file from `sed -ew /tmp/p`, where argv is
+        # ["-ew", "/tmp/p"] and neither token alone shows w with its target.
+        "sed -ew /tmp/p f",
+        # EACH -e carries its own script. Joining the whole remainder made
+        # `sed -e p -e 'w /tmp/x'` read as "p -e w /tmp/x f", where the w lost
+        # its command position -- while real sed wrote the file.
+        "sed -e p -e 'w /tmp/x' f",
+        "sed -e 's/a/b/' -e 'e id' f",
+        "sed -e p -e r /etc/passwd f",
+        # -i takes a SEPARATE value on GNU sed, so `ext` was read as the
+        # script and the real one never scanned. Found by enumerating sed's
+        # own usage string rather than the constant sets here -- a sweep
+        # driven by those sets cannot see a flag missing from them.
+        "sed -i ext 'w /etc/x' f",
+        "sed --in-place ext 'e id' f",
+        "sed -l 5 'w /etc/x' f",
+        "sed -i ext -e 'e id' f",
+        # Delimiters that are regex metacharacters, and an escaped delimiter,
+        # must not hide a following command.
+        r"sed 's/a\/b/c/;w /etc/x' f",
+        "sed 's|a|b|;w /etc/x' f",
+        "sed 's.a.b.;e id' f",
+        # A target several directories deep still resolves.
+        "sed 'w /tmp/a/b/c' f",
+        "sed 'r /a/b/c' f",
+        "sed -e's/x/id/e' f",
+        # M is I's sibling regex-address modifier; covering one and not the
+        # other is the same fix-one-path-not-its-sibling class.
+        "sed '/x/Me id' f",
+        "sed '/x/Mw /tmp/p' f",
+        "sed 'W /etc/x' f",
+        "sed '1r /etc/passwd' f",
+        "sed '1R /etc/passwd' f",
+        # A script file cannot be inspected, in any spelling.
+        "sed -f p.sed f",
+        "sed -fp.sed f",
+        "sed --file=p.sed f",
+        # An option the validator cannot classify hides the script's
+        # position, so it fails closed rather than guessing.
+        "sed -Q 'w /tmp/x' f",
+        "sed -nQ 's/a/b/' f",
+        "sed -an 'w/tmp/x' f",
+        "sed -nE 'e id' f",
+        # End-of-options: the token after -- is the script.
+        "sed -- 'w /tmp/x' f",
+        "sed -- '1e id' f",
+        "sed -n -- 'w /etc/x' f",
+        "sed -e 'w /tmp/x' -- README.md",
+        "sed -i -- 'e id' f",
+        # No-separator file commands in the AMBIGUOUS position. A content
+        # heuristic cannot separate these from filenames -- "w.txt" is a
+        # valid filename AND a valid write to ".txt" -- so position does
+        # it: sed needs an input file after its script, hence a token that
+        # is LAST can only be a filename. Whitespace-based and
+        # shape-based guesses were each a bypass in earlier rounds.
+        "sed -i ext 'w/tmp/x' f",
+        # Known over-block, recorded rather than silently accepted: a BSD
+        # backup suffix beginning with e/w/r is indistinguishable from a
+        # GNU script, and GNU DOES execute `sed -i eid file`. Both readings
+        # must be scanned, so `sed -i ext 's/a/b/' f` is refused. Only the
+        # BSD-only `-i SUFFIX` spelling is affected; `sed -i.bak` and
+        # `sed -i` are unaffected and are the GNU forms.
+        "sed -i ext 's/a/b/' f",
+        "sed --in-place ext 's/a/b/' f",
+        # GNU sed needs no separator OR slash: `wout1` writes `out1` and
+        # `eid` runs `id`, verified against GNU sed 4.9. Requiring one was
+        # a spelling rule and a bypass, the same class as the three
+        # token-classification attempts before it.
+        "sed 'wout1' f",
+        # BSD sed OPENS AND TRUNCATES a w target before it errors on stdin,
+        # so a write lands with no input file present -- verified, 14 bytes
+        # to 0. A bound that skipped this slot when nothing followed it
+        # reasoned from GNU semantics alone.
+        "sed -i bak 'w /tmp/x'",
+        "sed -i bak 'W /tmp/x'",
+        "sed -i bak 's/a/b/w /tmp/x'",
+        "sed -l bak 'w /tmp/x'",
+        "sed --in-place bak 'w /tmp/x'",
+        "sed -n -i bak 'w /tmp/x'",
+        "sed --line-length 5 'w /tmp/x'",
+        # `sed -i bak 'eid'` is NOT here: the `e` command does not execute in
+        # this slot on either implementation. `e touch /tmp/marker` and the
+        # attached `etouch /tmp/marker` were both run under BSD sed and GNU
+        # sed 4.9 -- all four rc=1, no marker created. `e` remains blocked in
+        # every reachable position (bare script, -e, -i attached, --expression,
+        # -n, after an address); see test_e_command_blocked_where_reachable.
+        # A backup suffix that LOOKS like a script defeated the attempt to
+        # pick a reading from slot one: BSD takes slot one as the suffix
+        # whatever its shape, so `-i 1d` left the payload unscanned --
+        # verified, it overwrote a file. Fifth failure of classifying a
+        # token in this area; both slots are now scanned.
+        "sed -i '1d' 'w /tmp/x' in.txt",
+        "sed -i 's/a/b/' 'w /tmp/x' in.txt",
+        "sed -i '$d' 'w /tmp/x'",
+        "sed -i '2p' 'w /tmp/x'",
+        "sed -i '1,2d' 'w /tmp/x'",
+        "sed -i '1d' 'r /etc/passwd' f",
+        "sed -i bak 'w ../esc'",
+        # ATTACHED traversal in the ambiguous slot. The narrow anchor
+        # required the separator to be the FIRST character after the
+        # command letter, so `w../victim.txt` left the working directory --
+        # verified overwriting a file one level up. The suite tested the
+        # attached form in the OTHER slot and the separated form in this
+        # one, so it could not discriminate.
+        "sed -i bak 'w../victim.txt' in.txt",
+        "sed -i bak 'r../secret' f",
+        "sed -i bak 'w~/x' f",
+        # Multi-component paths whose FIRST component is an ordinary name:
+        # the round-16 anchor required the separator near the front, so
+        # these escaped. Verified overwriting a file two levels up.
+        "sed -i bak 'wdir/../../victim.txt' in.txt",
+        "sed -i bak 'wlink/victim.txt' f",
+        "sed -l 5 'wdir/../../victim.txt' in.txt",
+        "sed -i bak 'Wa/b/c' f",
+        # And the case that disproved "CWD writes are harmless": a git
+        # hook written into .git/ is EXECUTED by git.
+        "sed -i bak 'w.git/hooks/pre-commit' f",
+        "sed -i bak 'w.git/config' f",
+        "sed -i bak 'w.ssh/authorized_keys' f",
+        "sed -i bak 'w$HOME/x' f",
+        "sed -i bak 'w//etc/x' f",
+        "sed -i bak 'w.//../esc' f",
+        "sed -i bak 'w./sub/../../esc' f",
+        "sed -i bak 'W../s' f",
+        "sed -i bak 'w./../esc' f",
+        "sed -l bak 'w../x' f",
+        "sed 'w-file' f",
+        "sed 'w.bak' f",
+        "sed '1,2wout3' f",
+        "sed 'rin1' f",
+        "sed 'eid' f",
+        "sed 'eecho HI' f",
+        "sed 'w../../pwned' f",
+        "sed -n 's/x/id/ep' f",
+        "sed -i ext 'W/tmp/x' f",
+        "sed -i ext 'r/etc/passwd' f",
+        "sed -i ext '1w/tmp/x' f",
+        "sed -i ext 's/a/b/w/tmp/x' f",
+        "sed -i a/b 'w /tmp/x' f",
+        # GNU sed declares -i[SUFFIX] as an OPTIONAL, attached-only
+        # argument while BSD takes it separately, so the two disagree on
+        # which token is the script. Both readings are scanned; picking
+        # one let `sed -i 'w /tmp/evil'` through on GNU, which is what CI
+        # runs.
+        "sed -i '1e id' f",
+        "sed -i 'w /tmp/evil' f",
+        "sed -i 's/a/b/e' f",
+        "sed -i ext 'w /tmp/x' f",
+        "sed -i ext '1e id' f",
+        "sed --in-place 'e id' f",
+        "sed --in-place=.bak 'w /tmp/x' f",
+        "sed -n -i.bak 'e id' f",
+    ),
+)
+def test_sed_cannot_run_a_command_or_write_a_file(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"sed ran a command or wrote a file: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Ordinary sed must keep working. The near-misses matter: words
+        # containing e/w next to a delimiter ("we", "end", "where", "new")
+        # are what an over-eager pattern trips on.
+        "sed 's/a/b/' f",
+        "sed -n '1p' f",
+        "sed -e 's/a/b/' -e 's/c/d/' f",
+        "sed 's/a/b/g' f",
+        "sed '/x/d' f",
+        "sed -i.bak 's/a/b/' f",
+        "sed 's/we/you/' f",
+        "sed 's/a/b/gi' f",
+        "sed '1,3d' f",
+        "sed 's|a|b|' f",
+        "sed 's/end/start/' f",
+        "sed '/where/p' f",
+        "sed 's/new/old/' f",
+        "sed -n '/a/,/b/p' f",
+        "sed 's/.*//' f",
+        "sed '/^$/d' f",
+        "sed --expression='s/a/b/' f",
+        "sed '2,5p' f",
+        "sed 'y/ab/cd/' f",
+        "sed -n '$=' f",
+        "sed '/error/!d' f",
+        "sed 's/a/b/2' f",
+        "sed '$d' f",
+        "sed '$p' f",
+        # A letter inside a replacement or a /regex/ address is user text and
+        # must not read as a command; s/// and address bodies are blanked
+        # before the command anchors run.
+        "sed 's/x/Iw file/' f",
+        "sed '/HIw file/d' f",
+        "sed 's/Ie /x/' f",
+        r"sed 's/a\/b/c/' f",
+        "sed 's.a.b.' f",
+        "sed '/[;]/d' f",
+        "sed -e p -e d f",
+        "sed 's/a/b/' notes.txt",
+        "sed -l 5 's/a/b/' f",
+        # Short flags bundle, and these are real GNU options. Refusing a
+        # cluster because the combined token is absent from an enumerated
+        # list is that list auditing itself -- the shape that made an
+        # earlier sweep report zero mismatches while three bugs were live.
+        "sed -an 's/a/b/' f",
+        "sed -nE 's/a/b/' f",
+        "sed -rn 's/a/b/p' f",
+        "sed -sz 's/a/b/' f",
+        "sed --follow-symlinks 's/a/b/' f",
+        "sed -b 's/a/b/' f",
+        "sed -- 's/a/b/' f",
+        "sed -n -- 's/a/b/p' f",
+        "sed -- 's/a/b/' README.md",
+        # Input FILENAMES must never be scanned as script text: README.md
+        # would trip the [wWrR] anchor on "RE".
+        "sed -i 's/a/b/' README.md",
+        "sed -e 's/a/b/' README.md",
+        "sed -e p -e d README.md",
+        "sed 's/a/b/' w.txt",
+        "sed -n 'p' Reader.txt",
+        # The legacy s///e regex read the s of "start" and the e of "end"
+        # as a substitute-execute, refusing an ordinary range print.
+        "sed -n '/start/,/end/p' notes.md",
+        "sed -n '/setup/,/end/p' f",
+        # Filenames with spaces are fine unless the first word is exactly
+        # a file-command letter -- "w r.txt" is syntactically identical to
+        # a sed write, so that one is refused. Irreducible ambiguity, and
+        # the safe side; these five are the ordinary case.
+        "sed -i 1d 'raw data.txt'",
+        "sed -i 1d 'my report.md'",
+        "sed -i 1d 'final report.md'",
+        "sed -i 1d 'read me.txt'",
+        # `'write up.md'` moved to the blocked list: it begins with `w`, and
+        # the slot cannot tell that from a write to `rite up.md`.
+        "sed -i '' 's/a/b/' f",
+        "sed -n -i.bak 's/a/b/p' f",
+        "sed --in-place=.bak 's/a/b/' f",
+        "sed --binary 's/a/b/' f",
+        # `;s` gave the w a following non-space once the separator was
+        # relaxed, and the s///w pattern spanned the `;` into the next
+        # command. Both are now bounded to a single command.
+        "sed 's/we/us/;s/ws/xs/' f",
+        "sed 's/warning/error/' f",
+        "sed '/read/p' f",
+        "sed 'y/wr/WR/' f",
+        # `w..`, `w.env` and `wpyproject.toml` USED to be allowed here on the
+        # reasoning that a CWD write with no path component is harmless. That
+        # was wrong twice over, and they are now blocked: BSD sed parses the
+        # token as a script and truncates the target -- which is the token
+        # MINUS its leading `w` -- before failing on stdin, so `wpyproject.toml`
+        # empties `pyproject.toml` and `w.gitignore` empties `.gitignore`.
+        # Verified emptying each file; the rc=1 arrives after the damage.
+    ),
+)
+def test_sed_ordinary_scripts_still_run(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"ordinary sed was blocked: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # `git config` writes an exec key. The guard hardcoded position 1 for
+        # the subcommand, so ANY global option before it shifted the check
+        # off. This is GHSA-2rr7-8xrw-gmhr's own guard, bypassed -- and the
+        # third time a positional subcommand lookup has been defeated by a
+        # preceding flag, which is why all three callers now share one helper.
+        "git config core.sshCommand id",
+        "git -C /tmp config core.sshCommand id",
+        "git -Cd config core.pager id",
+        "git --git-dir x config core.sshCommand id",
+        "git -c color.ui=x config core.pager id",
+        "git --no-pager config core.sshCommand id",
+        # From git's own synopsis, absent from the value-flag set until
+        # enumerated against it: `git --attr-source HEAD -c key=v status`
+        # runs and honours the -c, so treating HEAD as the subcommand stopped
+        # the scan before the key.
+        "git --attr-source HEAD config core.sshCommand id",
+        "git --list-cmds val config core.pager id",
+    ),
+)
+def test_git_config_exec_key_found_behind_global_options(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"git config wrote an exec key: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Reading a key is fine, and --unset is how a victim recovers, so
+        # neither may be refused -- behind a global option either.
+        "git config --get core.pager",
+        "git config --unset core.sshCommand",
+        "git config --list",
+        "git config user.name x",
+        "git -C /tmp config --get core.pager",
+        "git -C /tmp config --unset core.pager",
+        "git -C /tmp config user.email x",
+    ),
+)
+def test_git_config_reads_and_unsets_still_allowed(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"a git config read or unset was blocked: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # ripgrep runs a program: --pre=COMMAND searches the output of
+        # COMMAND for each file. Verified executing a planted script. Found
+        # by auditing the ALLOWLIST for exec capability rather than the
+        # launcher set -- nine review rounds reasoned from the launcher set,
+        # which by construction cannot contain a launcher not yet recognised.
+        "rg --pre /tmp/x.sh pat f",
+        "rg --pre=id pat f",
+        "rg --hostname-bin id pat f",
+        "xargs rg --pre=id pat f",
+    ),
+)
+def test_rg_cannot_run_a_program(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"rg ran a program: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Ordinary searching must keep working, including the flags that
+        # merely name a FILE rather than a program.
+        "rg pat f",
+        "rg -n pat f",
+        "rg --search-zip pat f",
+        "rg --ignore-file .rgignore pat f",
+        "rg -i --glob '*.py' pat",
+    ),
+)
+def test_rg_ordinary_searches_still_run(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"ordinary rg was blocked: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Flags NOT in any list here, caught by the suffix backstop alone.
+        # The explicit lists cannot contain an option nobody enumerated,
+        # which is how `rg --pre` survived nine review rounds; this is the
+        # same fix as the config-key suffix rule, one level up.
+        "git config --editor id",
+        "git x --custom-pager id",
+        "rg --some-new-cmd id x f",
+        "rg --future-bin id x f",
+        # git send-email documents four command-runner flags; the suffix
+        # backstop caught all four before they were ever enumerated, which
+        # is the point of having it. --access-hook needed "hook" adding.
+        "git send-email --sendmail-cmd=/tmp/e.sh p",
+        "git send-email --to-cmd=id p",
+        "git send-email --cc-cmd=id p",
+        "git send-email --header-cmd=id p",
+        "git daemon --access-hook=id",
+    ),
+)
+def test_unenumerated_program_naming_flags_are_refused(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a program-naming flag was allowed: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # ...and the suffix must not swallow ordinary options. These are the
+        # near-misses: value-taking flags whose names end in ordinary words.
+        "git log --format=short",
+        "git log --author=x",
+        "git log --grep=fix",
+        "git log --since=1.day",
+        "git branch --sort=-committerdate",
+        "git diff --stat",
+        "rg --max-count 5 pat f",
+        "rg --color never pat f",
+        "git send-email --to x@y p",
+        "git send-email --from x p",
+        "git send-email --confirm=never p",
+        "rg --ignore-file .rgignore pat f",
+        "rg -n --glob '*.py' pat",
+        # The --no- family turns a feature OFF and names no program:
+        # `git --no-pager log` ends in "pager" but disables the pager.
+        # Caught by the suite, not by my probe, which never tried it.
+        "git --no-pager log",
+        "git --no-replace-objects log",
+        "git --no-optional-locks status",
+        "git --no-advice status",
+        "git log --no-color",
+        "git commit --no-gpg-sign -m x",
+        "git log --no-ext-diff",
+        "rg --no-config pat f",
+    ),
+)
+def test_ordinary_flags_are_not_mistaken_for_programs(segment: str) -> None:
+    assert _validate_segment(segment, "", False) is None, (
+        f"an ordinary flag was blocked: {segment}"
+    )
+
+
+# Arities fixed from each tool's own manual, NOT read back from the sets in
+# the source. A fail-closed unknown-flag rule cannot catch a WRONG arity,
+# because the flag is known -- which is why `sed -i` (GNU: optional and
+# attached-only; filed here as required-value) stepped over the script itself
+# and was invisible to every other check. This is the sed equivalent of
+# _XARGS_KNOWN_ARITIES, whose absence is exactly what let that through.
+_SED_KNOWN_ARITIES = (
+    ("-n", "boolean"),
+    ("-E", "boolean"),
+    ("-r", "boolean"),
+    ("-s", "boolean"),
+    ("-u", "boolean"),
+    ("-z", "boolean"),
+    ("-a", "boolean"),
+    ("-H", "boolean"),
+    ("-b", "boolean"),
+    ("--binary", "boolean"),
+    ("--follow-symlinks", "boolean"),
+    ("--posix", "boolean"),
+    ("--sandbox", "boolean"),
+    ("--debug", "boolean"),
+    # -l is a BOOLEAN on BSD (it sits inside the [-EHalnru] cluster in BSD's
+    # synopsis) and value-taking on GNU. Filing it "value" from GNU's manual
+    # alone is what the previous version of this table did -- encoding the
+    # very bug it exists to catch, because the arities were fixed from one
+    # implementation while the other was the one running. Both -i and -l are
+    # "optional" here in the sense that matters: the operand may or may not
+    # be the script, so both readings must keep it visible.
+    ("-l", "optional"),
+    ("--line-length", "optional"),
+    ("-i", "optional"),
+    ("--in-place", "optional"),
+    # The remaining known flags. Without these the table was a hand-kept list
+    # auditing another hand-kept list -- nothing failed if a flag joined
+    # SHELL_SED_KNOWN_FLAGS and never got an arity, which is the class (e)
+    # shape the completeness assertion below now closes.
+    # -e/-f take an operand that IS the script (or a file holding it), not a
+    # value to step over -- a third category the two-way split cannot express.
+    ("-e", "script"),
+    ("--expression", "script"),
+    ("-f", "script"),
+    ("--file", "script"),
+    ("--quiet", "boolean"),
+    ("--silent", "boolean"),
+    ("--separate", "boolean"),
+    ("--unbuffered", "boolean"),
+    ("--null-data", "boolean"),
+    ("--regexp-extended", "boolean"),
+    ("--help", "boolean"),
+    ("--version", "boolean"),
+)
+
+
+def test_every_known_sed_flag_has_a_declared_arity() -> None:
+    # A flag added to SHELL_SED_KNOWN_FLAGS without an arity would be
+    # invisible to the arity test, which is exactly how a list-auditing-a-list
+    # fails open.
+    assert {flag for flag, _ in _SED_KNOWN_ARITIES} == set(cs.SHELL_SED_KNOWN_FLAGS)
+
+
+@pytest.mark.parametrize(("flag", "arity"), _SED_KNOWN_ARITIES)
+def test_sed_flag_arity_keeps_the_script_visible(flag: str, arity: str) -> None:
+    # With the flag at its documented arity, a dangerous script must still be
+    # found. A misfiled arity makes the scanner step over the script, so this
+    # fails where a membership check cannot: mutating -i back to required-value
+    # (the round-ten bug) is killed here.
+    #
+    # The limit, stated rather than implied: the reverse misfiling -- a value
+    # flag treated as boolean -- SURVIVES, because scanning one token too many
+    # still leaves the script visible. This table catches arities that make
+    # the scanner see too little, not too much; over-scanning shows up as a
+    # false positive in the ordinary-invocation tests instead.
+    danger = "w /tmp/x"
+    if arity == "script":
+        # The operand is the script itself (or, for -f, a file this validator
+        # cannot read, which is refused outright).
+        assert _sed_exec_construct(["sed", flag, danger, "f"]) is not None
+        return
+    if arity == "value":
+        assert _sed_exec_construct(["sed", flag, "5", danger, "f"]) is not None
+    else:
+        assert _sed_exec_construct(["sed", flag, danger, "f"]) is not None
+    if arity == "optional":
+        # The implementations disagree about whether the operand is a suffix
+        # or the script, so both readings must keep the script visible.
+        assert _sed_exec_construct(["sed", flag, "ext", danger, "f"]) is not None
+
+
+@pytest.mark.parametrize(
+    "flag",
+    (
+        "-a",
+        "-d",
+        "-E",
+        "-I",
+        "-L",
+        "-n",
+        "-P",
+        "-s",
+        "--arg-file",
+        "--delimiter",
+        "--eof",
+        "--max-args",
+        "--max-chars",
+        "--max-lines",
+        "--max-procs",
+        "--process-slot-var",
+        "--replace",
+    ),
+)
+@pytest.mark.parametrize("spelling", ("separated", "bare"))
+def test_xargs_flag_cannot_hide_the_launched_program(flag: str, spelling: str) -> None:
+    # Class (f): implementations disagree about whether these take a value,
+    # so BOTH spellings must refuse a non-allowlisted program. Which reading
+    # the scanner takes does not matter as long as the DECISION is the same
+    # -- asserting the scanner's intermediate answer instead flagged three
+    # "gaps" that were not reachable, because the operand it resolved to was
+    # not allowlisted either.
+    parts = ["xargs", flag, "1", "python3", "-c", "1"]
+    if spelling == "bare":
+        parts = ["xargs", flag, "python3", "-c", "1"]
+    assert _validate_segment(" ".join(parts), "", True) is not None, (
+        f"{flag} hid the launched program ({spelling})"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        "git status",
+        "git log --oneline -20",
+        "git diff --stat",
+        "git add .",
+        "git branch --show-current",
+        "git rev-parse HEAD",
+        "git show --stat HEAD",
+        "git blame README.md",
+        "git stash list",
+        "git remote -v",
+        "git describe --tags",
+        "git config --get user.name",
+        "git shortlog -sn",
+        "git rev-list --count main..HEAD",
+        "rg 'def foo' --type py",
+        "rg -n TODO",
+        "rg -l pattern src/",
+        "rg --stats pat",
+        "sed -n '10,20p' README.md",
+        "sed 's/old/new/g' notes.txt",
+        "sed -i.bak 's/a/b/' f.py",
+        "awk '{print $2}' data.txt",
+        "awk -F: '{print $1}' hosts",
+        "awk 'END{print NR}' f",
+        "find . -name '*.py' -type f",
+        "find src -newer Makefile",
+        "find . -maxdepth 2 -type d",
+        "xargs -n1 echo",
+        "cat README.md",
+        "head -20 f",
+        "wc -l f.py",
+        "sort -u f",
+        "uniq -c f",
+        "cut -d, -f2 f",
+        "ls -la",
+        "pwd",
+        "echo hi",
+        "mkdir -p build",
+        "cp a b",
+        "mv a b",
+        "rmdir empty",
+        "tee out.txt",
+        # Real one-liners, the kind that appear in READMEs and shell
+        # history. The 42-command list above covers each tool once in its
+        # simplest form; these are the shapes that actually stress the
+        # sed and awk scanners.
+        "sed -n '/BEGIN/,/END/p' f",
+        "sed '/^#/d;/^$/d' f",
+        "sed '1!G;h;$!d' f",
+        "sed -n '2~3p' f",
+        "sed 's/.*\\///' f",
+        "awk '!seen[$0]++' f",
+        "awk 'NF' f",
+        "awk '/start/,/end/' f",
+        "awk 'length>max{max=length;line=$0} END{print line}' f",
+        "awk '{print toupper($0)}' f",
+        # Filenames and scripts containing the exact letters the sed and
+        # awk anchors key on. These are the shapes that look adversarial
+        # and are not: a writer module, a reader doc, substituting the
+        # words read and write, and a version bump with an empty -i suffix.
+        "sed -i '' 's/0.0.820/0.0.821/' pyproject.toml",
+        "sed -i '' 's/warn/error/' src/writer.py",
+        "sed -n '/^write/p' README.md",
+        "sed 's/read/write/g' docs/reader.md",
+        "sed 's|/usr/local|/opt|g' config.txt",
+        "awk '/error|warn/{print}' logs/run.log",
+        "awk '{a[$1]++} END{for(k in a) print k, a[k]}' f",
+        "git log --grep='rewrite' --oneline",
+        "rg --files-with-matches 'def _sed' codebase_rag",
+        "rg --replace '$1' 'x(y)' f",
+    ),
+)
+def test_everyday_invocations_are_not_blocked(segment: str) -> None:
+    # False positives are as serious as bypasses here: a guard that refuses
+    # ordinary work gets disabled, and then it guards nothing. Every
+    # allowlisted command appears at least once, in the form someone would
+    # actually type. Two real regressions were caught this way -- editing
+    # this repo's own README.md, and `sed 's/we/us/;s/ws/xs/'`.
+    assert _validate_segment(segment, "", False) is None, (
+        f"an everyday invocation was blocked: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        "git filter-branch --tree-filter id H",
+        "git filter-branch --index-filter id H",
+        "git filter-branch --parent-filter id H",
+        "git filter-branch --msg-filter id H",
+        "git filter-branch --commit-filter id H",
+        "git filter-branch --tag-name-filter id H",
+        "git filter-branch --subdirectory-filter x H",
+        "git filter-branch --env-filter id H",
+        "git filter-branch --setup id H",
+        "git clone --upload-pack id x",
+        "git fetch --upload-pack id",
+        "git push --receive-pack id",
+        "git clone --upload-pack=id x",
+        "git push --receive-pack=id",
+    ),
+)
+def test_git_program_running_filter_and_pack_flags_still_block(
+    segment: str,
+) -> None:
+    # "filter" and "pack" were removed from the suffix backstop because git
+    # spells object filters and pack FILES with the same words. These are
+    # the flags where the word does mean a program, and they must still be
+    # refused -- by the explicit lists, since the suffix no longer reaches
+    # them.
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a command-running flag was allowed: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        "git log --diff-filter=A",
+        "git rev-list --filter=blob:none HEAD",
+        "git gc --keep-largest-pack",
+        "git repack --keep-pack=x",
+        "git log --filter=tree:0",
+        "git rev-list --filter-provided-objects HEAD",
+        "git repack -adk",
+        "git gc --prune=now",
+    ),
+)
+def test_git_data_filter_and_pack_flags_are_allowed(segment: str) -> None:
+    # ...and the same words naming DATA must not be blocked. Every one of
+    # these was refused while "filter" and "pack" were in the suffix list.
+    assert _validate_segment(segment, "", False) is None, (
+        f"a data flag was blocked: {segment}"
+    )
+
+
+# Every git flag whose name ends in a program-naming word, taken from git's
+# own --help output across all 174 subcommands rather than from the sets in
+# the source. git is a single implementation, so it is an AUTHORITY: its
+# verdict settles what exists, where a modelled list only reflects what
+# someone remembered. The four "pack" entries are pack FILES, not programs,
+# which is why "pack" was removed from the suffix backstop.
+_GIT_PROGRAM_NAMING_FLAGS = (
+    ("send-email", "--cc-cmd", True),
+    ("send-email", "--header-cmd", True),
+    ("send-email", "--sendmail-cmd", True),
+    ("send-email", "--to-cmd", True),
+    ("send-email", "--no-header-cmd", False),
+    ("filter-branch", "--tree-filter", True),
+    ("filter-branch", "--index-filter", True),
+    ("filter-branch", "--env-filter", True),
+    ("filter-branch", "--setup", True),
+    ("difftool", "--extcmd", True),
+    ("mergetool", "--tool", True),
+    ("rebase", "--exec", True),
+    ("clone", "--upload-pack", True),
+    ("push", "--receive-pack", True),
+    ("daemon", "--access-hook", True),
+    ("svn", "--authors-prog", True),
+    # Pack FILES, not programs -- the ambiguity that made "pack" unusable as
+    # a suffix rule.
+    ("gc", "--keep-largest-pack", False),
+    ("repack", "--keep-pack", False),
+    ("pack-objects", "--keep-pack", False),
+    ("multi-pack-index", "--preferred-pack", False),
+)
+
+
+@pytest.mark.parametrize(
+    ("subcommand", "flag", "runs_a_program"), _GIT_PROGRAM_NAMING_FLAGS
+)
+def test_git_program_naming_flags_match_gits_own_semantics(
+    subcommand: str, flag: str, runs_a_program: bool
+) -> None:
+    blocked = _validate_segment(f"git {subcommand} {flag}=id x", "", True) is not None
+    assert blocked == runs_a_program, (
+        f"git {subcommand} {flag}: blocked={blocked}, runs_a_program={runs_a_program}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # A --no- flag disables a feature and cannot take a value at all --
+        # git says so itself: "option `no-gpg-sign' takes no value", and
+        # `--no-pager=cat` is rejected as an unknown option. So excluding
+        # them from the program-naming suffix rule is grammar, not a
+        # spelling guess, which is the standard every other exception on
+        # this branch failed before it was replaced.
+        "git send-email --no-sendmail-cmd=id p",
+        "git send-email --no-to-cmd=id p",
+        "git --no-pager log",
+        "git commit --no-gpg-sign -m x",
+        "git log --no-ext-diff",
+        "git --no-replace-objects log",
+        "git fetch --no-recurse-submodules",
+        "rg --no-config pat f",
+    ),
+)
+def test_negated_flags_never_name_a_program(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"a --no- flag was treated as naming a program: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "delimiter", ("/", "#", "|", "@", ",", "!", "%", "^", "+", "=", ":")
+)
+@pytest.mark.parametrize(
+    "flags",
+    ("e", "ge", "eg", "ie", "ei", "gie", "ige", "egi", "2e", "e2", "gei", "pe", "ep"),
+)
+def test_sed_substitute_execute_covered_for_every_spelling(
+    delimiter: str, flags: str
+) -> None:
+    # The legacy `sed ... s///e` regex was retired because it read the s of
+    # "start" and the e of "end" as a substitute-execute. This is the
+    # replacement's coverage proof: every delimiter x every flag arrangement
+    # containing an e, 143 combinations, all refused structurally.
+    segment = f"sed 's{delimiter}x{delimiter}id{delimiter}{flags}' file"
+    assert _validate_segment(segment, "", True) is not None, (
+        f"s///e spelling escaped: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        # sed in a pipeline: the payload may sit in any segment, and the
+        # whole-command text differs from each segment's argv.
+        "cat f | sed 's/x/id/e'",
+        "cat f | sed 'w /etc/x'",
+        "echo a | sed 'eid'",
+        "cat f | sed -n 's/x/id/ep'",
+        "ls | sed 'wout1'",
+        "cat f | sed 's/a/b/' | sed 'w /tmp/x'",
+    ),
+)
+def test_sed_payload_blocked_in_any_pipeline_segment(command: str) -> None:
+    groups = _parse_command(command)
+    segments = [s.strip() for g in groups for s in g.commands if s.strip()]
+    assert any(_validate_segment(s, "", True) is not None for s in segments), (
+        f"no segment refused the payload: {command}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # The two-reading operand structure that cost sed five attempts also
+        # exists in awk (-p/-D/-o) and xargs (-i/-l/-e): the token after the
+        # flag is its value under one implementation and the PROGRAM under
+        # another. Neither leaks, because the value resolves to something not
+        # on the allowlist -- but the decision is what is pinned here, not
+        # the scanner's intermediate answer, which is wrong for xargs and
+        # right anyway. Asserting the intermediate flagged three "gaps" that
+        # were not reachable.
+        "awk -p prof 'BEGIN{system(\"id\")}'",
+        "awk -D dbg 'BEGIN{system(\"id\")}'",
+        "awk -o out 'BEGIN{system(\"id\")}'",
+        "xargs -i {} python3 -c 1",
+        "xargs -l 5 python3 -c 1",
+        "xargs -e EOF python3 -c 1",
+    ),
+)
+def test_two_reading_operands_never_hide_the_payload(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a two-reading operand hid the payload: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Division must not be read as a regex literal, or the blanker would
+        # swallow the rest of the program and hide the construct behind it.
+        "awk 'BEGIN{x=1/2; print 1 | \"id\"}'",
+        "awk '{n=$1/$2; system(\"id\")}'",
+        "awk 'BEGIN{a[1]=2; print a[1]/1 | \"id\"}'",
+        "awk 'function f(){return 1} BEGIN{x=f()/2; system(\"id\")}'",
+        "awk 'BEGIN{x=(1+2)/3; print 1 | \"id\"}'",
+        'awk \'BEGIN{print length("ab")/2 | "id"}\'',
+        'awk \'BEGIN{$0="a"; x=NF/1; system("id")}\'',
+    ),
+)
+def test_awk_division_does_not_hide_a_construct(segment: str) -> None:
+    # This classifier answers "is this / a regex or division" and HOLDS where
+    # five sed token-classifiers failed, because it keys on the preceding
+    # token's grammatical class -- which awk's syntax determines -- rather
+    # than guessing what the token itself is.
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a mis-read slash hid the construct: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        "awk '{print $1/$2}' f",
+        "awk '{print 10/2}' f",
+        "awk 'BEGIN{print 1/2/3}'",
+        "awk '{x=$1/$2; y=$3/$4; print x,y}' f",
+        "awk 'BEGIN{print length(\"ab\")/2}'",
+        "awk '{print (a+b)/2}' f",
+        "awk '{print NF/2}' f",
+    ),
+)
+def test_awk_division_still_runs(segment: str) -> None:
+    assert _validate_segment(segment, "", False) is None, (
+        f"division was blocked: {segment}"
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        "w /tmp/x",
+        "w/tmp/x",
+        "w../esc",
+        "w~/x",
+        "w./../esc",
+        "W /tmp/x",
+        "r /etc/passwd",
+        # `eid` is deliberately absent: it executes in the bare-script slot
+        # but NOT in the `-i` suffix slot -- `e touch /tmp/marker` and
+        # `etouch /tmp/marker` were run under BSD and GNU sed 4.9, all four
+        # rc=1 with no marker. A divergence backed by execution, not a gap.
+        "1w/tmp/x",
+        "$w/tmp/x",
+        "s/a/b/w /etc/x",
+    ),
+)
+def test_both_sed_slots_agree_on_escaping_writes(payload: str) -> None:
+    # Class (d) -- a fix landing on one path and not its sibling -- produced
+    # the last two findings on this branch. The two sed anchors differ BY
+    # DESIGN (the ambiguous -i slot is narrower), so this pins where they
+    # must AGREE: every write that leaves the working directory. The only
+    # intended divergence is a bare CWD-relative target, covered separately.
+    assert (_validate_segment(f"sed '{payload}' f", "", True) is not None) is True
+    assert (
+        _validate_segment(f"sed -i bak '{payload}' f", "", True) is not None
+    ) is True
+
+
+@pytest.mark.parametrize("payload", ("wout1", "w.bak", "w-file"))
+def test_the_ambiguous_slot_refuses_bare_cwd_writes_too(payload: str) -> None:
+    # This test USED to assert the opposite -- that the `-i` slot permits a
+    # bare CWD-relative write, "which tee/cp/redirection already permit".
+    # Both halves of that were wrong. BSD sed truncates the token minus its
+    # leading `w`, so `wout1` empties `out1`; and the CWD is the project
+    # root, so the reachable targets include `.gitignore`, `conftest.py`
+    # (which pytest imports), `Makefile`, and any pre-existing symlink --
+    # which redirects the write anywhere on the filesystem with no slash in
+    # the command at all. Verified emptying each target file.
+    assert _validate_segment(f"sed '{payload}' f", "", True) is not None
+    assert _validate_segment(f"sed -i bak '{payload}' f", "", True) is not None
+
+
+def test_xargs_flag_partition_is_disjoint() -> None:
+    # The scan reads the three sets as a partition: a flag lands in exactly one
+    # and its arity follows. A flag in two sets makes the answer depend on
+    # which `if` runs first, so a reordering with no behavioural motive can
+    # silently restore a bypass. Enforced here rather than left to ordering.
+    assert not (cs.SHELL_XARGS_VALUE_FLAGS & cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS)
+    assert not (cs.SHELL_XARGS_VALUE_FLAGS & cs.SHELL_XARGS_BOOLEAN_FLAGS)
+    assert not (cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS & cs.SHELL_XARGS_BOOLEAN_FLAGS)
+
+
+def test_every_xargs_flag_resolves_the_program_for_its_arity() -> None:
+    # Disjointness alone cannot catch a flag filed in the WRONG set: moving
+    # `-n` from VALUE to BOOLEAN keeps the sets disjoint and makes
+    # `xargs -n 1 python3` resolve to `1`. Driving every flag at its declared
+    # arity ties each membership to an observable answer, so a misfiling fails
+    # here rather than silently reinstating a bypass.
+    for flag in sorted(cs.SHELL_XARGS_VALUE_FLAGS):
+        # Separated spelling: the value is one token, the program follows.
+        assert _xargs_launched_command(["xargs", flag, "1", "python3"]) == (
+            "python3"
+        ), f"{flag} declared value-taking but did not consume its value"
+    for flag in sorted(cs.SHELL_XARGS_OPTIONAL_ARG_FLAGS):
+        # Attached-only: the next token is the program, never a value.
+        assert _xargs_launched_command(["xargs", flag, "python3"]) == ("python3"), (
+            f"{flag} declared optional-arg but consumed the program"
+        )
+    for flag in sorted(cs.SHELL_XARGS_BOOLEAN_FLAGS):
+        assert _xargs_launched_command(["xargs", flag, "python3"]) == ("python3"), (
+            f"{flag} declared boolean but consumed the program"
+        )
+
+
+# Arities fixed from the GNU findutils and BSD xargs manuals, NOT read back
+# from the sets under test. A loop over a set cannot catch a flag that has
+# LEFT that set -- nothing then probes it -- which is how an earlier version
+# of this test let every OPTIONAL->BOOLEAN misfiling through.
+_XARGS_KNOWN_ARITIES = (
+    ("-I", "value"),
+    ("-L", "value"),
+    ("-E", "value"),
+    ("-n", "value"),
+    ("-P", "value"),
+    ("-s", "value"),
+    ("-d", "value"),
+    ("-a", "value"),
+    ("-J", "value"),
+    ("-R", "value"),
+    ("-S", "value"),
+    ("-i", "optional"),
+    ("-l", "optional"),
+    ("-e", "optional"),
+    ("-0", "boolean"),
+    ("-o", "boolean"),
+    ("-p", "boolean"),
+    ("-r", "boolean"),
+    ("-t", "boolean"),
+    ("-x", "boolean"),
+)
+
+
+@pytest.mark.parametrize(("flag", "arity"), _XARGS_KNOWN_ARITIES)
+def test_xargs_flag_arity_matches_the_manual(flag: str, arity: str) -> None:
+    # Drives each flag at the arity its manual documents, from a fixed table,
+    # so a flag moved between sets fails here whichever direction it moved.
+    if arity == "value":
+        assert _xargs_launched_command(["xargs", flag, "1", "python3"]) == "python3"
+    else:
+        assert _xargs_launched_command(["xargs", flag, "python3"]) == "python3"
+    if arity == "optional":
+        # Only an optional-arg flag absorbs the rest of its cluster; a boolean
+        # would read the trailing letter as another flag.
+        assert _xargs_launched_command(["xargs", f"{flag}X", "python3"]) == "python3"
+    if arity == "boolean":
+        # A boolean must not absorb a following value: with one supplied, the
+        # value itself becomes the program, which is how a misfiled VALUE flag
+        # shows up here.
+        assert _xargs_launched_command(["xargs", flag, "1", "python3"]) == "1"
+        # ...and it must not absorb the REST OF ITS CLUSTER either. Only a
+        # mixed cluster separates boolean from optional-arg: an all-boolean
+        # one like `-0pt` behaves identically under both classifications, so
+        # without a value-taking letter following, a BOOLEAN->OPTIONAL
+        # misfiling resolves an argument instead of the program -- the
+        # `-J cat python3` shape.
+        assert (
+            _xargs_launched_command(["xargs", f"{flag}n", "1", "python3"]) == "python3"
+        ), f"{flag} absorbed its cluster remainder as an attached value"
+
+
+class TestYoloLauncherConfinement:
+    # `--yolo` sets bypass_allowlist, so the allowlist stops constraining the
+    # segment at all and every launcher on it becomes unattended RCE. Blocking
+    # launchers outright is the same call already made for `rm -rf` and for
+    # `git config` exec keys (GHSA-2rr7-8xrw-gmhr): approval is not a control
+    # when nothing is there to approve.
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            "xargs python3 -c \"import subprocess;subprocess.call(['id'])\"",
+            "uv run python -c 1",
+            # The `;` MUST be escaped. Unescaped, the shell parser consumes it
+            # as a separator and find fails on its own syntax, so the assertion
+            # passes against unfixed code and proves nothing.
+            'find . -name x -exec python3 -c "1" \\;',
+            'find . -name x -execdir python3 -c "1" +',
+            # A git global option that takes a separate value must not be
+            # mistaken for the subcommand: that would stop the scan before
+            # the `-c` behind it and wave the whole attack through.
+            # Unknown-flag bypass: `-J` was not in the value-flag set, so the
+            # scan stepped over it, read `cat` as the program, and let python3
+            # through. The scan now fails closed on any flag it cannot name.
+            'xargs -J cat python3 -c "1"',
+            # Bundled short flags and `--` are ordinary xargs spellings, so
+            # each is a route to the same bypass if the scan mishandles it.
+            'xargs -n1 python3 -c "1"',
+            'xargs -I{} python3 -c "1"',
+            'xargs -0pt python3 -c "1"',
+            'xargs -- python3 -c "1"',
+            # The GNU optional-argument spellings are asserted at the
+            # validator level instead (test_yolo_blocks_gnu_optional_arg_
+            # launchers below). This test executes the command, and BSD/macOS
+            # xargs rejects -i/-l/--replace/--max-lines/--eof itself, so
+            # `return_code != 0` would hold here even with a validator that
+            # allowed everything -- passing for the platform's reason rather
+            # than for the fix's.
+        ),
+    )
+    async def test_yolo_still_blocks_launchers(
+        self, temp_project_root: Path, command: str
+    ) -> None:
+        commander = ShellCommander(
+            str(temp_project_root), timeout=5, is_yolo=lambda: True
+        )
+        tool = create_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, command)
+        assert result.return_code != 0, f"yolo executed a launcher: {command}"
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            # The over-block side of the same boundary. Without these, a
+            # scanner that simply blocked everything would satisfy every
+            # must-block case above.
+            "git commit -c core.pager=x --allow-empty -m probe",
+            "git -C . status",
+            "git -c color.ui=always status",
+            # ...and the bare forms must not be mistaken for an exec key.
+            "git --exec-path status",
+            "git --git-dir .git log",
+            "xargs -i cat",
+            "xargs -l cat",
+            "xargs --replace=% cat %",
+        ),
+    )
+    def test_yolo_allows_non_launcher_segments(self, command: str) -> None:
+        # `-c` after the subcommand is git's reuse-message flag, and the GNU
+        # optional-arg spellings with an allowlisted program launch nothing
+        # unvetted, so neither may be refused.
+        assert _validate_segment(command, "", True) is None
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            "xargs -i python3 cat",
+            "xargs --replace python3 cat",
+            "xargs -l node cat",
+            "xargs --max-lines python3 cat",
+            "xargs --eof python3 cat",
+            # Moved from the execution-level list: BSD xargs/find reject these
+            # themselves, and every git invocation exits 128 in the bare temp
+            # fixture, so `return_code != 0` held there with the validator
+            # fully disabled. Asserted against the validator, they discriminate
+            # on every platform.
+            'find . -name x -execdir python3 -c "1" +',
+            "git -c alias.z=!id z",
+            "git -c core.sshCommand=id status",
+            "git --config-env=core.pager=EVIL log",
+            "git -C /tmp -c core.sshCommand=id status",
+            "git --git-dir /tmp/.git -c core.sshCommand=id status",
+            "git --namespace ns -c core.pager=id log",
+            # git's --exec-path family takes an OPTIONAL attached argument:
+            # bare, it prints the path and exits rather than consuming the
+            # next token. Filing them as value-taking made the scan swallow
+            # the following -c and miss the key behind it -- the GNU xargs
+            # -i/-l/-e misfiling, in the git scanner.
+            "git --exec-path -c core.sshCommand=id status",
+            "git --html-path -c core.pager=id log",
+            "git --man-path -c core.sshCommand=id log",
+            "git --info-path -c alias.z=!id z",
+            'xargs -R 2 python3 -c "1"',
+            'xargs -S 100 python3 -c "1"',
+            'xargs --nosuchflag python3 -c "1"',
+            # A launcher nested under xargs must be vetted like a top-level
+            # segment: every launcher is itself allowlisted, so membership
+            # alone let `xargs uv run python -c ...` through (GHSA round 4).
+            "xargs uv run python -c 1",
+            "xargs pytest",
+            "xargs pre-commit run",
+            "xargs xargs python3 -c 1",
+            "xargs git -c core.sshCommand=id status",
+            "xargs find . -exec python3 {} ;",
+        ),
+    )
+    def test_yolo_blocks_gnu_optional_arg_launchers(self, command: str) -> None:
+        # Asserted against the validator rather than by executing, so the
+        # result reflects the fix on every platform: BSD xargs rejects these
+        # spellings on its own, which would mask what is being tested.
+        assert _validate_segment(command, "", True) is not None
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            # Yolo's actual purpose stays intact: ordinary work is unattended.
+            "echo hello",
+            "ls",
+            "xargs cat",
+            # Read-only find keeps working: it launches nothing without a
+            # mutating action, and yolo exists to run unattended work.
+            "find . -name '*.py'",
+            "find . -type f",
+            # A KNOWN value flag still resolves to the real program, so the
+            # fail-closed rule has not collapsed into blocking all of xargs.
+            "xargs -n 1 cat",
+            "xargs -0 cat",
+            # The same spellings with an allowlisted program must still run:
+            # a scan that blocked these would satisfy every "must block" case
+            # above while having simply stopped allowing anything.
+            "xargs -n1 cat",
+            "xargs -I{} cat {}",
+            "xargs -0pt cat",
+            "xargs -- cat",
+            "xargs -P4 cat",
+            # The GNU optional-argument spellings are checked against the
+            # validator in test_xargs_scanner_names_the_launched_program
+            # instead: this test EXECUTES the command, and BSD/macOS xargs
+            # rejects -i/-l/--replace outright, so running them here would
+            # fail on the platform's own argument parsing rather than on
+            # anything this fix controls.
+            # `-c` after the subcommand is git's reuse-message flag, not a
+            # config setter. `git log -c HEAD` would not discriminate: HEAD is
+            # not an exec key, so it passes either way. This spelling puts a
+            # real exec-key string in the subcommand's own -c, where scanning
+            # every token reports a false positive and stopping does not.
+            # git and GNU-only controls live in
+            # test_yolo_allows_non_launcher_segments below: the fixture root
+            # is a bare temp dir, so every git invocation exits 128 whatever
+            # the validator decides.
+        ),
+    )
+    async def test_yolo_still_runs_ordinary_commands(
+        self, temp_project_root: Path, command: str
+    ) -> None:
+        commander = ShellCommander(
+            str(temp_project_root), timeout=5, is_yolo=lambda: True
+        )
+        tool = create_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, command)
+        assert result.return_code == 0, f"yolo over-blocked ordinary work: {command}"
+
+
+def test_symlink_write_target_keeps_the_slash_anchor_broad() -> None:
+    """The `w` anchor must match a slash anywhere, symlinks being unspellable.
+
+    A narrower "escape-only" anchor is tempting: it would stop `sed -i 1d
+    web/index.html` being refused, since an ordinary relative path neither
+    starts with `/` or `~` nor contains `..`. It is wrong. `wlink/victim.txt`
+    was verified overwriting a file OUTSIDE the working directory when `link`
+    is a symlink to `..`, and a symlink is byte-identical to a directory in
+    the script text. There is no property of the token that separates them,
+    so the anchor cannot be narrowed on syntax; it stays broad and the
+    over-block below is the accepted price.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    # These MUST be asserted in the `-i` operand slot. That slot is the only
+    # place the narrower anchor would apply, so the bare-script spelling
+    # `sed 'wlink/victim.txt' in.txt` is refused either way and cannot tell
+    # the two anchors apart -- it is satisfied by the broken version too.
+    for script in (
+        "wlink/victim.txt",  # `link` -> `..`; verified overwriting outside the CWD
+        "wdir/../../victim.txt",
+        "w./../esc",
+        "w.git/hooks/pre-commit",
+    ):
+        assert _validate_segment(f"sed -i bak {script}", allowlist, False)
+        assert _validate_segment(f"sed -i 1d {script}", allowlist, False)
+
+
+def test_ambiguous_slot_overblock_is_bounded_and_has_a_workaround() -> None:
+    """The known false positive is confined, and every case has an escape hatch.
+
+    Refusing `sed -i 1d web/index.html` is a real cost, accepted because the
+    alternative reopens the symlink write above. It is bounded: it needs a
+    SEPARATED `-i`/`-l` argument whose filename begins with a file-command
+    letter. Any of the three ordinary alternatives below still work, so no
+    task is actually blocked -- only one spelling of it.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    # The over-block, stated explicitly rather than left to be rediscovered.
+    assert _validate_segment("sed -i 1d web/index.html", allowlist, False)
+    # Same trade, no slash needed: BSD sed parses a `w`-prefixed operand as a
+    # write and truncates the token MINUS its leading `w`, so `wsgi.py` and
+    # `wMakefile` are refused here to stop `w.gitignore` truncating
+    # `.gitignore`. The two readings are the same bytes; no classifier
+    # separates them, so the slot fails closed on `w`/`W`.
+    assert _validate_segment("sed -i bak wsgi.py", allowlist, False)
+    # `r`/`R` only read, so ordinary r-names stay usable -- the over-block is
+    # not widened past what the write actually threatens.
+    assert _validate_segment("sed -i bak report.csv", allowlist, False) is None
+
+    # A filename not starting with a file-command letter is unaffected, which
+    # is what bounds the cost.
+    assert _validate_segment("sed -i 1d src/file.py", allowlist, False) is None
+
+    # And the workarounds, which must keep working or the cost is not bounded.
+    for command in (
+        "sed -i.bak 1d web/index.html",
+        "sed -i '' 1d web/index.html",
+        "sed -i 1d ./web/index.html",
+    ):
+        assert _validate_segment(command, allowlist, False) is None
+
+
+def test_bare_w_token_in_the_i_slot_cannot_truncate_a_cwd_file() -> None:
+    """`sed -i bak w<name>` truncates <name> on BSD; the slot must refuse it.
+
+    Verified by execution, not inferred: with a `bak` suffix operand BSD sed
+    reads `w.gitignore` as a script, empties `.gitignore`, and only THEN
+    fails with "-I or -i may not be used with stdin". The non-zero exit is
+    not protection -- the file is already truncated. GNU sed parses the two
+    operands the other way round and is unaffected, but the validator must
+    deny regardless of which sed is installed.
+
+    The earlier `SHELL_SED_FILE_ESCAPING` anchor cannot catch these: it needs
+    a slash, a `~` or a separated target, and `wMakefile` has none of them.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    for target in (".gitignore", "Makefile", "conftest.py", "pyproject.toml", ".envrc"):
+        assert _validate_segment(f"sed -i bak w{target}", allowlist, False)
+        assert _validate_segment(f"sed -l bak w{target}", allowlist, False)
+
+
+def test_exec_anchors_never_run_in_the_filename_slot() -> None:
+    """Ordinary in-place edits must not be refused "via e command".
+
+    The second `-i` operand slot holds a script only under BSD; under GNU it
+    is an input filename. Running the exec anchors there matched the `e` in
+    any path component after a `/`, refusing 10.7% of this repo's own
+    slash-bearing paths -- `codebase_rag/embedder.py` among them, verified
+    editing in place and writing nothing else on GNU sed 4.9.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    for path in (
+        "codebase_rag/embedder.py",
+        "evals/l3.py",
+        "src/engine.py",
+        "requirements/dev.txt",
+    ):
+        assert _validate_segment(f"sed -i 's/a/b/' {path}", allowlist, False) is None
+
+    # The anchors must still fire wherever a script really is one.
+    for command in (
+        "sed -i 'e id' f",
+        "sed 'e id' f",
+        "sed -i 's/a/b/e' f",
+        "sed -i '1e id' f",
+        "sed -e 'w /tmp/x' f",
+    ):
+        assert _validate_segment(command, allowlist, False)
+
+
+def test_path_qualified_program_names_are_refused() -> None:
+    """A qualified argv[0] reaches none of the name-keyed guards.
+
+    Every guard compares `cmd_parts[0]` to a bare literal, so under --yolo
+    (allowlist bypassed) `/usr/bin/xargs -n1 sh -c id` was verified executing
+    with `rc=0` while bare `xargs` was blocked; the same held for sed, git and
+    rg. The qualified form is refused rather than reduced to a basename,
+    because the allowlist holds bare names and basenaming would also admit
+    `/tmp/evil/sed` -- a different binary wearing an allowlisted name.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    for command in (
+        "/usr/bin/xargs -n1 sh -c id",
+        "/usr/bin/sed -e 'w /tmp/victim' f",
+        "/usr/bin/git -c core.pager=id log",
+        "/usr/bin/rg --pre id foo",
+        "/bin/../usr/bin/xargs -n1 sh -c id",
+        "./xargs -n1 sh -c id",
+        "/tmp/evil/sed -e 1d f",
+    ):
+        # Both modes: the allowlist is not what stops these under --yolo.
+        assert _validate_segment(command, allowlist, True), command
+        assert _validate_segment(command, allowlist, False), command
+
+    # The recursion must inherit the rule, not just the top-level segment.
+    assert _validate_segment("xargs /usr/bin/sh -c id", allowlist, True)
+
+    # Bare names are unaffected.
+    for command in ("git status", "rg foo", "xargs -n1 cat", "sed -i 1d src/f.py"):
+        assert _validate_segment(command, allowlist, False) is None
+
+
+def test_e_command_blocked_where_reachable() -> None:
+    """`e` is skipped in the `-i` suffix slot, so pin every other position.
+
+    Skipping an anchor anywhere invites it being skipped everywhere. The slot
+    exemption is safe only because the command does not execute there (both
+    implementations, verified); these eight positions are the ones where it
+    does, and they must stay blocked.
+    """
+    allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
+
+    for command in (
+        "sed 'eid' f",
+        "sed -e 'eid' f",
+        "sed -i 'eid' f",
+        "sed -i.bak 'eid' f",
+        "sed --expression='eid' f",
+        "sed -n 'eid' f",
+        "sed '1eid' f",
+        "sed 'e id' f",
+    ):
+        assert _validate_segment(command, allowlist, False), command
+
+
+# A bundled short-flag cluster ending in `-e` claims the NEXT token as its
+# script, exactly as a standalone `-e` does. The collector instead matched the
+# raw token's `-e` prefix and read the cluster's own tail letter as the script
+# -- `arg[2:]` of `-ne` is the single character `e` -- so the real script was
+# never collected and a following `-e` carrying the payload was never reached.
+# Verified before the fix: `sed -ne p -e 'w FILE'` ran through ShellCommander
+# under --yolo with rc=0 and wrote FILE outside the working directory.
+_SED_E_CLUSTERS = ("-ne", "-nEe", "-ane", "-se", "-ue", "-be", "-re", "-ze")
+
+
+@pytest.mark.parametrize("cluster", _SED_E_CLUSTERS)
+def test_sed_e_cluster_does_not_hide_a_later_script(cluster: str) -> None:
+    # The payload sits in the SECOND -e, which is the position the misparse
+    # skipped. Asserting only that the segment was refused would hold against
+    # the broken collector too, since `sed -ne 'w /tmp/x'` was already blocked
+    # for an unrelated reason -- so pin the construct the scan actually names.
+    assert (
+        _sed_exec_construct(["sed", cluster, "p", "-e", "w /tmp/x", "f"]) is not None
+    ), cluster
+    assert _sed_exec_construct(["sed", cluster, "p", "-e", "1e id", "f"]) is not None
+    assert _sed_exec_construct(["sed", cluster, "p", "-e", "s/a/b/e", "f"]) is not None
+
+
+@pytest.mark.parametrize("cluster", _SED_E_CLUSTERS)
+def test_sed_e_cluster_still_runs_ordinary_scripts(cluster: str) -> None:
+    # The fix must not refuse the everyday spelling it parses correctly now:
+    # the next token is the script, and an ordinary one carries no construct.
+    assert _sed_exec_construct(["sed", cluster, "p", "README.md"]) is None, cluster
+    assert _sed_exec_construct(["sed", cluster, "1,5p", "f"]) is None
+
+
+def test_sed_e_cluster_with_attached_script_still_scanned() -> None:
+    # `-eSCRIPT` must never come back clean. In practice the known-flags check
+    # refuses first -- a script's leading character (`w`, `s`, `p`) is not a
+    # flag letter -- so the attached-script branch is a second line rather than
+    # the first. Either way the answer is a refusal, which is what matters; the
+    # cluster branch must not turn one of these into a pass by swallowing the
+    # token and leaving the script uncollected.
+    for argv in (
+        ["sed", "-ew", "/tmp/x", "f"],
+        ["sed", "-es/a/b/w /tmp/x", "in.txt"],
+    ):
+        assert _sed_exec_construct(argv) is not None, argv
+
+    # The ordinary separated spelling of the same edit still passes.
+    assert _sed_exec_construct(["sed", "-e", "s/a/b/", "in.txt"]) is None
+
+
+def test_sed_mid_cluster_attached_script_fails_closed() -> None:
+    # `-new /tmp/x` is `-n -e 'w /tmp/x'` to real sed, but `w` is not a known
+    # flag letter, so the cluster is unclassifiable and the scan refuses
+    # rather than guessing the script's position. Recorded as the CURRENT
+    # behaviour, which is the safe direction and is unchanged by the cluster
+    # fix -- these refuse identically before and after it.
+    for argv in (
+        ["sed", "-new /tmp/x", "f"],
+        ["sed", "-anew /tmp/x", "f"],
+        ["sed", "-nee id", "f"],
+    ):
+        construct = _sed_exec_construct(argv)
+        assert construct is not None, argv
+        assert "cannot interpret" in construct
+
+
+# `-f` names a script FILE this validator cannot read. The guard matched only
+# tokens STARTING with `-f`, so every bundled spelling evaded it: `sed -nf
+# s.sed in.txt` ran an arbitrary script file, verified writing its target with
+# rc=0 through ShellCommander under --yolo.
+@pytest.mark.parametrize(
+    "argv",
+    (
+        ["sed", "-nf", "script.sed", "f"],
+        ["sed", "-anf", "script.sed", "f"],
+        ["sed", "-nEf", "script.sed", "f"],
+        ["sed", "-f", "script.sed", "f"],
+        ["sed", "-fscript.sed", "f"],
+        ["sed", "--file=script.sed", "f"],
+    ),
+)
+def test_sed_script_file_refused_in_every_spelling(argv: list[str]) -> None:
+    construct = _sed_exec_construct(argv)
+    assert construct is not None, argv
+    assert "script file" in construct
+
+
+def test_sed_cluster_f_does_not_overreach() -> None:
+    # An `f` that is the VALUE of a preceding operand-taking flag is not the
+    # -f flag: `-ef` is `-e` with the attached script `f`, and `-if` is `-i`
+    # with the suffix `f`. Refusing those would block ordinary invocations.
+    assert _sed_exec_construct(["sed", "-ef", "README.md"]) is None
+    assert _sed_exec_construct(["sed", "-if", "s/a/b/", "f"]) is None
+
+
+# A cluster ending in an optional-argument flag takes its operand exactly as
+# the standalone spelling does, which pushes the script one slot further along.
+_SED_I_CLUSTERS = (
+    "-ni",
+    "-ani",
+    "-uni",
+    "-Eni",
+    "-rni",
+    "-Hni",
+    "-nl",
+    "-anl",
+    # An `l` BEFORE the terminal `i`: GNU reads the remainder as -l's line
+    # length, BSD reads -l as a boolean and the trailing `i` as a real -i.
+    # Taking the GNU half alone stopped the scan dead and `sed -li bak
+    # 'w FILE' in.txt` wrote outside the project root with rc=0.
+    "-li",
+    "-lni",
+    "-nli",
+    "-lEi",
+    "-Hli",
+)
+
+
+@pytest.mark.parametrize("cluster", _SED_I_CLUSTERS)
+def test_sed_optional_arg_cluster_still_scans_the_script_slot(cluster: str) -> None:
+    # `sed -ni bak 'w FILE' in.txt` is `-n -i bak` with the script two slots
+    # along. Reading the cluster as script-free collected nothing and never
+    # scanned the payload: this executed with rc=0 and wrote outside the
+    # project root, while the unbundled `sed -n -i bak ...` was refused.
+    construct = _sed_exec_construct(["sed", cluster, "bak", "w /tmp/x", "in.txt"])
+    assert construct is not None, cluster
+
+    # The unbundled spelling of the same command must agree.
+    assert _sed_exec_construct(["sed", "-n", "-i", "bak", "w /tmp/x", "in.txt"])
+
+
+@pytest.mark.parametrize("cluster", _SED_I_CLUSTERS)
+def test_sed_optional_arg_cluster_still_runs_ordinary_edits(cluster: str) -> None:
+    # The guard must not cost the everyday in-place edit its pass.
+    assert _sed_exec_construct(["sed", cluster, "s/a/b/", "README.md"]) is None
+
+
+def test_sed_mid_cluster_line_length_keeps_scanning() -> None:
+    # `-l` mid-cluster is value-taking under GNU and boolean under BSD. Only
+    # the BSD reading leaves a trailing `-i` to be found, so the scan must
+    # take it: stopping at the `-l` is what let `-li bak 'w FILE'` through.
+    assert _sed_cluster_tail("-li") == "-i"
+    assert _sed_cluster_tail("-lni") == "-i"
+
+    # `-l` in tail position is still the flag itself.
+    assert _sed_cluster_tail("-nl") == "-l"
+
+    # An ordinary line-length edit keeps its pass.
+    assert _sed_exec_construct(["sed", "-l", "80", "s/a/b/", "f"]) is None
+
+
+def test_git_exec_path_with_a_value_is_refused() -> None:
+    # `--exec-path=DIR` moves where git resolves subcommands, so any
+    # non-builtin name execs `DIR/git-<name>`. Verified: a planted `git-pwn`
+    # ran with rc=0 before this guard.
+    reason = _validate_segment("git --exec-path=/tmp/evil pwn", "git", True)
+    assert reason is not None
+    assert "--exec-path" in reason
+
+
+def test_git_bare_exec_path_still_passes() -> None:
+    # Bare, and with a SEPARATED operand, git prints the path and exits --
+    # verified against git itself, which ignored the separated argument and
+    # printed its own libexec dir. Neither redirects, so neither is refused.
+    assert _validate_segment("git --exec-path", "git", True) is None
+    assert _validate_segment("git --exec-path /tmp/evil pwn", "git", True) is None
+
+
+class TestGitRepoLocationEscape:
+    """`--git-dir`/`-C`/`--work-tree` pointed outside the project root.
+
+    Git reads the target's config and EXECUTES what it finds there, so a repo
+    the caller can write is arbitrary execution, not merely a read escape.
+    Verified before this guard: a planted `alias.pwn = "!touch FILE"` ran with
+    rc=0 through `git --git-dir=SCRATCH/.git pwn`.
+    """
+
+    ROOT = Path("/project/root")
+
+    @pytest.mark.parametrize(
+        "argv",
+        (
+            ["git", "--git-dir=/tmp/evil/.git", "pwn"],
+            ["git", "--git-dir", "/tmp/evil/.git", "pwn"],
+            ["git", "-C", "/tmp/evil", "pwn"],
+            ["git", "-C", "../other", "log"],
+            ["git", "--work-tree=/tmp/evil", "status"],
+            ["git", "--git-dir=/project/root/../escape/.git", "pwn"],
+        ),
+    )
+    def test_a_target_outside_the_root_is_refused(self, argv: list[str]) -> None:
+        blocked, reason = _git_escapes_project(argv, self.ROOT)
+        assert blocked, argv
+        assert "outside the project" in reason
+
+    @pytest.mark.parametrize(
+        "argv",
+        (
+            ["git", "-C", ".", "diff"],
+            ["git", "--git-dir", "x", "log"],
+            ["git", "--git-dir", ".git", "log"],
+            ["git", "-C", "dir", "status"],
+            ["git", "--work-tree", "sub", "status"],
+            ["git", "log"],
+            ["git", "status"],
+        ),
+    )
+    def test_a_target_inside_the_root_still_passes(self, argv: list[str]) -> None:
+        # Pointing git within the project is ordinary use and must keep its
+        # pass; the guard keys on where the value resolves, not on the flag.
+        assert _git_escapes_project(argv, self.ROOT) == (False, "")
+
+    def test_a_non_git_command_is_not_examined(self) -> None:
+        assert _git_escapes_project(["rm", "-C", "/tmp/evil"], self.ROOT) == (False, "")
+
+
+@pytest.mark.parametrize(
+    "inner",
+    (
+        "git --git-dir=/tmp/evil/.git pwn",
+        "git --git-dir /tmp/evil/.git pwn",
+        "git -C /tmp/evil pwn",
+        "git --work-tree=/tmp/evil status",
+        "git -C ../other log",
+    ),
+)
+@pytest.mark.parametrize("bypass", (False, True))
+def test_git_repo_escape_survives_nesting_under_xargs(inner: str, bypass: bool) -> None:
+    # The same nesting invariant as
+    # test_nesting_under_xargs_never_weakens_the_decision, for the guard that
+    # needs a project root and so cannot join that parametrisation.
+    #
+    # This is the gap the first version of the guard had: it ran only from
+    # execute() on the top-level segment, so `xargs git --git-dir=EVIL pwn`
+    # executed the planted alias with rc=0 while the direct spelling was
+    # refused. Placing it inside _validate_segment puts it on the recursion.
+    root = Path("/project/root")
+    assert _validate_segment(inner, "", bypass, 0, root) is not None, inner
+    nested = f"xargs {inner}"
+    assert _validate_segment(nested, "", bypass, 0, root) is not None, (
+        f"nesting weakened the block: {nested}"
+    )
+
+
+@pytest.mark.parametrize(
+    "inner",
+    (
+        "git -C . status",
+        "git --git-dir .git log",
+        "git -C sub diff",
+        "git status",
+    ),
+)
+def test_in_root_git_still_passes_nested(inner: str) -> None:
+    # The guard must not cost the everyday nested spelling its pass either.
+    root = Path("/project/root")
+    assert _validate_segment(inner, "", True, 0, root) is None, inner
+    assert _validate_segment(f"xargs {inner}", "", True, 0, root) is None, inner
