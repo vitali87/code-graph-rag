@@ -2189,12 +2189,9 @@ class GraphUpdater:
                 continue
             return f"{prefix}{name}", None
         for name in actual_files - expected_files:
-            dot = name.rfind(".")
-            suffix = name[dot:] if dot != -1 else ""
             if should_skip_rel_file(
                 f"{prefix}{name}",
                 dir_parts,
-                suffix,
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
             ):
