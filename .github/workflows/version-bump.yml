@@ -176,7 +176,7 @@ jobs:
           if [ -n "$GHSA" ]; then
             DETAIL=$(gh api "repos/${GITHUB_REPOSITORY}/security-advisories/${GHSA}" \
               --jq '"\(.summary) (\(.severity) severity, CVSS \(.cvss.score // "n/a")), advisory [\(.ghsa_id)](https://github.com/'"${GITHUB_REPOSITORY}"'/security/advisories/\(.ghsa_id))\(if .cve_id then " / " + .cve_id else "" end)."' \
-              2>/dev/null || true)
+              2>/dev/null) || DETAIL=""
           fi
           {
             echo "## 🔒 Security"
