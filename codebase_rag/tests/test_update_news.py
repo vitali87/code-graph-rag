@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+import pytest
+
+from scripts import update_news
 from scripts.update_news import (
     BULLET_PATTERN,
     HIGHLIGHT_BULLET,
@@ -8,6 +14,7 @@ from scripts.update_news import (
     existing_themes,
     extract_all_highlights,
     extract_bullets,
+    has_unparsable_bullets,
     is_feature_theme,
     prepend_news,
 )
@@ -395,3 +402,174 @@ class TestPrependNews:
         twice, inserted = prepend_news(once, fragment)
         assert inserted == []
         assert twice == once
+
+
+class TestParseFailureIsReported:
+    """`main` must distinguish "nothing to say" from "could not parse it".
+
+    The v0.0.820 outage was silent precisely because these two collapsed into
+    one exit-0 path: every highlight used a colon spelling the parser rejected,
+    zero bullets were inserted, and the release step reported success. An empty
+    highlights file is a legitimate no-op and must stay exit 0, so the failure
+    signal keys on bullet-shaped input that parsed to nothing.
+    """
+
+    @staticmethod
+    def _run(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fragment: str
+    ) -> tuple[int, str]:
+        """Drive main() end to end against a throwaway NEWS.md."""
+        news_path = tmp_path / "NEWS.md"
+        news_path.write_text(NEWS, encoding="utf-8")
+        fragment_path = tmp_path / "highlights.md"
+        fragment_path.write_text(fragment, encoding="utf-8")
+        monkeypatch.setattr(update_news, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(sys, "argv", ["update_news.py", str(fragment_path)])
+        return update_news.main(), news_path.read_text(encoding="utf-8")
+
+    def test_bullet_shaped_input_that_parses_to_nothing_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The v0.0.820 shape itself: bullets present, none parseable."""
+        fragment = (
+            "## Highlights\n"
+            "- **Web Search**  the agent can now search the web.\n"
+            "- **Graph Export**  the graph exports to GraphML.\n"
+        )
+        exit_code, news = self._run(tmp_path, monkeypatch, fragment)
+        captured = capsys.readouterr()
+        assert exit_code != 0
+        assert "Web Search" not in news
+        assert "parsed 0" in captured.out
+        # The diagnostic must name the regex an operator has to inspect, and the
+        # file to inspect it against. An earlier review found this message naming
+        # BULLET_PATTERN after the guard had moved to HIGHLIGHT_BULLET, which would
+        # send someone to the wrong regex mid-incident; nothing asserted it then.
+        assert "HIGHLIGHT_BULLET" in captured.err
+        assert str(tmp_path / "highlights.md") in captured.err
+
+    def test_an_empty_highlights_file_stays_a_clean_noop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A release with intentionally empty highlights must still bump."""
+        exit_code, news = self._run(tmp_path, monkeypatch, "")
+        assert exit_code == 0
+        assert news == NEWS
+
+    def test_prose_without_bullets_stays_a_clean_noop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No bullet-shaped line means there was nothing to parse, not a failure."""
+        fragment = "## Highlights\n\nThis release contains internal changes only.\n"
+        exit_code, news = self._run(tmp_path, monkeypatch, fragment)
+        assert exit_code == 0
+        assert news == NEWS
+
+    def test_a_fully_deduped_release_is_not_a_parse_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Bullets parsed but every theme is already present: success, not failure.
+
+        This is the case a naive "inserted == 0 means failure" check would call
+        a failure, which would turn every workflow rerun red.
+        """
+        fragment = "- **Ruby Support**: Ruby joins the graph through ast-grep.\n"
+        exit_code, news = self._run(tmp_path, monkeypatch, fragment)
+        assert exit_code == 0
+        assert news == NEWS
+        out = capsys.readouterr().out
+        assert "parsed 1" in out
+        assert "inserted 0" in out
+
+    def test_counts_are_reported_separately(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """parsed/deduped/inserted are distinct numbers, not one collapsed total."""
+        fragment = (
+            "- **Ruby Support**: already in NEWS, so this one dedupes away.\n"
+            "- **Graph Export**: the graph exports to GraphML.\n"
+        )
+        exit_code, _ = self._run(tmp_path, monkeypatch, fragment)
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "parsed 2" in out
+        assert "deduped 1" in out
+        assert "inserted 1" in out
+
+    def test_the_aggregation_fallback_is_labelled_not_counted_as_dedup(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An aggregated summary is inserted without ever being "parsed".
+
+        prepend_news falls back to one "Release Summary" bullet when every
+        theme is filtered out, and extract_bullets never produced it, so
+        inserted exceeds parsed. Reporting that as negative dedup - or
+        clamping it to zero and printing "parsed 0, deduped 0, inserted 1" -
+        describes a state that cannot happen; the line must say which path ran.
+        """
+        fragment = (
+            "* **CI Speedups**: builds are faster.\n* **Docs**: readme rewritten.\n"
+        )
+        exit_code, news = self._run(tmp_path, monkeypatch, fragment)
+        assert exit_code == 0
+        assert "- **Release Summary**:" in news
+        out = capsys.readouterr().out
+        assert "parsed 0, deduped 0, inserted 1 (aggregated fallback)" in out
+
+    def test_a_rerun_of_an_all_nonfeature_release_is_not_a_parse_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Filtered out is not the same as failed to parse.
+
+        When every theme is non-feature, extract_bullets is empty because
+        is_feature_theme dropped them, not because the patterns failed. The
+        first run is masked: the aggregation fallback inserts a summary, so the
+        guard is never reached. On a rerun that summary is already in NEWS.md,
+        nothing is inserted, and a guard keyed on extract_bullets fires with
+        "the format has diverged" about bullets that parsed perfectly. The
+        parse-success question is what extract_all_highlights answers.
+        """
+        fragment = (
+            "* **CI Automation**: pipelines are faster.\n"
+            "* **Docs**: the readme was rewritten.\n"
+        )
+        first_code, after_first = self._run(tmp_path, monkeypatch, fragment)
+        assert first_code == 0
+        assert "- **Release Summary**:" in after_first
+
+        # Rerun against the NEWS.md the first run produced.
+        (tmp_path / "NEWS.md").write_text(after_first, encoding="utf-8")
+        fragment_path = tmp_path / "highlights.md"
+        fragment_path.write_text(fragment, encoding="utf-8")
+        monkeypatch.setattr(update_news, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(sys, "argv", ["update_news.py", str(fragment_path)])
+        assert update_news.main() == 0
+
+    def test_unparsable_and_merely_filtered_are_distinguished(self) -> None:
+        """The guard must separate the two ways extract_bullets returns [].
+
+        A direct unit check on the discrimination itself, so a future change
+        that reintroduces the conflation fails here rather than only in the
+        end-to-end rerun above.
+        """
+        parses_but_filtered = (
+            "* **CI Automation**: pipelines are faster.\n* **Docs**: rewritten.\n"
+        )
+        does_not_parse = "- **Web Search**  no colon at all.\n"
+
+        assert extract_bullets(parses_but_filtered) == []
+        assert extract_bullets(does_not_parse) == []
+        assert has_unparsable_bullets(parses_but_filtered) is False
+        assert has_unparsable_bullets(does_not_parse) is True
