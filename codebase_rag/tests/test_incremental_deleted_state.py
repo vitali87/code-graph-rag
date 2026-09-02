@@ -1,5 +1,6 @@
-# The MCP server, the watcher and reingest keep one GraphUpdater across
-# runs. A deleted file's in-memory state (registry entries, simple-name
+# A GraphUpdater can be reused across runs (the watcher keeps one and
+# removes deleted files from its state; a caller may hold one across `run()`
+# calls). A deleted file's in-memory state (registry entries, simple-name
 # lookup, module-qn map) used to be removed only in the late deletion block,
 # after Pass 2 had parsed the changed files, so a rename or move done in one
 # cycle resolved the re-parsed importer against the deleted definitions and a
@@ -137,3 +138,42 @@ def test_a_reused_updater_gives_a_same_stem_replacement_the_bare_qn(
     modules = {qn for (label, qn) in after[0] if label == cs.NodeLabel.MODULE.value}
     assert modules == {"proj.util", "proj.main"}
     assert after == _clean(temp_repo, JS_AFTER, cs.SupportedLanguage.JS)
+
+
+# `main.py` names `helper` without an import so the resolver's simple-name
+# fallback, which is where the module-language check lives, decides the edge.
+RS_PY_BEFORE = {
+    "util.rs": "pub fn helper() -> i32 { 1 }\n",
+    "main.py": "def go():\n    return helper()\n",
+}
+RS_PY_AFTER = {
+    "util.py": "def helper():\n    return 1\n",
+    "main.py": RS_PY_BEFORE["main.py"] + "\n",
+}
+
+
+def test_a_reused_updater_forgets_a_deleted_module_language(
+    temp_repo: Path,
+) -> None:
+    # `reset_resolution_caches` must also drop the qn -> language memo:
+    # after `util.rs` is replaced by `util.py`, the bare qn `proj.util` names
+    # a Python module, and a stale RUST answer makes the resolver refuse the
+    # Python -> Rust call a clean index resolves.
+    root = temp_repo / "proj"
+    _materialise(root, RS_PY_BEFORE)
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    if cs.SupportedLanguage.RUST not in updater.parsers:
+        pytest.skip("rust parser not available")
+    updater.run(force=True)
+    (root / "util.rs").unlink()
+    (root / "util.py").write_text(RS_PY_AFTER["util.py"], encoding="utf-8")
+    (root / "main.py").write_text(RS_PY_AFTER["main.py"], encoding="utf-8")
+    _bump(root, "util.py")
+    _bump(root, "main.py")
+    updater.run(force=False)
+    after = _snapshot(store, root)
+
+    calls = {(e[1], e[4]) for e in after[1] if e[2] == cs.RelationshipType.CALLS.value}
+    assert ("proj.main.go", "proj.util.helper") in calls
+    assert after == _clean(temp_repo, RS_PY_AFTER, cs.SupportedLanguage.PYTHON)

@@ -333,6 +333,12 @@ class CallResolver:
         self._subclass_map_cache = None
         self._protocol_classes_cache = None
         self._struct_impl_cache.clear()
+        # The qn -> language memo goes too: after a same-stem replacement
+        # across languages (`util.rs` deleted, `util.py` added) the bare qn
+        # `proj.util` now names a Python module, and a stale RUST answer
+        # makes `_languages_can_call` drop the candidate a clean index
+        # resolves (issue #1575).
+        self._module_language_cache.clear()
 
     def resolve_function_call(
         self,

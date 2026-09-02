@@ -1197,10 +1197,11 @@ class GraphUpdater:
             logger.info("Resolved {} deferred containment parents", linked)
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
-        # The resolver memoises name -> qn answers across files; on a reused
-        # updater (MCP server, watcher) those answers can name definitions
+        # The resolver memoises name -> qn answers and module languages
+        # across files; on a reused updater (any caller that holds one across
+        # `run()` calls, as the tests do) those answers can name definitions
         # this run deleted or renamed, so every run starts Pass 3 with empty
-        # caches, as reingest already does (issue #1575).
+        # caches, as the watcher's per-event pass already does (issue #1575).
         self.factory.call_processor.reset_resolution_caches()
         logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
@@ -2787,7 +2788,8 @@ class GraphUpdater:
         for stale_key in (*reindexed_keys, *deleted_before_parse):
             self._delete_module_entities(stale_key)
         # The in-memory side of a deleted file goes now as well: a reused
-        # updater (MCP server, watcher, reingest) otherwise resolves this
+        # updater (the watcher's `remove_file_from_state` path, or any caller
+        # holding one across `run()` calls) otherwise resolves this
         # run's re-parsed importers against the deleted definitions and
         # suffixes a same-stem replacement's qn (issue #1575). The late
         # deletion block repeats this harmlessly.
