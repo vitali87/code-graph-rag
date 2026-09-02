@@ -887,6 +887,7 @@ class MCPToolsRegistry:
                 reparsed=[],
                 affected=[],
                 removed=[],
+                skipped=[],
                 elapsed_ms=0.0,
             )
 

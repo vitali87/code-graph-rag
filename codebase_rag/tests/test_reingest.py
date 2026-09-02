@@ -264,6 +264,21 @@ def test_reingest_refuses_paths_outside_the_repo(fixture_root: Path) -> None:
         updater.reingest([], deleted=[fixture_root.parent / "other.py"])
 
 
+def test_reingest_refuses_a_directory(fixture_root: Path) -> None:
+    # A directory sent as a path lands in `gone` (it is not a file) and the
+    # delete queries match nothing, so without the refusal the report says
+    # the package was removed while the graph is untouched.
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    before = _snapshot(store)
+    with pytest.raises(ValueError, match="a directory"):
+        updater.reingest(["pkg"])
+    with pytest.raises(ValueError, match="a directory"):
+        updater.reingest([], deleted=["pkg"])
+    assert _snapshot(store) == before
+
+
 def test_reingest_with_nothing_to_do_is_a_no_op(fixture_root: Path) -> None:
     store = MagicMock()
     report = _updater(store, fixture_root).reingest([])
@@ -674,8 +689,9 @@ def test_reingest_does_not_hide_an_edit_it_was_not_told_about(
     ],
     ids=["ignored_dir", "ignored_suffix", "cli_exclude"],
 )
+@pytest.mark.parametrize("via_deleted", [False, True], ids=["paths", "deleted"])
 def test_reingest_skips_paths_the_ignore_rules_exclude(
-    fixture_root: Path, rel: str, exclude: frozenset[str] | None
+    fixture_root: Path, rel: str, exclude: frozenset[str] | None, via_deleted: bool
 ) -> None:
     store = _StatefulIngestor()
     parsers, queries = load_parsers()
@@ -691,7 +707,11 @@ def test_reingest_skips_paths_the_ignore_rules_exclude(
     before = _snapshot(store)
     _write(fixture_root, rel, "def leaked():\n    return 1\n")
 
-    report = updater.reingest([rel])
+    # The `deleted` list runs the same ignore check: an excluded path named
+    # as deleted is reported skipped, not removed, and issues no delete.
+    report = (
+        updater.reingest([], deleted=[rel]) if via_deleted else updater.reingest([rel])
+    )
 
     assert report.skipped == (rel,)
     assert report.reparsed == () and report.affected == () and report.removed == ()

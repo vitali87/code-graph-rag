@@ -112,6 +112,7 @@ MCP_REINGEST_NEEDS_INDEX = (
     "before reingest"
 )
 REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
+REINGEST_IS_DIRECTORY = "Path is a directory, not a file: {path}"
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )

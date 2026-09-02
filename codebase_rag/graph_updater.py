@@ -3213,24 +3213,32 @@ class GraphUpdater:
         # (present, gone, skipped): a listed path missing on disk counts as
         # gone, an explicit deletion wins over a same-named file that
         # reappeared, and a path the ignore rules exclude is reported back
-        # rather than indexed.
+        # rather than indexed. A directory is refused: the delete queries
+        # match nothing for it, so it would be reported as removed while the
+        # graph stayed untouched.
         present: dict[str, Path] = {}
         gone: dict[str, Path] = {}
         skipped: set[str] = set()
         for raw in paths:
-            key, path = self._reingest_target(raw)
+            key, path = self._reingest_file_target(raw)
             if self._reingest_ignored(path):
                 skipped.add(key)
                 continue
             (present if path.is_file() else gone)[key] = path
         for raw in deleted:
-            key, path = self._reingest_target(raw)
+            key, path = self._reingest_file_target(raw)
             present.pop(key, None)
             if self._reingest_ignored(path):
                 skipped.add(key)
                 continue
             gone[key] = path
         return present, gone, skipped
+
+    def _reingest_file_target(self, raw: Path | str) -> tuple[str, Path]:
+        key, path = self._reingest_target(raw)
+        if path.is_dir():
+            raise ValueError(cs.REINGEST_IS_DIRECTORY.format(path=raw))
+        return key, path
 
     def _reingest_ignored(self, path: Path) -> bool:
         # The caller is an agent naming files it wrote, so the project's

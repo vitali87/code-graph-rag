@@ -605,6 +605,10 @@ class TestReingest:
             result = await mcp_registry.reingest(["../x"])
         assert "outside the repository" in result["error"]
         assert result["reparsed"] == []
+        # The error result carries every field the success result does, so
+        # a caller reading it never hits a KeyError on the failure path.
+        assert result["skipped"] == []
+        assert result["removed"] == []
 
     async def test_delete_project_drops_the_retained_updater(
         self, mcp_registry: MCPToolsRegistry
