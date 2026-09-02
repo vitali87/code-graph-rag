@@ -319,6 +319,20 @@ class TypeInferenceEngine:
             self._dart_type_inference = DartTypeInferenceEngine()
         return self._dart_type_inference
 
+    def reset_semantic_join_memos(self) -> None:
+        # The Go, Java and C# engines each memoise rel-path -> module qn for
+        # the semantic join and rebuild it only when module_qn_to_file_path
+        # changes SIZE. A rename on a reused updater removes one qn and adds
+        # one, so the size holds and the memo would keep the old path; it
+        # is cleared with the resolver's other memos at the start of Pass 3.
+        for engine in (
+            self._go_type_inference,
+            self._java_type_inference,
+            self._csharp_type_inference,
+        ):
+            if engine is not None:
+                engine._rel_to_module.clear()
+
     @property
     def lua_type_inference(self) -> LuaTypeInferenceEngine:
         if self._lua_type_inference is None:

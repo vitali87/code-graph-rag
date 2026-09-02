@@ -14,8 +14,11 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.frontends import go as go_fe
+from codebase_rag.parsers.go_frontend import GoCallSite, GoSemanticFacts
 from evals.cgr_graph import _StatefulIngestor
 
 _ABSOLUTE = {cs.NodeLabel.FOLDER.value, cs.NodeLabel.PACKAGE.value}
@@ -337,3 +340,62 @@ def test_a_reused_updater_keys_a_new_same_stem_module_by_its_own_qn(
     calls = _calls(after)
     assert ("proj.util.ts.helper2b", "proj.util.ts.helper2") in calls
     assert after == _clean(temp_repo, JS_ADD_AFTER, cs.SupportedLanguage.JS)
+
+
+# The Go, Java and C# semantic-join engines memoise rel-path -> module qn
+# and rebuild only when module_qn_to_file_path changes size, so they go
+# stale on a rename exactly as the resolver's own memos did. Modelled on Go
+# with a synthetic fact standing in for the go/types frontend.
+GO_IFACE = (
+    "package sample\n\ntype Handler interface{ Handle() string }\n\n"
+    "func Run(h Handler) {\n\t_ = h.Handle()\n}\n"
+)
+GO_A = (
+    'package sample\n\ntype A struct{}\n\nfunc (a A) Handle() string { return "a" }\n'
+)
+GO_B = (
+    'package sample\n\ntype B struct{}\n\nfunc (b B) Handle() string { return "b" }\n'
+)
+GO_MOD = "module example.com/p\n\ngo 1.23\n"
+GO_FACT_BEFORE = {"go.mod": GO_MOD, "iface.go": GO_IFACE, "a.go": GO_A, "b.go": GO_B}
+GO_FACT_AFTER = {"go.mod": GO_MOD, "iface.go": GO_IFACE, "a.go": GO_A, "c.go": GO_B}
+GO_CALL_KEY = ("iface.go", 6, len("\t_ = h."), "Handle")
+GO_TARGET = (5, len("func (b B) "))
+
+
+def _go_facts(target_file: str) -> GoSemanticFacts:
+    return GoSemanticFacts(
+        call_sites={GO_CALL_KEY: GoCallSite("Handle", target_file, *GO_TARGET)},
+        external_sites=set(),
+        implements=[],
+    )
+
+
+def test_a_reused_updater_joins_a_go_fact_against_the_renamed_module(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    holder = {"facts": _go_facts("b.go")}
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
+    monkeypatch.setattr(go_fe, "run_go_frontend", lambda repo_path: holder["facts"])
+
+    root = temp_repo / "proj"
+    _materialise(root, GO_FACT_BEFORE)
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.GO)
+    updater.run(force=True)
+    first = _calls(_snapshot(store, root))
+    # Positive control: the fact, not the heuristic, decides the first run.
+    assert ("proj.iface.Run", "proj.b.B.Handle") in first, first
+    assert ("proj.iface.Run", "proj.a.A.Handle") not in first, first
+
+    (root / "b.go").rename(root / "c.go")
+    _bump(root, "c.go")
+    holder["facts"] = _go_facts("c.go")
+    updater.run(force=False)
+    after = _calls(_snapshot(store, root))
+
+    # With the memo stale the fact's target resolves to nothing and the
+    # heuristic binds Run to A.Handle instead.
+    assert ("proj.iface.Run", "proj.c.B.Handle") in after, after
+    assert after == _calls(_clean(temp_repo, GO_FACT_AFTER, cs.SupportedLanguage.GO))

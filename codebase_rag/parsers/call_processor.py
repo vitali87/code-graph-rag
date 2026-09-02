@@ -1556,6 +1556,7 @@ class CallProcessor:
 
     def reset_resolution_caches(self) -> None:
         self._resolver.reset_resolution_caches()
+        self._resolver.type_inference.reset_semantic_join_memos()
         # Both indexes are derived from module_qn_to_file_path and rebuilt
         # lazily: the package index only when the map's SIZE changes, the
         # path index never. A deleted module removed from the map and a new
