@@ -469,7 +469,12 @@ def test_clear_readonly_survives_an_unremovable_entry(tmp_path: Path) -> None:
     subprocess.run(["chflags", "uchg", str(stuck)], check=True)
     inner.chmod(0o000)
     try:
-        with pytest.raises(OSError) as caught:
+        # Both are caught deliberately. `RecursionError` inherits
+        # `RuntimeError`, NOT `OSError`, so catching `OSError` alone would let
+        # an unbounded handler propagate as a test ERROR -- which reports as
+        # "something blew up" rather than naming the regression. Catching both
+        # and asserting on the type is what makes the failure say what broke.
+        with pytest.raises((OSError, RecursionError)) as caught:
             shutil.rmtree(root, onexc=_clear_readonly)
         assert not isinstance(caught.value, RecursionError), (
             "the handler recursed without bound instead of surfacing the "
