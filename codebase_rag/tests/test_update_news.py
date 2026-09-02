@@ -183,6 +183,26 @@ class TestExtractBullets:
         assert "- **Voice Input**: Speak to the agent." in added_pair, added_pair
         assert "- **Web Search**: Search the web." in added_pair, added_pair
 
+    def test_a_tab_after_the_colon_is_accepted_by_both_extractors(self) -> None:
+        """The same disagreement as #1609, on a different whitespace character.
+
+        The first fix unified the QUANTIFIER (` +` to ` *`) and left the
+        CHARACTER CLASS split: a literal space here, `\\s` in
+        `HIGHLIGHT_BULLET`. So `- **Theme**:\\tText` still parsed in one
+        extractor and not the other, with the same user-visible consequence
+        the issue measured. Fixing the named instance rather than the class
+        (CodeRabbit on PR #1627).
+
+        Both patterns now share one whitespace class, so a future divergence
+        has to be written deliberately in one place rather than drifting.
+        """
+        assert extract_bullets("- **Theme**:\tText here.") == [
+            "- **Theme**: Text here."
+        ]
+        assert extract_all_highlights("* **Theme**:\tText here.") == [
+            ("Theme", "Text here.")
+        ]
+
     def test_a_space_after_the_colon_is_still_normalised_away(self) -> None:
         """The control: loosening must not change the well-formed case.
 

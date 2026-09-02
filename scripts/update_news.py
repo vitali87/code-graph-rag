@@ -62,9 +62,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # not under our control, so tolerating its whitespace is the direction that
 # fails safe. Normalisation is unaffected: `text` still starts at the first
 # non-space, so the emitted bullet carries exactly one space either way.
-BULLET_PATTERN = re.compile(r"^- \*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:) *(?P<text>\S.*)$")
+# The one separator both extractors use, so they cannot disagree about what
+# follows the colon. #1609 unified the QUANTIFIER, leaving this pattern with a
+# literal space and HIGHLIGHT_BULLET with `\s`; a tab then still parsed in one
+# and not the other, reproducing the same defect on a different character
+# (CodeRabbit, PR #1627). Sharing the fragment means a future divergence has
+# to be written deliberately in one place rather than drifting.
+_AFTER_COLON = r"\s*"
+BULLET_PATTERN = re.compile(
+    rf"^- \*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:){_AFTER_COLON}(?P<text>\S.*)$"
+)
 HIGHLIGHT_BULLET = re.compile(
-    r"^[-*]\s+\*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:)\s*(?P<text>\S.*)$"
+    rf"^[-*]\s+\*\*(?P<theme>[^*]+?)(?::\*\*|\*\*:){_AFTER_COLON}(?P<text>\S.*)$"
 )
 
 # Any line a human would call a bullet, however malformed. Used only to tell
