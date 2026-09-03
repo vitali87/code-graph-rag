@@ -832,6 +832,12 @@ class MCPToolsRegistry:
             exclude_paths=exclude_paths,
             project_name=project_name,
         )
+        # Dropped before the run mutates the graph: if the update fails part
+        # way, the retained updater would describe the graph as it was
+        # before, and a later reingest would resolve against definitions the
+        # partial update has already replaced. With it gone, that reingest
+        # hydrates from the store instead.
+        self._live_updater = None
         updater.run()
         self.ingestor.flush_all()
         self._live_updater = updater

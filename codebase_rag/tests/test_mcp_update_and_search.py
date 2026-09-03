@@ -674,6 +674,27 @@ class TestReingest:
             assert mock_updater_cls.call_count == 1
             assert "not indexed" in result["error"]
 
+    async def test_a_failed_update_drops_the_retained_updater(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        # update_repository mutates the graph before it can fail; the
+        # updater retained from before describes the graph as it was, so a
+        # later reingest must hydrate from the store rather than reuse it.
+        _mark_indexed(mcp_registry)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            first = MagicMock()
+            first.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
+            )
+            failing = MagicMock()
+            failing.run.side_effect = RuntimeError("died mid-run")
+            mock_updater_cls.side_effect = [first, failing]
+            await mcp_registry.reingest(["a.py"])
+            assert mcp_registry._live_updater is first
+            result = await mcp_registry.update_repository()
+            assert "Error" in result
+            assert mcp_registry._live_updater is None
+
     async def test_failed_embedding_wipe_still_drops_the_retained_updater(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
