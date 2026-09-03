@@ -91,6 +91,54 @@ class TestReingestFailedMidRun:
         )
 
 
+class TestTheRecoveryItself:
+    def test_the_rebuild_is_forced(
+        self, handler: CodeChangeEventHandler, updater: MagicMock
+    ) -> None:
+        # An incremental run skips files whose hashes are unchanged, and after a
+        # re-ingest that deleted subtrees without rebuilding them the FILES are
+        # unchanged. A plain run() would skip exactly the files whose nodes are
+        # missing and report success over a still-partial graph.
+        updater.reingest.side_effect = RuntimeError("died after the delete")
+        handler.dispatch(_Event("/repo/a.py"))
+        updater.reingest.side_effect = None
+        handler.dispatch(_Event("/repo/b.py"))
+
+        updater.run.assert_called_once_with(force=True)
+
+    def test_a_failed_rebuild_does_not_end_the_dispatcher(
+        self, handler: CodeChangeEventHandler, updater: MagicMock
+    ) -> None:
+        # This runs from a watchdog callback: an exception here kills the
+        # dispatcher thread and the watcher goes silently deaf, which is the
+        # failure this recovery exists to prevent, one level up.
+        updater.reingest.side_effect = RuntimeError("died after the delete")
+        handler.dispatch(_Event("/repo/a.py"))
+        updater.reingest.side_effect = None
+        updater.run.side_effect = RuntimeError("rebuild failed too")
+
+        handler.dispatch(_Event("/repo/b.py"))
+
+    def test_a_failed_rebuild_retries_and_skips_the_scoped_work(
+        self, handler: CodeChangeEventHandler, updater: MagicMock
+    ) -> None:
+        updater.reingest.side_effect = RuntimeError("died after the delete")
+        handler.dispatch(_Event("/repo/a.py"))
+        updater.reingest.reset_mock()
+        updater.reingest.side_effect = None
+        updater.run.side_effect = RuntimeError("rebuild failed too")
+
+        handler.dispatch(_Event("/repo/b.py"))
+        # Resolving this change against a graph known to be partial would
+        # compound the damage, so the scoped work is skipped entirely.
+        assert not updater.reingest.called
+
+        updater.run.side_effect = None
+        handler.dispatch(_Event("/repo/c.py"))
+        assert updater.run.call_count == 2, "the next change must retry the rebuild"
+        assert updater.reingest.called, "and then resume scoped work"
+
+
 class TestRefusalsAreNotFailures:
     @pytest.mark.parametrize(
         "error",

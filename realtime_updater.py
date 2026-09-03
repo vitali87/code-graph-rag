@@ -106,6 +106,29 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         else:
             logger.info(logs.WATCHER_ACTIVE)
 
+    def _rebuild_after_failure(self) -> bool:
+        """Re-index everything after a partial re-ingest. True when the graph is whole.
+
+        `force=True` is required, not tidiness: an incremental run skips files
+        whose hashes are unchanged, and after a re-ingest that deleted subtrees
+        without rebuilding them the FILES on disk are unchanged. A plain
+        `run()` would therefore skip exactly the files whose nodes are missing
+        and report success over a graph that is still partial.
+
+        A rebuild that itself fails must not escape either. This runs from a
+        watchdog callback, so an exception here ends the dispatcher and the
+        watcher goes silently deaf -- the same failure this recovery exists to
+        prevent, one level up. The flag stays set so the next change retries.
+        """
+        logger.warning(logs.WATCHER_REBUILDING_AFTER_FAILURE)
+        try:
+            self.updater.run(force=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(logs.WATCHER_REBUILD_FAILED.format(error=exc))
+            return False
+        self._needs_full_rebuild = False
+        return True
+
     def _is_relevant(self, path_str: str) -> bool:
         path = Path(path_str)
         # Shared with the repository walk. These two predicates answer the same
@@ -252,10 +275,11 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # missing the subtrees it deleted and never rebuilt. Resolving this
         # change against that state would compound the damage, so restore a
         # whole graph first (issue #1681).
-        if self._needs_full_rebuild:
-            logger.warning(logs.WATCHER_REBUILDING_AFTER_FAILURE)
-            self.updater.run()
-            self._needs_full_rebuild = False
+        if self._needs_full_rebuild and not self._rebuild_after_failure():
+            # The rebuild failed too, so the graph is still partial. Skip the
+            # scoped work rather than resolve this change against it; the flag
+            # stays set and the next change tries again.
+            return
         try:
             if event.event_type == EventType.DELETED:
                 self.updater.reingest((), deleted=(path,))

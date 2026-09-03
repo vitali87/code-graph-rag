@@ -293,6 +293,11 @@ WATCHER_REINGEST_FAILED = (
     "Re-ingest FAILED for {path}: {error}. The graph may be partial, so the "
     "next change triggers a full re-index before any scoped update."
 )
+WATCHER_REBUILD_FAILED = (
+    "Re-index after a failed re-ingest also FAILED: {error}. The graph is still "
+    "partial; the next change will try again. Run 'cgr start --update-graph' if "
+    "this persists."
+)
 WATCHER_REBUILDING_AFTER_FAILURE = (
     "Re-indexing the whole repository before this change, because the last "
     "re-ingest failed part way through."
