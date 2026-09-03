@@ -710,11 +710,17 @@ class MCPToolsRegistry:
                     project_name=project_name, projects=projects
                 ),
             )
+        # Before the first write, not after: a delete that fails part way
+        # has already removed graph data the retained updater still
+        # describes, and the project may still be listed, so only the
+        # incomplete flag stops the next reingest from resolving against
+        # those definitions over what is left. After a completed delete the
+        # project is gone and the not-indexed guard takes over.
+        self._live_updater = None
+        self._graph_incomplete = True
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
-        # The retained reingest updater holds definitions of the graph that
-        # was just removed; the next reingest must start from the store.
-        self._live_updater = None
+        self._graph_incomplete = False
         return DeleteProjectSuccessResult(
             success=True,
             project=project_name,
@@ -736,11 +742,15 @@ class MCPToolsRegistry:
         logger.warning(lg.MCP_WIPING_DATABASE)
         try:
             async with self._ingestor_lock:
-                await asyncio.to_thread(self.ingestor.clean_database)
-                # Dropped as soon as the graph is gone, before the embedding
-                # sweep can fail: the retained updater holds definitions of a
-                # graph that no longer exists.
+                # Same posture as delete_project: dropped and marked before
+                # the wipe, which can fail part way; cleared once the graph
+                # is gone, when the not-indexed guard covers the rest. The
+                # embedding sweep after it cannot leave a partial graph, so
+                # its failure keeps the updater dropped and nothing else.
                 self._live_updater = None
+                self._graph_incomplete = True
+                await asyncio.to_thread(self.ingestor.clean_database)
+                self._graph_incomplete = False
                 await asyncio.to_thread(clear_all_embeddings)
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:

@@ -804,6 +804,46 @@ class TestReingest:
             assert "error" not in await mcp_registry.reingest(["a.py"])
             assert mock_updater_cls.call_count == 1
 
+    async def test_a_failed_project_delete_call_marks_the_graph_incomplete(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        # The delete_project tool can fail after removing part of the
+        # graph while the project is still listed; the next reingest must
+        # refuse rather than reuse the retained updater over what is left.
+        project = _mark_indexed(mcp_registry)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            mock_updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
+            )
+            await mcp_registry.reingest(["a.py"])
+            mcp_registry.ingestor.delete_project.side_effect = RuntimeError(
+                "delete died"
+            )
+            result = await mcp_registry.delete_project(project)
+            assert result["success"] is False
+            assert "delete died" in result["error"]
+            mcp_registry.ingestor.delete_project.side_effect = None
+            refused = await mcp_registry.reingest(["a.py"])
+            assert "failed part way" in refused["error"]
+            assert mock_updater_cls.call_count == 1
+
+    async def test_a_failed_wipe_marks_the_graph_incomplete(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        _mark_indexed(mcp_registry)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            mock_updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
+            )
+            await mcp_registry.reingest(["a.py"])
+            mcp_registry.ingestor.clean_database.side_effect = RuntimeError("wipe died")
+            result = await mcp_registry.wipe_database(confirm=True)
+            assert "wipe died" in result
+            mcp_registry.ingestor.clean_database.side_effect = None
+            refused = await mcp_registry.reingest(["a.py"])
+            assert "failed part way" in refused["error"]
+            assert mock_updater_cls.call_count == 1
+
     async def test_failed_embedding_wipe_still_drops_the_retained_updater(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
