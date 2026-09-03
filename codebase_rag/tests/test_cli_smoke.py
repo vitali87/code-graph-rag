@@ -164,23 +164,44 @@ def _deadlines_not_using_the_constant(tree: ast.AST) -> list[int]:
     scan, and both are legal at these call sites. Mirrors the detector in
     `test_frontend_subprocess_timeouts.py`, which exists for the same class.
 
-    A `**{"timeout": 30}` splat stays invisible to this too -- the keyword has
-    no `arg` -- so the sibling gate's rule applies: over-reporting is the safe
-    direction, and this one cannot see that shape at all.
+    A `**{"timeout": 30}` splat is resolved too, via `_deadline_expression`;
+    only an opaque `**kwargs` built elsewhere stays invisible, and no amount of
+    AST reading fixes that one.
     """
     found: list[int] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        timeout = next((kw for kw in node.keywords if kw.arg == "timeout"), None)
-        if timeout is None:
+        deadline = _deadline_expression(node)
+        if deadline is None:
             continue
         if not (
-            isinstance(timeout.value, ast.Name)
-            and timeout.value.id == "_CLI_TIMEOUT_SECONDS"
+            isinstance(deadline, ast.Name) and deadline.id == "_CLI_TIMEOUT_SECONDS"
         ):
             found.append(node.lineno)
     return found
+
+
+def _deadline_expression(call: ast.Call) -> ast.expr | None:
+    """The `timeout=` value of a call, however it was spelled.
+
+    A `**{"timeout": 30}` splat carries `arg=None` in the AST, so a plain
+    keyword-name lookup reads it as "no deadline set" and the call escapes the
+    gate entirely. The literal-dict form is resolvable, so it is resolved.
+    """
+    for keyword in call.keywords:
+        if keyword.arg == "timeout":
+            return keyword.value
+        # `**{...}` -- a literal mapping splatted into the call.
+        if keyword.arg is None and isinstance(keyword.value, ast.Dict):
+            for key, value in zip(keyword.value.keys, keyword.value.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "timeout"
+                    and value is not None
+                ):
+                    return value
+    return None
 
 
 def test_cli_spawns_in_this_file_share_the_deadline() -> None:
@@ -339,6 +360,23 @@ def test_the_detector_recognises_compliant_and_offending_deadlines() -> None:
         _deadlines_not_using_the_constant(
             ast.parse("subprocess.run(['x'], timeout=_CLI_TIMEOUT_SECONDS)")
         )
+        == []
+    )
+    # A literal mapping splatted into the call hides the keyword name, so a
+    # plain lookup reads it as "no deadline" and the call escapes entirely.
+    assert _deadlines_not_using_the_constant(
+        ast.parse("subprocess.run(['x'], **{'timeout': 30})")
+    ) == [1]
+    assert (
+        _deadlines_not_using_the_constant(
+            ast.parse("subprocess.run(['x'], **{'timeout': _CLI_TIMEOUT_SECONDS})")
+        )
+        == []
+    )
+    # A splat of something built elsewhere is genuinely unresolvable; it stays
+    # quiet rather than being reported on a guess.
+    assert (
+        _deadlines_not_using_the_constant(ast.parse("subprocess.run(['x'], **kwargs)"))
         == []
     )
     # No `timeout=` at all is a different gate's business
