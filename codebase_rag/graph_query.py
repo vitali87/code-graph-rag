@@ -192,6 +192,30 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
 # --- definition ---------------------------------------------------------------
 
 
+def source_root_for(
+    fetch_all: QueryFn, project_name: str, repo_root: Path
+) -> Path | None:
+    """`repo_root` when the graph project was indexed from it, else None.
+
+    A definition of another project carries a relative path that may also
+    exist under `repo_root`; reading it there would return the wrong file. A
+    matching project name is not enough either: the Project node's stored
+    root path must be this repository.
+    """
+    rows = fetch_all(
+        cq.CYPHER_PROJECT_ROOT_PATH,
+        {
+            cs.KEY_PROJECT_NAME: project_name,
+            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+        },
+    )
+    stored = _opt_str(rows[0].get(cs.KEY_ROOT_PATH)) if rows else None
+    if not stored:
+        return None
+    local = repo_root.resolve()
+    return local if Path(stored).resolve() == local else None
+
+
 def definition(
     fetch_all: QueryFn, project_name: str, qualified_name: str, repo_root: Path | None
 ) -> DefinitionRow:

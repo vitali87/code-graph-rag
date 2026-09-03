@@ -79,19 +79,9 @@ def definition_cmd(qualified_name: str, project: str | None, repo_path: Path) ->
         project,
         repo_path,
         lambda f, n: graph_query.definition(
-            f, n, qualified_name, _source_root_for(n, repo_path)
+            f, n, qualified_name, graph_query.source_root_for(f, n, repo_path)
         ),
     )
-
-
-def _source_root_for(project_name: str, repo_path: Path) -> Path | None:
-    # Source is read from disk only when the selected project IS this
-    # repository: another project's definition carries a relative path that
-    # may also exist here and would read the wrong file.
-    from .utils.path_utils import derive_project_name
-
-    root = repo_path.resolve()
-    return root if project_name == derive_project_name(root) else None
 
 
 def _depth_option[F: Callable[..., None]](fn: F) -> F:

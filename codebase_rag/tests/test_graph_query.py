@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -97,6 +98,11 @@ def _by_qn(qn: str) -> ResultRow:
     return next(n for n in NODES if n[cs.KEY_QUALIFIED_NAME] == qn)
 
 
+# Where the fixture project was indexed from; a test sets it to its own root
+# to be allowed to read source, any other value leaves the span source-less.
+PROJECT_ROOT = "/elsewhere/foreign-checkout"
+
+
 def fake_fetch_all(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
     """The fixture graph answering exactly the fixed queries the tools issue."""
     p = params or {}
@@ -104,6 +110,8 @@ def fake_fetch_all(query: str, params: PropertyDict | None = None) -> list[Resul
     assert prefix == f"{P}.", "every query is project-scoped"
     qn = str(p.get(cs.KEY_QN, ""))
     out: list[ResultRow] = []
+    if query == cq.CYPHER_PROJECT_ROOT_PATH:
+        return [{cs.KEY_ROOT_PATH: PROJECT_ROOT}]
     if query == cq.CYPHER_GRAPH_RESOLVE_NAME:
         for n in NODES:
             q = str(n[cs.KEY_QUALIFIED_NAME])
@@ -667,7 +675,7 @@ async def test_mcp_definition_reads_source_only_for_the_servers_own_project(
     foreign = await registry.definition(f"{P}.util.helper", project=P)
     assert foreign["found"] is True
     assert foreign["source"] is None
-    with patch("codebase_rag.mcp.tools.derive_project_name", return_value=P):
+    with patch.object(sys.modules[__name__], "PROJECT_ROOT", str(tmp_path)):
         own = await registry.definition(f"{P}.util.helper", project=P)
     assert own["source"] is not None and own["source"].startswith("def helper(a):")
 
@@ -688,7 +696,7 @@ def test_cli_definition_reads_source_only_for_the_repos_own_project(
     ]
     with patch("codebase_rag.main.connect_memgraph", return_value=_mock_connect()):
         foreign = CliRunner().invoke(graph_cli, args)
-        with patch("codebase_rag.utils.path_utils.derive_project_name", return_value=P):
+        with patch.object(sys.modules[__name__], "PROJECT_ROOT", str(tmp_path)):
             own = CliRunner().invoke(graph_cli, args)
     assert foreign.exit_code == 0, foreign.output
     assert json.loads(foreign.output)["source"] is None

@@ -237,7 +237,6 @@ MCP_QUERY_CODE_GRAPH = (
     "exact name or location: they run fixed queries with no LLM. Use this for "
     "open-ended questions. "
     "Query the codebase knowledge graph using natural language. "
-    "Use semantic_search unless you know the exact names of classes/functions you are searching for. "
     "Ask questions like 'What functions call UserService.create_user?' or "
     "'Show me all classes that implement the Repository interface'. "
     "Pass `project` to restrict results to one indexed project; use "

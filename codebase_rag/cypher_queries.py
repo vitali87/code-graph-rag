@@ -32,6 +32,12 @@ CYPHER_AUDIT_OR = " OR "
 CYPHER_LIST_PROJECTS = (
     "MATCH (p:Project) RETURN p.name AS name, p.root_path AS root_path ORDER BY p.name"
 )
+# The repository a graph project was indexed from (issue #1523): source is
+# read from disk only when that root IS the local repository, never on the
+# strength of a matching project name alone.
+CYPHER_PROJECT_ROOT_PATH = (
+    "MATCH (p:Project {name: $project_name}) RETURN p.root_path AS root_path"
+)
 
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})

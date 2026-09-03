@@ -1176,12 +1176,14 @@ class MCPToolsRegistry:
         )
 
     def _source_root_for(self, project_name: str) -> Path | None:
-        # Source is read from disk only when the selected project IS this
-        # server's repository: another project's definition carries a
-        # relative path that may also exist here and would read the wrong
-        # file, so its span is answered without source.
-        root = Path(self.project_root)
-        return root if project_name == derive_project_name(root) else None
+        # Source is read from disk only when the selected project was indexed
+        # from this server's repository (its Project node's stored root):
+        # another project's definition carries a relative path that may also
+        # exist here and would read the wrong file, and a matching name alone
+        # does not prove the root, so its span is answered without source.
+        return graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
 
     async def definition(
         self, qualified_name: str, project: str | None = None
