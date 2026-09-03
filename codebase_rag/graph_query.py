@@ -434,46 +434,15 @@ def tests_reaching(
     """
     prefix = _prefix(project_name)
     params = {cs.KEY_PROJECT_PREFIX: prefix}
-    node_rows = fetch_all(cq.CYPHER_DEAD_CODE_NODES, params)
-    rel_rows = fetch_all(cq.CYPHER_DEAD_CODE_RELS, params)
-    nodes: dict[_NodeId, PropertyDict] = {}
-    for row in node_rows:
-        qn = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
-        if qn:
-            nodes[(str(row.get(cs.KEY_LABEL, "")), qn)] = _node_props(row)
-    by_qn: dict[str, tuple[str, PropertyDict]] = {
-        str(qn): (label, props) for (label, qn), props in nodes.items()
-    }
-    reverse: dict[str, set[str]] = {}
-    for row in rel_rows:
-        if str(row.get(cs.KEY_REL_TYPE, "")) not in _REACH_RELS:
-            continue
-        src = str(row.get(cs.KEY_FROM_QN) or "")
-        dst = str(row.get(cs.KEY_TO_QN) or "")
-        if src and dst:
-            reverse.setdefault(dst, set()).add(src)
+    nodes = _reach_nodes(fetch_all(cq.CYPHER_DEAD_CODE_NODES, params))
+    reverse = _reverse_edges(fetch_all(cq.CYPHER_DEAD_CODE_RELS, params))
+    depth_of, through_of = _reverse_walk(reverse, qualified_name)
     rust_modules = _rust_test_modules_from_nodes(nodes)
     rust_spans = _rust_test_fn_spans(nodes)
-
-    depth_of: dict[str, int] = {qualified_name: 0}
-    through_of: dict[str, str] = {qualified_name: qualified_name}
-    frontier = [qualified_name]
-    while frontier:
-        next_frontier: list[str] = []
-        for qn in sorted(frontier):
-            for caller in sorted(reverse.get(qn, ())):
-                if caller in depth_of:
-                    continue
-                depth_of[caller] = depth_of[qn] + 1
-                through_of[caller] = qn
-                next_frontier.append(caller)
-        frontier = next_frontier
-
+    by_qn = {str(qn): (label, props) for (label, qn), props in nodes.items()}
     out: list[TestReachRow] = []
     for qn, depth in depth_of.items():
-        if qn == qualified_name:
-            continue
-        entry = by_qn.get(qn)
+        entry = by_qn.get(qn) if qn != qualified_name else None
         if entry is None:
             continue
         label, props = entry
@@ -489,3 +458,45 @@ def tests_reaching(
                 )
             )
     return sorted(out, key=lambda r: (r["depth"], r["qualified_name"]))
+
+
+def _reach_nodes(node_rows: list[ResultRow]) -> dict[_NodeId, PropertyDict]:
+    nodes: dict[_NodeId, PropertyDict] = {}
+    for row in node_rows:
+        qn = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
+        if qn:
+            nodes[(str(row.get(cs.KEY_LABEL, "")), qn)] = _node_props(row)
+    return nodes
+
+
+def _reverse_edges(rel_rows: list[ResultRow]) -> dict[str, set[str]]:
+    """Callee -> callers over the reachability relationship types."""
+    reverse: dict[str, set[str]] = {}
+    for row in rel_rows:
+        if str(row.get(cs.KEY_REL_TYPE, "")) not in _REACH_RELS:
+            continue
+        src = str(row.get(cs.KEY_FROM_QN) or "")
+        dst = str(row.get(cs.KEY_TO_QN) or "")
+        if src and dst:
+            reverse.setdefault(dst, set()).add(src)
+    return reverse
+
+
+def _reverse_walk(
+    reverse: dict[str, set[str]], start: str
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Breadth-first over callers: depth of each reached qn and the qn it came through."""
+    depth_of: dict[str, int] = {start: 0}
+    through_of: dict[str, str] = {start: start}
+    frontier = [start]
+    while frontier:
+        next_frontier: list[str] = []
+        for qn in sorted(frontier):
+            for caller in sorted(reverse.get(qn, ())):
+                if caller in depth_of:
+                    continue
+                depth_of[caller] = depth_of[qn] + 1
+                through_of[caller] = qn
+                next_frontier.append(caller)
+        frontier = next_frontier
+    return depth_of, through_of

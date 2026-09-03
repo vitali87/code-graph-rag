@@ -256,7 +256,8 @@ def test_definition_reads_source_inside_the_repo(tmp_path: Path) -> None:
     assert row["path"] == "util.py"
     assert (row["start_line"], row["end_line"]) == (1, 4)
     assert row["docstring"] == "Help."
-    assert row["source"] is not None and row["source"].startswith("def helper(a):")
+    assert row["source"] is not None
+    assert row["source"].startswith("def helper(a):")
     missing = graph_query.definition(fake_fetch_all, P, f"{P}.nope", tmp_path)
     assert missing["found"] is False
     assert missing["source"] is None
@@ -264,7 +265,9 @@ def test_definition_reads_source_inside_the_repo(tmp_path: Path) -> None:
 
 def test_definition_without_a_repo_root_keeps_the_span() -> None:
     row = graph_query.definition(fake_fetch_all, P, f"{P}.app.run", None)
-    assert row["found"] and row["source"] is None and row["start_line"] == 3
+    assert row["found"]
+    assert row["source"] is None
+    assert row["start_line"] == 3
 
 
 # --- callers / callees -----------------------------------------------------------
@@ -626,7 +629,8 @@ async def test_mcp_callers_scopes_to_the_given_project(
     registry: MCPToolsRegistry,
 ) -> None:
     rows = await registry.callers(f"{P}.util.helper", depth=2, project=P)
-    assert isinstance(rows, list) and len(rows) == 5
+    assert isinstance(rows, list)
+    assert len(rows) == 5
     assert rows[0]["line"] == 4
 
 
@@ -634,22 +638,22 @@ async def test_mcp_unknown_project_is_refused_before_any_query(
     registry: MCPToolsRegistry,
 ) -> None:
     result = await registry.resolve("helper", project="typo")
-    assert isinstance(result, dict) and "typo" in result["error"]
+    assert isinstance(result, dict)
+    assert "typo" in result["error"]
     registry.ingestor.fetch_all.assert_not_called()
 
 
 async def test_mcp_depth_is_clamped(registry: MCPToolsRegistry) -> None:
     rows = await registry.callees(f"{P}.app.main", depth=99, project=P)
-    assert (
-        isinstance(rows, list)
-        and max(r["depth"] for r in rows) <= cs.GRAPH_QUERY_MAX_DEPTH
-    )
+    assert isinstance(rows, list)
+    assert max(r["depth"] for r in rows) <= cs.GRAPH_QUERY_MAX_DEPTH
 
 
 async def test_mcp_errors_are_reported_not_raised(registry: MCPToolsRegistry) -> None:
     registry.ingestor.fetch_all.side_effect = RuntimeError("down")
     result = await registry.importers(f"{P}.util", project=P)
-    assert isinstance(result, dict) and "down" in result["error"]
+    assert isinstance(result, dict)
+    assert "down" in result["error"]
 
 
 def test_query_code_graph_description_points_at_the_deterministic_tools() -> None:
@@ -677,7 +681,8 @@ async def test_mcp_definition_reads_source_only_for_the_servers_own_project(
     assert foreign["source"] is None
     with patch.object(sys.modules[__name__], "PROJECT_ROOT", str(tmp_path)):
         own = await registry.definition(f"{P}.util.helper", project=P)
-    assert own["source"] is not None and own["source"].startswith("def helper(a):")
+    assert own["source"] is not None
+    assert own["source"].startswith("def helper(a):")
 
 
 def test_cli_definition_reads_source_only_for_the_repos_own_project(
