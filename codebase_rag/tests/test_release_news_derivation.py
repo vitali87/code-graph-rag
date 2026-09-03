@@ -11,8 +11,10 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 _WORKFLOW = (
@@ -61,6 +63,11 @@ def _security_notice_script() -> str:
     return step["run"]
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the step runs under the Ubuntu runner's bash; on the Windows runner "
+    "`bash` resolves to the WSL launcher, which has no distribution installed",
+)
 def test_security_notice_falls_back_when_the_advisory_fetch_fails(
     tmp_path: Path,
 ) -> None:
