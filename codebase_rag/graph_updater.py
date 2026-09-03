@@ -2215,6 +2215,52 @@ class GraphUpdater:
             }
         )
 
+    def _foreign_definer_keys(self, gone_keys: Iterable[str]) -> set[str]:
+        """Files that registered definitions keyed under a module going away.
+
+        A definition's qn need not sit under the qn of the file that defines
+        it. A Go method keys by its RECEIVER TYPE's module, so
+        `func (t T) M()` in pkg/methods.go registers `proj.pkg.types.T.M`
+        when `T` is declared in pkg/types.go.
+
+        Renaming types.go deletes that Module subtree, and the method node
+        and its outgoing CALLS go with it because they hang off the type.
+        methods.go holds no edge INTO types.go, so the caller query cannot
+        find it, nothing re-parses it, and the method is never recreated:
+        the reused updater ends with no CALLS at all where a clean index has
+        them (issue #1660).
+
+        The span records already name the registering module, so the files
+        to re-parse are exactly those that recorded a qn under a departing
+        module without being that module themselves. Read before
+        `remove_file_from_state` runs, while the run's records still stand.
+        """
+        gone = set(gone_keys)
+        if not gone:
+            return set()
+        dp = self.factory.definition_processor
+        key_for_module = {
+            qn: cached_relative_path(path, self.repo_path).as_posix()
+            for qn, path in dp.module_qn_to_file_path.items()
+        }
+        gone_modules = {qn for qn, key in key_for_module.items() if key in gone}
+        if not gone_modules:
+            return set()
+        definers = set()
+        for (span_module, _line, _col), location in dp.function_locations.items():
+            if span_module in gone_modules:
+                continue
+            qn = location.qualified_name
+            if any(
+                qn.startswith(f"{module}{cs.SEPARATOR_DOT}") for module in gone_modules
+            ):
+                definers.add(span_module)
+        return {
+            key
+            for module in definers
+            if (key := key_for_module.get(module)) is not None and key not in gone
+        }
+
     def _package_paths(self) -> set[str] | None:
         """Relative paths of this project's Package nodes, None if unreadable."""
         if not isinstance(self.ingestor, QueryProtocol):
@@ -3116,6 +3162,13 @@ class GraphUpdater:
         # module qn changes on this run, so a file that includes or calls it
         # must re-parse too, or its captured inbound edges are restored
         # against the old qn (a wrong IMPORTS edge, a dropped CALLS edge).
+        # A file that DEFINES into a departing module joins for a different
+        # reason than a caller does: its definitions live in the subtree
+        # about to be deleted, and no edge points from it into that file for
+        # the caller query to follow (issue #1660).
+        foreign_definers = self._foreign_definer_keys(
+            {*reindexed_keys, *deleted_before_parse}
+        )
         affected = 0
         for caller_key in sorted(
             {
@@ -3123,6 +3176,7 @@ class GraphUpdater:
                     sorted({*reindexed_keys, *deleted_before_parse, *siblings})
                 ),
                 *siblings,
+                *foreign_definers,
             }
         ):
             if caller_key in present:

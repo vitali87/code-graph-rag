@@ -692,3 +692,45 @@ def test_re_parsing_a_go_file_does_not_duplicate_a_sibling_keyed_method(
     clean = _clean(temp_repo, GO_AFTER, cs.SupportedLanguage.GO)
     assert _methods(after) == _methods(clean)
     assert _methods(after) == {"proj.pkg.types.T.M"}
+
+
+GO_TYPE_RENAMED = {
+    "pkg/kinds.go": GO_BEFORE["pkg/types.go"],
+    "pkg/methods.go": GO_BEFORE["pkg/methods.go"],
+    "pkg/util.go": GO_BEFORE["pkg/util.go"],
+}
+
+
+def test_renaming_the_go_file_holding_a_receiver_type_keeps_the_method_calls(
+    temp_repo: Path,
+) -> None:
+    """Renaming types.go must not strand the methods bound to the type it held.
+
+    `func (t T) M()` lives in methods.go but keys under the module that
+    declares `T`. Renaming types.go to kinds.go moves that module, and on a
+    reused updater the method's CALLS edge disappeared entirely rather than
+    rebinding under the new module (issue #1660).
+
+    Compared against a clean index of the renamed tree rather than a hardcoded
+    qn: whether the method should now key under `proj.pkg.kinds` is the clean
+    index's answer to give, and pinning my own guess would make this test
+    agree with whatever I happened to build.
+
+    Sits beside the #1659 test deliberately: both start from the same fixture
+    and rename one file, and the pair is what shows the two defects are
+    distinct -- that one removes stale state, this one nominates a file to
+    re-parse.
+    """
+    root = temp_repo / "proj"
+    _materialise(root, GO_BEFORE)
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.GO)
+    updater.run(force=True)
+    (root / "pkg" / "types.go").rename(root / "pkg" / "kinds.go")
+    _bump(root, "pkg/kinds.go")
+    updater.run(force=False)
+    after = _snapshot(store, root)
+
+    clean = _clean(temp_repo, GO_TYPE_RENAMED, cs.SupportedLanguage.GO)
+    assert _calls(after) == _calls(clean)
+    assert after == clean
