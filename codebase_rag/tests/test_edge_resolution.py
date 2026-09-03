@@ -356,6 +356,31 @@ def test_dispatch_literal_is_recorded_only_when_it_is_unique(tmp_path: Path) -> 
     assert locate_dispatch_literal(tmp_path, "app.py", 1, 6, "elsewhere") is None
 
 
+@pytest.mark.parametrize(
+    "computed",
+    ["getattr(obj, name)()", "TABLE[name]()", "fn = getattr(obj, name)\n    fn()"],
+)
+def test_a_computed_dispatch_in_the_body_makes_the_edge_unlocatable(
+    tmp_path: Path, computed: str
+) -> None:
+    from codebase_rag.trace.dispatch_site import locate_dispatch_literal
+
+    # The traced call may have gone through the computed dispatch, so the
+    # one unrelated literal naming the callee must not be reported as its
+    # site; a literal-keyed lookup in the same body is not a computed one.
+    (tmp_path / "app.py").write_text(
+        "def run(obj, name):\n"
+        f"    {computed}\n"
+        '    getattr(obj, "hidden")\n'
+        '    TABLE["keyed"]()\n'
+    )
+    assert locate_dispatch_literal(tmp_path, "app.py", 1, 5, "hidden") is None
+    (tmp_path / "plain.py").write_text(
+        'def run(obj, name):\n    getattr(obj, "hidden")\n    TABLE["keyed"]()\n'
+    )
+    assert locate_dispatch_literal(tmp_path, "plain.py", 1, 3, "hidden") is not None
+
+
 # --- dead code floor --------------------------------------------------------------
 
 

@@ -8,7 +8,8 @@ is what a rewrite would have to touch, so the dynamic edge records it. A
 nested `def`/`class` is another callable's body and is not searched, and two
 candidate literals cannot be told apart statically (an unrelated `d["name"]`
 looks exactly like a registry lookup), so the site is recorded only when the
-candidate is unique; otherwise the edge is marked unlocatable.
+candidate is unique and the body holds no computed dispatch that could have
+carried the call instead; otherwise the edge is marked unlocatable.
 """
 
 from __future__ import annotations
@@ -49,6 +50,27 @@ def _is_dispatch_literal(node: Node) -> bool:
     return True
 
 
+def _is_computed_dispatch(node: Node) -> bool:
+    """`getattr(obj, name)` with a non-literal name, or `table[key](...)`.
+
+    Either could have carried the traced call, so no literal in the same
+    body can be trusted to be its site.
+    """
+    if node.type != cs.TS_PY_CALL:
+        return False
+    func = node.child_by_field_name(cs.FIELD_FUNCTION)
+    if func is None:
+        return False
+    if func.type == cs.TS_PY_SUBSCRIPT:
+        key = func.child_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
+        return key is not None and key.type != cs.TS_PY_STRING
+    if safe_decode_text(func) != cs.PY_BUILTIN_GETATTR:
+        return False
+    args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
+    named = args.named_children if args is not None else []
+    return len(named) >= 2 and named[1].type != cs.TS_PY_STRING
+
+
 def locate_dispatch_literal(
     repo_root: Path, path: str, start_line: int, end_line: int, callee_name: str
 ) -> PropertyDict | None:
@@ -59,7 +81,9 @@ def locate_dispatch_literal(
     Python, cannot be read, holds no such literal in the caller's own body
     (nested definitions excluded), or holds more than one, since the scan
     cannot tell the traced dispatch site from an unrelated same-named
-    literal and must not point a rewrite at the wrong one.
+    literal and must not point a rewrite at the wrong one. A computed
+    dispatch in the body (`getattr(obj, name)`, `table[key]()`) could have
+    carried the call itself, so it makes the edge unlocatable too.
     """
     file_path = repo_root / path
     if get_language_for_extension(file_path.suffix) != cs.SupportedLanguage.PYTHON:
@@ -86,6 +110,8 @@ def locate_dispatch_literal(
             if inside_caller:
                 continue
             inside_caller = True
+        if _is_computed_dispatch(node):
+            return None
         if _literal_text(node) == callee_name and _is_dispatch_literal(node):
             found.append(node)
         stack.extend((child, inside_caller) for child in node.children)
