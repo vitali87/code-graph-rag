@@ -26,7 +26,6 @@ from ..types_defs import (
 
 # The node-backed oracles (Lua, PHP, Ruby, TypeScript/JavaScript) all shell
 # out to the same toolchain, so they share one availability probe.
-@lru_cache(maxsize=8)
 def node_oracle_available(oracle_dir: Path | None = None) -> bool:
     """Whether the node toolchain can RUN this oracle, not merely whether it exists.
 
@@ -58,7 +57,23 @@ def node_oracle_available(oracle_dir: Path | None = None) -> bool:
         return True
     package = _oracle_dependency(oracle_dir)
     if package is None:
+        # Deps not installed yet, or nothing to load: `ensure_node_deps` runs
+        # later and fixes the former. NOT cached, deliberately -- this is "ask
+        # again", not "yes". Caching it locked in a provisional answer taken
+        # before installation, so on a clean checkout the real probe never ran
+        # at all and an incompatible Node reached the oracle anyway.
         return True
+    return _node_can_require(node, str(oracle_dir), package)
+
+
+@lru_cache(maxsize=16)
+def _node_can_require(node: str, oracle_dir: str, package: str) -> bool:
+    """Whether this node can `require()` this package from this directory.
+
+    Cached on the full triple, and only ever on a REAL verdict: the answer to
+    this question cannot change within a process, whereas "are the deps
+    installed" can and must not be memoised alongside it.
+    """
     try:
         probe = subprocess.run(
             [node, ec.NODE_EVAL_FLAG, ec.NODE_REQUIRE_PROBE.format(package=package)],
@@ -75,32 +90,33 @@ def node_oracle_available(oracle_dir: Path | None = None) -> bool:
 
 
 def _oracle_dependency(oracle_dir: Path) -> str | None:
-    """The package this oracle loads, read from its own `package.json`.
+    """The package this oracle actually `require()`s, read from its own script.
 
-    Read rather than hard-coded so the probe cannot drift from what the oracle
-    actually requires, and per-oracle because they do not share a dependency:
-    ruby loads `@ruby/prism`, lua `luaparse`, php `php-parser`, ts
-    `typescript`, and only the first is ESM-only.
+    Read, never guessed: the four node oracles do not share a dependency
+    (ruby `@ruby/prism`, lua `luaparse`, php `php-parser`, ts `typescript`),
+    and only the first is ESM-only. Taking the alphabetically first entry of
+    `package.json` picks the right one today ONLY because each manifest
+    happens to hold exactly one dependency; add a second and the probe
+    silently validates a package the oracle never loads.
 
-    The DEPENDENCY is the right subject, not the entry script: requiring
-    `ruby_ast.js` runs its main, which prints a usage line and exits non-zero
-    with no arguments, so a working toolchain would be reported broken.
+    The entry script's own `require()` is the authoritative source, because it
+    is literally the call that breaks. Bare builtins (`fs`, `path`) are
+    skipped: they load on every Node and would make the probe vacuous.
 
-    None when the manifest is missing or deps are not installed yet, so the
-    guard cannot mistake "not fetched" for "toolchain broken" -- that is
-    `ensure_node_deps`'s job and it runs later.
+    None when deps are not installed yet or no third-party require is found,
+    which the caller treats as "ask again later" rather than as a verdict.
     """
     if not (oracle_dir / ec.NODE_MODULES_DIRNAME).is_dir():
         return None
-    manifest = oracle_dir / ec.NODE_PACKAGE_MANIFEST
-    try:
-        deps = json.loads(manifest.read_text(encoding=cs.ENCODING_UTF8)).get(
-            ec.NODE_PACKAGE_DEPS_KEY, {}
-        )
-    except (OSError, ValueError, AttributeError):
-        return None
-    names = sorted(deps) if isinstance(deps, dict) else []
-    return names[0] if names else None
+    for script in sorted(oracle_dir.glob(ec.NODE_ORACLE_SCRIPT_GLOB)):
+        try:
+            source = script.read_text(encoding=cs.ENCODING_UTF8)
+        except OSError:
+            continue
+        for name in ec.NODE_REQUIRE_PATTERN.findall(source):
+            if name not in ec.NODE_BUILTIN_MODULES and not name.startswith("."):
+                return name
+    return None
 
 
 def _node_deps_ready(oracle_dir: Path) -> bool:

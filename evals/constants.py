@@ -1,3 +1,4 @@
+import re
 from enum import StrEnum
 
 from codebase_rag import constants as cs
@@ -394,6 +395,14 @@ NODE_EVAL_FLAG = "-e"
 NODE_REQUIRE_PROBE = 'require("{package}")'
 NODE_PACKAGE_MANIFEST = "package.json"
 NODE_PACKAGE_DEPS_KEY = "dependencies"
+NODE_ORACLE_SCRIPT_GLOB = "*.js"
+# The oracle's own `require("pkg")` calls: the authoritative statement of what
+# it loads, and literally the call that fails on an incompatible Node. Builtins
+# are excluded because they load everywhere and would make the probe vacuous.
+NODE_REQUIRE_PATTERN = re.compile(r"""require\(\s*["']([^"']+)["']\s*\)""")
+NODE_BUILTIN_MODULES: frozenset[str] = frozenset(
+    {"fs", "path", "os", "util", "url", "process", "assert", "module", "buffer"}
+)
 NODE_PROBE_TIMEOUT_S = 30
 NPM_BIN = "npm"
 NPM_INSTALL = "install"

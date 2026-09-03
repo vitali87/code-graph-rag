@@ -20,7 +20,11 @@ from pathlib import Path
 import pytest
 
 from evals import constants as ec
-from evals.oracles._common import _oracle_dependency, node_oracle_available
+from evals.oracles._common import (
+    _node_can_require,
+    _oracle_dependency,
+    node_oracle_available,
+)
 from evals.oracles.csharp_oracle import _sdk_major, csharp_oracle_available
 
 _ORACLE_CSPROJ = (
@@ -43,7 +47,9 @@ def _clear_guard_caches() -> None:
     # Both guards are lru_cached, so a verdict from one test would otherwise
     # answer for the next one's PATH. Clearing before each test is what makes
     # the stubs below decide the outcome.
-    node_oracle_available.cache_clear()
+    # `node_oracle_available` is deliberately NOT cached (a pre-install answer
+    # must not freeze); the real verdict cache lives on `_node_can_require`.
+    _node_can_require.cache_clear()
     csharp_oracle_available.cache_clear()
 
 
@@ -133,8 +139,9 @@ class TestNodeGuard:
     def _oracle(tmp_path: Path, package: str) -> Path:
         oracle = tmp_path / "oracle"
         (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
-        (oracle / ec.NODE_PACKAGE_MANIFEST).write_text(
-            f'{{"dependencies": {{"{package}": "1.0.0"}}}}', encoding="utf-8"
+        (oracle / "oracle_ast.js").write_text(
+            f'const fs = require("fs");\nconst p = require("{package}");\n',
+            encoding="utf-8",
         )
         return oracle
 
@@ -201,27 +208,77 @@ class TestNodeGuard:
 
 
 class TestOracleDependency:
-    def test_the_package_is_read_from_the_oracles_own_manifest(
-        self, tmp_path: Path
-    ) -> None:
-        """Read, never hard-coded: the four oracles do not share a dependency.
-
-        Ruby loads `@ruby/prism`, lua `luaparse`, php `php-parser`, ts
-        `typescript`, and only the first is ESM-only. A hard-coded package
-        would be a second copy of that fact, free to drift.
-        """
+    @staticmethod
+    def _with_script(tmp_path: Path, source: str) -> Path:
         oracle = tmp_path / "oracle"
         (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
+        (oracle / "oracle_ast.js").write_text(source, encoding="utf-8")
+        return oracle
+
+    def test_the_package_is_the_one_the_script_requires(self, tmp_path: Path) -> None:
+        """Read from the oracle's own `require()`, never guessed.
+
+        The four oracles do not share a dependency, and only `@ruby/prism` is
+        ESM-only, so the probe must ask about the package THIS oracle loads.
+        """
+        oracle = self._with_script(tmp_path, 'const p = require("luaparse");\n')
+        assert _oracle_dependency(oracle) == "luaparse"
+
+    def test_an_extra_dependency_does_not_displace_the_real_one(
+        self, tmp_path: Path
+    ) -> None:
+        """The alphabetical-pick defect.
+
+        Reading `package.json` and taking the first key sorts `aaa-helper`
+        ahead of `luaparse`, so the probe would validate a package the oracle
+        never loads and report a broken toolchain as usable. It picked the
+        right entry today only because each manifest happens to hold exactly
+        one dependency -- a latent bug, not a theoretical one.
+        """
+        oracle = self._with_script(tmp_path, 'const p = require("luaparse");\n')
         (oracle / ec.NODE_PACKAGE_MANIFEST).write_text(
-            '{"dependencies": {"luaparse": "0.3.1"}}', encoding="utf-8"
+            '{"dependencies": {"aaa-helper": "1.0.0", "luaparse": "0.3.1"}}',
+            encoding="utf-8",
         )
         assert _oracle_dependency(oracle) == "luaparse"
 
-    def test_a_missing_or_unreadable_manifest_yields_no_package(
+    def test_builtins_and_relative_requires_are_skipped(self, tmp_path: Path) -> None:
+        """A builtin loads on every Node, so probing one proves nothing."""
+        oracle = self._with_script(
+            tmp_path,
+            'const fs = require("fs");\nconst u = require("./util");\n'
+            'const p = require("php-parser");\n',
+        )
+        assert _oracle_dependency(oracle) == "php-parser"
+
+    def test_uninstalled_or_scriptless_oracles_yield_no_package(
         self, tmp_path: Path
     ) -> None:
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        assert _oracle_dependency(bare) is None
+        installed = tmp_path / "installed"
+        (installed / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
+        assert _oracle_dependency(installed) is None
+
+
+class TestGuardCacheLifecycle:
+    def test_a_pre_install_answer_is_not_cached(self, tmp_path: Path) -> None:
+        """Issue #1639: the provisional "ask again" must not become a verdict.
+
+        On a clean checkout the guard runs before `ensure_node_deps`, so it
+        cannot probe and answers True to avoid mistaking "not fetched" for
+        "toolchain broken". Caching that froze it: the real probe never ran,
+        and an incompatible Node reached the oracle anyway. Only genuine
+        verdicts are cached.
+        """
         oracle = tmp_path / "oracle"
-        (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
-        assert _oracle_dependency(oracle) is None
-        (oracle / ec.NODE_PACKAGE_MANIFEST).write_text("not json {{{", encoding="utf-8")
-        assert _oracle_dependency(oracle) is None
+        oracle.mkdir()
+        (oracle / "oracle_ast.js").write_text(
+            'const p = require("definitely-not-installed");\n', encoding="utf-8"
+        )
+        assert node_oracle_available(oracle) is True
+
+        # ensure_node_deps installs them; the guard must now actually probe.
+        (oracle / ec.NODE_MODULES_DIRNAME).mkdir()
+        assert node_oracle_available(oracle) is False
