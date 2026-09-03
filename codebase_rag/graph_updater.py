@@ -3442,6 +3442,18 @@ class GraphUpdater:
         self, reparse: dict[str, Path], gone: dict[str, Path], hashes: FileHashCache
     ) -> None:
         import_processor = self.factory.import_processor
+        # A fresh updater read every definition's annotations back from the
+        # graph into the pending type facts BEFORE this delete; the facts of
+        # the files re-parsed or dropped here describe the old source, and
+        # the re-parse queues the new ones, so without this both the stale
+        # and the fresh RETURNS/ACCEPTS edge would be emitted (issue #1527).
+        qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+        stale_paths = {*reparse.values(), *gone.values()}
+        stale_modules = {
+            base_module_qn(Path(key), self.project_name) for key in (*reparse, *gone)
+        } | {qn for qn, path in qn_to_path.items() if path in stale_paths}
+        pending = self.factory.definition_processor.pending_type_facts
+        pending[:] = [fact for fact in pending if fact.module_qn not in stale_modules]
         for key, path in reparse.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)

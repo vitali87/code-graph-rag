@@ -486,6 +486,47 @@ def test_reingest_reports_a_cache_it_could_neither_backdate_nor_remove(
     )
 
 
+TYPED_FILES = {
+    "types_.py": "class A:\n    pass\n\n\nclass B:\n    pass\n",
+    "mod.py": "from types_ import A, B\n\n\ndef f(x: A) -> A:\n    return x\n",
+}
+
+
+@pytest.mark.parametrize("fresh_updater", [False, True], ids=["warm", "fresh"])
+def test_reingest_replaces_the_type_edges_of_a_changed_annotation(
+    temp_repo: Path, fresh_updater: bool
+) -> None:
+    # A fresh updater reads the old annotation back from the graph before the
+    # scoped delete; that requeued fact must go with the module, or the old
+    # RETURNS/ACCEPTS edge is emitted beside the new one (issue #1527).
+    root = temp_repo / PROJECT
+    root.mkdir()
+    for rel, text in TYPED_FILES.items():
+        _write(root, rel, text)
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    updater.run(force=True)
+    _write(root, "mod.py", TYPED_FILES["mod.py"].replace("A", "B"))
+    if fresh_updater:
+        updater = _updater(store, root)
+
+    updater.reingest(["mod.py"])
+
+    actual = _snapshot(store)
+    expected = _clean_index(root)
+    assert actual == expected, _diff(actual, expected)
+    typed = {
+        (e[1], e[2], e[4])
+        for e in actual[1]
+        if e[2]
+        in (cs.RelationshipType.RETURNS.value, cs.RelationshipType.ACCEPTS.value)
+    }
+    assert typed == {
+        (f"{PROJECT}.mod.f", cs.RelationshipType.RETURNS.value, f"{PROJECT}.types_.B"),
+        (f"{PROJECT}.mod.f", cs.RelationshipType.ACCEPTS.value, f"{PROJECT}.types_.B"),
+    }
+
+
 def test_reingest_reports_dependents_and_removals(fixture_root: Path) -> None:
     store = _StatefulIngestor()
     updater = _updater(store, fixture_root)

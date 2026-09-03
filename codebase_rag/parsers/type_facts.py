@@ -316,9 +316,13 @@ class TypeReferenceResolver:
         return None
 
     def resolve(self, name: str, module_qn: str) -> str | None:
-        if name.startswith(_RUST_CRATE_ROOT):
+        # A crate-root path is absolute: it must not bind to a nearer module
+        # that happens to share the tail, so the scoped walk is skipped and
+        # only the unique-suffix match below decides.
+        absolute = name.startswith(_RUST_CRATE_ROOT)
+        if absolute:
             name = name[len(_RUST_CRATE_ROOT) :]
-        for candidate in self._scoped_candidates(name, module_qn):
+        for candidate in () if absolute else self._scoped_candidates(name, module_qn):
             if self._is_type(candidate):
                 return candidate
         matches = [
@@ -328,7 +332,21 @@ class TypeReferenceResolver:
         ]
         if not matches:
             return None
+        if absolute:
+            return self._root_nearest_unique(matches)
         return self._nearest_unique(matches, module_qn)
+
+    @staticmethod
+    def _root_nearest_unique(matches: list[str]) -> str | None:
+        # An absolute path names the type closest to the crate root: the
+        # shortest matching qn wins, and two at the same depth stay
+        # unresolved rather than guessed.
+        ranked = sorted(matches, key=lambda qn: (qn.count(cs.SEPARATOR_DOT), qn))
+        if len(ranked) > 1 and ranked[0].count(cs.SEPARATOR_DOT) == ranked[1].count(
+            cs.SEPARATOR_DOT
+        ):
+            return None
+        return ranked[0]
 
     def resolve_annotation(self, annotation: str, module_qn: str) -> list[str]:
         found: dict[str, None] = {}

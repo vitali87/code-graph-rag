@@ -358,6 +358,22 @@ def test_resolver_maps_a_rust_crate_root_path_to_the_project() -> None:
     assert resolver.resolve("crate.missing.Item", "p.src.lib") is None
 
 
+def test_resolver_does_not_bind_a_crate_root_path_to_a_nearer_module() -> None:
+    # `crate::` is absolute: from src/deep/m.rs it must not pick the nearer
+    # src/deep/model.rs over the crate's own src/model.rs, and two equally
+    # plausible suffix matches stay unresolved rather than guessed.
+    resolver = _resolver(
+        {"p.src.model.Item": NodeType.CLASS, "p.src.deep.model.Item": NodeType.CLASS},
+        {},
+    )
+    assert resolver.resolve("crate.model.Item", "p.src.deep.m") == "p.src.model.Item"
+    # Two candidates at the same depth from the root: unresolved, not guessed.
+    resolver = _resolver(
+        {"p.a.model.Item": NodeType.CLASS, "p.b.model.Item": NodeType.CLASS}, {}
+    )
+    assert resolver.resolve("crate.model.Item", "p.a.m") is None
+
+
 def test_resolver_prefers_the_nearest_package_among_candidates() -> None:
     resolver = _resolver({"p.a.x.Item": NodeType.CLASS, "p.b.Item": NodeType.CLASS}, {})
     assert resolver.resolve("Item", "p.a.y") == "p.a.x.Item"
