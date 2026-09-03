@@ -3536,12 +3536,12 @@ class GraphUpdater:
         try:
             os.utime(cache_path, (observed_at, observed_at))
         except OSError as e:
-            logger.warning(ls.CACHE_STAMP_FAILED, path=cache_path, error=e)
+            logger.warning(ls.REINGEST_CACHE_STAMP_FAILED, path=cache_path, error=e)
             try:
                 cache_path.unlink(missing_ok=True)
             except OSError as unlink_error:
                 logger.warning(
-                    ls.CACHE_STAMP_CLEANUP_FAILED,
+                    ls.REINGEST_CACHE_STAMP_CLEANUP_FAILED,
                     path=cache_path,
                     error=unlink_error,
                 )
