@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import posixpath
+import secrets
 import sys
 import time
 from collections import defaultdict
@@ -271,6 +272,37 @@ def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
         logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
 
 
+# Bounded so a directory that somehow rejects every candidate ends the publish
+# instead of spinning; with 8 random bytes a collision is already vanishingly
+# unlikely, so more than a few attempts would only mask a real filesystem
+# problem.
+_TEMP_NAME_ATTEMPTS = 8
+
+
+def _open_exclusive_temp(cache_path: Path) -> tuple[int, str]:
+    """Create a fresh temporary file beside `cache_path`, never following a link.
+
+    `O_EXCL` fails rather than reusing an existing path and `O_NOFOLLOW`
+    fails rather than opening a symlink's target, so neither a guessed name
+    nor a planted link can redirect the write. The name is random, which
+    means an attacker cannot plant the link in the first place; the flags
+    are what make that a guarantee rather than a probability.
+
+    `O_NOFOLLOW` is POSIX; on platforms lacking it the flag is 0 and the
+    random name plus `O_EXCL` still prevent reuse of a planted path.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    for _ in range(_TEMP_NAME_ATTEMPTS):
+        candidate = cache_path.with_name(
+            f"{cache_path.name}.{secrets.token_hex(8)}.tmp"
+        )
+        try:
+            return os.open(candidate, flags, 0o600), str(candidate)
+        except FileExistsError:
+            continue
+    raise OSError(f"could not create a temporary file beside {cache_path}")
+
+
 def _publish_hash_cache(
     cache_path: Path, hashes: FileHashCache, observed_at: float | None
 ) -> bool:
@@ -294,10 +326,23 @@ def _publish_hash_cache(
     left untouched, which is the safe direction: a cache that is one run out
     of date costs a rescan, while a mis-stamped one loses an edit.
     """
-    tmp_path = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
+    # The temporary name is unpredictable and the file is created with
+    # O_EXCL|O_NOFOLLOW, so a local process that can write to the repository
+    # directory cannot pre-place a symlink here and have this truncate the
+    # link's target with cache JSON. A PID-derived name opened with
+    # `Path.open("w")` did exactly that: the name was guessable and the open
+    # followed the link (issue #1700). O_EXCL also means an existing path is
+    # a publish FAILURE rather than something to unlink and retry -- removing
+    # it would be the same race one step later.
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with tmp_path.open("w", encoding="utf-8") as f:
+        fd, tmp_name = _open_exclusive_temp(cache_path)
+        tmp_path = Path(tmp_name)
+    except OSError as e:
+        logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
+        return False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(hashes, f, indent=2)
         if observed_at is not None:
             os.utime(tmp_path, (observed_at, observed_at))

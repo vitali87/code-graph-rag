@@ -646,6 +646,7 @@ class TestCrashBetweenCacheSaveAndFlush:
         )
 
         real_open = Path.open
+        real_os_open = os.open
         real_utime = os.utime
         real_replace = os.replace
         refused: set[str] = set()
@@ -661,6 +662,17 @@ class TestCrashBetweenCacheSaveAndFlush:
                 raise OSError(errno.EROFS, "Read-only file system")
             return real_open(self, *args, **kwargs)
 
+        # The publish creates its temporary through `os.open` with
+        # O_EXCL|O_NOFOLLOW rather than `Path.open` (issue #1700), so the
+        # read-only filesystem has to be simulated at that call too. Patching
+        # only `Path.open` left the write unrefused, which the `"write" in
+        # refused` assertion below catches rather than passing vacuously.
+        def _refuse_os_open(path, flags, mode=0o777, **kwargs):  # type: ignore[no-untyped-def]
+            if _is_cache_temp(Path(os.fspath(path))):
+                refused.add("write")
+                raise OSError(errno.EROFS, "Read-only file system")
+            return real_os_open(path, flags, mode, **kwargs)
+
         def _refuse_utime(path, times=None, **kwargs):  # type: ignore[no-untyped-def]
             if _is_cache_temp(Path(path)):
                 refused.add("utime")
@@ -674,6 +686,7 @@ class TestCrashBetweenCacheSaveAndFlush:
             return real_replace(src, dst, **kwargs)
 
         monkeypatch.setattr(Path, "open", _refuse_open)
+        monkeypatch.setattr(graph_updater_module.os, "open", _refuse_os_open)
         monkeypatch.setattr(graph_updater_module.os, "utime", _refuse_utime)
         monkeypatch.setattr(graph_updater_module.os, "replace", _refuse_replace)
         # Must COMPLETE: a cache that cannot be written is not a failed run.
@@ -685,6 +698,7 @@ class TestCrashBetweenCacheSaveAndFlush:
         ).run()
         monkeypatch.setattr(graph_updater_module.os, "replace", real_replace)
         monkeypatch.setattr(graph_updater_module.os, "utime", real_utime)
+        monkeypatch.setattr(graph_updater_module.os, "open", real_os_open)
         monkeypatch.setattr(Path, "open", real_open)
 
         assert "write" in refused, (
@@ -1876,3 +1890,73 @@ def test_a_pre_parse_failure_leaves_the_old_subtrees_in_place(
         updater.run()
 
     assert _deleted_module_paths(mock_ingestor) == set()
+
+
+class TestHashCachePublishSymlinkSafety:
+    """The publish must not write through a link planted at its temp path."""
+
+    def test_a_planted_symlink_at_the_predictable_path_is_not_followed(
+        self, tmp_path: Path
+    ) -> None:
+        """A pre-placed link at the OLD predictable name must be inert.
+
+        The temporary name used to be `<cache>.<pid>.tmp` and was opened with
+        `Path.open("w")`, which follows a symlink: a local process able to
+        write to the repository directory could point that name at any file
+        the publisher could write and have it truncated and replaced with
+        cache JSON (issue #1700).
+
+        The victim is asserted BY CONTENT rather than by mtime or size: the
+        overwrite leaves a perfectly well-formed file, so only the bytes
+        distinguish "untouched" from "replaced with someone else's data".
+        """
+        cache_path = tmp_path / "cache.json"
+        victim = tmp_path / "victim.txt"
+        original = "precious contents that must survive\n"
+        victim.write_text(original, encoding="utf-8")
+
+        planted = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
+        planted.symlink_to(victim)
+
+        published = graph_updater_module._publish_hash_cache(
+            cache_path, {"a.py": "deadbeef"}, None
+        )
+
+        assert victim.read_text(encoding="utf-8") == original, (
+            "the publish followed a symlink planted at its temporary path and "
+            "overwrote the link's target with cache JSON"
+        )
+        assert published, "the publish must still succeed around a planted link"
+        assert json.loads(cache_path.read_text(encoding="utf-8")) == {
+            "a.py": "deadbeef"
+        }, "the cache itself must be written correctly"
+
+    def test_the_temporary_name_is_not_derived_from_the_pid(
+        self, tmp_path: Path
+    ) -> None:
+        """Two publishes must not reuse one predictable temporary name.
+
+        Pins the unpredictability directly. Asserting only that the planted
+        link survives would still pass if the name were merely CHANGED to
+        another fixed string, which an attacker reads out of the source just
+        as easily.
+        """
+        seen: set[str] = set()
+        real_open = os.open
+
+        def _record(path, flags, mode=0o777, **kwargs):  # type: ignore[no-untyped-def]
+            name = os.fspath(path)
+            if name.endswith(".tmp"):
+                seen.add(os.path.basename(name))
+            return real_open(path, flags, mode, **kwargs)
+
+        with patch.object(os, "open", _record):
+            for index in range(2):
+                graph_updater_module._publish_hash_cache(
+                    tmp_path / f"cache{index}.json", {"a.py": "x"}, None
+                )
+
+        assert len(seen) == 2, f"expected two distinct temporary names, saw {seen}"
+        assert not any(str(os.getpid()) in name for name in seen), (
+            f"the temporary name still embeds the pid, so it stays guessable: {seen}"
+        )
