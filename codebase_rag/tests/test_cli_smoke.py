@@ -13,11 +13,13 @@ from codebase_rag import constants as cs
 from codebase_rag.cli import app
 
 # Deadline for a CLI subprocess, not a performance assertion. Starting the CLI
-# costs ~12s because `--help` imports the whole parser stack before it can
-# render, so a 30s deadline left barely 2.5x headroom and the tests below
-# flaked under `pytest -n 2` while passing alone (issue #1655). These tests ask
-# "does the CLI start and print", and a generous deadline does not weaken that;
-# the startup cost itself is the separate question.
+# costs ~10s idle because `--help` imports the whole parser stack before it can
+# render, but the number that matters is the CONCURRENT one: measured on 4
+# vCPUs it is 19.5s at 4-way and 41.4s at 8-way, so the old 30s deadline held
+# 1.5x headroom under the load `-n auto` produces and could not pass at all
+# beyond it (issue #1655). These tests ask "does the CLI start and print", and
+# a generous deadline does not weaken that; the startup cost is its own
+# question.
 _CLI_TIMEOUT_SECONDS = 120
 # Call names that start a real process, so a deadline applies to them.
 _SUBPROCESS_LAUNCHERS = frozenset({"run", "Popen", "check_output", "check_call"})
