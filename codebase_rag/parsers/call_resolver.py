@@ -438,47 +438,67 @@ class CallResolver:
         head, _, rest = receiver.partition(cs.SEPARATOR_DOT)
         if not head or not head.isidentifier():
             return False
-        # `self`/`cls` and a typed local name a value that is nonetheless a
-        # namespace for its OWN nested classes, so they admit only a class
-        # nested in that type: `self.Inner()` constructs, `self.Error()` naming
-        # a module-level `Error` is the #1641 defect wearing a new receiver.
-        # Single-segment only -- `self.err.Error()` reaches a FIELD, which is an
-        # ordinary value, so a chain must fall through to the checks below.
-        if not rest:
-            if head in cs.SELF_RECEIVER_KEYWORDS and class_context:
-                if self._class_is_nested_in(resolved_qn, class_context):
-                    return True
-            if local_var_types and (var_type := local_var_types.get(head)):
-                typed_qn = self._resolve_class_name(var_type, module_qn)
-                if (
-                    typed_qn
-                    and self.function_registry.get(typed_qn) == cs.NodeLabel.CLASS
-                    and self._class_is_nested_in(resolved_qn, typed_qn)
-                ):
-                    return True
+        # Single-segment only: `self.err.Error()` reaches a FIELD, an ordinary
+        # value, so a chain falls through to the namespace resolution below.
+        if not rest and self._receiver_owns_nested_class(
+            head, module_qn, resolved_qn, class_context, local_var_types
+        ):
+            return True
+        base = self._receiver_base_qn(head, module_qn)
+        if base is None:
+            return False
         # Resolve the WHOLE receiver, not just its head. `mod_a.instance` has a
         # module for a head and a value for a tail, and judging it by the head
         # alone accepted `mod_a.instance.Error()` -- the original defect reached
-        # through one more segment.
-        #
-        # `_resolve_class_name` follows the import map without checking what it
-        # landed on, so it answers `mod_a.helper` for an imported FUNCTION named
-        # `helper`. Confirm the qn it returns really is a Class before trusting
-        # it; the name alone is not evidence of classness.
-        base: str | None = None
-        class_qn = self._resolve_class_name(head, module_qn)
-        if class_qn and self.function_registry.get(class_qn) == cs.NodeLabel.CLASS:
-            base = class_qn
-        else:
-            import_map = self.import_processor.import_mapping.get(module_qn) or {}
-            if head in import_map:
-                base = import_map[head]
-        if base is None:
-            return False
-        # Being imported says nothing about KIND: `from m import instance` and
-        # `import m` both land in the map, and only the second is a namespace.
+        # through one more segment. Being imported also says nothing about KIND:
+        # `from m import instance` and `import m` both land in the map, and only
+        # the second is a namespace.
         full = base if not rest else f"{base}{cs.SEPARATOR_DOT}{rest}"
         return self._import_target_is_a_namespace(full)
+
+    def _receiver_owns_nested_class(
+        self,
+        head: str,
+        module_qn: str,
+        resolved_qn: str,
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> bool:
+        """Whether `head` names a type whose OWN nested class is being built.
+
+        `self`/`cls`/`this` and a local typed to a class are spelled as values
+        but really do construct: `self.Inner()` is a nested-class construction,
+        while `self.Error()` naming a module-level `Error` is the #1641 defect
+        wearing a new receiver. So each admits only a class nested in its type.
+        """
+        if head in cs.SELF_RECEIVER_KEYWORDS and class_context:
+            if self._class_is_nested_in(resolved_qn, class_context):
+                return True
+        if not local_var_types:
+            return False
+        var_type = local_var_types.get(head)
+        if not var_type:
+            return False
+        typed_qn = self._resolve_class_name(var_type, module_qn)
+        return bool(
+            typed_qn
+            and self.function_registry.get(typed_qn) == cs.NodeLabel.CLASS
+            and self._class_is_nested_in(resolved_qn, typed_qn)
+        )
+
+    def _receiver_base_qn(self, head: str, module_qn: str) -> str | None:
+        """The qn the receiver's first segment names, if it names a namespace.
+
+        `_resolve_class_name` follows the import map without checking what it
+        landed on, so it answers `mod_a.helper` for an imported FUNCTION named
+        `helper`. Confirm the qn it returns really is a Class before trusting
+        it; the name alone is not evidence of classness.
+        """
+        class_qn = self._resolve_class_name(head, module_qn)
+        if class_qn and self.function_registry.get(class_qn) == cs.NodeLabel.CLASS:
+            return class_qn
+        import_map = self.import_processor.import_mapping.get(module_qn) or {}
+        return import_map.get(head)
 
     def _class_is_nested_in(self, class_qn: str, owner_qn: str) -> bool:
         """Whether `class_qn` is declared inside `owner_qn` or one of its bases.
