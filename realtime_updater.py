@@ -26,7 +26,11 @@ from codebase_rag.constants import (
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.utils.path_utils import is_ignored_filename
+from codebase_rag.utils.path_utils import (
+    is_ignored_filename,
+    is_unconditionally_ignored_filename,
+    unignore_names_this_file,
+)
 
 
 class PendingTimer(Protocol):
@@ -106,8 +110,20 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         path = Path(path_str)
         # Shared with the repository walk. These two predicates answer the same
         # question and drifted apart once already (issue #1636).
-        if is_ignored_filename(path.name):
+        if is_unconditionally_ignored_filename(path.name):
             return False
+        # The rescuable half (.min.js, .min.css) is ignored unless the run's
+        # unignore set names the file (issue #1637). Read from the updater
+        # rather than stored at construction: `_register_generated_sources`
+        # recomputes `unignore_paths` every run, so a copy taken here would
+        # go stale. Without this the watcher drops edits to a file the walk
+        # indexed, and the two consumers disagree again (issue #1636).
+        if is_ignored_filename(path.name):
+            unignore_paths = getattr(self.updater, "unignore_paths", None)
+            if not (
+                unignore_paths and unignore_names_this_file(path_str, unignore_paths)
+            ):
+                return False
         return all(part not in self.ignore_patterns for part in path.parts)
 
     def dispatch(self, event: FileSystemEvent) -> None:

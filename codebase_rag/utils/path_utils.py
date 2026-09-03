@@ -72,6 +72,31 @@ def matches_ignore_patterns(rel_path_str: str, patterns: frozenset[str]) -> bool
 _GLOB_MAGIC = re.compile(r"[*?\[]")
 
 
+def unignore_names_this_file(rel_path_str: str, patterns: frozenset[str]) -> bool:
+    """Whether some unignore pattern names THIS FILE rather than a container.
+
+    `matches_ignore_patterns` cannot answer this: gitwildmatch matches
+    `build/js/jquery.min.js` against the directory pattern `build` just as
+    readily as against the file's own path, so a directory-level `!` would
+    otherwise rescue a bundle inside it.
+
+    This is the "what counts as exact" decision issue #1637 left open. A
+    pattern qualifies when, with any trailing slash removed, it equals the
+    file's path or its bare filename -- so `!docs/js/jquery.min.js` and
+    `!jquery.min.js` both rescue, while `!docs`, `!docs/js` and `!docs/**` do
+    not. Globs are deliberately excluded: `!docs/**` reads as "rescue this
+    subtree", which is the directory-level intent the split preserves.
+    """
+    filename = rel_path_str.rsplit(cs.SEPARATOR_SLASH, 1)[-1]
+    for pattern in patterns:
+        candidate = pattern.strip().rstrip(cs.SEPARATOR_SLASH)
+        if not candidate or _GLOB_MAGIC.search(candidate):
+            continue
+        if candidate.lstrip(cs.SEPARATOR_SLASH) in (rel_path_str, filename):
+            return True
+    return False
+
+
 def unignore_could_match_within(pattern: str, rel_dir: str) -> bool:
     # Dir-pruning guard: keep a pruned-by-default directory when an
     # unignore pattern could match it or anything beneath it.
@@ -139,6 +164,18 @@ def is_ignored_filename(name: str) -> bool:
     return name.endswith(cs.IGNORE_FILENAME_ENDINGS)
 
 
+def is_unconditionally_ignored_filename(name: str) -> bool:
+    """Whether a filename is ignored even against an explicit unignore.
+
+    The stricter half of `is_ignored_filename`: compiled output and editor
+    droppings, which no configuration should resurrect. The rest of the list
+    is text a parser can read, so an explicit `!` line rescues it instead
+    (issue #1637). Both walk predicates must ask this question the same way,
+    or the indexer and the watcher disagree about which files are in the graph.
+    """
+    return name.endswith(cs.UNCONDITIONAL_IGNORE_FILENAME_ENDINGS)
+
+
 def should_skip_path(
     path: Path,
     repo_path: Path,
@@ -147,12 +184,11 @@ def should_skip_path(
     is_file: bool | None = None,
 ) -> bool:
     _is_file = path.is_file() if is_file is None else is_file
-    # Ahead of every exclude/unignore check, and deliberately so: a generated
-    # artefact is not source in any configuration, so rescuing the DIRECTORY it
-    # sits in must not drag it back in. Pinned by
-    # TestIgnoreSuffixesInteraction in test_exclude_patterns.py; the docs state
-    # the precedence for the reader (#1636).
-    if _is_file and is_ignored_filename(path.name):
+    # Ahead of every exclude/unignore check for the UNCONDITIONAL half only:
+    # compiled output is not source in any configuration, so rescuing the
+    # DIRECTORY it sits in must not drag it back in. The rescuable half is
+    # tested after the unignore below, so an explicit `!` line can win.
+    if _is_file and is_unconditionally_ignored_filename(path.name):
         return True
     # Containment below is lexical, so a symlink whose target escapes the root
     # would pass it and let a repo-scoped sweep read or overwrite outside files
@@ -168,6 +204,15 @@ def should_skip_path(
     match_path = rel_path_str if _is_file else f"{rel_path_str}/"
     if exclude_paths and matches_ignore_patterns(match_path, exclude_paths):
         return True
+    # The rescuable half, decided BEFORE the general unignore below: that check
+    # returns False for a directory-level `!` too, since gitwildmatch matches
+    # `build/js/jquery.min.js` against the pattern `build`. Requiring a pattern
+    # that names the FILE is what keeps `!build/` from resurrecting a bundle
+    # inside it while `!build/js/jquery.min.js` rescues it (issue #1637).
+    if _is_file and is_ignored_filename(path.name):
+        return not (
+            unignore_paths and unignore_names_this_file(rel_path_str, unignore_paths)
+        )
     # unignore rescues only built-in ignores, never explicit user excludes.
     if unignore_paths and matches_ignore_patterns(match_path, unignore_paths):
         return False
@@ -208,10 +253,19 @@ def should_skip_rel_file(
     # cannot see a compound ending like ".min.js" no matter what this function
     # then does with it (issue #1636). First, matching `should_skip_path`; the
     # two must agree on precedence as well as on the rule.
-    if is_ignored_filename(rel_path_str.rsplit(cs.SEPARATOR_SLASH, 1)[-1]):
+    filename = rel_path_str.rsplit(cs.SEPARATOR_SLASH, 1)[-1]
+    if is_unconditionally_ignored_filename(filename):
         return True
     if exclude_paths and matches_ignore_patterns(rel_path_str, exclude_paths):
         return True
+    # Same position and rule as `should_skip_path`: the rescuable half needs a
+    # pattern naming the FILE, decided before the general unignore below, or a
+    # directory-level `!` would rescue it there (#1637). The two predicates
+    # must agree on precedence, not merely on the ending rule.
+    if is_ignored_filename(filename):
+        return not (
+            unignore_paths and unignore_names_this_file(rel_path_str, unignore_paths)
+        )
     # unignore rescues only built-in ignores, never explicit user excludes.
     if unignore_paths and matches_ignore_patterns(rel_path_str, unignore_paths):
         return False

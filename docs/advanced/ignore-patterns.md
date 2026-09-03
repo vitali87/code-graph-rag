@@ -62,11 +62,27 @@ and `min.js` are indexed normally. A non-minified vendored file (say
 directory. Prefer either to a blanket `docs/**`, which also drops the
 first-party Markdown under `docs/` that the document tier indexes on purpose.
 
-Unlike the directory exclusions above, this rule takes precedence over `!`
-lines and **cannot be un-ignored**: a generated artefact is not source in any
-configuration, so un-ignoring the directory it sits in does not bring it back.
-The trade-off is that there is currently no way to index a file whose name ends
-this way, even deliberately.
+Unlike the directory exclusions above, un-ignoring the **directory** a
+generated file sits in does not bring it back: `!build/` does not resurrect
+`build/out.pyc` or `build/js/jquery.min.js`.
+
+How to override it depends on which kind of file it is:
+
+| Ending | Overridable? |
+|---|---|
+| `.pyc`, `.pyo`, `.o`, `.a`, `.so`, `.dll`, `.class`, `.tmp`, `~` | No. Compiled output and editor droppings are not source in any configuration. |
+| `.min.js`, `.min.css` | Yes, with a `!` line naming the **file exactly**. |
+
+So a bundle you maintain, or a third-party one you want to ask questions about,
+can be indexed deliberately:
+
+```
+!docs/js/jquery.min.js
+```
+
+A directory-level `!` is not enough, which keeps the default intact for the
+common case: a repository that ships generated API documentation gets none of
+its vendored JavaScript unless it names each file it actually wants.
 
 ## Scope
 

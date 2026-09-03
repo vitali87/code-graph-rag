@@ -26,7 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import codebase_rag.constants.languages as cs
-from codebase_rag.utils.path_utils import walk_eligible_files
+from codebase_rag.utils.path_utils import should_skip_rel_file, walk_eligible_files
 from realtime_updater import CodeChangeEventHandler
 
 # Kept out of the graph: machine-generated, never hand-edited.
@@ -146,8 +146,12 @@ class TestPrecedenceAgainstUnignore:
     Adding `.min.js` puts a new kind of entry under that rule -- the first one
     a user might plausibly want indexed -- so the precedence is asserted here
     for the extension too, and for `should_skip_rel_file`, which had no such
-    test. The consequence is a real limit with no escape hatch, stated in
-    docs/advanced/ignore-patterns.md rather than left for a user to discover.
+    test.
+
+    #1637 then split the list: compiled output stays unconditional, while the
+    text-like entries (`.min.js`, `.min.css`) are rescued by an EXACT `!` line
+    naming the file. The directory case below is unchanged, so rescuing
+    `build/` still does not drag a bundle back in.
     """
 
     @staticmethod
@@ -185,13 +189,13 @@ class TestPrecedenceAgainstUnignore:
         # rules out one that ignores nothing.
         assert walked == {"build/js/hand.js"}
 
-    def test_an_exact_unignore_line_does_not_rescue_it_either(
-        self, tmp_path: Path
-    ) -> None:
-        # The exact-path case, which no pre-existing test settled in either
-        # direction. Pinning it restrictively here is a decision, not a
-        # discovery: implementing #1637 means inverting this test and the
-        # matching paragraph in docs/advanced/ignore-patterns.md.
+    def test_an_exact_unignore_line_rescues_it(self, tmp_path: Path) -> None:
+        # Inverted by #1637, as the previous revision of this test said it
+        # would be. `.min.js` is text a parser can read and a user can
+        # plausibly want indexed, so an explicit `!` naming the file wins,
+        # while the DIRECTORY case above still does not rescue it. The
+        # matching paragraph in docs/advanced/ignore-patterns.md was updated
+        # with this change.
         walked = {
             rel
             for _d, _f, rel in walk_eligible_files(
@@ -199,7 +203,25 @@ class TestPrecedenceAgainstUnignore:
                 unignore_paths=frozenset({"build", "build/js/jquery.min.js"}),
             )
         }
-        assert walked == {"build/js/hand.js"}
+        assert walked == {"build/js/hand.js", "build/js/jquery.min.js"}
+
+    def test_an_exact_unignore_line_does_not_rescue_compiled_output(
+        self, tmp_path: Path
+    ) -> None:
+        # The half of the rule #1637 deliberately did NOT relax. Without this,
+        # the inversion above is equally satisfied by making every entry
+        # rescuable, which would let a `!` line resurrect a .pyc.
+        repo = tmp_path / "repo"
+        (repo / "build").mkdir(parents=True)
+        (repo / "build" / "out.pyc").write_text("x\n", encoding="utf-8")
+        (repo / "build" / "keep.py").write_text("x\n", encoding="utf-8")
+        walked = {
+            rel
+            for _d, _f, rel in walk_eligible_files(
+                repo, unignore_paths=frozenset({"build", "build/out.pyc"})
+            )
+        }
+        assert walked == {"build/keep.py"}
 
 
 class TestIndexerAndWatcherAgree:
@@ -215,6 +237,32 @@ class TestIndexerAndWatcherAgree:
     still passes. So this guards against the two implementations drifting apart
     again, and the walk tests above are what pin the rule itself.
     """
+
+    def test_they_agree_on_a_rescued_bundle_too(self, tmp_path: Path) -> None:
+        """The unignore case, which the parametrised test below cannot reach.
+
+        Its fixtures pass no `unignore_paths`, so it stayed green while the
+        walk indexed a rescued `.min.js` and the watcher dropped every later
+        edit to it -- the #1636 divergence, re-opened by #1637's escape hatch
+        in the one configuration that uses it.
+        """
+        rel = "docs/js/jquery.min.js"
+        unignore = frozenset({rel})
+        updater = MagicMock()
+        updater.unignore_paths = unignore
+        handler = CodeChangeEventHandler(updater=updater)
+
+        walk_indexes = not should_skip_rel_file(
+            rel, ("docs", "js"), unignore_paths=unignore
+        )
+        assert walk_indexes, "fixture guard: the walk did not rescue the bundle"
+        assert handler._is_relevant(rel) == walk_indexes
+
+        # And without the `!`, both must still drop it: a watcher that simply
+        # stopped applying the rule would satisfy the assertion above.
+        bare = MagicMock()
+        bare.unignore_paths = None
+        assert not CodeChangeEventHandler(updater=bare)._is_relevant(rel)
 
     @pytest.mark.parametrize("rel", [*SKIPPED, *INDEXED])
     def test_same_verdict_for_every_fixture_file(self, repo: Path, rel: str) -> None:
