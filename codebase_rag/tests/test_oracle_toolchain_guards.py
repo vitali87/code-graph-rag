@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from evals import constants as ec
+from evals.oracles import _common
 from evals.oracles._common import (
     _node_require_stderr,
     _oracle_dependency,
@@ -352,3 +353,45 @@ class TestSkipReasons:
     def test_a_working_toolchain_has_no_reason(self, tmp_path: Path) -> None:
         """None is the signal the call sites branch on, so it must be exact."""
         assert node_oracle_skip_reason(None) is None
+
+
+class TestPostInstallRecheck:
+    def test_a_toolchain_that_turns_out_unusable_skips_rather_than_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The clean-checkout gap (#1639).
+
+        The guard runs before `ensure_node_deps`, so on a fresh clone it
+        cannot probe and answers "available" to avoid mistaking "not fetched"
+        for "toolchain broken". Nothing revisited that once the deps landed,
+        so an incompatible runtime reached the oracle and died with
+        ERR_REQUIRE_ESM -- an evaluation FAILURE standing in for an
+        unavailable toolchain, which is the whole defect.
+
+        Asserting on the SKIP specifically: a raise reaches the report as an
+        error and an empty payload grades every node as missing, and both are
+        the misdiagnosis this issue is about.
+        """
+        binaries = tmp_path / "bin"
+        binaries.mkdir()
+        _stub(
+            binaries,
+            "node",
+            'case "$2" in\n  *require*) exit 1 ;;\n  *) exit 0 ;;\nesac',
+        )
+        _stub(binaries, "npm", "exit 0")
+        monkeypatch.setenv("PATH", str(binaries))
+
+        oracle = tmp_path / "oracle"
+        (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
+        script = oracle / "oracle_ast.js"
+        script.write_text('const p = require("@ruby/prism");\n', encoding="utf-8")
+        # The install itself is not under test; what matters is that the
+        # capability is re-checked once it has happened.
+        monkeypatch.setattr(_common, "ensure_node_deps", lambda _dir: None)
+
+        with pytest.raises(BaseException) as raised:
+            _common.run_node_oracle_payload(oracle, script, ())
+        assert "Skipped" in type(raised.value).__name__, (
+            f"expected a skip, got {type(raised.value).__name__}"
+        )

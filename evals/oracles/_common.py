@@ -7,6 +7,8 @@ import time
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
+import pytest
+
 from codebase_rag import constants as cs
 
 from .. import constants as ec
@@ -206,6 +208,21 @@ def run_node_oracle_payload(
     node = shutil.which(ec.NODE_BIN)
     if node is None:
         return OraclePayload(nodes=[], edges=[], name_edges=[])
+    # Re-check AFTER installing. On a clean checkout the guard ran before
+    # node_modules existed, so it could not probe and answered "available" to
+    # avoid mistaking "not fetched" for "toolchain broken". That answer was
+    # provisional, and this is the first moment it can be settled: without
+    # this an incompatible runtime reaches the oracle and dies with
+    # ERR_REQUIRE_ESM, turning an unavailable toolchain into an evaluation
+    # FAILURE, which is the whole defect issue #1639 is about.
+    reason = node_oracle_skip_reason(oracle_dir)
+    if reason is not None:
+        # `pytest.skip` rather than a raise or an empty payload. An empty
+        # payload grades every node as missing, which reads as a real
+        # regression; a bare raise reaches the report as an ERROR, which is
+        # the same misdiagnosis #1639 is about. Skipping here needs no change
+        # at the ~24 call sites and cannot be forgotten at a new one.
+        pytest.skip(reason)
     proc = subprocess.run(
         [node, str(script), *args],
         capture_output=True,

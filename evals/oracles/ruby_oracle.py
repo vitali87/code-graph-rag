@@ -25,7 +25,13 @@ def ruby_oracle_available() -> bool:
 
 
 def ruby_oracle_skip_reason() -> str | None:
-    """Why this oracle cannot run here, or None when it can (issue #1639)."""
+    """Why this oracle cannot run here, or None when it can (issue #1639).
+
+    On a clean checkout this answers None because the deps are not installed
+    yet and the probe cannot run; `run_node_oracle_payload` re-checks once
+    `ensure_node_deps` has fetched them and raises `NodeOracleUnavailable`,
+    which the test guards below turn into a skip carrying the real reason.
+    """
     return node_oracle_skip_reason(_ORACLE_DIR)
 
 
