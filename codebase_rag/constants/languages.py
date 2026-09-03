@@ -455,7 +455,10 @@ IGNORE_PATTERNS = frozenset(
 # `Path("jquery.min.js").suffix` is ".js" and `Path("notes.py~").suffix` is
 # ".py~", so a `Path.suffix` test silently matched neither (issue #1636).
 # Use `path_utils.is_ignored_filename`; do not re-derive the rule.
-IGNORE_SUFFIXES = frozenset(
+# Compiled output and editor droppings. Nothing a parser reads, and nothing a
+# user would ask for, so an unignore must never resurrect one: rescuing
+# `build/` must not drag `build/out.pyc` back in.
+UNCONDITIONAL_IGNORE_SUFFIXES = frozenset(
     {
         ".tmp",
         "~",
@@ -466,16 +469,28 @@ IGNORE_SUFFIXES = frozenset(
         ".so",
         ".dll",
         ".class",
-        # Vendored bundles that generated API docs (jazzy, YARD, JSDoc,
-        # Sphinx) ship alongside the source they document. Their symbols are
-        # whatever the minifier emitted, and they outnumber the real ones.
+    }
+)
+# Generated, but TEXT a parser can read, so unlike the set above these are
+# files a user can plausibly want in the graph: a project vendoring a single
+# minified helper it maintains, or someone indexing a bundle on purpose to ask
+# questions about it. Ignored by default for the reason below, but an explicit
+# unignore rescues them (issue #1637).
+#
+# Vendored bundles that generated API docs (jazzy, YARD, JSDoc, Sphinx) ship
+# alongside the source they document. Their symbols are whatever the minifier
+# emitted, and they outnumber the real ones.
+RESCUABLE_IGNORE_SUFFIXES = frozenset(
+    {
         ".min.js",
         ".min.css",
     }
 )
+IGNORE_SUFFIXES = UNCONDITIONAL_IGNORE_SUFFIXES | RESCUABLE_IGNORE_SUFFIXES
 # `str.endswith` takes a tuple, and the repository walk tests every filename,
 # so build it once rather than per file. Derived, never edited separately.
 IGNORE_FILENAME_ENDINGS = tuple(sorted(IGNORE_SUFFIXES))
+UNCONDITIONAL_IGNORE_FILENAME_ENDINGS = tuple(sorted(UNCONDITIONAL_IGNORE_SUFFIXES))
 
 # pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"

@@ -24,7 +24,7 @@ fixtures/**
 - A bare name (`vendor`) matches a file or directory with that name at any depth
 - A pattern containing a slash (`docs/*.md`, `/generated`) is anchored to the repository root
 - A trailing slash (`build/`) matches directories only
-- Lines starting with `!` un-ignore matching paths that a **default** exclusion would skip (explicit excludes always win; the name-ending rule under [Default Exclusions](#default-exclusions) cannot be un-ignored)
+- Lines starting with `!` un-ignore matching paths that a **default** exclusion would skip (explicit excludes always win; the name-ending rule under [Default Exclusions](#default-exclusions) is un-ignorable only for `.min.js` and `.min.css`, and only by a `!` line naming the file)
 - Lines starting with `#` are comments; blank lines are ignored
 - Patterns from `.cgrignore` are merged with `--exclude` flags (which use the same syntax) and auto-detected directories
 
@@ -62,11 +62,34 @@ and `min.js` are indexed normally. A non-minified vendored file (say
 directory. Prefer either to a blanket `docs/**`, which also drops the
 first-party Markdown under `docs/` that the document tier indexes on purpose.
 
-Unlike the directory exclusions above, this rule takes precedence over `!`
-lines and **cannot be un-ignored**: a generated artefact is not source in any
-configuration, so un-ignoring the directory it sits in does not bring it back.
-The trade-off is that there is currently no way to index a file whose name ends
-this way, even deliberately.
+Unlike the directory exclusions above, un-ignoring the **directory** a
+generated file sits in does not bring it back: `!build/` does not resurrect
+`build/out.pyc` or `build/js/jquery.min.js`.
+
+How to override it depends on which kind of file it is:
+
+| Ending | Overridable? |
+|---|---|
+| `.pyc`, `.pyo`, `.o`, `.a`, `.so`, `.dll`, `.class`, `.tmp`, `~` | No. Compiled output and editor droppings are not source in any configuration. |
+| `.min.js`, `.min.css` | Yes, with a `!` line naming the **file exactly**. |
+
+So a bundle you maintain, or a third-party one you want to ask questions about,
+can be indexed deliberately:
+
+```text
+!docs/js/jquery.min.js
+```
+
+A directory-level `!` is not enough, which keeps the default intact for the
+common case: a repository that ships generated API documentation gets none of
+its vendored JavaScript unless it names each file it actually wants.
+
+The rescuing line must name the file literally: a `!` pattern containing `*`,
+`?` or `[` does not rescue a bundle, so `!docs/js/*.min.js` and `!*.min.js`
+have no effect and each file needs its own line. Everywhere else in this file
+`!` patterns take globs as usual; this one rule is the exception, because a
+glob is how you write "this whole subtree", which is exactly the
+directory-level intent the default is protecting.
 
 ## Scope
 
