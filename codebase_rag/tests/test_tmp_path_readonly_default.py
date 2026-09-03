@@ -68,6 +68,61 @@ def test_plants_a_readonly_object(tmp_path):
 """
 
 
+def _git_env(**overrides: str) -> dict[str, str]:
+    """A Git environment with every inherited `GIT_*` routing variable gone.
+
+    `{**os.environ, ...}` is not enough. An inherited `GIT_DIR`,
+    `GIT_WORK_TREE`, `GIT_INDEX_FILE` or `GIT_OBJECT_DIRECTORY` redirects a
+    `git init` away from the directory it names, so the repo under test is
+    never built where the test looks for it. The object counts these tests
+    assert on would then describe some other repository, or an empty tree --
+    and a test asserting an object is ABSENT passes vacuously when it is
+    reading the wrong directory. Dropping the whole prefix rather than a
+    listed few keeps that true for routing variables not enumerated here
+    (#1648 review).
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | dict(
+        overrides
+    )
+
+
+def test_git_env_drops_inherited_routing_variables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`_git_env` must strip inherited `GIT_*`, not merely add to it.
+
+    Pins the property directly rather than through a repo-building test: with
+    `GIT_DIR` set, `git init` builds the repo somewhere else entirely, so a
+    test that COUNTS objects would go red for a reason far from the cause,
+    and one asserting an object is absent would go GREEN vacuously. The
+    routing variables below are the ones that redirect a command away from
+    its `cwd`; `GIT_CONFIG_GLOBAL` is passed as an override to show the
+    filter drops inherited values without discarding the ones a caller asks
+    for.
+    """
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere" / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "elsewhere" / "index"))
+    monkeypatch.setenv("GIT_OBJECT_DIRECTORY", str(tmp_path / "elsewhere" / "o"))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "inherited"))
+    monkeypatch.setenv("PATH", os.environ["PATH"])
+
+    env = _git_env(GIT_CONFIG_GLOBAL=str(tmp_path / "wanted"))
+
+    leaked = sorted(k for k in env if k.startswith("GIT_") and k != "GIT_CONFIG_GLOBAL")
+    assert leaked == [], (
+        f"inherited Git routing variables survived into the child env: {leaked}; "
+        "each one redirects git away from the directory the test built"
+    )
+    assert env["GIT_CONFIG_GLOBAL"] == str(tmp_path / "wanted"), (
+        "the caller's own override must win over the inherited value, or the "
+        "filter has thrown away the setting it was asked to apply"
+    )
+    assert "PATH" in env, (
+        "only GIT_* is dropped; stripping the rest would leave git unfindable"
+    )
+
+
 def _plant_readonly_object(root: Path) -> Path:
     """Write a file with git's loose-object mode: read-only for everyone."""
     objects = root / ".git" / "objects" / "ab"
@@ -631,12 +686,11 @@ def test_git_repo_fixture_tears_down_its_own_readonly_objects(
 
     assert (git_repo / ".git").is_dir()
     (git_repo / "a.py").write_text("x = 1\n", encoding="utf-8")
-    env = {
-        **os.environ,
-        "GIT_CONFIG_GLOBAL": str(git_repo / "absent"),
-        "GIT_CONFIG_SYSTEM": str(git_repo / "absent"),
-        "GIT_DEFAULT_HASH": "sha1",
-    }
+    env = _git_env(
+        GIT_CONFIG_GLOBAL=str(git_repo / "absent"),
+        GIT_CONFIG_SYSTEM=str(git_repo / "absent"),
+        GIT_DEFAULT_HASH="sha1",
+    )
     subprocess.run(["git", "add", "a.py"], cwd=git_repo, check=True, env=env)
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c"],
@@ -694,12 +748,11 @@ def test_the_loose_object_filter_rejects_a_packed_repo(
     already rejects packs, `*.idx`, `commit-graph` and the decoy by name.
     `_FANOUT_DIR` is a narrowing optimisation here, not independently pinned.
     """
-    env = {
-        **os.environ,
-        "GIT_CONFIG_GLOBAL": str(tmp_path / "absent"),
-        "GIT_CONFIG_SYSTEM": str(tmp_path / "absent"),
-        "GIT_DEFAULT_HASH": "sha1",
-    }
+    env = _git_env(
+        GIT_CONFIG_GLOBAL=str(tmp_path / "absent"),
+        GIT_CONFIG_SYSTEM=str(tmp_path / "absent"),
+        GIT_DEFAULT_HASH="sha1",
+    )
     repo = tmp_path / "packed"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=env)
@@ -763,12 +816,11 @@ def test_the_loose_object_filter_accepts_a_sha256_repo(
     the pins deliberately exclude, so the sha256 branch is pinned behaviour
     rather than uncovered code that can be dropped silently.
     """
-    env = {
-        **os.environ,
-        "GIT_CONFIG_GLOBAL": str(tmp_path / "absent"),
-        "GIT_CONFIG_SYSTEM": str(tmp_path / "absent"),
-        "GIT_DEFAULT_HASH": "sha256",
-    }
+    env = _git_env(
+        GIT_CONFIG_GLOBAL=str(tmp_path / "absent"),
+        GIT_CONFIG_SYSTEM=str(tmp_path / "absent"),
+        GIT_DEFAULT_HASH="sha256",
+    )
     repo = tmp_path / "sha256"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=env)
