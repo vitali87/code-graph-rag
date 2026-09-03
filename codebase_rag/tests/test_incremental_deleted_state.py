@@ -258,6 +258,35 @@ def test_a_rehydrated_updater_forgets_a_deleted_module_qn(temp_repo: Path) -> No
     assert "proj.util" not in updater.known_module_paths()
 
 
+def test_a_deleted_mod_rs_is_swept_on_its_recorded_qn(temp_repo: Path) -> None:
+    # `mod.rs` names its directory: src/a/mod.rs records as proj.src.a, while
+    # the path-derived prefix is proj.src.a.mod. Keying the registry sweep on
+    # the path-derived form swept a qn nothing recorded, so a reused updater
+    # (watcher, MCP server) kept the deleted file's definitions and Pass 3
+    # could still resolve calls into them.
+    #
+    # The recorded qn is seeded directly rather than parsed: the collapse is a
+    # property of remove_file_from_state, and driving it through a real parse
+    # would make the test skip wherever the Rust grammar is unavailable.
+    root = temp_repo / "proj"
+    (root / "src" / "a").mkdir(parents=True, exist_ok=True)
+    mod_rs = root / "src" / "a" / "mod.rs"
+    mod_rs.write_text("pub fn helper() -> i32 { 42 }\n", encoding="utf-8")
+
+    updater = _updater(_StatefulIngestor(), root, cs.SupportedLanguage.PYTHON)
+    updater.factory.definition_processor.module_qn_to_file_path["proj.src.a"] = mod_rs
+    updater.function_registry.insert("proj.src.a.helper", "Function")
+    updater.simple_name_lookup.setdefault("helper", set()).add("proj.src.a.helper")
+
+    updater.remove_file_from_state(mod_rs)
+
+    assert not [qn for qn in updater.function_registry.keys() if "helper" in qn], (
+        "the deleted mod.rs left registry entries behind"
+    )
+    for qn_set in updater.simple_name_lookup.values():
+        assert not [qn for qn in qn_set if "helper" in qn]
+
+
 JEDI_CORE = (
     "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
     "    return Base()\n"

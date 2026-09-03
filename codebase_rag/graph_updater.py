@@ -2225,10 +2225,29 @@ class GraphUpdater:
             if file_path.name == cs.INIT_PY
             else relative_path.with_suffix("").parts
         )
-        module_qn_prefix = cs.SEPARATOR_DOT.join([self.project_name, *path_parts])
-        self.factory.import_processor.commonjs_direct_exports.pop(
-            module_qn_prefix, None
-        )
+        path_derived_qn = cs.SEPARATOR_DOT.join([self.project_name, *path_parts])
+        # Sweep on the qns the parse RECORDED for this path, not on the
+        # path-derived form. The two differ whenever `base_module_qn` applies
+        # its mod.rs collapse (src/a/mod.rs records as proj.src.a, while the
+        # path yields proj.src.a.mod) or `_disambiguate_module_qn` suffixes a
+        # qn an earlier-parsed sibling already owns. Keying on the path-derived
+        # form swept a qn nothing ever recorded, so a mod.rs deletion left its
+        # registry and simple-name entries behind and Pass 3 kept resolving
+        # calls into definitions that no longer exist. The Rust and C# import
+        # blocks below already re-derive the recorded qn for this reason.
+        # A file that was never parsed recorded nothing; the path-derived form
+        # is the only prefix available for it, and it owns no recorded qn that
+        # this could wipe.
+        recorded_qns = {
+            qn
+            for qn, path in (
+                self.factory.definition_processor.module_qn_to_file_path.items()
+            )
+            if path == file_path
+        }
+        module_qn_prefixes = recorded_qns or {path_derived_qn}
+        for prefix in module_qn_prefixes:
+            self.factory.import_processor.commonjs_direct_exports.pop(prefix, None)
         # A deleted file is no writer: its mod-scope registry entries must
         # not weigh in the next arbitration (a modified file re-drops this
         # in its own re-parse, harmlessly twice). The drop keys on the qn
@@ -2261,13 +2280,7 @@ class GraphUpdater:
         # they are never re-registered because it is not re-parsed. The span
         # records key by the REGISTERING file's module qn, so a qn recorded
         # under a module this event does not touch survives (issue #1025).
-        touched_modules = {
-            qn
-            for qn, path in (
-                self.factory.definition_processor.module_qn_to_file_path.items()
-            )
-            if path == file_path
-        }
+        touched_modules = recorded_qns
         foreign_qns = {
             location.qualified_name
             for (
@@ -2296,8 +2309,12 @@ class GraphUpdater:
 
         for qn in list(self.function_registry.keys()):
             if (
-                qn.startswith(f"{module_qn_prefix}.") or qn == module_qn_prefix
-            ) and qn not in foreign_qns:
+                any(
+                    qn.startswith(f"{prefix}.") or qn == prefix
+                    for prefix in module_qn_prefixes
+                )
+                and qn not in foreign_qns
+            ):
                 qns_to_remove.add(qn)
                 del self.function_registry[qn]
 
