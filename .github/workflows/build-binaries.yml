@@ -25,6 +25,12 @@ on:
 
 permissions: read-all
 
+# A new push to the same PR supersedes the queued or running analysis of the
+# previous head; cancelling it keeps the runner queue for live heads.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     name: Build ${{ matrix.platform }}-${{ matrix.arch }}
