@@ -889,6 +889,8 @@ class TestIncompleteMarkerSurvivesTheProcess:
             name = str((params or {}).get(cs.KEY_PROJECT_NAME))
             if "clear" in failing and "DELETE m" in query:
                 raise RuntimeError("clear write refused")
+            if "mark" in failing and "SET m.run_incomplete" in query:
+                raise RuntimeError("mark write refused")
             # MERGE creates the node when absent; MATCH does not, and a
             # MATCH-based mark therefore writes NOTHING on a first run. The
             # fake has to honour that difference or it answers the question
@@ -904,6 +906,8 @@ class TestIncompleteMarkerSurvivesTheProcess:
         def _read(query: str, params: dict | None = None) -> list[dict]:
             if "run_incomplete" not in query:
                 return []
+            if "read" in failing:
+                raise RuntimeError("marker read refused")
             name = str((params or {}).get(cs.KEY_PROJECT_NAME))
             # A real MATCH returns NO ROWS when the marker node is absent, not
             # a row saying false. Modelling the empty result matters: code that
@@ -1080,4 +1084,57 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert registry._graph_incomplete is True, (
             "the local flag reported complete while the graph still says "
             "incomplete; a fresh registry would refuse reingest forever"
+        )
+
+    async def test_an_unwritable_marker_aborts_before_destructive_work(
+        self, temp_project_root: Path
+    ) -> None:
+        """A mark that cannot be stored must stop the run, not proceed.
+
+        The marker is the only protection that survives a restart. Indexing
+        on without it means a crash leaves a partial graph a fresh process
+        cannot distinguish from a complete one, and a scoped reingest then
+        treats it as authoritative. Nothing is lost by refusing: no graph
+        state has changed yet (#1705 review).
+
+        Asserts the DELETE never happened, not merely that an error was
+        returned: an abort that still wiped the project would satisfy an
+        error-message assertion while doing the exact damage this prevents.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+        ingestor._failing.add("mark")
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            result = await registry.index_repository()
+
+        assert "Error" in result, "an unstorable marker must fail the run"
+        (
+            ingestor.delete_project.assert_not_called(),
+            (
+                "the run destroyed the existing graph despite having no marker "
+                "to record that it had started"
+            ),
+        )
+        updater_cls.assert_not_called()
+
+    async def test_an_unreadable_marker_refuses_reingest(
+        self, temp_project_root: Path
+    ) -> None:
+        """ "Cannot tell" must not be read as "the last run finished".
+
+        Returning False on a failed read hydrates a scoped reingest from a
+        graph that may be partial, which is precisely the failure the marker
+        exists to prevent. An update_repository recovers either way.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+        ingestor._failing.add("read")
+
+        refused = await registry.reingest(["a.py"])
+
+        assert "failed part way" in refused.get("error", ""), (
+            f"an unreadable marker was treated as a completed run; got {refused}"
         )
