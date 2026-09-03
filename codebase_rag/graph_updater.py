@@ -2739,6 +2739,27 @@ class GraphUpdater:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = _load_hash_cache(cache_path) if not force else {}
+        # Snapshot for the single-file merge, read from DISK and independently
+        # of `force`. Two distinct reasons it cannot reuse `old_hashes`:
+        #
+        # 1. the stale-key pop below -- a single-file run does not commit the
+        #    delombok state (see `run`), so it must not act on that pop
+        #    either. Merging over the popped dict would DROP every
+        #    Lombok-affected sibling, which then takes the `is_new` path next
+        #    run and skips delete-before-reingest, leaving the previous
+        #    parse's entities beside the fresh ones (#1619 review).
+        # 2. `force` -- which empties `old_hashes` to make this run RE-PARSE
+        #    what it walked. A single-file run walked one file, so `force`
+        #    says nothing about the siblings it never looked at. Reusing the
+        #    emptied dict would persist a cache holding only the target and
+        #    erase every sibling's hash, which is the same data loss the
+        #    unforced path already guards (#1619 review, round 2).
+        #
+        # Only the single-file commit reads this; a project run replaces the
+        # cache wholesale from its own complete walk, as it always has.
+        pristine_hashes = (
+            _load_hash_cache(cache_path) if self._single_file is not None else {}
+        )
         for stale_key in self._delombok_stale_keys:
             old_hashes.pop(stale_key, None)
         is_full_build = (force or not old_hashes) and self._single_file is None
@@ -2784,9 +2805,27 @@ class GraphUpdater:
         # from it and no on-disk hash names it any more. Only the graph still
         # does. It costs a query only on the runs where the set actually
         # moved.
+        # A single-file run whose cache cannot name the target needs this too,
+        # for the same reason a full build does. `is_new` would otherwise fall
+        # through to True on a file the previous parse already indexed, skip
+        # delete-before-reingest, and stack a second parse's entities on the
+        # first -- renamed-away symbols and their CALLS/REFERENCES edges
+        # surviving beside the fresh ones (#1619 review, round 3).
+        #
+        # The condition mirrors `is_full_build` above deliberately: `force`
+        # empties `old_hashes`, and a missing or evicted cache leaves it empty
+        # the same way, so both must ask the graph. Guarding on `force` alone
+        # left the identical defect on a fresh clone of an already-indexed
+        # repo -- the cache lives in the working tree, the graph does not --
+        # and after any cache eviction (#1619 review, round 4).
+        cacheless_single_file = (force or not old_hashes) and (
+            self._single_file is not None
+        )
         preexisting_paths = (
             self._existing_module_paths()
-            if is_full_build or not self._exclusions_match_last_run()
+            if is_full_build
+            or cacheless_single_file
+            or not self._exclusions_match_last_run()
             else frozenset()
         )
         # None is "the sink claims readability and the query failed", not
@@ -2906,10 +2945,23 @@ class GraphUpdater:
             if preexisting_paths
             else frozenset()
         )
-        deleted_before_parse = sorted(
-            (set(old_hashes) | self._delombok_stale_keys | graph_only_gone)
-            - eligible_by_key.keys()
-            - unreadable_keys
+        # Empty on a single-file run, for the same reason `deleted_keys`
+        # below is: every term here is PROJECT-WIDE (the whole hash cache, the
+        # whole Delombok-stale set, every module the graph holds), and the
+        # only thing subtracted is `eligible_by_key` -- which on a single-file
+        # run names just the walked file. So each sibling falls straight
+        # through and is deleted before the parse, which is the sweep #1619
+        # exists to stop. It was previously bounded only by accident, because
+        # nothing on this path populated the set (issue #1671); that is not a
+        # property to rely on, so the scope rule is stated here.
+        deleted_before_parse = (
+            sorted(
+                (set(old_hashes) | self._delombok_stale_keys | graph_only_gone)
+                - eligible_by_key.keys()
+                - unreadable_keys
+            )
+            if self._single_file is None
+            else []
         )
         # A directory whose package-ness flipped since the last run (an
         # __init__.py or Cargo.toml added or deleted) changes the container
@@ -3058,8 +3110,14 @@ class GraphUpdater:
         graph_paths = (
             preexisting_paths if preexisting_paths is not None else frozenset()
         )
+        # A single-file run walked exactly one file, so `current_file_keys`
+        # names only that file and every sibling looks deleted. It cannot
+        # speak for the project's file set, for the same reason `run` guards
+        # the exclusion stamp with `self._single_file is None` (#1619).
         deleted_keys = (
             (set(old_hashes.keys()) | graph_paths) - current_file_keys - unreadable_keys
+            if self._single_file is None
+            else set()
         )
         if deleted_keys:
             logger.info(ls.INCREMENTAL_DELETED, count=len(deleted_keys))
@@ -3098,8 +3156,48 @@ class GraphUpdater:
         # between tell its successor the file was already reconciled, and the
         # successor computes an empty `deleted_keys` and never re-issues the
         # delete. The subtree then stays in the graph until a full rebuild.
-        self._pending_hash_cache = (cache_path, new_hashes)
-        self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
+        if self._single_file is None:
+            self._pending_hash_cache = (cache_path, new_hashes)
+            self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
+        else:
+            # Two different remedies, because the run has different standing
+            # on each (#1619). It DID hash its one file, so that hash is worth
+            # recording -- merged over the previous run's entries, never
+            # replacing them, or the next full run treats every sibling as
+            # new. It collected NO directory mtimes at all
+            # (`_collect_eligible_files` returns above the walk that populates
+            # them), so there is nothing to merge and writing the empty
+            # collection would wipe the previous walk's record wholesale.
+            # ...but only when there IS a previous run's cache to merge over.
+            # With none (missing, empty or unreadable), publishing the one
+            # hash this run took would create a cache naming a single file,
+            # which the next PROJECT run reads as authoritative: every
+            # sibling is then absent from `old_hashes`, takes the `is_new`
+            # path, skips delete-before-reingest, and an edited sibling's
+            # previous entities survive beside the fresh parse. Writing
+            # nothing keeps the next project run a full build, which
+            # reconciles properly (#1619 review, round 5). Measured: with the
+            # cache removed, a single-file run then a project run left
+            # `module_b.py` undeleted after an edit.
+            self._pending_hash_cache = (
+                (cache_path, {**pristine_hashes, **new_hashes})
+                if pristine_hashes
+                else None
+            )
+            # And it must carry the PREVIOUS cache's mtime forward rather
+            # than stamping this run's instant. The merged entries are mostly
+            # the previous run's hashes, so stamping now would assert every
+            # sibling was observed just now: a sibling edited before this run
+            # then satisfies `file_mtime <= cache_mtime` with a hash that
+            # still matches, and the next project run reports "already in
+            # sync" and never indexes the edit (#1619 review).
+            #
+            # Note this must be the previous mtime, NOT None. None skips the
+            # `os.utime` in `run` altogether, which leaves the file its own
+            # write time -- LATER than this run's instant, so it makes the
+            # trap worse rather than closing it. `cache_mtime` was read at the
+            # top of this method, before anything wrote to the cache.
+            self._pending_cache_observed_at = cache_mtime or None
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry
         # the old parser's edges.
