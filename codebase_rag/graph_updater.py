@@ -3111,9 +3111,21 @@ class GraphUpdater:
             # (`_collect_eligible_files` returns above the walk that populates
             # them), so there is nothing to merge and writing the empty
             # collection would wipe the previous walk's record wholesale.
+            # ...but only when there IS a previous run's cache to merge over.
+            # With none (missing, empty or unreadable), publishing the one
+            # hash this run took would create a cache naming a single file,
+            # which the next PROJECT run reads as authoritative: every
+            # sibling is then absent from `old_hashes`, takes the `is_new`
+            # path, skips delete-before-reingest, and an edited sibling's
+            # previous entities survive beside the fresh parse. Writing
+            # nothing keeps the next project run a full build, which
+            # reconciles properly (#1619 review, round 5). Measured: with the
+            # cache removed, a single-file run then a project run left
+            # `module_b.py` undeleted after an edit.
             self._pending_hash_cache = (
-                cache_path,
-                {**pristine_hashes, **new_hashes},
+                (cache_path, {**pristine_hashes, **new_hashes})
+                if pristine_hashes
+                else None
             )
             # And it must carry the PREVIOUS cache's mtime forward rather
             # than stamping this run's instant. The merged entries are mostly

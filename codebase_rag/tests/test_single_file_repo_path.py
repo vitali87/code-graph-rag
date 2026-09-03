@@ -428,6 +428,79 @@ class TestSingleFileRunScope:
             "the previous cache, not be replaced by it"
         )
 
+    def test_single_file_run_publishes_no_cache_when_there_was_none(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """A cacheless single-file run must not leave a one-entry cache.
+
+        Publishing the single hash it took would create a cache naming one
+        file, and the NEXT PROJECT run reads that as authoritative: every
+        sibling is absent from `old_hashes`, so it takes the `is_new` path,
+        skips delete-before-reingest, and an edited sibling's previous
+        entities survive beside the fresh parse.
+
+        The assertion is on the LATER project run's deletes, not on the cache
+        contents, because the cache is written either way -- `{}` by
+        `_touch_empty_json` when suppressed, `{"module_a.py": ...}` when not.
+        Only the consequence one run later tells the two apart, which is the
+        whole point of the finding (#1619 review, round 5).
+        """
+        repo = self._three_module_project(tmp_path)
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        cache_path = repo / cs.HASH_CACHE_FILENAME
+        assert cache_path.is_file(), (
+            "fixture guard: the project run must have written a cache, or "
+            "removing it below would not establish the precondition"
+        )
+        cache_path.unlink()
+
+        graph_rows = [
+            {cs.KEY_PATH: "module_a.py"},
+            {cs.KEY_PATH: "module_b.py"},
+            {cs.KEY_PATH: "__init__.py"},
+        ]
+        single = _MockIngestor()
+        single.fetch_all.return_value = graph_rows
+        GraphUpdater(
+            ingestor=single,
+            repo_path=repo / "module_a.py",
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        # Edit a sibling the single-file run never looked at.
+        (repo / "module_b.py").write_text(
+            "def module_b_function():\n    return 99\n", encoding="utf-8"
+        )
+
+        project = _MockIngestor()
+        project.fetch_all.return_value = graph_rows
+        GraphUpdater(
+            ingestor=project,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        deleted = {
+            call.args[1][cs.KEY_PATH]
+            for call in project.execute_write.call_args_list
+            if call.args and call.args[0] == cs.CYPHER_DELETE_MODULE
+        }
+        assert "module_b.py" in deleted, (
+            "the single-file run published a cache naming only its own file, "
+            "so this project run treated the edited sibling as new and "
+            "skipped delete-before-reingest; its previous entities now "
+            "survive alongside the fresh parse"
+        )
+
     @pytest.mark.parametrize(
         ("force", "drop_cache"),
         [(False, False), (True, False), (False, True)],
