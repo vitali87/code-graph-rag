@@ -2888,10 +2888,23 @@ class GraphUpdater:
             if preexisting_paths
             else frozenset()
         )
-        deleted_before_parse = sorted(
-            (set(old_hashes) | self._delombok_stale_keys | graph_only_gone)
-            - eligible_by_key.keys()
-            - unreadable_keys
+        # Empty on a single-file run, for the same reason `deleted_keys`
+        # below is: every term here is PROJECT-WIDE (the whole hash cache, the
+        # whole Delombok-stale set, every module the graph holds), and the
+        # only thing subtracted is `eligible_by_key` -- which on a single-file
+        # run names just the walked file. So each sibling falls straight
+        # through and is deleted before the parse, which is the sweep #1619
+        # exists to stop. It was previously bounded only by accident, because
+        # nothing on this path populated the set (issue #1671); that is not a
+        # property to rely on, so the scope rule is stated here.
+        deleted_before_parse = (
+            sorted(
+                (set(old_hashes) | self._delombok_stale_keys | graph_only_gone)
+                - eligible_by_key.keys()
+                - unreadable_keys
+            )
+            if self._single_file is None
+            else []
         )
         # A directory whose package-ness flipped since the last run (an
         # __init__.py or Cargo.toml added or deleted) changes the container
