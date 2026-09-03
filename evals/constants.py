@@ -381,6 +381,17 @@ NODE_BIN = "node"
 # covers that break, a missing install and any future incompatibility, without
 # hard-coding a version to keep up to date.
 DOTNET_LIST_SDKS_FLAG = "--list-sdks"
+DOTNET_SKIP_NO_BINARY = "{binary} is not on PATH"
+DOTNET_SKIP_NO_SDKS = "dotnet --list-sdks failed: {stderr}"
+DOTNET_SKIP_SDK_TOO_OLD = (
+    "the C# oracle needs .NET SDK {needed} or newer to build its net{needed}.0 "
+    "project; installed: {found}"
+)
+DOTNET_SKIP_BUILD_FAILED = "the C# oracle could not be built: {stderr}"
+DOTNET_SKIP_BUILD_INCOMPLETE = (
+    "the C# oracle build did not complete (another process held the build lock "
+    "past the timeout)"
+)
 DOTNET_PROBE_TIMEOUT_S = 30
 DOTNET_SDK_LINE_SEP = " "
 # Oracle.csproj targets net10.0, so an older SDK cannot build it (NETSDK1045).
@@ -396,6 +407,13 @@ NODE_REQUIRE_PROBE = 'require("{package}")'
 NODE_PACKAGE_MANIFEST = "package.json"
 NODE_PACKAGE_DEPS_KEY = "dependencies"
 NODE_ORACLE_SCRIPT_GLOB = "*.js"
+# Skip reasons name what actually went wrong. "node/npm toolchain not
+# available" is FALSE on the machine that reported #1639: node is installed
+# there, and the oracle dies on ERR_REQUIRE_ESM. The stderr is truncated
+# because a full node stack trace buries the one line that explains the skip.
+NODE_SKIP_NO_BINARY = "{binary} is not on PATH"
+NODE_SKIP_CANNOT_REQUIRE = "this node cannot require({package}): {stderr}"
+SKIP_REASON_STDERR_CHARS = 400
 # The oracle's own `require("pkg")` calls: the authoritative statement of what
 # it loads, and literally the call that fails on an incompatible Node. Builtins
 # are excluded because they load everywhere and would make the probe vacuous.

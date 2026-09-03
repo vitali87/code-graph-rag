@@ -9,6 +9,7 @@ from ..types_defs import GraphData, OraclePayload
 from ._common import (
     is_ignored,
     node_oracle_available,
+    node_oracle_skip_reason,
     payload_to_graph,
     run_node_oracle_payload,
 )
@@ -21,6 +22,11 @@ _CALLABLE_KINDS = frozenset({cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.va
 
 def typescript_available() -> bool:
     return node_oracle_available(_ORACLE_DIR)
+
+
+def typescript_skip_reason() -> str | None:
+    """Why this oracle cannot run here, or None when it can (issue #1639)."""
+    return node_oracle_skip_reason(_ORACLE_DIR)
 
 
 def _run_payload(target: Path, suffixes: tuple[str, ...]) -> OraclePayload:

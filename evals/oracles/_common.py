@@ -26,6 +26,33 @@ from ..types_defs import (
 
 # The node-backed oracles (Lua, PHP, Ruby, TypeScript/JavaScript) all shell
 # out to the same toolchain, so they share one availability probe.
+def node_oracle_skip_reason(oracle_dir: Path | None = None) -> str | None:
+    """Why the node oracle cannot run here, or None when it can (issue #1639).
+
+    The fixed strings the call sites print today ("node/npm toolchain not
+    available") are wrong in the case that matters: on the reporting machine
+    node IS available, and the reason the oracle fails is an ERR_REQUIRE_ESM
+    from a Node too old for the ESM-only parser. The issue asks for the
+    captured stderr so a developer can see WHY it skipped instead of guessing.
+    """
+    node = shutil.which(ec.NODE_BIN)
+    if node is None:
+        return ec.NODE_SKIP_NO_BINARY.format(binary=ec.NODE_BIN)
+    if shutil.which(ec.NPM_BIN) is None:
+        return ec.NODE_SKIP_NO_BINARY.format(binary=ec.NPM_BIN)
+    if oracle_dir is None:
+        return None
+    package = _oracle_dependency(oracle_dir)
+    if package is None:
+        return None
+    stderr = _node_require_stderr(node, str(oracle_dir), package)
+    if stderr is None:
+        return None
+    return ec.NODE_SKIP_CANNOT_REQUIRE.format(
+        package=package, stderr=stderr.strip()[: ec.SKIP_REASON_STDERR_CHARS]
+    )
+
+
 def node_oracle_available(oracle_dir: Path | None = None) -> bool:
     """Whether the node toolchain can RUN this oracle, not merely whether it exists.
 
@@ -63,16 +90,17 @@ def node_oracle_available(oracle_dir: Path | None = None) -> bool:
         # before installation, so on a clean checkout the real probe never ran
         # at all and an incompatible Node reached the oracle anyway.
         return True
-    return _node_can_require(node, str(oracle_dir), package)
+    return _node_require_stderr(node, str(oracle_dir), package) is None
 
 
 @lru_cache(maxsize=16)
-def _node_can_require(node: str, oracle_dir: str, package: str) -> bool:
-    """Whether this node can `require()` this package from this directory.
+def _node_require_stderr(node: str, oracle_dir: str, package: str) -> str | None:
+    """None when the require succeeds, else the stderr explaining why not.
 
-    Cached on the full triple, and only ever on a REAL verdict: the answer to
-    this question cannot change within a process, whereas "are the deps
-    installed" can and must not be memoised alongside it.
+    Cached on the full triple, and only ever on a REAL verdict: the answer
+    cannot change within a process, whereas "are the deps installed" can and
+    must not be memoised alongside it (that is why the caller decides the
+    uninstalled case before reaching here).
     """
     try:
         probe = subprocess.run(
@@ -84,9 +112,9 @@ def _node_can_require(node: str, oracle_dir: str, package: str) -> bool:
             cwd=oracle_dir,
             timeout=ec.NODE_PROBE_TIMEOUT_S,
         )
-    except (subprocess.TimeoutExpired, OSError):
-        return False
-    return probe.returncode == 0
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return str(e)
+    return None if probe.returncode == 0 else (probe.stderr or probe.stdout)
 
 
 def _oracle_dependency(oracle_dir: Path) -> str | None:

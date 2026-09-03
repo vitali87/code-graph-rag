@@ -30,23 +30,17 @@ _DOTNET_ENV = {ec.DOTNET_TELEMETRY_ENV: "1", ec.DOTNET_NOLOGO_ENV: "1"}
 
 
 @lru_cache(maxsize=1)
-def csharp_oracle_available() -> bool:
-    """Whether a dotnet SDK that can BUILD this oracle is installed (issue #1639).
+def csharp_oracle_skip_reason() -> str | None:
+    """Why the C# oracle cannot run here, or None when it can (issue #1639).
 
-    `which("dotnet")` answers "is the launcher present", which a runtime-only
-    install and an SDK too old for the csproj both satisfy. `Oracle.csproj`
-    targets `net10.0`, so an SDK 8 machine sailed past the guard and the build
-    then failed with NETSDK1045 -- 15 failures and 4 setup errors that read as
-    real regressions rather than as a missing toolchain.
-
-    The probe asks the SDK to list itself and requires a major version at least
-    the csproj's. Comparing majors (not attempting the build) keeps the guard
-    cheap and side-effect free; the build's own failure path still skips for
-    anything this cannot foresee, such as an unreachable NuGet feed.
+    "dotnet toolchain not installed" is FALSE on the reporting machine: dotnet
+    IS installed there and the build fails with NETSDK1045 because the SDK is
+    too old for the csproj. The issue asks for the captured stderr so the skip
+    line names the real obstacle.
     """
     dotnet = shutil.which(ec.DOTNET_BIN)
     if dotnet is None:
-        return False
+        return ec.DOTNET_SKIP_NO_BINARY.format(binary=ec.DOTNET_BIN)
     try:
         probe = subprocess.run(
             [dotnet, ec.DOTNET_LIST_SDKS_FLAG],
@@ -56,14 +50,36 @@ def csharp_oracle_available() -> bool:
             check=False,
             timeout=ec.DOTNET_PROBE_TIMEOUT_S,
         )
-    except (subprocess.TimeoutExpired, OSError):
-        return False
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return str(e)
     if probe.returncode != 0:
-        return False
-    return any(
-        _sdk_major(line) >= ec.CSHARP_ORACLE_MIN_SDK_MAJOR
-        for line in probe.stdout.splitlines()
-    )
+        return ec.DOTNET_SKIP_NO_SDKS.format(stderr=(probe.stderr or "").strip())
+    listed = [line for line in probe.stdout.splitlines() if line.strip()]
+    if not any(_sdk_major(line) >= ec.CSHARP_ORACLE_MIN_SDK_MAJOR for line in listed):
+        return ec.DOTNET_SKIP_SDK_TOO_OLD.format(
+            needed=ec.CSHARP_ORACLE_MIN_SDK_MAJOR,
+            found=", ".join(listed) or "none",
+        )
+    try:
+        if not _ensure_built(dotnet):
+            return ec.DOTNET_SKIP_BUILD_INCOMPLETE
+    except subprocess.CalledProcessError as e:
+        return ec.DOTNET_SKIP_BUILD_FAILED.format(
+            stderr=((e.stderr or e.stdout or "").strip())[: ec.SKIP_REASON_STDERR_CHARS]
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return ec.DOTNET_SKIP_BUILD_FAILED.format(stderr=str(e))
+    return None
+
+
+def csharp_oracle_available() -> bool:
+    """Whether the C# oracle can run here (issue #1639).
+
+    Thin wrapper over `csharp_oracle_skip_reason`, which holds the reasoning
+    and the caching, so the two can never disagree about availability and the
+    build is probed once rather than once per caller.
+    """
+    return csharp_oracle_skip_reason() is None
 
 
 def _sdk_major(sdk_line: str) -> int:

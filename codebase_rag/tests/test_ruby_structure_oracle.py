@@ -11,7 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from evals.oracles import ruby_oracle_available, run_ruby_oracle
+from evals.oracles import (
+    ruby_oracle_skip_reason,
+    run_ruby_oracle,
+)
 
 # Every construct here is one the oracle must find. Kept small so the labels
 # stay reviewable, and deliberately mixed so a parser that only handles the
@@ -46,8 +49,9 @@ end
 
 
 def _require_ruby() -> None:
-    if not ruby_oracle_available():
-        pytest.skip("node/npm toolchain not available")
+    reason = ruby_oracle_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
 
 
 def test_oracle_finds_every_ruby_definition(tmp_path: Path) -> None:

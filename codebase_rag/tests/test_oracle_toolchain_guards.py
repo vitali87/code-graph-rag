@@ -21,11 +21,16 @@ import pytest
 
 from evals import constants as ec
 from evals.oracles._common import (
-    _node_can_require,
+    _node_require_stderr,
     _oracle_dependency,
     node_oracle_available,
+    node_oracle_skip_reason,
 )
-from evals.oracles.csharp_oracle import _sdk_major, csharp_oracle_available
+from evals.oracles.csharp_oracle import (
+    _sdk_major,
+    csharp_oracle_available,
+    csharp_oracle_skip_reason,
+)
 
 _ORACLE_CSPROJ = (
     Path(__file__).resolve().parents[2]
@@ -48,9 +53,9 @@ def _clear_guard_caches() -> None:
     # answer for the next one's PATH. Clearing before each test is what makes
     # the stubs below decide the outcome.
     # `node_oracle_available` is deliberately NOT cached (a pre-install answer
-    # must not freeze); the real verdict cache lives on `_node_can_require`.
-    _node_can_require.cache_clear()
-    csharp_oracle_available.cache_clear()
+    # must not freeze); the real verdict cache lives on `_node_require_stderr`.
+    _node_require_stderr.cache_clear()
+    csharp_oracle_skip_reason.cache_clear()
 
 
 class TestSdkMajor:
@@ -282,3 +287,68 @@ class TestGuardCacheLifecycle:
         # ensure_node_deps installs them; the guard must now actually probe.
         (oracle / ec.NODE_MODULES_DIRNAME).mkdir()
         assert node_oracle_available(oracle) is False
+
+
+class TestSkipReasons:
+    """The reason must name the obstacle, not restate the guard (#1639).
+
+    "dotnet toolchain not installed" was printed on a machine where dotnet IS
+    installed, which is the whole complaint: the skip line told a developer
+    nothing and sent them looking for a missing package that was present.
+    """
+
+    def test_an_old_sdk_reason_names_the_versions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _stub(tmp_path, "dotnet", 'echo "8.0.130 [/usr/share/dotnet/sdk]"')
+        monkeypatch.setenv("PATH", str(tmp_path))
+        reason = csharp_oracle_skip_reason()
+        assert reason is not None
+        # Both halves: what was found and what is needed.
+        assert "8.0.130" in reason
+        assert str(ec.CSHARP_ORACLE_MIN_SDK_MAJOR) in reason
+        # And it must not repeat the FALSE claim this replaces. Asserting only
+        # that the values appear is satisfied by "dotnet toolchain not
+        # installed" with the numbers concatenated onto it -- verified by
+        # mutation: that string passed the two assertions above.
+        assert "not installed" not in reason
+        assert "not available" not in reason
+
+    def test_a_missing_binary_reason_names_the_binary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PATH", str(tmp_path))
+        reason = csharp_oracle_skip_reason()
+        assert reason is not None and ec.DOTNET_BIN in reason
+
+    def test_a_node_reason_carries_the_require_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binaries = tmp_path / "bin"
+        binaries.mkdir()
+        _stub(
+            binaries,
+            "node",
+            'case "$2" in\n'
+            '  *require*) echo "Error [ERR_REQUIRE_ESM]: nope" >&2; exit 1 ;;\n'
+            "  *) exit 0 ;;\n"
+            "esac",
+        )
+        _stub(binaries, "npm", "exit 0")
+        monkeypatch.setenv("PATH", str(binaries))
+        oracle = tmp_path / "oracle"
+        (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
+        (oracle / "oracle_ast.js").write_text(
+            'const p = require("@ruby/prism");\n', encoding="utf-8"
+        )
+        reason = node_oracle_skip_reason(oracle)
+        assert reason is not None
+        assert "@ruby/prism" in reason
+        assert "ERR_REQUIRE_ESM" in reason
+        # node IS on PATH here, so a reason saying otherwise is the bug.
+        assert "not available" not in reason
+        assert "not installed" not in reason
+
+    def test_a_working_toolchain_has_no_reason(self, tmp_path: Path) -> None:
+        """None is the signal the call sites branch on, so it must be exact."""
+        assert node_oracle_skip_reason(None) is None
