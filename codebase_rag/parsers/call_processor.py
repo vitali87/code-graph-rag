@@ -6329,7 +6329,12 @@ class CallProcessor:
                     is_call_target = (
                         parent is not None
                         and parent.type == call_type
-                        and parent.child_by_field_name(func_field) is node
+                        # `==` not `is`: py-tree-sitter builds a fresh
+                        # wrapper per lookup, so the node returned here is
+                        # never the same object as the one taken from
+                        # .children, and identity would leave this guard
+                        # permanently False.
+                        and parent.child_by_field_name(func_field) == node
                     )
                     if not is_call_target and (
                         callee_info := resolve_func(
