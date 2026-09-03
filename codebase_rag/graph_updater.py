@@ -42,6 +42,7 @@ from .parsers.endpoint_prefixes import (
     CYPHER_PROJECT_PY_MODULES,
     CYPHER_PROJECT_ROUTE_HANDLERS,
     build_router_registry,
+    imported_module_qns,
 )
 from .parsers.endpoint_routes import (
     CYPHER_DELETE_MODULE_EXPOSES,
@@ -1364,32 +1365,40 @@ class GraphUpdater:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
             return
         dp = self.factory.definition_processor
-        module_files = self._python_module_files()
-        if only is not None:
+        known_files = self._python_module_files()
+        if only is None:
+            module_files = known_files
+            module_asts = self._python_module_asts(module_files)
+        else:
             # The router modules a mounting module's mounts need are the
-            # ones it imports; they load through the cache, and their
-            # handlers rehydrate below so a mount-prefix edit re-emits them.
-            scoped = {qn: p for qn, p in module_files.items() if qn in only}
-            for qn in only:
-                for target in self._imported_module_qns(qn, module_files):
-                    scoped[target] = module_files[target]
-            module_files = scoped
-        module_asts = self._python_module_asts(module_files)
+            # ones it imports, transitively (a mount chain main -> api ->
+            # routes needs all three); they load through the cache, and
+            # their handlers rehydrate below so a mount-prefix edit
+            # re-emits them.
+            module_files, module_asts = self._scoped_module_closure(only, known_files)
         entries = list(dp.pending_endpoints)
         # A mount-only incremental change re-parses just the mounting module;
         # the unchanged handlers must still re-emit under the new prefix, so
         # they come back from the graph. A full build queued them all already.
         if not self._is_full_build:
-            rehydrated = self._rehydrated_route_handlers(
-                {qn for _label, qn, _decorators, _module in entries},
-                set(module_asts),
-            )
-            if only is not None:
+            if only is None:
+                rehydrated = self._rehydrated_route_handlers(
+                    {qn for _label, qn, _decorators, _module in entries},
+                    set(module_asts),
+                )
+            else:
                 # Scoped: only the handlers of the router modules pulled in
                 # above; a module in `only` re-parsed and queued its own.
+                # Handlers are attributed against every module the graph
+                # knows, never the partial scoped set, or a package
+                # `__init__` pulled in by an import would stand in for its
+                # unloaded children and claim unrelated routers' handlers.
                 rehydrated = [
                     entry
-                    for entry in rehydrated
+                    for entry in self._rehydrated_route_handlers(
+                        {qn for _label, qn, _decorators, _module in entries},
+                        set(known_files),
+                    )
                     if entry[3] in module_asts and entry[3] not in only
                 ]
             entries.extend(rehydrated)
@@ -1422,22 +1431,30 @@ class GraphUpdater:
             )
         dp.pending_endpoints.clear()
 
-    def _imported_module_qns(
-        self, module_qn: str, known: Mapping[str, Path]
-    ) -> set[str]:
-        # Every module the import map of `module_qn` binds, directly or as
-        # the owner of an imported symbol (`routes.router` binds
-        # `proj.routes.router`, whose module is `proj.routes`).
-        bindings = self.factory.import_processor.import_mapping.get(module_qn, {})
-        found: set[str] = set()
-        for full_name in bindings.values():
-            parts = full_name.split(cs.SEPARATOR_DOT)
-            for end in range(len(parts), 0, -1):
-                candidate = cs.SEPARATOR_DOT.join(parts[:end])
-                if candidate in known:
-                    found.add(candidate)
-                    break
-        return found
+    def _scoped_module_closure(
+        self, only: set[str], known: Mapping[str, Path]
+    ) -> tuple[dict[str, Path], dict[str, Node]]:
+        # `only` plus every known module reachable through their imports,
+        # resolved from the ASTs the way the router registry resolves them.
+        files: dict[str, Path] = {}
+        asts: dict[str, Node] = {}
+        pending = [qn for qn in only if qn in known]
+        module_qns = set(known)
+        while pending:
+            qn = pending.pop()
+            if qn in files:
+                continue
+            files[qn] = known[qn]
+            loaded = self._python_module_asts({qn: known[qn]})
+            if qn not in loaded:
+                continue
+            asts[qn] = loaded[qn]
+            pending.extend(
+                target
+                for target in imported_module_qns(qn, loaded[qn], module_qns)
+                if target not in files
+            )
+        return files, asts
 
     def _drop_stale_handler_exposes(self, handler_qns: list[str]) -> None:
         # Re-emitted handlers drop their previous EXPOSES first, so a

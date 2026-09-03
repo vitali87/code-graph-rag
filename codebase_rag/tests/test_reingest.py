@@ -9,7 +9,7 @@ import hashlib
 import json
 import os
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -785,8 +785,18 @@ MAIN_PY = (
 class _QueryableSink:
     """Answers the graph read-backs the endpoint pass makes; nothing else."""
 
-    def __init__(self, project: str) -> None:
+    def __init__(
+        self,
+        project: str,
+        modules: Mapping[str, str] | None = None,
+        handlers: tuple[str, ...] = ("routes.get_user",),
+    ) -> None:
         self.project = project
+        # Full module qn -> repo-relative path, as the graph would answer.
+        self.modules = dict(
+            modules or {f"{project}.routes": "routes.py", f"{project}.main": "main.py"}
+        )
+        self.handlers = handlers
         self.ensure_node_batch = MagicMock()
         self.ensure_relationship_batch = MagicMock()
         self.flush_all = MagicMock()
@@ -796,18 +806,27 @@ class _QueryableSink:
     def _fetch(self, query: str, params: object = None) -> list:
         if query in (CYPHER_PROJECT_MODULES, CYPHER_PROJECT_PY_MODULES):
             return [
-                {"qualified_name": f"{self.project}.routes", "path": "routes.py"},
-                {"qualified_name": f"{self.project}.main", "path": "main.py"},
+                {"qualified_name": qn, "path": path}
+                for qn, path in self.modules.items()
             ]
         if query == CYPHER_PROJECT_ROUTE_HANDLERS:
             return [
                 {
                     "labels": ["Function"],
-                    "qualified_name": f"{self.project}.routes.get_user",
+                    "qualified_name": f"{self.project}.{handler}",
                     "decorators": ["@router.get('/{user_id}')"],
                 }
+                for handler in self.handlers
             ]
         return []
+
+    def stale_delete_qns(self) -> set[str]:
+        return {
+            qn.split(".", 1)[1]
+            for c in self.execute_write.call_args_list
+            if c.args and "EXPOSES" in c.args[0]
+            for qn in c.args[1]["qns"]
+        }
 
     def exposes(self) -> set[tuple[str, str]]:
         rel = cs.RelationshipType.EXPOSES.value
@@ -853,3 +872,108 @@ def test_reingest_re_emits_handlers_under_an_edited_mount_prefix(
         if c.args and "EXPOSES" in c.args[0]
     ]
     assert stale_deletes, "the stale EXPOSES delete was not issued"
+
+
+def _mount_updater(root: Path, sink: _QueryableSink) -> GraphUpdater:
+    parsers, queries = load_parsers()
+    return GraphUpdater(
+        ingestor=sink,  # type: ignore[arg-type]
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture([cs.CaptureGroup.IO.value]),
+        project_name=sink.project,
+    )
+
+
+def test_a_mount_edit_under_a_package_root_leaves_unrelated_routers_alone(
+    temp_repo: Path,
+) -> None:
+    # A package root (`__init__.py`) makes the import processor record a
+    # sibling `import routes` bare, and `from . import helper` pulls the
+    # package module itself into the scoped set. The scoped pass must still
+    # find routes.py through the registry's own import resolution, and must
+    # not let the package module stand in for other.py: app2's handler is
+    # neither deleted nor re-emitted by an edit to main.py.
+    root = temp_repo / "rootp"
+    root.mkdir()
+    _write(root, "__init__.py", "def helper():\n    return 1\n")
+    _write(root, "routes.py", ROUTES_PY)
+    _write(root, "other.py", ROUTES_PY.replace("/users", "/things"))
+    main = (
+        "from fastapi import FastAPI\n\nfrom . import helper\nimport routes\n\n"
+        "app = FastAPI()\napp.include_router(routes.router, prefix='{prefix}')\n"
+    )
+    _write(root, "main.py", main.format(prefix="/api"))
+    _write(
+        root,
+        "app2.py",
+        "from fastapi import FastAPI\n\nimport other\n\napp = FastAPI()\n"
+        "app.include_router(other.router, prefix='/second')\n",
+    )
+    sink = _QueryableSink("rootp", handlers=("routes.get_user", "other.get_user"))
+    updater = _mount_updater(root, sink)
+    updater.run()
+    assert sink.exposes() == {
+        ("routes.get_user", "GET /api/users/{user_id}"),
+        ("other.get_user", "GET /second/things/{user_id}"),
+    }
+    dp = updater.factory.definition_processor
+    sink.modules = {
+        qn: path.relative_to(root).as_posix()
+        for qn, path in dp.module_qn_to_file_path.items()
+    }
+    assert set(sink.modules) >= {
+        "rootp",
+        "rootp.routes",
+        "rootp.other",
+        "rootp.main",
+        "rootp.app2",
+    }
+    sink.ensure_relationship_batch.reset_mock()
+    sink.execute_write.reset_mock()
+    _write(root, "main.py", main.format(prefix="/v2"))
+
+    updater.reingest(["main.py"])
+
+    assert sink.exposes() == {("routes.get_user", "GET /v2/users/{user_id}")}
+    assert sink.stale_delete_qns() == {"routes.get_user"}
+
+
+def test_a_mount_edit_rehydrates_a_nested_router_chain(temp_repo: Path) -> None:
+    # main mounts api.api_router, which mounts routes.router: an edit to
+    # main's prefix must pull in both levels, as the full build composes
+    # them, or the handler two imports away keeps its stale prefix.
+    root = temp_repo / "nest"
+    root.mkdir()
+    _write(root, "routes.py", ROUTES_PY)
+    _write(
+        root,
+        "api.py",
+        "from fastapi import APIRouter\n\nimport routes\n\napi_router = APIRouter()\n"
+        "api_router.include_router(routes.router)\n",
+    )
+    main = (
+        "from fastapi import FastAPI\n\nfrom api import api_router\n\n"
+        "app = FastAPI()\napp.include_router(api_router, prefix='{prefix}')\n"
+    )
+    _write(root, "main.py", main.format(prefix="/api/v1"))
+    sink = _QueryableSink(
+        "nest",
+        modules={
+            "nest.routes": "routes.py",
+            "nest.api": "api.py",
+            "nest.main": "main.py",
+        },
+    )
+    updater = _mount_updater(root, sink)
+    updater.run()
+    assert sink.exposes() == {("routes.get_user", "GET /api/v1/users/{user_id}")}
+    sink.ensure_relationship_batch.reset_mock()
+    sink.execute_write.reset_mock()
+    _write(root, "main.py", main.format(prefix="/api/v2"))
+
+    updater.reingest(["main.py"])
+
+    assert sink.exposes() == {("routes.get_user", "GET /api/v2/users/{user_id}")}
+    assert sink.stale_delete_qns() == {"routes.get_user"}
