@@ -655,6 +655,47 @@ def test_query_code_graph_description_points_at_the_deterministic_tools() -> Non
 # --- cgr graph --------------------------------------------------------------------
 
 
+async def test_mcp_definition_reads_source_only_for_the_servers_own_project(
+    registry: MCPToolsRegistry, tmp_path: Path
+) -> None:
+    # The graph may hold several projects; a definition of another project
+    # carries a relative path that can also exist under this server's root
+    # and must not be read from here.
+    (tmp_path / "util.py").write_text(
+        "def helper(a):\n    return a\n", encoding="utf-8"
+    )
+    foreign = await registry.definition(f"{P}.util.helper", project=P)
+    assert foreign["found"] is True
+    assert foreign["source"] is None
+    with patch("codebase_rag.mcp.tools.derive_project_name", return_value=P):
+        own = await registry.definition(f"{P}.util.helper", project=P)
+    assert own["source"] is not None and own["source"].startswith("def helper(a):")
+
+
+def test_cli_definition_reads_source_only_for_the_repos_own_project(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "util.py").write_text(
+        "def helper(a):\n    return a\n", encoding="utf-8"
+    )
+    args = [
+        "definition",
+        f"{P}.util.helper",
+        "--project",
+        P,
+        "--repo-path",
+        str(tmp_path),
+    ]
+    with patch("codebase_rag.main.connect_memgraph", return_value=_mock_connect()):
+        foreign = CliRunner().invoke(graph_cli, args)
+        with patch("codebase_rag.utils.path_utils.derive_project_name", return_value=P):
+            own = CliRunner().invoke(graph_cli, args)
+    assert foreign.exit_code == 0, foreign.output
+    assert json.loads(foreign.output)["source"] is None
+    assert own.exit_code == 0, own.output
+    assert json.loads(own.output)["source"].startswith("def helper(a):")
+
+
 def _mock_connect() -> MagicMock:
     ingestor = MagicMock()
     ingestor.fetch_all = MagicMock(side_effect=fake_fetch_all)

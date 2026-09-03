@@ -29,7 +29,7 @@ def _project_and_fetch(
     return name, ingestor.fetch_all, ingestor
 
 
-def _run(
+def _run_query_and_emit(
     project: str | None,
     repo_path: Path,
     query: Callable[[graph_query.QueryFn, str], object],
@@ -39,7 +39,7 @@ def _run(
         _emit(query(fetch_all, name))
 
 
-def _common[F: Callable[..., None]](fn: F) -> F:
+def _graph_options[F: Callable[..., None]](fn: F) -> F:
     fn = click.option("--project", default=None, help=ch.HELP_GRAPH_PROJECT)(fn)
     return click.option(
         "--repo-path",
@@ -62,22 +62,36 @@ def cli() -> None:
 
 @cli.command("resolve", help=ch.CMD_GRAPH_RESOLVE, short_help=ch.CMD_GRAPH_RESOLVE)
 @click.argument("target")
-@_common
+@_graph_options
 def resolve_cmd(target: str, project: str | None, repo_path: Path) -> None:
-    _run(project, repo_path, lambda f, n: graph_query.resolve(f, n, target))
+    _run_query_and_emit(
+        project, repo_path, lambda f, n: graph_query.resolve(f, n, target)
+    )
 
 
 @cli.command(
     "definition", help=ch.CMD_GRAPH_DEFINITION, short_help=ch.CMD_GRAPH_DEFINITION
 )
 @click.argument("qualified_name")
-@_common
+@_graph_options
 def definition_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
-    _run(
+    _run_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.definition(f, n, qualified_name, repo_path.resolve()),
+        lambda f, n: graph_query.definition(
+            f, n, qualified_name, _source_root_for(n, repo_path)
+        ),
     )
+
+
+def _source_root_for(project_name: str, repo_path: Path) -> Path | None:
+    # Source is read from disk only when the selected project IS this
+    # repository: another project's definition carries a relative path that
+    # may also exist here and would read the wrong file.
+    from .utils.path_utils import derive_project_name
+
+    root = repo_path.resolve()
+    return root if project_name == derive_project_name(root) else None
 
 
 def _depth_option[F: Callable[..., None]](fn: F) -> F:
@@ -93,11 +107,11 @@ def _depth_option[F: Callable[..., None]](fn: F) -> F:
 @cli.command("callers", help=ch.CMD_GRAPH_CALLERS, short_help=ch.CMD_GRAPH_CALLERS)
 @click.argument("qualified_name")
 @_depth_option
-@_common
+@_graph_options
 def callers_cmd(
     qualified_name: str, depth: int, project: str | None, repo_path: Path
 ) -> None:
-    _run(
+    _run_query_and_emit(
         project,
         repo_path,
         lambda f, n: graph_query.callers(f, n, qualified_name, depth),
@@ -107,11 +121,11 @@ def callers_cmd(
 @cli.command("callees", help=ch.CMD_GRAPH_CALLEES, short_help=ch.CMD_GRAPH_CALLEES)
 @click.argument("qualified_name")
 @_depth_option
-@_common
+@_graph_options
 def callees_cmd(
     qualified_name: str, depth: int, project: str | None, repo_path: Path
 ) -> None:
-    _run(
+    _run_query_and_emit(
         project,
         repo_path,
         lambda f, n: graph_query.callees(f, n, qualified_name, depth),
@@ -122,9 +136,9 @@ def callees_cmd(
     "implementors", help=ch.CMD_GRAPH_IMPLEMENTORS, short_help=ch.CMD_GRAPH_IMPLEMENTORS
 )
 @click.argument("qualified_name")
-@_common
+@_graph_options
 def implementors_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
-    _run(
+    _run_query_and_emit(
         project, repo_path, lambda f, n: graph_query.implementors(f, n, qualified_name)
     )
 
@@ -133,20 +147,22 @@ def implementors_cmd(qualified_name: str, project: str | None, repo_path: Path) 
     "overrides", help=ch.CMD_GRAPH_OVERRIDES, short_help=ch.CMD_GRAPH_OVERRIDES
 )
 @click.argument("qualified_name")
-@_common
+@_graph_options
 def overrides_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
-    _run(project, repo_path, lambda f, n: graph_query.overrides(f, n, qualified_name))
+    _run_query_and_emit(
+        project, repo_path, lambda f, n: graph_query.overrides(f, n, qualified_name)
+    )
 
 
 @cli.command(
     "importers", help=ch.CMD_GRAPH_IMPORTERS, short_help=ch.CMD_GRAPH_IMPORTERS
 )
 @click.argument("module_qualified_name")
-@_common
+@_graph_options
 def importers_cmd(
     module_qualified_name: str, project: str | None, repo_path: Path
 ) -> None:
-    _run(
+    _run_query_and_emit(
         project,
         repo_path,
         lambda f, n: graph_query.importers(f, n, module_qualified_name),
@@ -159,11 +175,11 @@ def importers_cmd(
     short_help=ch.CMD_GRAPH_TESTS_REACHING,
 )
 @click.argument("qualified_name")
-@_common
+@_graph_options
 def tests_reaching_cmd(
     qualified_name: str, project: str | None, repo_path: Path
 ) -> None:
-    _run(
+    _run_query_and_emit(
         project,
         repo_path,
         lambda f, n: graph_query.tests_reaching(f, n, qualified_name),

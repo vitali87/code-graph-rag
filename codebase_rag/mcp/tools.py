@@ -1175,6 +1175,14 @@ class MCPToolsRegistry:
             lambda name: graph_query.resolve(self.ingestor.fetch_all, name, target),
         )
 
+    def _source_root_for(self, project_name: str) -> Path | None:
+        # Source is read from disk only when the selected project IS this
+        # server's repository: another project's definition carries a
+        # relative path that may also exist here and would read the wrong
+        # file, so its span is answered without source.
+        root = Path(self.project_root)
+        return root if project_name == derive_project_name(root) else None
+
     async def definition(
         self, qualified_name: str, project: str | None = None
     ) -> object:
@@ -1182,7 +1190,10 @@ class MCPToolsRegistry:
             cs.MCPToolName.DEFINITION,
             project,
             lambda name: graph_query.definition(
-                self.ingestor.fetch_all, name, qualified_name, Path(self.project_root)
+                self.ingestor.fetch_all,
+                name,
+                qualified_name,
+                self._source_root_for(name),
             ),
         )
 

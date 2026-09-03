@@ -120,7 +120,7 @@ def _opt_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _symbol(row: ResultRow) -> SymbolRow:
+def _symbol_row(row: ResultRow) -> SymbolRow:
     return SymbolRow(
         label=str(row.get(cs.KEY_LABEL, "")),
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
@@ -156,7 +156,7 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
                 cs.KEY_LINE: int(line_text),
             },
         )
-        symbols = [_symbol(r) for r in rows]
+        symbols = [_symbol_row(r) for r in rows]
         # Innermost first: the tightest span is what the line "is in".
         symbols.sort(
             key=lambda s: (
@@ -174,7 +174,7 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
             cs.KEY_QN: target,
         },
     )
-    symbols = [_symbol(r) for r in rows]
+    symbols = [_symbol_row(r) for r in rows]
     exact = [s for s in symbols if s["qualified_name"] == target]
     suffix = [
         s
@@ -217,7 +217,7 @@ def definition(
             found=False,
         )
     row = rows[0]
-    symbol = _symbol(row)
+    symbol = _symbol_row(row)
     source: str | None = None
     path, start, end = symbol["path"], symbol["start_line"], symbol["end_line"]
     if repo_root is not None and path and start and end:
@@ -319,7 +319,7 @@ def callees(
 # --- implementors / overrides / importers ---------------------------------------
 
 
-def _related(
+def _related_rows(
     fetch_all: QueryFn, project_name: str, query: str, qn: str
 ) -> list[RelatedRow]:
     rows = fetch_all(
@@ -341,7 +341,7 @@ def implementors(
     fetch_all: QueryFn, project_name: str, qualified_name: str
 ) -> list[RelatedRow]:
     """Types that INHERIT from or IMPLEMENT `qualified_name`."""
-    return _related(
+    return _related_rows(
         fetch_all, project_name, cq.CYPHER_GRAPH_IMPLEMENTORS, qualified_name
     )
 
@@ -350,7 +350,9 @@ def overrides(
     fetch_all: QueryFn, project_name: str, qualified_name: str
 ) -> list[RelatedRow]:
     """Methods that OVERRIDE `qualified_name`, and the method it overrides."""
-    return _related(fetch_all, project_name, cq.CYPHER_GRAPH_OVERRIDES, qualified_name)
+    return _related_rows(
+        fetch_all, project_name, cq.CYPHER_GRAPH_OVERRIDES, qualified_name
+    )
 
 
 def importers(
