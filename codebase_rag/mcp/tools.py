@@ -307,6 +307,7 @@ class MCPToolsRegistry:
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.tests_reaching,
             ),
+            cs.MCPToolName.RENAME: self._rename_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
                 description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
@@ -1328,6 +1329,90 @@ class MCPToolsRegistry:
                 self.ingestor.fetch_all, name, qualified_name
             ),
         )
+
+    # --- graph-driven edit operations (issue #1532) ------------------------------
+
+    def _rename_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.RENAME,
+            description=td.MCP_TOOLS[cs.MCPToolName.RENAME],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.NEW_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_NEW_NAME
+                    ),
+                    cs.MCPParamName.ALLOW_HEURISTIC: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[cs.MCPParamName.QUALIFIED_NAME, cs.MCPParamName.NEW_NAME],
+            ),
+            handler=self.rename,
+            returns_json=True,
+        )
+
+    async def rename(
+        self,
+        qualified_name: str,
+        new_name: str,
+        allow_heuristic: bool = False,
+        dry_run: bool = False,
+        project: str | None = None,
+    ) -> object:
+        # The graph read and the edit share the ingestor lock (taken by
+        # `_graph_query`): a rebuild landing between planning and writing
+        # would rewrite stale sites.
+        return await self._graph_query(
+            cs.MCPToolName.RENAME,
+            project,
+            lambda name: self._run_rename(
+                name, qualified_name, new_name, allow_heuristic, dry_run
+            ),
+        )
+
+    def _run_rename(
+        self,
+        project_name: str,
+        qualified_name: str,
+        new_name: str,
+        allow_heuristic: bool,
+        dry_run: bool,
+    ) -> object:
+        from codebase_rag.editing.rename import RenameRefused, rename, sites_for
+
+        try:
+            report = rename(
+                Path(self.project_root),
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                new_name,
+                allow_heuristic=allow_heuristic,
+                dry_run=dry_run,
+            )
+        except RenameRefused as refused:
+            return {
+                cs.DICT_KEY_ERROR: str(refused),
+                cs.KEY_AMBIGUOUS: sites_for(refused.ambiguous),
+                cs.KEY_UNLOCATABLE: list(refused.unlocatable),
+            }
+        payload = dict(report._asdict())
+        payload[cs.KEY_SITES] = sites_for(report.sites)
+        payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+        return payload
 
     async def query_code_graph(
         self, natural_language_query: str, project: str | None = None
