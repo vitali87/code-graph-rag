@@ -86,6 +86,16 @@ class TestModuleNamesOffered:
             # A Rust crate root is named by the manifest, not the directory, so
             # it keeps its own stem rather than being folded into the parent.
             ("src/lib.rs", {"lib", "src.lib"}),
+            # The directory-module rule is PER LANGUAGE. `index` and `mod` are
+            # ordinary Python module names, and treating every such stem as a
+            # directory module leaves them with no importable name at all.
+            ("index.py", {"index"}),
+            ("mod.py", {"mod"}),
+            ("pkg/index.py", {"index", "pkg.index"}),
+            # At the repository root there is no directory to be named by, and
+            # nothing imports the root itself.
+            ("index.ts", set()),
+            ("__init__.py", set()),
         ],
     )
     def test_both_spellings_are_offered(

@@ -2093,13 +2093,19 @@ class GraphUpdater:
             path = PurePosixPath(key)
             parts = list(path.parent.parts)
             stem = path.stem
-            if not stem or stem in cs.DIRECTORY_MODULE_STEMS:
+            directory_stem = cs.DIRECTORY_MODULE_STEM_BY_EXT.get(path.suffix)
+            if not stem or (directory_stem is not None and stem == directory_stem):
                 # A directory-module entry point is named by its DIRECTORY:
                 # `pkg`, and `a.b.pkg` from the root -- never `pkg.pkg`, which
-                # is what keeping the stem in the dotted form produces. Covers
-                # `__init__.py`, Rust's `mod.rs` and JS/TS `index.*`, which an
-                # importer all spell as the directory.
+                # is what keeping the stem in the dotted form produces.
+                #
+                # Matched WITH the extension: `index.py` and `mod.py` are
+                # ordinary Python modules imported by those names, and treating
+                # every `index`/`mod` stem as a directory module leaves them
+                # with no importable name at all.
                 if not parts:
+                    # At the repository root there is no directory to be named
+                    # by, and nothing imports the root itself.
                     continue
                 stem = parts.pop()
             names.add(stem)
