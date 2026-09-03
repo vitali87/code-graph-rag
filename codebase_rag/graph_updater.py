@@ -1197,6 +1197,12 @@ class GraphUpdater:
             logger.info("Resolved {} deferred containment parents", linked)
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
+        # The resolver memoises name -> qn answers and module languages
+        # across files; on a reused updater (any caller that holds one across
+        # `run()` calls, as the tests do) those answers can name definitions
+        # this run deleted or renamed, so every run starts Pass 3 with empty
+        # caches, as the watcher's per-event pass already does (issue #1575).
+        self.factory.call_processor.reset_resolution_caches()
         logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
 
@@ -2170,6 +2176,29 @@ class GraphUpdater:
                 self.simple_name_lookup[simple_name] = new_qn_set
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
+        # The file no longer owns any module qn: a replacement with the same
+        # stem (util.js -> util.ts) must take the bare qn a clean index gives
+        # it, and a re-parse re-registers its own entry (issue #1575).
+        qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+        # The qn read back from the graph goes with the map entry, keyed on
+        # the qn the graph RECORDED (a disambiguated `util.py` beside
+        # `util.js`, a `mod.rs` directory), never on the path-derived prefix,
+        # which for a same-stem sibling names the SURVIVOR's qn.
+        # `known_module_paths` would otherwise keep offering the deleted
+        # module to deferred resolution as a live internal target on a
+        # reused updater (issue #1575).
+        for qn in [qn for qn, path in qn_to_path.items() if path == file_path]:
+            del qn_to_path[qn]
+            self._rehydrated_module_qns.discard(qn)
+        # The paths read back from the graph for an earlier incremental run
+        # go with the registry entries: `_module_language` falls through to
+        # them for a definition qn, and a replacement in another language
+        # (util.rs -> util.py) would otherwise still answer RUST for the qn
+        # its new file re-registers (issue #1575).
+        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        for qn in qns_to_remove:
+            rehydrated.pop(qn, None)
+
     def _existing_module_paths(self) -> frozenset[str] | None:
         """Paths of this project's Module nodes already in the graph.
 
@@ -2774,6 +2803,14 @@ class GraphUpdater:
         pre_parsed = self._pre_parse_changed_files(changed_entries)
         for stale_key in (*reindexed_keys, *deleted_before_parse):
             self._delete_module_entities(stale_key)
+        # The in-memory side of a deleted file goes now as well: a reused
+        # updater (the watcher's `remove_file_from_state` path, or any caller
+        # holding one across `run()` calls) otherwise resolves this
+        # run's re-parsed importers against the deleted definitions and
+        # suffixes a same-stem replacement's qn (issue #1575). The late
+        # deletion block repeats this harmlessly.
+        for deleted_key in deleted_before_parse:
+            self.remove_file_from_state(self.repo_path / deleted_key)
         first_failure: Exception | None = None
 
         with Progress(
@@ -2844,10 +2881,13 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_DELETED, count=len(deleted_keys))
             for deleted_key in deleted_keys:
                 deleted_path = self.repo_path / deleted_key
-                self.remove_file_from_state(deleted_path)
-                # A key the up-front loop already cleared gets no second
-                # module delete; only the File node is still to go.
+                # A key cleared before the parse gets neither a second state
+                # drop nor a second module delete: the state drop keys on the
+                # module qn, which a same-stem replacement parsed since has
+                # taken over (its CommonJS export entry would go with it).
+                # Only the File node is still to go.
                 if deleted_key not in deleted_set:
+                    self.remove_file_from_state(deleted_path)
                     self._delete_module_entities(deleted_key)
                 if isinstance(self.ingestor, QueryProtocol):
                     # Keyed on the absolute path: a sibling project's File
