@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -862,3 +863,118 @@ class TestReingest:
             result = await mcp_registry.wipe_database(confirm=True)
             assert "rror" in result
             assert mcp_registry._live_updater is None
+
+
+class TestIncompleteMarkerSurvivesTheProcess:
+    """The refusal must outlive the process that earned it (issue #1679)."""
+
+    @staticmethod
+    def _store() -> MagicMock:
+        """An ingestor whose marker property persists across registries.
+
+        Backed by a dict rather than a canned return value: the point of the
+        fix is that the SECOND registry reads what the FIRST one wrote, and a
+        static return value would satisfy the assertion without any write
+        having happened.
+        """
+        store: dict[str, bool] = {}
+        ingestor = MagicMock()
+
+        def _write(query: str, params: dict | None = None) -> None:
+            name = (params or {}).get(cs.KEY_PROJECT_NAME)
+            if "SET p.run_incomplete" in query:
+                store[str(name)] = True
+            elif "REMOVE p.run_incomplete" in query:
+                store.pop(str(name), None)
+
+        def _read(query: str, params: dict | None = None) -> list[dict]:
+            if "run_incomplete" not in query:
+                return []
+            name = str((params or {}).get(cs.KEY_PROJECT_NAME))
+            return [{"run_incomplete": store.get(name, False)}]
+
+        ingestor.execute_write.side_effect = _write
+        ingestor.fetch_all.side_effect = _read
+        ingestor._marker_store = store
+        return ingestor
+
+    def _registry(self, root: Path, ingestor: MagicMock) -> MCPToolsRegistry:
+        """A registry sharing `ingestor` but nothing else.
+
+        Each call is a separate process as far as `_graph_incomplete` is
+        concerned, which is precisely the case the persisted marker exists
+        for; `cypher_gen` is per-registry because nothing here queries it.
+        """
+        return MCPToolsRegistry(
+            project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
+        )
+
+    async def test_a_fresh_registry_refuses_reingest_after_a_crashed_update(
+        self, temp_project_root: Path
+    ) -> None:
+        """A new process must still refuse, which is the whole gap.
+
+        `_graph_incomplete` lives on the registry, so the ORIGINAL process
+        refuses correctly. The defect was that a crash or an MCP restart
+        produced a registry whose flag is False, which then hydrated a scoped
+        updater from the partial graph and treated its missing definitions as
+        authoritative.
+
+        The second registry here shares only the store, never the flag, which
+        is exactly what a restarted server has.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("update died")
+            assert "Error" in await first.update_repository()
+
+        assert ingestor._marker_store.get(project) is True, (
+            "the failed update left no persisted marker, so a fresh process "
+            "has nothing to read"
+        )
+
+        # The crash: a brand new registry over the same store.
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        assert second._graph_incomplete is False, (
+            "fixture guard: the new registry must NOT carry the in-process "
+            "flag, or this test cannot tell the persisted marker apart from it"
+        )
+
+        refused = await second.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            "a fresh registry hydrated a scoped updater from the partial "
+            f"graph left by a crashed update; got {refused}"
+        )
+
+    async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
+        self, temp_project_root: Path
+    ) -> None:
+        """The marker must be CLEARED, not merely set.
+
+        Without this the fix would be indistinguishable from one that refuses
+        every reingest forever, which also passes the test above.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "Error" not in await first.update_repository()
+
+        assert project not in ingestor._marker_store, (
+            "a completed update left the marker set, so every later reingest "
+            "would refuse for a run that actually finished"
+        )
+
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = SimpleNamespace(
+                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+            )
+            result = await second.reingest(["a.py"])
+        assert "error" not in result, f"a completed run must not refuse: {result}"
